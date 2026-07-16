@@ -34,6 +34,7 @@ import {
 } from "./discovery-errors.js";
 import { createRangoDebugger, timed, NS } from "../debug.js";
 import { computeProductionHash } from "../plugins/client-ref-hashing.js";
+import { createMcpRouteDeclarationCollector } from "./mcp-snapshot.js";
 
 const debug = createRangoDebugger(NS.discovery);
 
@@ -180,6 +181,7 @@ export async function discoverRouters(
       continue;
     }
 
+    const mcpRouteDeclarations = state.isBuildMode ? undefined : {};
     const manifest = await generateManifestFull(
       router.urlpatterns,
       routerMountIndex,
@@ -187,6 +189,12 @@ export async function discoverRouters(
         routerId: id,
         ...(router.__basename ? { urlPrefix: router.__basename } : {}),
         ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
+        ...(mcpRouteDeclarations
+          ? {
+              collectEntries:
+                createMcpRouteDeclarationCollector(mcpRouteDeclarations),
+            }
+          : {}),
       },
     );
     routerMountIndex++;
@@ -242,6 +250,7 @@ export async function discoverRouters(
       sourceFile: router.__sourceFile,
       routeSourceFiles,
       factoryOnlyPrefixes,
+      mcpRouteDeclarations,
     });
 
     // Flatten prefix tree leaf nodes into precomputed entries.

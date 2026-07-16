@@ -394,10 +394,12 @@ Pluggable `SegmentCacheStore` interface configured at handler level. The
 shapes sketched in this historical narrative predate the shipped types; for the
 authoritative, copy-pasteable definitions see `src/cache/types.ts`
 (`SegmentCacheStore`, `CacheGetResult`, `CachedEntryData`). In brief, the
-shipped store returns a `CacheGetResult` (data + `shouldRevalidate`) from
-`get()`, takes an optional `swr` on `set()`, and carries a larger optional
-surface (`getResponse`/`putResponse`, `getItem`/`setItem`, `invalidateTags`,
-`keyGenerator`, `defaults`); the shipped `CachedEntryData` is
+shipped store returns a `CacheGetResult` with independent `freshness` and
+`revalidationClaimed` fields from `get()`. Every write returns a
+`CacheWriteAcknowledgement`: `stored`, `scheduled`, `skipped` with a bounded
+reason, or `failed`. The interface carries a larger optional surface
+(`getResponse`/`putResponse`, `getItem`/`setItem`, `getShell`/`putShell`,
+`invalidateTags`, `keyGenerator`, `defaults`); the shipped `CachedEntryData` is
 `{ segments, handles: string, expiresAt, tags?, taggedAt? }` (`handles` is a
 single Flight-encoded string, not a per-segment record).
 
@@ -548,8 +550,9 @@ This POC sketch carried `createdAt`/`staleAt`/`revalidationContext` and a
 per-segment `handles` record. The shipped `CachedEntryData`
 (`src/cache/types.ts`) is leaner — `{ segments, handles: string, expiresAt,
 tags?, taggedAt? }` — and staleness/revalidation is decided by the store
-(`CacheGetResult.shouldRevalidate`) rather than by fields on the entry. Treat
-the snippet below as the original reasoning, not the current type.
+through independent `CacheGetResult.freshness` and
+`CacheGetResult.revalidationClaimed` fields rather than by fields on the entry.
+Treat the snippet below as the original reasoning, not the current type.
 
 ```typescript
 // Historical POC shape (see src/cache/types.ts for the shipped type)
@@ -752,18 +755,16 @@ interface SegmentCacheStore {
   // Store-level defaults inherited by cache() boundaries
   readonly defaults?: { ttl?: number; swr?: number };
 
-  // get() returns a CacheGetResult ({ data, shouldRevalidate }), not the raw
-  // entry; set() takes an optional swr window. See src/cache/types.ts for the
-  // full shipped interface, including the optional response-cache
-  // (getResponse/putResponse), "use cache" item (getItem/setItem),
-  // invalidateTags, and keyGenerator surface.
-  get(key: string): Promise<CacheGetResult | null>;
+  // Reads report value freshness independently from which stale reader claimed
+  // revalidation. Writes acknowledge completed, scheduled, skipped, or failed
+  // persistence. See src/cache/types.ts for the full response/item/shell surface.
+  get(key: string): Promise<CacheGetResult | null | CacheReadError>;
   set(
     key: string,
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void>;
+  ): Promise<CacheWriteAcknowledgement>;
   delete(key: string): Promise<boolean>;
   clear?(): Promise<void>;
 }
@@ -992,16 +993,18 @@ When `isIntercept` is true, cache operations use the `intercept:` prefix. Interc
 
 **Note**: Proactive caching for intercept routes follows the same pattern - it populates the appropriate intercept cache entry when null components are detected.
 
-#### 5. MemorySegmentCacheStore SWR Limitation
+#### 5. MemorySegmentCacheStore Segment-Family SWR Limitation
 
-The in-memory store doesn't support SWR - it always returns `shouldRevalidate: false`:
+The in-memory store's segment `get`/`set` family remains TTL-only. A retained
+segment entry is fresh and never claims background revalidation:
 
 ```typescript
-// Memory store doesn't support SWR - never triggers revalidation
-return { data: cached, shouldRevalidate: false };
+return { data: cached, freshness: "fresh", revalidationClaimed: false };
 ```
 
-**Impact**: Tests using memory store won't exercise SWR revalidation paths. Use `CFCacheStore` in production for full SWR support.
+**Impact**: Segment-cache tests using the memory store do not exercise stale
+segment revalidation. Its response, item, and shell families do support SWR;
+use those families or a platform adapter when the stale window is the contract.
 
 #### 6. Request Object Capture in Proactive Caching
 

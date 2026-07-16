@@ -21,7 +21,10 @@
 import type { CacheScope } from "../cache/cache-scope.js";
 import type { PartialCacheOptions } from "../types.js";
 import type { RequestContext } from "../server/request-context.js";
-import type { SegmentCacheStore } from "../cache/types.js";
+import type {
+  CacheWriteAcknowledgement,
+  SegmentCacheStore,
+} from "../cache/types.js";
 import type { EntryCacheConfig, EntryData } from "../server/context.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import {
@@ -206,7 +209,7 @@ export async function serveResponseRouteWithCache(
   const putFresh = (
     store2: SegmentCacheStore,
     fresh: Response,
-  ): Promise<void> =>
+  ): Promise<CacheWriteAcknowledgement> =>
     store2.putResponse!(
       cacheKey,
       fresh.clone(),
@@ -218,35 +221,51 @@ export async function serveResponseRouteWithCache(
   try {
     const cached = await store.getResponse(cacheKey);
     if (cached && canServeCached(cached.response)) {
-      if (!cached.shouldRevalidate) {
+      if (cached.tags?.length) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "response-route",
+          phase: cached.freshness === "stale" ? "stale" : "hit",
+          provenance: ["stored"],
+          tags: cached.tags,
+          identity: cacheKey,
+          outcome: responseType,
+        });
+      }
+      if (cached.freshness === "fresh") {
         return applyPreHandlerCallbacks(cached.response);
       }
       // Stale hit (SWR): return cached, revalidate in background.
-      reqCtx.waitUntil(async () => {
-        try {
-          const fresh = finalizeResponse(await executeHandler());
-          if (canStore(fresh)) {
-            await putFresh(store, fresh);
-            if (diagnosticLink && responseTags?.length) {
-              recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
-                artifact: "response-route",
-                phase: "write",
-                provenance: [tagProvenance],
-                tags: responseTags,
-                identity: cacheKey,
-                outcome: "revalidated",
-              });
+      if (cached.revalidationClaimed)
+        reqCtx.waitUntil(async () => {
+          try {
+            const fresh = finalizeResponse(await executeHandler());
+            if (canStore(fresh)) {
+              const acknowledgement = await putFresh(store, fresh);
+              if (
+                diagnosticLink &&
+                responseTags?.length &&
+                (acknowledgement.outcome === "stored" ||
+                  acknowledgement.outcome === "scheduled")
+              ) {
+                recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                  artifact: "response-route",
+                  phase: "write",
+                  provenance: [tagProvenance],
+                  tags: responseTags,
+                  identity: cacheKey,
+                  outcome: "revalidated",
+                });
+              }
             }
+          } catch (error) {
+            reportCacheError(
+              error,
+              "stale-revalidation",
+              "[ResponseCache] background revalidation",
+              reqCtx,
+            );
           }
-        } catch (error) {
-          reportCacheError(
-            error,
-            "stale-revalidation",
-            "[ResponseCache] background revalidation",
-            reqCtx,
-          );
-        }
-      });
+        });
       return applyPreHandlerCallbacks(cached.response);
     }
   } catch (error) {
@@ -273,14 +292,19 @@ export async function serveResponseRouteWithCache(
     const toCache = response.clone();
     reqCtx.waitUntil(async () => {
       try {
-        await store.putResponse!(
+        const acknowledgement = await store.putResponse!(
           cacheKey,
           toCache,
           cacheScope!.ttl,
           cacheScope!.swr,
           responseTags,
         );
-        if (diagnosticLink && responseTags?.length) {
+        if (
+          diagnosticLink &&
+          responseTags?.length &&
+          (acknowledgement.outcome === "stored" ||
+            acknowledgement.outcome === "scheduled")
+        ) {
           recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
             artifact: "response-route",
             phase: "write",

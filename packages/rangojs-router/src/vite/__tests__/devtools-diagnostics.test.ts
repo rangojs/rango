@@ -5,6 +5,7 @@ import {
   RANGO_DIAGNOSTIC_BRIDGE_EVENT,
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
 } from "../../router/diagnostics/bridge-protocol.js";
+import { RANGO_BROWSER_NAVIGATION_EVENT } from "../../router/diagnostics/browser-protocol.js";
 import { installRangoDevtoolsDiagnostics } from "../devtools-diagnostics.js";
 
 describe("Vite devtools diagnostics", () => {
@@ -40,6 +41,7 @@ describe("Vite devtools diagnostics", () => {
       realmId: "realm-1",
       batchSequence: 1,
       droppedEvents: 0,
+      droppedEventsByRequest: [],
       events: [
         {
           schemaVersion: 1,
@@ -124,6 +126,51 @@ describe("Vite devtools diagnostics", () => {
     cleanup();
     expect(hot.off).toHaveBeenCalledWith(
       RANGO_DIAGNOSTIC_BRIDGE_EVENT,
+      expect.any(Function),
+    );
+  });
+
+  it("ingests browser navigation events from the client environment", () => {
+    const listeners = new Map<string, (value: unknown) => void>();
+    const hot = {
+      on: vi.fn((event: string, listener: (value: unknown) => void) => {
+        listeners.set(event, listener);
+      }),
+      off: vi.fn(),
+      send: vi.fn(),
+    };
+    const server = {
+      environments: { client: { hot } },
+      config: { logger: { warn: vi.fn() } },
+      httpServer: { listening: true },
+    } as unknown as ViteDevServer;
+    const store = createRangoMcpDiagnosticStore({
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      projectRoot: "/workspace/app",
+      getRouteSource: () => null,
+    });
+    const cleanup = installRangoDevtoolsDiagnostics({
+      server,
+      projectRoot: "/workspace/app",
+      store,
+    });
+
+    listeners.get(RANGO_BROWSER_NAVIGATION_EVENT)!({
+      version: 1,
+      sequence: 1,
+      documentId: "doc-00000000-0000-4000-8000-000000000001",
+      navigationId: "nav-00000000-0000-4000-8000-000000000002",
+      kind: "navigate",
+      phase: "started",
+      pathname: "/about",
+    });
+
+    expect(store.listNavigations().navigations).toEqual([
+      expect.objectContaining({ pathname: "/about", eventCount: 1 }),
+    ]);
+    cleanup();
+    expect(hot.off).toHaveBeenCalledWith(
+      RANGO_BROWSER_NAVIGATION_EVENT,
       expect.any(Function),
     );
   });

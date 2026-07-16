@@ -63,6 +63,8 @@ describe("RecordingShellStore", () => {
       "res1",
       new Response("BODY", { status: 201, headers: { "x-a": "1" } }),
       60,
+      0,
+      ["response-tag"],
     );
 
     const rec = new RecordingShellStore(inner);
@@ -91,15 +93,22 @@ describe("RecordingShellStore", () => {
     const resp = byKey.get("res1")!;
     expect(resp.family).toBe("response");
     expect((resp.value as any).status).toBe(201);
+    expect((resp.value as any).tags).toEqual(["response-tag"]);
   });
 
   it("records WRITES (setItem/set/putResponse) — the value a MISS baked", async () => {
     const inner = new MemorySegmentCacheStore();
     const rec = new RecordingShellStore(inner);
 
-    await rec.set("seg1", segData("s"), 60);
-    await rec.setItem("item1", "WRITTEN", { ttl: 60 });
-    await rec.putResponse("res1", new Response("R", { status: 200 }), 60);
+    await expect(rec.set("seg1", segData("s"), 60)).resolves.toEqual({
+      outcome: "stored",
+    });
+    await expect(rec.setItem("item1", "WRITTEN", { ttl: 60 })).resolves.toEqual(
+      { outcome: "stored" },
+    );
+    await expect(
+      rec.putResponse("res1", new Response("R", { status: 200 }), 60),
+    ).resolves.toEqual({ outcome: "stored" });
 
     const snapshot = rec.drainSnapshot()!;
     expect(snapshot.map((r) => r.family).sort()).toEqual([
@@ -203,12 +212,17 @@ describe("SeededShellStore", () => {
       {
         family: "response",
         key: "res1",
-        value: { status: 203, headers: [["x-h", "v"]], body: btoa("PINNED") },
+        value: {
+          status: 203,
+          headers: [["x-h", "v"]],
+          body: btoa("PINNED"),
+          tags: ["response-tag"],
+        },
       },
     ];
   }
 
-  it("serves snapshot values AS FRESH (shouldRevalidate: false) without touching the real store", async () => {
+  it("serves snapshot values as fresh without claiming revalidation or touching the real store", async () => {
     // Pin the clock: snapshotOf() -> segData() embeds `Date.now() + 60_000` as
     // expiresAt, and this test builds the seed and the expected value from two
     // SEPARATE snapshotOf() calls. On real timers a millisecond tick between them
@@ -226,7 +240,8 @@ describe("SeededShellStore", () => {
       const seg = hit(await seeded.get("seg1"));
       expect(seg).toEqual({
         data: (snapshotOf()[0] as any).value,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
       expect(getSpy).not.toHaveBeenCalled(); // pinned key never hits the real store
 
@@ -235,12 +250,17 @@ describe("SeededShellStore", () => {
         value: "PINNED-ITEM",
         handles: "PH",
         tags: ["pt"],
-        shouldRevalidate: false, // MUST NOT kick SWR revalidation for a pinned key
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
       expect(getItemSpy).not.toHaveBeenCalled();
 
       const resp = await seeded.getResponse("res1");
-      expect(resp!.shouldRevalidate).toBe(false);
+      expect(resp).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+        tags: ["response-tag"],
+      });
       expect(resp!.response.status).toBe(203);
       expect(resp!.response.headers.get("x-h")).toBe("v");
       expect(await resp!.response.text()).toBe("PINNED");
@@ -298,7 +318,9 @@ describe("SeededShellStore", () => {
     const setItemSpy = vi.spyOn(inner, "setItem");
     const seeded = new SeededShellStore(inner, snapshotOf());
 
-    await seeded.setItem("hole-write", "FROM-HOLE", { ttl: 60 });
+    await expect(
+      seeded.setItem("hole-write", "FROM-HOLE", { ttl: 60 }),
+    ).resolves.toEqual({ outcome: "stored" });
     expect(setItemSpy).toHaveBeenCalledWith("hole-write", "FROM-HOLE", {
       ttl: 60,
     });
@@ -370,7 +392,7 @@ describe("buildShellLoaderSeed", () => {
 });
 
 describe("snapshot round-trip", () => {
-  it("the response family round-trips body/headers/status through record -> JSON -> seed", async () => {
+  it("the response family round-trips body/headers/status/tags through record -> JSON -> seed", async () => {
     const inner = new MemorySegmentCacheStore();
     await inner.putResponse(
       "r",
@@ -379,6 +401,8 @@ describe("snapshot round-trip", () => {
         headers: { "content-type": "text/plain", "x-custom": "yes" },
       }),
       60,
+      0,
+      ["warm-response"],
     );
     const rec = new RecordingShellStore(inner);
     await rec.getResponse("r");
@@ -397,6 +421,7 @@ describe("snapshot round-trip", () => {
     expect(served!.response.status).toBe(202);
     expect(served!.response.headers.get("content-type")).toBe("text/plain");
     expect(served!.response.headers.get("x-custom")).toBe("yes");
+    expect(served!.tags).toEqual(["warm-response"]);
     expect(await served!.response.text()).toBe("HELLO-BODY");
   });
 

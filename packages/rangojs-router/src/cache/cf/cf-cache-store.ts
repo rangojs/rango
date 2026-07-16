@@ -36,6 +36,9 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   CacheReadError,
+  CacheResponseResult,
+  CacheShellResult,
+  CacheWriteAcknowledgement,
 } from "../types.js";
 import { CACHE_READ_ERROR } from "../types.js";
 import {
@@ -403,6 +406,11 @@ const pendingShellWrites = new WeakMap<
   KVNamespace,
   Map<string, CFShellEnvelope>
 >();
+const kvRevalidationClaims = new WeakMap<KVNamespace, Map<string, number>>();
+const l1RevalidationClaims = new Map<string, Map<string, number>>();
+const MAX_KV_REVALIDATION_CLAIMS = 1000;
+const MAX_L1_REVALIDATION_CLAIMS = 1000;
+const MAX_L1_REVALIDATION_NAMESPACES = 64;
 
 function shellWritesFor(kv: KVNamespace): Map<string, CFShellEnvelope> {
   let writes = pendingShellWrites.get(kv);
@@ -411,6 +419,78 @@ function shellWritesFor(kv: KVNamespace): Map<string, CFShellEnvelope> {
     pendingShellWrites.set(kv, writes);
   }
   return writes;
+}
+
+function claimKvRevalidation(
+  kv: KVNamespace,
+  key: string,
+  expiresAt: number,
+): boolean {
+  let claims = kvRevalidationClaims.get(kv);
+  if (!claims) {
+    claims = new Map();
+    kvRevalidationClaims.set(kv, claims);
+  }
+  const now = Date.now();
+  const claimedUntil = claims.get(key) ?? 0;
+  if (claimedUntil > now) return false;
+  if (!claims.has(key) && claims.size >= MAX_KV_REVALIDATION_CLAIMS) {
+    for (const [candidate, until] of claims) {
+      if (until <= now) claims.delete(candidate);
+    }
+    if (claims.size >= MAX_KV_REVALIDATION_CLAIMS) return false;
+  }
+  claims.set(key, Math.min(expiresAt, now + MAX_REVALIDATION_INTERVAL * 1000));
+  return true;
+}
+
+function clearKvRevalidationClaim(kv: KVNamespace, key: string): void {
+  kvRevalidationClaims.get(kv)?.delete(key);
+}
+
+function claimL1Revalidation(
+  namespace: string,
+  key: string,
+  expiresAt: number,
+): boolean {
+  let claims = l1RevalidationClaims.get(namespace);
+  const now = Date.now();
+  if (!claims) {
+    if (l1RevalidationClaims.size >= MAX_L1_REVALIDATION_NAMESPACES) {
+      for (const [
+        candidateNamespace,
+        candidateClaims,
+      ] of l1RevalidationClaims) {
+        for (const [candidate, until] of candidateClaims) {
+          if (until <= now) candidateClaims.delete(candidate);
+        }
+        if (candidateClaims.size === 0) {
+          l1RevalidationClaims.delete(candidateNamespace);
+        }
+      }
+      if (l1RevalidationClaims.size >= MAX_L1_REVALIDATION_NAMESPACES) {
+        return false;
+      }
+    }
+    claims = new Map();
+    l1RevalidationClaims.set(namespace, claims);
+  }
+  const claimedUntil = claims.get(key) ?? 0;
+  if (claimedUntil > now) return false;
+  if (!claims.has(key) && claims.size >= MAX_L1_REVALIDATION_CLAIMS) {
+    for (const [candidate, until] of claims) {
+      if (until <= now) claims.delete(candidate);
+    }
+    if (claims.size >= MAX_L1_REVALIDATION_CLAIMS) return false;
+  }
+  claims.set(key, Math.min(expiresAt, now + MAX_REVALIDATION_INTERVAL * 1000));
+  return true;
+}
+
+function clearL1RevalidationClaim(namespace: string, key: string): void {
+  const claims = l1RevalidationClaims.get(namespace);
+  claims?.delete(key);
+  if (claims?.size === 0) l1RevalidationClaims.delete(namespace);
 }
 
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
@@ -696,6 +776,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       return caches.open(this.namespace);
     }
     return caches.default;
+  }
+
+  private getL1ClaimNamespace(): string {
+    return this.namespace ? `named:${this.namespace}` : "default";
   }
 
   /**
@@ -993,9 +1077,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Get cached entry data by key.
    *
    * Handles SWR atomically:
-   * - If stale and not already revalidating, marks as REVALIDATING and returns shouldRevalidate: true
-   * - If already REVALIDATING (and recent), returns shouldRevalidate: false
-   * - If fresh, returns shouldRevalidate: false
+   * - If stale and not already revalidating, marks as REVALIDATING and claims revalidation
+   * - If already REVALIDATING (and recent), reports stale without claiming revalidation
+   * - If fresh, reports fresh without claiming revalidation
    *
    * On L1 miss, falls back to KV (L2) if configured.
    * KV hits are promoted to L1 in the background.
@@ -1130,7 +1214,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         ? (
             outcome: CFCacheReadDebugEvent["outcome"],
             bodyReadMs: number,
-            shouldRevalidate?: boolean,
+            revalidationClaimed?: boolean,
           ) =>
             this.emitDebug({
               op: "get",
@@ -1143,7 +1227,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               ageHeader: response.headers.get("age"),
               isStale,
               isRevalidating,
-              shouldRevalidate,
+              freshness: isStale ? "stale" : "fresh",
+              revalidationClaimed,
               matchMs,
               markerMs,
               bodyReadMs,
@@ -1177,7 +1262,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           bodyReadMs,
           false,
         );
-        return { data, shouldRevalidate: false };
+        return {
+          data,
+          freshness: isStale ? "stale" : "fresh",
+          revalidationClaimed: false,
+        };
       }
 
       // Case 2: Stale and needs revalidation.
@@ -1209,7 +1298,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetSegment(key, { suppressRevalidate: true });
       }
 
-      // Mark REVALIDATING so concurrent requests don't all revalidate, then
+      const expiresAt = Number(
+        response.headers.get(CACHE_EXPIRES_AT_HEADER) ?? "0",
+      );
+      const revalidationClaimed = claimL1Revalidation(
+        this.getL1ClaimNamespace(),
+        request.url,
+        expiresAt > now ? expiresAt : now + MAX_REVALIDATION_INTERVAL * 1000,
+      );
+      if (!revalidationClaimed) {
+        debugRead?.("l1-revalidating-guarded", bodyReadMs, false);
+        return { data, freshness: "stale", revalidationClaimed: false };
+      }
+
+      // Mark REVALIDATING so later requests don't revalidate, then
       // return the stale data. The marker write is non-blocking and best-effort
       // (see markRevalidating) -- it must not add latency to, or fail, the served
       // stale read.
@@ -1222,7 +1324,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       );
 
       debugRead?.("l1-stale-revalidate", bodyReadMs, true);
-      return { data, shouldRevalidate: true };
+      return { data, freshness: "stale", revalidationClaimed: true };
     } catch (error) {
       // reportCacheError logs and routes to onError (cache-read); the debug
       // emit is the separate wrangler-tail signal. Keep both observability paths.
@@ -1244,9 +1346,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void> {
-    if (this.isReservedSegmentKey(key, "cache-write")) return;
-    if (this.skipUncacheableTagSet(data.tags)) return;
+  ): Promise<CacheWriteAcknowledgement> {
+    if (this.isReservedSegmentKey(key, "cache-write")) {
+      return { outcome: "skipped", reason: "invalid-input" };
+    }
+    if (this.skipUncacheableTagSet(data.tags)) {
+      return { outcome: "skipped", reason: "unsupported" };
+    }
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(key);
@@ -1285,7 +1391,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         },
       });
 
-      const putPromise = cache.put(request, response);
+      const putPromise = cache
+        .put(request, response)
+        .then(() =>
+          clearL1RevalidationClaim(this.getL1ClaimNamespace(), request.url),
+        );
 
       if (this.waitUntil) {
         // Non-blocking write. These store-level background tasks intentionally
@@ -1308,8 +1418,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (reuses `body` as envelope.d)
       this.kvSetSegment(key, body, staleAt, totalTtl, swrWindow);
+      return { outcome: this.waitUntil ? "scheduled" : "stored" };
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] set");
+      return { outcome: "failed" };
     }
   }
 
@@ -1347,12 +1459,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Get a cached Response by key (for document-level caching).
-   * Returns the response and whether it should be revalidated (SWR).
+   * Returns the response with independent freshness and revalidation ownership.
    * Falls back to KV (L2) on L1 miss.
    */
-  async getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  async getResponse(key: string): Promise<CacheResponseResult | null> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`doc:${key}`);
@@ -1398,7 +1508,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Thundering-herd guard, mirroring the segment (get) and item (getItem)
       // tiers. Without it, every concurrent stale reader returned
-      // shouldRevalidate=true and document-cache.ts scheduled a fresh render for
+      // revalidation ownership and document-cache.ts scheduled a fresh render for
       // each one. Recency comes from our own revalidating-at stamp, not CF's Age
       // header (see CACHE_REVALIDATING_AT_HEADER); an absent/zero stamp counts as
       // "not recent" so a dropped revalidation re-arms instead of pinning.
@@ -1420,15 +1530,36 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // defeat streaming the document and add a full read to every cache hit.
 
       if (isStale && !isRevalidating) {
+        const expiresAt = Number(
+          response.headers.get(CACHE_EXPIRES_AT_HEADER) ?? "0",
+        );
+        if (
+          !claimL1Revalidation(
+            this.getL1ClaimNamespace(),
+            request.url,
+            expiresAt > now
+              ? expiresAt
+              : now + MAX_REVALIDATION_INTERVAL * 1000,
+          )
+        ) {
+          return {
+            response: this.toClientResponse(response),
+            freshness: "stale",
+            revalidationClaimed: false,
+            tags: tagInfo.tags,
+          };
+        }
         // First stale reader within the window: mark REVALIDATING (non-blocking,
         // best-effort) so concurrent readers below see the guard and suppress,
-        // then return shouldRevalidate=true so this caller revalidates. Clone the
+        // then claim revalidation for this caller. Clone the
         // matched response for the marker since its original body must still
         // stream to the client.
         this.markResponseRevalidating(cache, request, response.clone());
         return {
           response: this.toClientResponse(response),
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
+          tags: tagInfo.tags,
         };
       }
 
@@ -1436,7 +1567,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // (re-)revalidation. A recent marker already has a render in flight.
       return {
         response: this.toClientResponse(response),
-        shouldRevalidate: false,
+        freshness: isStale ? "stale" : "fresh",
+        revalidationClaimed: false,
+        tags: tagInfo.tags,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getResponse");
@@ -1492,8 +1625,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> {
-    if (this.skipUncacheableTagSet(tags)) return;
+  ): Promise<CacheWriteAcknowledgement> {
+    if (this.skipUncacheableTagSet(tags)) {
+      return { outcome: "skipped", reason: "unsupported" };
+    }
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`doc:${key}`);
@@ -1540,7 +1675,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         headers,
       });
 
-      const putPromise = cache.put(request, toCache);
+      const putPromise = cache
+        .put(request, toCache)
+        .then(() =>
+          clearL1RevalidationClaim(this.getL1ClaimNamespace(), request.url),
+        );
 
       if (this.waitUntil) {
         // Non-blocking write
@@ -1586,15 +1725,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               };
               return this.kv!.put(kvKey, JSON.stringify(envelope), {
                 expirationTtl: totalTtl,
-              });
+              }).then(() => clearKvRevalidationClaim(this.kv!, kvKey));
             },
             "cache-write",
             "[CFCacheStore] kvPutResponse",
           ),
         );
       }
+      return { outcome: this.waitUntil ? "scheduled" : "stored" };
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putResponse");
+      return { outcome: "failed" };
     }
   }
 
@@ -1703,7 +1844,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         ? (
             outcome: CFCacheReadDebugEvent["outcome"],
             bodyReadMs: number,
-            shouldRevalidate?: boolean,
+            revalidationClaimed?: boolean,
           ) =>
             this.emitDebug({
               op: "getItem",
@@ -1716,7 +1857,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               ageHeader: response.headers.get("age"),
               isStale,
               isRevalidating,
-              shouldRevalidate,
+              freshness: isStale ? "stale" : "fresh",
+              revalidationClaimed,
               matchMs,
               markerMs,
               bodyReadMs,
@@ -1753,7 +1895,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return {
           value: data.value,
           handles: data.handles,
-          shouldRevalidate: false,
+          freshness: isStale ? "stale" : "fresh",
+          revalidationClaimed: false,
           tags: tagInfo.tags,
         };
       }
@@ -1761,6 +1904,25 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // Stale and needs revalidation -- mark REVALIDATING (non-blocking,
       // best-effort, remaining-ttl) and return the stale value. See get() /
       // markRevalidating for the full rationale.
+      const expiresAt = Number(
+        response.headers.get(CACHE_EXPIRES_AT_HEADER) ?? "0",
+      );
+      if (
+        !claimL1Revalidation(
+          this.getL1ClaimNamespace(),
+          request.url,
+          expiresAt > now ? expiresAt : now + MAX_REVALIDATION_INTERVAL * 1000,
+        )
+      ) {
+        debugRead?.("l1-revalidating-guarded", bodyReadMs, false);
+        return {
+          value: data.value,
+          handles: data.handles,
+          freshness: "stale",
+          revalidationClaimed: false,
+          tags: tagInfo.tags,
+        };
+      }
       this.markRevalidating(
         cache,
         request,
@@ -1773,7 +1935,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       return {
         value: data.value,
         handles: data.handles,
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
         tags: tagInfo.tags,
       };
     } catch (error) {
@@ -1791,8 +1954,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> {
-    if (this.skipUncacheableTagSet(options?.tags)) return;
+  ): Promise<CacheWriteAcknowledgement> {
+    if (this.skipUncacheableTagSet(options?.tags)) {
+      return { outcome: "skipped", reason: "unsupported" };
+    }
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`fn:${key}`);
@@ -1829,7 +1994,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         },
       });
 
-      const putPromise = cache.put(request, response);
+      const putPromise = cache
+        .put(request, response)
+        .then(() =>
+          clearL1RevalidationClaim(this.getL1ClaimNamespace(), request.url),
+        );
 
       if (this.waitUntil) {
         this.waitUntil(() =>
@@ -1860,14 +2029,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             () =>
               this.kv!.put(kvKey, envelopeJson, {
                 expirationTtl: totalTtl,
-              }),
+              }).then(() => clearKvRevalidationClaim(this.kv!, kvKey)),
             "cache-write",
             "[CFCacheStore] kvSetItem",
           ),
         );
       }
+      return { outcome: this.waitUntil ? "scheduled" : "stored" };
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] setItem");
+      return { outcome: "failed" };
     }
   }
 
@@ -1916,7 +2087,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    */
   async getShell(
     key: string,
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    options?: { claimRevalidation?: boolean },
+  ): Promise<CacheShellResult | null> {
     if (!this.kv) {
       this.warnShellFamilyInertOnce();
       return null;
@@ -1941,15 +2113,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           });
           return null;
         }
-        const shouldRevalidate = pendingWrite.s > 0 && now > pendingWrite.s;
+        const freshness =
+          pendingWrite.s > 0 && now > pendingWrite.s ? "stale" : "fresh";
         this.debugShell(key, "pending-hit", {
-          freshness: shouldRevalidate ? "stale" : "fresh",
+          freshness,
           markerMs,
           expiresAt: pendingWrite.e,
         });
         return {
           entry: this.shellEnvelopeToEntry(pendingWrite),
-          shouldRevalidate,
+          freshness,
+          revalidationClaimed:
+            freshness === "stale" && options?.claimRevalidation !== false,
+          tags: pendingWrite.t,
         };
       }
 
@@ -1977,7 +2153,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           reason: matchError ? "error" : timedOut ? "timeout" : "absent",
           matchMs,
         });
-        return this.kvGetShell(key);
+        return this.kvGetShell(key, options);
       }
       if (response.status !== 200) {
         this.debugShell(key, "l1-miss", {
@@ -1985,7 +2161,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           status: response.status,
           matchMs,
         });
-        return this.kvGetShell(key);
+        return this.kvGetShell(key, options);
       }
 
       const bodyStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
@@ -2002,10 +2178,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         });
         if (errored) {
           return this.healCorruptL1(cache, request, error, "getShell", () =>
-            this.kvGetShell(key),
+            this.kvGetShell(key, options),
           );
         }
-        return this.kvGetShell(key);
+        return this.kvGetShell(key, options);
       }
       if (!isShellEnvelope(value)) {
         this.debugShell(key, "l1-miss", {
@@ -2018,7 +2194,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           request,
           new Error("malformed/partial L1 shell envelope"),
           "getShell",
-          () => this.kvGetShell(key),
+          () => this.kvGetShell(key, options),
         );
       }
 
@@ -2030,7 +2206,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           bodyReadMs,
           expiresAt: value.e,
         });
-        return this.kvGetShell(key);
+        return this.kvGetShell(key, options);
       }
 
       // Unlike other L1 families, shells always check the durable generation
@@ -2050,9 +2226,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return null;
       }
 
-      const shouldRevalidate = value.s > 0 && now > value.s;
+      const freshness = value.s > 0 && now > value.s ? "stale" : "fresh";
       this.debugShell(key, "l1-hit", {
-        freshness: shouldRevalidate ? "stale" : "fresh",
+        freshness,
         matchMs,
         bodyReadMs,
         markerMs,
@@ -2060,12 +2236,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       });
       return {
         entry: this.shellEnvelopeToEntry(value),
-        shouldRevalidate,
+        freshness,
+        revalidationClaimed:
+          freshness === "stale" && options?.claimRevalidation !== false,
+        tags: value.t,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
       this.debugShell(key, "l1-miss", { reason: "error" });
-      return this.kvGetShell(key);
+      return this.kvGetShell(key, options);
     }
   }
 
@@ -2083,13 +2262,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
+  ): Promise<CacheWriteAcknowledgement> {
     // KV remains required for durable generation markers and cross-colo reads.
     if (!this.kv) {
       this.warnShellFamilyInertOnce();
-      return;
+      return { outcome: "skipped", reason: "unsupported" };
     }
-    if (!this.waitUntil) return;
+    if (!this.waitUntil) {
+      return { outcome: "skipped", reason: "unsupported" };
+    }
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -2126,7 +2307,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         (await this.isGloballyInvalidated(tags, entry.createdAt))
       ) {
         this.debugShell(key, "write-invalidated");
-        return "invalidated";
+        return { outcome: "skipped", reason: "invalidated-generation" };
       }
       const envelope: CFShellEnvelope = {
         p: entry.prelude,
@@ -2203,9 +2384,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       this.waitUntil(async () => {
         await write;
       });
-      return undefined;
+      return { outcome: "scheduled" };
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] putShell");
+      return { outcome: "failed" };
     }
   }
 
@@ -2250,7 +2432,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   /** KV shell fallback with corruption checks and background L1 promotion. */
   private async kvGetShell(
     key: string,
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    options?: { claimRevalidation?: boolean },
+  ): Promise<CacheShellResult | null> {
     if (!this.kv) return null;
     try {
       const readStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
@@ -2298,9 +2481,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return null;
       }
 
-      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
+      const freshness = envelope.s > 0 && now > envelope.s ? "stale" : "fresh";
       this.debugShell(key, "kv-hit", {
-        freshness: shouldRevalidate ? "stale" : "fresh",
+        freshness,
         readMs,
         markerMs,
         expiresAt: envelope.e,
@@ -2308,7 +2491,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       this.promoteShellToL1(key, envelope);
       return {
         entry: this.shellEnvelopeToEntry(envelope),
-        shouldRevalidate,
+        freshness,
+        revalidationClaimed:
+          freshness === "stale" && options?.claimRevalidation !== false,
+        tags: envelope.t,
       };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");
@@ -3280,7 +3466,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // render exactly when the colo is already struggling. We still serve the
       // stale data and still promote to L1; only the revalidation is withheld.
       const stale = now > envelope.s;
-      const shouldRevalidate = stale && !opts?.suppressRevalidate;
+      const revalidationClaimed =
+        stale &&
+        !opts?.suppressRevalidate &&
+        claimKvRevalidation(this.kv, kvKey, envelope.e);
 
       // Promote to L1 in background
       this.promoteSegmentToL1(key, envelope);
@@ -3294,9 +3483,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             : opts?.suppressRevalidate
               ? "kv-stale-suppressed"
               : "kv-stale",
-          shouldRevalidate,
+          freshness: stale ? "stale" : "fresh",
+          revalidationClaimed,
         });
-      return { data: envelope.d, shouldRevalidate };
+      return {
+        data: envelope.d,
+        freshness: stale ? "stale" : "fresh",
+        revalidationClaimed,
+      };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetSegment");
       if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
@@ -3362,7 +3556,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         () =>
           this.kv!.put(kvKey, envelopeJson, {
             expirationTtl: totalTtl,
-          }),
+          }).then(() => clearKvRevalidationClaim(this.kv!, kvKey)),
         "cache-write",
         "[CFCacheStore] kvSetSegment",
       ),
@@ -3460,7 +3654,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // Degraded fall-through suppresses revalidation (no KV herd guard); see
       // kvGetSegment. Still serves stale and still promotes.
       const stale = now > envelope.s;
-      const shouldRevalidate = stale && !opts?.suppressRevalidate;
+      const revalidationClaimed =
+        stale &&
+        !opts?.suppressRevalidate &&
+        claimKvRevalidation(this.kv, kvKey, envelope.e);
 
       // Promote to L1
       this.promoteItemToL1(key, envelope);
@@ -3474,12 +3671,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             : opts?.suppressRevalidate
               ? "kv-stale-suppressed"
               : "kv-stale",
-          shouldRevalidate,
+          freshness: stale ? "stale" : "fresh",
+          revalidationClaimed,
         });
       return {
         value: envelope.v,
         handles: envelope.h,
-        shouldRevalidate,
+        freshness: stale ? "stale" : "fresh",
+        revalidationClaimed,
         tags: envelope.t,
       };
     } catch (error) {
@@ -3539,7 +3738,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    */
   private async kvGetResponse(
     key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  ): Promise<CacheResponseResult | null> {
     if (!this.kv) return null;
 
     try {
@@ -3582,7 +3781,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return null;
       }
 
-      const shouldRevalidate = now > envelope.s;
+      const freshness = now > envelope.s ? "stale" : "fresh";
 
       // Reconstruct Response: decode base64 -> binary, rebuild headers/status.
       // Corrupt/partial base64 throws in atob; malformed `hd` or an out-of-range
@@ -3616,7 +3815,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // Promote to L1
       this.promoteResponseToL1(key, envelope);
 
-      return { response, shouldRevalidate };
+      return {
+        response,
+        freshness,
+        revalidationClaimed:
+          freshness === "stale" &&
+          claimKvRevalidation(this.kv, kvKey, envelope.e),
+        tags: envelope.t,
+      };
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetResponse");
       return null;

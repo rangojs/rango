@@ -43,6 +43,7 @@ describe("diagnostic runtime bridge", () => {
         realmId: "realm-1",
         batchSequence: 1,
         droppedEvents: 0,
+        droppedEventsByRequest: [],
         events: [
           expect.objectContaining({ requestId: "req-1" }),
           expect.objectContaining({ requestId: "req-2" }),
@@ -66,10 +67,17 @@ describe("diagnostic runtime bridge", () => {
 
     const batches = hot.send.mock.calls.map((call) => call[1]) as Array<{
       droppedEvents: number;
+      droppedEventsByRequest: Array<{
+        requestId: string;
+        droppedEvents: number;
+      }>;
       events: Array<{ requestId: string }>;
     }>;
     expect(batches.flatMap((batch) => batch.events)).toHaveLength(256);
     expect(batches[0]!.droppedEvents).toBe(1);
+    expect(batches[0]!.droppedEventsByRequest).toEqual([
+      { requestId: "req-0", droppedEvents: 1 },
+    ]);
     expect(batches[0]!.events[0]!.requestId).toBe("req-1");
   });
 
@@ -97,7 +105,13 @@ describe("diagnostic runtime bridge", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 75));
 
     expect(hot.send).toHaveBeenCalledTimes(2);
-    expect(hot.send.mock.calls[1]![1]).toMatchObject({ droppedEvents: 65 });
+    expect(hot.send.mock.calls[1]![1]).toMatchObject({
+      droppedEvents: 65,
+      droppedEventsByRequest: expect.arrayContaining([
+        { requestId: "oversized", droppedEvents: 1 },
+        { requestId: "req-1", droppedEvents: 1 },
+      ]),
+    });
   });
 
   it("retries a failed final send as a drop-only batch", async () => {
@@ -114,6 +128,7 @@ describe("diagnostic runtime bridge", () => {
     expect(hot.send).toHaveBeenCalledTimes(2);
     expect(hot.send.mock.calls[1]![1]).toMatchObject({
       droppedEvents: 1,
+      droppedEventsByRequest: [{ requestId: "req-1", droppedEvents: 1 }],
       events: [],
     });
   });

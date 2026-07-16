@@ -36,6 +36,10 @@ async function initializeApp() {
       initialPayload.metadata?.devDiscoveryEpoch,
       import.meta.hot
     );
+    const { installBrowserNavigationDiagnostics } = await import(
+      "@rangojs/router/internal/browser/navigation-diagnostics"
+    );
+    installBrowserNavigationDiagnostics(import.meta.hot);
   }
 
   const app = createElement(Rango);

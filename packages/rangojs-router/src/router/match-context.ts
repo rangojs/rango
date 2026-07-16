@@ -83,7 +83,8 @@
  *
  * State flags (set by middleware, read by others):
  *   - cacheHit: Cache lookup succeeded
- *   - shouldRevalidate: SWR revalidation needed
+ *   - cacheFreshness: Whether a retained cache hit is fresh or stale
+ *   - revalidationClaimed: Whether this request owns background SWR work
  *
  * Segment accumulation:
  *   - segments: Resolved segments from pipeline
@@ -207,8 +208,9 @@ export interface MatchPipelineState {
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
 
-  // Whether cache should be revalidated (SWR)
-  shouldRevalidate?: boolean;
+  // Freshness and SWR ownership are independent for guarded stale reads.
+  cacheFreshness?: "fresh" | "stale";
+  revalidationClaimed?: boolean;
 
   // Source of cache hit ("runtime" or "prerender")
   cacheSource?: "runtime" | "prerender";

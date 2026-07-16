@@ -8,6 +8,10 @@ import type {
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
+import {
+  BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED,
+  getBrowserNavigationDiagnostics,
+} from "./navigation-diagnostics-bridge.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -184,6 +188,13 @@ export function createNavigationBridge(
         options?.revalidate === false &&
         targetUrl.pathname === new URL(window.location.href).pathname
       ) {
+        const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+          ? getBrowserNavigationDiagnostics()
+          : null;
+        const diagnosticNavigation = navigationDiagnostics?.start(
+          "navigate",
+          targetUrl.href,
+        );
         // Preserve intercept context from the current history entry so that
         // popstate uses the correct cache key (:intercept suffix) and restores
         // the right full-page vs modal semantics.
@@ -250,6 +261,9 @@ export function createNavigationBridge(
 
         // Handle post-navigation scroll
         handleNavigationEnd({ scroll: options.scroll });
+        if (diagnosticNavigation) {
+          navigationDiagnostics?.complete(diagnosticNavigation);
+        }
         return;
       }
 
@@ -406,6 +420,7 @@ export function createNavigationBridge(
           operation: "navigation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during navigation:",
             networkError,
@@ -420,6 +435,7 @@ export function createNavigationBridge(
         // silently. Prefetched responses funnel here too: a failed warm-prefetch
         // payload rejects on consumption and propagates to this catch.
         console.error("[Browser] Unprocessable navigation response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();
@@ -437,6 +453,7 @@ export function createNavigationBridge(
         eventController,
         window.location.href,
         { replace: true },
+        { kind: "refresh" },
       );
 
       try {
@@ -462,6 +479,7 @@ export function createNavigationBridge(
           operation: "revalidation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during refresh:",
             networkError,
@@ -474,6 +492,7 @@ export function createNavigationBridge(
         // popstate, so an unprocessable response must surface the error boundary
         // here too rather than become an uncaught rejection.
         console.error("[Browser] Unprocessable refresh response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, window.location.href);
       } finally {
         tx[Symbol.dispose]();
@@ -489,6 +508,13 @@ export function createNavigationBridge(
       eventController.abortNavigation();
 
       const url = window.location.href;
+      const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+        ? getBrowserNavigationDiagnostics()
+        : null;
+      const diagnosticNavigation = navigationDiagnostics?.start(
+        "popstate",
+        url,
+      );
 
       // Check if this history entry is an intercept
       const historyState = window.history.state;
@@ -613,6 +639,9 @@ export function createNavigationBridge(
           } else {
             onUpdate(popstateUpdate);
           }
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.complete(diagnosticNavigation);
+          }
 
           // SWR: If stale, trigger background revalidation
           if (isStale) {
@@ -636,6 +665,13 @@ export function createNavigationBridge(
               eventController,
               url,
               { skipLoadingState: true, replace: true },
+              diagnosticNavigation
+                ? {
+                    navigation: diagnosticNavigation,
+                    kind: "popstate",
+                    settle: false,
+                  }
+                : undefined,
             );
 
             fetchPartialUpdate(
@@ -677,9 +713,18 @@ export function createNavigationBridge(
       }
 
       // Fetch if not cached
-      const tx = createNavigationTransaction(store, eventController, url, {
-        replace: true,
-      });
+      const tx = createNavigationTransaction(
+        store,
+        eventController,
+        url,
+        {
+          replace: true,
+        },
+        {
+          navigation: diagnosticNavigation,
+          kind: "popstate",
+        },
+      );
 
       try {
         await fetchPartialUpdate(
@@ -718,6 +763,7 @@ export function createNavigationBridge(
           operation: "navigation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during popstate:",
             networkError,
@@ -729,6 +775,7 @@ export function createNavigationBridge(
         // Unprocessable response on a back/forward navigation: surface the
         // error boundary instead of an uncaught rejection (see navigate()).
         console.error("[Browser] Unprocessable popstate response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();

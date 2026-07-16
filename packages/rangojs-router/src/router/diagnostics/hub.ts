@@ -35,7 +35,7 @@ interface StoredTrace {
 }
 
 type DiagnosticEventListener = (event: DiagnosticEvent) => void;
-type DiagnosticDropListener = (count: number) => void;
+type DiagnosticDropListener = (count: number, requestId?: string) => void;
 
 function encodedBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -196,7 +196,7 @@ export class DiagnosticHub {
       stored.trace.updatedAt = input.timestamp;
       stored.trace.droppedEvents++;
       this.droppedEvents++;
-      this.notifyDroppedInputs(1);
+      this.notifyDroppedInputs(1, input.requestId);
       const addedReason = addReason(stored.trace, "event-too-large");
       this.addBytes(
         stored,
@@ -258,7 +258,7 @@ export class DiagnosticHub {
       : 0;
     if (boundedCount === 0) return;
     this.droppedEvents += boundedCount;
-    this.notifyDroppedInputs(boundedCount);
+    this.notifyDroppedInputs(boundedCount, requestId);
     if (!requestId) return;
     const stored = this.traces.get(requestId);
     if (!stored) return;
@@ -281,10 +281,10 @@ export class DiagnosticHub {
     };
   }
 
-  private notifyDroppedInputs(count: number): void {
+  private notifyDroppedInputs(count: number, requestId?: string): void {
     for (const listener of this.dropListeners) {
       try {
-        listener(count);
+        listener(count, requestId);
       } catch {}
     }
   }

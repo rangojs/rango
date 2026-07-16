@@ -1,6 +1,6 @@
 # Rango MCP and agent skills
 
-Status: **Phases 0-4 implemented**.
+Status: **Phases 0-4 and the post-roadmap protocol/installer additions are implemented**.
 
 Before this work, Rango already shipped version-matched reference skills,
 route-manifest inspection, structured telemetry, performance waterfalls, cache
@@ -18,9 +18,8 @@ framework-side view through a development-only Model Context Protocol (MCP)
 server, then builds workflow skills on top of it.
 
 The MCP reports facts. Skills turn those facts into a diagnosis, edit strategy,
-and verification loop. Keeping that boundary strict lets the same diagnostics
-later power a CLI or graphical devtools without teaching the runtime how to edit
-an application.
+and verification loop. Keeping that boundary strict lets other read-only clients
+reuse the diagnostics without teaching the runtime how to edit an application.
 
 ## Current implementation boundary
 
@@ -64,8 +63,11 @@ Phase 3 added bounded `explain_render`, `explain_cache_tags`, and
 `explain_revalidation` projections for scope-level cache/PPR decisions, loader
 consumption lanes, exact request-observed tag activity, and the authoritative
 revalidation trace. Phase 4 ships four browser-plus-MCP workflows with checked
-fixture tasks. Browser state and logs remain browser-driver responsibilities;
-the MCP does not pretend to own them.
+fixture tasks. Tool schema version 5 also ships static `match_route`, browser-owned
+navigation traces (`list_navigations`, `get_navigation_trace`, and
+`list_requests.navigationId`), request-attributed bridge-loss reporting, and the
+project-local `rango mcp install` client configurator. DOM, console, network, and
+application-log evidence remain browser-driver responsibilities.
 
 ## Goals
 
@@ -85,6 +87,8 @@ the MCP does not pretend to own them.
 
 - The MCP does not control a browser. Skills use `agent-browser`, Playwright, or
   another browser driver and cross-check its view against Rango's view.
+- A consolidated diagnostic report and graphical devtools UI are outside this
+  roadmap; the shipped surface stays tool-oriented and read-only.
 - The MCP does not edit source files, invalidate caches, submit actions, or replay
   requests. All MCP tools are observational.
 - The MCP is not a production observability backend. `TelemetrySink`, tracing,
@@ -258,7 +262,11 @@ Requirements:
   compatibility remains the SDK-negotiated MCP protocol version.
 - A tool result has a bounded maximum size and reports truncation explicitly.
 
-The `rango mcp` stdio proxy is the supported connector. It obtains the endpoint
+The `rango mcp` stdio proxy is the supported connector. `rango mcp install
+--client <claude-code|cursor|vscode|gemini> [--root <path>] [--dry-run]` writes
+the matching project-local client configuration through collision-safe JSONC
+edits, rejects symlinked targets, and never persists the endpoint or credential.
+The proxy obtains the endpoint
 and credential from an owner-only, non-symlink descriptor in an owner-only,
 non-symlink directory, forwards the same tool calls, and contains no diagnostic
 logic. Descriptors rotate with the dev process and stale process descriptors are
@@ -279,19 +287,27 @@ document or PPR shell cache, and protocol-switch/WebSocket responses are exempt
 when rewrapping would lose platform state. The response header and all
 browser-side correlation code are absent from production builds.
 
-When a driver cannot set a request header, tools support bounded lookup by
-router, pathname, transport kind, and start time. That fallback must report
-ambiguity. Selecting "the latest `/products/42`" without saying that three
-prefetches matched is not acceptable evidence.
+When a driver cannot select from a response ID, `list_requests` supports bounded
+lookup by router, route pattern, transport kind, receipt time, and navigation ID.
+That fallback must report ambiguity rather than treating the latest request as
+authoritative.
 
-One browser navigation can adopt an in-flight prefetch or trigger an action
-request followed by revalidation work. The implemented schema correlates the
-HTTP request and its router transactions; it does not yet expose a separate
-browser `navigationId`. A completed-prefetch navigation may have no new HTTP
-request at all, so browser-level navigation correlation remains deferred until
-the browser runtime owns a stable identifier.
+The browser owns stable `documentId` and `navigationId` values for initial
+documents, navigate, refresh, popstate, and action lifecycles. It emits bounded
+started/committed/aborted/failed events and authoritative many-to-many request
+links with request roles. A navigation can adopt a completed or in-flight
+prefetch, and an action can link both its mutation and revalidation requests.
+Initial-document linkage is recovered from the server-owned ID in
+`Server-Timing`, so correlation does not require baking an ID into cached HTML.
+`list_navigations` selects lifecycles, `get_navigation_trace` returns one exact
+lifecycle, request summaries expose `navigationIds`, and
+`list_requests({ navigationId })` returns its linked server work.
 
 ## Diagnostic schema
+
+Tool schema version **5** versions MCP capabilities and result shapes. The
+runtime diagnostic event schema remains independently versioned at **1**; the
+two numbers intentionally do not advance together.
 
 Request-scoped events begin with:
 
@@ -454,19 +470,21 @@ from the other.
 The first protocol should stay small. High-level tools are more stable than one
 tool per internal event.
 
-| Tool                     | Phase    | Returns                                                                                                                                              |
-| ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_project_metadata`   | shipped  | project root, package version, Vite mode, routers, dev-server URLs, capabilities and tool schema version                                             |
-| `get_routes`             | shipped  | paginated runtime route maps, router source ownership, patterns, names, search schemas, trailing-slash behavior, generation and freshness            |
-| `get_discovery_status`   | shipped  | route-discovery phase, attempts, generation, counts, freshness and the latest discovery error                                                        |
-| `match_route`            | proposed | the route, params, layouts, parallels, intercept candidates, middleware, loaders, and cache/PPR declarations for a URL without executing handlers    |
-| `get_compilation_issues` | shipped  | current structured Vite/RSC transform errors plus bounded recent-only logger warnings, with sanitized source locations and explicit capture coverage |
-| `get_errors`             | shipped  | Rango request/runtime errors retained by the hub, filterable by request, router, or receipt time                                                     |
-| `list_requests`          | shipped  | bounded request summaries with exact request-ID selection, route declaration ownership, opaque cursors, and bridge drop statistics                   |
-| `get_request_trace`      | shipped  | the bounded structured trace and route declaration ownership for one exact server request ID                                                         |
-| `explain_render`         | shipped  | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                |
-| `explain_cache_tags`     | shipped  | exact bounded tag attachment and invalidation activity observed for one request; global store state remains explicitly uninspected                   |
-| `explain_revalidation`   | shipped  | segment/loader recomputation decisions for an action or navigation request                                                                           |
+| Tool                     | Phase   | Returns                                                                                                                                                  |
+| ------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_project_metadata`   | shipped | project root, package version, Vite mode, routers, dev-server URLs, capabilities and tool schema version                                                 |
+| `get_routes`             | shipped | paginated runtime route maps, router source ownership, patterns, names, search schemas, trailing-slash behavior, generation and freshness                |
+| `get_discovery_status`   | shipped | route-discovery phase, attempts, generation, counts, freshness and the latest discovery error                                                            |
+| `match_route`            | shipped | canonical-trie match, params, segment structure, middleware/loaders, intercept candidates, and cache/PPR declarations without executing application code |
+| `get_compilation_issues` | shipped | current structured Vite/RSC transform errors plus bounded recent-only logger warnings, with sanitized source locations and explicit capture coverage     |
+| `get_errors`             | shipped | Rango request/runtime errors retained by the hub, filterable by request, router, or receipt time                                                         |
+| `list_requests`          | shipped | bounded request summaries with exact request/navigation selection, route ownership, navigation IDs, opaque cursors, and bridge drop statistics           |
+| `get_request_trace`      | shipped | the bounded structured trace and route declaration ownership for one exact server request ID                                                             |
+| `list_navigations`       | shipped | bounded browser-owned document/navigation lifecycles with linked request IDs                                                                             |
+| `get_navigation_trace`   | shipped | one exact browser navigation lifecycle, including prefetch adoption and action/revalidation request links                                                |
+| `explain_render`         | shipped | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                    |
+| `explain_cache_tags`     | shipped | exact bounded tag attachment and invalidation activity observed for one request; global store state remains explicitly uninspected                       |
+| `explain_revalidation`   | shipped | segment/loader recomputation decisions for an action or navigation request                                                                               |
 
 `match_route` is read-only discovery, not a dry-run render. It must not execute
 middleware, handlers, loaders, cache stores, or user predicates with side
@@ -506,7 +524,13 @@ Collection follows these rules:
   untrusted data, not agent instructions. Results preserve provenance and skills
   never interpolate those values into commands or edit instructions.
 
-Diagnostics are best-effort and fail open. A hub allocation, projection, or MCP
+Diagnostics are best-effort and fail open. Bridge protocol version 2 carries
+both total loss and a bounded `droppedEventsByRequest` attribution map. Attributed
+loss increments the retained trace's `droppedEvents`, making request summaries
+and explanation projections explicitly truncated; residual unattributed loss
+remains global bridge state.
+
+A hub allocation, projection, or MCP
 serialization failure must not alter routing, rendering, caching, or response
 timing beyond the development-only observation cost. The hub reports its own
 dropped-event counter so missing evidence is visible.
@@ -524,7 +548,8 @@ Preflight:
 
 1. Confirm compatible Rango, Vite, React, MCP schema, and browser-driver
    versions.
-2. Connect to the running Vite server and list routers/routes.
+2. Connect to the running Vite server, call `match_route` for the target URL, and
+   confirm any runtime-dependent declarations that still require an observed trace.
 3. Open the target URL in a worktree-scoped browser session.
 
 Verification loop:
@@ -532,7 +557,9 @@ Verification loop:
 1. Ask `get_compilation_issues` before driving stale output.
 2. Perform the intended document load, navigation, prefetch, or action.
 3. Capture the browser-visible result, console, network, and React/Suspense state.
-4. Select the exact request by the shared request ID.
+4. Select the exact browser lifecycle with `list_navigations` /
+   `get_navigation_trace`, then select its linked server requests by navigation
+   ID or exact request ID. A completed-prefetch adoption may have no new request.
 5. Read `explain_render`, `get_errors`, and, for mutations,
    `explain_cache_tags` plus `explain_revalidation`.
 6. Cross-check the two views. A clean framework trace does not prove the DOM is
@@ -645,10 +672,11 @@ frontmatter is quoted and guarded because invalid YAML made the standard CLI
 silently omit `/intercept` and `/parallel` even though Rango's original
 line-oriented catalog check accepted them.
 
-The external CLI is an interim registration path, not the collision-safe Phase 5
-installer: it may auto-confirm when it detects an agent session. Instructions
-therefore require checking `.agents/skills/rango` and `.claude/skills/rango`
-before invocation rather than treating omission of `--yes` as protection.
+The external skills CLI remains an interim **skill registration** path: it may
+auto-confirm when it detects an agent session. `rango mcp install` is separate;
+it collision-safely installs MCP client configuration but does not manage
+`AGENTS.md` or copy skills. Instructions therefore still require checking
+`.agents/skills/rango` and `.claude/skills/rango` before invoking the skills CLI.
 
 Every workflow skill follows the same document shape:
 
@@ -775,7 +803,8 @@ diagnosis or edit and passes in both dev and production verification.
 The package now ships a standard-CLI-installable `/rango` entry skill, a
 canonical managed `rango-agent-rules` block, and migration guidance that replaces
 Next's marked block without touching project instructions. A package-owned
-installer remains follow-up work:
+MCP client configuration now has the separate package-owned `rango mcp install`
+command. Managed rule and skill registration remains follow-up work:
 
 - add an idempotent `rango agents` command that installs or updates the managed
   block and registers `/rango`, with collision reporting and `--dry-run`;
@@ -802,6 +831,10 @@ fail visibly and custom `AGENTS.md` content remains byte-for-byte unchanged.
 | handler loader consumption is reported baked | lane projection test                | capture-generation copy identified     | same semantics after build           |
 | revalidation stays a separate axis           | trace projection tests              | action shows selected/skipped segments | same action/PE behavior after build  |
 | diagnostics cannot break requests            | throwing hub/serializer tests       | injected diagnostic failure fails open | no diagnostic code active            |
+| static route matching executes no app code   | canonical-trie snapshot tests       | Node and Cloudflare route structures   | no MCP endpoint                      |
+| browser navigation links exact requests      | lifecycle/link projection tests     | document/nav/prefetch/action traces    | browser behavior unchanged           |
+| bridge loss is request-attributed            | protocol/queue/drop tests           | lossy request reports truncation       | bridge absent                        |
+| MCP client install is collision-safe         | four-client JSONC matrix            | built CLI smoke test                   | no runtime configuration persisted   |
 
 Changes under the Vite plugin also run the route-types HMR test and build the
 router before local dev verification. Changes to segment resolution or PPR
@@ -853,13 +886,10 @@ accidental remote introspection service.
 
 ## Deferred work
 
-1. Implement the read-only `match_route` tool without executing application
-   code; observed request traces remain the only source for runtime decisions.
-2. Add browser-owned navigation correlation only when one stable identifier can
-   represent prefetch adoption and action-triggered revalidation. Request IDs
-   remain the shipped framework/browser join today.
-3. Complete the package-owned consumer installer in Phase 5. Until then, the
-   standard `skills` CLI command and managed block above are the supported setup.
+1. Complete managed `AGENTS.md` rule and skill registration in Phase 5. Until
+   then, the standard `skills` CLI command and managed block above are the
+   supported skill setup; `rango mcp install` covers MCP client configuration
+   only.
 
 The earlier retention and background-capture questions are resolved. The hub
 uses the fixed 100-request/5,000-event/five-minute/4-MiB/32-KiB bounds, and a

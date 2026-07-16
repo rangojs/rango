@@ -652,7 +652,11 @@ export const urlpatterns = urls(
               PprScopedHomePage,
               {
                 name: "pprScoped",
-                ppr: { ttl: 300, swr: 120 },
+                ppr: {
+                  ttl: 300,
+                  swr: 120,
+                  tags: ["mcp-ppr-scoped"],
+                },
               },
               () => [
                 loader(PprShellPriceLoader),
@@ -1206,7 +1210,7 @@ export const urlpatterns = urls(
         ]),
 
         // Slow cache route
-        cache({ ttl: 60, swr: 300 }, () => [
+        cache({ ttl: 1, swr: 300 }, () => [
           path("/slow-cache", SlowCachePage, { name: "slowCache" }),
         ]),
 

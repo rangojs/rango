@@ -117,14 +117,15 @@ describe("createCacheSink (telemetry capture path)", () => {
       pathname: "/products/1",
       routeKey: "/products/:id",
       hit: true,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
       source: "runtime",
       segments: [
         {
           id: "/products/:id",
           type: "route",
           cacheStatus: "hit",
-          shouldRevalidate: false,
+          revalidationClaimed: false,
         },
       ],
     };
@@ -153,14 +154,27 @@ describe("createCacheSink (telemetry capture path)", () => {
       pathname: "/p",
       routeKey: "/p",
       hit: false,
-      shouldRevalidate: false,
-      segments: [{ id: "/p", type: "route", cacheStatus: "miss" }],
+      freshness: null,
+      revalidationClaimed: false,
+      segments: [
+        {
+          id: "/p",
+          type: "route",
+          cacheStatus: "miss",
+          revalidationClaimed: false,
+        },
+      ],
     });
 
     const decisions = filterCacheDecisions(events);
     expect(decisions).toHaveLength(1);
     expect(decisions[0].segments).toEqual([
-      { id: "/p", type: "route", cacheStatus: "miss" },
+      {
+        id: "/p",
+        type: "route",
+        cacheStatus: "miss",
+        revalidationClaimed: false,
+      },
     ]);
   });
 
@@ -172,20 +186,23 @@ describe("createCacheSink (telemetry capture path)", () => {
       pathname: "/p",
       routeKey: "/p",
       hit: true,
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
       source: "runtime",
       segments: [
         {
           id: "/p",
           type: "route",
           cacheStatus: "stale",
-          shouldRevalidate: true,
+          revalidationClaimed: true,
         },
       ],
     });
     const [decision] = filterCacheDecisions(events);
+    expect(decision.freshness).toBe("stale");
+    expect(decision.revalidationClaimed).toBe(true);
     expect(decision.segments?.[0].cacheStatus).toBe("stale");
-    expect(decision.segments?.[0].shouldRevalidate).toBe(true);
+    expect(decision.segments?.[0].revalidationClaimed).toBe(true);
   });
 
   it("filters cache.decision out of a mixed event stream and exposes per-decision segment status", () => {
@@ -206,9 +223,17 @@ describe("createCacheSink (telemetry capture path)", () => {
       pathname: "/x",
       routeKey: "/x",
       hit: true,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
       source: "runtime",
-      segments: [{ id: "/x", type: "route", cacheStatus: "hit" }],
+      segments: [
+        {
+          id: "/x",
+          type: "route",
+          cacheStatus: "hit",
+          revalidationClaimed: false,
+        },
+      ],
     });
     sink.emit({
       type: "cache.decision",
@@ -216,9 +241,17 @@ describe("createCacheSink (telemetry capture path)", () => {
       pathname: "/y",
       routeKey: "/y",
       hit: false,
-      shouldRevalidate: false,
+      freshness: null,
+      revalidationClaimed: false,
       source: "runtime",
-      segments: [{ id: "/y", type: "route", cacheStatus: "miss" }],
+      segments: [
+        {
+          id: "/y",
+          type: "route",
+          cacheStatus: "miss",
+          revalidationClaimed: false,
+        },
+      ],
     });
 
     const decisions = filterCacheDecisions(events);
@@ -250,12 +283,14 @@ describe("assertCacheDecision (telemetry assert path)", () => {
       pathname: "/x",
       routeKey: "/x",
       hit: true,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
       source: "runtime",
       segments: segments.map((s) => ({
         id: s.id,
         type: "route",
         cacheStatus: s.cacheStatus,
+        revalidationClaimed: false,
       })),
     });
     return events;

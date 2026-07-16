@@ -68,7 +68,7 @@ describe("updateTag (read-your-own-writes)", () => {
     // rather than short-circuit or silently report success.
     const failing = {
       get: async () => null,
-      set: async () => {},
+      set: async () => ({ outcome: "stored" as const }),
       delete: async () => false,
       invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as SegmentCacheStore;
@@ -126,7 +126,9 @@ describe("updateTag (read-your-own-writes)", () => {
       async getItem() {
         return null;
       },
-      async setItem() {},
+      async setItem() {
+        return { outcome: "stored" as const };
+      },
     } as unknown as SegmentCacheStore;
     const explicit = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
@@ -247,7 +249,7 @@ describe("revalidateTag (background hard-purge)", () => {
     // ALS context is gone, so the captured ctx must be threaded to the reporter.
     const failing = {
       get: async () => null,
-      set: async () => {},
+      set: async () => ({ outcome: "stored" as const }),
       delete: async () => false,
       invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as SegmentCacheStore;

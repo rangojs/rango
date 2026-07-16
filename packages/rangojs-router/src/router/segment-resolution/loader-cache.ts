@@ -419,7 +419,7 @@ function executeLoaderData<TEnv>(
         recordLoaderCacheDiagnostic(loaderId, "stale", {
           ttl,
           swr,
-          backgroundRevalidationRequested: true,
+          backgroundRevalidationRequested: cached.revalidationClaimed,
         });
       },
       onMiss: () => {

@@ -12,7 +12,7 @@ PPR reuses the HTML shell, and DSL loaders remain the request-visible data layer
 ## Requires
 
 Read `/rango`, `/caching`, `/ppr`, `/loader`, `/observability`, and `/testing`.
-Use MCP tool schema version 4 and a browser driver.
+Use MCP tool schema version 5 and a browser driver.
 
 ## Preflight
 

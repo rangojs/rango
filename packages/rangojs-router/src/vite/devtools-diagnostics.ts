@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { ViteDevServer } from "vite";
 import { RANGO_DIAGNOSTIC_BRIDGE_EVENT } from "../router/diagnostics/bridge-protocol.js";
+import { RANGO_BROWSER_NAVIGATION_EVENT } from "../router/diagnostics/browser-protocol.js";
 import type { RangoMcpDiagnosticStore } from "../devtools-mcp/diagnostic-store.js";
 
 interface HotChannel {
@@ -52,6 +53,7 @@ export function installRangoDevtoolsDiagnostics(
   options: InstallRangoDevtoolsDiagnosticsOptions,
 ): () => void {
   const bridgeListeners = new Map<HotChannel, (data: unknown) => void>();
+  const navigationListeners = new Map<HotChannel, (data: unknown) => void>();
   const sendWrappers = new Map<
     HotChannel,
     { original: HotChannel["send"]; wrapped: HotChannel["send"] }
@@ -138,6 +140,15 @@ export function installRangoDevtoolsDiagnostics(
         hot.on(RANGO_DIAGNOSTIC_BRIDGE_EVENT, listener);
         bridgeListeners.set(hot, listener);
       }
+      if (name === "client" && !navigationListeners.has(hot)) {
+        const listener = (data: unknown): void => {
+          try {
+            options.store.ingestBrowserNavigationEvent(data);
+          } catch {}
+        };
+        hot.on(RANGO_BROWSER_NAVIGATION_EVENT, listener);
+        navigationListeners.set(hot, listener);
+      }
     }
     options.store.setStructuredErrorCapture(sendWrappers.size > 0);
   };
@@ -171,10 +182,14 @@ export function installRangoDevtoolsDiagnostics(
     for (const [hot, listener] of bridgeListeners) {
       hot.off?.(RANGO_DIAGNOSTIC_BRIDGE_EVENT, listener);
     }
+    for (const [hot, listener] of navigationListeners) {
+      hot.off?.(RANGO_BROWSER_NAVIGATION_EVENT, listener);
+    }
     for (const [hot, { original, wrapped }] of sendWrappers) {
       if (hot.send === wrapped) hot.send = original;
     }
     bridgeListeners.clear();
+    navigationListeners.clear();
     sendWrappers.clear();
   };
 }

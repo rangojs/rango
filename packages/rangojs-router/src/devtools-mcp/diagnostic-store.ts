@@ -3,6 +3,7 @@ import {
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
   RANGO_DIAGNOSTIC_MAX_BATCH_BYTES,
   RANGO_DIAGNOSTIC_MAX_BATCH_EVENTS,
+  RANGO_DIAGNOSTIC_MAX_DROP_REQUESTS,
   type DiagnosticBridgeBatch,
 } from "../router/diagnostics/bridge-protocol.js";
 import { DiagnosticHub } from "../router/diagnostics/hub.js";
@@ -13,6 +14,13 @@ import type {
   DiagnosticTrace,
   DiagnosticValue,
 } from "../router/diagnostics/types.js";
+import {
+  RANGO_BROWSER_NAVIGATION_VERSION,
+  type BrowserNavigationEvent,
+  type BrowserNavigationKind,
+  type BrowserNavigationPhase,
+  type BrowserNavigationRequestRole,
+} from "../router/diagnostics/browser-protocol.js";
 import {
   RANGO_MCP_MAX_RESULT_BYTES,
   RANGO_MCP_SCHEMA_VERSION,
@@ -32,11 +40,16 @@ import {
   type GetCompilationIssuesInput,
   type GetErrorsInput,
   type GetRequestTraceInput,
+  type GetNavigationTraceInput,
   type HandlerExplanation,
   type LoaderCacheExplanation,
   type LoaderConsumerExplanation,
   type LoaderExplanation,
   type ListRequestsInput,
+  type ListNavigationsInput,
+  type NavigationsPageSnapshot,
+  type NavigationSummary,
+  type NavigationTraceSnapshot,
   type PprExplanationEvent,
   type RenderExplanationSnapshot,
   type RevalidationDecisionExplanation,
@@ -56,10 +69,13 @@ const MAX_COMPILATION_ISSUES = 100;
 const MAX_RECENT_ISSUE_AGE_MS = 5 * 60_000;
 const MAX_EXPLANATION_ITEMS = 64;
 const MAX_TRACE_TRANSACTION_IDS = 128;
+const MAX_NAVIGATIONS = 100;
+const MAX_NAVIGATION_EVENTS = 128;
+const MAX_NAVIGATION_REQUESTS = 64;
 
 interface StoreCursor {
   instanceId: string;
-  kind: "requests" | "errors" | "compilation";
+  kind: "requests" | "navigations" | "errors" | "compilation";
   revision: number;
   filter: string;
   offset: number;
@@ -69,6 +85,19 @@ interface RequestReceipt {
   firstSeenAt: number;
   lastSeenAt: number;
   eventReceivedAt: Map<number, number>;
+}
+
+interface RetainedNavigation {
+  navigationId: string;
+  documentId: string;
+  kind: BrowserNavigationKind;
+  pathname: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  completed: boolean;
+  requestIds: Set<string>;
+  events: BrowserNavigationEvent[];
+  truncated: boolean;
 }
 
 export interface DiagnosticStoreOptions {
@@ -100,7 +129,10 @@ export interface RangoMcpDiagnosticStore {
     observedAt?: number,
     receivedAt?: number,
   ): boolean;
+  ingestBrowserNavigationEvent(value: unknown, receivedAt?: number): boolean;
   listRequests(input?: ListRequestsInput): RequestsPageSnapshot;
+  listNavigations(input?: ListNavigationsInput): NavigationsPageSnapshot;
+  getNavigationTrace(input: GetNavigationTraceInput): NavigationTraceSnapshot;
   getRequestTrace(input: GetRequestTraceInput): RequestTraceSnapshot;
   explainRender(input: ExplainRenderInput): RenderExplanationSnapshot;
   explainCacheTags(input: ExplainCacheTagsInput): CacheTagExplanationSnapshot;
@@ -128,6 +160,7 @@ function decodeCursor(value: string): StoreCursor {
     if (
       typeof parsed.instanceId !== "string" ||
       (parsed.kind !== "requests" &&
+        parsed.kind !== "navigations" &&
         parsed.kind !== "errors" &&
         parsed.kind !== "compilation") ||
       !Number.isSafeInteger(parsed.revision) ||
@@ -252,6 +285,79 @@ function sanitizeBridgeEvent(value: unknown): DiagnosticEventInput | null {
       ? { segmentId: sanitizeDiagnosticText(event.segmentId, 1_024) }
       : {}),
     data: sanitizeValue(event.data) as Record<string, DiagnosticValue>,
+  };
+}
+
+const NAVIGATION_ID_PATTERN =
+  /^nav-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const DOCUMENT_ID_PATTERN =
+  /^doc-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const REQUEST_ID_PATTERN =
+  /^req-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const NAVIGATION_KINDS = new Set<BrowserNavigationKind>([
+  "document",
+  "navigate",
+  "refresh",
+  "popstate",
+  "action",
+]);
+const NAVIGATION_PHASES = new Set<BrowserNavigationPhase>([
+  "started",
+  "request-linked",
+  "committed",
+  "aborted",
+  "failed",
+]);
+const NAVIGATION_ROLES = new Set<BrowserNavigationRequestRole>([
+  "document",
+  "navigation",
+  "prefetch-source",
+  "action",
+  "revalidation",
+]);
+
+function sanitizeBrowserNavigationEvent(
+  value: unknown,
+): BrowserNavigationEvent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const event = value as Partial<BrowserNavigationEvent>;
+  if (
+    event.version !== RANGO_BROWSER_NAVIGATION_VERSION ||
+    !Number.isSafeInteger(event.sequence) ||
+    (event.sequence ?? 0) <= 0 ||
+    typeof event.documentId !== "string" ||
+    !DOCUMENT_ID_PATTERN.test(event.documentId) ||
+    typeof event.navigationId !== "string" ||
+    !NAVIGATION_ID_PATTERN.test(event.navigationId) ||
+    typeof event.kind !== "string" ||
+    !NAVIGATION_KINDS.has(event.kind as BrowserNavigationKind) ||
+    typeof event.phase !== "string" ||
+    !NAVIGATION_PHASES.has(event.phase as BrowserNavigationPhase) ||
+    typeof event.pathname !== "string" ||
+    !event.pathname.startsWith("/") ||
+    Buffer.byteLength(event.pathname, "utf8") > 4_096 ||
+    (event.requestId !== undefined &&
+      (typeof event.requestId !== "string" ||
+        !REQUEST_ID_PATTERN.test(event.requestId))) ||
+    (event.role !== undefined &&
+      (typeof event.role !== "string" ||
+        !NAVIGATION_ROLES.has(event.role as BrowserNavigationRequestRole))) ||
+    (event.phase === "request-linked" && (!event.requestId || !event.role)) ||
+    (event.phase !== "request-linked" &&
+      (event.requestId !== undefined || event.role !== undefined))
+  ) {
+    return null;
+  }
+  return {
+    version: RANGO_BROWSER_NAVIGATION_VERSION,
+    sequence: event.sequence!,
+    documentId: event.documentId,
+    navigationId: event.navigationId,
+    kind: event.kind as BrowserNavigationKind,
+    phase: event.phase as BrowserNavigationPhase,
+    pathname: sanitizeDiagnosticText(event.pathname, 4_096),
+    ...(event.requestId ? { requestId: event.requestId } : {}),
+    ...(event.role ? { role: event.role as BrowserNavigationRequestRole } : {}),
   };
 }
 
@@ -428,7 +534,7 @@ function projectCacheTagExplanation(
     );
   }
   const operations: CacheTagExplanationSnapshot["operations"] = [];
-  let truncated = trace.truncated;
+  let truncated = trace.truncated || trace.droppedEvents > 0;
   for (const event of trace.events) {
     if (event.type !== "cache.tags") continue;
     if (transactionId && event.transactionId !== transactionId) continue;
@@ -627,7 +733,7 @@ function projectRenderExplanation(
   const renderStages: RenderExplanationSnapshot["renderStages"] = [];
   const errors: RenderExplanationSnapshot["errors"] = [];
   let explanationItems = 0;
-  let truncated = trace.truncated;
+  let truncated = trace.truncated || trace.droppedEvents > 0;
 
   const claimItem = (): boolean => {
     if (explanationItems >= MAX_EXPLANATION_ITEMS) {
@@ -926,6 +1032,7 @@ function projectRevalidationExplanation(
     : [];
   let truncated =
     trace.truncated ||
+    trace.droppedEvents > 0 ||
     diagnosticBoolean(event.data.entriesTruncated) === true ||
     rawEntries.length > MAX_EXPLANATION_ITEMS;
   const decisions: RevalidationDecisionExplanation[] = [];
@@ -1015,12 +1122,16 @@ export function createRangoMcpDiagnosticStore(
   const hub = new DiagnosticHub();
   const realmSequences = new Map<string, number>();
   const receipts = new Map<string, RequestReceipt>();
+  const navigations = new Map<string, RetainedNavigation>();
+  const navigationSequences = new Map<string, number>();
+  const requestNavigationIds = new Map<string, Set<string>>();
   const compilationIssues = new Map<string, CompilationIssueRecord>();
   let acceptedBatches = 0;
   let rejectedBatches = 0;
   let duplicateBatches = 0;
   let bridgeDroppedEvents = 0;
   let requestRevision = 0;
+  let navigationRevision = 0;
   let errorRevision = 0;
   let compilationRevision = 0;
   let compilationIssueId = 0;
@@ -1113,6 +1224,9 @@ export function createRangoMcpDiagnosticStore(
       requestId: trace.requestId,
       routerId: trace.routerId,
       clientCorrelationId: trace.clientCorrelationId,
+      navigationIds: [
+        ...(requestNavigationIds.get(trace.requestId) ?? new Set<string>()),
+      ].slice(0, 64),
       method:
         typeof started?.data.method === "string" ? started.data.method : null,
       transport: isRequestTransport(transport) ? transport : null,
@@ -1127,7 +1241,7 @@ export function createRangoMcpDiagnosticStore(
       completed: trace.completed,
       errorCount,
       eventCount: trace.events.length,
-      truncated: trace.truncated,
+      truncated: trace.truncated || trace.droppedEvents > 0,
       droppedEvents: trace.droppedEvents,
       source: traceSource(trace, options.getRouteSource, classified),
     };
@@ -1166,6 +1280,9 @@ export function createRangoMcpDiagnosticStore(
         (batch.batchSequence ?? 0) <= 0 ||
         !Number.isSafeInteger(batch.droppedEvents) ||
         (batch.droppedEvents ?? -1) < 0 ||
+        !Array.isArray(batch.droppedEventsByRequest) ||
+        batch.droppedEventsByRequest.length >
+          RANGO_DIAGNOSTIC_MAX_DROP_REQUESTS ||
         !Array.isArray(batch.events) ||
         (batch.events.length === 0 && batch.droppedEvents === 0) ||
         batch.events.length > RANGO_DIAGNOSTIC_MAX_BATCH_EVENTS
@@ -1185,13 +1302,43 @@ export function createRangoMcpDiagnosticStore(
         rejectedBatches++;
         return false;
       }
+      const requestDrops = batch.droppedEventsByRequest;
+      const dropRequestIds = new Set<string>();
+      let attributedDrops = 0;
+      for (const value of requestDrops) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          rejectedBatches++;
+          return false;
+        }
+        const entry = value as { requestId?: unknown; droppedEvents?: unknown };
+        if (
+          typeof entry.requestId !== "string" ||
+          entry.requestId.length === 0 ||
+          Buffer.byteLength(entry.requestId, "utf8") > 128 ||
+          dropRequestIds.has(entry.requestId) ||
+          !Number.isSafeInteger(entry.droppedEvents) ||
+          (entry.droppedEvents as number) <= 0
+        ) {
+          rejectedBatches++;
+          return false;
+        }
+        dropRequestIds.add(entry.requestId);
+        attributedDrops += entry.droppedEvents as number;
+        if (!Number.isSafeInteger(attributedDrops)) {
+          rejectedBatches++;
+          return false;
+        }
+      }
+      if (attributedDrops > batch.droppedEvents!) {
+        rejectedBatches++;
+        return false;
+      }
 
       if (!realmSequences.has(realmId) && realmSequences.size >= MAX_REALMS) {
         realmSequences.delete(realmSequences.keys().next().value as string);
       }
       realmSequences.set(realmId, batch.batchSequence!);
       bridgeDroppedEvents += batch.droppedEvents!;
-      hub.noteDroppedEvents(batch.droppedEvents!);
 
       for (const input of sanitizedEvents as DiagnosticEventInput[]) {
         const recorded = hub.record(input, observedAt);
@@ -1210,8 +1357,99 @@ export function createRangoMcpDiagnosticStore(
         requestRevision++;
         if (errorEvent) errorRevision++;
       }
+      for (const entry of requestDrops) {
+        const requestId = sanitizeDiagnosticText(entry.requestId, 128);
+        hub.noteDroppedEvents(entry.droppedEvents, requestId);
+        if (hub.getTrace(requestId, observedAt)) requestRevision++;
+      }
+      hub.noteDroppedEvents(batch.droppedEvents! - attributedDrops);
       acceptedBatches++;
       syncReceipts(hub.getRetainedEventSequences(observedAt));
+      return true;
+    },
+
+    ingestBrowserNavigationEvent(
+      value: unknown,
+      receivedAt: number = Date.now(),
+    ): boolean {
+      let bytes: number;
+      try {
+        bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+      } catch {
+        return false;
+      }
+      if (bytes > 16 * 1024) return false;
+      const event = sanitizeBrowserNavigationEvent(value);
+      if (!event) return false;
+      const previousSequence = navigationSequences.get(event.documentId) ?? 0;
+      if (event.sequence <= previousSequence) return true;
+
+      let navigation = navigations.get(event.navigationId);
+      if (
+        navigation &&
+        (navigation.documentId !== event.documentId ||
+          navigation.kind !== event.kind ||
+          navigation.pathname !== event.pathname)
+      ) {
+        return false;
+      }
+      navigationSequences.set(event.documentId, event.sequence);
+      if (!navigation) {
+        while (navigations.size >= MAX_NAVIGATIONS) {
+          const oldestId = navigations.keys().next().value as
+            | string
+            | undefined;
+          if (!oldestId) break;
+          const removed = navigations.get(oldestId);
+          navigations.delete(oldestId);
+          for (const requestId of removed?.requestIds ?? []) {
+            const linked = requestNavigationIds.get(requestId);
+            linked?.delete(oldestId);
+            if (linked?.size === 0) requestNavigationIds.delete(requestId);
+          }
+        }
+        navigation = {
+          navigationId: event.navigationId,
+          documentId: event.documentId,
+          kind: event.kind,
+          pathname: event.pathname,
+          firstSeenAt: receivedAt,
+          lastSeenAt: receivedAt,
+          completed: false,
+          requestIds: new Set(),
+          events: [],
+          truncated: false,
+        };
+        navigations.set(event.navigationId, navigation);
+      }
+      navigation.lastSeenAt = receivedAt;
+      if (navigation.events.length < MAX_NAVIGATION_EVENTS) {
+        navigation.events.push(event);
+      } else {
+        navigation.truncated = true;
+      }
+      if (
+        event.phase === "committed" ||
+        event.phase === "aborted" ||
+        event.phase === "failed"
+      ) {
+        navigation.completed = true;
+      }
+      if (event.phase === "request-linked" && event.requestId) {
+        if (
+          navigation.requestIds.has(event.requestId) ||
+          navigation.requestIds.size < MAX_NAVIGATION_REQUESTS
+        ) {
+          navigation.requestIds.add(event.requestId);
+          const linked = requestNavigationIds.get(event.requestId) ?? new Set();
+          linked.add(event.navigationId);
+          requestNavigationIds.set(event.requestId, linked);
+          requestRevision++;
+        } else {
+          navigation.truncated = true;
+        }
+      }
+      navigationRevision++;
       return true;
     },
 
@@ -1222,6 +1460,7 @@ export function createRangoMcpDiagnosticStore(
       const filter = JSON.stringify({
         routerId: input.routerId ?? null,
         requestId: input.requestId ?? null,
+        navigationId: input.navigationId ?? null,
         transport: input.transport ?? null,
         routePattern: input.routePattern ?? null,
         completed: input.completed ?? null,
@@ -1239,6 +1478,11 @@ export function createRangoMcpDiagnosticStore(
           if (input.routerId && summary.routerId !== input.routerId)
             return false;
           if (input.requestId && summary.requestId !== input.requestId)
+            return false;
+          if (
+            input.navigationId &&
+            !summary.navigationIds.includes(input.navigationId)
+          )
             return false;
           if (input.transport && summary.transport !== input.transport)
             return false;
@@ -1288,6 +1532,111 @@ export function createRangoMcpDiagnosticStore(
         throw new Error("Rango MCP request page exceeded its output limit");
       }
       return result;
+    },
+
+    listNavigations(input: ListNavigationsInput = {}): NavigationsPageSnapshot {
+      const since = parseSince(input.since);
+      const filter = JSON.stringify({
+        navigationId: input.navigationId ?? null,
+        kind: input.kind ?? null,
+        completed: input.completed ?? null,
+        since,
+      });
+      const offset = cursorOffset(
+        input.cursor,
+        "navigations",
+        navigationRevision,
+        filter,
+      );
+      const summaries: NavigationSummary[] = [...navigations.values()]
+        .map((navigation) => ({
+          navigationId: navigation.navigationId,
+          documentId: navigation.documentId,
+          kind: navigation.kind,
+          pathname: navigation.pathname,
+          startedAt: new Date(navigation.firstSeenAt).toISOString(),
+          updatedAt: new Date(navigation.lastSeenAt).toISOString(),
+          completed: navigation.completed,
+          requestIds: [...navigation.requestIds].slice(0, 64),
+          eventCount: navigation.events.length,
+          truncated: navigation.truncated || navigation.requestIds.size > 64,
+        }))
+        .filter((navigation) => {
+          if (
+            input.navigationId &&
+            navigation.navigationId !== input.navigationId
+          )
+            return false;
+          if (input.kind && navigation.kind !== input.kind) return false;
+          if (
+            input.completed !== undefined &&
+            navigation.completed !== input.completed
+          )
+            return false;
+          return since === null || Date.parse(navigation.updatedAt) >= since;
+        })
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const limit = pageLimit(input.limit);
+      const navigationCursor = (nextOffset: number): string | null =>
+        nextOffset < summaries.length
+          ? encodeCursor({
+              instanceId: options.instanceId,
+              kind: "navigations",
+              revision: navigationRevision,
+              filter,
+              offset: nextOffset,
+            })
+          : null;
+      const { page, stoppedForSize } = pageWithinResultLimit(
+        summaries,
+        offset,
+        limit,
+        (items, nextOffset): NavigationsPageSnapshot => ({
+          schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+          navigations: items,
+          nextCursor: navigationCursor(nextOffset),
+          truncated: false,
+        }),
+      );
+      return {
+        schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+        navigations: page,
+        nextCursor: navigationCursor(offset + page.length),
+        truncated: stoppedForSize,
+      };
+    },
+
+    getNavigationTrace(
+      input: GetNavigationTraceInput,
+    ): NavigationTraceSnapshot {
+      const navigation = navigations.get(input.navigationId);
+      if (!navigation) {
+        throw new Error(
+          `No retained browser navigation for ${input.navigationId}`,
+        );
+      }
+      const snapshot: NavigationTraceSnapshot = {
+        schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+        navigationId: navigation.navigationId,
+        documentId: navigation.documentId,
+        kind: navigation.kind,
+        pathname: navigation.pathname,
+        completed: navigation.completed,
+        requestIds: [...navigation.requestIds].slice(0, 64),
+        events: [...navigation.events],
+        truncated: navigation.truncated || navigation.requestIds.size > 64,
+      };
+      while (
+        snapshot.events.length > 0 &&
+        serializedToolResultBytes(snapshot) > RANGO_MCP_MAX_RESULT_BYTES
+      ) {
+        snapshot.events.shift();
+        snapshot.truncated = true;
+      }
+      if (serializedToolResultBytes(snapshot) > RANGO_MCP_MAX_RESULT_BYTES) {
+        throw new Error("Rango MCP navigation trace exceeded its output limit");
+      }
+      return snapshot;
     },
 
     getRequestTrace(input: GetRequestTraceInput): RequestTraceSnapshot {

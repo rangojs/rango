@@ -733,7 +733,11 @@ export const shellCachePatterns = urls(
           ShellScopedHomePage,
           {
             name: "shellCacheScoped",
-            ppr: { ttl: 300, swr: 120 },
+            ppr: {
+              ttl: 300,
+              swr: 120,
+              tags: ["mcp-shell-scoped"],
+            },
           },
           () => [
             loader(ShellPriceLoader),

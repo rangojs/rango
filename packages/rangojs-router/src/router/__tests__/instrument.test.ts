@@ -367,7 +367,8 @@ describe("observeEvent", () => {
         pathname: "/x",
         routeKey: "x",
         hit: true,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       }),
     );
     expect(events).toHaveLength(1);
@@ -383,7 +384,8 @@ describe("observeEvent", () => {
           pathname: "/x",
           routeKey: "x",
           hit: true,
-          shouldRevalidate: false,
+          freshness: "fresh",
+          revalidationClaimed: false,
         }),
       ),
     ).not.toThrow();
@@ -397,7 +399,8 @@ describe("observeEvent", () => {
         pathname: "/x",
         routeKey: "x",
         hit: true,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       }),
     ).not.toThrow();
   });

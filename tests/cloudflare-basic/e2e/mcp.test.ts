@@ -38,11 +38,13 @@ test.describe("MCP devtools", () => {
         preset: "cloudflare",
         mode: "development",
         capabilities: {
+          routeMatching: true,
           recentRequests: true,
           runtimeErrors: true,
           renderExplanation: true,
           revalidationExplanation: true,
           cacheTagExplanation: true,
+          browserState: true,
           sourceOwnership: true,
         },
       });
@@ -68,6 +70,30 @@ test.describe("MCP devtools", () => {
           }),
         ]),
       );
+      const productRoute = routes.structuredContent?.routes?.find(
+        (route: { name?: string }) => route.name === "api.productDetail",
+      );
+      const matchedRoute = await mcp.client.callTool({
+        name: "match_route",
+        arguments: {
+          url: "/api/products/1",
+          routerId: productRoute?.routerId,
+        },
+      });
+      expect(
+        matchedRoute.isError,
+        JSON.stringify(matchedRoute.content),
+      ).not.toBe(true);
+      expect(matchedRoute.structuredContent).toMatchObject({
+        pathname: "/api/products/1",
+        matched: true,
+        route: {
+          name: "api.productDetail",
+          pattern: "/api/products/:id",
+          params: { id: "1" },
+          structure: { responseType: "json" },
+        },
+      });
 
       const response = await page.goto(f.url("/api/products/1"));
       expect(response?.status()).toBe(200);
@@ -103,6 +129,64 @@ test.describe("MCP devtools", () => {
         trace: { requestId, completed: true },
         source: { file: "src/api/urls.tsx", precision: "declaration-file" },
       });
+
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      const navigationResponse = page.waitForResponse(
+        (candidate) =>
+          new URL(candidate.url()).pathname === "/tx-src/b" &&
+          new URL(candidate.url()).searchParams.has("_rsc_partial"),
+      );
+      await page.getByTestId("tx-src-to-b").click();
+      await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+      const navigationRequestId = await (
+        await navigationResponse
+      ).headerValue("x-rango-request-id");
+      expect(navigationRequestId).toBeTruthy();
+      let navigationId: string | undefined;
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "list_navigations",
+            arguments: { kind: "navigate", completed: true },
+          });
+          const navigation = result.structuredContent?.navigations?.find(
+            (candidate: { pathname?: string }) =>
+              candidate.pathname === "/tx-src/b",
+          );
+          navigationId = navigation?.navigationId;
+          return navigation;
+        })
+        .toMatchObject({
+          pathname: "/tx-src/b",
+          requestIds: [navigationRequestId],
+        });
+      const navigationTrace = await mcp.client.callTool({
+        name: "get_navigation_trace",
+        arguments: { navigationId },
+      });
+      expect(navigationTrace.structuredContent).toMatchObject({
+        navigationId,
+        completed: true,
+        requestIds: [navigationRequestId],
+        events: expect.arrayContaining([
+          expect.objectContaining({ phase: "started" }),
+          expect.objectContaining({
+            phase: "request-linked",
+            requestId: navigationRequestId,
+            role: "navigation",
+          }),
+          expect.objectContaining({ phase: "committed" }),
+        ]),
+      });
+      const linkedRequest = await mcp.client.callTool({
+        name: "list_requests",
+        arguments: { navigationId },
+      });
+      expect(linkedRequest.structuredContent?.requests).toEqual([
+        expect.objectContaining({ requestId: navigationRequestId }),
+      ]);
+
       const errorResponse = await page.goto(
         f.url("/features/mcp-missing-feature"),
       );
@@ -149,7 +233,10 @@ test.describe("MCP devtools", () => {
         )
         .toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ outcome: "captured" }),
+            expect.objectContaining({
+              outcome: "captured",
+              storeWrite: "scheduled",
+            }),
           ]),
         );
 
@@ -211,6 +298,26 @@ test.describe("MCP devtools", () => {
             }),
           ]),
         });
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: renderRequestId },
+          });
+          return result.structuredContent?.operations;
+        })
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              artifact: "runtime-shell",
+              phase: "hit",
+              provenance: ["stored"],
+              tags: expect.arrayContaining([
+                expect.objectContaining({ value: "mcp-ppr-scoped" }),
+              ]),
+            }),
+          ]),
+        );
       const warmedExecution = await page
         .getByTestId("ppr-scoped-home")
         .textContent();
@@ -336,11 +443,22 @@ test.describe("MCP devtools", () => {
             arguments: { requestId: failOpenRequestId },
           });
           const content = result.structuredContent;
-          return content?.requests?.[0]?.requestId === failOpenRequestId
-            ? content.stats?.bridgeDroppedEvents
-            : 0;
+          const retainedRequest = content?.requests?.[0];
+          return retainedRequest?.requestId === failOpenRequestId &&
+            retainedRequest.droppedEvents > 0 &&
+            retainedRequest.truncated === true &&
+            content.stats?.bridgeDroppedEvents > 0
+            ? retainedRequest
+            : null;
         })
-        .toBeGreaterThan(0);
+        .toMatchObject({ requestId: failOpenRequestId, truncated: true });
+      const lossyExplanation = await mcp.client.callTool({
+        name: "explain_render",
+        arguments: { requestId: failOpenRequestId },
+      });
+      expect(lossyExplanation.structuredContent).toMatchObject({
+        truncated: true,
+      });
     }
   });
 });
@@ -370,6 +488,25 @@ test.describe("MCP devtools (production)", () => {
       );
       expect(appResponse?.status()).toBe(200);
       expect(await appResponse?.headerValue("x-rango-request-id")).toBeNull();
+
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      const navigationResponse = page.waitForResponse(
+        (candidate) =>
+          new URL(candidate.url()).pathname === "/tx-src/b" &&
+          new URL(candidate.url()).searchParams.has("_rsc_partial"),
+      );
+      await page.getByTestId("tx-src-to-b").click();
+      await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+      const productionNavigationResponse = await navigationResponse;
+      expect(
+        productionNavigationResponse.request().headers()[
+          "x-rango-navigation-id"
+        ],
+      ).toBeUndefined();
+      expect(
+        await productionNavigationResponse.headerValue("x-rango-request-id"),
+      ).toBeNull();
     }
     if (verifiesWorkflow("render-cache-adoption", "render-cache-optimizer")) {
       const renderUrl = f.url(

@@ -538,6 +538,10 @@ export interface FetchPartialOptions {
   routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
+  /** Development-only browser navigation correlation. */
+  diagnosticNavigation?: import("./navigation-diagnostics-bridge.js").BrowserNavigationDiagnosticRef;
+  /** Development-only role for the request linked to that navigation. */
+  diagnosticRequestRole?: import("../router/diagnostics/browser-protocol.js").BrowserNavigationRequestRole;
 }
 
 /**

@@ -275,6 +275,9 @@ export interface TrackedInclude {
   namePrefix?: string;
   patterns: unknown; // UrlPatterns
   lazy: boolean;
+  /** Parent captured when include() was declared. Build discovery uses this
+   * only to preserve structural ancestry in read-only declaration snapshots. */
+  parent: EntryData | null;
 }
 
 /**

@@ -84,7 +84,8 @@ function makeState(
 ): MatchPipelineState {
   return {
     cacheHit: true,
-    shouldRevalidate: true,
+    cacheFreshness: "stale",
+    revalidationClaimed: true,
     segments: [],
     matchedIds: [],
     interceptSegments: [],

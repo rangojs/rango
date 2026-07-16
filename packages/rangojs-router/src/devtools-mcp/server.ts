@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import {
   RANGO_MCP_MAX_RESULT_BYTES,
   RANGO_MCP_SERVER_NAME,
+  BROWSER_NAVIGATION_KINDS,
   REQUEST_TRANSPORTS,
   type ExplainCacheTagsInput,
   type ExplainRenderInput,
@@ -11,8 +12,11 @@ import {
   type GetCompilationIssuesInput,
   type GetErrorsInput,
   type GetRequestTraceInput,
+  type GetNavigationTraceInput,
   type GetRoutesInput,
   type ListRequestsInput,
+  type ListNavigationsInput,
+  type MatchRouteInput,
 } from "./protocol.js";
 import type { RangoMcpDiagnosticStore } from "./diagnostic-store.js";
 import type { RangoMcpSnapshotStore } from "./snapshot-store.js";
@@ -23,12 +27,19 @@ export interface RangoMcpToolHandlers {
   getProjectMetadata(): Promise<CallToolResult> | CallToolResult;
   getDiscoveryStatus(): Promise<CallToolResult> | CallToolResult;
   getRoutes(input: GetRoutesInput): Promise<CallToolResult> | CallToolResult;
+  matchRoute(input: MatchRouteInput): Promise<CallToolResult> | CallToolResult;
   getCompilationIssues(
     input: GetCompilationIssuesInput,
   ): Promise<CallToolResult> | CallToolResult;
   getErrors(input: GetErrorsInput): Promise<CallToolResult> | CallToolResult;
   listRequests(
     input: ListRequestsInput,
+  ): Promise<CallToolResult> | CallToolResult;
+  listNavigations(
+    input: ListNavigationsInput,
+  ): Promise<CallToolResult> | CallToolResult;
+  getNavigationTrace(
+    input: GetNavigationTraceInput,
   ): Promise<CallToolResult> | CallToolResult;
   getRequestTrace(
     input: GetRequestTraceInput,
@@ -73,10 +84,15 @@ export function createSnapshotToolHandlers(
     getProjectMetadata: () => jsonToolResult(store.getProjectMetadata()),
     getDiscoveryStatus: () => jsonToolResult(store.getDiscoveryStatus()),
     getRoutes: (input) => jsonToolResult(store.getRoutes(input)),
+    matchRoute: (input) => jsonToolResult(store.matchRoute(input)),
     getCompilationIssues: (input) =>
       jsonToolResult(diagnostics.getCompilationIssues(input)),
     getErrors: (input) => jsonToolResult(diagnostics.getErrors(input)),
     listRequests: (input) => jsonToolResult(diagnostics.listRequests(input)),
+    listNavigations: (input) =>
+      jsonToolResult(diagnostics.listNavigations(input)),
+    getNavigationTrace: (input) =>
+      jsonToolResult(diagnostics.getNavigationTrace(input)),
     getRequestTrace: (input) =>
       jsonToolResult(diagnostics.getRequestTrace(input)),
     explainRender: (input) => jsonToolResult(diagnostics.explainRender(input)),
@@ -145,6 +161,20 @@ export function createRangoMcpServer(
   );
 
   server.registerTool(
+    "match_route",
+    {
+      description:
+        "Match a URL against the current discovery trie and return static route declarations without executing middleware, handlers, loaders, cache stores, or runtime predicates.",
+      inputSchema: {
+        url: z.string().min(1).max(8_192),
+        routerId: z.string().min(1).max(1_024).optional(),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.matchRoute,
+  );
+
+  server.registerTool(
     "list_requests",
     {
       description:
@@ -152,6 +182,7 @@ export function createRangoMcpServer(
       inputSchema: {
         routerId: z.string().min(1).max(512).optional(),
         requestId: z.string().min(1).max(128).optional(),
+        navigationId: z.string().min(1).max(128).optional(),
         transport: z.enum(REQUEST_TRANSPORTS).optional(),
         routePattern: z.string().min(1).max(4_096).optional(),
         completed: z.boolean().optional(),
@@ -162,6 +193,37 @@ export function createRangoMcpServer(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     handlers.listRequests,
+  );
+
+  server.registerTool(
+    "list_navigations",
+    {
+      description:
+        "List bounded browser-owned navigation lifecycles and the server requests each navigation adopted or triggered.",
+      inputSchema: {
+        navigationId: z.string().min(1).max(128).optional(),
+        kind: z.enum(BROWSER_NAVIGATION_KINDS).optional(),
+        completed: z.boolean().optional(),
+        since: z.string().min(1).optional(),
+        cursor: z.string().min(1).max(MAX_CURSOR_LENGTH).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.listNavigations,
+  );
+
+  server.registerTool(
+    "get_navigation_trace",
+    {
+      description:
+        "Get one browser navigation lifecycle, including prefetch adoption and every linked server request ID.",
+      inputSchema: {
+        navigationId: z.string().min(1).max(128),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.getNavigationTrace,
   );
 
   server.registerTool(

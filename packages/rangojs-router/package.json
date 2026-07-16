@@ -104,6 +104,10 @@
       "types": "./dist/types/browser/dev-discovery.d.ts",
       "default": "./src/browser/dev-discovery.ts"
     },
+    "./internal/browser/navigation-diagnostics": {
+      "types": "./dist/types/browser/navigation-diagnostics.d.ts",
+      "default": "./src/browser/navigation-diagnostics.ts"
+    },
     "./internal/dev-diagnostics": {
       "types": "./dist/types/router/diagnostics/runtime-bridge.d.ts",
       "react-server": "./src/router/diagnostics/runtime-bridge.ts",
@@ -199,6 +203,7 @@
     "@types/debug": "^4.1.12",
     "@vitejs/plugin-rsc": "^0.5.27",
     "debug": "^4.4.1",
+    "jsonc-parser": "^3.3.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
     "rsc-html-stream": "^0.0.7",

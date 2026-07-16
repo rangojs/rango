@@ -101,7 +101,8 @@ describe("tracing + telemetry do not duplicate phase spans", () => {
       pathname: "/demo",
       routeKey: "demo",
       hit: true,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
     });
 
     const count = (name: string) => names.filter((n) => n === name).length;

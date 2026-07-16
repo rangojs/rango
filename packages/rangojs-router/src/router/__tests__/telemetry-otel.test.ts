@@ -310,7 +310,8 @@ describe("createOTelSink", () => {
         pathname: "/blog",
         routeKey: "blog",
         hit: true,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
         source: "runtime",
       });
       expect(spans).toHaveLength(1);
@@ -318,6 +319,8 @@ describe("createOTelSink", () => {
       expect(span.name).toBe("rango.cache.decision");
       expect(span.ended).toBe(true);
       expect(span.attributes["rango.cache.hit"]).toBe(true);
+      expect(span.attributes["rango.cache.freshness"]).toBe("fresh");
+      expect(span.attributes["rango.cache.revalidation_claimed"]).toBe(false);
       expect(span.attributes["rango.cache.source"]).toBe("runtime");
     });
 
@@ -329,9 +332,14 @@ describe("createOTelSink", () => {
         pathname: "/page",
         routeKey: "page",
         hit: false,
-        shouldRevalidate: false,
+        freshness: null,
+        revalidationClaimed: false,
       });
       expect(spans[0]!.attributes["rango.cache.source"]).toBeUndefined();
+      expect(spans[0]!.attributes["rango.cache.freshness"]).toBeUndefined();
+      expect(spans[0]!.attributes["rango.cache.revalidation_claimed"]).toBe(
+        false,
+      );
     });
   });
 

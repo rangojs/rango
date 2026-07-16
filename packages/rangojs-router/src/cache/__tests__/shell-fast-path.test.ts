@@ -42,6 +42,7 @@ function makeInnerStore(): SegmentCacheStore & {
     },
     async set(key: string, data: CachedEntryData) {
       sets.push([key, data]);
+      return { outcome: "stored" };
     },
     async delete() {
       return false;
@@ -139,9 +140,15 @@ describe("resolveShellImplicitCacheScope", () => {
     const onHit = vi.fn();
     const store: SegmentCacheStore = {
       async get() {
-        return { data: ENTRY, shouldRevalidate: false };
+        return {
+          data: ENTRY,
+          freshness: "fresh",
+          revalidationClaimed: false,
+        };
       },
-      async set() {},
+      async set() {
+        return { outcome: "stored" };
+      },
       async delete() {
         return false;
       },
@@ -161,7 +168,8 @@ describe("resolveShellImplicitCacheScope", () => {
       const scope = resolveShellImplicitCacheScope(null)!;
       await expect(scope.lookupRoute("/p", {})).resolves.toEqual({
         segments: [],
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
     });
 
@@ -192,9 +200,15 @@ describe("resolveShellImplicitCacheScope", () => {
     const onHit = vi.fn();
     const store: SegmentCacheStore = {
       async get() {
-        return { data: ENTRY, shouldRevalidate: false };
+        return {
+          data: ENTRY,
+          freshness: "fresh",
+          revalidationClaimed: false,
+        };
       },
-      async set() {},
+      async set() {
+        return { outcome: "stored" };
+      },
       async delete() {
         return true;
       },
@@ -226,7 +240,9 @@ describe("SnapshotOnlySegmentStore", () => {
     const recording = new RecordingShellStore(inner);
     const snapshotOnly = new SnapshotOnlySegmentStore(recording);
 
-    await snapshotOnly.set("doc:host/exec", ENTRY);
+    await expect(snapshotOnly.set("doc:host/exec", ENTRY)).resolves.toEqual({
+      outcome: "stored",
+    });
 
     expect(inner.sets).toHaveLength(0);
     const snapshot = recording.drainSnapshot();

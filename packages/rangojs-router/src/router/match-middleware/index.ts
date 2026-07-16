@@ -17,7 +17,7 @@
  * |      Purpose: Check cache before resolving                              |
  * |      On hit:  Yield cached segments + fresh loaders                     |
  * |      On miss: Pass through to segment resolution                        |
- * |      Side effects: Sets state.cacheHit, state.shouldRevalidate          |
+ * |      Side effects: Sets cache hit, freshness, and SWR ownership         |
  * |                                                                         |
  * |  [2] SEGMENT RESOLUTION                                                 |
  * |      Purpose: Resolve segments when cache misses                        |
@@ -39,7 +39,7 @@
  * |                                                                         |
  * |  [5] BACKGROUND REVALIDATION (outermost)                                |
  * |      Purpose: SWR - serve stale, revalidate in background               |
- * |      Triggers: When state.shouldRevalidate === true                     |
+ * |      Triggers: When state.revalidationClaimed === true                  |
  * |      Action: Async resolution via waitUntil(), updates cache            |
  * |                                                                         |
  * +-------------------------------------------------------------------------+
@@ -67,7 +67,7 @@
  * The middleware communicate through MatchPipelineState:
  *
  *   state.cacheHit        - Set by cache-lookup, read by others to skip work
- *   state.shouldRevalidate - Set by cache-lookup, triggers bg-revalidation
+ *   state.revalidationClaimed - Set by cache-lookup, triggers bg-revalidation
  *   state.segments        - Accumulated segments from pipeline
  *   state.interceptSegments - Segments for intercept slots
  *   state.slots           - Named slot data for client

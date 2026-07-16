@@ -28,18 +28,40 @@ export const CACHE_READ_ERROR: unique symbol = Symbol.for(
 );
 export type CacheReadError = typeof CACHE_READ_ERROR;
 
-/**
- * Result from cache get() including data and revalidation status
- */
-export interface CacheGetResult {
+export type CacheFreshness = "fresh" | "stale";
+
+export interface CacheReadState {
+  freshness: CacheFreshness;
+  /** True only for the stale reader that acquired revalidation ownership. */
+  revalidationClaimed: boolean;
+}
+
+export type CacheWriteSkipReason =
+  | "invalidated-generation"
+  | "unsupported"
+  | "invalid-input"
+  | "size-limit";
+
+export type CacheWriteAcknowledgement =
+  | { outcome: "stored" }
+  | { outcome: "scheduled" }
+  | { outcome: "skipped"; reason: CacheWriteSkipReason }
+  | { outcome: "failed" };
+
+/** Result from cache get() including independent freshness and SWR ownership. */
+export interface CacheGetResult extends CacheReadState {
   /** The cached entry data */
   data: CachedEntryData;
-  /**
-   * Whether the caller should trigger background revalidation.
-   * True when entry is stale AND not already being revalidated.
-   * The store atomically marks the entry as REVALIDATING when returning true.
-   */
-  shouldRevalidate: boolean;
+}
+
+export interface CacheResponseResult extends CacheReadState {
+  response: Response;
+  tags?: string[];
+}
+
+export interface CacheShellResult extends CacheReadState {
+  entry: ShellCacheEntry;
+  tags?: string[];
 }
 
 /**
@@ -106,8 +128,9 @@ export interface SegmentCacheStore<TEnv = unknown> {
 
   /**
    * Get cached entry data by key
-   * @returns Cache result with data and staleness, null if not found/expired,
-   * or CACHE_READ_ERROR when the read failed (optional — see the sentinel).
+   * @returns Cache result with data, freshness, and independent revalidation
+   * ownership; null if not found/expired; or CACHE_READ_ERROR when the read
+   * failed (optional — see the sentinel).
    */
   get(key: string): Promise<CacheGetResult | null | CacheReadError>;
 
@@ -123,7 +146,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void>;
+  ): Promise<CacheWriteAcknowledgement>;
 
   /**
    * Delete a cached entry
@@ -138,11 +161,9 @@ export interface SegmentCacheStore<TEnv = unknown> {
 
   /**
    * Get a cached Response by key.
-   * Returns the response and whether it should be revalidated (SWR).
+   * Returns the response with independent freshness and SWR ownership.
    */
-  getResponse?(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null>;
+  getResponse?(key: string): Promise<CacheResponseResult | null>;
 
   /**
    * Store a Response with TTL and optional SWR window.
@@ -158,23 +179,23 @@ export interface SegmentCacheStore<TEnv = unknown> {
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void>;
+  ): Promise<CacheWriteAcknowledgement>;
 
   /**
    * Get a cached PPR shell entry by key.
-   * Returns the stored prelude/postponed pair (see ShellCacheEntry) and whether
-   * it should be revalidated (SWR). Used by the shell-cache middleware to serve
-   * a cached HTML shell and resume fizz for just the live holes.
+   * Returns the stored prelude/postponed pair (see ShellCacheEntry) with
+   * independent freshness and SWR ownership. Used by the shell-cache middleware
+   * to serve a cached HTML shell and resume fizz for just the live holes.
    *
    * Optional: a store that does not implement the shell family disables the
    * shell-cache middleware (it fails open to the normal HTML render path).
-   * A passive read reports a stale entry as `shouldRevalidate: true` without
-   * claiming store-specific revalidation ownership.
+   * A passive read reports stale freshness without claiming store-specific
+   * revalidation ownership.
    */
   getShell?(
     key: string,
     options?: { claimRevalidation?: boolean },
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
+  ): Promise<CacheShellResult | null>;
 
   /**
    * Store a PPR shell entry with TTL and optional SWR window.
@@ -187,9 +208,8 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param swrSeconds - Optional stale-while-revalidate window in seconds
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
-   * @returns `invalidated` when a generation marker rejected the write,
-   *   `stored` when the store reports its write path completed, or void when it
-   *   reports no result. `stored` is not an independent durability guarantee.
+   * @returns An explicit acknowledgement distinguishing completed, scheduled,
+   *   skipped, and failed persistence.
    */
   putShell?(
     key: string,
@@ -197,11 +217,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void>;
+  ): Promise<CacheWriteAcknowledgement>;
 
   /**
    * Get a cached function result by key.
-   * Returns the serialized value, optional handle data, and staleness flag.
+   * Returns the serialized value and optional handle data with independent
+   * freshness and SWR ownership.
    */
   getItem?(key: string): Promise<CacheItemResult | null>;
 
@@ -215,7 +236,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void>;
+  ): Promise<CacheWriteAcknowledgement>;
 
   /**
    * Invalidate every cache entry (segment, response, item) tagged with any of
@@ -244,15 +265,13 @@ export interface SegmentCacheStore<TEnv = unknown> {
 /**
  * Result from getItem() for function-level caching ("use cache").
  */
-export interface CacheItemResult {
+export interface CacheItemResult extends CacheReadState {
   /** RSC-serialized return value */
   value: string;
   /** RSC-encoded handle data captured during execution (breadcrumbs, metadata,
    *  etc.). Encoded via the Flight codec so Promise/ReactNode handle values
    *  survive JSON-serializing stores — see handle-snapshot.ts encodeHandles. */
   handles?: string;
-  /** Whether the entry is stale and should be revalidated */
-  shouldRevalidate: boolean;
   /**
    * The entry's cache tags (including runtime cacheTag() tags), surfaced on read
    * so a "use cache" HIT can still contribute its tags to the request-scoped tag
@@ -408,6 +427,8 @@ export interface ShellSnapshotResponseValue {
   headers: [string, string][];
   /** base64-encoded response body (binary-safe, JSON-serializable). */
   body: string;
+  /** The response entry's cache tags. */
+  tags?: string[];
 }
 
 /** The stored form of an item-family (use cache / loader cache) snapshot value. */

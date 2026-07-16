@@ -125,7 +125,8 @@ describe("telemetry sink", () => {
         pathname: "/blog",
         routeKey: "blog",
         hit: false,
-        shouldRevalidate: false,
+        freshness: null,
+        revalidationClaimed: false,
       });
       safeEmit(sink, {
         type: "request.end",
@@ -222,7 +223,8 @@ describe("telemetry sink", () => {
           pathname: "/",
           routeKey: "home",
           hit: true,
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
           source: "runtime",
         },
         {
@@ -326,7 +328,8 @@ describe("telemetry sink", () => {
         pathname: "/test",
         routeKey: "test",
         hit: true,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
         source: "prerender",
       });
       sink.emit({
@@ -362,7 +365,8 @@ describe("telemetry sink", () => {
         pathname: "/",
         routeKey: "home",
         hit: false,
-        shouldRevalidate: false,
+        freshness: null,
+        revalidationClaimed: false,
       });
 
       expect(consoleSpy.mock.calls[0][0]).not.toContain("source=");

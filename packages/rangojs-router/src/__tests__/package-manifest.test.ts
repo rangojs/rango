@@ -38,6 +38,7 @@ describe("package manifest", () => {
     expect(pkg.dependencies["@modelcontextprotocol/sdk"]).toBe("1.29.0");
     expect(pkg.dependencies.undici).toBe("^7.28.0");
     expect(pkg.dependencies.zod).toBe("^4.0.0");
+    expect(pkg.dependencies["jsonc-parser"]).toBe("^3.3.1");
     expect(pkg.devDependencies["@modelcontextprotocol/sdk"]).toBeUndefined();
     expect(pkg.devDependencies.zod).toBeUndefined();
   });

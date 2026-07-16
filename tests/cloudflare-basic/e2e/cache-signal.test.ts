@@ -15,7 +15,7 @@ import {
 // pattern (/slow-cache). The app under test enables `debugCacheSignal` so the
 // header is present (see src/router.tsx).
 //
-// /slow-cache is a single component route wrapped in cache({ ttl: 60, swr: 300 }),
+// /slow-cache is a single component route wrapped in cache({ ttl: 1, swr: 300 }),
 // so its segment cache status appears in X-Rango-Cache. A unique query forces a
 // cold cache key per invocation (retry-safe), so the first request is a
 // guaranteed miss and the second, within the TTL, a hit.
@@ -64,6 +64,17 @@ function runCacheSignalSpec(f: Fixture): void {
     // The full contract: a cold key misses, the repeat hits.
     assertCacheStatus(target(res1), ROUTE_NAME, "miss");
     assertCacheStatus(target(res2), ROUTE_NAME, "hit");
+
+    // Past TTL, the first reader claims background SWR. The second reader sees
+    // the same stale entry behind the store's guard but owns no background work.
+    // Both responses must still report stale freshness.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const staleOwner = await page.request.get(url, { headers: flightHeaders });
+    const guardedStaleReader = await page.request.get(url, {
+      headers: flightHeaders,
+    });
+    assertCacheStatus(target(staleOwner), ROUTE_NAME, "stale");
+    assertCacheStatus(target(guardedStaleReader), ROUTE_NAME, "stale");
 
     // The wrong (pattern-shaped) key must NOT resolve — so a consumer copying
     // the URL pattern gets a clear failure, not a silent miss.

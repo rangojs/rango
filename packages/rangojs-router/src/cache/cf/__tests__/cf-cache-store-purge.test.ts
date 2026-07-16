@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CFCacheStore, TAG_MARKER_PREFIX } from "../cf-cache-store";
-import type { CachedEntryData } from "../../types";
+import { CFCacheStore, TAG_MARKER_PREFIX } from "../cf-cache-store.js";
+import type { CachedEntryData } from "../../types.js";
 import {
   createRequestContext,
   runWithRequestContext,
-} from "../../../server/request-context";
+} from "../../../server/request-context.js";
 
 function makeReqCtx() {
   return createRequestContext({
@@ -272,11 +272,18 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
         tagPurge: vi.fn(async () => {}),
       });
 
-      await store.set("k", createTestData(manyTags), 300);
-      await store.setItem("item", "v", { tags: manyTags });
-      await store.putResponse("doc", new Response("<html/>"), 300, 0, manyTags);
+      const acknowledgements = await Promise.all([
+        store.set("k", createTestData(manyTags), 300),
+        store.setItem("item", "v", { tags: manyTags }),
+        store.putResponse("doc", new Response("<html/>"), 300, 0, manyTags),
+      ]);
       await ctx.flush();
 
+      expect(acknowledgements).toEqual([
+        { outcome: "skipped", reason: "unsupported" },
+        { outcome: "skipped", reason: "unsupported" },
+        { outcome: "skipped", reason: "unsupported" },
+      ]);
       expect(put).not.toHaveBeenCalled();
       expect(await store.get("k")).toBeNull();
       expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(

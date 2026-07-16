@@ -80,6 +80,23 @@ describe("DiagnosticHub", () => {
     expect(hub.getStats(1).encodedBytes).toBeLessThanOrEqual(500);
   });
 
+  it("attributes producer input drops to their request", () => {
+    const hub = new DiagnosticHub({ maxEventBytes: 200 });
+    const drops: Array<{ count: number; requestId?: string }> = [];
+    hub.subscribeDroppedInputs((count, requestId) => {
+      drops.push({ count, requestId });
+    });
+
+    hub.record(event("req-1", 1, { data: { value: "x".repeat(1_000) } }));
+    hub.noteDroppedEvents(2, "req-1");
+
+    expect(drops).toEqual([
+      { count: 1, requestId: "req-1" },
+      { count: 2, requestId: "req-1" },
+    ]);
+    expect(hub.getTrace("req-1", 1)?.droppedEvents).toBe(3);
+  });
+
   it("enforces an encoded byte cap even when trace metadata cannot fit", () => {
     const hub = new DiagnosticHub({ maxEncodedBytes: 1 });
     hub.record(event("req-1", 1));

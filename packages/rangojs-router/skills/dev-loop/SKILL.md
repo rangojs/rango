@@ -15,16 +15,17 @@ output or replace interactive browser checks with `curl`.
 - Read `/rango` for the execution model and `/testing` for test levels.
 - A running Rango development server with the development MCP connected.
 - Playwright or another browser driver for DOM, console, and network evidence.
-- Tool schema version 4 with `explain_render`, `explain_cache_tags`, and
-  `explain_revalidation`.
+- Tool schema version 5 with `match_route`, navigation traces,
+  `explain_render`, `explain_cache_tags`, and `explain_revalidation`.
 
 ## Preflight
 
 1. Inspect package and lockfile versions for Rango, Vite, React, and the browser
    driver. Stop if the running process uses a different install.
 2. Call `get_project_metadata` and `get_discovery_status`.
-3. Call `get_routes` for the selected router and confirm the route is in the
-   current discovery generation.
+3. Call `match_route` for the target URL. Use `get_routes` only when you need to
+   browse or disambiguate the router; runtime-dependent declarations still need
+   an observed request trace.
 4. Call `get_compilation_issues` before trusting browser output. Fix current
    compilation errors first; label recent-only warnings as historical evidence.
 
@@ -37,10 +38,14 @@ remain true. Do not broaden the edit while collecting evidence.
 ## Diagnostic Loop
 
 1. Perform the interaction in the browser and capture DOM, console, and network.
-2. Read `X-Rango-Request-Id` from the exact response.
-3. Poll `list_requests` with a short bound until that exact request is complete,
-   then poll `get_request_trace` and `explain_render` until their required events
-   arrive. The cross-realm bridge is asynchronous.
+2. Select the exact lifecycle with `list_navigations` and
+   `get_navigation_trace`. Initial documents, soft navigation, refresh,
+   popstate, actions, and completed-prefetch adoption can have different request
+   shapes.
+3. Use `list_requests({ navigationId })` or an exact `X-Rango-Request-Id`, then
+   poll `get_request_trace` and `explain_render` until their required events
+   arrive. The cross-realm bridge is asynchronous; attributed loss makes the
+   selected trace explicitly truncated.
 4. For a mutation, call `explain_cache_tags` for invalidation activity and
    `explain_revalidation` for client-visible recomputation with the same request
    ID.

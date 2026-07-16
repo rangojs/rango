@@ -31,30 +31,39 @@ test.describe("MCP devtools", () => {
         "get_compilation_issues",
         "get_discovery_status",
         "get_errors",
+        "get_navigation_trace",
         "get_project_metadata",
         "get_request_trace",
         "get_routes",
+        "list_navigations",
         "list_requests",
+        "match_route",
       ]);
 
-      const [project, status, routes] = await Promise.all([
+      const [project, status, routes, matchedRoute] = await Promise.all([
         mcp.client.callTool({ name: "get_project_metadata" }),
         mcp.client.callTool({ name: "get_discovery_status" }),
         mcp.client.callTool({
           name: "get_routes",
           arguments: { limit: 1_000 },
         }),
+        mcp.client.callTool({
+          name: "match_route",
+          arguments: { url: "/blog/mcp-phase-2?secret=ignored" },
+        }),
       ]);
       expect(project.structuredContent).toMatchObject({
         preset: "node",
         mode: "development",
-        toolSchemaVersion: 4,
+        toolSchemaVersion: 5,
         capabilities: {
           routes: true,
+          routeMatching: true,
           discoveryStatus: true,
           renderExplanation: true,
           revalidationExplanation: true,
           cacheTagExplanation: true,
+          browserState: true,
         },
       });
 
@@ -71,6 +80,23 @@ test.describe("MCP devtools", () => {
             pattern: "/blog/:postId",
           }),
         ]),
+      );
+      expect(matchedRoute.structuredContent).toMatchObject({
+        pathname: "/blog/mcp-phase-2",
+        matched: true,
+        route: {
+          name: "blog.post",
+          pattern: "/blog/:postId",
+          params: { postId: "mcp-phase-2" },
+          structure: {
+            segments: expect.arrayContaining([
+              expect.objectContaining({ type: "route" }),
+            ]),
+          },
+        },
+      });
+      expect(JSON.stringify(matchedRoute.structuredContent)).not.toContain(
+        "secret",
       );
 
       const response = await page.goto(f.url("/blog/mcp-phase-2"));
@@ -114,6 +140,108 @@ test.describe("MCP devtools", () => {
           precision: "declaration-file",
         },
       });
+
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      const navigationResponse = page.waitForResponse(
+        (candidate) =>
+          new URL(candidate.url()).pathname === "/tx-src/b" &&
+          new URL(candidate.url()).searchParams.has("_rsc_partial"),
+      );
+      await page.getByTestId("tx-src-to-b").click();
+      await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+      const navigationRequestId = await (
+        await navigationResponse
+      ).headerValue("x-rango-request-id");
+      expect(navigationRequestId).toBeTruthy();
+      let navigationId: string | undefined;
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "list_navigations",
+            arguments: { kind: "navigate", completed: true },
+          });
+          const navigation = result.structuredContent?.navigations?.find(
+            (candidate: { pathname?: string }) =>
+              candidate.pathname === "/tx-src/b",
+          );
+          navigationId = navigation?.navigationId;
+          return navigation;
+        })
+        .toMatchObject({
+          pathname: "/tx-src/b",
+          requestIds: [navigationRequestId],
+        });
+      const navigationTrace = await mcp.client.callTool({
+        name: "get_navigation_trace",
+        arguments: { navigationId },
+      });
+      expect(navigationTrace.structuredContent).toMatchObject({
+        navigationId,
+        completed: true,
+        requestIds: [navigationRequestId],
+        events: expect.arrayContaining([
+          expect.objectContaining({ phase: "started" }),
+          expect.objectContaining({
+            phase: "request-linked",
+            requestId: navigationRequestId,
+            role: "navigation",
+          }),
+          expect.objectContaining({ phase: "committed" }),
+        ]),
+      });
+      const linkedRequest = await mcp.client.callTool({
+        name: "list_requests",
+        arguments: { navigationId },
+      });
+      expect(linkedRequest.structuredContent?.requests).toEqual([
+        expect.objectContaining({ requestId: navigationRequestId }),
+      ]);
+
+      await page.goto(f.url("/location-state"));
+      await waitForHydration(page);
+      const redirectActionResponse = page.waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "POST" &&
+          new URL(candidate.url()).searchParams.has("_rsc_action"),
+      );
+      await page.getByTestId("action-simple-redirect-btn").click();
+      await expect(page).toHaveURL(/\/location-state\/target$/);
+      const redirectActionRequestId = await (
+        await redirectActionResponse
+      ).headerValue("x-rango-request-id");
+      expect(redirectActionRequestId).toBeTruthy();
+      let actionNavigationId: string | undefined;
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "list_navigations",
+            arguments: { kind: "action", completed: true },
+          });
+          const navigation = result.structuredContent?.navigations?.find(
+            (candidate: { requestIds?: string[] }) =>
+              candidate.requestIds?.includes(redirectActionRequestId!),
+          );
+          actionNavigationId = navigation?.navigationId;
+          return navigation;
+        })
+        .toMatchObject({ requestIds: [redirectActionRequestId] });
+      const actionNavigationTrace = await mcp.client.callTool({
+        name: "get_navigation_trace",
+        arguments: { navigationId: actionNavigationId },
+      });
+      expect(actionNavigationTrace.structuredContent).toMatchObject({
+        completed: true,
+        events: expect.arrayContaining([
+          expect.objectContaining({
+            phase: "request-linked",
+            requestId: redirectActionRequestId,
+            role: "action",
+          }),
+          expect.objectContaining({ phase: "committed" }),
+        ]),
+      });
+
       const errorResponse = await page.goto(
         f.url("/__test/throw-handler-error"),
       );
@@ -161,7 +289,10 @@ test.describe("MCP devtools", () => {
         )
         .toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ outcome: "captured" }),
+            expect.objectContaining({
+              outcome: "captured",
+              storeWrite: "stored",
+            }),
           ]),
         );
 
@@ -230,6 +361,26 @@ test.describe("MCP devtools", () => {
             }),
           ]),
         });
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: renderRequestId },
+          });
+          return result.structuredContent?.operations;
+        })
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              artifact: "runtime-shell",
+              phase: "hit",
+              provenance: ["stored"],
+              tags: expect.arrayContaining([
+                expect.objectContaining({ value: "mcp-shell-scoped" }),
+              ]),
+            }),
+          ]),
+        );
       const warmedExecution = await page
         .getByTestId("shell-scoped-home")
         .textContent();
@@ -269,6 +420,36 @@ test.describe("MCP devtools", () => {
             }),
           ]),
         });
+
+      const responseCacheUrl = f.url(
+        `/response-cache/cached-json?probe=mcp-stored-${crypto.randomUUID()}`,
+      );
+      const coldResponseRoute = await page.goto(responseCacheUrl);
+      expect(coldResponseRoute?.status()).toBe(200);
+      const warmResponseRoute = await page.goto(responseCacheUrl);
+      const warmResponseRequestId =
+        await warmResponseRoute?.headerValue("x-rango-request-id");
+      expect(warmResponseRequestId).toBeTruthy();
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: warmResponseRequestId },
+          });
+          return result.structuredContent?.operations;
+        })
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              artifact: "response-route",
+              phase: "hit",
+              provenance: ["stored"],
+              tags: expect.arrayContaining([
+                expect.objectContaining({ value: "mcp-response-cache" }),
+              ]),
+            }),
+          ]),
+        );
 
       const invalidationResponse = await page.goto(
         f.url("/cache-tag-test/invalidate/catalog"),
@@ -356,11 +537,22 @@ test.describe("MCP devtools", () => {
             arguments: { requestId: failOpenRequestId },
           });
           const content = result.structuredContent;
-          return content?.requests?.[0]?.requestId === failOpenRequestId
-            ? content.stats?.bridgeDroppedEvents
-            : 0;
+          const request = content?.requests?.[0];
+          return request?.requestId === failOpenRequestId &&
+            request.droppedEvents > 0 &&
+            request.truncated === true &&
+            content.stats?.bridgeDroppedEvents > 0
+            ? request
+            : null;
         })
-        .toBeGreaterThan(0);
+        .toMatchObject({ requestId: failOpenRequestId, truncated: true });
+      const lossyExplanation = await mcp.client.callTool({
+        name: "explain_render",
+        arguments: { requestId: failOpenRequestId },
+      });
+      expect(lossyExplanation.structuredContent).toMatchObject({
+        truncated: true,
+      });
     }
   });
 });
@@ -388,6 +580,42 @@ test.describe("MCP devtools (production)", () => {
       );
       expect(appResponse?.status()).toBe(200);
       expect(await appResponse?.headerValue("x-rango-request-id")).toBeNull();
+
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      const navigationResponse = page.waitForResponse(
+        (candidate) =>
+          new URL(candidate.url()).pathname === "/tx-src/b" &&
+          new URL(candidate.url()).searchParams.has("_rsc_partial"),
+      );
+      await page.getByTestId("tx-src-to-b").click();
+      await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+      const productionNavigationResponse = await navigationResponse;
+      expect(
+        productionNavigationResponse.request().headers()[
+          "x-rango-navigation-id"
+        ],
+      ).toBeUndefined();
+      expect(
+        await productionNavigationResponse.headerValue("x-rango-request-id"),
+      ).toBeNull();
+
+      await page.goto(f.url("/location-state"));
+      await waitForHydration(page);
+      const redirectActionResponse = page.waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "POST" &&
+          new URL(candidate.url()).searchParams.has("_rsc_action"),
+      );
+      await page.getByTestId("action-simple-redirect-btn").click();
+      await expect(page).toHaveURL(/\/location-state\/target$/);
+      const productionActionResponse = await redirectActionResponse;
+      expect(
+        productionActionResponse.request().headers()["x-rango-navigation-id"],
+      ).toBeUndefined();
+      expect(
+        await productionActionResponse.headerValue("x-rango-request-id"),
+      ).toBeNull();
     }
 
     if (verifiesWorkflow("render-cache-adoption", "render-cache-optimizer")) {
@@ -425,6 +653,16 @@ test.describe("MCP devtools (production)", () => {
       expect(taggedResponse?.status()).toBe(200);
       expect(
         await taggedResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+      const responseCacheUrl = f.url(
+        `/response-cache/cached-json?probe=mcp-stored-production-${crypto.randomUUID()}`,
+      );
+      const coldResponseRoute = await page.goto(responseCacheUrl);
+      const coldBody = await coldResponseRoute?.text();
+      const warmResponseRoute = await page.goto(responseCacheUrl);
+      expect(await warmResponseRoute?.text()).toBe(coldBody);
+      expect(
+        await warmResponseRoute?.headerValue("x-rango-request-id"),
       ).toBeNull();
       const invalidationResponse = await page.goto(
         f.url("/cache-tag-test/invalidate/catalog"),

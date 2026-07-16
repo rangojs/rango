@@ -34,6 +34,7 @@ import { shouldPrefetch } from "./policy.js";
 import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import type { RscPayload } from "../types.js";
+import { BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED } from "../navigation-diagnostics-bridge.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
@@ -278,6 +279,12 @@ function executePrefetchFetch(
         streamComplete,
         scope,
         complete: false,
+        ...(BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED &&
+        response.headers.get("X-Rango-Request-Id")
+          ? {
+              sourceRequestId: response.headers.get("X-Rango-Request-Id")!,
+            }
+          : {}),
       };
       storePrefetch(storageKey, entry, gen);
       // The stall timeout now owns the body stream: arm eviction (publishedKey)

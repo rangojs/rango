@@ -201,9 +201,10 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
             "http.route": event.pathname,
             "rango.route_key": event.routeKey,
             "rango.cache.hit": event.hit,
-            "rango.cache.should_revalidate": event.shouldRevalidate,
+            "rango.cache.revalidation_claimed": event.revalidationClaimed,
           };
           if (event.source) attrs["rango.cache.source"] = event.source;
+          if (event.freshness) attrs["rango.cache.freshness"] = event.freshness;
           instant("rango.cache.decision", attrs).end();
           break;
         }

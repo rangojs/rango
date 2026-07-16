@@ -7,6 +7,7 @@
  */
 
 import type { ScanFilter } from "../../build/generate-route-types.js";
+import type { RouteStructureDeclaration } from "../../devtools-mcp/protocol.js";
 
 export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 
@@ -64,6 +65,8 @@ export interface PerRouterManifestEntry {
   sourceFile?: string;
   routeSourceFiles?: Record<string, string>;
   factoryOnlyPrefixes?: Set<string>;
+  /** Vite-host-only plain declaration projections used by match_route. */
+  mcpRouteDeclarations?: Record<string, RouteStructureDeclaration>;
 }
 
 /**

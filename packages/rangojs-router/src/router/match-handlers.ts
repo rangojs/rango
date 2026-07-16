@@ -66,7 +66,8 @@ interface LifecycleEmitter {
     state: {
       cacheHit: boolean;
       cacheSource?: "runtime" | "prerender";
-      shouldRevalidate?: boolean;
+      cacheFreshness?: "fresh" | "stale";
+      revalidationClaimed?: boolean;
     },
     segments: CacheSegmentSignal[],
   ): void;
@@ -118,7 +119,8 @@ function createLifecycleEmitter(args: {
       state: {
         cacheHit: boolean;
         cacheSource?: "runtime" | "prerender";
-        shouldRevalidate?: boolean;
+        cacheFreshness?: "fresh" | "stale";
+        revalidationClaimed?: boolean;
       },
       segments: CacheSegmentSignal[],
     ): void {
@@ -130,7 +132,8 @@ function createLifecycleEmitter(args: {
         pathname: args.pathname,
         routeKey,
         hit: state.cacheHit,
-        shouldRevalidate: !!state.shouldRevalidate,
+        freshness: state.cacheHit ? (state.cacheFreshness ?? "fresh") : null,
+        revalidationClaimed: !!state.revalidationClaimed,
         source: state.cacheSource,
         segments,
       });
@@ -227,7 +230,8 @@ export function createMatchHandlers<TEnv = any>(
     state: {
       cacheHit: boolean;
       cacheSource?: "runtime" | "prerender";
-      shouldRevalidate?: boolean;
+      cacheFreshness?: "fresh" | "stale";
+      revalidationClaimed?: boolean;
     },
   ): CacheSegmentSignal[] => buildCacheSignalSegments(routeKey, state);
   const recordSignalIfEnabled = (segments: CacheSegmentSignal[]): void => {

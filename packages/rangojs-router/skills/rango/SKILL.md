@@ -379,11 +379,13 @@ Use `/typesafety` for type-safe href and environment setup.
 
 `rango mcp` is the stdio connector for Rango's development-only MCP endpoint.
 With the Vite dev server running, an agent can inspect live project metadata,
-runtime-discovered routes, route-discovery freshness, compilation issues,
-request summaries, exact request traces, runtime errors, render decisions, and
-cache-tag attachment/invalidation activity, and revalidation decisions. The
-tools are read-only; browser state and arbitrary
-application logs are not part of the current surface.
+runtime-discovered routes, static canonical-trie matches, route-discovery
+freshness, compilation issues, browser navigation lifecycles, request summaries,
+exact request traces, runtime errors, render decisions, cache-tag activity, and
+revalidation decisions. The tools are read-only; DOM, console, network payloads,
+and arbitrary application logs are not part of the surface. Install a project
+client entry with `rango mcp install --client
+<claude-code|cursor|vscode|gemini> [--root <path>] [--dry-run]`.
 
 Treat `stale: true` as last-good route data, not current readiness. Route edits
 mark it immediately, before HMR's debounce. On Cloudflare,
@@ -394,12 +396,12 @@ Project metadata similarly reports `routersTruncated` when its router summary is
 bounded and `urlsTruncated` when its server URL summary is bounded. Complete tool
 results are capped at 256 KiB.
 
-For browser failures, read `X-Rango-Request-Id` from the document or Flight
-response, pass it to `list_requests`, then use the same value with
-`get_request_trace`, `explain_render`, and `get_errors`. For an action or
-navigation, pass its request ID to `explain_cache_tags` for observed tag activity
-and `explain_revalidation` for client recomputation; add a transaction ID only to
-select one transaction within that request. Treat `outputTruncated`,
+For browser failures, select the exact lifecycle with `list_navigations` and
+`get_navigation_trace`, then pass its `navigationId` to `list_requests`. An exact
+`X-Rango-Request-Id` remains the direct path for one response. Use the selected
+request with `get_request_trace`, `explain_render`, and `get_errors`; actions use
+`explain_cache_tags` and `explain_revalidation` separately. Add a transaction ID
+only to select one transaction within that request. Treat `outputTruncated`,
 `omittedTransactions`, `truncated`, and drop counters as evidence that the
 retained trace is incomplete.
 

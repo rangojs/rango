@@ -468,7 +468,7 @@ describe("dispatch", () => {
       let n = 0;
       const store: SegmentCacheStore = {
         get: async () => null,
-        set: async () => {},
+        set: async () => ({ outcome: "stored" }),
         delete: async () => false,
         getResponse: async () => ({
           response: new Response(JSON.stringify({ n: 99 }), {
@@ -478,9 +478,10 @@ describe("dispatch", () => {
               "Set-Cookie": "session=leaked; Path=/",
             },
           }),
-          shouldRevalidate: false,
+          freshness: "fresh",
+          revalidationClaimed: false,
         }),
-        putResponse: async () => {},
+        putResponse: async () => ({ outcome: "stored" }),
       };
       const router = createRouter<{}>({ cache: { store } }).routes(
         urls(({ path, cache }) => [
@@ -495,6 +496,47 @@ describe("dispatch", () => {
       const res = await dispatch(router, { request: "/cached-poison" });
       expect(await res.json()).toEqual({ n: 1 });
       expect(res.headers.get("Set-Cookie")).toBeNull();
+    });
+
+    it("serves an unclaimed stale response without running the handler or scheduling a write", async () => {
+      let handlerRuns = 0;
+      const putResponse = vi.fn(async () => ({ outcome: "stored" as const }));
+      const store: SegmentCacheStore = {
+        get: async () => null,
+        set: async () => ({ outcome: "stored" }),
+        delete: async () => false,
+        getResponse: async () => ({
+          response: new Response(JSON.stringify({ source: "stale" }), {
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+          freshness: "stale",
+          revalidationClaimed: false,
+        }),
+        putResponse,
+      };
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 60, swr: 300 }, () => [
+            path.json(
+              "/cached-stale-unclaimed",
+              () => {
+                handlerRuns++;
+                return { source: "handler" };
+              },
+              { name: "cached.stale-unclaimed" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, {
+        request: "/cached-stale-unclaimed",
+      });
+      await flushWrites();
+
+      expect(await res.json()).toEqual({ source: "stale" });
+      expect(handlerRuns).toBe(0);
+      expect(putResponse).not.toHaveBeenCalled();
     });
 
     it("does not write the cache from a HEAD request", async () => {
@@ -696,10 +738,10 @@ describe("dispatch", () => {
     ): SegmentCacheStore {
       return {
         get: async () => null,
-        set: async () => {},
+        set: async () => ({ outcome: "stored" }),
         delete: async () => false,
         getResponse: async () => null,
-        putResponse: async () => {},
+        putResponse: async () => ({ outcome: "stored" }),
         ...overrides,
       };
     }
@@ -837,7 +879,8 @@ describe("dispatch", () => {
             status: 200,
             headers: { "content-type": "application/json;charset=utf-8" },
           }),
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
         }),
         // Background revalidation re-runs the handler then writes; the write throws.
         putResponse: async () => {

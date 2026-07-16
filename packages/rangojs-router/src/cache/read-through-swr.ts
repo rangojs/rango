@@ -11,7 +11,11 @@
  * 4. Miss → execute, cache write (blocking when no waitUntil), return
  */
 
-import type { CacheItemResult, CacheItemOptions } from "./types.js";
+import type {
+  CacheItemResult,
+  CacheItemOptions,
+  CacheWriteAcknowledgement,
+} from "./types.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
 import type { CacheErrorReporter } from "./cache-error.js";
@@ -31,7 +35,7 @@ export interface ReadThroughItemConfig<T> {
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ) => Promise<void>;
+  ) => Promise<CacheWriteAcknowledgement>;
   /** Cache key */
   key: string;
   /** Execute the underlying function/loader on miss or revalidation */
@@ -104,13 +108,14 @@ export async function readThroughItem<T>(
     try {
       const data = await deserialize(cached.value);
 
-      if (!cached.shouldRevalidate) {
+      if (cached.freshness === "fresh") {
         onHit?.(cached);
         return data;
       }
 
-      // Stale hit — return stale data, revalidate in background
+      // Every stale reader reports stale; only the lock owner schedules work.
       onStale?.(cached);
+      if (!cached.revalidationClaimed) return data;
       runBackground(
         host,
         async () => {
@@ -123,8 +128,17 @@ export async function readThroughItem<T>(
               : execute());
             const serialized = await serialize(fresh);
             if (serialized !== null) {
-              await setItem(key, serialized, storeOptions);
-              onCached?.();
+              const acknowledgement = await setItem(
+                key,
+                serialized,
+                storeOptions,
+              );
+              if (
+                acknowledgement.outcome === "stored" ||
+                acknowledgement.outcome === "scheduled"
+              ) {
+                onCached?.();
+              }
             }
           } catch (error) {
             reportCacheError(
@@ -160,8 +174,13 @@ export async function readThroughItem<T>(
       try {
         const serialized = await serialize(data);
         if (serialized !== null) {
-          await setItem(key, serialized, storeOptions);
-          onCached?.();
+          const acknowledgement = await setItem(key, serialized, storeOptions);
+          if (
+            acknowledgement.outcome === "stored" ||
+            acknowledgement.outcome === "scheduled"
+          ) {
+            onCached?.();
+          }
         }
       } catch (error) {
         reportCacheError(

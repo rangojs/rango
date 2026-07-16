@@ -157,7 +157,11 @@ describe("CacheScope.lookupRoute under _shellFragmentPayload", () => {
     };
     return {
       entry,
-      get: async () => ({ data: entry, shouldRevalidate: false }),
+      get: async () => ({
+        data: entry,
+        freshness: "fresh",
+        revalidationClaimed: false,
+      }),
     } as unknown as SegmentCacheStore & { entry: CachedEntryData };
   }
 

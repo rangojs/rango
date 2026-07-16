@@ -98,8 +98,18 @@ For evidence-driven work, use `/dev-loop` after an edit,
 ## Inspecting a running app with MCP
 
 Rango's development server exposes live project, route, and discovery metadata
-to MCP-compatible coding agents. Add the connector to your project's MCP
-configuration:
+to MCP-compatible coding agents. Install the project-local connector entry for
+your client (supported values: `claude-code`, `cursor`, `vscode`, `gemini`):
+
+```bash
+pnpm exec rango mcp install --client claude-code
+```
+
+Use `--dry-run` to inspect the target and `--root <path>` when the Rango app is
+below the workspace root. The installer preserves JSONC comments and unrelated
+servers, refuses collisions/symlinked targets, writes atomically, and stores only
+the stdio command — never the live endpoint or bearer credential. The equivalent
+manual configuration is:
 
 ```json
 {
@@ -113,16 +123,22 @@ configuration:
 ```
 
 Start the app with `pnpm dev`. The connector discovers the running Rango server
-for the project and provides ten read-only tools:
+for the project and provides thirteen read-only tools under tool schema v5:
 
 - `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
 - `get_routes` - paginated runtime-discovered routes, including dynamic factories;
+- `match_route` - canonical-trie matching and declared route structure for a URL
+  without running middleware, handlers, loaders, stores, or runtime predicates;
 - `get_discovery_status` - generation, freshness, route counts, and the latest
   discovery error. On Cloudflare it also reports whether workerd has adopted the
   discovered route generation;
 - `get_compilation_issues` - current transform errors and recent Vite warnings;
-- `list_requests` - bounded request summaries with transport, route, and status;
+- `list_requests` - bounded request summaries with transport, route, status, and
+  linked browser navigation IDs; accepts an exact `navigationId` filter;
 - `get_request_trace` - the retained execution trace for an exact request ID;
+- `list_navigations` - bounded browser-owned document/navigation lifecycles;
+- `get_navigation_trace` - one exact document, navigate, refresh, popstate, or
+  action lifecycle with linked prefetch/mutation/revalidation requests;
 - `explain_render` - segment `cache()`, PPR, handler, loader-cache, and loader
   visible-generation decisions for one request;
 - `explain_cache_tags` - exact bounded tag attachment and invalidation activity
@@ -133,7 +149,8 @@ for the project and provides ten read-only tools:
 
 The workflow skills combine these development facts with a real browser and
 paired production verification. They do not treat MCP output as a substitute for
-DOM/network checks, and the MCP endpoint remains absent from production.
+DOM/network checks. Request-attributed bridge loss marks affected traces and
+explanations truncated, and the MCP endpoint remains absent from production.
 
 Use `rango mcp --root <path>` when the MCP process does not start in the project
 root. When multiple dev servers use one root, select one with

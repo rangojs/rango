@@ -345,7 +345,16 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const cached = await store.getResponse(cacheKey);
 
       if (cached && cached.response.status === 200) {
-        if (!cached.shouldRevalidate) {
+        if (diagnosticLink && cached.tags?.length) {
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "document",
+            phase: cached.freshness === "stale" ? "stale" : "hit",
+            provenance: ["stored"],
+            tags: cached.tags,
+            identity: cacheKey,
+          });
+        }
+        if (cached.freshness === "fresh") {
           // Fresh hit - return immediately
           log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
           return drainOnResponseCallbacks(
@@ -356,58 +365,73 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
         // Stale hit - return cached response, revalidate in background
         log(
-          `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
+          `[DocumentCache] STALE ${typeLabel}: ${url.pathname}${cached.revalidationClaimed ? " (revalidating)" : ""}`,
         );
 
-        runBackground(requestCtx, async () => {
-          try {
-            // Re-establish the request-context ALS around the background
-            // re-render: next() re-runs the full handler pipeline, and on
-            // workerd a waitUntil task runs detached from the request's I/O
-            // context, so a handler/component reading getRequestContext() would
-            // otherwise throw. Same fix as the route-level/use-cache background
-            // revalidation paths.
-            const fresh = await runWithRequestContext(requestCtx, () => next());
-            const directives = shouldCacheResponse(fresh);
-
-            if (directives && fresh.body) {
-              // Background revalidation: nothing streams to a client, so drain
-              // the fresh render fully before snapshotting tags (same
-              // render-complete barrier as the miss path).
-              const body = await new Response(fresh.body).arrayBuffer();
-              const tags = collectRequestTags(requestCtx);
-              await store.putResponse!(
-                cacheKey,
-                new Response(body, fresh),
-                directives.sMaxAge!,
-                directives.staleWhileRevalidate,
-                tags,
+        if (cached.revalidationClaimed)
+          runBackground(requestCtx, async () => {
+            try {
+              // Re-establish the request-context ALS around the background
+              // re-render: next() re-runs the full handler pipeline, and on
+              // workerd a waitUntil task runs detached from the request's I/O
+              // context, so a handler/component reading getRequestContext() would
+              // otherwise throw. Same fix as the route-level/use-cache background
+              // revalidation paths.
+              const fresh = await runWithRequestContext(requestCtx, () =>
+                next(),
               );
-              if (diagnosticLink && tags?.length) {
-                recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
-                  artifact: "document",
-                  phase: "write",
-                  provenance: ["request-union"],
+              const directives = shouldCacheResponse(fresh);
+
+              if (directives && fresh.body) {
+                // Background revalidation: nothing streams to a client, so drain
+                // the fresh render fully before snapshotting tags (same
+                // render-complete barrier as the miss path).
+                const body = await new Response(fresh.body).arrayBuffer();
+                const tags = collectRequestTags(requestCtx);
+                const acknowledgement = await store.putResponse!(
+                  cacheKey,
+                  new Response(body, fresh),
+                  directives.sMaxAge!,
+                  directives.staleWhileRevalidate,
                   tags,
-                  identity: cacheKey,
-                  outcome: "revalidated",
-                });
+                );
+                if (
+                  diagnosticLink &&
+                  tags?.length &&
+                  (acknowledgement.outcome === "stored" ||
+                    acknowledgement.outcome === "scheduled")
+                ) {
+                  recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                    artifact: "document",
+                    phase: "write",
+                    provenance: ["request-union"],
+                    tags,
+                    identity: cacheKey,
+                    outcome: "revalidated",
+                  });
+                }
+                if (
+                  acknowledgement.outcome === "stored" ||
+                  acknowledgement.outcome === "scheduled"
+                ) {
+                  log(
+                    `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
+                  );
+                }
               }
-              log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
+            } catch (error) {
+              // Pass requestCtx explicitly: this runs in a detached waitUntil task
+              // where the ALS context is gone, so onError only fires if we hand it
+              // the captured context (reportCacheError falls back to _getRequestContext
+              // otherwise, which is null here).
+              reportCacheError(
+                error,
+                "cache-write",
+                "[DocumentCache] revalidation",
+                requestCtx,
+              );
             }
-          } catch (error) {
-            // Pass requestCtx explicitly: this runs in a detached waitUntil task
-            // where the ALS context is gone, so onError only fires if we hand it
-            // the captured context (reportCacheError falls back to _getRequestContext
-            // otherwise, which is null here).
-            reportCacheError(
-              error,
-              "cache-write",
-              "[DocumentCache] revalidation",
-              requestCtx,
-            );
-          }
-        });
+          });
 
         return drainOnResponseCallbacks(
           addCacheStatusHeader(cached.response, "STALE"),
@@ -447,14 +471,19 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // body and its tag set consistent.
             const body = await new Response(cacheStream).arrayBuffer();
             const tags = collectRequestTags(requestCtx);
-            await store.putResponse!(
+            const acknowledgement = await store.putResponse!(
               cacheKey,
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
               tags,
             );
-            if (diagnosticLink && tags?.length) {
+            if (
+              diagnosticLink &&
+              tags?.length &&
+              (acknowledgement.outcome === "stored" ||
+                acknowledgement.outcome === "scheduled")
+            ) {
               recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
                 artifact: "document",
                 phase: "write",

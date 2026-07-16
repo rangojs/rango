@@ -5,14 +5,19 @@ import {
   serializedToolResultBytes,
   type DiscoveryStatusSnapshot,
   type GetRoutesInput,
+  type MatchRouteInput,
+  type MatchRouteSnapshot,
   type ProjectMetadataSnapshot,
   type RouteRecord,
+  type RouteStructureDeclaration,
   type RouterRecord,
   type RoutesPageSnapshot,
   type RouteOwnershipRecord,
   type RouteSourceOwnership,
   type RangoPreset,
 } from "./protocol.js";
+import type { TrieNode } from "../build/route-trie.js";
+import { tryTrieMatch } from "../router/trie-matching.js";
 
 const DEFAULT_ROUTE_PAGE_SIZE = 200;
 const MAX_ROUTE_PAGE_SIZE = 1_000;
@@ -48,17 +53,34 @@ export interface RangoMcpSnapshotStore {
     routers: RouterRecord[],
     attempt: DiscoveryAttempt,
     ownership?: RouteOwnershipRecord[],
+    matchIndexes?: RouteMatchIndex[],
   ): void;
   failDiscovery(error: unknown, attempt: DiscoveryAttempt): void;
   markRuntimeConvergence(state: "ready" | "pending" | "timeout"): void;
   getProjectMetadata(): ProjectMetadataSnapshot;
   getDiscoveryStatus(): DiscoveryStatusSnapshot;
   getRoutes(input?: GetRoutesInput): RoutesPageSnapshot;
+  matchRoute(input: MatchRouteInput): MatchRouteSnapshot;
   getRouteSource(
     routerId: string,
     routeKey: string | null,
     routePattern: string | null,
   ): RouteSourceOwnership | null;
+}
+
+export interface RouteMatchIndex {
+  routerId: string;
+  trie: TrieNode | null;
+  routes: Record<
+    string,
+    {
+      name: string | null;
+      pattern: string;
+      search: Record<string, string> | null;
+      structure: RouteStructureDeclaration | null;
+      truncated: boolean;
+    }
+  >;
 }
 
 export interface DiscoveryAttempt {
@@ -204,6 +226,7 @@ export function createRangoMcpSnapshotStore(
   let routers: RouterRecord[] = [];
   let routeSourcesByName = new Map<string, RouteSourceOwnership | null>();
   let routeSourcesByPattern = new Map<string, RouteSourceOwnership | null>();
+  let routeMatchIndexes = new Map<string, RouteMatchIndex>();
   let changeRevision = 0;
   let lastAttemptAt: number | null = null;
   let lastSuccessAt: number | null = null;
@@ -231,6 +254,37 @@ export function createRangoMcpSnapshotStore(
     };
   };
 
+  const resolveRouteSource = (
+    routerId: string,
+    routeKey: string | null,
+    routePattern: string | null,
+  ): RouteSourceOwnership | null => {
+    if (routeKey) {
+      const nameKey = `${routerId}\0${routeKey}`;
+      if (routeSourcesByName.has(nameKey)) {
+        return routeSourcesByName.get(nameKey) ?? null;
+      }
+    }
+    if (!routePattern) return null;
+    const patternKey = `${routerId}\0${routePattern}`;
+    if (routeSourcesByPattern.has(patternKey)) {
+      return routeSourcesByPattern.get(patternKey) ?? null;
+    }
+    const routerFile = routes.find(
+      (route) =>
+        route.routerId === routerId &&
+        route.pattern === routePattern &&
+        (!routeKey || route.name === routeKey),
+    )?.routerFile;
+    return routerFile
+      ? {
+          file: routerFile,
+          kind: "route",
+          precision: "router-file",
+        }
+      : null;
+  };
+
   return {
     markDiscoveryPending(): void {
       changeRevision++;
@@ -249,6 +303,7 @@ export function createRangoMcpSnapshotStore(
       nextRouters: RouterRecord[],
       discoveryAttempt: DiscoveryAttempt,
       ownership: RouteOwnershipRecord[] = [],
+      matchIndexes: RouteMatchIndex[] = [],
     ): void {
       if (discoveryAttempt.id !== attempt) return;
       routes = [...nextRoutes].sort((a, b) => {
@@ -259,6 +314,9 @@ export function createRangoMcpSnapshotStore(
         );
       });
       routers = [...nextRouters].sort((a, b) => a.id.localeCompare(b.id));
+      routeMatchIndexes = new Map(
+        matchIndexes.map((index) => [index.routerId, index]),
+      );
       routeSourcesByName = new Map();
       routeSourcesByPattern = new Map();
       for (const entry of ownership) {
@@ -328,6 +386,7 @@ export function createRangoMcpSnapshotStore(
         routersTruncated: selectedRouters.length < routers.length,
         capabilities: {
           routes: true,
+          routeMatching: true,
           discoveryStatus: true,
           compilationIssues: true,
           recentRequests: true,
@@ -336,7 +395,7 @@ export function createRangoMcpSnapshotStore(
           revalidationExplanation: true,
           cacheTagExplanation: true,
           sourceOwnership: true,
-          browserState: false,
+          browserState: true,
           logs: false,
         },
       });
@@ -457,35 +516,85 @@ export function createRangoMcpSnapshotStore(
       return createPage(page, nextOffset, stoppedForSize);
     },
 
+    matchRoute(input: MatchRouteInput): MatchRouteSnapshot {
+      if (Buffer.byteLength(input.url, "utf8") > 8_192) {
+        throw new Error("Route URL exceeds the 8192-byte input limit");
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(input.url, "http://rango.invalid");
+      } catch {
+        throw new Error("Invalid route URL");
+      }
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("Route URL must use http or https");
+      }
+      if (parsed.username || parsed.password) {
+        throw new Error("Route URL must not contain credentials");
+      }
+
+      let routerId = input.routerId ?? null;
+      if (routerId === null) {
+        if (routeMatchIndexes.size > 1) {
+          throw new Error(
+            "Multiple routers are active; pass routerId to match_route",
+          );
+        }
+        routerId = routeMatchIndexes.keys().next().value ?? null;
+      }
+      if (routerId !== null && !routeMatchIndexes.has(routerId)) {
+        throw new Error(`Unknown routerId: ${routerId}`);
+      }
+
+      const status = getDiscoveryStatus();
+      const index = routerId ? routeMatchIndexes.get(routerId) : undefined;
+      const matched = index ? tryTrieMatch(index.trie, parsed.pathname) : null;
+      const declaration = matched ? index?.routes[matched.routeKey] : undefined;
+      const snapshot: MatchRouteSnapshot = {
+        schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+        generation,
+        capturedAt: status.lastSuccessAt,
+        stale: status.stale,
+        pathname: boundUtf8(parsed.pathname, 8_192),
+        routerId,
+        matched: matched !== null,
+        route:
+          matched && declaration
+            ? {
+                name: declaration.name,
+                pattern: declaration.pattern,
+                params: Object.fromEntries(
+                  Object.entries(matched.params).map(([key, value]) => [
+                    boundUtf8(key, 256),
+                    boundUtf8(value, 4_096),
+                  ]),
+                ),
+                redirectTo: matched.redirectTo
+                  ? boundUtf8(matched.redirectTo, 8_192)
+                  : null,
+                source: resolveRouteSource(
+                  routerId!,
+                  matched.routeKey,
+                  declaration.pattern,
+                ),
+                search: declaration.search,
+                structure: declaration.structure,
+              }
+            : null,
+        truncated: declaration?.truncated ?? false,
+      };
+      if (serializedToolResultBytes(snapshot) > RANGO_MCP_MAX_RESULT_BYTES) {
+        throw new Error("Rango MCP route match exceeded its output limit");
+      }
+      return snapshot;
+    },
+
     getRouteSource(
       routerId: string,
       routeKey: string | null,
       routePattern: string | null,
     ): RouteSourceOwnership | null {
-      if (routeKey) {
-        const nameKey = `${routerId}\0${routeKey}`;
-        if (routeSourcesByName.has(nameKey)) {
-          return routeSourcesByName.get(nameKey) ?? null;
-        }
-      }
-      if (!routePattern) return null;
-      const patternKey = `${routerId}\0${routePattern}`;
-      if (routeSourcesByPattern.has(patternKey)) {
-        return routeSourcesByPattern.get(patternKey) ?? null;
-      }
-      const routerFile = routes.find(
-        (route) =>
-          route.routerId === routerId &&
-          route.pattern === routePattern &&
-          (!routeKey || route.name === routeKey),
-      )?.routerFile;
-      return routerFile
-        ? {
-            file: routerFile,
-            kind: "route",
-            precision: "router-file",
-          }
-        : null;
+      return resolveRouteSource(routerId, routeKey, routePattern);
     },
   };
 }

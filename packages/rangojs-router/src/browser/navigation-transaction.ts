@@ -12,6 +12,12 @@ import {
 import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
 import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED,
+  getBrowserNavigationDiagnostics,
+  type BrowserNavigationDiagnosticRef,
+} from "./navigation-diagnostics-bridge.js";
+import type { BrowserNavigationKind } from "../router/diagnostics/browser-protocol.js";
 
 export { resolveNavigationState } from "./history-state.js";
 
@@ -76,6 +82,7 @@ interface BoundCommitOverrides {
  */
 export interface BoundTransaction {
   readonly currentUrl: string;
+  readonly diagnosticNavigation?: BrowserNavigationDiagnosticRef;
   /** Start streaming and get a token to end it when the stream completes */
   startStreaming(): StreamingToken;
   /** Commit the navigation. Returns the effective scroll option for the caller to handle. */
@@ -97,6 +104,8 @@ interface NavigationTransaction extends Disposable {
   ): BoundTransaction;
   /** The navigation handle from the event controller */
   handle: NavigationHandle;
+  /** Mark an uncommitted navigation as failed before disposal. */
+  fail(): void;
 }
 
 /**
@@ -108,9 +117,43 @@ export function createNavigationTransaction(
   eventController: EventController,
   url: string,
   options?: NavigateOptions & { skipLoadingState?: boolean },
+  diagnostic?: {
+    navigation?: BrowserNavigationDiagnosticRef;
+    kind?: BrowserNavigationKind;
+    settle?: boolean;
+  },
 ): NavigationTransaction {
   let committed = false;
+  let diagnosticSettled = false;
   const currentUrl = window.location.href;
+  const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+    ? getBrowserNavigationDiagnostics()
+    : null;
+  const diagnosticNavigation = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+    ? (diagnostic?.navigation ??
+      navigationDiagnostics?.start(diagnostic?.kind ?? "navigate", url))
+    : undefined;
+
+  const completeDiagnostic = (): void => {
+    if (
+      diagnostic?.settle === false ||
+      diagnosticSettled ||
+      !diagnosticNavigation
+    )
+      return;
+    diagnosticSettled = true;
+    navigationDiagnostics?.complete(diagnosticNavigation);
+  };
+  const abortDiagnostic = (failed: boolean = false): void => {
+    if (
+      diagnostic?.settle === false ||
+      diagnosticSettled ||
+      !diagnosticNavigation
+    )
+      return;
+    diagnosticSettled = true;
+    navigationDiagnostics?.abort(diagnosticNavigation, failed);
+  };
 
   const handle = eventController.startNavigation(url, options);
 
@@ -141,6 +184,7 @@ export function createNavigationTransaction(
       const currentHandleData = eventController.getHandleState().data;
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
       handle.complete(parsedUrl);
+      completeDiagnostic();
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
       return { scroll: false };
     }
@@ -159,6 +203,7 @@ export function createNavigationTransaction(
     if (storeOnly) {
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
+      completeDiagnostic();
       return { scroll: false };
     }
 
@@ -178,6 +223,7 @@ export function createNavigationTransaction(
     }
 
     handle.complete(parsedUrl);
+    completeDiagnostic();
 
     debugLog(
       "[Browser] Navigation committed, historyKey:",
@@ -191,6 +237,9 @@ export function createNavigationTransaction(
   return {
     handle,
     commit,
+    fail() {
+      if (!committed) abortDiagnostic(true);
+    },
 
     with(
       opts: Omit<CommitOptions, "segmentIds" | "segments">,
@@ -199,6 +248,7 @@ export function createNavigationTransaction(
         get currentUrl() {
           return currentUrl;
         },
+        diagnosticNavigation,
         startStreaming() {
           return handle.startStreaming();
         },
@@ -236,10 +286,12 @@ export function createNavigationTransaction(
 
     [Symbol.dispose]() {
       if (handle.signal.aborted) {
+        if (!committed) abortDiagnostic();
         return;
       }
 
       if (!committed) {
+        abortDiagnostic();
         handle[Symbol.dispose]();
       }
     },

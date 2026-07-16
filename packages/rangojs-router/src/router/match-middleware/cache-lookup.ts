@@ -30,7 +30,7 @@
  *   |           |
  *   v           v
  * yield*    Set state.cacheHit = true
- * source    Set state.shouldRevalidate
+ * source    Set state.cacheFreshness and state.revalidationClaimed
  *   |           |
  *   |           v
  *   |    +---------------------------+
@@ -63,7 +63,7 @@
  *   - state.cacheHit = true signals downstream middleware to skip
  *   - Cached segments have their components nullified if client already has them
  *   - Loaders are always re-resolved for fresh data
- *   - state.shouldRevalidate triggers background SWR if cache was stale
+ *   - state.revalidationClaimed triggers background SWR for the lock owner
  *
  * Cache MISS:
  *   - Passes through to segment-resolution middleware
@@ -287,6 +287,8 @@ async function* yieldFromStore<TEnv>(
 
   state.cacheHit = true;
   state.cacheSource = "prerender";
+  state.cacheFreshness = "fresh";
+  state.revalidationClaimed = false;
   state.cachedSegments = segments;
   state.cachedMatchedIds = segments.map((s) => s.id);
 
@@ -434,7 +436,7 @@ export type GeneratorMiddleware<T> = (
  * - Applies revalidation to determine which segments need re-rendering
  * - Resolves loaders fresh (loaders are NOT cached by design)
  * - Sets state.cacheHit = true
- * - Sets state.shouldRevalidate if SWR needed
+ * - Sets cache freshness independently from SWR ownership
  * - Yields cached segments + fresh loader segments
  *
  * If cache miss:
@@ -601,7 +603,8 @@ export function withCacheLookup<TEnv>(
 
     state.cacheHit = true;
     state.cacheSource = "runtime";
-    state.shouldRevalidate = cacheResult.shouldRevalidate;
+    state.cacheFreshness = cacheResult.freshness;
+    state.revalidationClaimed = cacheResult.revalidationClaimed;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
     const pprTransitionDecisions = pipelineReqCtx?._pprTransitionDecisions;
@@ -703,7 +706,7 @@ export function withCacheLookup<TEnv>(
         routeKey: ctx.routeKey,
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
-        stale: cacheResult.shouldRevalidate || ctx.stale || undefined,
+        stale: cacheResult.freshness === "stale" || ctx.stale || undefined,
         traceSource: "cache-hit",
       });
 

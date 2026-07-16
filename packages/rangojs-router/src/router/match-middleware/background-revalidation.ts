@@ -18,7 +18,7 @@
  *         v
  *   +---------------------+
  *   | Should revalidate?  |
- *   | - shouldRevalidate  |──no───> return
+ *   | - revalidationClaimed |──no───> return
  *   | - cacheHit          |
  *   | - cacheScope        |
  *   +---------------------+
@@ -71,7 +71,7 @@
  * WHEN IS CACHE STALE?
  * ====================
  *
- * The cache-lookup middleware sets state.shouldRevalidate based on:
+ * The cache-lookup middleware sets state.revalidationClaimed based on:
  *   - TTL (time-to-live) expiration
  *   - Cache entry metadata
  *   - Configured staleness rules
@@ -113,7 +113,7 @@ import {
 /**
  * Creates background revalidation middleware
  *
- * If cache was stale (state.shouldRevalidate === true):
+ * If this request claimed stale revalidation ownership:
  * - Triggers background resolution via waitUntil
  * - Observes segments but doesn't modify them
  * - Updates cache with fresh segments after revalidation completes
@@ -133,7 +133,7 @@ export function withBackgroundRevalidation<TEnv>(
     // Only trigger background revalidation if:
     // 1. Cache was hit and stale
     // 2. Cache scope exists
-    if (!state.shouldRevalidate || !state.cacheHit || !ctx.cacheScope) {
+    if (!state.revalidationClaimed || !state.cacheHit || !ctx.cacheScope) {
       return;
     }
 

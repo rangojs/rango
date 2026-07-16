@@ -104,8 +104,9 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   structured lifecycle events, console sink, OpenTelemetry adapter, custom
   sinks
 - [MCP and agent skills design](./design/mcp-and-agent-skills.md) - the shipped
-  development-only MCP transport, route/discovery tools, cross-realm request and
-  error inspection, source ownership, render/revalidation explanations, and the
+  development-only tool schema v5: route discovery and static matching, browser
+  navigation/request correlation, request-attributed bridge loss, render/cache/
+  revalidation explanations, project-local client installation, and the
   `/dev-loop`, render-cache, and stale-data workflow skills
 
 ## Design Notes

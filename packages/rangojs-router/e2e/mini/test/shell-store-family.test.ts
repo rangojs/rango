@@ -30,11 +30,16 @@ describe("shell store family (mini dogfood, public surface)", () => {
   it("round-trips a shell entry under shellCacheKey with ttl/swr semantics", async () => {
     const store = new MemorySegmentCacheStore({ defaults: { ttl: 60 } });
     const key = shellCacheKey("http://localhost/page");
-    await store.putShell(key, entry(), 300, 60);
+    await expect(store.putShell(key, entry(), 300, 60)).resolves.toEqual({
+      outcome: "stored",
+    });
     const hit = await store.getShell(key);
     expect(hit).not.toBeNull();
     expect(hit!.entry.postponed).toBe(JSON.stringify({ hole: 1 }));
-    expect(hit!.shouldRevalidate).toBe(false);
+    expect(hit).toMatchObject({
+      freshness: "fresh",
+      revalidationClaimed: false,
+    });
     expect(
       await store.getShell(shellCacheKey("http://localhost/other")),
     ).toBeNull();

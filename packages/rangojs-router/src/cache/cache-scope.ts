@@ -174,7 +174,11 @@ function replayCachedLoaderConsumers(cached: CachedEntryData): void {
 export type CacheRouteLookupOutcome =
   | {
       status: "hit";
-      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
+      result: {
+        segments: ResolvedSegment[];
+        freshness: "fresh" | "stale";
+        revalidationClaimed: boolean;
+      };
     }
   | { status: "miss" | "bypass" | "error" };
 
@@ -428,7 +432,7 @@ export class CacheScope {
 
   /**
    * Lookup cached segments for a route (single cache entry per request).
-   * Returns { segments, shouldRevalidate } or null if cache miss.
+   * Returns cached segments with independent freshness and SWR ownership.
    *
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
@@ -440,7 +444,8 @@ export class CacheScope {
     isIntercept?: boolean,
   ): Promise<{
     segments: ResolvedSegment[];
-    shouldRevalidate: boolean;
+    freshness: "fresh" | "stale";
+    revalidationClaimed: boolean;
   } | null> {
     const outcome = await this.lookupRouteDetailed(
       pathname,
@@ -515,7 +520,7 @@ export class CacheScope {
         return { status: "miss" };
       }
 
-      const { data: cached, shouldRevalidate } = result;
+      const { data: cached, freshness, revalidationClaimed } = result;
 
       // Deserialize segments. A failure means the cached segments are corrupt/
       // partial: evict the entry (self-heal - the re-render re-caches under the
@@ -554,7 +559,7 @@ export class CacheScope {
       // to invalidate any full-page entry built on top of it. The write path
       // records via cacheRoute (resolveCacheTags); the hit path records here.
       recordRequestTags(cached.tags);
-      const tagPhase = Date.now() > cached.expiresAt ? "stale" : "hit";
+      const tagPhase = freshness === "stale" ? "stale" : "hit";
       if (cached.tags?.length) {
         recordCacheTagObservationDiagnostic(
           {
@@ -586,7 +591,7 @@ export class CacheScope {
           s.type === "parallel" ? s.slot : s.type,
         );
         debugCacheLog(
-          `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`,
+          `[CacheScope] ${freshness === "stale" ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`,
         );
       }
 
@@ -594,9 +599,12 @@ export class CacheScope {
       this.recordLookup(tagPhase, undefined, store, {
         key,
         cached,
-        backgroundRevalidationClaimed: shouldRevalidate,
+        backgroundRevalidationClaimed: revalidationClaimed,
       });
-      return { status: "hit", result: { segments, shouldRevalidate } };
+      return {
+        status: "hit",
+        result: { segments, freshness, revalidationClaimed },
+      };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
       // (resolveKey). Either way degrade to an uncached render — reported as
@@ -790,8 +798,11 @@ export class CacheScope {
           debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);
         }
 
-        await store.set(key, data, ttl, swr);
-        if (diagnosticLink && tags?.length) {
+        const acknowledgement = await store.set(key, data, ttl, swr);
+        const persisted =
+          acknowledgement.outcome === "stored" ||
+          acknowledgement.outcome === "scheduled";
+        if (diagnosticLink && tags?.length && persisted) {
           recordLinkedCacheTagObservationDiagnostic(
             diagnosticLink,
             {
@@ -810,7 +821,7 @@ export class CacheScope {
           );
         }
 
-        if (INTERNAL_RANGO_DEBUG) {
+        if (INTERNAL_RANGO_DEBUG && persisted) {
           const segmentTypes = nonLoaderSegments.map((s) =>
             s.type === "parallel" ? s.slot : s.type,
           );

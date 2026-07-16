@@ -483,10 +483,11 @@ during segment resolution.
   pathname: "/blog/hello",
   routeKey: "blog:post",
   hit: true,
-  shouldRevalidate: false,
+  freshness: "fresh",             // "fresh" | "stale" | null
+  revalidationClaimed: false,
   source: "runtime" | "prerender",  // optional
   segments: [                       // optional (CacheSegmentSignal[])
-    { id: "blog:post", type: "route", cacheStatus: "hit", shouldRevalidate: false },
+    { id: "blog:post", type: "route", cacheStatus: "hit", revalidationClaimed: false },
   ],
 }
 ```
@@ -575,7 +576,7 @@ The `createOTelSink` adapter maps the router's **discrete-fact events** to
 | Span Name                       | Key Attributes                                                                                          |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `rango.handler.error`           | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (error status) |
-| `rango.cache.decision`          | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                |
+| `rango.cache.decision`          | `rango.cache.hit`, `rango.cache.freshness`, `rango.cache.revalidation_claimed`, `rango.cache.source`    |
 | `rango.revalidation.decision`   | `rango.segment_id`, `http.route`, `rango.route_key`, `rango.revalidate`                                 |
 | `rango.request.timeout`         | `rango.phase`, `http.route`, `rango.duration_ms`, `rango.timeout.custom_handler` (error status)         |
 | `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |

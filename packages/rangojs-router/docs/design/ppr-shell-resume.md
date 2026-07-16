@@ -435,7 +435,8 @@ Mechanics (`src/cache/shell-snapshot.ts`):
 4. **Seeding.** `serveShellHit`'s tail runs through a `SeededShellStore` overlay
    (on a derived context, for the tail render ONLY — the shared `reqCtx` is
    untouched). A read for a snapshotted key returns the recorded value AS FRESH
-   (`shouldRevalidate: false` — a pinned key must NOT kick SWR revalidation);
+   (`freshness: "fresh", revalidationClaimed: false` — a pinned key must NOT
+   kick SWR revalidation);
    every other read falls through to the real store (the holes stay live); all
    writes pass through (a live hole's loader may legitimately write); the shell
    family always passes through.
@@ -726,8 +727,8 @@ export interface ShellCacheEntry {
 }
 
 supportsPassiveShellReads?: true;
-getShell?(key: string, options?: { claimRevalidation?: boolean }): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
-putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "invalidated" | void>;
+getShell?(key: string, options?: { claimRevalidation?: boolean }): Promise<CacheShellResult | null>;
+putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<CacheWriteAcknowledgement>;
 ```
 
 One entry carries both artifacts — the pair is version- and generation-coupled
@@ -1272,21 +1273,20 @@ param).
 **Capture debug sink.** `createRouter({ debugShellCapture })` mirrors the
 `CFCacheDebug` pattern: `true` logs one structured line per event, a
 function receives each `ShellCaptureDebugEvent` — outcome per attempt
-(`stored`/`redirect`/`no-shell`/`refused`/`error`), skip events
+(`stored`/`redirect`/`no-shell`/`refused`/`write-failed`/`error`), skip events
 (`skip-in-flight`/`skip-backoff`) and backoff escalation (`backoff`), plus
 attempt/barrier/write-settle durations and prelude/snapshot byte sizes.
-`storeWrite` is a narrower store-reported result: `stored` means the store's
-write path returned that result, `invalidated` means a tag invalidated the
-generation before storage, and `failed` means `putShell` rejected. It is not an
-independent durability proof: for example, Vercel's size guard can report and
-skip an oversized platform write inside a path that returns `stored`. The field
-is absent when the store does not report a result. In particular, `CFCacheStore`
-accepts an envelope into its isolate-local pending-write map, schedules the KV
-write through `waitUntil`, and
-returns before durability; a same-isolate read can consume that pending envelope,
-but the debug event does not claim `storeWrite: "stored"`. The attempt-level
-`outcome: "stored"` means capture succeeded and `putShell` was attempted, not
-that the platform durably stored it.
+`storeWrite` is the store acknowledgement: `stored`, `scheduled`, `skipped`, or
+`failed`. A skipped write also carries `storeWriteReason` such as
+`invalidated-generation` or `size-limit`. It is not an independent durability
+proof: `scheduled` means a platform write was accepted for `waitUntil`, not that
+it is durable. In particular, `CFCacheStore` accepts an envelope into its
+isolate-local pending-write map and returns `scheduled` while the KV write runs;
+a same-isolate read can consume that pending envelope before persistence. The
+attempt-level `outcome: "stored"` means capture succeeded and the store accepted
+the write; a `scheduled` acknowledgement is still not proof that the platform
+durably stored it. A transient failed acknowledgement reports `write-failed`
+without entering deterministic-refusal backoff, so a later request can retry.
 `INTERNAL_RANGO_DEBUG` lights the console sink without the option; an
 explicit `debugShellCapture: false` stays off. In dev the terminal event per
 key is buffered and, when `debugPerformance` metrics are active, rides the

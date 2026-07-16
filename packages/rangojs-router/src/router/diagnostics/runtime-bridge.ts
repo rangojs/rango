@@ -3,6 +3,7 @@ import {
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
   RANGO_DIAGNOSTIC_MAX_BATCH_BYTES,
   RANGO_DIAGNOSTIC_MAX_BATCH_EVENTS,
+  RANGO_DIAGNOSTIC_MAX_DROP_REQUESTS,
   type DiagnosticBridgeBatch,
 } from "./bridge-protocol.js";
 import {
@@ -36,9 +37,26 @@ export function connectDiagnosticRuntimeBridge(
   let queuedBytes = 0;
   let batchSequence = 0;
   let droppedEvents = 0;
+  const droppedEventsByRequest = new Map<string, number>();
   let scheduled = false;
   let active = true;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const noteDroppedEvents = (count: number, requestId?: string): void => {
+    droppedEvents += count;
+    if (
+      !requestId ||
+      new TextEncoder().encode(requestId).byteLength > 128 ||
+      (!droppedEventsByRequest.has(requestId) &&
+        droppedEventsByRequest.size >= RANGO_DIAGNOSTIC_MAX_DROP_REQUESTS)
+    ) {
+      return;
+    }
+    droppedEventsByRequest.set(
+      requestId,
+      (droppedEventsByRequest.get(requestId) ?? 0) + count,
+    );
+  };
 
   const scheduleFlush = (): void => {
     if (!active || scheduled) return;
@@ -59,7 +77,10 @@ export function connectDiagnosticRuntimeBridge(
     if (!active) return;
     while (queue.length > 0 || droppedEvents > 0) {
       const events: DiagnosticEvent[] = [];
-      let batchBytes = 256;
+      const requestDrops = [...droppedEventsByRequest].map(
+        ([requestId, count]) => ({ requestId, droppedEvents: count }),
+      );
+      let batchBytes = 256 + encodedBytes(requestDrops);
       while (
         queue.length > 0 &&
         events.length < RANGO_DIAGNOSTIC_MAX_BATCH_EVENTS
@@ -83,13 +104,23 @@ export function connectDiagnosticRuntimeBridge(
         realmId,
         batchSequence: ++batchSequence,
         droppedEvents,
+        droppedEventsByRequest: requestDrops,
         events,
       };
       droppedEvents = 0;
+      droppedEventsByRequest.clear();
       try {
         hot.send(RANGO_DIAGNOSTIC_BRIDGE_EVENT, batch);
       } catch {
-        droppedEvents += batch.droppedEvents + events.length;
+        const attributed = batch.droppedEventsByRequest.reduce(
+          (total, entry) => total + entry.droppedEvents,
+          0,
+        );
+        noteDroppedEvents(batch.droppedEvents - attributed);
+        for (const entry of batch.droppedEventsByRequest) {
+          noteDroppedEvents(entry.droppedEvents, entry.requestId);
+        }
+        for (const event of events) noteDroppedEvents(1, event.requestId);
         scheduleRetry();
         break;
       }
@@ -102,7 +133,7 @@ export function connectDiagnosticRuntimeBridge(
     try {
       bytes = encodedBytes(event);
     } catch {
-      droppedEvents++;
+      noteDroppedEvents(1, event.requestId);
       scheduleFlush();
       return;
     }
@@ -111,11 +142,12 @@ export function connectDiagnosticRuntimeBridge(
       (queue.length >= MAX_QUEUED_EVENTS ||
         queuedBytes + bytes > MAX_QUEUED_BYTES)
     ) {
-      queuedBytes -= queue.shift()!.bytes;
-      droppedEvents++;
+      const dropped = queue.shift()!;
+      queuedBytes -= dropped.bytes;
+      noteDroppedEvents(1, dropped.event.requestId);
     }
     if (bytes > RANGO_DIAGNOSTIC_MAX_BATCH_BYTES) {
-      droppedEvents++;
+      noteDroppedEvents(1, event.requestId);
       scheduleFlush();
       return;
     }
@@ -123,8 +155,8 @@ export function connectDiagnosticRuntimeBridge(
     queuedBytes += bytes;
     scheduleFlush();
   });
-  const unsubscribeDrops = hub.subscribeDroppedInputs((count) => {
-    droppedEvents += count;
+  const unsubscribeDrops = hub.subscribeDroppedInputs((count, requestId) => {
+    noteDroppedEvents(count, requestId);
     scheduleFlush();
   });
 
@@ -135,7 +167,7 @@ export function connectDiagnosticRuntimeBridge(
     if (retryTimer) clearTimeout(retryTimer);
     unsubscribe();
     unsubscribeDrops();
-    droppedEvents += queue.length;
+    for (const queued of queue) noteDroppedEvents(1, queued.event.requestId);
     queue.length = 0;
     queuedBytes = 0;
   };

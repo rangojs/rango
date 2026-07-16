@@ -303,7 +303,8 @@ describe("diagnostic channel", () => {
           pathname: url.pathname,
           routeKey: "catalog.products",
           hit: true,
-          shouldRevalidate: false,
+          freshness: "fresh",
+          revalidationClaimed: false,
           source: "runtime",
         });
         runWithRouterLogContext(
@@ -346,6 +347,14 @@ describe("diagnostic channel", () => {
       "cache.decision",
       "revalidation.trace",
     ]);
+    expect(
+      trace.events.find((event) => event.type === "cache.decision"),
+    ).toMatchObject({
+      data: {
+        freshness: "fresh",
+        revalidationClaimed: false,
+      },
+    });
     expect(JSON.stringify(trace)).not.toContain("secret");
     expect(trace.events.at(-1)).toMatchObject({
       transactionId: "matchPartial-tx-2",

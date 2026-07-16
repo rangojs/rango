@@ -103,7 +103,7 @@ export interface HandlerErrorEvent extends BaseEvent {
  * cache.decision telemetry event and the X-Rango-Cache debug header.
  *
  * v1 is COARSE: the router's pipeline tracks cache decisions at the
- * route/entry level (cacheHit/cacheSource/shouldRevalidate), not per
+ * route/entry level (cacheHit/cacheSource/cacheFreshness), not per
  * individual segment. The `segments` array therefore contains a single
  * route-level entry keyed by the route key. The shape is forward-compatible
  * with genuine per-segment status if the pipeline later exposes it.
@@ -122,8 +122,8 @@ export interface CacheSegmentSignal {
   type: string;
   /** Resolved cache status for this segment. */
   cacheStatus: CacheSegmentStatus;
-  /** Whether stale-while-revalidate was triggered for this segment. */
-  shouldRevalidate?: boolean;
+  /** Whether this request acquired stale-while-revalidate ownership. */
+  revalidationClaimed?: boolean;
 }
 
 export interface CacheDecisionEvent extends BaseEvent {
@@ -131,8 +131,9 @@ export interface CacheDecisionEvent extends BaseEvent {
   pathname: string;
   routeKey: string;
   hit: boolean;
-  /** Whether stale-while-revalidate was triggered */
-  shouldRevalidate: boolean;
+  freshness: "fresh" | "stale" | null;
+  /** Whether this request acquired stale-while-revalidate ownership. */
+  revalidationClaimed: boolean;
   source?: "runtime" | "prerender";
   /**
    * Optional per-segment (v1: coarse route-level) cache status. Present only
@@ -192,7 +193,7 @@ export type TelemetryEvent =
  *
  * v1 mapping (route-level — see CacheSegmentSignal):
  *   - prerender hit                         -> "prerendered"
- *   - runtime hit + shouldRevalidate (SWR)  -> "stale"
+ *   - runtime stale hit                     -> "stale"
  *   - runtime hit                           -> "hit"
  *   - no hit                                -> "miss"
  *
@@ -205,11 +206,11 @@ export type TelemetryEvent =
 export function deriveCacheStatus(state: {
   cacheHit: boolean;
   cacheSource?: "runtime" | "prerender";
-  shouldRevalidate?: boolean;
+  cacheFreshness?: "fresh" | "stale";
 }): CacheSegmentStatus {
   if (state.cacheHit) {
     if (state.cacheSource === "prerender") return "prerendered";
-    if (state.shouldRevalidate) return "stale";
+    if (state.cacheFreshness === "stale") return "stale";
     return "hit";
   }
   return "miss";
@@ -225,7 +226,8 @@ export function buildCacheSignalSegments(
   state: {
     cacheHit: boolean;
     cacheSource?: "runtime" | "prerender";
-    shouldRevalidate?: boolean;
+    cacheFreshness?: "fresh" | "stale";
+    revalidationClaimed?: boolean;
   },
 ): CacheSegmentSignal[] {
   return [
@@ -233,7 +235,7 @@ export function buildCacheSignalSegments(
       id: routeKey,
       type: "route",
       cacheStatus: deriveCacheStatus(state),
-      shouldRevalidate: !!state.shouldRevalidate,
+      revalidationClaimed: !!state.revalidationClaimed,
     },
   ];
 }
@@ -350,7 +352,7 @@ export function createConsoleSink(): TelemetrySink {
           break;
         case "cache.decision":
           console.log(
-            `[telemetry] ${event.type} ${event.pathname} hit=${event.hit} swr=${event.shouldRevalidate}${event.source ? ` source=${event.source}` : ""}`,
+            `[telemetry] ${event.type} ${event.pathname} hit=${event.hit} freshness=${event.freshness ?? "none"} revalidationClaimed=${event.revalidationClaimed}${event.source ? ` source=${event.source}` : ""}`,
           );
           break;
         case "revalidation.decision":

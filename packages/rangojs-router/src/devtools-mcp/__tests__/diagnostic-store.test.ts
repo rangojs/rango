@@ -3,6 +3,7 @@ import {
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
   type DiagnosticBridgeBatch,
 } from "../../router/diagnostics/bridge-protocol.js";
+import type { BrowserNavigationEvent } from "../../router/diagnostics/browser-protocol.js";
 import type {
   DiagnosticEvent,
   DiagnosticValue,
@@ -42,6 +43,7 @@ function batch(
     realmId: "realm-1",
     batchSequence: sequence,
     droppedEvents: 0,
+    droppedEventsByRequest: [],
     events,
   };
 }
@@ -59,6 +61,23 @@ function createStore() {
           }
         : null,
   });
+}
+
+function navigationEvent(
+  sequence: number,
+  phase: BrowserNavigationEvent["phase"],
+  requestId?: string,
+): BrowserNavigationEvent {
+  return {
+    version: 1,
+    sequence,
+    documentId: "doc-00000000-0000-4000-8000-000000000001",
+    navigationId: "nav-00000000-0000-4000-8000-000000000002",
+    kind: "navigate",
+    phase,
+    pathname: "/blog/first",
+    ...(requestId ? { requestId, role: "navigation" } : {}),
+  };
 }
 
 describe("Rango MCP diagnostic store", () => {
@@ -127,6 +146,7 @@ describe("Rango MCP diagnostic store", () => {
         ...valid,
         batchSequence: 2,
         droppedEvents: 1,
+        droppedEventsByRequest: [],
         events: [],
       }),
     ).toBe(true);
@@ -137,6 +157,149 @@ describe("Rango MCP diagnostic store", () => {
       rejectedBatches: 1,
       bridgeDroppedEvents: 1,
     });
+  });
+
+  it("attributes bridge loss to retained request traces", () => {
+    const store = createStore();
+    const lossyBatch = batch(1, [
+      event(1, "request.started", { method: "GET" }),
+      event(2, "revalidation.trace", {
+        entries: [],
+        entriesTruncated: false,
+      }),
+    ]);
+    lossyBatch.droppedEvents = 2;
+    lossyBatch.droppedEventsByRequest = [
+      { requestId: "req-1", droppedEvents: 1 },
+    ];
+
+    expect(store.ingestBridgeBatch(lossyBatch)).toBe(true);
+    expect(store.listRequests().requests[0]).toMatchObject({
+      requestId: "req-1",
+      droppedEvents: 1,
+      truncated: true,
+    });
+    expect(store.getRequestTrace({ requestId: "req-1" }).trace).toMatchObject({
+      droppedEvents: 1,
+    });
+    expect(store.explainRender({ requestId: "req-1" }).truncated).toBe(true);
+    expect(store.explainCacheTags({ requestId: "req-1" }).truncated).toBe(true);
+    expect(store.explainRevalidation({ requestId: "req-1" }).truncated).toBe(
+      true,
+    );
+    expect(store.listRequests().stats.bridgeDroppedEvents).toBe(2);
+
+    expect(
+      store.ingestBridgeBatch({
+        ...batch(2, []),
+        droppedEvents: 1,
+        droppedEventsByRequest: [{ requestId: "req-1", droppedEvents: 2 }],
+      }),
+    ).toBe(false);
+  });
+
+  it("links browser navigation lifecycles to authoritative request IDs", () => {
+    const store = createStore();
+    const requestId = "req-00000000-0000-4000-8000-000000000003";
+    store.ingestBridgeBatch(
+      batch(1, [
+        event(1, "request.started", { method: "GET" }, requestId),
+        event(
+          2,
+          "request.completed",
+          { status: 200, durationMs: 4 },
+          requestId,
+        ),
+      ]),
+    );
+
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(1, "started"), 1_000),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(2, "request-linked", requestId),
+        1_001,
+      ),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(2, "started"), 1_002),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(3, "committed"),
+        1_003,
+      ),
+    ).toBe(true);
+
+    expect(store.listNavigations()).toMatchObject({
+      navigations: [
+        {
+          navigationId: "nav-00000000-0000-4000-8000-000000000002",
+          completed: true,
+          requestIds: [requestId],
+          eventCount: 3,
+        },
+      ],
+    });
+    expect(
+      store.getNavigationTrace({
+        navigationId: "nav-00000000-0000-4000-8000-000000000002",
+      }),
+    ).toMatchObject({
+      requestIds: [requestId],
+      completed: true,
+      events: [
+        { phase: "started" },
+        { phase: "request-linked", requestId },
+        { phase: "committed" },
+      ],
+    });
+    expect(
+      store.listRequests({
+        navigationId: "nav-00000000-0000-4000-8000-000000000002",
+      }).requests[0],
+    ).toMatchObject({
+      requestId,
+      navigationIds: ["nav-00000000-0000-4000-8000-000000000002"],
+    });
+  });
+
+  it("bounds request links retained for one browser navigation", () => {
+    const store = createStore();
+    const overflowRequestId = "req-00000040-0000-4000-8000-000000000000";
+    store.ingestBridgeBatch(
+      batch(1, [
+        event(1, "request.started", { method: "GET" }, overflowRequestId),
+        event(
+          2,
+          "request.completed",
+          { status: 200, durationMs: 1 },
+          overflowRequestId,
+        ),
+      ]),
+    );
+    store.ingestBrowserNavigationEvent(navigationEvent(1, "started"));
+    for (let index = 0; index < 65; index++) {
+      const requestId = `req-${index.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+      expect(
+        store.ingestBrowserNavigationEvent(
+          navigationEvent(index + 2, "request-linked", requestId),
+        ),
+      ).toBe(true);
+    }
+
+    const trace = store.getNavigationTrace({
+      navigationId: "nav-00000000-0000-4000-8000-000000000002",
+    });
+    expect(trace.requestIds).toHaveLength(64);
+    expect(trace.events).toHaveLength(66);
+    expect(trace.truncated).toBe(true);
+    expect(
+      store.listRequests({
+        navigationId: "nav-00000000-0000-4000-8000-000000000002",
+      }).requests,
+    ).toHaveLength(0);
   });
 
   it("projects composed cache, PPR, and loader generation facts", () => {

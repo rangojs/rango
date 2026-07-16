@@ -106,7 +106,11 @@ function makeCtx(
       enabled: true,
       lookupRouteDetailed: async () => ({
         status: "hit",
-        result: { segments: cacheSegments, shouldRevalidate: false },
+        result: {
+          segments: cacheSegments,
+          freshness: "fresh",
+          revalidationClaimed: false,
+        },
       }),
       storeRoute: vi.fn(async () => {}),
     },
@@ -116,7 +120,8 @@ function makeCtx(
 function makeState(): MatchPipelineState {
   return {
     cacheHit: false,
-    shouldRevalidate: false,
+    cacheFreshness: "fresh",
+    revalidationClaimed: false,
     cachedSegments: undefined,
     cachedMatchedIds: undefined,
   } as any;

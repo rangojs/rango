@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { LoaderEntry } from "../server/context";
-import type { SegmentCacheStore, CacheItemResult } from "../cache/types";
+import type {
+  SegmentCacheStore,
+  CacheItemResult,
+  CacheWriteAcknowledgement,
+} from "../cache/types";
 
 // Mock segment-codec (RSC serialization)
 vi.mock("../cache/segment-codec.js", () => ({
@@ -48,10 +52,14 @@ function createMockStore(
 ): SegmentCacheStore {
   return {
     get: vi.fn(async () => null),
-    set: vi.fn(async () => {}),
+    set: vi.fn(
+      async (): Promise<CacheWriteAcknowledgement> => ({ outcome: "stored" }),
+    ),
     delete: vi.fn(async () => false),
     getItem: vi.fn(async () => null),
-    setItem: vi.fn(async () => {}),
+    setItem: vi.fn(
+      async (): Promise<CacheWriteAcknowledgement> => ({ outcome: "stored" }),
+    ),
     ...overrides,
   };
 }
@@ -157,7 +165,8 @@ describe("loader-cache", () => {
           getItem: vi.fn(
             async (): Promise<CacheItemResult> => ({
               value: JSON.stringify({ data: "cached" }),
-              shouldRevalidate: false,
+              freshness: "fresh",
+              revalidationClaimed: false,
             }),
           ),
         });
@@ -329,7 +338,8 @@ describe("loader-cache", () => {
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
             value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
+            freshness: "fresh",
+            revalidationClaimed: false,
           }),
         ),
       });
@@ -351,7 +361,8 @@ describe("loader-cache", () => {
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
             value: JSON.stringify({ name: "cached" }),
-            shouldRevalidate: false,
+            freshness: "fresh",
+            revalidationClaimed: false,
           }),
         ),
       });
@@ -391,7 +402,8 @@ describe("loader-cache", () => {
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
             value: JSON.stringify(staleData),
-            shouldRevalidate: true,
+            freshness: "stale",
+            revalidationClaimed: true,
           }),
         ),
       });
@@ -438,7 +450,8 @@ describe("loader-cache", () => {
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
             value: "null",
-            shouldRevalidate: false,
+            freshness: "fresh",
+            revalidationClaimed: false,
           }),
         ),
       });
@@ -693,7 +706,8 @@ describe("loader-cache", () => {
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
             value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
+            freshness: "fresh",
+            revalidationClaimed: false,
           }),
         ),
       });

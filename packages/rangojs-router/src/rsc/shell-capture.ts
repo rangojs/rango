@@ -45,6 +45,7 @@ import type {
   ShellCacheEntry,
   SegmentCacheStore,
   ShellSnapshotRecord,
+  CacheWriteSkipReason,
 } from "../cache/types.js";
 import {
   elideLoaderContainer,
@@ -417,7 +418,7 @@ export interface ShellCaptureDebugEvent {
   key: string;
   /**
    * What happened:
-   * - stored / redirect / no-shell / refused: one capture ATTEMPT's outcome
+   * - stored / redirect / no-shell / refused / write-failed: one capture ATTEMPT's outcome
    *   (see CaptureAttemptOutcome for the semantics of each)
    * - error: the capture task failed with a genuine error (also routed through
    *   reportCacheError; the key is backed off)
@@ -434,6 +435,7 @@ export interface ShellCaptureDebugEvent {
     | "redirect"
     | "no-shell"
     | "refused"
+    | "write-failed"
     | "error"
     | "skip-in-flight"
     | "skip-backoff"
@@ -461,8 +463,9 @@ export interface ShellCaptureDebugEvent {
   snapshotSkipped?: boolean;
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
-  /** Result reported by the store's shell-write path; not a durability proof. */
-  storeWrite?: "stored" | "invalidated" | "failed";
+  /** Result reported by the store's shell-write path; scheduled is not durable. */
+  storeWrite?: "stored" | "scheduled" | "skipped" | "failed";
+  storeWriteReason?: CacheWriteSkipReason;
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -507,6 +510,9 @@ export function describeShellCaptureEvent(
   if (event.storeWrite !== undefined) {
     parts.push(`store-write=${event.storeWrite}`);
   }
+  if (event.storeWriteReason !== undefined) {
+    parts.push(`store-write-reason=${event.storeWriteReason}`);
+  }
   if (event.backoffFailures !== undefined) {
     parts.push(`backoff-failures=${event.backoffFailures}`);
   }
@@ -548,6 +554,7 @@ const TIMING_RECORDED_OUTCOMES = new Set<ShellCaptureDebugEvent["outcome"]>([
   "redirect",
   "no-shell",
   "refused",
+  "write-failed",
   "error",
 ]);
 
@@ -1008,15 +1015,20 @@ export function scheduleShellCapture(
 
 /**
  * The outcome of one capture attempt.
- * - `stored`: a usable shell was captured (and a putShell was attempted; a store
- *   I/O failure is reported separately and does NOT make the attempt retryable —
- *   the capture itself worked).
+ * - `stored`: a usable shell was captured and its store accepted the write.
  * - `redirect`: the matched route redirects, so there is no shell to capture.
  * - `no-shell`: captureShellHTML returned null because the prelude was unusable
  *   or its private capture abort landed before the shell completed. This is the
  *   only RETRYABLE outcome.
+ * - `write-failed`: capture succeeded but transient store persistence failed.
+ *   It is not retried in-place and does not trigger deterministic-refusal backoff.
  */
-type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
+type CaptureAttemptOutcome =
+  | "stored"
+  | "redirect"
+  | "no-shell"
+  | "refused"
+  | "write-failed";
 
 function createNavigationCaptureRequest(request: Request, url: URL): Request {
   const headers = new Headers(request.headers);
@@ -1050,6 +1062,7 @@ type CaptureAttemptStats = Pick<
   | "snapshotSkipped"
   | "untaggedBake"
   | "storeWrite"
+  | "storeWriteReason"
 > & { diagnosticReason?: string };
 
 /**
@@ -1472,9 +1485,9 @@ export function deriveShellCaptureContext(
  * captureShellHTML, and store the result. Returns the attempt outcome (the caller
  * owns retry/warn decisions — this function no longer warns). Never throws out of
  * the store write: a failed putShell is routed through reportCacheError so the
- * background task stays best-effort, and the attempt still counts as `stored` (the
- * capture worked; only the store I/O failed). `ssrModule.captureShellHTML` MUST be
- * present (eligibility is checked before scheduling).
+ * background task stays best-effort, and the attempt reports `write-failed`
+ * without entering deterministic-refusal backoff. `ssrModule.captureShellHTML`
+ * MUST be present (eligibility is checked before scheduling).
  *
  * A `no-shell` result from captureShellHTML is the only retryable outcome. Every
  * captureShellHTML error propagates to reportCacheError and is NOT retried. The
@@ -1791,7 +1804,15 @@ async function captureAndStoreShell(
     }
 
     const store = capture.store ?? reqCtx._cacheStore;
-    if (store?.putShell) {
+    if (!store?.putShell) {
+      if (stats) {
+        stats.storeWrite = "skipped";
+        stats.storeWriteReason = "unsupported";
+        stats.diagnosticReason = "store-write-unsupported";
+      }
+      return "refused";
+    }
+    {
       try {
         const entry: ShellCacheEntry = {
           // slice() copies just this view's bytes into a fresh ArrayBuffer, so a
@@ -1831,8 +1852,22 @@ async function captureAndStoreShell(
           capture.swr,
           shellTags,
         );
-        if (stats && storeWrite) stats.storeWrite = storeWrite;
-        if (storeWrite === "invalidated") {
+        if (stats) {
+          stats.storeWrite = storeWrite.outcome;
+          if (storeWrite.outcome === "skipped") {
+            stats.storeWriteReason = storeWrite.reason;
+          }
+        }
+        if (
+          storeWrite.outcome === "stored" ||
+          storeWrite.outcome === "scheduled"
+        ) {
+          return "stored";
+        }
+        if (
+          storeWrite.outcome === "skipped" &&
+          storeWrite.reason === "invalidated-generation"
+        ) {
           if (stats) stats.diagnosticReason = "invalidated-generation";
           warnCaptureRefusedOnce(
             capture.key,
@@ -1840,8 +1875,19 @@ async function captureAndStoreShell(
               "If capture code deterministically calls updateTag() on its own shell tag, move that mutation out of the render; " +
               "otherwise every generation is invalidated before it can be served.",
           );
+        } else if (storeWrite.outcome === "skipped") {
+          if (stats)
+            stats.diagnosticReason = `store-write-${storeWrite.outcome}`;
+          warnCaptureRefusedOnce(
+            capture.key,
+            `the shell store skipped the write (${storeWrite.reason}).`,
+          );
           return "refused";
+        } else {
+          if (stats) stats.diagnosticReason = "store-write-failed";
+          return "write-failed";
         }
+        return "refused";
       } catch (error) {
         if (stats) {
           stats.storeWrite = "failed";
@@ -1854,12 +1900,9 @@ async function captureAndStoreShell(
           "[ShellCache] capture put",
           reqCtx,
         );
+        return "write-failed";
       }
     }
-    // A shell was captured (ordinary store I/O failure is reported, not retried).
-    // An acknowledged invalidation rejection returned `refused` above so the
-    // scheduler backs the key off instead of recapturing on every request.
-    return "stored";
   } finally {
     // Stop the hop loop for the pathological never-quiets path (quiesce never
     // fired, capture returned via maxWaitMs). On the normal path the loop already

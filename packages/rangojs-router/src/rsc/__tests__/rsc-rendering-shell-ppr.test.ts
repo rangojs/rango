@@ -1140,7 +1140,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell").mockResolvedValue({
       entry: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: false,
     });
     let replayArmed = false;
 

@@ -41,6 +41,10 @@ import type {
   ShellCacheEntry,
   ShellSnapshotRecord,
   CacheReadError,
+  CacheFreshness,
+  CacheResponseResult,
+  CacheShellResult,
+  CacheWriteAcknowledgement,
 } from "../types.js";
 import { CACHE_READ_ERROR } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
@@ -228,7 +232,7 @@ interface VercelShellEnvelope {
 export type VercelCacheReadOutcome =
   | "miss"
   | "fresh"
-  | "stale-revalidate"
+  | "stale"
   | "expired"
   | "corrupt"
   | "error";
@@ -240,7 +244,8 @@ export interface VercelCacheReadDebugEvent {
   outcome: VercelCacheReadOutcome;
   staleAt?: number;
   expiresAt?: number;
-  shouldRevalidate?: boolean;
+  freshness?: CacheFreshness;
+  revalidationClaimed?: boolean;
   /** Wall-clock ms spent in the backing cache.get(). */
   readMs?: number;
 }
@@ -324,7 +329,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * Suitable for production deployments on Vercel Functions (Node runtime). The
  * store is best-effort: every read failure degrades to a miss and every write
- * failure to a no-op (reported, never thrown) - the sole exception is
+ * failure to a failed acknowledgement (reported, never thrown) - the sole exception is
  * invalidateTags(), which rejects when the injected cache's expireTag() rejects
  * so an awaited updateTag() can surface the failure.
  *
@@ -446,19 +451,21 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
+    const revalidationClaimed = isStale
       ? await this.claimRevalidation(storeKey, env.e, "[VercelCacheStore] get")
       : false;
+    const freshness = isStale ? "stale" : "fresh";
     this.emitDebug({
       op: "get",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
+      outcome: freshness,
+      freshness,
+      revalidationClaimed,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
     });
-    return { data: env.d, shouldRevalidate };
+    return { data: env.d, freshness, revalidationClaimed };
   }
 
   async set(
@@ -466,7 +473,7 @@ export class VercelCacheStore<
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     try {
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
@@ -481,7 +488,7 @@ export class VercelCacheStore<
         ? { ...data, tags: safeTags.length > 0 ? safeTags : undefined }
         : data;
       const env: VercelSegmentEnvelope = { d, s: staleAt, e: expiresAt };
-      await this.write(
+      return await this.write(
         this.toStoreKey(key, "s"),
         env,
         ttl + swrWindow,
@@ -490,6 +497,7 @@ export class VercelCacheStore<
       );
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] set");
+      return { outcome: "failed" };
     }
   }
 
@@ -507,9 +515,7 @@ export class VercelCacheStore<
 
   // --- Response family (getResponse/putResponse) ---
 
-  async getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  async getResponse(key: string): Promise<CacheResponseResult | null> {
     const storeKey = this.toStoreKey(key, "r");
     const started = Date.now();
     let raw: unknown;
@@ -575,23 +581,25 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
+    const revalidationClaimed = isStale
       ? await this.claimRevalidation(
           storeKey,
           env.e,
           "[VercelCacheStore] getResponse",
         )
       : false;
+    const freshness = isStale ? "stale" : "fresh";
     this.emitDebug({
       op: "getResponse",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
+      outcome: freshness,
+      freshness,
+      revalidationClaimed,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
     });
-    return { response, shouldRevalidate };
+    return { response, freshness, revalidationClaimed, tags: env.t };
   }
 
   async putResponse(
@@ -600,7 +608,7 @@ export class VercelCacheStore<
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     try {
       const body = await response.clone().arrayBuffer();
       const headers: [string, string][] = [];
@@ -627,7 +635,7 @@ export class VercelCacheStore<
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
       };
-      await this.write(
+      return await this.write(
         this.toStoreKey(key, "r"),
         env,
         ttl + swrWindow,
@@ -636,6 +644,7 @@ export class VercelCacheStore<
       );
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] putResponse");
+      return { outcome: "failed" };
     }
   }
 
@@ -685,18 +694,20 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
+    const revalidationClaimed = isStale
       ? await this.claimRevalidation(
           storeKey,
           env.e,
           "[VercelCacheStore] getItem",
         )
       : false;
+    const freshness = isStale ? "stale" : "fresh";
     this.emitDebug({
       op: "getItem",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
+      outcome: freshness,
+      freshness,
+      revalidationClaimed,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
@@ -704,7 +715,8 @@ export class VercelCacheStore<
     return {
       value: env.v,
       handles: env.h,
-      shouldRevalidate,
+      freshness,
+      revalidationClaimed,
       tags: env.t,
     };
   }
@@ -713,7 +725,7 @@ export class VercelCacheStore<
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     try {
       const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
@@ -731,7 +743,7 @@ export class VercelCacheStore<
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
       };
-      await this.write(
+      return await this.write(
         this.toStoreKey(key, "i"),
         env,
         ttl + swrWindow,
@@ -740,6 +752,7 @@ export class VercelCacheStore<
       );
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] setItem");
+      return { outcome: "failed" };
     }
   }
 
@@ -748,7 +761,7 @@ export class VercelCacheStore<
   async getShell(
     key: string,
     options?: { claimRevalidation?: boolean },
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+  ): Promise<CacheShellResult | null> {
     const storeKey = this.toStoreKey(key, "h");
     const started = Date.now();
     let raw: unknown;
@@ -802,19 +815,21 @@ export class VercelCacheStore<
     }
 
     const isStale = env.s > 0 && now > env.s;
-    let shouldRevalidate = isStale;
-    if (isStale && options?.claimRevalidation !== false) {
-      shouldRevalidate = await this.claimRevalidation(
-        storeKey,
-        env.e,
-        "[VercelCacheStore] getShell",
-      );
-    }
+    const revalidationClaimed =
+      isStale && options?.claimRevalidation !== false
+        ? await this.claimRevalidation(
+            storeKey,
+            env.e,
+            "[VercelCacheStore] getShell",
+          )
+        : false;
+    const freshness = isStale ? "stale" : "fresh";
     this.emitDebug({
       op: "getShell",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
+      outcome: freshness,
+      freshness,
+      revalidationClaimed,
       staleAt: env.s,
       expiresAt: env.e,
       readMs,
@@ -833,7 +848,9 @@ export class VercelCacheStore<
         navigationOnly: env.no,
         createdAt: env.c,
       },
-      shouldRevalidate,
+      freshness,
+      revalidationClaimed,
+      tags: env.t,
     };
   }
 
@@ -843,7 +860,7 @@ export class VercelCacheStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
+  ): Promise<CacheWriteAcknowledgement> {
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -861,7 +878,7 @@ export class VercelCacheStore<
         safeTags.length > 0 &&
         (await this.isTagsInvalidatedSince(safeTags, entry.createdAt))
       ) {
-        return "invalidated";
+        return { outcome: "skipped", reason: "invalidated-generation" };
       }
       const retentionTtl =
         safeTags.length > 0
@@ -886,16 +903,16 @@ export class VercelCacheStore<
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
       // render), never silently no-op'd on the platform.
-      await this.write(
+      return await this.write(
         storeKey,
         env,
         retentionTtl,
         safeTags,
         "[VercelCacheStore] putShell",
       );
-      return "stored";
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] putShell");
+      return { outcome: "failed" };
     }
   }
 
@@ -993,7 +1010,7 @@ export class VercelCacheStore<
     totalTtlSeconds: number,
     tags: string[] | undefined,
     label: string,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     // Serialize the envelope exactly ONCE: the same string measures the entry
     // against the size cap AND is what we hand the platform. The Vercel client
     // JSON-serializes whatever value it is given, so passing the raw object here
@@ -1010,7 +1027,7 @@ export class VercelCacheStore<
       serialized = undefined;
     }
     if (serialized !== undefined && !this.withinSizeLimit(serialized, label)) {
-      return;
+      return { outcome: "skipped", reason: "size-limit" };
     }
     const safeTags = this.clampTagsForWrite(tags, label);
     const options: { ttl: number; tags?: string[]; name?: string } = {
@@ -1019,6 +1036,7 @@ export class VercelCacheStore<
     if (safeTags.length > 0) options.tags = safeTags;
     if (this.name) options.name = this.name;
     await this.cache.set(storeKey, serialized ?? value, options);
+    return { outcome: "stored" };
   }
 
   /**

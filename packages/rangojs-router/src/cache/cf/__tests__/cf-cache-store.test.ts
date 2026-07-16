@@ -9,9 +9,9 @@ import {
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
   type CFCacheReadDebugEvent,
-} from "../cf-cache-store";
-import type { CachedEntryData } from "../../types";
-import { runWithRequestContext } from "../../../server/request-context";
+} from "../cf-cache-store.js";
+import type { CachedEntryData } from "../../types.js";
+import { runWithRequestContext } from "../../../server/request-context.js";
 import {
   CACHE_READ_ERROR,
   type CacheReadError as CacheReadErrorT,
@@ -49,15 +49,31 @@ class MockCache {
   }
 }
 
+class MockCacheView {
+  constructor(private readonly backing: MockCache) {}
+
+  match(request: Request): Promise<Response | undefined> {
+    return this.backing.match(request);
+  }
+
+  put(request: Request, response: Response): Promise<void> {
+    return this.backing.put(request, response);
+  }
+
+  delete(request: Request): Promise<boolean> {
+    return this.backing.delete(request);
+  }
+}
+
 class MockCaches {
   private caches = new Map<string, MockCache>();
   private _default = new MockCache();
 
-  async open(name: string): Promise<MockCache> {
+  async open(name: string): Promise<MockCacheView> {
     if (!this.caches.has(name)) {
       this.caches.set(name, new MockCache());
     }
-    return this.caches.get(name)!;
+    return new MockCacheView(this.caches.get(name)!);
   }
 
   get default(): MockCache {
@@ -151,6 +167,29 @@ describe("CFCacheStore", () => {
     });
   });
 
+  describe("write acknowledgements", () => {
+    it("returns failed when synchronous write setup throws", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+      (store as any).getCache = () => {
+        throw new Error("cache unavailable");
+      };
+
+      const acknowledgements = await Promise.all([
+        store.set("segment", createTestData(), 60),
+        store.setItem("item", "value", { ttl: 60 }),
+        store.putResponse("response", new Response("body"), 60),
+      ]);
+
+      expect(acknowledgements).toEqual([
+        { outcome: "failed" },
+        { outcome: "failed" },
+        { outcome: "failed" },
+      ]);
+      error.mockRestore();
+    });
+  });
+
   describe("get/set", () => {
     it("should return null for missing key", async () => {
       const store = new CFCacheStore({ ctx: createMockCtx() });
@@ -163,7 +202,9 @@ describe("CFCacheStore", () => {
       const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
-      await store.set("test-key", data, 60);
+      await expect(store.set("test-key", data, 60)).resolves.toEqual({
+        outcome: "scheduled",
+      });
       // Execute waitUntil callback
       await mockCtx.waitUntil.mock.results[0].value;
 
@@ -171,7 +212,10 @@ describe("CFCacheStore", () => {
 
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
     it("should set Cache-Control header with TTL", async () => {
@@ -299,7 +343,7 @@ describe("CFCacheStore", () => {
   });
 
   describe("staleness detection and atomic revalidation", () => {
-    it("should return shouldRevalidate=false for fresh entries", async () => {
+    it("reports fresh entries without claiming revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -313,10 +357,13 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(30 * 1000);
 
       const result = hit(await store.get("test-key"));
-      expect(result?.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
-    it("should return shouldRevalidate=true and atomically mark REVALIDATING for stale entries", async () => {
+    it("reports stale entries and atomically claims revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -329,9 +376,12 @@ describe("CFCacheStore", () => {
       // Past TTL but within SWR window
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get should return shouldRevalidate=true and mark as REVALIDATING
+      // First get claims revalidation and marks the entry REVALIDATING.
       const result = hit(await store.get("test-key"));
-      expect(result?.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
 
       // Verify the entry is now marked as REVALIDATING
       const cache = mockCaches.default;
@@ -342,7 +392,7 @@ describe("CFCacheStore", () => {
       expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");
     });
 
-    it("should return shouldRevalidate=false when already REVALIDATING", async () => {
+    it("keeps a guarded stale reader stale without claiming revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -357,20 +407,23 @@ describe("CFCacheStore", () => {
 
       // First get - atomically marks as REVALIDATING
       const result1 = hit(await store.get("test-key"));
-      expect(result1?.shouldRevalidate).toBe(true);
+      expect(result1).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
 
       // Second get - already REVALIDATING, should not trigger again
       const result2 = hit(await store.get("test-key"));
-      expect(result2?.shouldRevalidate).toBe(false);
+      expect(result2).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
       // The guarded read is served from the re-serialized REVALIDATING re-put;
       // pin that the round-trip preserved the payload byte-for-byte.
       expect(result2?.data).toEqual(data);
     });
 
-    it("should prevent thundering herd with sequential requests", async () => {
-      // Note: Real thundering herd prevention relies on CF Cache API's atomic semantics.
-      // This test verifies sequential requests work correctly - first triggers revalidation,
-      // subsequent ones see REVALIDATING status and don't trigger again.
+    it("should prevent thundering herd with concurrent requests", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -383,20 +436,70 @@ describe("CFCacheStore", () => {
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
 
-      // Sequential requests - first triggers revalidation
-      const result1 = hit(await store.get("test-key"));
-      expect(result1?.shouldRevalidate).toBe(true);
-      expect(result1?.data).toEqual(data);
+      const results = await Promise.all([
+        store.get("test-key"),
+        store.get("test-key"),
+        store.get("test-key"),
+      ]);
+      const hits = results.map(hit);
+      expect(hits.filter((result) => result?.revalidationClaimed)).toHaveLength(
+        1,
+      );
+      for (const result of hits) {
+        expect(result).toMatchObject({ freshness: "stale" });
+        expect(result?.data).toEqual(data);
+      }
+    });
 
-      // Subsequent requests see REVALIDATING status and are served from the
-      // re-serialized re-put; assert the data survives the round-trip.
-      const result2 = hit(await store.get("test-key"));
-      expect(result2?.shouldRevalidate).toBe(false);
-      expect(result2?.data).toEqual(data);
+    it("shares concurrent claims across named-cache wrappers", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        namespace: "concurrent-herd",
+      });
+      const data = createTestData();
+      await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+      vi.advanceTimersByTime(120 * 1000);
 
-      const result3 = hit(await store.get("test-key"));
-      expect(result3?.shouldRevalidate).toBe(false);
-      expect(result3?.data).toEqual(data);
+      const results = await Promise.all([
+        store.get("test-key"),
+        store.get("test-key"),
+        store.get("test-key"),
+      ]);
+      expect(
+        results.map(hit).filter((result) => result?.revalidationClaimed),
+      ).toHaveLength(1);
+    });
+
+    it("keeps default and explicitly named default cache claims independent", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const defaultCtx = createMockCtx();
+      const namedCtx = createMockCtx();
+      const defaultStore = new CFCacheStore({ ctx: defaultCtx });
+      const namedStore = new CFCacheStore({
+        ctx: namedCtx,
+        namespace: "default",
+      });
+      const data = createTestData();
+
+      await defaultStore.set("namespace-collision", data, 60, 300);
+      await namedStore.set("namespace-collision", data, 60, 300);
+      await Promise.all([
+        defaultCtx.waitUntil.mock.results[0].value,
+        namedCtx.waitUntil.mock.results[0].value,
+      ]);
+      vi.advanceTimersByTime(120 * 1000);
+
+      expect(hit(await defaultStore.get("namespace-collision"))).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(hit(await namedStore.get("namespace-collision"))).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
     });
 
     it("returns the stale data even when the REVALIDATING marker write fails (segment get)", async () => {
@@ -419,7 +522,10 @@ describe("CFCacheStore", () => {
       // A failed marker write must not turn a good stale read into a null/miss.
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(putSpy).toHaveBeenCalled();
 
       putSpy.mockRestore();
@@ -816,7 +922,8 @@ describe("CFCacheStore", () => {
         // computed isRevalidating, so an operator can tell HIT from a
         // REVALIDATING entry whose stamp aged out.
         cacheStatus: "HIT",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
     });
 
@@ -932,13 +1039,13 @@ describe("CFCacheStore", () => {
 
       // t = 120s: stale, within SWR. First get re-puts the REVALIDATING marker.
       vi.advanceTimersByTime(120 * 1000);
-      expect(hit(await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("seg-stuck"))!.revalidationClaimed).toBe(true);
       // Remaining window = 360 - 120 = 240, NOT the original full-window 360.
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=240");
 
       // t = 150s: the guard lapses at MAX_REVALIDATION_INTERVAL, re-arm re-puts.
       vi.advanceTimersByTime(MAX_REVALIDATION_INTERVAL * 1000);
-      expect(hit(await store.get("seg-stuck"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("seg-stuck"))!.revalidationClaimed).toBe(true);
       // Keeps shrinking (210), proving retention is not restarted to 360.
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=210");
 
@@ -961,11 +1068,11 @@ describe("CFCacheStore", () => {
       const putSpy = vi.spyOn(mockCaches.default, "put");
 
       vi.advanceTimersByTime(120 * 1000);
-      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+      expect((await store.getItem("fn-stuck"))!.revalidationClaimed).toBe(true);
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=240");
 
       vi.advanceTimersByTime(MAX_REVALIDATION_INTERVAL * 1000);
-      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+      expect((await store.getItem("fn-stuck"))!.revalidationClaimed).toBe(true);
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=210");
 
       vi.advanceTimersByTime(210 * 1000);
@@ -1002,7 +1109,7 @@ describe("CFCacheStore", () => {
       // t = 120s: the promoted entry is now stale; its re-put must use the
       // remaining window derived from the carried deadline (240), not floor to 1.
       vi.advanceTimersByTime(120 * 1000);
-      expect(hit(await store.get("promoted"))!.shouldRevalidate).toBe(true);
+      expect(hit(await store.get("promoted"))!.revalidationClaimed).toBe(true);
       expect(lastPutCacheControl(putSpy)).toBe("public, max-age=240");
 
       putSpy.mockRestore();
@@ -1242,7 +1349,10 @@ describe("CFCacheStore", () => {
 
       // Stale KV data is served, but revalidation is withheld (no herd).
       expect(result!.data).toEqual(kvData);
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
       expect(events.map((e) => e.outcome)).toEqual([
         "body-timeout",
         "kv-stale-suppressed",
@@ -1269,7 +1379,10 @@ describe("CFCacheStore", () => {
       const result = hit(await store.get("non200-seg"));
 
       expect(result!.data).toEqual(kvData);
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
       expect(events.map((e) => e.outcome)).toEqual([
         "non-200",
         "kv-stale-suppressed",
@@ -1291,7 +1404,10 @@ describe("CFCacheStore", () => {
       const result = hit(await store.get("missing-seg"));
 
       expect(result!.data).toEqual(kvData);
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(events.map((e) => e.outcome)).toEqual(["l1-miss", "kv-stale"]);
     });
 
@@ -1316,7 +1432,10 @@ describe("CFCacheStore", () => {
 
       // A corrupt L1 body must still revalidate so a fresh render overwrites it.
       expect(result!.data).toEqual(kvData);
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(events.map((e) => e.outcome)).toEqual(["body-error", "kv-stale"]);
 
       matchSpy.mockRestore();
@@ -1348,7 +1467,10 @@ describe("CFCacheStore", () => {
       const result = await resultPromise;
 
       expect(result!.value).toBe("kv-value");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
       expect(events.map((e) => e.outcome)).toEqual([
         "body-timeout",
         "kv-stale-suppressed",
@@ -1380,7 +1502,10 @@ describe("CFCacheStore", () => {
       const result = await store.getItem("fn-key");
       expect(result).not.toBeNull();
       expect(result!.value).toBe("serialized-value");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
     it("should persist the encoded handle string losslessly alongside value", async () => {
@@ -1439,7 +1564,7 @@ describe("CFCacheStore", () => {
       );
     });
 
-    it("should return shouldRevalidate=true for stale items", async () => {
+    it("reports stale items and claims revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -1452,11 +1577,14 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       const result = await store.getItem("fn-stale");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(result!.value).toBe("stale-value");
     });
 
-    it("should atomically mark REVALIDATING to prevent thundering herd", async () => {
+    it("claims one revalidator across concurrent stale item reads", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -1467,16 +1595,17 @@ describe("CFCacheStore", () => {
 
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get triggers revalidation
-      const result1 = await store.getItem("fn-herd");
-      expect(result1!.shouldRevalidate).toBe(true);
-      expect(result1!.value).toBe("value");
-
-      // Second get sees REVALIDATING status and is served from the re-serialized
-      // re-put; pin that value (and the handle blob) survive the round-trip.
-      const result2 = await store.getItem("fn-herd");
-      expect(result2!.shouldRevalidate).toBe(false);
-      expect(result2!.value).toBe("value");
+      const results = await Promise.all([
+        store.getItem("fn-herd"),
+        store.getItem("fn-herd"),
+        store.getItem("fn-herd"),
+      ]);
+      expect(
+        results.filter((result) => result?.revalidationClaimed),
+      ).toHaveLength(1);
+      for (const result of results) {
+        expect(result).toMatchObject({ freshness: "stale", value: "value" });
+      }
     });
 
     it("returns the stale value even when the REVALIDATING marker write fails (function getItem)", async () => {
@@ -1497,7 +1626,10 @@ describe("CFCacheStore", () => {
       // A failed marker write must not turn a good stale read into a null/miss.
       expect(result).not.toBeNull();
       expect(result!.value).toBe("value");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(putSpy).toHaveBeenCalled();
 
       putSpy.mockRestore();
@@ -1525,15 +1657,18 @@ describe("CFCacheStore", () => {
       // First get marks REVALIDATING (stamps revalidating-at = now). A healthy
       // background revalidation would refresh the entry; simulate a hung one by
       // leaving it REVALIDATING.
-      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+      expect((await store.getItem("fn-stuck"))!.revalidationClaimed).toBe(true);
       // Recent REVALIDATING (within interval): guarded, no re-trigger.
-      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(false);
+      expect(await store.getItem("fn-stuck")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
 
       // Once the stamp ages to MAX_REVALIDATION_INTERVAL, the guard expires and
       // the next get re-triggers, so a dropped revalidation can never pin the
       // entry stale forever.
       vi.advanceTimersByTime(MAX_REVALIDATION_INTERVAL * 1000);
-      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+      expect((await store.getItem("fn-stuck"))!.revalidationClaimed).toBe(true);
     });
 
     it("does not re-trigger one second before MAX_REVALIDATION_INTERVAL", async () => {
@@ -1548,14 +1683,17 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       // Marks REVALIDATING (stamps revalidating-at = now).
-      expect((await store.getItem("fn-edge"))!.shouldRevalidate).toBe(true);
+      expect((await store.getItem("fn-edge"))!.revalidationClaimed).toBe(true);
 
       // One second before the interval elapses: still within the guard window.
       vi.advanceTimersByTime((MAX_REVALIDATION_INTERVAL - 1) * 1000);
-      expect((await store.getItem("fn-edge"))!.shouldRevalidate).toBe(false);
+      expect(await store.getItem("fn-edge")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
     });
 
-    it("should return shouldRevalidate=false for fresh items", async () => {
+    it("reports fresh items without claiming revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -1567,7 +1705,10 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(30 * 1000);
 
       const result = await store.getItem("fn-fresh");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
     it("should use fn: prefix in cache key", async () => {
@@ -1590,7 +1731,9 @@ describe("CFCacheStore", () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      await store.setItem("fn-async", "value", { ttl: 60 });
+      await expect(
+        store.setItem("fn-async", "value", { ttl: 60 }),
+      ).resolves.toEqual({ outcome: "scheduled" });
 
       expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
       expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
@@ -1626,7 +1769,7 @@ describe("CFCacheStore", () => {
       expect(await result!.response.text()).toBe("hello world");
     });
 
-    it("should return shouldRevalidate=false for fresh responses", async () => {
+    it("reports fresh responses without claiming revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -1637,10 +1780,13 @@ describe("CFCacheStore", () => {
 
       vi.advanceTimersByTime(30 * 1000);
       const result = await store.getResponse("doc-fresh");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
-    it("should return shouldRevalidate=true for stale responses", async () => {
+    it("reports stale responses and claims revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -1652,7 +1798,10 @@ describe("CFCacheStore", () => {
       // Past TTL, within SWR
       vi.advanceTimersByTime(120 * 1000);
       const result = await store.getResponse("doc-stale");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(await result!.response.text()).toBe("stale");
     });
 
@@ -1686,7 +1835,10 @@ describe("CFCacheStore", () => {
       // Past TTL, within default SWR
       vi.advanceTimersByTime(90 * 1000);
       const result = await store.getResponse("doc-default");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
     });
 
     it("should use doc: prefix in cache key", async () => {
@@ -1726,7 +1878,9 @@ describe("CFCacheStore", () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      await store.putResponse("doc-async", new Response("body"), 60);
+      await expect(
+        store.putResponse("doc-async", new Response("body"), 60),
+      ).resolves.toEqual({ outcome: "scheduled" });
 
       expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
       expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
@@ -1821,13 +1975,13 @@ describe("CFCacheStore", () => {
   // Document-tier thundering-herd guard (A2)
   // ==========================================================================
   // Mirrors the segment (get) / item (getItem) REVALIDATING guard for the
-  // document tier. Before this, every concurrent stale getResponse returned
-  // shouldRevalidate=true, so document-cache.ts scheduled a fresh render for
-  // each one (a herd). Now the first stale reader marks REVALIDATING and a
-  // recent marker suppresses shouldRevalidate for subsequent readers.
+  // document tier. Before this, every concurrent stale getResponse claimed
+  // revalidation, so document-cache.ts scheduled a fresh render for each one (a
+  // herd). Now the first stale reader marks REVALIDATING and a recent marker
+  // suppresses ownership for subsequent readers without changing freshness.
 
   describe("getResponse document-tier herd guard", () => {
-    it("first stale getResponse marks REVALIDATING and returns shouldRevalidate=true", async () => {
+    it("first stale getResponse marks REVALIDATING and claims ownership", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
@@ -1839,7 +1993,10 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(120 * 1000);
 
       const first = await store.getResponse("doc-herd");
-      expect(first!.shouldRevalidate).toBe(true);
+      expect(first).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(await first!.response.text()).toBe("body");
 
       // The L1 entry is now stamped REVALIDATING.
@@ -1853,7 +2010,7 @@ describe("CFCacheStore", () => {
       expect(await marked!.text()).toBe("body");
     });
 
-    it("only ONE of N concurrent stale getResponse reads sees shouldRevalidate=true", async () => {
+    it("only one of N stale getResponse reads claims revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
@@ -1863,17 +2020,17 @@ describe("CFCacheStore", () => {
 
       vi.advanceTimersByTime(120 * 1000);
 
-      // Sequential reads model the herd: the first re-puts the REVALIDATING
-      // marker (synchronously via waitUntil), the rest see it and suppress.
-      const r1 = await store.getResponse("doc-herd-seq");
-      const r2 = await store.getResponse("doc-herd-seq");
-      const r3 = await store.getResponse("doc-herd-seq");
+      const [r1, r2, r3] = await Promise.all([
+        store.getResponse("doc-herd-seq"),
+        store.getResponse("doc-herd-seq"),
+        store.getResponse("doc-herd-seq"),
+      ]);
 
-      const revalidators = [r1, r2, r3].filter((r) => r!.shouldRevalidate);
+      const revalidators = [r1, r2, r3].filter((r) => r!.revalidationClaimed);
       expect(revalidators.length).toBe(1);
-      expect(r1!.shouldRevalidate).toBe(true);
-      expect(r2!.shouldRevalidate).toBe(false);
-      expect(r3!.shouldRevalidate).toBe(false);
+      for (const result of [r1, r2, r3]) {
+        expect(result).toMatchObject({ freshness: "stale" });
+      }
       // Every reader still gets the full stale body.
       expect(await r1!.response.text()).toBe("body");
       expect(await r2!.response.text()).toBe("body");
@@ -1890,22 +2047,23 @@ describe("CFCacheStore", () => {
       await mockCtx.waitUntil.mock.results[0].value;
 
       vi.advanceTimersByTime(120 * 1000); // stale
-      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
+      expect((await store.getResponse("doc-rearm"))!.revalidationClaimed).toBe(
         true,
       );
       // Guarded immediately after.
-      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
-        false,
-      );
+      expect(await store.getResponse("doc-rearm")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
 
       // Past the recency window: the next stale read re-arms.
       vi.advanceTimersByTime((MAX_REVALIDATION_INTERVAL + 1) * 1000);
-      expect((await store.getResponse("doc-rearm"))!.shouldRevalidate).toBe(
+      expect((await store.getResponse("doc-rearm"))!.revalidationClaimed).toBe(
         true,
       );
     });
 
-    it("returns the stale response (shouldRevalidate=true) even when the marker write fails", async () => {
+    it("returns the claimed stale response even when the marker write fails", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
@@ -1922,7 +2080,10 @@ describe("CFCacheStore", () => {
       );
 
       const result = await store.getResponse("doc-marker-fail");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       expect(await result!.response.text()).toBe("body");
     });
 
@@ -2043,7 +2204,10 @@ describe("CFCacheStore", () => {
         const result = hit(await store.get("seg-key"));
         expect(result).not.toBeNull();
         expect(result!.data).toEqual(data);
-        expect(result!.shouldRevalidate).toBe(false);
+        expect(result).toMatchObject({
+          freshness: "fresh",
+          revalidationClaimed: false,
+        });
       });
 
       it("emits a kv-fresh debug event on a fresh L2 fallback", async () => {
@@ -2067,11 +2231,15 @@ describe("CFCacheStore", () => {
         vi.advanceTimersByTime(30 * 1000);
         const result = hit(await store.get("seg-fresh"));
 
-        expect(result!.shouldRevalidate).toBe(false);
+        expect(result).toMatchObject({
+          freshness: "fresh",
+          revalidationClaimed: false,
+        });
         expect(events.at(-1)).toMatchObject({
           op: "get",
           outcome: "kv-fresh",
-          shouldRevalidate: false,
+          freshness: "fresh",
+          revalidationClaimed: false,
         });
       });
 
@@ -2096,11 +2264,26 @@ describe("CFCacheStore", () => {
         vi.advanceTimersByTime(120 * 1000);
         const result = hit(await store.get("seg-stale"));
 
-        expect(result!.shouldRevalidate).toBe(true);
+        expect(result).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: true,
+        });
+        mockCaches.clear();
+        expect(hit(await store.get("seg-stale"))).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: false,
+        });
+        vi.advanceTimersByTime(MAX_REVALIDATION_INTERVAL * 1000);
+        mockCaches.clear();
+        expect(hit(await store.get("seg-stale"))).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: true,
+        });
         expect(events.at(-1)).toMatchObject({
           op: "get",
           outcome: "kv-stale",
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
         });
       });
 
@@ -2151,7 +2334,7 @@ describe("CFCacheStore", () => {
         expect(mockKV.store.has("long-ttl")).toBe(true);
       });
 
-      it("should return shouldRevalidate=true for stale KV entries", async () => {
+      it("reports stale KV entries and claims revalidation", async () => {
         vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
         const mockCtx = createMockCtx();
@@ -2170,7 +2353,10 @@ describe("CFCacheStore", () => {
         const result = hit(await store.get("seg-key"));
         expect(result).not.toBeNull();
         expect(result!.data).toEqual(data);
-        expect(result!.shouldRevalidate).toBe(true);
+        expect(result).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: true,
+        });
       });
 
       it("should return null for hard-expired KV entries", async () => {
@@ -2289,10 +2475,13 @@ describe("CFCacheStore", () => {
         const result = await store.getItem("fn-key");
         expect(result).not.toBeNull();
         expect(result!.value).toBe("my-value");
-        expect(result!.shouldRevalidate).toBe(false);
+        expect(result).toMatchObject({
+          freshness: "fresh",
+          revalidationClaimed: false,
+        });
       });
 
-      it("should return shouldRevalidate=true for stale KV function entries", async () => {
+      it("reports stale KV function entries and claims revalidation", async () => {
         vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
         const mockCtx = createMockCtx();
@@ -2309,7 +2498,15 @@ describe("CFCacheStore", () => {
         const result = await store.getItem("fn-key");
         expect(result).not.toBeNull();
         expect(result!.value).toBe("stale-value");
-        expect(result!.shouldRevalidate).toBe(true);
+        expect(result).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: true,
+        });
+        mockCaches.clear();
+        expect(await store.getItem("fn-key")).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: false,
+        });
       });
 
       it("emits kv-stale / kv-miss debug events for the L2 function path", async () => {
@@ -2333,7 +2530,8 @@ describe("CFCacheStore", () => {
         expect(events.at(-1)).toMatchObject({
           op: "getItem",
           outcome: "kv-stale",
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
         });
 
         events.length = 0;
@@ -2488,7 +2686,10 @@ describe("CFCacheStore", () => {
         expect(result).not.toBeNull();
         expect(result!.response.status).toBe(200);
         expect(await result!.response.text()).toBe("cached html");
-        expect(result!.shouldRevalidate).toBe(false);
+        expect(result).toMatchObject({
+          freshness: "fresh",
+          revalidationClaimed: false,
+        });
       });
 
       it("should preserve response headers from KV", async () => {

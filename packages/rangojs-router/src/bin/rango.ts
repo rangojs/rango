@@ -60,40 +60,103 @@ if (command === "generate") {
     runStaticGeneration(positionalArgs, mode);
   }
 } else if (command === "mcp") {
-  let projectRoot = process.cwd();
-  let instanceId: string | undefined;
+  if (rawArgs[0] === "install") {
+    let client: "claude-code" | "cursor" | "vscode" | "gemini" | undefined;
+    let projectRoot = ".";
+    let dryRun = false;
 
-  for (let i = 0; i < rawArgs.length; i++) {
-    const arg = rawArgs[i];
-    if (arg === "--root") {
-      const value = rawArgs[++i];
-      if (!value) {
-        console.error("[rango] --root requires a path argument");
+    for (let i = 1; i < rawArgs.length; i++) {
+      const arg = rawArgs[i];
+      if (arg === "--client") {
+        const value = rawArgs[++i];
+        if (
+          value !== "claude-code" &&
+          value !== "cursor" &&
+          value !== "vscode" &&
+          value !== "gemini"
+        ) {
+          console.error(
+            "[rango] --client requires one of: claude-code, cursor, vscode, gemini",
+          );
+          process.exit(1);
+        }
+        client = value;
+      } else if (arg === "--root") {
+        const value = rawArgs[++i];
+        if (!value) {
+          console.error("[rango] --root requires a path argument");
+          process.exit(1);
+        }
+        projectRoot = value;
+      } else if (arg === "--dry-run") {
+        dryRun = true;
+      } else {
+        console.error(`[rango] Unknown MCP install option: ${arg}`);
         process.exit(1);
       }
-      projectRoot = resolve(value);
-    } else if (arg === "--instance") {
-      instanceId = rawArgs[++i];
-      if (!instanceId) {
-        console.error("[rango] --instance requires an ID argument");
-        process.exit(1);
-      }
-    } else {
-      console.error(`[rango] Unknown MCP option: ${arg}`);
-      process.exit(1);
     }
-  }
-
-  import("../devtools-mcp/stdio-connector.js")
-    .then(({ runRangoMcpConnector }) =>
-      runRangoMcpConnector({ projectRoot, instanceId }),
-    )
-    .catch((error: unknown) => {
+    if (!client) {
       console.error(
-        `[rango] MCP connector failed: ${error instanceof Error ? error.message : String(error)}`,
+        "[rango] Usage: rango mcp install --client <claude-code|cursor|vscode|gemini> [--root <path>] [--dry-run]",
       );
       process.exit(1);
-    });
+    }
+
+    import("../devtools-mcp/client-config-installer.js")
+      .then(({ installRangoMcpClientConfig }) =>
+        installRangoMcpClientConfig({
+          workspaceRoot: process.cwd(),
+          projectRoot,
+          client,
+          dryRun,
+        }),
+      )
+      .then((result) => {
+        const prefix = result.dryRun ? "Would be" : "MCP client config";
+        console.log(`[rango] ${prefix} ${result.action}: ${result.configPath}`);
+      })
+      .catch((error: unknown) => {
+        console.error(
+          `[rango] MCP client install failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        process.exit(1);
+      });
+  } else {
+    let projectRoot = process.cwd();
+    let instanceId: string | undefined;
+
+    for (let i = 0; i < rawArgs.length; i++) {
+      const arg = rawArgs[i];
+      if (arg === "--root") {
+        const value = rawArgs[++i];
+        if (!value) {
+          console.error("[rango] --root requires a path argument");
+          process.exit(1);
+        }
+        projectRoot = resolve(value);
+      } else if (arg === "--instance") {
+        instanceId = rawArgs[++i];
+        if (!instanceId) {
+          console.error("[rango] --instance requires an ID argument");
+          process.exit(1);
+        }
+      } else {
+        console.error(`[rango] Unknown MCP option: ${arg}`);
+        process.exit(1);
+      }
+    }
+
+    import("../devtools-mcp/stdio-connector.js")
+      .then(({ runRangoMcpConnector }) =>
+        runRangoMcpConnector({ projectRoot, instanceId }),
+      )
+      .catch((error: unknown) => {
+        console.error(
+          `[rango] MCP connector failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        process.exit(1);
+      });
+  }
 } else {
   if (
     command &&
@@ -106,6 +169,7 @@ if (command === "generate") {
   console.log(`Usage:
   rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]
   rango mcp [--root <path>] [--instance <id>]
+  rango mcp install --client <claude-code|cursor|vscode|gemini> [--root <path>] [--dry-run]
 
   Auto-detects file type (createRouter, urls) and generates
   the appropriate .gen.ts route type files.
@@ -120,6 +184,8 @@ Options:
   --config <path>  Path to vite.config.ts (--runtime only, auto-detected if omitted)
   --root <path>    Project root for MCP runtime discovery (defaults to cwd)
   --instance <id>  Select one dev server when multiple instances use the same root
+  --client <name>  Install a project-local MCP config for a supported client
+  --dry-run        Report the MCP config action without writing it
 
 Examples:
   rango generate src/router.tsx

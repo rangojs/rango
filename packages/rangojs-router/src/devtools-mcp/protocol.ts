@@ -2,10 +2,14 @@ import type {
   DiagnosticTrace,
   DiagnosticValue,
 } from "../router/diagnostics/types.js";
+import type {
+  BrowserNavigationEvent,
+  BrowserNavigationKind,
+} from "../router/diagnostics/browser-protocol.js";
 
 export const RANGO_MCP_ENDPOINT = "/__rango/mcp";
 export const RANGO_MCP_SCHEMA_VERSION = 1 as const;
-export const RANGO_MCP_TOOL_SCHEMA_VERSION = 4 as const;
+export const RANGO_MCP_TOOL_SCHEMA_VERSION = 5 as const;
 export const RANGO_MCP_SERVER_NAME = "Rango DevTools";
 export const RANGO_MCP_MAX_RESULT_BYTES: number = 256 * 1024;
 
@@ -33,6 +37,7 @@ export interface ProjectMetadataSnapshot {
   routersTruncated: boolean;
   capabilities: {
     routes: boolean;
+    routeMatching: boolean;
     discoveryStatus: boolean;
     compilationIssues: boolean;
     recentRequests: boolean;
@@ -101,6 +106,89 @@ export interface RoutesPageSnapshot {
   truncated: boolean;
 }
 
+export interface MatchRouteInput {
+  url: string;
+  routerId?: string;
+}
+
+export interface RouteCacheDeclaration {
+  state: "none" | "disabled" | "configured";
+  ttl: number | null;
+  swr: number | null;
+  tags: string[];
+  tagsRuntime: boolean;
+  keyRuntime: boolean;
+  conditionRuntime: boolean;
+  storeOverride: boolean;
+  truncated: boolean;
+}
+
+export interface RouteLoaderDeclaration {
+  id: string | null;
+  cache: RouteCacheDeclaration;
+  revalidationRuntime: boolean;
+}
+
+export interface RouteInterceptDeclaration {
+  slot: string;
+  targetRoute: string;
+  selection: "always" | "runtime";
+  middlewareCount: number;
+  loaders: RouteLoaderDeclaration[];
+  truncated: boolean;
+}
+
+export interface RouteSegmentDeclaration {
+  id: string;
+  type: "route" | "layout" | "parallel" | "cache";
+  mountPath: string | null;
+  cache: RouteCacheDeclaration;
+  middlewareCount: number;
+  revalidationRuntime: boolean;
+  loading: boolean;
+  transition: "none" | "static" | "runtime";
+  loaders: RouteLoaderDeclaration[];
+  parallelSlots: string[];
+  intercepts: RouteInterceptDeclaration[];
+  truncated: boolean;
+}
+
+export interface RouteStructureDeclaration {
+  segments: RouteSegmentDeclaration[];
+  ppr: {
+    enabled: boolean;
+    ttl: number | null;
+    swr: number | null;
+    tags: string[];
+    tagsTruncated: boolean;
+    runtimeConfig: boolean;
+  };
+  prerender: boolean;
+  passthrough: boolean;
+  responseType: string | null;
+  truncated: boolean;
+}
+
+export interface MatchRouteSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  generation: number;
+  capturedAt: string | null;
+  stale: boolean;
+  pathname: string;
+  routerId: string | null;
+  matched: boolean;
+  route: {
+    name: string | null;
+    pattern: string;
+    params: Record<string, string>;
+    redirectTo: string | null;
+    source: RouteSourceOwnership | null;
+    search: Record<string, string> | null;
+    structure: RouteStructureDeclaration | null;
+  } | null;
+  truncated: boolean;
+}
+
 export interface RouteSourceOwnership {
   file: string;
   kind: "route";
@@ -136,9 +224,18 @@ export const REQUEST_TRANSPORTS: readonly [
 
 export type RequestTransport = (typeof REQUEST_TRANSPORTS)[number];
 
+export const BROWSER_NAVIGATION_KINDS: readonly BrowserNavigationKind[] = [
+  "document",
+  "navigate",
+  "refresh",
+  "popstate",
+  "action",
+];
+
 export interface ListRequestsInput {
   routerId?: string;
   requestId?: string;
+  navigationId?: string;
   transport?: RequestTransport;
   routePattern?: string;
   completed?: boolean;
@@ -151,6 +248,7 @@ export interface RequestSummary {
   requestId: string;
   routerId: string;
   clientCorrelationId: string | null;
+  navigationIds: string[];
   method: string | null;
   transport: RequestTransport | null;
   routeKey: string | null;
@@ -164,6 +262,51 @@ export interface RequestSummary {
   truncated: boolean;
   droppedEvents: number;
   source: RouteSourceOwnership | null;
+}
+
+export interface ListNavigationsInput {
+  navigationId?: string;
+  kind?: BrowserNavigationKind;
+  completed?: boolean;
+  since?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface NavigationSummary {
+  navigationId: string;
+  documentId: string;
+  kind: BrowserNavigationKind;
+  pathname: string;
+  startedAt: string;
+  updatedAt: string;
+  completed: boolean;
+  requestIds: string[];
+  eventCount: number;
+  truncated: boolean;
+}
+
+export interface NavigationsPageSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  navigations: NavigationSummary[];
+  nextCursor: string | null;
+  truncated: boolean;
+}
+
+export interface GetNavigationTraceInput {
+  navigationId: string;
+}
+
+export interface NavigationTraceSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  navigationId: string;
+  documentId: string;
+  kind: BrowserNavigationKind;
+  pathname: string;
+  completed: boolean;
+  requestIds: string[];
+  events: BrowserNavigationEvent[];
+  truncated: boolean;
 }
 
 export interface DiagnosticBridgeStats {

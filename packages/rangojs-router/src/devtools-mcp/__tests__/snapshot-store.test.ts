@@ -5,7 +5,11 @@ import {
   type RouterRecord,
 } from "../protocol.js";
 import { jsonToolResult } from "../server.js";
-import { createRangoMcpSnapshotStore } from "../snapshot-store.js";
+import { buildRouteTrie } from "../../build/route-trie.js";
+import {
+  createRangoMcpSnapshotStore,
+  type RouteMatchIndex,
+} from "../snapshot-store.js";
 
 function route(name: string, pattern: string, routerId = "app"): RouteRecord {
   return {
@@ -38,6 +42,32 @@ function createStore(
 
 function routers(...ids: string[]): RouterRecord[] {
   return ids.map((id) => ({ id, file: "src/router.tsx" }));
+}
+
+function matchIndex(): RouteMatchIndex {
+  return {
+    routerId: "app",
+    trie: buildRouteTrie(
+      { product: "/products/:id", wildcard: "/products/*rest" },
+      { product: "", wildcard: "" },
+    ),
+    routes: {
+      product: {
+        name: "product",
+        pattern: "/products/:id",
+        search: { tab: "string" },
+        structure: null,
+        truncated: false,
+      },
+      wildcard: {
+        name: "wildcard",
+        pattern: "/products/*rest",
+        search: null,
+        structure: null,
+        truncated: false,
+      },
+    },
+  };
 }
 
 describe("Rango MCP snapshot store", () => {
@@ -129,7 +159,7 @@ describe("Rango MCP snapshot store", () => {
       routes: [expect.objectContaining({ routerId: "api", name: "health" })],
     });
     expect(store.getProjectMetadata()).toMatchObject({
-      toolSchemaVersion: 4,
+      toolSchemaVersion: 5,
       entryFile: "src/router.tsx",
       routers: [
         { id: "api", file: "src/router.tsx" },
@@ -139,6 +169,7 @@ describe("Rango MCP snapshot store", () => {
       routersTruncated: false,
       capabilities: {
         routes: true,
+        routeMatching: true,
         discoveryStatus: true,
         compilationIssues: true,
         recentRequests: true,
@@ -148,6 +179,51 @@ describe("Rango MCP snapshot store", () => {
         cacheTagExplanation: true,
         sourceOwnership: true,
       },
+    });
+  });
+
+  it("matches the canonical trie without creating request state", () => {
+    const store = createStore();
+    const attempt = store.beginDiscovery();
+    store.publishRoutes(
+      [route("product", "/products/:id"), route("wildcard", "/products/*rest")],
+      routers("app"),
+      attempt,
+      [
+        {
+          routerId: "app",
+          routeName: "product",
+          routePattern: "/products/:id",
+          source: {
+            file: "src/products.tsx",
+            kind: "route",
+            precision: "declaration-file",
+          },
+        },
+      ],
+      [matchIndex()],
+    );
+
+    expect(
+      store.matchRoute({ url: "/products/42?secret=value" }),
+    ).toMatchObject({
+      pathname: "/products/42",
+      routerId: "app",
+      matched: true,
+      route: {
+        name: "product",
+        pattern: "/products/:id",
+        params: { id: "42" },
+        search: { tab: "string" },
+        source: { file: "src/products.tsx" },
+      },
+    });
+    expect(
+      JSON.stringify(store.matchRoute({ url: "/products/42?secret=value" })),
+    ).not.toContain("secret");
+    expect(store.matchRoute({ url: "/missing" })).toMatchObject({
+      matched: false,
+      route: null,
     });
   });
 

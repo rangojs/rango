@@ -37,6 +37,11 @@ import {
 import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
+import {
+  BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED,
+  getBrowserNavigationDiagnostics,
+  type BrowserNavigationDiagnosticRef,
+} from "./navigation-diagnostics-bridge.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -143,6 +148,7 @@ export function createServerActionBridge(
   async function refetchRoute(opts?: {
     segments?: string[];
     interceptSourceUrl?: string | null;
+    diagnosticNavigation?: BrowserNavigationDiagnosticRef;
   }): Promise<void> {
     const src = opts?.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
@@ -150,6 +156,13 @@ export function createServerActionBridge(
       eventController,
       window.location.href,
       { replace: true, skipLoadingState: true },
+      opts?.diagnosticNavigation
+        ? {
+            navigation: opts.diagnosticNavigation,
+            kind: "action",
+            settle: false,
+          }
+        : undefined,
     );
     try {
       await fetchPartialUpdate(
@@ -181,6 +194,24 @@ export function createServerActionBridge(
       : null;
     const log = (msg: string, details?: Record<string, unknown>) => {
       if (tx) browserDebugLog(tx, msg, details);
+    };
+    const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+      ? getBrowserNavigationDiagnostics()
+      : null;
+    const diagnosticNavigation = navigationDiagnostics?.start(
+      "action",
+      window.location.href,
+    );
+    let diagnosticSettled = false;
+    const completeDiagnostic = (): void => {
+      if (!diagnosticNavigation || diagnosticSettled) return;
+      navigationDiagnostics?.complete(diagnosticNavigation);
+      diagnosticSettled = true;
+    };
+    const abortDiagnostic = (failed: boolean): void => {
+      if (!diagnosticNavigation || diagnosticSettled) return;
+      navigationDiagnostics?.abort(diagnosticNavigation, failed);
+      diagnosticSettled = true;
     };
 
     const locationKey = window.history.state?.key;
@@ -301,6 +332,9 @@ export function createServerActionBridge(
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+          ...(diagnosticNavigation && {
+            "X-Rango-Navigation-Id": diagnosticNavigation.id,
+          }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
           }),
@@ -308,6 +342,13 @@ export function createServerActionBridge(
         body: encodedBody,
         signal: fetchAbort.signal,
       }).then(async (response) => {
+        if (diagnosticNavigation) {
+          navigationDiagnostics?.linkResponse(
+            diagnosticNavigation,
+            response,
+            "action",
+          );
+        }
         // A settled fetch promise means the request reached the server and a
         // Response came back (true for 2xx, 4xx, AND 5xx — fetch only rejects
         // on network-layer failure, never on HTTP status). Record it as the
@@ -333,6 +374,7 @@ export function createServerActionBridge(
             // short-circuits the action server-side, so nothing mutated and a
             // broadcast would only risk hard-reloading a sibling mid-task.
             finalizeAction(true);
+            abortDiagnostic(false);
           },
         });
         if (reloadResult) return reloadResult;
@@ -350,6 +392,7 @@ export function createServerActionBridge(
           // and we're navigating away). Latched, so the finally is a no-op.
           finalizeAction();
           await dispatchRedirect(redirect.url);
+          completeDiagnostic();
           return new Promise<Response>(() => {});
         }
         if (redirect === "blocked") {
@@ -376,6 +419,7 @@ export function createServerActionBridge(
           // Never-settling return: release the fence before the reload (the
           // reload resets module state anyway, but stay balanced). Latched.
           finalizeAction();
+          abortDiagnostic(false);
           window.location.reload();
           return new Promise<Response>(() => {});
         }
@@ -464,10 +508,12 @@ export function createServerActionBridge(
               url: metadata.redirect.url,
             });
             handle.complete(returnValue?.data);
+            completeDiagnostic();
             return returnValue?.data;
           }
           log("external action redirect", { url: externalUrl });
           handle.complete(returnValue?.data);
+          completeDiagnostic();
           window.location.assign(externalUrl);
           return returnValue?.data;
         }
@@ -480,11 +526,13 @@ export function createServerActionBridge(
             url: metadata.redirect.url,
           });
           handle.complete(returnValue?.data);
+          completeDiagnostic();
           return returnValue?.data;
         }
         log("action redirect", { url: redirectUrl });
         handle.complete(returnValue?.data);
         await dispatchRedirect(redirectUrl, metadata.locationState);
+        completeDiagnostic();
         return returnValue?.data;
       }
 
@@ -681,7 +729,7 @@ export function createServerActionBridge(
             // Invalidation is deferred to finalizeAction(); here we only trigger
             // the revalidation refetch of the new route (suppressed on keep).
             if (!scenario.onInterceptRoute && !keepCache) {
-              refetchRoute().catch((error) => {
+              refetchRoute({ diagnosticNavigation }).catch((error) => {
                 if (isBackgroundSuppressible(error)) return;
                 console.error(
                   "[Browser] Background revalidation failed:",
@@ -698,6 +746,7 @@ export function createServerActionBridge(
           if (!keepCache) {
             await refetchRoute({
               interceptSourceUrl: store.getInterceptSourceUrl(),
+              diagnosticNavigation,
             });
           }
           break;
@@ -711,7 +760,7 @@ export function createServerActionBridge(
           // resolving last must discharge a directive-free sibling's repair.
           // See the keep row in docs/design/rango-state-cookie.md (the all-keep
           // edge, and the benign re-mark-stale-after-refetch end-state delta).
-          await refetchRoute({ interceptSourceUrl });
+          await refetchRoute({ interceptSourceUrl, diagnosticNavigation });
           break;
         }
 
@@ -733,6 +782,7 @@ export function createServerActionBridge(
           await refetchRoute({
             segments: segmentsToSend,
             interceptSourceUrl,
+            diagnosticNavigation,
           });
           break;
         }
@@ -811,13 +861,18 @@ export function createServerActionBridge(
       }
 
       handle.complete(returnData);
+      completeDiagnostic();
       return returnData;
+    } catch (error) {
+      abortDiagnostic(true);
+      throw error;
     } finally {
       // The single deferred invalidation + fence release for this action. Runs
       // for every terminal that settles (normal, navigated-away, error, abort,
       // intercept, concurrent); the SPA-redirect paths above already ran it.
       // Latched, so it fires exactly once.
       finalizeAction();
+      abortDiagnostic(false);
       handle[Symbol.dispose]();
     }
   }

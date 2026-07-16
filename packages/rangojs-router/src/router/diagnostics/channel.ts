@@ -303,10 +303,18 @@ export function runWithRequestDiagnostics(
           ) {
             try {
               response.headers.set("X-Rango-Request-Id", identity.requestId);
+              response.headers.append(
+                "Server-Timing",
+                `rango-request-id;desc="${identity.requestId}"`,
+              );
             } catch {
               try {
                 const headers = new Headers(response.headers);
                 headers.set("X-Rango-Request-Id", identity.requestId);
+                headers.append(
+                  "Server-Timing",
+                  `rango-request-id;desc="${identity.requestId}"`,
+                );
                 response = new Response(response.body, {
                   status: response.status,
                   statusText: response.statusText,
@@ -836,7 +844,8 @@ export function recordTelemetryDiagnostic(event: TelemetryEvent): void {
         "cache.decision",
         {
           hit: event.hit,
-          shouldRevalidate: event.shouldRevalidate,
+          freshness: event.freshness,
+          revalidationClaimed: event.revalidationClaimed,
           source: event.source ?? null,
           segments: event.segments ?? [],
         },

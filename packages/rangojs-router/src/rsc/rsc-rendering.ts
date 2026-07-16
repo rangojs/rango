@@ -80,6 +80,7 @@ import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import {
   getDevelopmentDiagnosticLink,
+  recordCacheTagObservationDiagnostic,
   recordPprDiagnostic,
   type DevelopmentDiagnosticLink,
 } from "../router/diagnostics/channel.js";
@@ -406,12 +407,13 @@ async function handleRscRenderingInner<TEnv>(
           // recapture when asked, then commit the composed response.
           const serveHit = (
             entry: ShellCacheEntry,
-            revalidate: boolean | undefined,
+            freshness: "fresh" | "stale",
+            revalidate: boolean,
             source: "runtime" | "build",
           ): Response => {
             recordPprDiagnostic("document", {
               outcome: "hit",
-              freshness: revalidate ? "stale" : "fresh",
+              freshness,
               source,
               backgroundCaptureRequested: revalidate === true,
             });
@@ -484,7 +486,21 @@ async function handleRscRenderingInner<TEnv>(
             } else {
               // Stale (SWR) hit: serve the stale shell now, recapture in the
               // background (stampede-guarded + backoff inside scheduleShellCapture).
-              return serveHit(cached.entry, cached.shouldRevalidate, "runtime");
+              if (cached.tags?.length) {
+                recordCacheTagObservationDiagnostic({
+                  artifact: "runtime-shell",
+                  phase: cached.freshness === "stale" ? "stale" : "hit",
+                  provenance: ["stored"],
+                  tags: cached.tags,
+                  identity: key,
+                });
+              }
+              return serveHit(
+                cached.entry,
+                cached.freshness,
+                cached.revalidationClaimed,
+                "runtime",
+              );
             }
           } else if (cached) {
             missReason = cached.entry.navigationOnly
@@ -510,7 +526,12 @@ async function handleRscRenderingInner<TEnv>(
           );
           if (buildHit) {
             // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
-            return serveHit(buildHit.entry, buildHit.stale, "build");
+            return serveHit(
+              buildHit.entry,
+              buildHit.stale ? "stale" : "fresh",
+              buildHit.stale,
+              "build",
+            );
           }
           // MISS (no entry, invalid reactVersion, or store read failure): axis 1
           // + a background capture scheduled once the response is known servable.
@@ -947,7 +968,17 @@ async function matchPartialWithPprReplay<TEnv>(
     const decision = replayableShellSnapshot(cached.entry, ctx.version);
     if ("snapshot" in decision) {
       snapshot = decision.snapshot;
-      freshness = cached.shouldRevalidate ? "stale" : "fresh";
+      freshness = cached.freshness;
+      if (cached.tags?.length) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "runtime-shell",
+          phase: freshness === "stale" ? "stale" : "hit",
+          provenance: ["stored"],
+          tags: cached.tags,
+          identity: key,
+          outcome: "navigation-replay",
+        });
+      }
     } else {
       bypassReason = decision.reason;
     }
@@ -974,7 +1005,17 @@ async function matchPartialWithPprReplay<TEnv>(
       );
       if ("snapshot" in decision) {
         snapshot = decision.snapshot;
-        freshness = navigationCached.shouldRevalidate ? "stale" : "fresh";
+        freshness = navigationCached.freshness;
+        if (navigationCached.tags?.length) {
+          recordCacheTagObservationDiagnostic({
+            artifact: "runtime-shell",
+            phase: freshness === "stale" ? "stale" : "hit",
+            provenance: ["stored"],
+            tags: navigationCached.tags,
+            identity: navigationKey,
+            outcome: "navigation-replay",
+          });
+        }
       } else {
         bypassReason = decision.reason;
       }

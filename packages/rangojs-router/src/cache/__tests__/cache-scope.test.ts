@@ -321,7 +321,11 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
       diagnosticCachePolicy,
     };
     return {
-      get: async () => ({ data, shouldRevalidate: false }),
+      get: async () => ({
+        data,
+        freshness: "fresh",
+        revalidationClaimed: false,
+      }),
     } as unknown as SegmentCacheStore;
   }
 
@@ -423,7 +427,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
   });
 
   it("retains handler loader generations with cached handler segments", async () => {
-    const set = vi.fn(async () => {});
+    const set = vi.fn(async () => ({ outcome: "stored" as const }));
     const store = {
       get: vi.fn(async () => null),
       set,
@@ -487,6 +491,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
     let cached: CachedEntryData | undefined;
     const set = vi.fn(async (_key: string, data: CachedEntryData) => {
       cached = data;
+      return { outcome: "stored" as const };
     });
     const store = {
       get: vi.fn(async () => null),

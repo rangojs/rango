@@ -124,6 +124,7 @@ export interface BuildShellCaptureResult {
     | "no-shell"
     | "redirect"
     | "refused"
+    | "write-failed"
     /** Middleware/handler opted this URL out of PPR shell capture. */
     | "dynamic"
     /** The router swept does not own this URL — try the next one. */
@@ -197,8 +198,9 @@ async function attemptBuildCapture(
       _ttl?: number,
       _swr?: number,
       tags?: string[],
-    ): Promise<void> => {
+    ): Promise<{ outcome: "stored" }> => {
       collected = { entry, tags };
+      return { outcome: "stored" };
     },
   };
 

@@ -196,6 +196,11 @@ export function createPartialUpdater(
         mode.type === "stale-revalidation" || segments.length === 0,
       version: getVersion(),
       routerId: store.getRouterId?.(),
+      diagnosticNavigation: tx.diagnosticNavigation,
+      diagnosticRequestRole:
+        mode.type === "action" || mode.type === "stale-revalidation"
+          ? "revalidation"
+          : "navigation",
     });
     const streamingToken = tx.startStreaming();
     const {

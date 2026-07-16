@@ -76,6 +76,7 @@ import {
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { createDiscoveryGate } from "./discovery/gate-state.js";
 import {
+  createMcpRouteMatchIndexes,
   createMcpRouteSnapshot,
   createMcpRouterSnapshot,
   createMcpSourceOwnershipSnapshot,
@@ -567,6 +568,7 @@ export function createRouterDiscoveryPlugin(
             createMcpRouterSnapshot(s),
             attempt,
             createMcpSourceOwnershipSnapshot(s),
+            createMcpRouteMatchIndexes(s),
           );
         } catch (error) {
           mcp.failDiscovery(error, attempt);
