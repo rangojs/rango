@@ -261,6 +261,15 @@ tail's re-render-and-pin approach: a handler that computes something the
 snapshot doesn't pin (a timestamp, a random id) drifts today; replayed it
 cannot.
 
+There is one browser-observable transition that is not a parity failure. Flight
+can hydrate a postponed boundary before fizz finishes its `$RC`/`$RV` reveal
+cleanup. For that short window the visible client-rendered node and fizz's
+`<div hidden id="S:n">` copy coexist with identical data; `$RV` removes the
+hidden container on its scheduled animation frame or timer. E2e assertions
+must wait for the global locator count to return to one before reading content.
+Scoping a locator to the visible page container hides a genuinely stuck
+`S:n` copy and therefore weakens the regression guard.
+
 ## Unification with pre-rendering
 
 `prerender-api-design.md`'s core principle — _pre-rendering is caching at
