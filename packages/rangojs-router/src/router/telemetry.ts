@@ -2,7 +2,8 @@
  * Router Telemetry Sink
  *
  * Internal event model for structured lifecycle events.
- * The sink is optional and zero-cost when not configured.
+ * The sink is optional. Without one, public delivery is disabled; development
+ * may still project the same local facts into the compile-gated diagnostic hub.
  *
  * Emit points:
  *   - request.start / request.end   (match-handlers.ts)
@@ -43,11 +44,10 @@ export interface RequestEndEvent extends BaseEvent {
   segmentCount: number;
   cacheHit: boolean;
   /**
-   * HTTP status when a Response ended the transaction — a thrown-Response
-   * short-circuit (redirect / auth gate carries the Response's status, e.g. 302),
-   * or dispatch()'s final response status. Absent for a normal render completion:
-   * the Response is built after match(), so match()/matchPartial() have no status
-   * to stamp there. Lets a sink split 3xx short-circuits from 2xx completions.
+   * HTTP status when a Response ended the transaction, dispatch() produced its
+   * final response, or matching completed as a RouteNotFoundError (404). Absent
+   * for a normal successful render completion: the Response is built after
+   * match(), so match()/matchPartial() have no status to stamp there.
    */
   status?: number;
 }

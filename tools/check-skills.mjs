@@ -8,7 +8,8 @@
 // Enforced per skill directory (packages/rangojs-router/skills/<name>/):
 //   1. SKILL.md exists.
 //   2. Frontmatter parses (`---` fence, `name:`, `description:`), `name`
-//      equals the directory basename, `description` is non-empty.
+//      equals the directory basename, `description` is non-empty, and optional
+//      argument hints that look like YAML collections are quoted strings.
 //   3. Every backtick `/token` in a skill file's body is either a real skill
 //      directory or an allowlisted non-skill URL example (route paths,
 //      package subpath entries, storage-key examples, etc. that legitimately
@@ -118,6 +119,7 @@ function checkFrontmatter(skillName, skillMdAbs) {
   fmLines.forEach((l, i) => {
     const separator = l.indexOf(":");
     if (separator !== -1) {
+      const key = l.slice(0, separator).trim();
       const rawValue = l.slice(separator + 1).trim();
       const isDoubleQuoted = rawValue.startsWith('"') && rawValue.endsWith('"');
       const isSingleQuoted = rawValue.startsWith("'") && rawValue.endsWith("'");
@@ -126,6 +128,18 @@ function checkFrontmatter(skillName, skillMdAbs) {
           skillMdAbs,
           i + 2,
           "frontmatter values containing `: ` must be quoted for valid YAML",
+        );
+      }
+      if (
+        key === "argument-hint" &&
+        rawValue.startsWith("[") &&
+        !isDoubleQuoted &&
+        !isSingleQuoted
+      ) {
+        addViolation(
+          skillMdAbs,
+          i + 2,
+          "bracketed `argument-hint` must be quoted so YAML parses it as a string",
         );
       }
     }

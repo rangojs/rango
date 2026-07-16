@@ -61,15 +61,34 @@ task-focused guides written for LLM coding agents. Start at
 `skills/rango/SKILL.md` (the mental model + catalog); a machine-readable index
 is at `skills/catalog.json`.
 
-- **Claude Code**: point it at the skills (e.g. "read
-  node_modules/@rangojs/router/skills/rango/SKILL.md before routing work"), or
-  copy/symlink the directories you use into your project's `.claude/skills/`.
-- **Other agents (Cursor, Codex CLI, Gemini CLI, ...)**: these harnesses
-  auto-discover skills from `.agents/skills/` in your project (or
-  `~/.agents/skills/`) — copy or symlink the skill directories you use from
-  `node_modules/@rangojs/router/skills/<name>` into `.agents/skills/<name>`.
-  The files are plain markdown; cross-references like `/loader` name sibling
-  skill directories.
+Install the `/rango` entry skill into an existing app with the standard Agent
+Skills CLI:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+`universal` installs the shared `.agents/skills/rango` entry used by Cursor,
+Codex, OpenCode, Gemini CLI, and other compatible agents; `claude-code` also
+registers `.claude/skills/rango`. Restart an agent session that was already
+running, then invoke `/rango` where slash skills are supported or ask the agent
+to load the Rango skill. Before running it, inspect both target paths and stop if
+either already contains a `rango` skill. The external CLI may auto-confirm when
+it detects an agent session, so omitting `--yes` is not collision protection.
+
+Installing the entry skill is enough: when a sibling such as `/loader` is not
+registered as its own slash command, `/rango` directs the agent to the
+version-matched file under `node_modules/@rangojs/router/skills/`. To register
+every sibling command, rerun with `--skill '*'` only after checking every target
+name; names such as `route`, `layout`, and `testing` commonly collide with
+project skills.
+
+Agents that read repository rules but do not support skills can use the managed
+[`rango-agent-rules` block](./skills/rango/agent-rules.md) in the app's root
+`AGENTS.md`. Keep project instructions outside its `BEGIN`/`END` markers.
 
 For evidence-driven work, use `/dev-loop` after an edit,
 `/render-cache-adoption` before adding `cache()` or PPR,

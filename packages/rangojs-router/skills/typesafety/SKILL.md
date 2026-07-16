@@ -1,7 +1,7 @@
 ---
 name: typesafety
 description: Set up type-safe routes, params, and environment types in @rangojs/router. Use when route or search params aren't typed, TypeScript can't infer a loader's return type, or wiring up typed environment bindings.
-argument-hint: [setup]
+argument-hint: "[setup]"
 ---
 
 # Type Safety Setup

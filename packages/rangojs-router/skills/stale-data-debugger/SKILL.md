@@ -1,7 +1,7 @@
 ---
 name: stale-data-debugger
 description: Diagnose stale Rango UI data across loader lanes, cache freshness, tags, revalidation, and client reuse. Use when a mutation succeeds but the page stays stale, one user sees an old value, or invalidation appears ineffective.
-argument-hint: [route-or-action]
+argument-hint: "[route-or-action]"
 ---
 
 # Stale Data Debugger
@@ -32,9 +32,11 @@ path.
 2. Correlate the resulting render and call `explain_render`.
 3. Check whether the loader ran and which generation reached its consumer.
 4. Check segment, loader-data, and PPR freshness independently.
-5. MCP reports observed tag names, not invalidation acknowledgement. Prove an
-   awaited `updateTag`, instrumented store/platform event, or state that this
-   evidence is unavailable before considering a tag fix.
+5. MCP deliberately does not expose cache-tag values: tags can contain
+   request-derived tenant or user identifiers, so cache-scope explanations leave
+   them empty. It also does not acknowledge invalidation. Prove an awaited
+   `updateTag`, an instrumented store/platform event, or state that this evidence
+   is unavailable before considering a tag fix.
 6. Check client prefetch/history reuse.
 7. Apply one axis-specific fix, then repeat the same browser sequence.
 

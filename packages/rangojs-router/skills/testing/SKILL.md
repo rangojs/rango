@@ -1,7 +1,7 @@
 ---
 name: testing
 description: Test @rangojs/router apps — unit (loaders/middleware/reverse/components), integration (dispatch/Flight), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader or middleware, or asking how to test a route end-to-end in dev and production.
-argument-hint: [layer]
+argument-hint: "[layer]"
 ---
 
 # Testing @rangojs/router apps

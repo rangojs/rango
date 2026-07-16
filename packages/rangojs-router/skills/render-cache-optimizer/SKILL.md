@@ -1,7 +1,7 @@
 ---
 name: render-cache-optimizer
 description: Optimize a semantically correct Rango cached route with measured browser and MCP evidence. Use when warm documents or soft navigations still do unnecessary handler work, useful shell output is late, or loading flashes remain after cache adoption.
-argument-hint: [route]
+argument-hint: "[route]"
 ---
 
 # Render Cache Optimizer

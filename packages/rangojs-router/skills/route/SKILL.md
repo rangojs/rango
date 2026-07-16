@@ -1,7 +1,7 @@
 ---
 name: route
 description: Define routes with path() in @rangojs/router. Use when creating a new page or route, or asking how to define a URL path and its handler.
-argument-hint: [pattern]
+argument-hint: "[pattern]"
 ---
 
 # Defining Routes with path()

@@ -9,17 +9,27 @@ argument-hint:
 Use this when you need to understand request latency, cache decisions,
 revalidation behavior, loader overlap, or production traces.
 
-Rango exposes two complementary observability surfaces:
+Rango exposes two public observability surfaces and one development-only
+diagnostic adapter:
 
 1. **Performance timeline** (`debugPerformance`) — per-request waterfall for
    local or targeted debugging. It prints to the console and emits
    `Server-Timing`.
 2. **Structured telemetry** (`telemetry`) — lifecycle events sent to a pluggable
    sink for production monitoring, OpenTelemetry, or custom metrics.
+3. **Development MCP** (`rango mcp`) — bounded request, route, error, render, and
+   revalidation facts from a running Vite dev server. It is read-only, requires
+   no application telemetry sink, and is absent from production builds.
 
 The essentials are below. The exported `TelemetryEvent` union type
 (`import type { TelemetryEvent } from "@rangojs/router"`) is the full event
 contract — every event kind and its fields are typed there.
+
+Use the MCP when an agent needs to correlate one browser response with exact
+framework decisions: read `X-Rango-Request-Id`, select it with `list_requests`,
+then call `get_request_trace`, `explain_render`, or
+`explain_revalidation`. Browser DOM, console, and network state still belong to
+the browser driver; production monitoring still belongs to telemetry/tracing.
 
 ## Performance timeline
 
@@ -195,8 +205,11 @@ Then inspect:
   first paint.
 - the `Server-Timing` header to compare local logs with browser-network timing.
 
-## Zero-overhead defaults
+## Disabled-by-default costs
 
-`debugPerformance` is off by default, and `telemetry` emits nothing unless a sink
-is configured. Per-request `ctx.debugPerformance()` lets you turn on the
-waterfall only for the route, user, or query param you are investigating.
+`debugPerformance` is off by default, and public telemetry emits nothing unless
+a sink is configured. Production builds retain that no-op fast path.
+Development builds can still project the same local facts into the compile-gated
+diagnostic hub for `rango mcp`; that is separate from public sink delivery.
+Per-request `ctx.debugPerformance()` turns on the waterfall only for the route,
+user, or query param you are investigating.

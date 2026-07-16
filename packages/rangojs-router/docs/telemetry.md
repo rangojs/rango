@@ -1,11 +1,11 @@
 # Router Observability
 
 When you need to see what the router is actually doing on a request — where the
-time went, or what it decided and why — you reach for one of two systems. They
-answer different questions, so the first thing to get straight is which one you
-want.
+time went, or what it decided and why — choose the surface that owns that
+question.
 
-The router has two complementary observability systems:
+The router has two public observability systems and one development-only
+diagnostic adapter:
 
 - **Performance timeline** (`debugPerformance`) — a per-request waterfall of
   every phase from handler entry to response, exposed as a console log and
@@ -14,8 +14,11 @@ The router has two complementary observability systems:
 - **Structured telemetry** (`telemetry`) — lifecycle events emitted through a
   pluggable sink (console, OpenTelemetry, custom). Designed for production
   monitoring and distributed tracing.
+- **Development MCP** (`rango mcp`) — bounded request, route, error, render, and
+  revalidation facts from a running Vite development server. Designed for
+  read-only agent diagnostics without application sink configuration.
 
-During `vite dev`, `rango mcp` adds a third, read-only adapter over the same owned
+During `vite dev`, `rango mcp` is a read-only adapter over the same owned
 request facts. It can list exact server request IDs, retrieve a bounded trace,
 query sanitized runtime errors, and report route declaration ownership without
 requiring a `TelemetrySink`. It also projects segment-cache, PPR, loader
@@ -221,7 +224,9 @@ request path.
 ## Structured Telemetry
 
 The router emits structured lifecycle events through a pluggable telemetry sink.
-When no sink is configured, telemetry is completely disabled (zero overhead).
+Without a sink, public telemetry delivery is disabled. Production builds retain
+the no-op fast path; development builds may still project the same local facts
+into the compile-gated diagnostic hub used by `rango mcp`.
 
 `createRouter()` and the built-in telemetry sink factories are root
 server/RSC APIs. Use them from router definition files and other server/RSC
@@ -387,9 +392,10 @@ production and is added after cache capture or retrieval.
   durationMs: 15.2,
   segmentCount: 3,
   cacheHit: false,
-  status: 302,  // optional — present only when a Response ended the transaction
-                // (a thrown-Response short-circuit, or dispatch()'s final
-                // response); absent for a normal render completion
+  status: 302,  // optional — present when a Response ended the transaction,
+                // dispatch() produced its final response, or route matching
+                // completed as a RouteNotFoundError (404); absent for a normal
+                // successful render completion
 }
 
 // request.error
@@ -409,9 +415,12 @@ is completed control flow, not a failure. It emits `request.end` with
 `segmentCount: 0` (the same completed-request event the non-thrown redirect
 path emits) and `status` set to the thrown Response's status (e.g. `302`), never
 `request.error`, so auth redirects do not inflate error counts. `request.error`
-fires only for a genuine unhandled error. A normal render completion omits
-`status` (the Response is built after `match()`), so a sink can split 3xx
-short-circuits from 2xx completions on the field's presence.
+fires only for a genuine unhandled error. A route-context `RouteNotFoundError`
+likewise completes the match as `request.end` with `status: 404`; preserving it
+for the outer error boundary does not make it an unhandled router failure. A
+normal successful render completion omits `status` (the Response is built after
+`match()`), so a sink can distinguish known HTTP completions from ordinary
+render completions on the field's presence.
 
 ### Loader Events
 

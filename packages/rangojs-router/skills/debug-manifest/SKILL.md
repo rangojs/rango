@@ -8,6 +8,24 @@ argument-hint:
 
 Inspect the route manifest to verify parent relationships, shortCodes, and route structure.
 
+## Inspect a running app first
+
+With the Vite dev server and `rango mcp` connected, use `get_discovery_status`
+before trusting route output. `stale: true` means the previous successful route
+generation is still available but does not include the latest edit; on
+Cloudflare, also require `runtimeConvergence: "ready"` before treating discovery
+as proof that workerd serves that generation.
+
+Then use `get_routes` for the runtime route patterns, names, search schemas,
+router source ownership, and pagination/truncation state. This is the best first
+check for “did my route edit reach the running server?” It is read-only and does
+not execute lazy providers, handlers, middleware, or loaders.
+
+Use `router.debugManifest()` below when you need the in-process segment graph:
+shortCodes, parent relationships, layout ownership, loader/middleware flags,
+parallel counts, or intercept counts. The two views answer different questions;
+MCP route discovery does not replace the detailed manifest structure.
+
 ## Programmatic Access
 
 Call `router.debugManifest()` — an `async` method on the router instance:

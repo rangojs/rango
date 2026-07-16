@@ -1,7 +1,7 @@
 ---
 name: links
 description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse. Use when generating a link to a route by name instead of hardcoding a path, or a link breaks after routes move or get mounted elsewhere.
-argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
+argument-hint: "[ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]"
 ---
 
 # Links & URL Generation

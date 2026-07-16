@@ -1,7 +1,7 @@
 ---
 name: migrate-nextjs
 description: Migrate a Next.js App Router project to @rangojs/router. Use when the user asks to "migrate from Next.js", "convert Next.js to Rango", "replace Next.js", or has a Next.js app they want to port.
-argument-hint: [path-to-nextjs-app]
+argument-hint: "[path-to-nextjs-app]"
 ---
 
 # Migrate from Next.js App Router to @rangojs/router
@@ -64,6 +64,50 @@ datastore, or auth swap, also read
 [backend-host-swap.md](backend-host-swap.md). Do not treat RLS policies,
 database functions, provider callbacks, or secret management as incidental
 route work.
+
+## Replace Next.js agent context
+
+New Next.js 16.2+ apps scaffold a managed `nextjs-agent-rules` block unless the
+agent files were disabled. During migration, replace only that marked block when
+it exists; otherwise add the Rango block without changing existing project
+instructions. Preserve every instruction outside the markers, and preserve a
+`CLAUDE.md` that imports `@AGENTS.md`.
+
+```md
+<!-- BEGIN:rango-agent-rules -->
+
+# Rango: read the version-matched skills before coding
+
+This application uses `@rangojs/router`, not Next.js. Do not infer routing,
+caching, revalidation, middleware, or rendering behavior from Next.js APIs.
+
+Before Rango work, load `/rango` when that skill is installed. Otherwise read
+`node_modules/@rangojs/router/skills/rango/SKILL.md`, then open the relevant
+sibling skill under `node_modules/@rangojs/router/skills/`. These files match the
+installed router version and are the source of truth over training data.
+
+After adding, removing, or renaming routes, run `npx rango generate src/` and
+commit every regenerated `*.gen.ts` file with the route change.
+
+<!-- END:rango-agent-rules -->
+```
+
+After installing `@rangojs/router`, register the actual `/rango` entry skill:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+Before running the command, inspect `.agents/skills/rango` and
+`.claude/skills/rango`. If either exists, stop and ask instead of running the
+installer: the external CLI may auto-confirm inside an agent session even
+without `--yes`. The managed rule is the fallback for agents that read
+`AGENTS.md` but do not support skills; the installed skill provides `/rango` in
+compatible harnesses. The canonical block also ships at
+`node_modules/@rangojs/router/skills/rango/agent-rules.md`.
 
 ## Replace imports, never shim Next
 
@@ -773,22 +817,25 @@ See `/theme` for full API including system detection and cookie persistence.
 ## Migration Checklist
 
 1. [ ] Classify the migration boundary (framework, host/runtime, datastore/auth, or both)
-2. [ ] Set up Vite config with `rango()` plugin (and read `/cloudflare` for Workers)
-3. [ ] Create Document component (replaces root `<html>` layout)
-4. [ ] Create `router.tsx` with `createRouter()`
-5. [ ] Convert file-based routes to `urls()` DSL in `urls.tsx`
-6. [ ] Migrate layouts to `layout()` with `<Outlet />`
-7. [ ] Convert data fetching to `createLoader()` + `ctx.use()`
-8. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
-9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
-10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
-11. [ ] Migrate API routes to `path.json()` / `path.text()`
-12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
-13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
-14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
+2. [ ] Replace `nextjs-agent-rules` when present, otherwise add `rango-agent-rules`, preserving project instructions
+3. [ ] Install the `/rango` entry skill and verify it is discoverable
+4. [ ] Set up Vite config with `rango()` plugin (and read `/cloudflare` for Workers)
+5. [ ] Create Document component (replaces root `<html>` layout)
+6. [ ] Create `router.tsx` with `createRouter()`
+7. [ ] Convert file-based routes to `urls()` DSL in `urls.tsx`
+8. [ ] Migrate layouts to `layout()` with `<Outlet />`
+9. [ ] Keep inline server-component fetching where it fits; add `createLoader()` only for live, shared, or client-consumed data
+10. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
+11. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
+12. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
+13. [ ] Migrate API routes to `path.json()` / `path.text()`
+14. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
+15. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
+16. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the
-        `ppr` path option (loader + `loading()` as the hole)
-15. [ ] Run `npx rango generate src/` to generate route types
-16. [ ] Verify no shims: `grep -rn "from ['\"]next" src/ app/` returns nothing,
+        `ppr` path option; preserve existing Suspense/promise holes, using
+        `loader()` + `loading()` only when liveness must be guaranteed
+17. [ ] Run `npx rango generate src/` to generate route types
+18. [ ] Verify no shims: `grep -rn "from ['\"]next" src/ app/` returns nothing,
         no mock `next/*` modules or aliases exist, and `next` is out of
         `package.json`

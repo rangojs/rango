@@ -2,11 +2,12 @@
 
 Status: **Phases 0-4 implemented**.
 
-Rango already ships version-matched reference skills, route-manifest inspection,
-structured telemetry, performance waterfalls, cache signals, PPR signals, and a
-dev/production e2e harness. What it does not have is one machine-readable view of
-a running request. An agent can prove what the browser rendered, or inspect one
-log stream at a time, but it cannot ask the framework a simple question such as:
+Before this work, Rango already shipped version-matched reference skills,
+route-manifest inspection, structured telemetry, performance waterfalls, cache
+signals, PPR signals, and a dev/production e2e harness, but no single
+machine-readable view of a running request. An agent could prove what the browser
+rendered, or inspect one log stream at a time, but it could not ask the framework
+a simple question such as:
 
 > Why did `/products/42` render this way?
 
@@ -265,7 +266,7 @@ ignored.
 ### Browser correlation
 
 Framework and browser views need a shared identifier. Every trace receives a
-cryptographically random server-owned `traceId`. A bounded, validated
+cryptographically random server-owned `requestId`. A bounded, validated
 `x-rsc-router-request-id` may be retained separately as `clientCorrelationId`,
 but it never replaces the server identity: browser counters restart, callers can
 reuse values, and arbitrary header values are untrusted.
@@ -282,12 +283,12 @@ router, pathname, transport kind, and start time. That fallback must report
 ambiguity. Selecting "the latest `/products/42`" without saying that three
 prefetches matched is not acceptable evidence.
 
-`navigationId` is separate from `requestId`: one browser navigation can adopt an
-in-flight prefetch or trigger an action request followed by a revalidation
-request. A completed-prefetch navigation may have no new HTTP request at all, so
-its browser transaction refers to the adopted prefetch request ID. The first
-implementation may leave `navigationId` absent until the browser runtime has a
-stable navigation transaction identifier, but the schema reserves it.
+One browser navigation can adopt an in-flight prefetch or trigger an action
+request followed by revalidation work. The implemented schema correlates the
+HTTP request and its router transactions; it does not yet expose a separate
+browser `navigationId`. A completed-prefetch navigation may have no new HTTP
+request at all, so browser-level navigation correlation remains deferred until
+the browser runtime owns a stable identifier.
 
 ## Diagnostic schema
 
@@ -300,59 +301,52 @@ interface DiagnosticEventBase {
   timestamp: number;
   requestId: string;
   transactionId: string;
-  navigationId?: string;
+  clientCorrelationId?: string;
   routerId: string;
   routeKey?: string;
   segmentId?: string;
   type: string;
+  data: Record<string, DiagnosticValue>;
 }
 ```
 
 Project diagnostics such as Vite compilation, discovery, and HMR failures use a
 separate base without request, transaction, or router IDs. They can occur before
 an application router exists and must not be forced into a fabricated request.
-Background work that outlives a response uses its own trace linked through
-`causedByTraceId`; it is not silently appended to a completed request.
+Background shell capture keeps an explicit diagnostic link captured from the
+triggering request and appends bounded capture facts to that request trace even
+after its active transaction exits. It does not fabricate a second root trace.
 
 `sequence` provides deterministic ordering when monotonic timestamps are equal.
-`transactionId` distinguishes full matching, partial matching, actions,
-progressive enhancement, and background capture work associated with one HTTP
-request.
+`transactionId` distinguishes full matching, partial matching, actions, and
+progressive enhancement associated with one HTTP request. A linked background
+capture reuses the triggering transaction ID and is distinguished by its
+`ppr.capture` event type.
 
-The hub projects events into a request trace:
+The hub retains an event trace. `get_request_trace` returns this shape plus route
+source ownership and output-truncation counters; `explain_render` and
+`explain_revalidation` build separate bounded projections from the events.
 
 ```ts
-interface RequestTrace {
+interface DiagnosticTrace {
   schemaVersion: 1;
-  request: {
-    requestId: string;
-    transactionIds: string[];
-    navigationId?: string;
-    method: string;
-    pathname: string;
-    transport:
-      | "document"
-      | "navigation"
-      | "prefetch"
-      | "action"
-      | "progressive-enhancement"
-      | "loader-fetch"
-      | "response-route";
-  };
-  match?: MatchExplanation;
-  middleware: MiddlewareExplanation[];
-  renderCache: RenderCacheExplanation;
-  loaders: LoaderExplanation[];
-  handlers: HandlerExplanation[];
-  revalidation: RevalidationExplanation[];
-  render: RenderExplanation;
-  errors: DiagnosticError[];
+  requestId: string;
+  routerId: string;
+  clientCorrelationId: string | null;
+  transactionIds: string[];
+  startedAt: number;
+  updatedAt: number;
+  completed: boolean;
+  events: DiagnosticEvent[];
   truncated: boolean;
+  truncationReasons: Array<"event-count" | "encoded-bytes" | "event-too-large">;
+  droppedEvents: number;
 }
 ```
 
-The exact TypeScript declarations are implementation work, but the following
-semantic requirements are fixed.
+The exported internal declarations in `router/diagnostics/types.ts` and
+`devtools-mcp/protocol.ts` are the implementation source of truth. The following
+semantic requirements explain why those fields exist.
 
 ### Segment `cache()` explanation
 
@@ -366,7 +360,8 @@ Each evaluated scope reports:
 - runtime or prerender source;
 - TTL/SWR policy and freshness when the store provides it;
 - whether background revalidation was claimed;
-- tag names only when they are static or already emitted as diagnostics;
+- an empty tag list: cache tags may contain request-derived tenant/user
+  identifiers, so the current diagnostic channel does not expose their values;
 - a digest of dynamic cache identity, never a raw key that may contain secrets.
 
 The existing `cache.decision` event is coarse and route-level. It remains a
@@ -400,16 +395,29 @@ source, and all consumers:
 ```ts
 interface LoaderExplanation {
   loaderId: string;
-  loaderName: string;
-  registeredBy?: string;
+  loaderName: string | null;
+  registrations: Array<{
+    registeredBy: string;
+    segmentId: string;
+    lane: "live" | "baked";
+    boundary: "loading" | "none";
+    dataCache: "configured" | "disabled" | "none";
+  }>;
   execution:
     | { outcome: "ran"; durationMs: number }
-    | { outcome: "memoized"; fromLoaderId: string }
     | { outcome: "cached"; freshness: "fresh" | "stale" }
-    | { outcome: "skipped"; reason: string }
-    | { outcome: "error"; handledByBoundary: boolean };
+    | { outcome: "error"; durationMs: number; handledByBoundary: boolean }
+    | { outcome: "unknown" };
+  cacheDecisions: Array<{
+    outcome: "hit" | "stale" | "miss" | "bypass";
+    reason: string | null;
+    ttl: number | null;
+    swr: number | null;
+    backgroundRevalidationRequested: boolean;
+  }>;
   consumers: Array<{
-    kind: "dsl-client" | "dsl-server" | "handler" | "loader-dependency";
+    kind: "dsl-client" | "handler" | "loader-dependency";
+    consumerId: string | null;
     lane: "live" | "baked";
     boundary: "loading" | "consumer-suspense" | "none";
     containerValue: "request" | "capture-generation";
@@ -418,11 +426,10 @@ interface LoaderExplanation {
 }
 ```
 
-The names may change during implementation; the distinctions may not. In
-particular, the MCP must never infer liveness only from whether the loader body
-executed. Container and nested-promise generations are independent because PPR
-can retain a capture-generation container while resolving promise holes from the
-current request.
+The MCP never infers liveness only from whether the loader body executed.
+Container and nested-promise generations are independent because PPR can retain
+a capture-generation container while resolving promise holes from the current
+request.
 
 ### Revalidation explanation
 
@@ -468,9 +475,9 @@ generic "evaluate code" escape hatch.
 
 ## Retention, redaction, and failure posture
 
-The hub retains a ring bounded by request count, event count, age, and encoded
-size. Exact defaults should be measured during implementation, but all four
-bounds are required. A trace says which bound truncated it.
+The hub retains at most 100 requests, 5,000 events, five minutes of activity,
+4 MiB of encoded data, and 32 KiB per event. A trace says whether event count,
+encoded size, or an oversized event truncated it and reports dropped events.
 
 Collection follows these rules:
 
@@ -611,6 +618,29 @@ included in the generated `skills/catalog.json`. They link to `/rango`,
 `/caching`, `/ppr`, `/loader`, `/observability`, and `/testing` rather than
 copying those API references.
 
+The package directory is a standard Agent Skills source. Consumers can register
+the entry skill without copying paths by hand:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+The entry skill resolves unregistered sibling guides from the installed package,
+so installing all generic slash names is optional. The canonical
+`rango-agent-rules` block ships as `skills/rango/agent-rules.md` for harnesses
+that read root `AGENTS.md` but do not load skills. Bracketed `argument-hint`
+frontmatter is quoted and guarded because invalid YAML made the standard CLI
+silently omit `/intercept` and `/parallel` even though Rango's original
+line-oriented catalog check accepted them.
+
+The external CLI is an interim registration path, not the collision-safe Phase 5
+installer: it may auto-confirm when it detects an agent session. Instructions
+therefore require checking `.agents/skills/rango` and `.claude/skills/rango`
+before invocation rather than treating omission of `--yes` as protection.
+
 Every workflow skill follows the same document shape:
 
 1. `requires`
@@ -729,6 +759,27 @@ and separate development and production verification.
 Exit criterion: each skill has a fixture task that fails without the intended
 diagnosis or edit and passes in both dev and production verification.
 
+### Phase 5: consumer rule registration (planned)
+
+The package now ships a standard-CLI-installable `/rango` entry skill, a
+canonical managed `rango-agent-rules` block, and migration guidance that replaces
+Next's marked block without touching project instructions. A package-owned
+installer remains follow-up work:
+
+- add an idempotent `rango agents` command that installs or updates the managed
+  block and registers `/rango`, with collision reporting and `--dry-run`;
+- have `create-rango` invoke it for new applications in the separate
+  `rangojs/templates` repository;
+- let `/migrate-nextjs` use the same operation to replace
+  `nextjs-agent-rules`, preserving everything outside the markers;
+- never mutate a consumer repository from package `postinstall`;
+- keep `.agents/skills/rango` and `.claude/skills/rango` version-aligned with the
+  installed package rather than leaving stale copied guidance after upgrades.
+
+Exit criterion: a new scaffold and a migrated Next.js app both start an agent
+session with the managed Rango rule and an invokable `/rango`, while collisions
+fail visibly and custom `AGENTS.md` content remains byte-for-byte unchanged.
+
 ## Verification matrix
 
 | Contract                                     | Unit/integration                    | Dev e2e                                | Production e2e                       |
@@ -789,13 +840,17 @@ existing telemetry/tracing APIs are the supported production surface. Keeping
 MCP dev-only makes absence testable and prevents a debug flag from becoming an
 accidental remote introspection service.
 
-## Open questions
+## Deferred work
 
-1. What count, age, and byte limits preserve enough concurrent loader/PPR detail
-   without making large applications expensive? Measure before fixing defaults.
-2. Can every supported browser driver inject `x-rsc-router-request-id` into
-   document and framework fetches, or should the browser runtime expose a
-   development-only navigation ID hook?
-3. Should background shell capture have its own root trace linked by
-   `causedByRequestId`, or remain a child transaction of the triggering request?
-   The answer must preserve captures that outlive request completion.
+1. Implement the read-only `match_route` tool without executing application
+   code; observed request traces remain the only source for runtime decisions.
+2. Add browser-owned navigation correlation only when one stable identifier can
+   represent prefetch adoption and action-triggered revalidation. Request IDs
+   remain the shipped framework/browser join today.
+3. Complete the package-owned consumer installer in Phase 5. Until then, the
+   standard `skills` CLI command and managed block above are the supported setup.
+
+The earlier retention and background-capture questions are resolved. The hub
+uses the fixed 100-request/5,000-event/five-minute/4-MiB/32-KiB bounds, and a
+background shell capture records through the triggering request's retained
+diagnostic link after the active transaction exits.

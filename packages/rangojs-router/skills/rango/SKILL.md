@@ -13,6 +13,33 @@ skills gives nothing to slot details into, so a reader free-associates from loca
 vocabulary — which is exactly how `revalidate()` gets misread as caching. Start
 with the shape, then pick a primitive.
 
+## Consumer registration
+
+This is the package's installable entry skill. In an existing Rango app, register
+it with:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+The installed `/rango` command is the entry point; the complete version-matched
+catalog remains under `node_modules/@rangojs/router/skills/`. When a sibling
+slash command named below is not registered, read its `SKILL.md` from that
+package directory rather than guessing from training data. Registering all
+sibling commands with `--skill '*'` is optional and may collide with generic
+project skill names such as `route`, `layout`, or `testing`.
+
+Before installation, inspect `.agents/skills/rango` and
+`.claude/skills/rango`. Stop and ask before replacing either path: the external
+CLI may auto-confirm when it detects an agent session, so the absence of
+`--yes` does not make a collision safe.
+
+For an agent that reads repository rules but does not load skills, add the
+[managed Rango rule](./agent-rules.md) to the app's root `AGENTS.md`.
+
 ## The shape of rango (read first)
 
 - **Routes are expressed, not configured.** The `urls()` tree shows where every

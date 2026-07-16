@@ -1,7 +1,7 @@
 ---
 name: render-cache-adoption
 description: Adopt Rango segment cache and PPR without freezing live request data. Use when adding cache() or ppr to a route, deciding which rendered artifact to reuse, or diagnosing a cache hit that changed loader or middleware semantics.
-argument-hint: [route]
+argument-hint: "[route]"
 ---
 
 # Render Cache Adoption

@@ -188,7 +188,8 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
    * @returns `invalidated` when a generation marker rejected the write,
-   *   `stored` when acknowledged, or void for stores without acknowledgements.
+   *   `stored` when the store reports its write path completed, or void when it
+   *   reports no result. `stored` is not an independent durability guarantee.
    */
   putShell?(
     key: string,

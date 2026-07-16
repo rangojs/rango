@@ -1,7 +1,7 @@
 ---
 name: fonts
 description: Load and configure web fonts with preload hints for optimal performance. Use when adding a custom font to a Rango app, fonts flash or swap on load (FOUT/FOIT), or you want font preload for performance.
-argument-hint: [provider]
+argument-hint: "[provider]"
 ---
 
 # Fonts

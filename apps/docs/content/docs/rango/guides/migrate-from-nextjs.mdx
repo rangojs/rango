@@ -8,6 +8,29 @@ If you know the App Router, most of Rango is already familiar. Server components
 
 Work route-by-route, bottom-up: leaf pages first, then layouts, then middleware. Verify each route works before moving to the next.
 
+## Replace Next.js agent rules
+
+New Next.js 16.2+ apps create a managed `nextjs-agent-rules` section unless the
+agent files were disabled. Replace only that marked section when it exists;
+otherwise add Rango's canonical block from
+`node_modules/@rangojs/router/skills/rango/agent-rules.md` without changing
+existing project instructions. Preserve any `CLAUDE.md` import of `@AGENTS.md`.
+
+Then register the actual `/rango` entry skill:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+Before running the command, inspect `.agents/skills/rango` and
+`.claude/skills/rango`; stop if either exists. The external CLI may auto-confirm
+inside an agent session even without `--yes`, so an explicit preflight is the
+collision guard. The managed `AGENTS.md` rule covers agents without skill
+support; compatible agents can invoke `/rango` directly.
+
 ## Replace imports — never shim Next
 
 Do not create mock `next/*` modules, Vite aliases for `next/*`, or compatibility wrappers (a local `Link` that forwards `href` to `to`, a fake `useRouter`, a stubbed `next/headers`). Shims freeze Next semantics into the app, hide unsupported behavior until runtime, and keep `next` in the dependency graph — the migration looks done but isn't. Replace every `next/*` import at its call site:

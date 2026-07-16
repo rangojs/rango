@@ -156,6 +156,16 @@ shell family. For bots, `ssr: { resolveStreaming }` returning `"allReady"`
 bypasses PPR entirely and serves one complete buffered document. Stored shells
 self-invalidate when `React.version` changes, so deploys self-heal via recapture.
 
+Enable `createRouter({ debugShellCapture: true })` for structured capture
+events. Read the attempt outcome and `storeWrite` independently: `outcome:
+"stored"` means capture succeeded and `putShell` was attempted;
+`storeWrite: "stored" | "invalidated" | "failed"` is the narrower result
+reported by the store. It is not independent durability proof: a platform
+adapter can report and skip a write internally, as Vercel does for an oversized
+item. `CFCacheStore` returns no result after accepting a same-isolate pending
+envelope and scheduling KV through `waitUntil`, so it can serve that pending
+value without claiming the KV write is durable yet.
+
 ## Options and invalidation
 
 | Field            | Default | Notes                                                              |

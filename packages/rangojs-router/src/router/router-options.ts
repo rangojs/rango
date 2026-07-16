@@ -700,7 +700,9 @@ export interface RangoOptions<TEnv = any> {
    * separate `tracing` option below — a sink does not emit them, because async-context nesting
    * cannot be faithfully reconstructed from after-the-fact start/end events.
    *
-   * No-op when not configured (zero overhead).
+   * Without a sink, public event delivery is disabled. Production retains the
+   * no-op fast path; development may still project the same local facts into
+   * the compile-gated diagnostic hub used by `rango mcp`.
    *
    * @example Console logging
    * ```typescript

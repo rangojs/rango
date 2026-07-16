@@ -1275,6 +1275,18 @@ function receives each `ShellCaptureDebugEvent` — outcome per attempt
 (`stored`/`redirect`/`no-shell`/`refused`/`error`), skip events
 (`skip-in-flight`/`skip-backoff`) and backoff escalation (`backoff`), plus
 attempt/barrier/write-settle durations and prelude/snapshot byte sizes.
+`storeWrite` is a narrower store-reported result: `stored` means the store's
+write path returned that result, `invalidated` means a tag invalidated the
+generation before storage, and `failed` means `putShell` rejected. It is not an
+independent durability proof: for example, Vercel's size guard can report and
+skip an oversized platform write inside a path that returns `stored`. The field
+is absent when the store does not report a result. In particular, `CFCacheStore`
+accepts an envelope into its isolate-local pending-write map, schedules the KV
+write through `waitUntil`, and
+returns before durability; a same-isolate read can consume that pending envelope,
+but the debug event does not claim `storeWrite: "stored"`. The attempt-level
+`outcome: "stored"` means capture succeeded and `putShell` was attempted, not
+that the platform durably stored it.
 `INTERNAL_RANGO_DEBUG` lights the console sink without the option; an
 explicit `debugShellCapture: false` stays off. In dev the terminal event per
 key is buffered and, when `debugPerformance` metrics are active, rides the

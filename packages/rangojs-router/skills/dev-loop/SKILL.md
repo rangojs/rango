@@ -1,7 +1,7 @@
 ---
 name: dev-loop
 description: Run an evidence-driven Rango development loop after an edit. Use when verifying a route, loader, action, cache, or rendering change with browser behavior and MCP request diagnostics, or when local output may be stale or ambiguous.
-argument-hint: [route-or-test]
+argument-hint: "[route-or-test]"
 ---
 
 # Development Loop

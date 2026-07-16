@@ -150,7 +150,7 @@ The resolver receives `{ request, env, url }`, may be sync or async, and only ru
 
 ## telemetry / tracing
 
-The router emits structured lifecycle events through a pluggable telemetry sink — zero overhead when not configured. Events emitted: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`.
+The router emits structured lifecycle events through a pluggable telemetry sink. Without one, public telemetry delivery is disabled and production retains the no-op fast path; development may still project the same local facts into the compile-gated `rango mcp` diagnostic hub. Events emitted: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`.
 
 ```typescript
 // Console sink for development

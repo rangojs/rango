@@ -1,7 +1,7 @@
 ---
 name: middleware
 description: Define middleware for authentication, logging, and request processing in @rangojs/router. Use when gating routes behind auth checks, logging requests, or running shared logic before a handler runs.
-argument-hint: [middleware-name]
+argument-hint: "[middleware-name]"
 ---
 
 # Middleware

@@ -4,12 +4,19 @@ description: See where request time goes with the debugPerformance waterfall, th
 type: guide
 ---
 
-A request feels slow and you need to see where the time went — or you're heading to production and need durable request events and traces. Rango covers both with two complementary surfaces, and both cost nothing until you turn them on.
+A request feels slow and you need to see where the time went — or you're heading to production and need durable request events and traces. Rango exposes two public observability surfaces plus one development-only diagnostic adapter.
 
-| Surface                                   | What it gives you                                                    | Reach for it when                                    |
-| ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
-| Performance timeline (`debugPerformance`) | A per-request waterfall in the console plus a `Server-Timing` header | Debugging one slow request, locally or targeted      |
-| Structured telemetry (`telemetry`)        | Lifecycle events sent to a pluggable sink                            | Production monitoring, OpenTelemetry, custom metrics |
+| Surface                                   | What it gives you                                                           | Reach for it when                                     |
+| ----------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Performance timeline (`debugPerformance`) | A per-request waterfall in the console plus a `Server-Timing` header        | Debugging one slow request, locally or targeted       |
+| Structured telemetry (`telemetry`)        | Lifecycle events sent to a pluggable sink                                   | Production monitoring, OpenTelemetry, custom metrics  |
+| Development MCP (`rango mcp`)             | Bounded route, request, error, render, and revalidation facts from Vite dev | Correlating browser behavior with framework decisions |
+
+The MCP adapter is read-only, needs no application telemetry sink, and is absent
+from production builds. Read `X-Rango-Request-Id` from a development document or
+Flight response, select it with `list_requests`, then use `get_request_trace`,
+`explain_render`, or `explain_revalidation`. Browser DOM, console, and network
+state remain the browser driver's responsibility.
 
 ## The performance waterfall
 
@@ -81,7 +88,7 @@ const router = createRouter({
 });
 ```
 
-Events include `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`, and `request.origin-rejected`. The exported `TelemetryEvent` union (`import type { TelemetryEvent } from "@rangojs/router"`) is the full contract — every event kind and its fields are typed there.
+Events include `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`, and `request.origin-rejected`. A completed route-context not-found is `request.end` with `status: 404`, not `request.error`; ordinary successful match renders omit `status` because their final response is built later. The exported `TelemetryEvent` union (`import type { TelemetryEvent } from "@rangojs/router"`) is the full contract — every event kind and its fields are typed there.
 
 ## Tracing: phase spans
 
@@ -172,7 +179,7 @@ Then inspect:
 
 ## What it costs when off
 
-Nothing. `debugPerformance` is off by default, and `telemetry` emits nothing unless a sink is configured. Per-request `ctx.debugPerformance()` lets you scope the waterfall to exactly the traffic you're investigating.
+`debugPerformance` is off by default, and public telemetry emits nothing unless a sink is configured. Production retains that no-op fast path. Development can still project the same local facts into the compile-gated diagnostic hub for `rango mcp`; that is separate from public sink delivery. Per-request `ctx.debugPerformance()` lets you scope the waterfall to exactly the traffic you're investigating.
 
 <Cards>
   <Card href="/docs/rango/guides/bundle-analysis" title="Bundle Analysis">

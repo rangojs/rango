@@ -459,7 +459,7 @@ export interface ShellCaptureDebugEvent {
   snapshotSkipped?: boolean;
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
-  /** Outcome reported by a store that supports shell-write acknowledgements. */
+  /** Result reported by the store's shell-write path; not a durability proof. */
   storeWrite?: "stored" | "invalidated" | "failed";
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
