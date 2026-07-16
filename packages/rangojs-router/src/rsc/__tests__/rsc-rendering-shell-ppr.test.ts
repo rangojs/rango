@@ -146,6 +146,8 @@ interface RunOpts {
    * to model a context-less probe (curl, synthetic monitor).
    */
   navContext?: false;
+  /** Fragment capability header is present by default on client partials. */
+  fragmentCapability?: false;
   /** Extra request headers (e.g. X-RSC-HMR). */
   headers?: Record<string, string>;
   shell?: ShellCacheEntry;
@@ -180,6 +182,9 @@ async function run(opts: RunOpts): Promise<{
         accept: opts.partial ? "text/x-component" : "text/html",
         ...(opts.partial && opts.navContext !== false
           ? { "X-RSC-Router-Client-Path": "/from" }
+          : {}),
+        ...(opts.partial && opts.fragmentCapability !== false
+          ? { "X-Rango-Fragment-Passthrough": "1" }
           : {}),
         ...opts.headers,
       },
@@ -1284,6 +1289,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     ],
     ["nonce", { nonce: "n-test" }],
     ["no-navigation-context", { navContext: false as const }],
+    ["no-fragment-capability", { fragmentCapability: false as const }],
+    ["fragment-recovery", { headers: { "X-Rango-Fragment-Recovery": "1" } }],
     ["undeclared ppr", { ppr: undefined }],
   ] as const)(
     "keeps _shellFragmentPayload unarmed on the %s bypass lane",
@@ -1787,6 +1794,29 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "BYPASS; reason=snapshot-miss",
     );
+  });
+
+  it("heals a seeded document snapshot at the key that would otherwise shadow the repair", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      fragmentCapability: false,
+      ppr: true,
+      shell: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      matchPartial: async () => {
+        getRequestContext()._shellImplicitCache?.onCorrupt?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "BYPASS; reason=snapshot-miss",
+    );
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      key: KEY,
+      navigationOnly: true,
+    });
   });
 
   it("bypasses a context-less partial as no-navigation-context: zero shell reads, no seeding, no capture", async () => {

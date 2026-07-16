@@ -1080,6 +1080,7 @@ function describePprShell(mode: "dev" | "build") {
           headers: {
             "X-RSC-Router-Client-Path": f.url("/"),
             "X-Rango-Prefetch": "1",
+            "X-Rango-Fragment-Passthrough": "1",
           },
         });
         assertPprReplayStatus(
@@ -1095,6 +1096,156 @@ function describePprShell(mode: "dev" | "build") {
       assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
     });
 
+    test("a warm fragment prefetch expands its client chunk before the click", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-root"),
+      );
+      const targetPath = "/ppr-shell/slot-hole?probe=fragment-prefetch-warm";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      const scriptResources = () =>
+        page.evaluate(() =>
+          performance
+            .getEntriesByType("resource")
+            .map((entry) => entry.name)
+            .filter((name) => /\.[cm]?[jt]sx?$/.test(new URL(name).pathname)),
+        );
+      const beforePrefetch = new Set(await scriptResources());
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          response.request().headers()["x-rango-prefetch"] === "1"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").hover();
+      const response = await prefetchResponse;
+      expect(response.request().headers()["x-rango-fragment-passthrough"]).toBe(
+        "1",
+      );
+      expect(await response.text()).toContain("__rangoFragment");
+      // Dev serves each client module separately, so fragment expansion is
+      // directly visible as pre-click JS I/O. Production may fold the fixture's
+      // client reference into the initial app chunk; the no-new-JS click check
+      // below remains the observable contract there.
+      if (mode === "dev") {
+        await expect
+          .poll(async () => (await scriptResources()).length, {
+            timeout: 10_000,
+          })
+          .toBeGreaterThan(beforePrefetch.size);
+      }
+      const warmedResources = new Set(await scriptResources());
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").click();
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+      expect(
+        (await scriptResources()).filter((name) => !warmedResources.has(name)),
+      ).toEqual([]);
+    });
+
+    test("an in-flight fragment prefetch is adopted without a second request", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-inflight-root"),
+      );
+      const targetPath =
+        "/ppr-shell/slot-hole?probe=fragment-prefetch-inflight";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      let releasePrefetch!: () => void;
+      const holdPrefetch = new Promise<void>((resolve) => {
+        releasePrefetch = resolve;
+      });
+      await page.route(
+        (routeUrl) =>
+          routeUrl.pathname === "/ppr-shell/slot-hole" &&
+          routeUrl.searchParams.get("probe") === "fragment-prefetch-inflight" &&
+          routeUrl.searchParams.has("_rsc_partial"),
+        async (route) => {
+          await holdPrefetch;
+          await route.continue();
+        },
+      );
+
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchStarted = page.waitForRequest((req) => {
+        const requestUrl = new URL(req.url());
+        return (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          req.headers()["x-rango-prefetch"] === "1"
+        );
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-inflight"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").hover();
+      await prefetchStarted;
+      // Dispatch while the prefetch is held before response headers. The click
+      // must adopt the inflight promise; a warm entry cannot exist yet.
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").dispatchEvent(
+        "click",
+      );
+      releasePrefetch();
+      const response = await prefetchResponse;
+      expect(await response.text()).toContain("__rangoFragment");
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+    });
+
     test("partial replay HIT carries verbatim fragment envelopes; a context-less probe carries none", async ({
       request,
     }) => {
@@ -1107,7 +1258,12 @@ function describePprShell(mode: "dev" | "build") {
 
       const replay = await request.get(
         `${url}&_rsc_partial=true&_rsc_segments=`,
-        { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+        {
+          headers: {
+            "X-RSC-Router-Client-Path": f.url("/"),
+            "X-Rango-Fragment-Passthrough": "1",
+          },
+        },
       );
       expect(replay.status()).toBe(200);
       assertPprReplayStatus(

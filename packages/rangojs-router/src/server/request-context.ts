@@ -304,6 +304,12 @@ export interface RequestContext<
     /** @internal Called only after the implicit cache hit decodes successfully. */
     onHit?: () => void;
     /**
+     * @internal Called when the seeded document record fails server-side
+     * deserialization. Partial replay uses it to replace the enclosing shell
+     * snapshot after serving the fresh fallback.
+     */
+    onCorrupt?: () => void;
+    /**
      * @internal The resolved key of the canonical document segment record.
      * Written during a CAPTURE render by CacheScope.cacheRoute when a
      * doc-namespaced scope records the matched segments; captureAndStoreShell
@@ -339,7 +345,10 @@ export interface RequestContext<
    * (segment-codec fragmentSegments) instead of deserialize -> re-serialize
    * per request; the payload consumers (SSR resume, browser hydration, and
    * the client partial-navigation decode chokepoints) expand them
-   * (segment-fragments.ts, issue #700). Two arming sites, both scoped to a
+   * (segment-fragments.ts, issue #700). Partial requests arm only after the
+   * browser advertises `X-Rango-Fragment-Passthrough: 1`; a decode failure
+   * retries without it so CacheScope can evict the bad record. Two arming sites,
+   * both scoped to a
    * render/match window: serveShellHit's derived tail context (document
    * HIT), and matchPartialWithPprReplay's mutate-restore around the partial
    * match (matchPartialForReplay). It must never be visible to a capture

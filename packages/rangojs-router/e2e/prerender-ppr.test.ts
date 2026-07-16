@@ -167,7 +167,12 @@ function runPrerenderPprSpec(f: Fixture): void {
 
     const replay = await request.get(
       `${url}&_rsc_partial=true&_rsc_segments=`,
-      { headers: { "X-RSC-Router-Client-Path": f.url("/") } },
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": f.url("/"),
+          "X-Rango-Fragment-Passthrough": "1",
+        },
+      },
     );
     expect(replay.status()).toBe(200);
     expect(replay.headers()["x-rango-ppr-replay"]).toBe(

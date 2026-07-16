@@ -83,6 +83,20 @@ export function NavLayout() {
           PPR navigation replay without transition
         </Link>
         <Link
+          to="/ppr-shell/slot-hole?probe=fragment-prefetch-warm"
+          data-testid="nav-ppr-fragment-prefetch-warm"
+          prefetch="hover"
+        >
+          PPR fragment warm prefetch
+        </Link>
+        <Link
+          to="/ppr-shell/slot-hole?probe=fragment-prefetch-inflight"
+          data-testid="nav-ppr-fragment-prefetch-inflight"
+          prefetch="hover"
+        >
+          PPR fragment in-flight prefetch
+        </Link>
+        <Link
           to="/ppr-shell/inline-action?probe=ppr-inline-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"

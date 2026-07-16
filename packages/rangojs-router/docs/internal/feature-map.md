@@ -285,9 +285,13 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `x-rango-ppr-replay` reports whether the seeded segment record actually
   supplied the partial match, including freshness, or why replay was bypassed.
   No Flight resume is involved; replayed segments DO ride the partial payload
-  as verbatim `__rangoFragment` envelopes (#700 fragment splice, armed per
-  match window), expanded by the client's navigation/prefetch decoders before
-  any consumer renders.
+  as verbatim `__rangoFragment` envelopes (#700 fragment splice, capability-
+  gated and armed per match window), expanded by the client's
+  navigation/prefetch decoders before any consumer renders. A fragment decode
+  failure retries once without passthrough so server-side eviction and seeded-
+  snapshot healing remain intact; the capable document-cache slot is replaced
+  with the fallback, the current tab disables further passthrough, and
+  context-less clients remain in a separate slot.
 - Route-level segment caching (`cache()` DSL), named cache profiles (`cacheProfiles`)
 - `cache()` + segment scope propagation, global segment cache config on router
 - `"use cache"` directive runtime wrappers, response route cache layer

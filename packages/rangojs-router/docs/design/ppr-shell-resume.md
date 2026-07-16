@@ -49,6 +49,20 @@ pipeline still owns client-segment nullification, revalidation, diff selection,
 parallel ordering, handles, and fresh loader resolution; the browser receives an
 ordinary partial payload and has no PPR-specific branch.
 
+Rango's navigation and prefetch clients advertise fragment expansion with
+`X-Rango-Fragment-Passthrough: 1`. Replayed ReactNode fields can then carry their
+stored Flight strings as `__rangoFragment` envelopes; both browser decode
+chokepoints expand them before rendering or caching the decoded payload. A
+fragment-only decode failure retries once without the capability header, which
+restores the server's decode-and-evict path. If the corrupt record came from a
+seeded shell snapshot, the successful fallback also schedules a navigation-only
+recapture. Response caches key the capable wire variant separately, so a raw or
+older client never receives envelopes it cannot expand. The one-shot recovery
+marker skips the corrupt response-cache read, reaches segment validation, and
+replaces that capable slot with the valid fallback. The current browser document
+then leaves passthrough disabled so its already-populated HTTP cache cannot replay
+the old bytes.
+
 A partial request does not require a prior document capture. On a shell-snapshot
 miss, the first request renders normally and schedules the existing shell
 capture with `navigationOnly: true`. Capture, rather than a direct segment write,
@@ -91,6 +105,10 @@ late navigation capture cannot downgrade a document-safe shell. Partial replay
 prefers the document shell and falls back to the navigation snapshot, using only
 its segment snapshot and eligibility flags. The `navigationOnly` entry marker is
 also preserved through memory, Cloudflare, and Vercel stores as defense in depth.
+Corruption repair is the one key-placement exception: it overwrites the exact
+runtime key that supplied the bad snapshot. A repair at the document key still
+carries `navigationOnly`, so document serving refuses it and performs a normal
+document-safe recapture instead of serving a partial-request-derived shell.
 
 SSR setup for a cold partial (module loading plus the document `allReady` policy)
 runs inside the guarded background task; the Flight response never waits for it

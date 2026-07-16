@@ -24,6 +24,10 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import {
+  SEGMENT_FRAGMENT_CAPABILITY_HEADER,
+  SEGMENT_FRAGMENT_RECOVERY_HEADER,
+} from "../segment-fragments.js";
 
 const CACHE_STATUS_HEADER = "x-document-cache-status";
 
@@ -260,6 +264,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // pipeline (stripInternalParams), so _rsc_partial, _rsc_segments, etc.
     // are not visible on ctx.url in production.
     const rawUrl = new URL(ctx.request.url);
+    const isFragmentRecovery =
+      ctx.request.headers.get(SEGMENT_FRAGMENT_RECOVERY_HEADER) === "1";
 
     // Only cache GET requests — mutations and other methods must not be cached
     if (ctx.request.method !== "GET") {
@@ -317,6 +323,16 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
+      // Fragment envelopes require a capable Rango decoder. Keep that wire
+      // variant out of the context-less/legacy partial slot; this middleware
+      // returns hits before request classification and cannot rely on the
+      // match-time capability gate.
+      const fragmentSuffix =
+        isPartial &&
+        (ctx.request.headers.get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) === "1" ||
+          isFragmentRecovery)
+          ? ":fragments"
+          : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
       // Default key rides the shared host-namespaced base (cacheKeyBase) so the
@@ -326,7 +342,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
       const cacheKey = keyGenerator
-        ? keyGenerator(url) + segmentHash + typeSuffix
+        ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
         : cacheKeyBase(
             url.host,
             url.pathname,
@@ -335,9 +351,15 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             requestCtx?._searchParamsFilter,
           ) +
           segmentHash +
+          fragmentSuffix +
           typeSuffix;
       // 1. Check cache
-      const cached = await store.getResponse(cacheKey);
+      // Recovery must reach CacheScope's server decoder so it can evict the bad
+      // segment. Treat it as a miss, then let the ordinary write path replace
+      // the corrupt fragment-capable response with the valid fallback bytes.
+      const cached = isFragmentRecovery
+        ? null
+        : await store.getResponse(cacheKey);
 
       if (cached && cached.response.status === 200) {
         if (!cached.shouldRevalidate) {
