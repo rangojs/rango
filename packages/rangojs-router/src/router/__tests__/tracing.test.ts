@@ -81,6 +81,7 @@ describe("resolveTracing", () => {
       handler: true,
       render: true,
       ssr: true,
+      response: true,
     });
   });
 
@@ -97,6 +98,21 @@ describe("resolveTracing", () => {
       handler: true,
       render: true,
       ssr: false,
+      response: true,
+    });
+  });
+
+  it("response: false suppresses only the response phase", () => {
+    const resolved = resolveTracing({ runner, spans: { response: false } });
+    expect(resolved?.phases).toEqual({
+      request: true,
+      middleware: true,
+      action: true,
+      loader: true,
+      handler: true,
+      render: true,
+      ssr: true,
+      response: false,
     });
   });
 

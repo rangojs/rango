@@ -145,10 +145,25 @@ const router = createRouter({ document: Document, urls: urlpatterns, tracing });
 These factories return a `RouterTracingConfig` for the same `tracing` slot;
 `telemetry` stays independent (events only, no phase spans). Phase spans:
 `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`,
-`rango.render`, `rango.ssr` — the same phases the `debugPerformance` timeline
-shows, co-emitted from one site. Off-platform (no Cloudflare tracing destination
-/ no OTel SDK) every span call is a transparent pass-through, so the request
-behaves as if tracing were off.
+`rango.handler`, `rango.render`, `rango.ssr`, `rango.response` — the same
+phases the `debugPerformance` timeline shows, co-emitted from one site.
+Off-platform (no Cloudflare tracing destination / no OTel SDK) every span call
+is a transparent pass-through, so the request behaves as if tracing were off.
+
+`rango.response` is the explicit handoff marker: at most one per traced
+request, a direct child of `rango.request`, wrapping only response finalization
+(redirect interception/guarding, `Server-Timing` mutation, final response
+selection) and ending immediately before the handler returns the response to
+the host. It is handoff-bound, never drain-bound — it never reads or awaits
+`response.body`. Attributes: `http.response.status_code`,
+`rango.response.mode` (classified request mode, or `middleware-short-circuit`),
+`rango.response.body_kind` (`stream`/`empty`/`websocket`). For request modes
+that render nothing (fetchable `_rsc_loader`, response routes, middleware
+short-circuits) it shows the trace is complete rather than truncated — those
+requests legitimately have no `rango.render`/`rango.ssr`/`rango.handler` spans.
+On deployed Workers it may read 0 ms (frozen non-I/O timers); its position and
+attributes are the value. Disable per-response billing overhead at volume with
+`spans: { response: false }`.
 
 Custom sinks implement `emit(event)`:
 

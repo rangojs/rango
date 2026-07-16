@@ -193,6 +193,16 @@ describe("PHASES registry", () => {
     });
   });
 
+  it("response is span-only (metric:false) with the exact rango.response name", () => {
+    // Span-only is load-bearing: a co-emitted metric would circularly mutate
+    // the Server-Timing header the response phase itself finalizes.
+    expect(PHASES.response.metric).toBe(false);
+    expect(PHASES.response.tracePhase).toBe("response");
+    expect(PHASES.response.spanName).toBe("rango.response");
+    expect(PHASES.response.attributes).toBeUndefined();
+    expect(PHASES.response.lazyAttributes).toBeUndefined();
+  });
+
   it("request is span-only; render/ssr carry their metric labels", () => {
     expect(PHASES.request.metric).toBe(false);
     expect(PHASES.ssr.metric).toEqual({ label: "ssr:render-html" });

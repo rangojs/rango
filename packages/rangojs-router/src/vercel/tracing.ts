@@ -2,9 +2,9 @@
  * Vercel OpenTelemetry tracing integration.
  *
  * Bridges the router's performance phases (request, middleware, action,
- * loaders, handler, render, ssr) onto OpenTelemetry spans so they show up in
- * Vercel's trace waterfall next to the platform's automatic spans, with correct
- * nesting. Vercel exposes tracing through OpenTelemetry (not a native import-free
+ * loaders, handler, render, ssr, response) onto OpenTelemetry spans so they
+ * show up in Vercel's trace waterfall next to the platform's automatic spans,
+ * with correct nesting. Vercel exposes tracing through OpenTelemetry (not a native import-free
  * API like Cloudflare), so this is a thin convenience over `createOTelTracing`:
  * it reads the global OTel tracer that `@vercel/otel`'s `registerOTel()` installs.
  *
@@ -69,8 +69,8 @@ export interface VercelTracingOptions extends TracingToggleOptions {
 /**
  * Create the tracing config for a Vercel router. Pass the result to
  * `createRouter({ tracing })`. Spans are emitted for the request, middleware,
- * action, loaders, handler, render, and ssr phases; pass `spans` to turn
- * individual phases off.
+ * action, loaders, handler, render, ssr, and response phases; pass `spans` to
+ * turn individual phases off.
  *
  * @see createOTelTracing (`@rangojs/router`) for the underlying adapter on any
  *   platform with an OpenTelemetry SDK.

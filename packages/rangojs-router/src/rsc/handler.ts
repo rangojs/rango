@@ -618,88 +618,126 @@ export function createRSCHandler<
           return coreRequestHandler(request, env, url, variables, nonce);
         };
 
-        // Execute middleware chain if any, otherwise call core handler directly
-        let response: Response;
-        if (matchedMiddleware.length > 0) {
-          const mwResponse = await executeMiddleware(
-            matchedMiddleware,
-            request,
-            env,
-            variables,
-            coreHandler,
-            createReverseFunction(getRequiredRouteMap()),
-          );
+        // Execute middleware chain if any, otherwise call core handler
+        // directly; the response is finalized below, inside the response span.
+        const hasMiddleware = matchedMiddleware.length > 0;
+        const downstream = hasMiddleware
+          ? await executeMiddleware(
+              matchedMiddleware,
+              request,
+              env,
+              variables,
+              coreHandler,
+              createReverseFunction(getRequiredRouteMap()),
+            )
+          : await coreHandler();
 
-          if (
-            url.searchParams.has("_rsc_partial") ||
-            url.searchParams.has("_rsc_action")
-          ) {
-            const intercepted = interceptRedirectForPartial(
-              mwResponse,
-              createRedirectFlightResponse,
-              { requestOrigin: url.origin, basename: router.basename },
-            );
-            response = intercepted ?? finalizeResponse(mwResponse);
+        // Final response construction + host handoff, wrapped in rango.response
+        // — the explicit stream-handoff marker. The callback is synchronous, so
+        // the span ends immediately before the handler returns the response to
+        // the host; it never reads or wraps response.body. A downstream throw
+        // skips it entirely (no response exists to hand off).
+        return observePhase(PHASES.response, (responseSpan) => {
+          let response: Response;
+          if (hasMiddleware) {
+            if (
+              url.searchParams.has("_rsc_partial") ||
+              url.searchParams.has("_rsc_action")
+            ) {
+              const intercepted = interceptRedirectForPartial(
+                downstream,
+                createRedirectFlightResponse,
+                { requestOrigin: url.origin, basename: router.basename },
+              );
+              response = intercepted ?? finalizeResponse(downstream);
+            } else {
+              response = finalizeResponse(downstream);
+            }
           } else {
-            response = finalizeResponse(mwResponse);
+            response = downstream;
           }
-        } else {
-          response = await coreHandler();
-        }
 
-        // Finalize metrics after all middleware (including post-next work)
-        // has completed so :post spans are captured in the timeline.
-        // Handler timing parts are always emitted (even without debug metrics)
-        // so non-debug requests still get bootstrap Server-Timing entries.
-        const handlerTimingArr: string[] = variables.__handlerTiming || [];
-        // Preserve any existing Server-Timing set by response routes or middleware
-        const existingTiming = response.headers.get("Server-Timing");
-        const timingParts = existingTiming
-          ? [existingTiming, ...handlerTimingArr]
-          : [...handlerTimingArr];
+          // Finalize metrics after all middleware (including post-next work)
+          // has completed so :post spans are captured in the timeline.
+          // Handler timing parts are always emitted (even without debug metrics)
+          // so non-debug requests still get bootstrap Server-Timing entries.
+          const handlerTimingArr: string[] = variables.__handlerTiming || [];
+          // Preserve any existing Server-Timing set by response routes or middleware
+          const existingTiming = response.headers.get("Server-Timing");
+          const timingParts = existingTiming
+            ? [existingTiming, ...handlerTimingArr]
+            : [...handlerTimingArr];
 
-        const metricsStore = requestContext._metricsStore;
-        if (metricsStore) {
-          // When the store was created at handler start (earlyMetricsStore),
-          // handler:total covers the full request. When ctx.debugPerformance()
-          // created the store mid-request its requestStart is now the threaded
-          // _handlerStart (== handlerStart), so both branches yield the true
-          // request entry; reading the store's own anchor keeps this correct even
-          // if a store ever lands without the threading (falls back to its start).
-          const totalStart = earlyMetricsStore
-            ? handlerStart
-            : metricsStore.requestStart;
-          appendMetric(
-            metricsStore,
-            "handler:total",
-            totalStart,
-            performance.now() - totalStart,
-          );
-          const metricsTiming = buildMetricsTiming(
-            request.method,
-            url.pathname,
-            metricsStore,
-          );
-          if (metricsTiming) timingParts.push(metricsTiming);
-        }
-
-        const fullTiming = timingParts.join(", ");
-        if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-          try {
-            response.headers.set("Server-Timing", fullTiming);
-          } catch {
-            // Immutable headers (e.g. a passed-through platform Response) — drop
-            // the timing header, never the response. Instrumentation must not
-            // 500 a request.
+          const metricsStore = requestContext._metricsStore;
+          if (metricsStore) {
+            // When the store was created at handler start (earlyMetricsStore),
+            // handler:total covers the full request. When ctx.debugPerformance()
+            // created the store mid-request its requestStart is now the threaded
+            // _handlerStart (== handlerStart), so both branches yield the true
+            // request entry; reading the store's own anchor keeps this correct even
+            // if a store ever lands without the threading (falls back to its start).
+            const totalStart = earlyMetricsStore
+              ? handlerStart
+              : metricsStore.requestStart;
+            appendMetric(
+              metricsStore,
+              "handler:total",
+              totalStart,
+              performance.now() - totalStart,
+            );
+            const metricsTiming = buildMetricsTiming(
+              request.method,
+              url.pathname,
+              metricsStore,
+            );
+            if (metricsTiming) timingParts.push(metricsTiming);
           }
-        }
 
-        // Single open-redirect chokepoint: every response (PE, full-page,
-        // middleware short-circuit, response-route) funnels through here, so
-        // guarding browser-followed (3xx) redirects once covers them all and any
-        // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
-        // through untouched (validated client-side instead).
-        return guardOutgoingRedirect(response, url.origin, router.basename);
+          const fullTiming = timingParts.join(", ");
+          if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+            try {
+              response.headers.set("Server-Timing", fullTiming);
+            } catch {
+              // Immutable headers (e.g. a passed-through platform Response) — drop
+              // the timing header, never the response. Instrumentation must not
+              // 500 a request.
+            }
+          }
+
+          // Single open-redirect chokepoint: every response (PE, full-page,
+          // middleware short-circuit, response-route) funnels through here, so
+          // guarding browser-followed (3xx) redirects once covers them all and any
+          // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
+          // through untouched (validated client-side instead).
+          const guarded = guardOutgoingRedirect(
+            response,
+            url.origin,
+            router.basename,
+          );
+
+          // Attributes describe the response actually handed to the host (after
+          // unsafe-redirect replacement), low-cardinality only. body_kind checks
+          // the websocket marker before the body getter so a workerd upgrade
+          // Response is never poked; `.body` is a getter access, not a read of
+          // the stream.
+          responseSpan.setAttribute(
+            "http.response.status_code",
+            guarded.status,
+          );
+          responseSpan.setAttribute(
+            "rango.response.mode",
+            requestContext._requestMode ?? "middleware-short-circuit",
+          );
+          responseSpan.setAttribute(
+            "rango.response.body_kind",
+            isWebSocketUpgradeResponse(guarded)
+              ? "websocket"
+              : guarded.body === null
+                ? "empty"
+                : "stream",
+          );
+          return guarded;
+        });
       }),
     );
   };
@@ -754,6 +792,12 @@ export function createRSCHandler<
     }
     const classifyDur = performance.now() - classifyStart;
     handlerTiming.push(`handler-classify;dur=${classifyDur.toFixed(2)}`);
+
+    // Stash the classified mode for the rango.response span (rango.response.mode)
+    // — the outer handler tail cannot see the plan. Stays unset when middleware
+    // short-circuits before core execution runs (reported as
+    // "middleware-short-circuit").
+    getRequestContext()._requestMode = plan.mode;
 
     // ---- 2. Terminal plans (no execution needed) ----
     if (plan.mode === "redirect") {

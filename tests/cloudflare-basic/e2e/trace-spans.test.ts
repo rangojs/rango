@@ -23,14 +23,17 @@ interface SpanNode {
   children: SpanNode[];
 }
 
-function decodeTrace(res: APIResponse): SpanNode[] {
-  const header = res.headers()["x-rango-trace"];
+function decodeTraceHeader(header: string | null | undefined): SpanNode[] {
   expect(
     header,
     "X-Rango-Trace missing — is tracing wired on the router and __trace_debug handled in the worker?",
   ).toBeTruthy();
-  const json = decodeURIComponent(escape(atob(header)));
+  const json = decodeURIComponent(escape(atob(header!)));
   return JSON.parse(json) as SpanNode[];
+}
+
+function decodeTrace(res: APIResponse): SpanNode[] {
+  return decodeTraceHeader(res.headers()["x-rango-trace"]);
 }
 
 function flatten(nodes: SpanNode[]): SpanNode[] {
@@ -101,6 +104,20 @@ function runTraceSpec(f: Fixture): void {
     const middleware = findNode(roots, "rango.middleware");
     expect(middleware, "expected a rango.middleware span").toBeTruthy();
     expect(hasDescendant(request, "rango.middleware")).toBe(true);
+
+    // Exactly one rango.response span — the final-response/host-handoff
+    // marker — as a DIRECT child of rango.request (it opens after downstream
+    // middleware/render work returned, so it never nests under them), tagged
+    // with the response actually handed to the host.
+    const responses = flatten(roots).filter((n) => n.name === "rango.response");
+    expect(responses).toHaveLength(1);
+    expect(
+      request.children.some((n) => n.name === "rango.response"),
+      "rango.response must be a direct child of rango.request",
+    ).toBe(true);
+    expect(responses[0].attributes["http.response.status_code"]).toBe(200);
+    expect(responses[0].attributes["rango.response.mode"]).toBe("full-render");
+    expect(responses[0].attributes["rango.response.body_kind"]).toBe("stream");
   });
 
   test("emits a rango.loader span for a fetchable _rsc_loader request", async ({
@@ -132,6 +149,84 @@ function runTraceSpec(f: Fixture): void {
     ).toBeTruthy();
     expect(loader!.attributes["rango.loader_id"]).toContain("TraceProbeLoader");
     expect(hasDescendant(request!, "rango.loader")).toBe(true);
+
+    // A standalone loader request renders nothing: render/ssr/handler are
+    // intentionally absent (a correct trace, not dropped spans) — while the
+    // rango.response handoff marker IS present, tagged with the loader mode.
+    // This is the trace shape that motivated the marker: without it, a
+    // no-render trace looks truncated at the request boundary.
+    expect(findNode(roots, "rango.render")).toBeUndefined();
+    expect(findNode(roots, "rango.ssr")).toBeUndefined();
+    expect(findNode(roots, "rango.handler")).toBeUndefined();
+    const response = findNode(roots, "rango.response");
+    expect(response, "expected a rango.response span").toBeTruthy();
+    expect(
+      request!.children.some((n) => n.name === "rango.response"),
+      "rango.response must be a direct child of rango.request",
+    ).toBe(true);
+    expect(response!.attributes["rango.response.mode"]).toBe("loader");
+    expect(response!.attributes["http.response.status_code"]).toBe(200);
+  });
+
+  test("records the response handoff marker before the delayed loader content streams", async () => {
+    // page.request buffers the whole body, so stream with Node fetch instead.
+    // /ppr-shell carries its ~400ms price loader promise into the component
+    // behind loading(), so the shell (with the fallback) flushes first and the
+    // live price streams later in the same body (/blog would NOT do: its
+    // sidebar handler awaits the loader, blocking response construction).
+    // __no_cache keeps this a fresh render (no shell-cache HIT interference).
+    // Dev only: warm the route's modules first — on a cold dev server the
+    // on-demand compile exceeds the 400ms loader delay, so the whole body
+    // coalesces into one flush and nothing streams. The shared dev-warmup
+    // setup project already warms /ppr-shell (PPR_WARMUP_ROUTES), but local
+    // `--no-deps` subset runs skip it; this keeps the test self-sufficient.
+    // The loader delay is paid per request, so the warmed request streams.
+    if (f.mode === "dev") {
+      await fetch(f.url(`/ppr-shell?__no_cache=1`), {
+        headers: { accept: "text/html" },
+      }).then((warm) => warm.body?.cancel());
+    }
+
+    const res = await fetch(f.url(`/ppr-shell?__trace_debug=1&__no_cache=1`), {
+      headers: { accept: "text/html" },
+    });
+    expect(res.status).toBe(200);
+
+    // The X-Rango-Trace header is serialized at handoff (right after
+    // router.fetch resolves) — asserting on it BEFORE draining the body proves
+    // the rango.response marker exists while the price is still streaming.
+    const roots = decodeTraceHeader(res.headers.get("x-rango-trace"));
+    const response = findNode(roots, "rango.response");
+    expect(
+      response,
+      "expected rango.response recorded at handoff, before body drain",
+    ).toBeTruthy();
+    expect(response!.attributes["rango.response.body_kind"]).toBe("stream");
+    expect(response!.attributes["http.response.status_code"]).toBe(200);
+
+    // Stream the body once: the first flush containing the Suspense fallback
+    // must NOT already contain the live price (that would mean nothing
+    // streamed); the delayed loader content arrives later on the same body.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let html = "";
+    let sawFallbackFirst = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      html += decoder.decode(value, { stream: true });
+      if (!sawFallbackFirst && html.includes("ppr-price-fallback")) {
+        sawFallbackFirst = true;
+        expect(
+          html,
+          "fallback flushed with the price already inlined",
+        ).not.toContain("Live price:");
+      }
+    }
+    expect(sawFallbackFirst, "stream ended before the shell flushed").toBe(
+      true,
+    );
+    expect(html).toContain("Live price:");
   });
 
   test("does not emit spans without __trace_debug", async ({ page }) => {
