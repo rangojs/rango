@@ -19,6 +19,9 @@ import {
 } from "../hub.js";
 import {
   getDevelopmentDiagnosticLink,
+  recordCacheTagInvalidationDiagnostic,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagInvalidationDiagnostic,
   recordCacheScopeDiagnostic,
   recordLinkedPprCaptureDiagnostic,
   recordLoaderCacheDiagnostic,
@@ -79,6 +82,99 @@ describe("diagnostic channel", () => {
         data: { outcome: "captured" },
       }),
     ]);
+  });
+
+  it("records bounded exact cache tags and linked invalidation outcomes", () => {
+    const request = new Request("http://localhost/products");
+    const tags = Array.from({ length: 18 }, (_, index) => `product:${index}`);
+    const link = runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "write",
+          provenance: ["runtime"],
+          tags,
+          identity: "use-cache:products:tenant-a",
+          outcome: "catalog#getProduct",
+        });
+        recordCacheTagInvalidationDiagnostic({
+          verb: "revalidateTag",
+          outcome: "scheduled",
+          tags: ["product:0"],
+          capableStoreCount: 1,
+          incapableStoreCount: 0,
+        });
+        return getDevelopmentDiagnosticLink();
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    recordLinkedCacheTagInvalidationDiagnostic(link!, {
+      verb: "revalidateTag",
+      outcome: "completed",
+      tags: ["product:0"],
+      capableStoreCount: 1,
+      incapableStoreCount: 0,
+    });
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "cache.tags",
+      "cache.tags",
+      "cache.tags",
+    ]);
+    expect(trace.events[0]?.data).toMatchObject({
+      kind: "observe",
+      tags: tags.slice(0, 16),
+      tagCount: 18,
+      tagsTruncated: true,
+      identityDigest: expect.stringMatching(/^cache-[0-9a-f]{16}$/),
+    });
+    expect(trace.events[0]?.data.tagDigests).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^cache-[0-9a-f]{16}$/)]),
+    );
+    expect(trace.events[2]?.data).toMatchObject({
+      kind: "invalidate",
+      verb: "revalidateTag",
+      outcome: "completed",
+      tags: ["product:0"],
+    });
+  });
+
+  it("bounds individual cache-tag values before recording the event", () => {
+    const request = new Request("http://localhost/products");
+    const longTag = `product:${"x".repeat(32_768)}`;
+
+    runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "write",
+          provenance: ["runtime"],
+          tags: [longTag],
+        });
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events).toHaveLength(1);
+    expect(trace.events[0]?.data).toMatchObject({
+      tagCount: 1,
+      tagsTruncated: true,
+      tagDigests: [expect.stringMatching(/^cache-[0-9a-f]{16}$/)],
+    });
+    expect((trace.events[0]!.data.tags as string[])[0]?.endsWith("...")).toBe(
+      true,
+    );
   });
 
   it("masks an inherited diagnostic transaction when a nested run disables it", async () => {

@@ -306,6 +306,159 @@ describe("Rango MCP diagnostic store", () => {
     ]);
   });
 
+  it("projects exact cache-tag activity without claiming store state", () => {
+    const store = createStore();
+    expect(
+      store.ingestBridgeBatch(
+        batch(1, [
+          event(1, "cache.tags", {
+            kind: "observe",
+            artifact: "function",
+            phase: "write",
+            provenance: ["static-policy", "runtime"],
+            tags: ["products", "product:alpha", "password=hunter2"],
+            tagDigests: ["cache-a", "cache-b", "cache-c"],
+            tagCount: 3,
+            tagsTruncated: false,
+            identityDigest: "cache-entry",
+            outcome: "catalog#getProduct",
+          }),
+          event(2, "cache.tags", {
+            kind: "invalidate",
+            verb: "updateTag",
+            outcome: "completed",
+            tags: ["product:alpha"],
+            tagDigests: ["cache-b"],
+            tagCount: 1,
+            tagsTruncated: false,
+            capableStoreCount: 2,
+            incapableStoreCount: 0,
+          }),
+        ]),
+      ),
+    ).toBe(true);
+
+    const result = store.explainCacheTags({ requestId: "req-1" });
+    expect(result).toMatchObject({
+      requestId: "req-1",
+      valuesExposed: true,
+      storeState: "not-inspected",
+      truncated: false,
+      operations: [
+        {
+          kind: "observe",
+          artifact: "function",
+          phase: "write",
+          provenance: ["static-policy", "runtime"],
+          tags: [
+            { value: "products", digest: "cache-a" },
+            { value: "product:alpha", digest: "cache-b" },
+            { value: "password=[redacted]", digest: "cache-c" },
+          ],
+          identityDigest: "cache-entry",
+        },
+        {
+          kind: "invalidate",
+          verb: "updateTag",
+          outcome: "completed",
+          capableStoreCount: 2,
+          incapableStoreCount: 0,
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("hunter2");
+  });
+
+  it("rejects unknown transaction selectors and shrinks oversized tag projections", () => {
+    const store = createStore();
+    const tags = Array.from(
+      { length: 16 },
+      (_, index) => `${index}-${"x".repeat(300)}`,
+    );
+    const events = Array.from({ length: 64 }, (_, index) =>
+      event(index + 1, "cache.tags", {
+        kind: "observe",
+        artifact: "function",
+        phase: "write",
+        provenance: ["runtime"],
+        tags,
+        tagDigests: tags.map((_, tagIndex) => `cache-${tagIndex}`),
+        tagCount: tags.length,
+        tagsTruncated: false,
+        identityDigest: `cache-entry-${index}`,
+        outcome: "catalog#getProduct",
+      }),
+    );
+    for (let offset = 0; offset < events.length; offset += 16) {
+      expect(
+        store.ingestBridgeBatch(
+          batch(offset / 16 + 1, events.slice(offset, offset + 16)),
+        ),
+      ).toBe(true);
+    }
+
+    expect(() =>
+      store.explainCacheTags({
+        requestId: "req-1",
+        transactionId: "missing-transaction",
+      }),
+    ).toThrow("No retained transaction");
+    const result = store.explainCacheTags({ requestId: "req-1" });
+    expect(result.truncated).toBe(true);
+    expect(result.operations.length).toBeLessThan(64);
+    expect(serializedToolResultBytes(result)).toBeLessThanOrEqual(
+      RANGO_MCP_MAX_RESULT_BYTES,
+    );
+    expect(result.operations[0]?.tags[0]?.value.endsWith("...")).toBe(true);
+  });
+
+  it("marks malformed tag events incomplete instead of inventing defaults", () => {
+    const store = createStore();
+    expect(
+      store.ingestBridgeBatch(
+        batch(1, [
+          event(1, "cache.tags", {
+            kind: "invalidate",
+            verb: "updateTag",
+            outcome: "completed",
+          }),
+        ]),
+      ),
+    ).toBe(true);
+
+    expect(store.explainCacheTags({ requestId: "req-1" })).toMatchObject({
+      operations: [],
+      truncated: true,
+    });
+  });
+
+  it("marks sanitized digest evidence as truncated", () => {
+    const store = createStore();
+    expect(
+      store.ingestBridgeBatch(
+        batch(1, [
+          event(1, "cache.tags", {
+            kind: "observe",
+            artifact: "function",
+            phase: "write",
+            provenance: ["runtime"],
+            tags: ["products"],
+            tagDigests: ["d".repeat(1_000)],
+            tagCount: 1,
+            tagsTruncated: false,
+          }),
+        ]),
+      ),
+    ).toBe(true);
+
+    const result = store.explainCacheTags({ requestId: "req-1" });
+    expect(result.truncated).toBe(true);
+    expect(result.operations[0]).toMatchObject({
+      tagsTruncated: true,
+      tags: [{ value: "products" }],
+    });
+  });
+
   it("projects revalidation independently by request or transaction", () => {
     const store = createStore();
     const revalidation = {

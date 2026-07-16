@@ -124,6 +124,7 @@ export async function readThroughItem<T>(
             const serialized = await serialize(fresh);
             if (serialized !== null) {
               await setItem(key, serialized, storeOptions);
+              onCached?.();
             }
           } catch (error) {
             reportCacheError(

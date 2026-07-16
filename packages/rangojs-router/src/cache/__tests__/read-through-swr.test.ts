@@ -121,6 +121,7 @@ describe("readThroughItem", () => {
       const bgTasks: Array<() => Promise<void>> = [];
       const host = { waitUntil: (fn: () => Promise<void>) => bgTasks.push(fn) };
       const localExecute = vi.fn(async () => "fresh-data");
+      const onCached = vi.fn();
 
       await readThroughItem({
         ...store,
@@ -130,6 +131,7 @@ describe("readThroughItem", () => {
         deserialize,
         storeOptions,
         host,
+        onCached,
       });
 
       // Background task scheduled but not yet run
@@ -144,6 +146,7 @@ describe("readThroughItem", () => {
         "ser:fresh-data",
         storeOptions,
       );
+      expect(onCached).toHaveBeenCalledOnce();
     });
 
     it("revalidates inline (fire-and-forget) when no waitUntil", async () => {

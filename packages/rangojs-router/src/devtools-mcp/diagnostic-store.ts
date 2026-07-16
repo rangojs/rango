@@ -22,7 +22,11 @@ import {
   type CompilationIssuesPageSnapshot,
   type DiagnosticBridgeStats,
   type CacheScopeExplanation,
+  type CacheTagExplanationSnapshot,
+  type CacheTagInvalidationExplanation,
+  type CacheTagObservationExplanation,
   type ErrorsPageSnapshot,
+  type ExplainCacheTagsInput,
   type ExplainRenderInput,
   type ExplainRevalidationInput,
   type GetCompilationIssuesInput,
@@ -99,6 +103,7 @@ export interface RangoMcpDiagnosticStore {
   listRequests(input?: ListRequestsInput): RequestsPageSnapshot;
   getRequestTrace(input: GetRequestTraceInput): RequestTraceSnapshot;
   explainRender(input: ExplainRenderInput): RenderExplanationSnapshot;
+  explainCacheTags(input: ExplainCacheTagsInput): CacheTagExplanationSnapshot;
   explainRevalidation(
     input: ExplainRevalidationInput,
   ): RevalidationExplanationSnapshot;
@@ -285,13 +290,265 @@ function diagnosticBoolean(value: DiagnosticValue | undefined): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-function diagnosticStrings(value: DiagnosticValue | undefined): string[] {
+function diagnosticStrings(
+  value: DiagnosticValue | undefined,
+  limit: number = 8,
+  maxBytes: number = 128,
+): string[] {
   return Array.isArray(value)
     ? value
         .filter((item): item is string => typeof item === "string")
-        .slice(0, 8)
-        .map((item) => sanitizeDiagnosticText(item, 128))
+        .slice(0, limit)
+        .map((item) => sanitizeDiagnosticText(item, maxBytes))
     : [];
+}
+
+function diagnosticTagValues(value: DiagnosticValue | undefined): {
+  values: string[];
+  valid: boolean;
+  truncated: boolean;
+} {
+  if (!Array.isArray(value)) {
+    return { values: [], valid: false, truncated: false };
+  }
+  const raw = value.filter((item): item is string => typeof item === "string");
+  const retained = raw.slice(0, 16);
+  return {
+    values: retained.map((item) => sanitizeDiagnosticText(item, 256)),
+    valid: raw.length === value.length,
+    truncated:
+      raw.length > retained.length ||
+      retained.some((item) => Buffer.byteLength(item, "utf8") > 256),
+  };
+}
+
+function diagnosticTagDigests(value: DiagnosticValue | undefined): {
+  values: Array<string | null>;
+  valid: boolean;
+  truncated: boolean;
+} {
+  if (!Array.isArray(value)) {
+    return { values: [], valid: false, truncated: false };
+  }
+  const valid = value.every(
+    (item): item is string | null => item === null || typeof item === "string",
+  );
+  const retained = value.slice(0, 16);
+  return {
+    values: retained.map((item) =>
+      typeof item === "string" ? sanitizeDiagnosticText(item, 128) : null,
+    ),
+    valid,
+    truncated:
+      value.length > retained.length ||
+      retained.some(
+        (item) =>
+          typeof item === "string" && Buffer.byteLength(item, "utf8") > 128,
+      ),
+  };
+}
+
+function diagnosticCount(value: DiagnosticValue | undefined): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
+    : null;
+}
+
+const CACHE_TAG_ARTIFACTS = new Set<CacheTagObservationExplanation["artifact"]>(
+  [
+    "segment",
+    "loader",
+    "function",
+    "document",
+    "response-route",
+    "runtime-shell",
+    "build-shell",
+  ],
+);
+
+const CACHE_TAG_PHASES = new Set<CacheTagObservationExplanation["phase"]>([
+  "lookup",
+  "hit",
+  "stale",
+  "miss",
+  "write",
+  "capture",
+  "bypass",
+]);
+
+const CACHE_TAG_PROVENANCE = new Set<
+  CacheTagObservationExplanation["provenance"][number]
+>(["static-policy", "dynamic-policy", "runtime", "stored", "request-union"]);
+
+function diagnosticCacheTagProvenance(value: DiagnosticValue | undefined): {
+  values: CacheTagObservationExplanation["provenance"];
+  valid: boolean;
+  truncated: boolean;
+} {
+  if (!Array.isArray(value)) {
+    return { values: [], valid: false, truncated: false };
+  }
+  const raw = value.filter((item): item is string => typeof item === "string");
+  const retained = raw.slice(0, 8);
+  const sanitized = retained.map((item) => sanitizeDiagnosticText(item, 128));
+  const values = sanitized.filter(
+    (item): item is CacheTagObservationExplanation["provenance"][number] =>
+      CACHE_TAG_PROVENANCE.has(
+        item as CacheTagObservationExplanation["provenance"][number],
+      ),
+  );
+  return {
+    values,
+    valid: raw.length === value.length && values.length === sanitized.length,
+    truncated:
+      raw.length > retained.length ||
+      retained.some((item) => Buffer.byteLength(item, "utf8") > 128),
+  };
+}
+
+const CACHE_TAG_INVALIDATION_OUTCOMES = new Set<
+  CacheTagInvalidationExplanation["outcome"]
+>([
+  "requested",
+  "scheduled",
+  "completed",
+  "partial",
+  "failed",
+  "no-context",
+  "no-capable-store",
+]);
+
+function projectCacheTagExplanation(
+  trace: DiagnosticTrace,
+  transactionId?: string,
+): CacheTagExplanationSnapshot {
+  if (transactionId && !trace.transactionIds.includes(transactionId)) {
+    throw new Error(
+      `No retained transaction ${transactionId} for request ${trace.requestId}`,
+    );
+  }
+  const operations: CacheTagExplanationSnapshot["operations"] = [];
+  let truncated = trace.truncated;
+  for (const event of trace.events) {
+    if (event.type !== "cache.tags") continue;
+    if (transactionId && event.transactionId !== transactionId) continue;
+    if (operations.length >= MAX_EXPLANATION_ITEMS) {
+      truncated = true;
+      break;
+    }
+    const kind = diagnosticString(event.data.kind);
+    const tagValues = diagnosticTagValues(event.data.tags);
+    const tagDigests = diagnosticTagDigests(event.data.tagDigests);
+    const tagCount = diagnosticCount(event.data.tagCount);
+    if (
+      !tagValues.valid ||
+      !tagDigests.valid ||
+      tagCount === null ||
+      tagCount === 0 ||
+      tagCount < tagValues.values.length ||
+      tagDigests.values.length !== tagValues.values.length ||
+      typeof event.data.tagsTruncated !== "boolean"
+    ) {
+      truncated = true;
+      continue;
+    }
+    const tagsTruncated =
+      diagnosticBoolean(event.data.tagsTruncated) === true ||
+      tagValues.truncated ||
+      tagDigests.truncated ||
+      tagValues.values.length < tagCount;
+    const base = {
+      transactionId: event.transactionId,
+      sequence: event.sequence,
+      timestamp: event.timestamp,
+      tags: tagValues.values.map((value, index) => ({
+        value,
+        digest: tagDigests.values[index] ?? null,
+      })),
+      tagCount,
+      tagsTruncated,
+    };
+    truncated ||= tagsTruncated;
+    if (kind === "observe") {
+      const artifact = diagnosticString(event.data.artifact);
+      const phase = diagnosticString(event.data.phase);
+      const parsedProvenance = diagnosticCacheTagProvenance(
+        event.data.provenance,
+      );
+      const provenance = parsedProvenance.values;
+      if (
+        !CACHE_TAG_ARTIFACTS.has(
+          artifact as CacheTagObservationExplanation["artifact"],
+        ) ||
+        !CACHE_TAG_PHASES.has(
+          phase as CacheTagObservationExplanation["phase"],
+        ) ||
+        provenance.length === 0 ||
+        !parsedProvenance.valid ||
+        parsedProvenance.truncated
+      ) {
+        truncated = true;
+        continue;
+      }
+      operations.push({
+        ...base,
+        kind: "observe",
+        artifact: artifact as CacheTagObservationExplanation["artifact"],
+        phase: phase as CacheTagObservationExplanation["phase"],
+        provenance,
+        segmentId: event.segmentId ?? null,
+        identityDigest: diagnosticString(event.data.identityDigest),
+        outcome: diagnosticString(event.data.outcome),
+      });
+      continue;
+    }
+    if (kind === "invalidate") {
+      const verb = diagnosticString(event.data.verb);
+      const outcome = diagnosticString(event.data.outcome);
+      const capableStoreCount = diagnosticCount(event.data.capableStoreCount);
+      const incapableStoreCount = diagnosticCount(
+        event.data.incapableStoreCount,
+      );
+      if (
+        (verb !== "updateTag" && verb !== "revalidateTag") ||
+        !CACHE_TAG_INVALIDATION_OUTCOMES.has(
+          outcome as CacheTagInvalidationExplanation["outcome"],
+        ) ||
+        capableStoreCount === null ||
+        incapableStoreCount === null
+      ) {
+        truncated = true;
+        continue;
+      }
+      operations.push({
+        ...base,
+        kind: "invalidate",
+        verb,
+        outcome: outcome as CacheTagInvalidationExplanation["outcome"],
+        capableStoreCount,
+        incapableStoreCount,
+      });
+      continue;
+    }
+    truncated = true;
+  }
+  const snapshot: CacheTagExplanationSnapshot = {
+    schemaVersion: RANGO_MCP_SCHEMA_VERSION,
+    requestId: trace.requestId,
+    transactionId: transactionId ?? null,
+    operations,
+    valuesExposed: true,
+    storeState: "not-inspected",
+    truncated,
+  };
+  while (
+    snapshot.operations.length > 0 &&
+    serializedToolResultBytes(snapshot) > RANGO_MCP_MAX_RESULT_BYTES
+  ) {
+    snapshot.operations.pop();
+    snapshot.truncated = true;
+  }
+  return snapshot;
 }
 
 function diagnosticStringsWithTruncation(value: DiagnosticValue | undefined): {
@@ -1103,6 +1360,25 @@ export function createRangoMcpDiagnosticStore(
       if (serializedToolResultBytes(explanation) > RANGO_MCP_MAX_RESULT_BYTES) {
         throw new Error(
           "Rango MCP render explanation exceeded its output limit",
+        );
+      }
+      return explanation;
+    },
+
+    explainCacheTags(
+      input: ExplainCacheTagsInput,
+    ): CacheTagExplanationSnapshot {
+      const trace = hub.getTrace(input.requestId, performance.now());
+      if (!trace) {
+        throw new Error(`No retained request trace for ${input.requestId}`);
+      }
+      const explanation = projectCacheTagExplanation(
+        trace,
+        input.transactionId,
+      );
+      if (serializedToolResultBytes(explanation) > RANGO_MCP_MAX_RESULT_BYTES) {
+        throw new Error(
+          "Rango MCP cache-tag explanation exceeded its output limit",
         );
       }
       return explanation;

@@ -59,6 +59,8 @@ import type { HandlerContext } from "./handler-context.js";
 import {
   getDevelopmentDiagnosticLink,
   isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
   recordLinkedPprCaptureDiagnostic,
   recordPprDiagnostic,
   runWithDevelopmentDiagnosticsDisabled,
@@ -828,6 +830,8 @@ export interface ShellCaptureDescriptor {
   ttl?: number;
   swr?: number;
   tags?: string[];
+  /** @internal Links detached capture tag evidence to its foreground request. */
+  diagnosticLink?: DevelopmentDiagnosticLink;
   /**
    * Per-route capture settle budget in ms (`ppr.captureTimeout`, resolved by
    * resolvePprConfig). Feeds captureShellHTML's maxWaitMs — the ONE deadline
@@ -882,6 +886,9 @@ export function scheduleShellCapture(
   diagnosticLink: DevelopmentDiagnosticLink | null = getDevelopmentDiagnosticLink(),
 ): void {
   const key = descriptor.key;
+  const linkedDescriptor = diagnosticLink
+    ? { ...descriptor, diagnosticLink }
+    : descriptor;
   const publish: CaptureEventPublisher = diagnosticLink
     ? (captureDescriptor, event, reason) =>
         publishCaptureDebugEvent(
@@ -937,7 +944,7 @@ export function scheduleShellCapture(
         url,
         reqCtx,
         resolvedSsrModule,
-        descriptor,
+        linkedDescriptor,
         SHELL_CAPTURE_RETRY_DELAY_MS,
         publish,
       );
@@ -1750,6 +1757,27 @@ async function captureAndStoreShell(
     const collected = [...reqCtx._requestTags];
     const union = new Set<string>([...(capture.tags ?? []), ...collected]);
     const shellTags = union.size > 0 ? [...union] : undefined;
+    if (shellTags) {
+      const provenance = [
+        ...(capture.tags?.length ? (["static-policy"] as const) : []),
+        ...(collected.length ? (["request-union"] as const) : []),
+      ];
+      const diagnostic = {
+        artifact: "runtime-shell" as const,
+        phase: "capture" as const,
+        provenance: [...provenance],
+        tags: shellTags,
+        identity: capture.key,
+      };
+      if (capture.diagnosticLink) {
+        recordLinkedCacheTagObservationDiagnostic(
+          capture.diagnosticLink,
+          diagnostic,
+        );
+      } else {
+        recordCacheTagObservationDiagnostic(diagnostic);
+      }
+    }
 
     // Missing tags are valid: the shell follows TTL/SWR-only invalidation. Expose
     // that choice only to operators who enabled structured capture diagnostics.

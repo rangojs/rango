@@ -5,7 +5,7 @@ import type {
 
 export const RANGO_MCP_ENDPOINT = "/__rango/mcp";
 export const RANGO_MCP_SCHEMA_VERSION = 1 as const;
-export const RANGO_MCP_TOOL_SCHEMA_VERSION = 3 as const;
+export const RANGO_MCP_TOOL_SCHEMA_VERSION = 4 as const;
 export const RANGO_MCP_SERVER_NAME = "Rango DevTools";
 export const RANGO_MCP_MAX_RESULT_BYTES: number = 256 * 1024;
 
@@ -39,6 +39,7 @@ export interface ProjectMetadataSnapshot {
     runtimeErrors: boolean;
     renderExplanation: boolean;
     revalidationExplanation: boolean;
+    cacheTagExplanation: boolean;
     sourceOwnership: boolean;
     browserState: boolean;
     logs: boolean;
@@ -302,6 +303,71 @@ export interface RenderExplanationSnapshot {
 export interface ExplainRevalidationInput {
   requestId: string;
   transactionId?: string;
+}
+
+export interface ExplainCacheTagsInput {
+  requestId: string;
+  transactionId?: string;
+}
+
+export interface CacheTagReference {
+  value: string;
+  digest: string | null;
+}
+
+interface CacheTagOperationBase {
+  transactionId: string;
+  sequence: number;
+  timestamp: number;
+  tags: CacheTagReference[];
+  tagCount: number;
+  tagsTruncated: boolean;
+}
+
+export interface CacheTagObservationExplanation extends CacheTagOperationBase {
+  kind: "observe";
+  artifact:
+    | "segment"
+    | "loader"
+    | "function"
+    | "document"
+    | "response-route"
+    | "runtime-shell"
+    | "build-shell";
+  phase: "lookup" | "hit" | "stale" | "miss" | "write" | "capture" | "bypass";
+  provenance: Array<
+    "static-policy" | "dynamic-policy" | "runtime" | "stored" | "request-union"
+  >;
+  segmentId: string | null;
+  identityDigest: string | null;
+  outcome: string | null;
+}
+
+export interface CacheTagInvalidationExplanation extends CacheTagOperationBase {
+  kind: "invalidate";
+  verb: "updateTag" | "revalidateTag";
+  outcome:
+    | "requested"
+    | "scheduled"
+    | "completed"
+    | "partial"
+    | "failed"
+    | "no-context"
+    | "no-capable-store";
+  capableStoreCount: number;
+  incapableStoreCount: number;
+}
+
+export interface CacheTagExplanationSnapshot {
+  schemaVersion: typeof RANGO_MCP_SCHEMA_VERSION;
+  requestId: string;
+  transactionId: string | null;
+  operations: Array<
+    CacheTagObservationExplanation | CacheTagInvalidationExplanation
+  >;
+  valuesExposed: true;
+  storeState: "not-inspected";
+  truncated: boolean;
 }
 
 export interface RevalidationDecisionExplanation {

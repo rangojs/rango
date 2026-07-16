@@ -15,7 +15,8 @@ output or replace interactive browser checks with `curl`.
 - Read `/rango` for the execution model and `/testing` for test levels.
 - A running Rango development server with the development MCP connected.
 - Playwright or another browser driver for DOM, console, and network evidence.
-- Tool schema version 3 with `explain_render` and `explain_revalidation`.
+- Tool schema version 4 with `explain_render`, `explain_cache_tags`, and
+  `explain_revalidation`.
 
 ## Preflight
 
@@ -40,7 +41,9 @@ remain true. Do not broaden the edit while collecting evidence.
 3. Poll `list_requests` with a short bound until that exact request is complete,
    then poll `get_request_trace` and `explain_render` until their required events
    arrive. The cross-realm bridge is asynchronous.
-4. For a mutation, call `explain_revalidation` with the same request ID.
+4. For a mutation, call `explain_cache_tags` for invalidation activity and
+   `explain_revalidation` for client-visible recomputation with the same request
+   ID.
 5. Cross-check framework evidence with the browser. Repeat after one focused edit.
 
 ## Edit Rules

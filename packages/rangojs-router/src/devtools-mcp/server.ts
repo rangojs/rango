@@ -5,6 +5,7 @@ import {
   RANGO_MCP_MAX_RESULT_BYTES,
   RANGO_MCP_SERVER_NAME,
   REQUEST_TRANSPORTS,
+  type ExplainCacheTagsInput,
   type ExplainRenderInput,
   type ExplainRevalidationInput,
   type GetCompilationIssuesInput,
@@ -34,6 +35,9 @@ export interface RangoMcpToolHandlers {
   ): Promise<CallToolResult> | CallToolResult;
   explainRender(
     input: ExplainRenderInput,
+  ): Promise<CallToolResult> | CallToolResult;
+  explainCacheTags(
+    input: ExplainCacheTagsInput,
   ): Promise<CallToolResult> | CallToolResult;
   explainRevalidation(
     input: ExplainRevalidationInput,
@@ -76,6 +80,8 @@ export function createSnapshotToolHandlers(
     getRequestTrace: (input) =>
       jsonToolResult(diagnostics.getRequestTrace(input)),
     explainRender: (input) => jsonToolResult(diagnostics.explainRender(input)),
+    explainCacheTags: (input) =>
+      jsonToolResult(diagnostics.explainCacheTags(input)),
     explainRevalidation: (input) =>
       jsonToolResult(diagnostics.explainRevalidation(input)),
   };
@@ -199,6 +205,20 @@ export function createRangoMcpServer(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     handlers.explainRender,
+  );
+
+  server.registerTool(
+    "explain_cache_tags",
+    {
+      description:
+        "Explain exact bounded cache-tag attachment and invalidation activity observed for one retained request without reading or mutating cache entries.",
+      inputSchema: {
+        requestId: z.string().min(1).max(128),
+        transactionId: z.string().min(1).max(128).optional(),
+      },
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    handlers.explainCacheTags,
   );
 
   server.registerTool(

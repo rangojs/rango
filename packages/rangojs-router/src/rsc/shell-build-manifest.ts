@@ -28,6 +28,7 @@
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
+import { recordCacheTagObservationDiagnostic } from "../router/diagnostics/channel.js";
 import {
   DEV_SHELL_PROBE_TIMEOUT_MS,
   hasIntactShellPayload,
@@ -292,8 +293,18 @@ export async function lookupBuildShell(
     if (!record) return null;
     const entry = record.entry;
     if (record.tags && record.tags.length > 0) {
+      const recordTagLookup = (outcome: string): void =>
+        recordCacheTagObservationDiagnostic({
+          artifact: "build-shell",
+          phase: "lookup",
+          provenance: ["stored"],
+          tags: record.tags!,
+          identity: buildShellManifestKey(url.pathname),
+          outcome,
+        });
       const check = store.isTagsInvalidatedSince;
       if (typeof check !== "function") {
+        recordTagLookup("unsupported-store");
         // A tagged build entry on a store that cannot answer "was this tag
         // invalidated since the build" must not serve: updateTag() could
         // never evict it. Declared intent that cannot be honored deserves a
@@ -311,7 +322,11 @@ export async function lookupBuildShell(
         }
         return null;
       }
-      if (await check.call(store, record.tags, entry.createdAt)) return null;
+      if (await check.call(store, record.tags, entry.createdAt)) {
+        recordTagLookup("invalidated");
+        return null;
+      }
+      recordTagLookup("current");
     }
     const stale = Date.now() >= entry.createdAt + record.ttl * 1000;
     return { entry, stale };

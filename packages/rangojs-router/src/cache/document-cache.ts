@@ -24,6 +24,10 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordLinkedCacheTagObservationDiagnostic,
+} from "../router/diagnostics/channel.js";
 
 const CACHE_STATUS_HEADER = "x-document-cache-status";
 
@@ -291,6 +295,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
     // Get request context and cache store
     const requestCtx = getRequestContext();
+    const diagnosticLink = getDevelopmentDiagnosticLink();
     const store = requestCtx?._cacheStore;
 
     // Skip if no cache store or store doesn't support response caching
@@ -370,13 +375,24 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               // the fresh render fully before snapshotting tags (same
               // render-complete barrier as the miss path).
               const body = await new Response(fresh.body).arrayBuffer();
+              const tags = collectRequestTags(requestCtx);
               await store.putResponse!(
                 cacheKey,
                 new Response(body, fresh),
                 directives.sMaxAge!,
                 directives.staleWhileRevalidate,
-                collectRequestTags(requestCtx),
+                tags,
               );
+              if (diagnosticLink && tags?.length) {
+                recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                  artifact: "document",
+                  phase: "write",
+                  provenance: ["request-union"],
+                  tags,
+                  identity: cacheKey,
+                  outcome: "revalidated",
+                });
+              }
               log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
           } catch (error) {
@@ -430,13 +446,24 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // unaffected) is the render-complete barrier that keeps the cached
             // body and its tag set consistent.
             const body = await new Response(cacheStream).arrayBuffer();
+            const tags = collectRequestTags(requestCtx);
             await store.putResponse!(
               cacheKey,
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
-              collectRequestTags(requestCtx),
+              tags,
             );
+            if (diagnosticLink && tags?.length) {
+              recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                artifact: "document",
+                phase: "write",
+                provenance: ["request-union"],
+                tags,
+                identity: cacheKey,
+                outcome: "miss",
+              });
+            }
           } catch (error) {
             // Detached waitUntil task — pass the captured requestCtx so onError
             // fires even though the ALS context is gone (see the revalidation

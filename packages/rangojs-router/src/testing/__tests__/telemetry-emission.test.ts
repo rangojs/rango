@@ -31,6 +31,8 @@ import {
   resetDevelopmentDiagnosticHub,
 } from "../../router/diagnostics/hub.js";
 import { getRequestIdentity } from "../../router/request-identity.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { updateTag } from "../../cache/tag-invalidation.js";
 
 // Pins dispatch's match-transaction telemetry emission — the dogfood gap the
 // RSC-free dispatch left: a consumer configuring createRouter({ telemetry })
@@ -108,6 +110,51 @@ describe("dispatch telemetry emission", () => {
     // dispatch builds the final response before request.end, so it stamps the
     // response status (200 for this json route).
     expect(end.status).toBe(200);
+  });
+
+  it("records exact awaited cache-tag invalidation through public dispatch", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.setItem("product-alpha", "cached", {
+      ttl: 60,
+      tags: ["product:alpha"],
+    });
+    const router = createRouter({ cache: { store } }).routes(
+      urls(({ path }) => [
+        path.json("/invalidate", async () => {
+          await updateTag("product:alpha");
+          return { ok: true };
+        }),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+    const request = new Request("http://localhost/invalidate", {
+      method: "POST",
+    });
+
+    const response = await dispatch(router, { request });
+
+    expect(response.status).toBe(200);
+    expect(await store.getItem("product-alpha")).toBeNull();
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(
+      trace.events
+        .filter((event) => event.type === "cache.tags")
+        .map((event) => event.data),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "invalidate",
+        verb: "updateTag",
+        outcome: "requested",
+        tags: ["product:alpha"],
+      }),
+      expect.objectContaining({
+        kind: "invalidate",
+        verb: "updateTag",
+        outcome: "completed",
+        tags: ["product:alpha"],
+      }),
+    ]);
   });
 
   it("carries isPartial=true on a partial (?_rsc_partial) request", async () => {

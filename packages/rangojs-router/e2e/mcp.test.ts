@@ -25,6 +25,7 @@ test.describe("MCP devtools", () => {
     if (verifiesWorkflow("dev-loop")) {
       const tools = await mcp.client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+        "explain_cache_tags",
         "explain_render",
         "explain_revalidation",
         "get_compilation_issues",
@@ -47,12 +48,13 @@ test.describe("MCP devtools", () => {
       expect(project.structuredContent).toMatchObject({
         preset: "node",
         mode: "development",
-        toolSchemaVersion: 3,
+        toolSchemaVersion: 4,
         capabilities: {
           routes: true,
           discoveryStatus: true,
           renderExplanation: true,
           revalidationExplanation: true,
+          cacheTagExplanation: true,
         },
       });
 
@@ -239,6 +241,67 @@ test.describe("MCP devtools", () => {
     }
 
     if (verifiesWorkflow("stale-data-debugger")) {
+      const taggedResponse = await page.goto(
+        f.url(`/cache-tag-test/catalog/mcp-tags-${crypto.randomUUID()}`),
+      );
+      expect(taggedResponse?.status()).toBe(200);
+      const taggedRequestId =
+        await taggedResponse?.headerValue("x-rango-request-id");
+      expect(taggedRequestId).toBeTruthy();
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: taggedRequestId },
+          });
+          return result.structuredContent;
+        })
+        .toMatchObject({
+          requestId: taggedRequestId,
+          valuesExposed: true,
+          storeState: "not-inspected",
+          operations: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "observe",
+              tags: expect.arrayContaining([
+                expect.objectContaining({ value: "catalog" }),
+              ]),
+            }),
+          ]),
+        });
+
+      const invalidationResponse = await page.goto(
+        f.url("/cache-tag-test/invalidate/catalog"),
+      );
+      expect(invalidationResponse?.status()).toBe(200);
+      const invalidationRequestId =
+        await invalidationResponse?.headerValue("x-rango-request-id");
+      expect(invalidationRequestId).toBeTruthy();
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: invalidationRequestId },
+          });
+          return result.structuredContent?.operations;
+        })
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "invalidate",
+              verb: "updateTag",
+              outcome: "requested",
+              tags: [expect.objectContaining({ value: "catalog" })],
+            }),
+            expect.objectContaining({
+              kind: "invalidate",
+              verb: "updateTag",
+              outcome: "completed",
+              tags: [expect.objectContaining({ value: "catalog" })],
+            }),
+          ]),
+        );
+
       await page.goto(f.url("/revalidation-contract"));
       await waitForHydration(page);
       const actionResponse = page.waitForResponse(
@@ -354,6 +417,23 @@ test.describe("MCP devtools (production)", () => {
       );
     }
     if (verifiesWorkflow("stale-data-debugger")) {
+      const taggedResponse = await page.goto(
+        f.url(
+          `/cache-tag-test/catalog/mcp-tags-production-${crypto.randomUUID()}`,
+        ),
+      );
+      expect(taggedResponse?.status()).toBe(200);
+      expect(
+        await taggedResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+      const invalidationResponse = await page.goto(
+        f.url("/cache-tag-test/invalidate/catalog"),
+      );
+      expect(invalidationResponse?.status()).toBe(200);
+      expect(
+        await invalidationResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+
       await page.goto(f.url("/revalidation-contract"));
       await waitForHydration(page);
       const actionResponse = page.waitForResponse(

@@ -23,6 +23,7 @@ test.describe("MCP devtools", () => {
 
   test("reports Cloudflare routes and request diagnostics", async ({
     page,
+    request,
   }) => {
     test.setTimeout(60_000);
     if (verifiesWorkflow("dev-loop")) {
@@ -41,6 +42,7 @@ test.describe("MCP devtools", () => {
           runtimeErrors: true,
           renderExplanation: true,
           revalidationExplanation: true,
+          cacheTagExplanation: true,
           sourceOwnership: true,
         },
       });
@@ -220,6 +222,73 @@ test.describe("MCP devtools", () => {
     }
 
     if (verifiesWorkflow("stale-data-debugger")) {
+      const taggedResponse = await page.goto(
+        f.url(`/cache-lab?probe=mcp-tags-${crypto.randomUUID()}`),
+      );
+      expect(taggedResponse?.status()).toBe(200);
+      const taggedRequestId =
+        await taggedResponse?.headerValue("x-rango-request-id");
+      expect(taggedRequestId).toBeTruthy();
+      await expect
+        .poll(
+          async () => {
+            const result = await mcp.client.callTool({
+              name: "explain_cache_tags",
+              arguments: { requestId: taggedRequestId },
+            });
+            return result.structuredContent?.operations;
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "observe",
+              artifact: "function",
+              tags: expect.arrayContaining([
+                expect.objectContaining({ value: "cache-lab:catalog" }),
+                expect.objectContaining({
+                  value: "cache-lab:product:alpha",
+                }),
+              ]),
+            }),
+          ]),
+        );
+
+      const invalidationResponse = await request.post(
+        f.url("/api/cache/invalidate"),
+        { data: { tags: ["cache-lab:product:alpha"] } },
+      );
+      expect(invalidationResponse.status()).toBe(200);
+      const invalidationRequestId =
+        invalidationResponse.headers()["x-rango-request-id"];
+      expect(invalidationRequestId).toBeTruthy();
+      await expect
+        .poll(
+          async () => {
+            const result = await mcp.client.callTool({
+              name: "explain_cache_tags",
+              arguments: { requestId: invalidationRequestId },
+            });
+            return result.structuredContent?.operations;
+          },
+          { timeout: 30_000 },
+        )
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "invalidate",
+              verb: "updateTag",
+              outcome: "completed",
+              tags: [
+                expect.objectContaining({
+                  value: "cache-lab:product:alpha",
+                }),
+              ],
+            }),
+          ]),
+        );
+
       await page.goto(f.url("/swr-action?probe=mcp-revalidation"));
       await waitForHydration(page);
       const actionResponse = page.waitForResponse(
@@ -332,6 +401,22 @@ test.describe("MCP devtools (production)", () => {
       );
     }
     if (verifiesWorkflow("stale-data-debugger")) {
+      const taggedResponse = await page.goto(
+        f.url(`/cache-lab?probe=mcp-tags-production-${crypto.randomUUID()}`),
+      );
+      expect(taggedResponse?.status()).toBe(200);
+      expect(
+        await taggedResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+      const invalidationResponse = await request.post(
+        f.url("/api/cache/invalidate"),
+        { data: { tags: ["cache-lab:product:alpha"] } },
+      );
+      expect(invalidationResponse.status()).toBe(200);
+      expect(
+        invalidationResponse.headers()["x-rango-request-id"],
+      ).toBeUndefined();
+
       await page.goto(f.url("/swr-action?probe=mcp-revalidation-production"));
       await waitForHydration(page);
       const actionResponse = page.waitForResponse(

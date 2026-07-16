@@ -113,7 +113,7 @@ configuration:
 ```
 
 Start the app with `pnpm dev`. The connector discovers the running Rango server
-for the project and provides nine read-only tools:
+for the project and provides ten read-only tools:
 
 - `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
 - `get_routes` - paginated runtime-discovered routes, including dynamic factories;
@@ -125,6 +125,8 @@ for the project and provides nine read-only tools:
 - `get_request_trace` - the retained execution trace for an exact request ID;
 - `explain_render` - segment `cache()`, PPR, handler, loader-cache, and loader
   visible-generation decisions for one request;
+- `explain_cache_tags` - exact bounded tag attachment and invalidation activity
+  observed for one request, without reading or mutating cache entries;
 - `explain_revalidation` - the separate segment and loader recomputation
   decisions for one request, optionally narrowed to one of its transactions;
 - `get_errors` - runtime errors with request, route, phase, and source context.

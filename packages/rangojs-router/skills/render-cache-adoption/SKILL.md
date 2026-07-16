@@ -12,7 +12,7 @@ PPR reuses the HTML shell, and DSL loaders remain the request-visible data layer
 ## Requires
 
 Read `/rango`, `/caching`, `/ppr`, `/loader`, `/observability`, and `/testing`.
-Use MCP tool schema version 3 and a browser driver.
+Use MCP tool schema version 4 and a browser driver.
 
 ## Preflight
 
@@ -33,7 +33,8 @@ State whether the desired artifact is Flight segments, an HTML shell, or both.
    must preserve a live hole.
 4. Warm the route and correlate the exact request.
 5. Require `explain_render` to show the intended tier hit and consumer lanes.
-6. Exercise invalidation/SWR and use `explain_revalidation` for mutations.
+6. Exercise invalidation/SWR, use `explain_cache_tags` for tag activity, and use
+   `explain_revalidation` for client-visible recomputation.
 
 ## Edit Rules
 

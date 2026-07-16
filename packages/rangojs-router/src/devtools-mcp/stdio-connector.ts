@@ -126,6 +126,7 @@ export async function runRangoMcpConnector(
     listRequests: (input) => proxy.call("list_requests", { ...input }),
     getRequestTrace: (input) => proxy.call("get_request_trace", { ...input }),
     explainRender: (input) => proxy.call("explain_render", { ...input }),
+    explainCacheTags: (input) => proxy.call("explain_cache_tags", { ...input }),
     explainRevalidation: (input) =>
       proxy.call("explain_revalidation", { ...input }),
   });

@@ -44,8 +44,11 @@ import type { RequestContext } from "../server/request-context.js";
 import {
   areDevelopmentDiagnosticsAvailable,
   cacheDiagnosticIdentity,
+  getDevelopmentDiagnosticLink,
   isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
   recordCacheScopeDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
   recordLoaderConsumerDiagnostic,
 } from "../router/diagnostics/channel.js";
 
@@ -253,8 +256,8 @@ export class CacheScope {
           details.cached?.diagnosticCachePolicy?.swr ??
           (this.enabled ? (this.swr ?? null) : null),
         freshForMs: expiresAt === undefined ? null : expiresAt - Date.now(),
-        // Cached tags may contain request-derived tenant/user identifiers. The
-        // diagnostic channel only emits tags with proven static provenance.
+        // Exact values use the bounded cache.tags envelope. Keeping this legacy
+        // field empty avoids exposing the same untrusted values without digests.
         tags: [],
         identityDigest: details.key
           ? cacheDiagnosticIdentity(details.key)
@@ -551,6 +554,19 @@ export class CacheScope {
       // to invalidate any full-page entry built on top of it. The write path
       // records via cacheRoute (resolveCacheTags); the hit path records here.
       recordRequestTags(cached.tags);
+      const tagPhase = Date.now() > cached.expiresAt ? "stale" : "hit";
+      if (cached.tags?.length) {
+        recordCacheTagObservationDiagnostic(
+          {
+            artifact: "segment",
+            phase: tagPhase,
+            provenance: ["stored"],
+            tags: cached.tags,
+            identity: key,
+          },
+          this.owner?.segmentId,
+        );
+      }
       replayCachedLoaderConsumers(cached);
 
       // Replay handle data. An empty string means the route pushed no handles —
@@ -575,16 +591,11 @@ export class CacheScope {
       }
 
       CACHE_HIT_OBSERVERS.get(this)?.();
-      this.recordLookup(
-        () => (Date.now() > cached.expiresAt ? "stale" : "hit"),
-        undefined,
-        store,
-        {
-          key,
-          cached,
-          backgroundRevalidationClaimed: shouldRevalidate,
-        },
-      );
+      this.recordLookup(tagPhase, undefined, store, {
+        key,
+        cached,
+        backgroundRevalidationClaimed: shouldRevalidate,
+      });
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
@@ -618,7 +629,24 @@ export class CacheScope {
   recordTags(requestCtx: RequestContext | undefined): void {
     if (!this.enabled) return;
     if (!this.conditionAllows("write")) return;
-    recordRequestTags(resolveCacheTags(this.config, requestCtx), requestCtx);
+    const tags = resolveCacheTags(this.config, requestCtx);
+    recordRequestTags(tags, requestCtx);
+    if (tags?.length) {
+      recordCacheTagObservationDiagnostic(
+        {
+          artifact: "segment",
+          phase: "lookup",
+          provenance: [
+            typeof this.config === "object" &&
+            typeof this.config.tags === "function"
+              ? "dynamic-policy"
+              : "static-policy",
+          ],
+          tags,
+        },
+        this.owner?.segmentId,
+      );
+    }
   }
 
   /**
@@ -671,6 +699,7 @@ export class CacheScope {
     // Resolve tags early (while request context is available, before waitUntil)
     const tags = resolveCacheTags(this.config, requestCtx);
     recordRequestTags(tags, requestCtx);
+    const diagnosticLink = getDevelopmentDiagnosticLink();
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
@@ -762,6 +791,24 @@ export class CacheScope {
         }
 
         await store.set(key, data, ttl, swr);
+        if (diagnosticLink && tags?.length) {
+          recordLinkedCacheTagObservationDiagnostic(
+            diagnosticLink,
+            {
+              artifact: "segment",
+              phase: "write",
+              provenance: [
+                typeof this.config === "object" &&
+                typeof this.config.tags === "function"
+                  ? "dynamic-policy"
+                  : "static-policy",
+              ],
+              tags,
+              identity: key,
+            },
+            this.owner?.segmentId,
+          );
+        }
 
         if (INTERNAL_RANGO_DEBUG) {
           const segmentTypes = nonLoaderSegments.map((s) =>

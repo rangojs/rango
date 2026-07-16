@@ -369,7 +369,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
     expect(ctx._requestTags.size).toBe(0);
   });
 
-  it("projects inherited hits without exposing cached tags or keys", async () => {
+  it("projects inherited hits through the bounded tag envelope", async () => {
     const store = await makeHitStore(["tenant-secret"], undefined, {
       ttl: 60,
       swr: 30,
@@ -390,10 +390,11 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
       ),
     );
 
-    const diagnostic = getDevelopmentDiagnosticHub()!
-      .listTraces()[0]!
-      .events.find((event) => event.type === "cache.scope")!;
-    expect(diagnostic.data).toMatchObject({
+    const trace = getDevelopmentDiagnosticHub()!.listTraces()[0]!;
+    const scopeDiagnostic = trace.events.find(
+      (event) => event.type === "cache.scope",
+    )!;
+    expect(scopeDiagnostic.data).toMatchObject({
       kind: "inherited",
       outcome: "hit",
       reason: null,
@@ -401,9 +402,23 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
       swr: 30,
       tags: [],
     });
-    expect(diagnostic.data.identityDigest).toMatch(/^cache-[0-9a-f]{16}$/);
-    expect(JSON.stringify(diagnostic)).not.toContain("tenant-secret");
-    expect(JSON.stringify(diagnostic)).not.toContain("example.com/products");
+    expect(scopeDiagnostic.data.identityDigest).toMatch(/^cache-[0-9a-f]{16}$/);
+    expect(JSON.stringify(scopeDiagnostic)).not.toContain("tenant-secret");
+    expect(JSON.stringify(scopeDiagnostic)).not.toContain(
+      "example.com/products",
+    );
+
+    const tagDiagnostic = trace.events.find(
+      (event) => event.type === "cache.tags",
+    )!;
+    expect(tagDiagnostic.data).toMatchObject({
+      artifact: "segment",
+      phase: "hit",
+      provenance: ["stored"],
+      tags: ["tenant-secret"],
+      tagDigests: [expect.stringMatching(/^cache-[0-9a-f]{16}$/)],
+    });
+    expect(JSON.stringify(tagDiagnostic)).not.toContain("example.com/products");
     resetDevelopmentDiagnosticHub();
   });
 

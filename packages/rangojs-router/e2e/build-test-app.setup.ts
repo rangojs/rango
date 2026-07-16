@@ -146,6 +146,8 @@ test("build test-app", async () => {
     "event-too-large",
     "request.started",
     "revalidation.trace",
+    "cache.tags",
+    "explain_cache_tags",
     "sanitizeDiagnosticText",
     "rango:diagnostics:batch",
     "internal/dev-diagnostics",

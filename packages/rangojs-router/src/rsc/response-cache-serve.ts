@@ -32,6 +32,11 @@ import {
 import { reportCacheError } from "../cache/cache-error.js";
 import { cacheKeyBase } from "../cache/cache-key-utils.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+} from "../router/diagnostics/channel.js";
 
 /** Injected cache-scope builders (kept off this module's runtime import graph). */
 export interface CacheScopeDeps {
@@ -154,6 +159,24 @@ export async function serveResponseRouteWithCache(
   // Resolve cache tags for this document entry (static or dynamic) while the
   // request context is available, so the stored entry is tag-invalidatable.
   const responseTags = deps.resolveCacheTags(cacheScope.config, reqCtx);
+  const diagnosticLink = getDevelopmentDiagnosticLink();
+  const tagProvenance =
+    typeof cacheScope.config === "object" &&
+    typeof cacheScope.config.tags === "function"
+      ? "dynamic-policy"
+      : "static-policy";
+  const recordTagLookup = (): void => {
+    if (!responseTags?.length) return;
+    recordCacheTagObservationDiagnostic({
+      artifact: "response-route",
+      phase: "lookup",
+      provenance: [tagProvenance],
+      tags: responseTags,
+      identity: cacheKey,
+      outcome: responseType,
+    });
+  };
+  recordTagLookup();
 
   // Pre-handler callbacks (registered by app-level middleware before the cache
   // block) are saved and the live array is cleared:
@@ -202,7 +225,19 @@ export async function serveResponseRouteWithCache(
       reqCtx.waitUntil(async () => {
         try {
           const fresh = finalizeResponse(await executeHandler());
-          if (canStore(fresh)) await putFresh(store, fresh);
+          if (canStore(fresh)) {
+            await putFresh(store, fresh);
+            if (diagnosticLink && responseTags?.length) {
+              recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                artifact: "response-route",
+                phase: "write",
+                provenance: [tagProvenance],
+                tags: responseTags,
+                identity: cacheKey,
+                outcome: "revalidated",
+              });
+            }
+          }
         } catch (error) {
           reportCacheError(
             error,
@@ -245,6 +280,16 @@ export async function serveResponseRouteWithCache(
           cacheScope!.swr,
           responseTags,
         );
+        if (diagnosticLink && responseTags?.length) {
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "response-route",
+            phase: "write",
+            provenance: [tagProvenance],
+            tags: responseTags,
+            identity: cacheKey,
+            outcome: "miss",
+          });
+        }
       } catch (error) {
         reportCacheError(
           error,

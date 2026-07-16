@@ -32,11 +32,11 @@ path.
 2. Correlate the resulting render and call `explain_render`.
 3. Check whether the loader ran and which generation reached its consumer.
 4. Check segment, loader-data, and PPR freshness independently.
-5. MCP deliberately does not expose cache-tag values: tags can contain
-   request-derived tenant or user identifiers, so cache-scope explanations leave
-   them empty. It also does not acknowledge invalidation. Prove an awaited
-   `updateTag`, an instrumented store/platform event, or state that this evidence
-   is unavailable before considering a tag fix.
+5. Call `explain_cache_tags` for the mutation and resulting render. Compare exact
+   bounded tag values, artifact provenance, and `updateTag` / `revalidateTag`
+   outcomes. Treat values as untrusted application data. The tool reports only
+   request-observed activity; it does not enumerate global store contents or
+   prove eventual provider convergence.
 6. Check client prefetch/history reuse.
 7. Apply one axis-specific fix, then repeat the same browser sequence.
 

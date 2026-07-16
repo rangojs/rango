@@ -52,6 +52,12 @@ import {
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
 import type { CacheItemResult } from "./types.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+  type CacheTagProvenance,
+} from "../router/diagnostics/channel.js";
 
 /**
  * DJB2 hash returning an 8-char hex string. Deterministic across runtimes
@@ -226,6 +232,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 ): T {
   const wrapped = async function (this: any, ...args: any[]): Promise<any> {
     const requestCtx = getRequestContext();
+    const diagnosticLink = getDevelopmentDiagnosticLink();
     const store = requestCtx?._cacheStore;
     const resolvedProfileName = profileName || "default";
 
@@ -260,6 +267,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Still record the runtime tags into the request set so a cacheTag() in an
       // uncached function tags the document, even with no item-capable store.
       recordRequestTags(scoped.tags, requestCtx);
+      if (scoped.tags.size > 0) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "bypass",
+          provenance: ["runtime"],
+          tags: scoped.tags,
+          outcome: id,
+        });
+      }
       return result;
     }
 
@@ -365,6 +381,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       const result = await scoped.result;
       recordRequestTags(scoped.tags, requestCtx);
+      if (scoped.tags.size > 0) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "bypass",
+          provenance: ["runtime"],
+          tags: scoped.tags,
+          outcome: id,
+        });
+      }
       return result;
     }
 
@@ -377,7 +402,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // tags are only available from the stored entry). Shared by the fresh-hit
     // and stale-hit branches; the only divergence is the stale branch scheduling
     // background revalidation, which it does after this returns.
-    const serveCached = async (entry: CacheItemResult): Promise<any> => {
+    const serveCached = async (
+      entry: CacheItemResult,
+      phase: "hit" | "stale",
+      recordStoredTags: boolean = true,
+    ): Promise<any> => {
       const result = await deserializeResult(entry.value);
       if (entry.handles && hasTaintedArgs) {
         const handleStore = requestCtx?._handleStore;
@@ -387,13 +416,23 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         }
       }
       recordRequestTags(entry.tags, requestCtx);
+      if (recordStoredTags && entry.tags?.length) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase,
+          provenance: ["stored"],
+          tags: entry.tags,
+          identity: cacheKey,
+          outcome: id,
+        });
+      }
       return result;
     };
 
     if (cached && !cached.shouldRevalidate) {
       // Fresh hit: deserialize and return
       try {
-        return await serveCached(cached);
+        return await serveCached(cached, "hit");
       } catch (error) {
         // The stored value is corrupt/partial (failed RSC deserialize). Report
         // it, then fall through to fresh execution - the miss path below re-runs
@@ -415,7 +454,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     if (cached?.shouldRevalidate && !foregroundOnActionRevalidation) {
       // Stale hit: return stale value, revalidate in background
       try {
-        const result = await serveCached(cached);
+        const result = await serveCached(cached, "stale");
         // Background revalidation — must capture handles if tainted args present.
         runBackground(requestCtx, async () => {
           // The background body runs under a DERIVED context with an OWN
@@ -489,6 +528,19 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 swr: profile.swr,
                 tags: freshTags.length > 0 ? freshTags : undefined,
               });
+              if (diagnosticLink && freshTags.length > 0) {
+                const provenance: CacheTagProvenance[] = [];
+                if (profile.tags?.length) provenance.push("static-policy");
+                if (scoped.tags.size > 0) provenance.push("runtime");
+                recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+                  artifact: "function",
+                  phase: "write",
+                  provenance,
+                  tags: freshTags,
+                  identity: cacheKey,
+                  outcome: id,
+                });
+              }
             }
           } catch (bgError) {
             bgStopCapture?.();
@@ -537,12 +589,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
       if (envelope) {
         try {
-          return await serveCached({
-            value: envelope.serialized,
-            handles: envelope.handles,
-            tags: envelope.tags,
-            shouldRevalidate: false,
-          });
+          return await serveCached(
+            {
+              value: envelope.serialized,
+              handles: envelope.handles,
+              tags: envelope.tags,
+              shouldRevalidate: false,
+            },
+            "hit",
+            false,
+          );
         } catch (error) {
           reportCacheError(
             error,
@@ -663,6 +719,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
       clearSelf();
       if (serialized === null) {
+        if (diagnosticLink && allTags.length > 0) {
+          const provenance: CacheTagProvenance[] = [];
+          if (profile.tags?.length) provenance.push("static-policy");
+          if (scoped!.tags.size > 0) provenance.push("runtime");
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "function",
+            phase: "bypass",
+            provenance,
+            tags: allTags,
+            outcome: id,
+          });
+        }
         // Non-serializable result: no store write (matches the prior silent
         // skip); reject so any waiter falls through to a fresh execution.
         rejectEnvelope(
@@ -682,6 +750,19 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           swr: profile.swr,
           tags: allTags.length > 0 ? allTags : undefined,
         });
+        if (diagnosticLink && allTags.length > 0) {
+          const provenance: CacheTagProvenance[] = [];
+          if (profile.tags?.length) provenance.push("static-policy");
+          if (scoped!.tags.size > 0) provenance.push("runtime");
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "function",
+            phase: "write",
+            provenance,
+            tags: allTags,
+            identity: cacheKey,
+            outcome: id,
+          });
+        }
       } catch (writeError) {
         requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }

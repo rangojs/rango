@@ -14,8 +14,8 @@ diagnostic adapter:
 - **Structured telemetry** (`telemetry`) — lifecycle events emitted through a
   pluggable sink (console, OpenTelemetry, custom). Designed for production
   monitoring and distributed tracing.
-- **Development MCP** (`rango mcp`) — bounded request, route, error, render, and
-  revalidation facts from a running Vite development server. Designed for
+- **Development MCP** (`rango mcp`) — bounded request, route, error, render,
+  cache-tag, and revalidation facts from a running Vite development server. Designed for
   read-only agent diagnostics without application sink configuration.
 
 During `vite dev`, `rango mcp` is a read-only adapter over the same owned
@@ -30,7 +30,9 @@ tracing there.
 
 The request tools are `list_requests`, `get_request_trace`, and `get_errors`.
 `explain_render` joins cache, PPR, handler, and loader events for one request;
-`explain_revalidation` keeps client-visible recomputation decisions on their
+`explain_cache_tags` reports exact bounded tag attachment and invalidation
+activity observed for one request without inspecting global store contents;
+`explain_revalidation` keeps client-visible recomputation decisions on its
 separate freshness axis.
 `get_compilation_issues` also reports structured transform errors and bounded
 recent Vite warnings. Its response marks warning coverage as `recent-only`

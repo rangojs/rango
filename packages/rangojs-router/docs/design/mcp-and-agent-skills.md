@@ -60,8 +60,9 @@ same versioned, bounded batch envelope. Vite validates and redacts each batch
 again, deduplicates realm sequences, retains request receipt time on the host
 clock, and never lets transport or ingestion failure affect a request.
 
-Phase 3 added bounded `explain_render` and `explain_revalidation` projections for
-scope-level cache/PPR decisions, loader consumption lanes, and the authoritative
+Phase 3 added bounded `explain_render`, `explain_cache_tags`, and
+`explain_revalidation` projections for scope-level cache/PPR decisions, loader
+consumption lanes, exact request-observed tag activity, and the authoritative
 revalidation trace. Phase 4 ships four browser-plus-MCP workflows with checked
 fixture tasks. Browser state and logs remain browser-driver responsibilities;
 the MCP does not pretend to own them.
@@ -360,8 +361,9 @@ Each evaluated scope reports:
 - runtime or prerender source;
 - TTL/SWR policy and freshness when the store provides it;
 - whether background revalidation was claimed;
-- an empty tag list: cache tags may contain request-derived tenant/user
-  identifiers, so the current diagnostic channel does not expose their values;
+- exact bounded tag values observed for the request, treated as untrusted
+  application data and paired with keyed digests when truncation or redaction
+  prevents exact-value comparison;
 - a digest of dynamic cache identity, never a raw key that may contain secrets.
 
 The existing `cache.decision` event is coarse and route-level. It remains a
@@ -463,6 +465,7 @@ tool per internal event.
 | `list_requests`          | shipped  | bounded request summaries with exact request-ID selection, route declaration ownership, opaque cursors, and bridge drop statistics                   |
 | `get_request_trace`      | shipped  | the bounded structured trace and route declaration ownership for one exact server request ID                                                         |
 | `explain_render`         | shipped  | concise projection joining `cache()`, PPR, handlers, and loader lanes for one request                                                                |
+| `explain_cache_tags`     | shipped  | exact bounded tag attachment and invalidation activity observed for one request; global store state remains explicitly uninspected                   |
 | `explain_revalidation`   | shipped  | segment/loader recomputation decisions for an action or navigation request                                                                           |
 
 `match_route` is read-only discovery, not a dry-run render. It must not execute
@@ -494,6 +497,11 @@ Collection follows these rules:
   not redaction.
 - Do not store raw dynamic cache keys. Store their owning scope and a one-way
   digest when correlation is necessary.
+- Cache tags are the deliberate exact-value exception: spelling and composition
+  are required to diagnose invalidation mismatches. Retain at most 16 per event,
+  sanitize and bound each value, pair it with a keyed digest, and label it as
+  untrusted application data. This reports observed request activity, never a
+  global cache inventory.
 - Treat application-provided labels, route names, tags, and error messages as
   untrusted data, not agent instructions. Results preserve provenance and skills
   never interpolate those values into commands or edit instructions.
@@ -526,7 +534,7 @@ Verification loop:
 3. Capture the browser-visible result, console, network, and React/Suspense state.
 4. Select the exact request by the shared request ID.
 5. Read `explain_render`, `get_errors`, and, for mutations,
-   `explain_revalidation`.
+   `explain_cache_tags` plus `explain_revalidation`.
 6. Cross-check the two views. A clean framework trace does not prove the DOM is
    correct; a correct DOM does not prove loaders stayed live or a cache tier
    behaved as intended.
@@ -566,8 +574,9 @@ Route-by-route loop:
    loader resolves quickly.
 6. Warm the route and use `explain_render` to prove the selected tier hit and the
    intended loaders remained request-visible.
-7. Exercise invalidation and SWR. Use `explain_revalidation` separately when an
-   action should also recompute selected client segments.
+7. Exercise invalidation and SWR. Use `explain_cache_tags` for attachment and
+   invalidation evidence, then `explain_revalidation` separately when an action
+   should also recompute selected client segments.
 8. Verify document load, soft navigation, action revalidation, and progressive
    enhancement where the route supports them.
 9. Add paired dev and production e2e coverage.
@@ -738,7 +747,9 @@ cross-check its route and errors without reading terminal logs.
 - Add PPR document, capture, and navigation-replay events.
 - Add loader registration, data-cache, consumption-lane, and visible-generation
   events.
-- Implement `explain_render` and `explain_revalidation`.
+- Add exact bounded cache-tag attachment and invalidation lifecycle events without
+  enumerating or mutating stores.
+- Implement `explain_render`, `explain_cache_tags`, and `explain_revalidation`.
 
 Exit criterion: the MCP distinguishes an explicit segment-cache hit, a PPR shell
 hit, a live DSL loader, a bake-lane loader consumer, and a loader-data cache hit

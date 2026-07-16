@@ -88,13 +88,18 @@ Runtime event ownership stays with
 [`router/error-handling.ts`](../../src/router/error-handling.ts),
 [`router/match-handlers.ts`](../../src/router/match-handlers.ts),
 [`cache/cache-scope.ts`](../../src/cache/cache-scope.ts),
+[`cache/cache-runtime.ts`](../../src/cache/cache-runtime.ts),
+[`cache/document-cache.ts`](../../src/cache/document-cache.ts),
+[`cache/tag-invalidation.ts`](../../src/cache/tag-invalidation.ts),
 [`router/loader-resolution.ts`](../../src/router/loader-resolution.ts),
 [`router/segment-resolution/fresh.ts`](../../src/router/segment-resolution/fresh.ts),
 [`router/segment-resolution/loader-cache.ts`](../../src/router/segment-resolution/loader-cache.ts),
 [`rsc/handler.ts`](../../src/rsc/handler.ts), and
 [`rsc/render-pipeline.ts`](../../src/rsc/render-pipeline.ts),
+[`rsc/response-cache-serve.ts`](../../src/rsc/response-cache-serve.ts),
 [`rsc/rsc-rendering.ts`](../../src/rsc/rsc-rendering.ts), and
-[`rsc/shell-capture.ts`](../../src/rsc/shell-capture.ts).
+[`rsc/shell-capture.ts`](../../src/rsc/shell-capture.ts), and
+[`rsc/shell-build-manifest.ts`](../../src/rsc/shell-build-manifest.ts).
 Root request lifecycle, public testing coverage, and compile-time gating are
 integrated by [`router.ts`](../../src/router.ts),
 [`testing/dispatch.ts`](../../src/testing/dispatch.ts), and

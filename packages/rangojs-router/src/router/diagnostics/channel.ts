@@ -35,6 +35,7 @@ interface RecordOptions {
 }
 
 const MAX_RETAINED_LOADER_CONSUMERS = 512;
+const MAX_CACHE_TAGS_PER_EVENT = 16;
 
 type DiagnosticData = Record<string, unknown> | (() => Record<string, unknown>);
 
@@ -461,6 +462,152 @@ export function recordCacheScopeDiagnostic(
       return { ...value, reason: value.reason ?? null };
     },
     { segmentId },
+  );
+}
+
+export type CacheTagArtifact =
+  | "segment"
+  | "loader"
+  | "function"
+  | "document"
+  | "response-route"
+  | "runtime-shell"
+  | "build-shell";
+
+export type CacheTagObservationPhase =
+  | "lookup"
+  | "hit"
+  | "stale"
+  | "miss"
+  | "write"
+  | "capture"
+  | "bypass";
+
+export type CacheTagProvenance =
+  | "static-policy"
+  | "dynamic-policy"
+  | "runtime"
+  | "stored"
+  | "request-union";
+
+export interface CacheTagObservationDiagnostic {
+  artifact: CacheTagArtifact;
+  phase: CacheTagObservationPhase;
+  provenance: CacheTagProvenance[];
+  tags: Iterable<string>;
+  identity?: string;
+  outcome?: string;
+}
+
+export type CacheTagInvalidationOutcome =
+  | "requested"
+  | "scheduled"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "no-context"
+  | "no-capable-store";
+
+export interface CacheTagInvalidationDiagnostic {
+  verb: "updateTag" | "revalidateTag";
+  outcome: CacheTagInvalidationOutcome;
+  tags: Iterable<string>;
+  capableStoreCount: number;
+  incapableStoreCount: number;
+}
+
+function cacheTagData(tags: Iterable<string>): Record<string, unknown> {
+  const values = [...new Set(tags)];
+  const retained = values.slice(0, MAX_CACHE_TAGS_PER_EVENT);
+  const retainedValues = retained.map((tag) =>
+    sanitizeDiagnosticText(tag, 256),
+  );
+  return {
+    tags: retainedValues,
+    tagDigests: retained.map((tag) => cacheDiagnosticIdentity(`tag:${tag}`)),
+    tagCount: values.length,
+    tagsTruncated:
+      retained.length < values.length ||
+      retained.some((tag) => new TextEncoder().encode(tag).byteLength > 256),
+  };
+}
+
+function diagnosticLinkOptions(link: DevelopmentDiagnosticLink): RecordOptions {
+  return {
+    requestId: link.requestId,
+    transactionId: link.transactionId,
+    clientCorrelationId: link.clientCorrelationId,
+    routerId: link.routerId,
+  };
+}
+
+function cacheTagObservationData(
+  diagnostic: CacheTagObservationDiagnostic,
+): Record<string, unknown> {
+  return {
+    kind: "observe",
+    artifact: diagnostic.artifact,
+    phase: diagnostic.phase,
+    provenance: diagnostic.provenance,
+    ...cacheTagData(diagnostic.tags),
+    identityDigest: diagnostic.identity
+      ? cacheDiagnosticIdentity(diagnostic.identity)
+      : null,
+    outcome: diagnostic.outcome ?? null,
+  };
+}
+
+export function recordCacheTagObservationDiagnostic(
+  diagnostic: CacheTagObservationDiagnostic,
+  segmentId?: string,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("cache.tags", () => cacheTagObservationData(diagnostic), {
+    segmentId,
+  });
+}
+
+export function recordLinkedCacheTagObservationDiagnostic(
+  link: DevelopmentDiagnosticLink,
+  diagnostic: CacheTagObservationDiagnostic,
+  segmentId?: string,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("cache.tags", () => cacheTagObservationData(diagnostic), {
+    ...diagnosticLinkOptions(link),
+    segmentId,
+  });
+}
+
+function cacheTagInvalidationData(
+  diagnostic: CacheTagInvalidationDiagnostic,
+): Record<string, unknown> {
+  return {
+    kind: "invalidate",
+    verb: diagnostic.verb,
+    outcome: diagnostic.outcome,
+    ...cacheTagData(diagnostic.tags),
+    capableStoreCount: diagnostic.capableStoreCount,
+    incapableStoreCount: diagnostic.incapableStoreCount,
+  };
+}
+
+export function recordCacheTagInvalidationDiagnostic(
+  diagnostic: CacheTagInvalidationDiagnostic,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic("cache.tags", () => cacheTagInvalidationData(diagnostic));
+}
+
+export function recordLinkedCacheTagInvalidationDiagnostic(
+  link: DevelopmentDiagnosticLink,
+  diagnostic: CacheTagInvalidationDiagnostic,
+): void {
+  if (!DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
+  recordDiagnostic(
+    "cache.tags",
+    () => cacheTagInvalidationData(diagnostic),
+    diagnosticLinkOptions(link),
   );
 }
 

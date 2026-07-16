@@ -36,6 +36,7 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import type { CacheItemResult } from "../../cache/types.js";
 import {
   maskNestedContainerThenables,
   overlayLoaderContainer,
@@ -46,7 +47,10 @@ import {
   createMaskedLoaderPromise,
 } from "./loader-mask.js";
 import {
+  getDevelopmentDiagnosticLink,
   isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
   recordLoaderCacheDiagnostic,
   recordLoaderConsumerDiagnostic,
 } from "../diagnostics/channel.js";
@@ -345,6 +349,7 @@ function executeLoaderData<TEnv>(
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
   recordRequestTags(tags);
+  const diagnosticLink = getDevelopmentDiagnosticLink();
 
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -355,6 +360,36 @@ function executeLoaderData<TEnv>(
       pathname,
       ctx.params,
     );
+    const recordTagLookup = (): void => {
+      if (!tags?.length) return;
+      recordCacheTagObservationDiagnostic({
+        artifact: "loader",
+        phase: "lookup",
+        provenance: [
+          typeof options.tags === "function"
+            ? "dynamic-policy"
+            : "static-policy",
+        ],
+        tags,
+        identity: key,
+        outcome: loaderId,
+      });
+    };
+    recordTagLookup();
+    const recordStoredTagActivity = (
+      cached: CacheItemResult,
+      phase: "hit" | "stale",
+    ): void => {
+      if (!cached.tags?.length) return;
+      recordCacheTagObservationDiagnostic({
+        artifact: "loader",
+        phase,
+        provenance: ["stored"],
+        tags: cached.tags,
+        identity: key,
+        outcome: loaderId,
+      });
+    };
 
     // Capture the request context up front (foreground, ALS present) so the
     // background stale revalidation can re-establish it. On workerd a waitUntil
@@ -373,12 +408,14 @@ function executeLoaderData<TEnv>(
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
-      onHit: () => {
+      onHit: (cached) => {
         debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`);
+        recordStoredTagActivity(cached, "hit");
         recordLoaderCacheDiagnostic(loaderId, "hit", { ttl, swr });
       },
-      onStale: () => {
+      onStale: (cached) => {
         debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
+        recordStoredTagActivity(cached, "stale");
         recordLoaderCacheDiagnostic(loaderId, "stale", {
           ttl,
           swr,
@@ -389,7 +426,23 @@ function executeLoaderData<TEnv>(
         debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
         recordLoaderCacheDiagnostic(loaderId, "miss", { ttl, swr });
       },
-      onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
+      onCached: () => {
+        debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
+        if (diagnosticLink && tags?.length) {
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "loader",
+            phase: "write",
+            provenance: [
+              typeof options.tags === "function"
+                ? "dynamic-policy"
+                : "static-policy",
+            ],
+            tags,
+            identity: key,
+            outcome: loaderId,
+          });
+        }
+      },
       host: requestCtxForExecute,
     });
   })();

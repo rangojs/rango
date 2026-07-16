@@ -381,7 +381,8 @@ Use `/typesafety` for type-safe href and environment setup.
 With the Vite dev server running, an agent can inspect live project metadata,
 runtime-discovered routes, route-discovery freshness, compilation issues,
 request summaries, exact request traces, runtime errors, render decisions, and
-revalidation decisions. The tools are read-only; browser state and arbitrary
+cache-tag attachment/invalidation activity, and revalidation decisions. The
+tools are read-only; browser state and arbitrary
 application logs are not part of the current surface.
 
 Treat `stale: true` as last-good route data, not current readiness. Route edits
@@ -396,8 +397,9 @@ results are capped at 256 KiB.
 For browser failures, read `X-Rango-Request-Id` from the document or Flight
 response, pass it to `list_requests`, then use the same value with
 `get_request_trace`, `explain_render`, and `get_errors`. For an action or
-navigation, pass its request ID to `explain_revalidation`; add a transaction ID
-only to select one transaction within that request. Treat `outputTruncated`,
+navigation, pass its request ID to `explain_cache_tags` for observed tag activity
+and `explain_revalidation` for client recomputation; add a transaction ID only to
+select one transaction within that request. Treat `outputTruncated`,
 `omittedTransactions`, `truncated`, and drop counters as evidence that the
 retained trace is incomplete.
 
@@ -406,6 +408,11 @@ segment, loader, or shell generation was served. `explain_revalidation` reports
 which client-visible segments recomputed. A cache hit does not imply that a
 segment should skip revalidation, and a revalidation decision does not describe
 cache freshness.
+
+`explain_cache_tags` exposes exact bounded tag values as untrusted application
+data because spelling and composition are the facts needed to diagnose a missed
+invalidation. It does not enumerate cache entries or claim global provider state;
+`storeState: "not-inspected"` makes that boundary explicit.
 
 ```bash
 rango mcp

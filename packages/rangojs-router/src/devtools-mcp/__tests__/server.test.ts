@@ -21,6 +21,7 @@ async function createClient(): Promise<Client> {
     listRequests: (input) => jsonToolResult({ input, requests: [] }),
     getRequestTrace: (input) => jsonToolResult({ input, trace: null }),
     explainRender: (input) => jsonToolResult({ input, renderCache: [] }),
+    explainCacheTags: (input) => jsonToolResult({ input, operations: [] }),
     explainRevalidation: (input) => jsonToolResult({ input, decisions: [] }),
   });
   const client = new Client({ name: "test", version: "1.0.0" });
@@ -39,6 +40,7 @@ describe("Rango MCP server", () => {
     const tools = await client.listTools();
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+      "explain_cache_tags",
       "explain_render",
       "explain_revalidation",
       "get_compilation_issues",

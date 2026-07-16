@@ -17,8 +17,8 @@ diagnostic adapter:
    `Server-Timing`.
 2. **Structured telemetry** (`telemetry`) — lifecycle events sent to a pluggable
    sink for production monitoring, OpenTelemetry, or custom metrics.
-3. **Development MCP** (`rango mcp`) — bounded request, route, error, render, and
-   revalidation facts from a running Vite dev server. It is read-only, requires
+3. **Development MCP** (`rango mcp`) — bounded request, route, error, render,
+   cache-tag, and revalidation facts from a running Vite dev server. It is read-only, requires
    no application telemetry sink, and is absent from production builds.
 
 The essentials are below. The exported `TelemetryEvent` union type
@@ -27,7 +27,7 @@ contract — every event kind and its fields are typed there.
 
 Use the MCP when an agent needs to correlate one browser response with exact
 framework decisions: read `X-Rango-Request-Id`, select it with `list_requests`,
-then call `get_request_trace`, `explain_render`, or
+then call `get_request_trace`, `explain_render`, `explain_cache_tags`, or
 `explain_revalidation`. Browser DOM, console, and network state still belong to
 the browser driver; production monitoring still belongs to telemetry/tracing.
 
