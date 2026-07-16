@@ -429,7 +429,7 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    body + headers + status; items/segments are already JSON-able stored forms).
    It rides with the rest of the entry. NOTE: the CF and Vercel stores cherry-pick
    entry fields into a custom KV/Blob envelope, so `snapshot` (and `initialTheme`)
-   are explicitly carried there (`KVShellEnvelope.sn`/`.i`,
+   are explicitly carried there (`CFShellEnvelope.sn`/`.i`,
    `VercelShellEnvelope.sn`/`.i`) — a new field on `ShellCacheEntry` that those
    envelopes forget silently no-ops on the real stores.
 4. **Seeding.** `serveShellHit`'s tail runs through a `SeededShellStore` overlay
@@ -732,9 +732,9 @@ putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "inva
 
 One entry carries both artifacts — the pair is version- and generation-coupled
 and must never mix (Next's platform guide makes this an explicit requirement).
-Implementations: memory store (tests/dev), CF store (KV-backed, mirroring the
-item family; the Cache-API L1 tier is a follow-up), Vercel store (runtime
-cache; respect the 2 MB item cap — skip storage with a debug log when over).
+Implementations: memory store (tests/dev), CF store (Cache API L1 with KV as
+the durable cross-colo L2), Vercel store (runtime cache; respect the 2 MB item
+cap — skip storage with a debug log when over).
 Shell entries participate in `invalidateTags` via the same tag machinery as
 their store's item family.
 
@@ -1308,14 +1308,32 @@ ms>;desc="…"` — the same consume-on-read doctrine as the `ppr-capture`
 mirror above. Production folds the collection away (`NODE_ENV` literal);
 `INTERNAL_RANGO_DEBUG` remains the raw console narration of the same window.
 
-**Inert shell family.** The shell family is KV-only on `CFCacheStore`; with
-no KV namespace bound, `getShell`/`putShell` no-op and every ppr route is a
-permanent MISS — the correctness-first fail-open of v1, previously with zero
-diagnostics. The store now warns once per isolate, from inside
-`getShell`/`putShell` (only ppr routes call them, so a KV-less store in a
-non-PPR app stays silent), naming the fix: bind a KV namespace
-(`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use a shell-capable
+**Cloudflare shell-tier trace.** A build made with `INTERNAL_RANGO_DEBUG=1`
+also emits compact `[CFCacheStore][shell]` JSON lines for runtime shell storage
+decisions: `l1-stored`, `kv-stored`, `l1-hit`, `l1-miss`, `kv-hit`,
+`kv-miss`, `kv-promoted`, `marker-invalidated`, and `write-invalidated`. The
+event carries the shell key, epoch timestamp, incoming `cf-ray`/colo when
+available, freshness/expiry, and the bounded match/body/marker/KV timings that
+apply to that decision. This is the deployed cross-colo diagnostic: tail the
+Worker while sending the exact same shell URL from multiple regions. The flag
+is resolved at Vite build time, so setting it only as a Worker runtime variable
+does not enable the trace.
+
+**Inert shell family.** `CFCacheStore` uses Cache API as the per-colo shell L1
+and KV as the durable cross-colo L2. KV remains required: with no namespace
+bound, `getShell`/`putShell` no-op and every ppr route is a permanent MISS — the
+correctness-first fail-open, previously with zero diagnostics. The store warns
+once per isolate, from inside `getShell`/`putShell` (only ppr routes call them,
+so a KV-less store in a non-PPR app stays silent), naming the fix: bind a KV
+namespace (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use a shell-capable
 store.
+
+The two CF tiers carry the exact same coupled envelope. A Cache API miss falls
+through to KV and promotes the validated envelope back into that colo. Runtime
+shell L1 entries also carry the store's namespaced `Cache-Tag`s, so purge mode
+evicts them. Unlike ordinary L1 data entries, a surviving shell still checks KV
+generation markers: its `taggedAt` is capture start, and an old capture can land
+after the purge that invalidated it. The marker prevents that resurrection.
 
 ## Dead ideas (do not re-propose)
 
@@ -1383,7 +1401,8 @@ are not revived.
 
 - Build-time capture in the prerender pipeline (B segments): SHIPPED as
   producer B (#699), with middleware replay added under `ctx.build === true`.
-- CF Cache-API L1 tier for shell entries (KV only in v1).
+- CF Cache-API L1 tier for shell entries: SHIPPED (KV remains the durable L2;
+  shell L1 reads retain the generation-marker check for capture/purge races).
 - Vercel BOA `chain` / streaming-lambda serving.
 - Render-recorded shell-tag union for shell entries: SHIPPED in #648 (originally
   scoped out of v1, which had only TTL/SWR + the explicit `ppr.tags` option +

@@ -228,8 +228,10 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    *   per-request memo is consulted (synchronously, no KV read), so a request
    *   that ran `updateTag()` still masks its own not-yet-purged entries
    *   (read-your-own-writes).
-   * - The KV tier and PPR shells still use the KV markers — those are written
-   *   regardless, and purge cannot reach KV — so keep `kv` configured for L2.
+   * - The KV tier and PPR shell reads still use the KV markers. Runtime shell
+   *   L1 entries are purgeable, but their taggedAt is the capture-start time: a
+   *   capture can finish after an invalidation purge, so eviction alone cannot
+   *   reject that older generation. Keep `kv` configured for shell L2 + markers.
    *   Without `kv`, purge mode is the ONLY tag invalidation and the store is
    *   L1-only: a supported configuration (previously tag invalidation without
    *   KV had no read-side effect at all). One KV-less caveat: an entry whose

@@ -19,6 +19,9 @@ export function NavLayout() {
         <Link to={href("/counter")} data-testid="nav-counter">
           Counter
         </Link>
+        <Link to="/cache-lab" data-testid="nav-cache-lab">
+          Cache Lab
+        </Link>
         <Link to={href("/api-demo")} data-testid="nav-api-demo">
           API Demo
         </Link>

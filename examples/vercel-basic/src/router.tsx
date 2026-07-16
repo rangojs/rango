@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router";
+import { createRouter, updateTag } from "@rangojs/router";
 import {
   MemorySegmentCacheStore,
   VercelCacheStore,
@@ -12,6 +12,12 @@ import {
   PprInlineActionPage,
 } from "./components/pages/AboutPage.js";
 import { CachedTimePage } from "./components/pages/CachedTimePage.js";
+import { CacheLabPage } from "./components/pages/CacheLabPage.js";
+import { CacheLabPulseLoader } from "./cache-lab-data.js";
+import {
+  CACHE_LAB_ALLOWED_TAGS,
+  CACHE_LAB_TAGS,
+} from "./cache-lab-contract.js";
 import { buildTracing, buildTelemetry } from "./instrumentation.js";
 import { getLastTrace } from "./trace-debug.js";
 
@@ -107,6 +113,9 @@ declare global {
 const base = createRouter({
   document: Document,
   cache: resolveCache,
+  cacheProfiles: {
+    "cache-lab": { ttl: 3600, swr: 300 },
+  },
   // Vercel custom spans: emit "rango.*" spans for the request/middleware/
   // loader/render/ssr phases via OpenTelemetry. The hybrid setup in
   // instrumentation.ts wires @vercel/otel in the real path and an in-memory
@@ -133,9 +142,79 @@ const withDebug = TRACE_DEBUG
     )
   : base;
 
-export const router = withDebug.routes(({ path, cache }) => [
+export const router = withDebug.routes(({ path, cache, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
+  path(
+    "/cache-lab",
+    CacheLabPage,
+    {
+      name: "cacheLab",
+      ppr: {
+        ttl: 3600,
+        swr: 300,
+        tags: [CACHE_LAB_TAGS.shell],
+      },
+    },
+    () => [loader(CacheLabPulseLoader)],
+  ),
+  path.json(
+    "/api/cache/invalidate",
+    async (ctx) => {
+      ctx.header("Cache-Control", "no-store");
+
+      if (ctx.request.method !== "POST") {
+        return Response.json(
+          { error: "Use POST to invalidate cache tags." },
+          { status: 405, headers: { Allow: "POST" } },
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = await ctx.request.json();
+      } catch {
+        return Response.json(
+          { error: "The request body must be valid JSON." },
+          { status: 400 },
+        );
+      }
+
+      const candidateTags =
+        typeof payload === "object" &&
+        payload !== null &&
+        "tags" in payload &&
+        Array.isArray(payload.tags)
+          ? payload.tags
+          : null;
+      if (
+        !candidateTags ||
+        candidateTags.length === 0 ||
+        candidateTags.length > CACHE_LAB_ALLOWED_TAGS.length ||
+        !candidateTags.every((tag): tag is string => typeof tag === "string")
+      ) {
+        return Response.json(
+          { error: "tags must be a non-empty array of known cache tags." },
+          { status: 400 },
+        );
+      }
+
+      const tags = [...new Set(candidateTags)];
+      const unknownTags = tags.filter(
+        (tag) => !CACHE_LAB_ALLOWED_TAGS.includes(tag),
+      );
+      if (unknownTags.length > 0) {
+        return Response.json(
+          { error: `Unknown cache tag: ${unknownTags.join(", ")}` },
+          { status: 400 },
+        );
+      }
+
+      await updateTag(...tags);
+      return { invalidated: tags };
+    },
+    { name: "cacheInvalidate" },
+  ),
   path("/ppr-inline-action", PprInlineActionPage, {
     name: "pprInlineAction",
     ppr: { ttl: 300, swr: 120 },

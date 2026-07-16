@@ -10,6 +10,10 @@ export function HomePage() {
       <p>
         Visit <strong>/cached</strong> to see the Runtime Cache store in action.
       </p>
+      <p>
+        Open <strong>/cache-lab</strong> to inspect tagged function values, a
+        PPR shell, streamed metadata, and tag invalidation together.
+      </p>
     </main>
   );
 }

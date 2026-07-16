@@ -753,12 +753,12 @@ describe("captureAndStoreShell", () => {
     expect(putShell).not.toHaveBeenCalled();
   });
 
-  it("returns 'no-shell' (retryable) when captureShellHTML rejects with an AbortError", async () => {
-    // Defensive: captureShellHTML normally converts its own abort to a null return.
-    // If an AbortError still escapes as a rejection, captureAndStoreShell classifies
-    // it as the same retryable degradation — NOT a reported failure.
+  it("rethrows a genuine AbortError from captureShellHTML", async () => {
+    // createShellCaptureHandler converts only its private capture-abort sentinel
+    // to null. Any error that escapes it, including one named AbortError, is a
+    // genuine render failure and must reach the scheduler's error reporter.
     const putShell = makePutShell();
-    const abortErr = Object.assign(new Error("aborted"), {
+    const abortErr = Object.assign(new Error("component fetch canceled"), {
       name: "AbortError",
     });
     const ssrModule = {
@@ -767,23 +767,20 @@ describe("captureAndStoreShell", () => {
         throw abortErr;
       }),
     } as unknown as SSRModule;
-    const reqCtx = makeReqCtx(putShell);
-
-    const outcome = await captureAndStoreShell(
-      ssrModule,
-      emptyStream(),
-      createHandleStore(),
-      reqCtx,
-      {
-        key: "/p:shell",
-        buildVersion: "test-build",
-        store: { putShell } as any,
-      },
-    );
-    expect(outcome).toBe("no-shell");
+    await expect(
+      captureAndStoreShell(
+        ssrModule,
+        emptyStream(),
+        createHandleStore(),
+        makeReqCtx(putShell),
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
+      ),
+    ).rejects.toBe(abortErr);
     expect(putShell).not.toHaveBeenCalled();
-    // An abort is expected degradation, not an error — nothing reported.
-    expect(reqCtx._reportBackgroundError).not.toHaveBeenCalled();
   });
 
   it("rethrows a genuine (non-abort) captureShellHTML error so the caller reports it", async () => {
@@ -1262,38 +1259,33 @@ describe("runShellCapture", () => {
     expect(putShell.mock.calls[0]![0]).toBe("/p:shell");
   });
 
-  // Deliverable 1(b): a first attempt that REJECTS with an AbortError is retryable.
-  it("retries when the first attempt rejects with an AbortError, then stores", async () => {
+  it("does not retry a genuine AbortError from captureShellHTML", async () => {
     const putShell = makePutShell();
-    const abortErr = Object.assign(new Error("aborted"), {
+    const abortErr = Object.assign(new Error("component fetch canceled"), {
       name: "AbortError",
     });
-    const captureShellHTML = vi
-      .fn()
-      .mockRejectedValueOnce(abortErr)
-      .mockResolvedValueOnce({
-        prelude: enc("<html><body>warm</body></html>"),
-        postponed: null,
-      });
+    const captureShellHTML = vi.fn().mockRejectedValue(abortErr);
     const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
 
-    await runShellCapture(
-      ctx,
-      new Request("http://localhost/p"),
-      {},
-      new URL("http://localhost/p"),
-      makeReqCtx(),
-      ssrModule,
-      {
-        key: "/p:shell",
-        buildVersion: "test-build",
-        store: { putShell } as any,
-      },
-      0,
-    );
+    await expect(
+      runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/p:shell",
+          buildVersion: "test-build",
+          store: { putShell } as any,
+        },
+        0,
+      ),
+    ).rejects.toBe(abortErr);
 
-    expect(captureShellHTML).toHaveBeenCalledTimes(2);
-    expect(putShell).toHaveBeenCalledTimes(1);
+    expect(captureShellHTML).toHaveBeenCalledTimes(1);
+    expect(putShell).not.toHaveBeenCalled();
   });
 
   // Deliverable 1(c): a genuine (non-abort) error is NOT retried — it propagates so
@@ -1326,16 +1318,16 @@ describe("runShellCapture", () => {
     expect(putShell).not.toHaveBeenCalled();
   });
 
-  // scheduleShellCapture routes a propagated genuine error through
-  // reportCacheError exactly once, does NOT retry, and (Deliverable 8) backs the
-  // key off since a genuine failure recurs.
-  it("reports a genuine capture error once via reportCacheError, then backs the key off", async () => {
+  // End-to-end proof for the AbortError distinction: once the capture handler
+  // lets one escape, the scheduler reports it, does not retry, and backs off.
+  it("reports a genuine AbortError once via reportCacheError, then backs the key off", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const captured: Array<() => Promise<void>> = [];
-      const captureShellHTML = vi.fn(async () => {
-        throw new Error("boom");
+      const abortErr = Object.assign(new Error("component fetch canceled"), {
+        name: "AbortError",
       });
+      const captureShellHTML = vi.fn().mockRejectedValue(abortErr);
       const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
       const reqCtx = makeReqCtx();
       (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
@@ -1360,9 +1352,12 @@ describe("runShellCapture", () => {
       );
       await captured[0]!();
 
-      // No retry on a non-abort error, reported exactly once.
+      // No retry: an escaped AbortError is a genuine render failure.
       expect(captureShellHTML).toHaveBeenCalledTimes(1);
-      expect(reqCtx._reportBackgroundError).toHaveBeenCalledTimes(1);
+      expect(reqCtx._reportBackgroundError).toHaveBeenCalledWith(
+        abortErr,
+        "cache-write",
+      );
 
       // Backed off: a second schedule within the window is skipped (no new task).
       scheduleShellCapture(

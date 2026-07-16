@@ -248,7 +248,7 @@ container-with-promise-paths-elided)` into the same
   path (absent at capture) passes through fresh — it cannot contradict prelude
   bytes that never rendered it.
 - **Envelope compat.** CF and Vercel shells cherry-pick entry fields into
-  custom envelopes (`KVShellEnvelope.sn` / `VercelShellEnvelope.sn`); the
+  custom envelopes (`CFShellEnvelope.sn` / `VercelShellEnvelope.sn`); the
   snapshot array itself already rides there, and the new family value is
   opaque to the stores — verify with an envelope round-trip test rather than
   assuming.

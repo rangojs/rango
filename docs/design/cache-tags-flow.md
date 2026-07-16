@@ -79,9 +79,9 @@ flowchart TD
     the per-colo Cache API within that window;
   - **KV** — the global source of truth (memory store has no KV step; it deletes
     eagerly, so its reads do no tag work at all).
-- In **purge mode** (`tagPurge` configured) an L1 hit consults only the
-  per-request memo — eviction is the purge's job; see "Purge mode" below. The
-  KV tier and PPR shells always run the full cascade.
+- In **purge mode** (`tagPurge` configured) an ordinary L1 data hit consults
+  only the per-request memo — eviction is the purge's job; see "Purge mode"
+  below. KV reads and PPR shell reads always run the full cascade.
 
 ---
 
@@ -207,11 +207,13 @@ Configure `tagPurge` and the store flips the L1 contract:
   entry a purge cannot reach (written pre-upgrade, or its header omitted for
   the 16 KB overflow above) keeps the full marker check instead of serving
   stale until TTL.
-- **KV L2 and PPR shells keep the marker check.** Purge cannot reach KV, and a
-  baked build-manifest shell has no cache entry to purge — the markers (still
-  written on every invalidation) remain their eviction mechanism. Keep `kv`
-  configured for those tiers; without it, purge mode runs a supported L1-only
-  store (previously tags-without-KV had no read-side effect at all).
+- **KV L2 and PPR shell reads keep the marker check.** Purge cannot reach KV or
+  a baked build-manifest shell. A runtime shell L1 entry does carry purgeable
+  Cache-Tags, but its generation starts before its eventual write: an old
+  capture can finish after the invalidation purge, so a surviving shell still
+  checks the marker to reject that resurrection. Keep `kv` configured for the
+  shell family; without it, purge mode still supports ordinary L1-only data
+  caching, but PPR shells remain inert.
 
 What you trade: marker mode gives read-time KV consistency; purge mode's
 cross-request invalidation latency is the purge propagation (Cloudflare quotes
