@@ -174,6 +174,7 @@ describe("prefetch fetch reduced-data behavior", () => {
       "http://localhost:4173/current",
     );
     expect(headers["X-Rango-Prefetch"]).toBe("1");
+    expect(headers["X-Rango-Fragment-Passthrough"]).toBe("1");
   });
 
   it("stores the decoded entry in the in-memory cache on success", async () => {

@@ -25,6 +25,7 @@ import {
   removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  isFragmentPassthroughEnabled,
   type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
@@ -33,6 +34,7 @@ import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
+import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -219,6 +221,9 @@ function executePrefetchFetch(
       "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
       "X-Rango-Prefetch": "1",
+      ...(isFragmentPassthroughEnabled() && {
+        [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+      }),
     },
   })
     .then((response) => {

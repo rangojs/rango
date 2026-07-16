@@ -401,9 +401,10 @@ export class CacheScope {
       // flag shares fate with the key: a disrupted ALS already missed the
       // seeded record and degraded to the full tail.
       let segments: ResolvedSegment[];
+      const ambientContext = _getRequestContext();
       try {
         const codec = await import("./segment-codec.js");
-        segments = _getRequestContext()?._shellFragmentPayload
+        segments = ambientContext?._shellFragmentPayload
           ? await codec.fragmentSegments(cached.segments)
           : await codec.deserializeSegments(cached.segments);
       } catch (error) {
@@ -417,6 +418,9 @@ export class CacheScope {
           .catch((e) =>
             reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
           );
+        if (this.isShellImplicitDocScope) {
+          ambientContext?._shellImplicitCache?.onCorrupt?.();
+        }
         return { status: "miss" };
       }
 

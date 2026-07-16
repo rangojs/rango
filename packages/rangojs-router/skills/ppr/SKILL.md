@@ -258,11 +258,21 @@ Partial responses expose the actual decision as `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. With
 performance metrics enabled, the same decision appears as
 `ppr-navigation-replay` in `Server-Timing`. `HIT` means matching consumed the
-seeded segment record after it decoded successfully, not merely that a snapshot
-existed. An explicit `cache()` scope that supplies the match cannot produce a
+seeded segment record, not merely that a snapshot existed. Fragment-capable
+clients decode its stored ReactNode fields after the response arrives; if that
+decode fails, the client retries once through the server decode-and-evict path
+and disables further passthrough for that browser document. The retry replaces
+the fragment-capable response-cache slot, and a corrupt seeded snapshot is
+recaptured at the key that supplied it. An explicit `cache()` scope that supplies
+the match cannot produce a
 false HIT — it reports `explicit-cache-hit`. There is still no Flight resume
 API; this is segment replay followed by normal Flight streaming, not reuse of
-the HTML `prelude`/`postponed` bytes.
+the HTML `prelude`/`postponed` bytes. Replayed segments do ride the partial
+payload as verbatim `__rangoFragment` envelopes (#700 fragment splice — the
+stored per-segment Flight strings are string-copied instead of
+deserialize→re-serialize per request); the client expands them at its
+navigation/prefetch decode chokepoints before anything renders, so they are
+consumer-invisible.
 
 The bounded bypass tokens, grouped by when they are decided:
 

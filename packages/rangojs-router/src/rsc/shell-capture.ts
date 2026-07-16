@@ -1330,6 +1330,10 @@ export function deriveShellCaptureContext(
   derivedCtx._explicitTaggedStores = new Set();
   derivedCtx._transitionWhen = [];
   derivedCtx._shellCaptureRun = true;
+  // Own-property reset: an inherited flag would make serializeSegments store
+  // a double-encoded fragment. No current arming site reaches a capture
+  // render (kept as defense-in-depth for a future one).
+  derivedCtx._shellFragmentPayload = false;
   derivedCtx._metricsStore = undefined;
   // Spans, like perf metrics above, are a FOREGROUND surface: the capture
   // re-render must not emit a second rango.render/loader/ssr set after the

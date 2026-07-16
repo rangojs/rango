@@ -6,10 +6,11 @@
  * fragment STRINGS ride the outgoing payload verbatim inside these envelopes
  * — the outer Flight render copies a string instead of re-serializing a whole
  * element tree — and the CONSUMER expands each envelope through its own Flight
- * deserializer: the SSR resume pass (ssr/ssr-root.tsx) and browser hydration
- * (browser/rsc-router.tsx). Each fragment is its own row space, decoded
- * independently, exactly like the segment codec's per-record decode — so
- * there is no Flight row-id collision or shared-row dedupe hazard.
+ * deserializer: the SSR resume pass (ssr/ssr-root.tsx), browser hydration, and
+ * capability-gated partial navigation/prefetch decoders. Each fragment is its
+ * own row space, decoded independently, exactly like the segment codec's
+ * per-record decode — so there is no Flight row-id collision or shared-row
+ * dedupe hazard.
  *
  * Envelopes appear ONLY on fields that hold ReactNodes (component / layout /
  * loading). A plain object is never a valid ReactNode, so the marker cannot
@@ -21,6 +22,25 @@
  */
 
 import type { ResolvedSegment } from "./types.js";
+
+/** Partial-request capability gate for browser-side fragment expansion. */
+export const SEGMENT_FRAGMENT_CAPABILITY_HEADER: string =
+  "X-Rango-Fragment-Passthrough";
+
+/** One-shot request marker that forces server-side fragment validation. */
+export const SEGMENT_FRAGMENT_RECOVERY_HEADER: string =
+  "X-Rango-Fragment-Recovery";
+
+/** A stored fragment failed in its consumer-side Flight decoder. */
+export class SegmentFragmentDecodeError extends Error {
+  readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super("Failed to decode a stored RSC segment fragment");
+    this.name = "SegmentFragmentDecodeError";
+    this.cause = cause;
+  }
+}
 
 /**
  * One RSC-encoded fragment traveling inside an RscPayload segment field.
@@ -105,6 +125,27 @@ export async function expandSegmentFragments(
     }
   }
   if (decodes.length > 0) await Promise.all(decodes);
+}
+
+/**
+ * Expand every envelope in an RscPayload-shaped object, in place. Decode
+ * failures use a distinct error so partial navigation can retry once through
+ * the server's decode-and-evict path. The
+ * hasSegmentFragments pre-scan keeps envelope-free payloads — every
+ * non-replay response — to one synchronous field walk; this runs on every
+ * navigation and prefetch decode.
+ */
+export async function expandPayloadFragments(
+  payload: { metadata?: { segments?: ResolvedSegment[] } },
+  decode: FragmentDecoder,
+): Promise<void> {
+  const segments = payload.metadata?.segments;
+  if (!hasSegmentFragments(segments)) return;
+  try {
+    await expandSegmentFragments(segments, decode);
+  } catch (error) {
+    throw new SegmentFragmentDecodeError(error);
+  }
 }
 
 /**

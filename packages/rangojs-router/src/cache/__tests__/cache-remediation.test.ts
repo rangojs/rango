@@ -519,4 +519,39 @@ describe("segment self-heal (corrupt cached segments via CacheScope)", () => {
     expect(store.delete).toHaveBeenCalled(); // faulty entry self-healed
     expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
   });
+
+  it("notifies replay when the seeded document record is corrupt", async () => {
+    const onCorrupt = vi.fn();
+    const url = new URL("http://localhost/test");
+    const reqCtx = {
+      url,
+      originalUrl: new URL(url),
+      searchParams: url.searchParams,
+      _cacheStore: null,
+      _handleStore: null,
+      _shellImplicitCache: { onCorrupt },
+    };
+    mockGetRequestContext.mockReturnValue(reqCtx);
+    mock_getRequestContext.mockReturnValue(reqCtx);
+
+    const store = {
+      get: vi.fn().mockResolvedValue({
+        data: { segments: ["truncated"], handles: "" },
+        shouldRevalidate: false,
+      }),
+      set: vi.fn(),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+    const { deserializeSegments } = await import("../segment-codec.js");
+    vi.mocked(deserializeSegments).mockRejectedValueOnce(
+      new Error("truncated segment payload"),
+    );
+
+    const scope = new CacheScope({ store } as any, null, "doc");
+    const result = await scope.lookupRoute("/test", {});
+
+    expect(result).toBeNull();
+    expect(store.delete).toHaveBeenCalledTimes(1);
+    expect(onCorrupt).toHaveBeenCalledTimes(1);
+  });
 });

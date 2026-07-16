@@ -33,7 +33,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("private, max-age=60");
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -53,7 +53,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     // Navigation responses include X-RSC-Router-Client-Path in Vary
     // (source-dependent diff), unlike prefetch which omits it
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -154,7 +154,7 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("private, max-age=60");
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -172,7 +172,7 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
