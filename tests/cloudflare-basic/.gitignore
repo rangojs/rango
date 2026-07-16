@@ -1,5 +1,5 @@
 dist
-.vercel
 node_modules
 *.local
 .env*
+.dev*
