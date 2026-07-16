@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import packageJson from "../../../package.json";
 import {
   installRangoMcpClientConfig,
   type RangoMcpClient,
@@ -59,7 +60,7 @@ describe("Rango MCP client config installer", () => {
     expect(config[target.parent]["rango-devtools"]).toEqual({
       ...(target.type ? { type: target.type } : {}),
       command: "npx",
-      args: ["-y", "@rangojs/router@0.4.1", "mcp"],
+      args: ["-y", `@rangojs/router@${packageJson.version}`, "mcp"],
     });
     expect(JSON.stringify(config)).not.toMatch(
       /__rango\/mcp|authorization|bearer|token/iu,

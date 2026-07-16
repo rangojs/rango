@@ -933,6 +933,99 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
     });
 
+    it("separates fragment-capable partial responses from context-less clients", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const capableCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      const capableNext = vi.fn().mockResolvedValue(
+        new Response("fragment envelopes", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(capableCtx, capableNext);
+      await vi.runAllTimersAsync();
+
+      const probeCtx = createMockMiddlewareContext(url);
+      const probeNext = vi.fn().mockResolvedValue(
+        new Response("decoded elements", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const probeResponse = (await middleware(probeCtx, probeNext)) as Response;
+
+      expect(probeNext).toHaveBeenCalledTimes(1);
+      expect(probeResponse.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(await probeResponse.text()).toBe("decoded elements");
+    });
+
+    it("bypasses an existing response-cache hit during fragment recovery", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const middleware = createDocumentCacheMiddleware();
+      const url =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,layout";
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const cachedCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      await middleware(
+        cachedCtx,
+        vi.fn().mockResolvedValue(
+          new Response("cached response", {
+            headers: { "Cache-Control": "s-maxage=60" },
+          }),
+        ),
+      );
+      await vi.runAllTimersAsync();
+
+      const recoveryCtx = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Recovery": "1" },
+      });
+      const recoveryNext = vi.fn().mockResolvedValue(
+        new Response("server-decoded recovery", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const response = (await middleware(
+        recoveryCtx,
+        recoveryNext,
+      )) as Response;
+
+      expect(recoveryNext).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(await response.text()).toBe("server-decoded recovery");
+      await vi.runAllTimersAsync();
+
+      const capableAgain = createMockMiddlewareContext(url, {
+        headers: { "X-Rango-Fragment-Passthrough": "1" },
+      });
+      const shouldNotRun = vi.fn();
+      const replaced = (await middleware(
+        capableAgain,
+        shouldNotRun,
+      )) as Response;
+
+      expect(shouldNotRun).not.toHaveBeenCalled();
+      expect(replaced.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await replaced.text()).toBe("server-decoded recovery");
+    });
+
     it("should scope default cache key by user-facing search params", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");

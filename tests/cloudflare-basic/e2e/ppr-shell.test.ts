@@ -425,7 +425,11 @@ function describePprShell(mode: "dev" | "build") {
       await expect(testId(page, "ppr-shell-header")).toHaveText(
         "PPR Shell Demo",
       );
-      await expect(testId(page, "ppr-price")).toContainText("Live price:");
+      // Flight can hydrate the boundary before fizz's $RV removes its hidden
+      // S:n reveal copy. Wait globally so a permanent duplicate still fails.
+      const price = testId(page, "ppr-price");
+      await expect(price).toHaveCount(1);
+      await expect(price).toContainText("Live price:");
 
       const counter = testId(page, "ppr-counter");
       await counter.click();
@@ -737,24 +741,16 @@ function describePprShell(mode: "dev" | "build") {
       using __ = guardHydrationErrors(page);
       await page.goto(url);
       await waitForHydration(page);
-      // Scope to the PprShellSettled container (data-testid="ppr-settled").
-      // When the nested promise's Flight payload lands client-side before fizz's
-      // `$RC("B:0","S:0")` completeSegment script executes (a streaming race the
-      // #706 fragment splice widens — the baked payload is now a byte copy that
-      // finishes well ahead of the resume), React client-renders the dehydrated
-      // boundary in place and leaves fizz's HIDDEN segment container
-      // (`<div hidden id="S:0">`, a direct child of <body>) orphaned in the DOM.
-      // That orphan carries the `hidden` attribute — invisible, zero layout, out
-      // of the a11y tree — but it holds a second `ppr-settled-fast` node, so a
-      // bare testid locator strict-mode-collides with it. The container scope
-      // keeps only the visible in-place copy (the orphan lives outside it).
+      // Flight can hydrate this boundary before fizz's $RC/$RV reveal cleanup.
+      // During that normal seam the visible node and hidden S:n copy coexist;
+      // wait globally so a permanently orphaned copy remains a test failure.
+      const fast = testId(page, "ppr-settled-fast");
+      await expect(fast).toHaveCount(1);
       const settled = page.getByTestId("ppr-settled");
       await expect(settled.getByTestId("ppr-settled-label")).toHaveText(
         /Settled outer \d+/,
       );
-      await expect(settled.getByTestId("ppr-settled-fast")).toHaveText(
-        /Settled fast \d+/,
-      );
+      await expect(fast).toHaveText(/Settled fast \d+/);
     });
 
     // --- Per-request nonce via the ContextVar token: ppr stays on axis 1 (#656) ---
@@ -1017,6 +1013,11 @@ function describePprShell(mode: "dev" | "build") {
           { headers: new Headers(partialResponse.headers()) },
           { outcome: "HIT", freshness: "fresh" },
         );
+        // Fragment splice (#700) on navigation: a replay HIT's segments ride
+        // as verbatim __rangoFragment envelopes; the client expands them
+        // before render, so the content assertions below prove they are
+        // consumer-invisible on workerd too.
+        expect(await partialResponse.text()).toContain("__rangoFragment");
         await expect(testId(page, "ppr-exec-chrome")).toHaveText(
           "Exec matrix static chrome",
         );
@@ -1075,6 +1076,7 @@ function describePprShell(mode: "dev" | "build") {
           headers: {
             "X-RSC-Router-Client-Path": f.url("/"),
             "X-Rango-Prefetch": "1",
+            "X-Rango-Fragment-Passthrough": "1",
           },
         });
         assertPprReplayStatus(
@@ -1088,6 +1090,195 @@ function describePprShell(mode: "dev" | "build") {
       });
       expect(document.status()).toBe(200);
       assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
+    });
+
+    test("a warm fragment prefetch expands its client chunk before the click", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-root"),
+      );
+      const targetPath = "/ppr-shell/slot-hole?probe=fragment-prefetch-warm";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      const scriptResources = () =>
+        page.evaluate(() =>
+          performance
+            .getEntriesByType("resource")
+            .map((entry) => entry.name)
+            .filter((name) => /\.[cm]?[jt]sx?$/.test(new URL(name).pathname)),
+        );
+      const beforePrefetch = new Set(await scriptResources());
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
+          response.request().headers()["x-rango-prefetch"] === "1"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").hover();
+      const response = await prefetchResponse;
+      expect(response.request().headers()["x-rango-fragment-passthrough"]).toBe(
+        "1",
+      );
+      expect(await response.text()).toContain("__rangoFragment");
+      // Dev serves each client module separately, so fragment expansion is
+      // directly visible as pre-click JS I/O. Production may fold the fixture's
+      // client reference into the initial app chunk; the no-new-JS click check
+      // below remains the observable contract there.
+      if (mode === "dev") {
+        await expect
+          .poll(async () => (await scriptResources()).length, {
+            timeout: 10_000,
+          })
+          .toBeGreaterThan(beforePrefetch.size);
+      }
+      const warmedResources = new Set(await scriptResources());
+
+      await testId(page, "nav-ppr-fragment-prefetch-warm").click();
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+      expect(
+        (await scriptResources()).filter((name) => !warmedResources.has(name)),
+      ).toEqual([]);
+    });
+
+    test("an in-flight fragment prefetch is adopted without a second request", async ({
+      page,
+      request,
+    }) => {
+      await warmToHit(
+        request,
+        f.url("/ppr-shell?probe=fragment-prefetch-inflight-root"),
+      );
+      const targetPath =
+        "/ppr-shell/slot-hole?probe=fragment-prefetch-inflight";
+      await warmToHit(request, f.url(targetPath));
+
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+
+      let releasePrefetch!: () => void;
+      const holdPrefetch = new Promise<void>((resolve) => {
+        releasePrefetch = resolve;
+      });
+      await page.route(
+        (routeUrl) =>
+          routeUrl.pathname === "/ppr-shell/slot-hole" &&
+          routeUrl.searchParams.get("probe") === "fragment-prefetch-inflight" &&
+          routeUrl.searchParams.has("_rsc_partial"),
+        async (route) => {
+          await holdPrefetch;
+          await route.continue();
+        },
+      );
+
+      const partialRequests: string[] = [];
+      page.on("request", (req) => {
+        const requestUrl = new URL(req.url());
+        if (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          requestUrl.searchParams.has("_rsc_partial")
+        ) {
+          partialRequests.push(req.url());
+        }
+      });
+      const prefetchStarted = page.waitForRequest((req) => {
+        const requestUrl = new URL(req.url());
+        return (
+          requestUrl.pathname === "/ppr-shell/slot-hole" &&
+          requestUrl.searchParams.get("probe") ===
+            "fragment-prefetch-inflight" &&
+          req.headers()["x-rango-prefetch"] === "1"
+        );
+      });
+      const prefetchResponse = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/ppr-shell/slot-hole" &&
+          responseUrl.searchParams.get("probe") === "fragment-prefetch-inflight"
+        );
+      });
+
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").hover();
+      await prefetchStarted;
+      // Dispatch while the prefetch is held before response headers. The click
+      // must adopt the inflight promise; a warm entry cannot exist yet.
+      await testId(page, "nav-ppr-fragment-prefetch-inflight").dispatchEvent(
+        "click",
+      );
+      releasePrefetch();
+      const response = await prefetchResponse;
+      expect(await response.text()).toContain("__rangoFragment");
+      await expect(testId(page, "ppr-slot-home")).toHaveText(
+        "Slot home static content",
+      );
+      expect(partialRequests).toHaveLength(1);
+    });
+
+    test("partial replay HIT carries verbatim fragment envelopes; a context-less probe carries none", async ({
+      request,
+    }) => {
+      // #700 extended to navigation on the real KV/workerd path: the doc
+      // segment record that fragments the document HIT tail also fragments
+      // the partial replay serve; the client decoders expand the envelopes.
+      await warmToHit(request, f.url("/ppr-shell?probe=fragwarmup"));
+      const url = f.url("/ppr-shell/slot-hole?probe=fragnav");
+      await warmToHit(request, url);
+
+      const replay = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+        {
+          headers: {
+            "X-RSC-Router-Client-Path": f.url("/"),
+            "X-Rango-Fragment-Passthrough": "1",
+          },
+        },
+      );
+      expect(replay.status()).toBe(200);
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+      const body = await replay.text();
+      expect(body).toContain("__rangoFragment");
+      // Payload completeness: the replayed content still reaches the client,
+      // inside the fragment strings.
+      expect(body).toContain("Slot home static content");
+
+      // Context-less probe (curl shape): the replay gate bypasses BEFORE the
+      // fragment arming, so the fallback render serializes real elements.
+      const probe = await request.get(
+        `${url}&_rsc_partial=true&_rsc_segments=`,
+      );
+      expect(probe.status()).toBe(200);
+      expect(await probe.text()).not.toContain("__rangoFragment");
     });
 
     test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({
@@ -1409,6 +1600,9 @@ function describePprShell(mode: "dev" | "build") {
       assertPprReplayStatus(
         { headers: new Headers(freshResponse.headers()) },
         { outcome: "HIT", freshness: "fresh" },
+      );
+      await expect(testId(page, "ppr-stale-replay-data")).toContainText(
+        /^ppr-stale-1-execution-\d+$/,
       );
       const capturedData = await testId(
         page,

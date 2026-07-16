@@ -22,7 +22,7 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
-import { expandSegmentFragments } from "../segment-fragments.js";
+import { expandPayloadFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
@@ -177,9 +177,7 @@ export async function initBrowserApp(
   // renderSegments, history cache). Non-HIT payloads have no envelopes and pay
   // one field scan. The SSR resume pass ran the same expansion (ssr-root.tsx),
   // so the hydrated tree matches the server-rendered one by construction.
-  await expandSegmentFragments(initialPayload.metadata?.segments, (stream) =>
-    deps.createFromReadableStream(stream),
-  );
+  await expandPayloadFragments(initialPayload, deps.createFromReadableStream);
 
   // Extract themeConfig and initialTheme from payload if not explicitly provided
   // This allows virtual entries to work without importing the router
@@ -312,8 +310,16 @@ export async function initBrowserApp(
   }
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's
-  // client chunks (same createFromFetch the navigation client uses).
-  setPrefetchDecoder((response) => deps.createFromFetch<RscPayload>(response));
+  // client chunks (same createFromFetch the navigation client uses). Fragment
+  // envelopes (#700) expand BEFORE the decoded payload enters the prefetch
+  // cache, so cached entries only ever resolve to expanded segments; a
+  // fragment-decode failure rejects the entry's payload and rides the cache's
+  // existing eviction path.
+  setPrefetchDecoder(async (response) => {
+    const payload = await deps.createFromFetch<RscPayload>(response);
+    await expandPayloadFragments(payload, deps.createFromReadableStream);
+    return payload;
+  });
 
   // Create a bound renderSegments that reads rootLayout through the shell ref.
   // The shell is set once at init and not swapped within a session (a cross-app

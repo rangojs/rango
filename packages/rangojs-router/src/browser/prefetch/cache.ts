@@ -80,6 +80,7 @@ export interface DecodedPrefetch {
 }
 
 let cacheTTL = 300_000;
+let fragmentPassthroughEnabled = true;
 
 // Max stored entries before FIFO eviction. Mirrors DEFAULT_PREFETCH_CACHE_SIZE
 // (router/prefetch-limits.ts); kept as a local literal so the client bundle
@@ -370,6 +371,23 @@ export function clearPrefetchInflight(key: string): void {
     inflightAliases.delete(k);
     adoptedKeys.delete(k);
   });
+}
+
+/** Whether this document may request stored segment fragment envelopes. */
+export function isFragmentPassthroughEnabled(): boolean {
+  return fragmentPassthroughEnabled;
+}
+
+/**
+ * Disable fragment passthrough for the rest of this document after one stored
+ * fragment fails to decode. The recovery replaces shared cache entries, while
+ * this guard prevents the current tab's HTTP cache from serving its already-
+ * cached corrupt variant again.
+ */
+export function disableFragmentPassthrough(): void {
+  if (!fragmentPassthroughEnabled) return;
+  fragmentPassthroughEnabled = false;
+  clearPrefetchCache(false);
 }
 
 export function clearPrefetchCache(rotateRangoState = true): void {

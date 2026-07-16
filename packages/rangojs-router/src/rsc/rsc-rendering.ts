@@ -90,6 +90,10 @@ import type {
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import { isPprEntry } from "../server/context.js";
+import {
+  SEGMENT_FRAGMENT_CAPABILITY_HEADER,
+  SEGMENT_FRAGMENT_RECOVERY_HEADER,
+} from "../segment-fragments.js";
 
 type PprReplayBypassReason =
   | "method"
@@ -293,6 +297,7 @@ async function handleRscRenderingInner<TEnv>(
   let hasInterceptSlots = false;
   let pprReplayStatus: PprReplayStatus | undefined;
   let partialCaptureNeeded = false;
+  let partialCaptureKey: string | undefined;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -563,6 +568,7 @@ async function handleRscRenderingInner<TEnv>(
     pprReplayStatus = replay.status;
     partialCaptureNeeded =
       "captureNeeded" in replay && replay.captureNeeded === true;
+    partialCaptureKey = "captureKey" in replay ? replay.captureKey : undefined;
 
     if (!result) {
       // Fall back to full render
@@ -681,7 +687,7 @@ async function handleRscRenderingInner<TEnv>(
 
   const rscHeaders: Record<string, string> = {
     "content-type": "text/x-component;charset=utf-8",
-    vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    vary: `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`,
     // Router identity, so the client can verify pre-decode (before importing
     // chunks) that this content payload belongs to its app and refuse a
     // foreign one (cache/proxy/bug). Control-only reload/redirect responses
@@ -804,7 +810,8 @@ async function handleRscRenderingInner<TEnv>(
       },
       createShellCaptureDescriptor(
         ctx,
-        buildNavigationShellKey(url, reqCtx._searchParamsFilter),
+        partialCaptureKey ??
+          buildNavigationShellKey(url, reqCtx._searchParamsFilter),
         pprConfig,
         store,
         true,
@@ -865,8 +872,30 @@ async function matchPartialWithPprReplay<TEnv>(
     );
     return finalStatus;
   };
+  let armFragments = false;
+  /**
+   * Every matchPartial in this function runs through this helper so the
+   * fragment flag (#700 passthrough, armed below the navigation-context gate)
+   * can never outlive a match or miss a lane — a thrown-Response redirect
+   * exit included. Mutate-restore on the SHARED reqCtx, never a derived
+   * context: the pipeline writes ambient state during the match that must
+   * land on reqCtx (_pprReplayPostMatchReason, location state,
+   * _treeHasStreaming read by the render-barrier closure). Assign-back
+   * restore leaves an own `undefined` after the first arm, matching the
+   * _shellImplicitCache idiom.
+   */
+  const matchPartialForReplay = async () => {
+    if (!armFragments) return ctx.router.matchPartial(request, { env });
+    const prevFragmentPayload = reqCtx._shellFragmentPayload;
+    reqCtx._shellFragmentPayload = true;
+    try {
+      return await ctx.router.matchPartial(request, { env });
+    } finally {
+      reqCtx._shellFragmentPayload = prevFragmentPayload;
+    }
+  };
   const runMatch = async (status?: PprReplayStatus) => {
-    const result = await ctx.router.matchPartial(request, { env });
+    const result = await matchPartialForReplay();
     // The match may have settled a fact the pre-match gate could only guess
     // at (prerender serve, intercept resolution) — report the truth.
     const finalStatus = status ? finalizeReplayStatus(status) : undefined;
@@ -903,6 +932,14 @@ async function matchPartialWithPprReplay<TEnv>(
   if (!getNavigationContextHeader(request)) {
     return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
   }
+  // Fragment passthrough (#700), extended to partial replay. Navigation
+  // context proves the request can be matched; the separate capability header
+  // proves its payload consumer can expand envelopes. Older clients and the
+  // one-shot corruption recovery request still replay the same segment record,
+  // but through the server decode path.
+  armFragments =
+    request.headers.get(SEGMENT_FRAGMENT_RECOVERY_HEADER) !== "1" &&
+    request.headers.get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) === "1";
   // The prerender probe and the cache-opt-out gate below both need the
   // classified snapshot; resolve (and persist) it once.
   const routeSnapshot = classifiedRouteSnapshot(reqCtx);
@@ -963,11 +1000,13 @@ async function matchPartialWithPprReplay<TEnv>(
 
   let bypassReason: PprReplayBypassReason | undefined;
   let snapshot: ShellSnapshotRecord[] | undefined;
+  let snapshotStoreKey: string | undefined;
   let freshness: "fresh" | "stale" = "fresh";
   if (cached) {
     const decision = replayableShellSnapshot(cached.entry, ctx.version);
     if ("snapshot" in decision) {
       snapshot = decision.snapshot;
+      snapshotStoreKey = key;
       freshness = cached.freshness;
       if (cached.tags?.length) {
         recordCacheTagObservationDiagnostic({
@@ -1005,6 +1044,7 @@ async function matchPartialWithPprReplay<TEnv>(
       );
       if ("snapshot" in decision) {
         snapshot = decision.snapshot;
+        snapshotStoreKey = navigationKey;
         freshness = navigationCached.freshness;
         if (navigationCached.tags?.length) {
           recordCacheTagObservationDiagnostic({
@@ -1074,7 +1114,7 @@ async function matchPartialWithPprReplay<TEnv>(
         },
       };
       try {
-        const result = await ctx.router.matchPartial(request, { env });
+        const result = await matchPartialForReplay();
         const provisionalStatus: PprReplayStatus = explicitCacheBypass
           ? { outcome: "BYPASS", reason: "cache-disabled" }
           : explicitCacheHit
@@ -1119,6 +1159,7 @@ async function matchPartialWithPprReplay<TEnv>(
 
   const previousImplicitCache = reqCtx._shellImplicitCache;
   let segmentReplayHit = false;
+  let segmentReplayCorrupt = false;
   let explicitCacheHit = false;
   let explicitCacheBypass = false;
   reqCtx._shellImplicitCache = {
@@ -1130,6 +1171,9 @@ async function matchPartialWithPprReplay<TEnv>(
     keyPrefix: "doc",
     onHit: () => {
       segmentReplayHit = true;
+    },
+    onCorrupt: () => {
+      segmentReplayCorrupt = true;
     },
     // Arms the explicit-scope composition in withCacheLookup: a route-derived
     // cache() scope stays authoritative, the seeded doc record supplies the
@@ -1147,7 +1191,7 @@ async function matchPartialWithPprReplay<TEnv>(
   };
 
   try {
-    const result = await ctx.router.matchPartial(request, { env });
+    const result = await matchPartialForReplay();
     const provisionalStatus: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
       : explicitCacheHit
@@ -1160,7 +1204,18 @@ async function matchPartialWithPprReplay<TEnv>(
     // keep snapshot.cacheScope) — the "snapshot-miss" guess would blame the
     // capture for a lane that was never in play.
     const status = finalizeReplayStatus(provisionalStatus);
-    return { result, status };
+    return {
+      result,
+      status,
+      captureNeeded:
+        segmentReplayCorrupt && reqCtx._pprReplayPostMatchReason === undefined,
+      // A corrupt document snapshot must be overwritten at the document key;
+      // writing only the secondary navigation key would leave the preferred
+      // document entry shadowing the repair forever. The capture remains marked
+      // navigationOnly, so a document request ignores it and recaptures a
+      // document-safe shell under the same key.
+      captureKey: segmentReplayCorrupt ? snapshotStoreKey : undefined,
+    };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;
   }

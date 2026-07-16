@@ -316,6 +316,7 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`, `__prerender_collect`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
+- **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
