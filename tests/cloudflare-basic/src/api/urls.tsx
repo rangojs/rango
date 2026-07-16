@@ -1,4 +1,5 @@
-import { urls, RouterError } from "@rangojs/router";
+import { urls, RouterError, updateTag } from "@rangojs/router";
+import { CACHE_LAB_ALLOWED_TAGS } from "../cache-lab-contract.js";
 
 /**
  * API routes using urls.json() - handlers return plain objects,
@@ -36,6 +37,64 @@ export const apiPatterns = urls(({ path }) => [
   ),
 
   path.json("/products", (ctx) => products, { name: "products" }),
+
+  path.json(
+    "/cache/invalidate",
+    async (ctx) => {
+      ctx.header("Cache-Control", "no-store");
+
+      if (ctx.request.method !== "POST") {
+        return Response.json(
+          { error: "Use POST to invalidate cache tags." },
+          { status: 405, headers: { Allow: "POST" } },
+        );
+      }
+
+      let payload: unknown;
+      try {
+        payload = await ctx.request.json();
+      } catch {
+        return Response.json(
+          { error: "The request body must be valid JSON." },
+          { status: 400 },
+        );
+      }
+
+      const candidateTags =
+        typeof payload === "object" &&
+        payload !== null &&
+        "tags" in payload &&
+        Array.isArray(payload.tags)
+          ? payload.tags
+          : null;
+      if (
+        !candidateTags ||
+        candidateTags.length === 0 ||
+        candidateTags.length > CACHE_LAB_ALLOWED_TAGS.length ||
+        !candidateTags.every((tag): tag is string => typeof tag === "string")
+      ) {
+        return Response.json(
+          { error: "tags must be a non-empty array of known cache tags." },
+          { status: 400 },
+        );
+      }
+
+      const tags = [...new Set(candidateTags)];
+      const unknownTags = tags.filter(
+        (tag) => !CACHE_LAB_ALLOWED_TAGS.includes(tag),
+      );
+      if (unknownTags.length > 0) {
+        return Response.json(
+          { error: `Unknown cache tag: ${unknownTags.join(", ")}` },
+          { status: 400 },
+        );
+      }
+
+      await updateTag(...tags);
+      return { invalidated: tags };
+    },
+    { name: "cacheInvalidate" },
+  ),
 
   path.json(
     "/products/:id",

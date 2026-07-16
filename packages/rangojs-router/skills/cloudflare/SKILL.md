@@ -129,8 +129,10 @@ export const router = createRouter<AppBindings>({
 });
 ```
 
-KV is required for durable PPR shells. `CFCacheStore` without `kv` can still
-cache segment/response entries in the Cache API, but its shell family is inert.
+PPR shells use Cache API as the per-colo L1 and KV as the durable cross-colo
+L2; a KV hit promotes the coupled shell envelope back into L1. KV remains
+required for this family. `CFCacheStore` without `kv` can still cache
+segment/response entries in Cache API, but its shell family is inert.
 
 ## Commands
 

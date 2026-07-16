@@ -4,6 +4,7 @@ export const routes = {
   apiDemo: "/api-demo",
   blog: "/blog",
   blogPost: "/blog/:slug",
+  cacheLab: "/cache-lab",
   counter: "/counter",
   documentCache: "/document-cache",
   fast: "/slow/fast",

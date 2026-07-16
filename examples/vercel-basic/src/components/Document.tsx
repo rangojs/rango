@@ -12,12 +12,15 @@ export function Document({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{
             __html: `
               * { box-sizing: border-box; margin: 0; padding: 0; }
-              body { font-family: system-ui, sans-serif; line-height: 1.6; padding: 2rem; max-width: 760px; margin: 0 auto; }
+              body { font-family: system-ui, sans-serif; line-height: 1.6; padding: 2rem; }
+              body > nav, body > main { margin-left: auto; margin-right: auto; max-width: 760px; }
+              body > main.cache-lab { max-width: 1080px; }
               nav { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
               nav a { margin-right: 1rem; color: #0070f3; text-decoration: none; }
               nav a:hover { text-decoration: underline; }
               h1 { margin-bottom: 1rem; }
               time { font-variant-numeric: tabular-nums; font-weight: 600; }
+              @media (max-width: 720px) { body { padding: 1rem; } }
             `,
           }}
         />
@@ -32,6 +35,9 @@ export function Document({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/cached")} data-testid="nav-cached">
             Cached
+          </Link>
+          <Link to={href("/cache-lab")} data-testid="nav-cache-lab">
+            Cache Lab
           </Link>
           <Link
             to={href("/ppr-inline-action")}

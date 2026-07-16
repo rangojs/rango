@@ -30,6 +30,9 @@ declare global {
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
+import { CacheLabPage } from "./pages/cache-lab.js";
+import { CACHE_LAB_TAGS } from "./cache-lab-contract.js";
+import { CacheLabPulseLoader } from "./cache-lab-data.js";
 import { AboutPage } from "./pages/about.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
@@ -513,6 +516,23 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // Deployable cache lab: two independently tagged "use cache" values
+        // rendered inside a tagged PPR shell with promised Meta. The paired e2e
+        // drives its authenticated /api/cache/invalidate endpoint and proves
+        // selective item refresh, shell-only recapture, and re-caching.
+        path(
+          "/cache-lab",
+          CacheLabPage,
+          {
+            name: "cacheLab",
+            ppr: {
+              ttl: 3600,
+              swr: 300,
+              tags: [CACHE_LAB_TAGS.shell],
+            },
+          },
+          () => [loader(CacheLabPulseLoader)],
+        ),
         // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per PAGE
         // ROUTE via the `ppr` path option — serving is integral to the router
         // (no middleware); the shell store is the app CFCacheStore (KV-backed
