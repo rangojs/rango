@@ -213,8 +213,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     await vi.waitFor(() => expect(decodeMock).toHaveBeenCalledTimes(1));
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
     const entry = consumePrefetch(wildcardKey);
     expect(entry).not.toBeNull();
 
@@ -245,9 +244,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(decodeMock).not.toHaveBeenCalled();
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     expect(
-      consumePrefetch(
-        "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
-      ),
+      consumePrefetch("v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1"),
     ).toBeNull();
   });
 
@@ -337,8 +334,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).not.toBeNull();
   });
 
@@ -363,8 +359,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     const sourceKey =
       "v1:abc\0http://localhost:4173/gallery\0/photo/42?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/photo/42?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/photo/42?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).toBeNull();
     expect(consumePrefetch(sourceKey)).not.toBeNull();
   });
@@ -478,8 +473,7 @@ describe('prefetchKey=":source" opt-out', () => {
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     const sourceKey =
       "v1:abc\0http://localhost:4173/home\0/dashboard?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/dashboard?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/dashboard?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).toBeNull();
     expect(consumePrefetch(sourceKey)).not.toBeNull();
   });
@@ -551,8 +545,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Consume via the source alias. This must NOT strand the wildcard
     // sibling's inflight flag after .finally() runs.
@@ -613,8 +606,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Same-source nav adopts via sourceKeyA first.
     const adopted = consumeInflightPrefetch(sourceKeyA);
@@ -648,8 +640,7 @@ describe('prefetchKey=":source" opt-out', () => {
     const { hasPrefetch } = await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Both aliases should be discoverable before anyone consumes.
     expect(hasPrefetch(sourceKeyA)).toBe(true);
@@ -682,8 +673,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyB =
       "v1:abc\0http://localhost:4173/b\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
     expect(consumeInflightPrefetch(sourceKeyB)).toBeNull();
     expect(consumeInflightPrefetch(wildcardKey)).toBeNull();
 
@@ -786,8 +776,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
     (window.location as any).pathname = "/home";
 
     const { hasPrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
     prefetchDirect("/blog", ["A0"], "v1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -841,8 +830,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
     (window.location as any).pathname = "/home";
 
     const { hasPrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
     prefetchDirect("/blog", ["A0"], "v1");
     // Let the fetch resolve and the `.then` publish the entry.
@@ -896,8 +884,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
 
     const { hasPrefetch, consumePrefetch } =
       await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
     // A publishes (stalled); its stall timer is armed for 30s.
     prefetchDirect("/blog", ["A0"], "v1");
@@ -943,8 +930,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
     (window.location as any).pathname = "/home";
 
     const { hasPrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
     prefetchQueued("/blog", ["A0"], "v1");
     // Drive the queue's idle/image waits so the item actually executes.
@@ -981,8 +967,7 @@ describe("hover prefetch stalled-fetch timeout (F4)", () => {
 
     const { hasPrefetch, consumePrefetch } =
       await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
     // Entry is cached (timer was cleared on settle, fetch was never aborted).
     expect(hasPrefetch(wildcardKey)).toBe(true);
@@ -1036,8 +1021,7 @@ describe("same-page cache poisoning regression", () => {
     });
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
     const consumed = consumePrefetch(wildcardKey);
     expect(consumed).not.toBeNull();
 
@@ -1078,8 +1062,7 @@ describe("same-page cache poisoning regression", () => {
     });
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
     consumePrefetch(wildcardKey);
 
     window.location.href = "http://localhost:4173/page/2";
@@ -1107,9 +1090,9 @@ describe("same-page cache poisoning regression", () => {
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
 
-    const key1 = "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const key2 = "v1:abc\0/page/2?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const key3 = "v1:abc\0/page/3?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const key1 = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
+    const key2 = "v1:abc\0/page/2?_rsc_partial=true&_rsc_v=v1";
+    const key3 = "v1:abc\0/page/3?_rsc_partial=true&_rsc_v=v1";
 
     window.location.href = "http://localhost:4173/page/list";
     (window.location as any).pathname = "/page/list";
@@ -1177,8 +1160,7 @@ describe("prefetch entry.complete clean-EOF gating (#622 follow-up)", () => {
     restoreGlobalProperty("navigator", originalNavigatorDescriptor);
   });
 
-  const WILDCARD_KEY =
-    "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+  const WILDCARD_KEY = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
   // Drain queued microtasks so the Promise.allSettled([payload, streamComplete])
   // callback that sets entry.complete has run.

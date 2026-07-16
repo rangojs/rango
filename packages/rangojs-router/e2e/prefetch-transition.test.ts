@@ -198,6 +198,44 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
+    test("retains a fully-prefetched sibling after navigating to another prefetched route", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const firstResponsePromise = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/slow-streaming?prefetch-sequence=first"),
+      );
+      await page.hover('[data-testid="nav-prefetch-sequence-first"]');
+      const firstResponse = await firstResponsePromise;
+
+      const secondResponsePromise = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/suspense-stream?prefetch-sequence=second"),
+      );
+      await page.hover('[data-testid="nav-prefetch-sequence-second"]');
+      const secondResponse = await secondResponsePromise;
+      await Promise.all([firstResponse.finished(), secondResponse.finished()]);
+
+      await testId(page, "nav-prefetch-sequence-first").click();
+      await expect(testId(page, "slow-streaming-message")).toContainText(
+        "Slow data loaded",
+        { timeout: 8000 },
+      );
+
+      await watchFlash(page, "suspense-stream-fallback");
+      await testId(page, "nav-prefetch-sequence-second").click();
+      await expect(testId(page, "suspense-stream-content")).toHaveText(
+        "resolved",
+        { timeout: 8000 },
+      );
+      expect(
+        await readFlash(page),
+        "a sibling prefetched from the original page must stay warm after the first navigation",
+      ).toBe(false);
+    });
+
     test("fully-prefetched nav whose CLIENT component suspends on mount reveals the layout fallback (does NOT hold the old page)", async ({
       page,
     }) => {
