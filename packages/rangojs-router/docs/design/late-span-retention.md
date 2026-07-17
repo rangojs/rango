@@ -1,10 +1,34 @@
 # Late-span retention on Cloudflare: what is proven, what is not
 
-Status: open investigation. The `rango.response` handoff marker is shipped
-(`src/router/instrument.ts` `PHASES.response`, wrapped at the tail of the
-request span in `src/rsc/handler.ts`); this doc covers the question that
+Status: partially field-confirmed. The `rango.response` handoff marker is
+shipped (`src/router/instrument.ts` `PHASES.response`, wrapped at the tail of
+the request span in `src/rsc/handler.ts`); this doc covers the question that
 marker deliberately does NOT answer: **does Cloudflare retain Rango phase
 spans that settle after `router.fetch()` returns?**
+
+## Field evidence (2026-07-16, deployed hec worker)
+
+A production trace of a canceled partial navigation settled two pieces:
+
+- **Platform spans created ~24 s after handoff, inside shell-capture waitUntil
+  work, ARE retained** in the same exported trace, parented by the async
+  context captured at task creation — and they survive client cancellation
+  (the root showed `outcome: canceled`; the capture still completed and its
+  kv_put closed the invocation).
+- The "~24 s of zero I/O" before the capture's spans was the per-isolate
+  serialized capture queue (`src/rsc/capture-queue.ts`): a predecessor link
+  can legitimately occupy the queue for two capture attempts (~15 s each,
+  `SHELL_CAPTURE_MAX_WAIT_MS`) plus the 400 ms retry delay. The invocation's
+  wall time closes when the LAST waitUntil settles, so a late capture stretches
+  the recorded duration; the client-cancel moment is not in the trace at all.
+
+Both findings motivated the `rango.background` span (`PHASES.background` in
+`src/router/instrument.ts`): each detached lane is now wrapped at its execution
+boundary, so post-handoff spans get an explanatory parent and queue parking
+shows up as `rango.background.queue_wait_ms` instead of dead air.
+Still unverified on a deployed worker: whether Rango's OWN construction-bound
+spans that SETTLE mid-stream (population 1) keep their recorded duration in
+the export, and the acceptance criteria below.
 
 ## Why you cannot answer this locally
 
@@ -32,21 +56,24 @@ reading a trace:
    below target first.
 2. **Post-handoff spans from SWR background revalidation.** These are entered
    AFTER `router.fetch()` returned, inside `waitUntil` work that re-establishes
-   the captured request context — and `_tracing` rides along in that context:
-   - `src/cache/document-cache.ts:387` — a STALE document hit re-runs the full
-     downstream pipeline (`runWithRequestContext(requestCtx, () => next())`)
-     in `waitUntil`: fresh `rango.middleware` / `rango.render` / `rango.ssr` /
-     `rango.loader` / `rango.handler` spans, all post-handoff. It cannot emit
-     a second `rango.response` — the finalization tail is outside `next()`.
-   - `src/router/segment-resolution/loader-cache.ts:331` — a STALE loader hit
-     re-executes the loader under the captured context (`wrapBackground`):
-     one post-handoff `rango.loader` span plus whatever the loader fetches.
-   - `src/cache/cache-runtime.ts:467` — "use cache" background revalidation
-     re-runs the cached fn under a derived context; the fn's own fetch/KV
-     operations get platform-automatic spans in the same event.
-   - Deliberate exception: PPR shell capture strips tracing
-     (`src/rsc/shell-capture.ts:1341` sets `derivedCtx._tracing = undefined`),
-     so captures never emit phase spans. Keep it that way.
+   the captured request context — and `_tracing` rides along in that context.
+   Each lane is now wrapped in a `rango.background` span (kind attribute per
+   lane), so these no longer appear as unexplained orphans:
+   - `createDocumentCacheMiddleware` in `src/cache/document-cache.ts` re-runs
+     the full downstream pipeline on a STALE document hit: fresh
+     `rango.middleware` / `rango.render` / `rango.ssr` / `rango.loader` /
+     `rango.handler` spans, all post-handoff. It cannot emit a second
+     `rango.response` — the finalization tail is outside `next()`.
+   - `executeLoaderData` in
+     `src/router/segment-resolution/loader-cache.ts` re-executes a STALE loader
+     under the captured context: one post-handoff `rango.loader` span plus
+     whatever the loader fetches.
+   - `registerCachedFunction` in `src/cache/cache-runtime.ts` re-runs a cached
+     function under a derived context; the function's own fetch/KV operations
+     get platform-automatic spans in the same event.
+   - PPR shell capture's `deriveShellCaptureContext` deliberately suppresses
+     inner phase spans, while `scheduleShellCapture` retains the outer
+     `rango.background` wrapper. Keep that split.
 3. **Detached work after client cancellation.** The client disconnects after
    the first chunk; workerd cancels the stream. Whether dependent work (and
    its spans) survives is a product question, not a telemetry one — see the
@@ -85,6 +112,21 @@ lift it or reproduce the shape in the target app:
 - Its delayed Cloudflare fetch/KV child span remains parented under it.
 - Response status, headers, byte count, first-chunk timing, and TTFB are
   unchanged versus a tracing-disabled control request.
+
+## Shipped mitigations (2026-07-16)
+
+Two of the risks this doc surfaced are now bounded in the router:
+
+- `timeouts.streamIdleMs` is ENFORCED (rsc/stream-idle.ts, wired at the
+  handler's response tail): a streamed body with no flow for the budget is
+  errored and its source render canceled, so a never-settling embedded promise
+  can no longer hold a connection open indefinitely. Opt-in, end-to-end idle
+  semantics.
+- The capture queue drops tasks that waited past
+  `CAPTURE_QUEUE_WAIT_BUDGET_MS` (15s) unrun (`skip-queue-timeout`, no
+  backoff), so a parked capture can no longer start an attempt the platform's
+  post-response waitUntil budget cannot cover; queue parking is observable via
+  `rango.background.queue_wait_ms`.
 
 ## Cancellation policy (decided up front)
 

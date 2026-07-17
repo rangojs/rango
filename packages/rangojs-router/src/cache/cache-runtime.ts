@@ -45,6 +45,7 @@ import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import {
   normalizeTags,
   recordRequestTags,
@@ -464,32 +465,45 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             // synchronous kickoff; its async continuations inherit it. The
             // DERIVED context goes in, so ambient _handleStore reads inside
             // the body resolve to the isolated store.
-            const scoped = runWithRequestContext(bgCtx, () =>
-              runWithCacheTagScope(() => fn.apply(this, args)),
-            );
-            const freshResult = await scoped.result;
-            bgStopCapture?.();
-            // Merge profile/DSL tags with runtime cacheTag() tags, read after
-            // awaiting so post-await cacheTag() calls are included. Normalize
-            // (drops empty profile tags, matching the invalidate path) + dedupe.
-            const freshTags = [
-              ...new Set(
-                normalizeTags([...(profile.tags ?? []), ...scoped.tags]),
+            //
+            // The span opens inside the request ALS and wraps the WHOLE task —
+            // fn kickoff through the store write — so its platform spans nest
+            // under rango.background and a slow or failing setItem is part of
+            // the traced revalidation, not an untraced tail.
+            await runWithRequestContext(bgCtx, () =>
+              observePhase(
+                PHASES.background("use-cache-revalidation"),
+                async () => {
+                  const scoped = runWithCacheTagScope(() =>
+                    fn.apply(this, args),
+                  );
+                  const freshResult = await scoped.result;
+                  bgStopCapture?.();
+                  // Merge profile/DSL tags with runtime cacheTag() tags, read
+                  // after awaiting so post-await cacheTag() calls are included.
+                  // Normalize (drops empty profile tags, matching the
+                  // invalidate path) + dedupe.
+                  const freshTags = [
+                    ...new Set(
+                      normalizeTags([...(profile.tags ?? []), ...scoped.tags]),
+                    ),
+                  ];
+                  recordRequestTags(freshTags, requestCtx);
+                  const serialized = await serializeResult(freshResult);
+                  if (serialized !== null) {
+                    const encodedHandles = bgCapture?.data
+                      ? await encodeHandles(bgCapture.data)
+                      : undefined;
+                    await store.setItem!(cacheKey, serialized, {
+                      handles: encodedHandles,
+                      ttl: profile.ttl,
+                      swr: profile.swr,
+                      tags: freshTags.length > 0 ? freshTags : undefined,
+                    });
+                  }
+                },
               ),
-            ];
-            recordRequestTags(freshTags, requestCtx);
-            const serialized = await serializeResult(freshResult);
-            if (serialized !== null) {
-              const encodedHandles = bgCapture?.data
-                ? await encodeHandles(bgCapture.data)
-                : undefined;
-              await store.setItem!(cacheKey, serialized, {
-                handles: encodedHandles,
-                ttl: profile.ttl,
-                swr: profile.swr,
-                tags: freshTags.length > 0 ? freshTags : undefined,
-              });
-            }
+            );
           } catch (bgError) {
             bgStopCapture?.();
             // Pass requestCtx explicitly: this runs in a detached background

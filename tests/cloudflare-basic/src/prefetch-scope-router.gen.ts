@@ -2,6 +2,7 @@
 export const routes = {
   prefetchScopeHome: "/",
   prefetchScopeResourceRoute: "/target.js",
+  prefetchScopeStreamHang: "/stream-hang",
   prefetchScopeTarget: "/target",
 } as const;
 export type routes = typeof routes;

@@ -8,17 +8,15 @@ vi.mock("../cache/segment-codec.js", () => ({
   deserializeResult: vi.fn(async (encoded: string) => JSON.parse(encoded)),
 }));
 
+function runBackgroundImmediately(p: Promise<unknown> | (() => unknown)): void {
+  if (typeof p === "function") p();
+  else p.catch(() => {});
+}
+
 // Mock request context
 const mockRequestCtx: any = {
   params: {},
-  waitUntil: vi.fn((p: Promise<unknown> | (() => unknown)) => {
-    // Execute immediately in tests
-    if (typeof p === "function") {
-      p();
-    } else {
-      p.catch(() => {});
-    }
-  }),
+  waitUntil: vi.fn(runBackgroundImmediately),
   _cacheStore: undefined,
 };
 
@@ -37,6 +35,7 @@ vi.mock("../internal-debug.js", () => ({
 
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache";
 import { createMetricsStore } from "../router/metrics";
+import { resolveTracing } from "../router/tracing.js";
 import { serializeResult, deserializeResult } from "../cache/segment-codec";
 import {
   getRequestContext,
@@ -88,7 +87,9 @@ function createLoaderEntry(loader: any, cacheOptions?: any): LoaderEntry {
 describe("loader-cache", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequestCtx.waitUntil = vi.fn(runBackgroundImmediately);
     mockRequestCtx._cacheStore = undefined;
+    mockRequestCtx._tracing = undefined;
   });
 
   // ==========================================================================
@@ -366,6 +367,25 @@ describe("loader-cache", () => {
     it("returns stale data and triggers background revalidation", async () => {
       const staleData = { name: "stale" };
       const freshData = { name: "fresh" };
+      const pendingBackground: Array<() => Promise<void>> = [];
+      const spans: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+      }> = [];
+      mockRequestCtx.waitUntil = vi.fn((fn: () => Promise<void>) => {
+        pendingBackground.push(fn);
+      });
+      mockRequestCtx._tracing = resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      });
       const store = createMockStore({
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
@@ -382,8 +402,18 @@ describe("loader-cache", () => {
 
       // Should return stale data immediately
       expect(result).toEqual(staleData);
-      // Background revalidation should have been scheduled
-      expect(mockRequestCtx.waitUntil).toHaveBeenCalled();
+      expect(loader).not.toHaveBeenCalled();
+      expect(spans).toHaveLength(0);
+
+      expect(pendingBackground).toHaveLength(1);
+      await pendingBackground[0]();
+
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+      expect(spans[0].attributes["rango.background.kind"]).toBe(
+        "loader-revalidation",
+      );
     });
   });
 

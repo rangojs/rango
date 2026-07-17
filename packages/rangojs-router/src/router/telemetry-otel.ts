@@ -6,11 +6,10 @@
  *   - createOTelTracing(tracer): the OTel adapter for the `tracing` SLOT — the
  *     canonical phase-span layer. It bridges observePhase's callback boundary
  *     onto OTel's callback-bound `startActiveSpan`, so the router's phase spans
- *     (rango.request/middleware/action/loader/handler/render/ssr/response) nest
- *     by async context and the loader's own OTel spans (db/fetch) land under
- *     rango.loader. This is the
- *     OTel equivalent of createCloudflareTracing — pass it to
- *     `createRouter({ tracing })`.
+ *     (rango.request/middleware/action/loader/handler/render/ssr/response/
+ *     background) nest by async context and the loader's own OTel spans
+ *     (db/fetch) land under rango.loader. This is the OTel equivalent of
+ *     createCloudflareTracing — pass it to `createRouter({ tracing })`.
  *
  *   - createOTelSink(tracer): the OTel adapter for the `telemetry` SLOT — a
  *     TelemetrySink for the EVENT-shaped facts (handler errors, cache decisions,

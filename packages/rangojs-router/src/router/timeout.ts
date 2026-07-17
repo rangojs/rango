@@ -11,7 +11,18 @@ export interface RouterTimeouts {
   actionMs?: number;
   /** Timeout for initial render/response production (ms). */
   renderStartMs?: number;
-  /** Timeout for idle streaming after render starts (ms). Reserved for PR 2. */
+  /**
+   * Timeout for idle streaming after the response is handed off (ms): when no
+   * chunk flows to the client for this long, the body stream is errored with a
+   * RouterTimeoutError ("stream-idle") and the source render is canceled —
+   * bounding hangs from never-settling promises embedded in the payload.
+   * END-TO-END semantics: a stalled slow client counts as idle the same as a
+   * wedged producer, so pick generous budgets (seconds). Opt-in (unset =
+   * unbounded, and the `timeout` shorthand deliberately does not apply);
+   * onTimeout does NOT fire — no replacement Response can be served
+   * mid-stream — the trip reports via onError + the request.timeout event.
+   * Enforcement: rsc/stream-idle.ts, wired at the handler's response tail.
+   */
   streamIdleMs?: number;
 }
 

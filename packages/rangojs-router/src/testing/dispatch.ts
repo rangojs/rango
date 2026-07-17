@@ -151,9 +151,11 @@ import type { TelemetrySink } from "../router/telemetry.js";
 import {
   RouterTimeoutError,
   createDefaultTimeoutResponse,
+  isTimeoutEnabled,
   withTimeout,
 } from "../router/timeout.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
+import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -854,7 +856,59 @@ export async function dispatch<TEnv = any>(
       // it leaves -- a cross-origin Location is rewritten to the basename root
       // unless redirect(url, { external: true }) opted out. Soft partial/action
       // redirects are already resolved at createSimpleRedirectResponse time.
-      return guardOutgoingRedirect(finalResponse, url.origin, router.basename);
+      const guardedResponse = guardOutgoingRedirect(
+        finalResponse,
+        url.origin,
+        router.basename,
+      );
+
+      // Mirror production's stream-idle watchdog (handler.ts response tail),
+      // same gating and reporting — dispatch is the userland dogfood surface
+      // for timeouts.streamIdleMs, so the primitive carries the real wiring,
+      // not a stub. Websocket check FIRST (an upgrade response's body getter
+      // must never be poked); onTimeout does not apply mid-stream.
+      const streamIdleMs = router.timeouts?.streamIdleMs;
+      if (
+        isTimeoutEnabled(streamIdleMs) &&
+        !isWebSocketUpgradeResponse(guardedResponse) &&
+        guardedResponse.body
+      ) {
+        return applyStreamIdleTimeout(
+          guardedResponse,
+          streamIdleMs!,
+          (trip) => {
+            invokeOnError(
+              router.onError,
+              trip.error,
+              "handler",
+              {
+                request: req,
+                url,
+                env,
+                handledByBoundary: false,
+                metadata: {
+                  timeout: true,
+                  phase: "stream-idle",
+                  durationMs: trip.totalMs,
+                },
+              },
+              "RSC",
+            );
+            if (sink) {
+              safeEmit(resolveSink(sink), {
+                type: "request.timeout",
+                timestamp: performance.now(),
+                requestId: telemetryRequestId,
+                phase: "stream-idle",
+                pathname: url.pathname,
+                durationMs: trip.totalMs,
+                customHandler: false,
+              });
+            }
+          },
+        );
+      }
+      return guardedResponse;
     } catch (error) {
       if (sink) {
         if (error instanceof Response) {
