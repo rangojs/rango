@@ -136,6 +136,32 @@ describe("createVercelTracing", () => {
     expect(names).not.toContain("rango.loader");
   });
 
+  it("emits rango.response nested under the request; spans:{response:false} suppresses only it", () => {
+    // Parity with the Cloudflare runner: the response phase is a first-class
+    // toggleable phase on every platform.
+    const on = createMockOtelTracer();
+    const resolvedOn = resolveTracing(
+      createVercelTracing({ tracer: on.tracer }),
+    );
+    traceSpan(resolvedOn, "request", "rango.request", () =>
+      traceSpan(resolvedOn, "response", "rango.response", () => "ok"),
+    );
+    expect(on.spans.map((s) => [s.name, s.parent])).toEqual([
+      ["rango.request", undefined],
+      ["rango.response", "rango.request"],
+    ]);
+
+    const off = createMockOtelTracer();
+    const resolvedOff = resolveTracing(
+      createVercelTracing({ tracer: off.tracer, spans: { response: false } }),
+    );
+    const out = traceSpan(resolvedOff, "request", "rango.request", () =>
+      traceSpan(resolvedOff, "response", "rango.response", () => "ok"),
+    );
+    expect(out).toBe("ok");
+    expect(off.spans.map((s) => s.name)).toEqual(["rango.request"]);
+  });
+
   it("defaults to the global OTel tracer when none is provided", () => {
     const { tracer, spans } = createMockOtelTracer();
     const getTracerCalls: Array<string | undefined> = [];

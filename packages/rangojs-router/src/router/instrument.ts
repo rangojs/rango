@@ -176,6 +176,23 @@ export const PHASES = {
     tracePhase: "ssr",
     spanName: "rango.ssr",
   } as PhaseSpec,
+
+  /** Final response construction + host handoff: opened AFTER downstream
+   * middleware/core execution returns a Response, wrapping only finalization
+   * (redirect interception/guarding, Server-Timing mutation, final response
+   * selection) and ending immediately before the router handler returns the
+   * response to the host. Handoff-bound, never drain-bound — it must never
+   * read, tee, buffer, or await response.body, so it cannot regress streaming.
+   * At most one per traced request; absent when the request throws before a
+   * response exists. Span only (metric:false) — a co-emitted metric would
+   * circularly mutate the Server-Timing header this phase itself finalizes.
+   * On Cloudflare it may report 0 ms (non-I/O timers are frozen); its position
+   * and attributes (status/mode/body kind, set by the handler) are the value. */
+  response: {
+    metric: false,
+    tracePhase: "response",
+    spanName: "rango.response",
+  } as PhaseSpec,
 } as const;
 
 /** Apply a phase spec's static attributes to a span (the no-op span ignores them). */
@@ -209,9 +226,10 @@ function recordPhaseMetric(
  * returns a promise both the metric duration and the span end when it settles.
  *
  * This is the ONLY phase primitive: every phase (request/middleware/action/
- * loader/handler/render/ssr) is construction-bound — the span and metric settle
- * when fn's own work completes (for the streaming phases, when the RSC/HTML
- * stream is constructed, NOT when the body drains). Instrumentation is strictly
+ * loader/handler/render/ssr/response) is construction-bound — the span and
+ * metric settle when fn's own work completes (for the streaming phases, when
+ * the RSC/HTML stream is constructed, NOT when the body drains; for response,
+ * when finalization hands the stream to the host). Instrumentation is strictly
  * best-effort: it never wraps or buffers the response and adds no work on the
  * streaming path, so it cannot regress response latency or streaming. A loader
  * that resolves while the body streams therefore keeps a rango.loader span that
