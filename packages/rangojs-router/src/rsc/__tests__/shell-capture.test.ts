@@ -19,8 +19,10 @@ import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
   getRequestContext,
+  runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { resolveTracing } from "../../router/tracing.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { CacheScope } from "../../cache/cache-scope.js";
 import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
@@ -1488,6 +1490,63 @@ describe("runShellCapture", () => {
     scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
     expect(captured).toHaveLength(2);
     await captured[1]!();
+  });
+
+  it("wraps the background capture in ONE rango.background span (kind=shell-capture), inner phase spans suppressed", async () => {
+    const captured: Array<() => Promise<void>> = [];
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<body>x</body>"),
+        postponed: null,
+      })),
+    );
+    const reqCtx = makeReqCtx();
+    const spans: Array<{
+      name: string;
+      attributes: Record<string, unknown>;
+    }> = [];
+    (reqCtx as any)._tracing = resolveTracing({
+      runner: (name, fn) => {
+        const record = { name, attributes: {} as Record<string, unknown> };
+        spans.push(record);
+        return fn({
+          setAttribute(k, v) {
+            record.attributes[k] = v;
+          },
+        });
+      },
+    });
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    const request = new Request("http://localhost/span");
+    const url = new URL("http://localhost/span");
+
+    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
+      key: "/span:shell",
+      buildVersion: "test-build",
+      store: { putShell } as any,
+    });
+
+    expect(captured).toHaveLength(1);
+    // No span until the task actually runs.
+    expect(spans).toHaveLength(0);
+    // Production propagates the request ALS into the waitUntil continuation;
+    // the harness intercepts waitUntil, so re-establish it around the drain.
+    await runWithRequestContext(reqCtx as any, () => captured[0]!());
+
+    expect(putShell).toHaveBeenCalledTimes(1);
+    // Exactly ONE span — the wrapper. The capture's inner phase spans stay
+    // suppressed (deriveShellCaptureContext strips _tracing), so the capture
+    // re-render must NOT add a duplicate rango.ssr/render/loader set.
+    expect(spans.map((s) => s.name)).toEqual(["rango.background"]);
+    const attrs = spans[0].attributes;
+    expect(attrs["rango.background.kind"]).toBe("shell-capture");
+    expect(attrs["rango.shell_key"]).toBe("/span:shell");
+    expect(attrs["rango.background.outcome"]).toBe("stored");
+    expect(typeof attrs["rango.background.queue_wait_ms"]).toBe("number");
   });
 
   it("loads a lazy SSR module only inside the background capture task", async () => {

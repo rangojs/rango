@@ -145,10 +145,13 @@ const router = createRouter({ document: Document, urls: urlpatterns, tracing });
 These factories return a `RouterTracingConfig` for the same `tracing` slot;
 `telemetry` stays independent (events only, no phase spans). Phase spans:
 `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`,
-`rango.handler`, `rango.render`, `rango.ssr`, `rango.response` — the same
-phases the `debugPerformance` timeline shows, co-emitted from one site.
-Off-platform (no Cloudflare tracing destination / no OTel SDK) every span call
-is a transparent pass-through, so the request behaves as if tracing were off.
+`rango.handler`, `rango.render`, `rango.ssr`, `rango.response`,
+`rango.background`. All share the `PHASES` registry and `observePhase`
+execution boundary with `debugPerformance`; phases with `metric: false` either
+use finer-grained perf rows or, for `response` and `background`, remain
+span-only. Off-platform (no Cloudflare tracing destination / no OTel SDK) every
+span call is a transparent pass-through, so the request behaves as if tracing
+were off.
 
 `rango.response` is the explicit handoff marker: at most one per traced
 request, a direct child of `rango.request`, wrapping only response finalization
@@ -164,6 +167,17 @@ requests legitimately have no `rango.render`/`rango.ssr`/`rango.handler` spans.
 On deployed Workers it may read 0 ms (frozen non-I/O timers); its position and
 attributes are the value. Disable per-response billing overhead at volume with
 `spans: { response: false }`.
+
+`rango.background` wraps detached waitUntil work — PPR shell captures and SWR
+background revalidations — that runs after the foreground spans ended. Without
+it, a capture or revalidation shows up as an unexplained wave of orphan
+KV/fetch spans minutes into a trace. `rango.background.kind` names the lane
+(`shell-capture` / `document-revalidation` / `loader-revalidation` /
+`use-cache-revalidation`); the shell-capture lane also carries
+`rango.shell_key`, `rango.background.outcome`, and
+`rango.background.queue_wait_ms` (a capture parked behind the per-isolate
+capture queue reads as span duration, not dead air). Toggle with
+`spans: { background: false }`.
 
 Custom sinks implement `emit(event)`:
 

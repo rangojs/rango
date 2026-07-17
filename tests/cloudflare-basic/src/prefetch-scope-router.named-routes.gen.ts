@@ -2,6 +2,7 @@
 export const NamedRoutes = {
   prefetchScopeHome: "/__prefetch-scope",
   prefetchScopeResourceRoute: "/__prefetch-scope/target.js",
+  prefetchScopeStreamHang: "/__prefetch-scope/stream-hang",
   prefetchScopeTarget: "/__prefetch-scope/target",
 } as const;
 

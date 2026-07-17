@@ -115,7 +115,14 @@ runs inside the guarded background task; the Flight response never waits for it
 and setup failure cannot turn the already-rendered navigation into a 500.
 Cross-key capture execution remains
 serialized and admits at most 32 queued/running captures per isolate; excess
-best-effort captures are dropped and may retry on a later request.
+best-effort captures are dropped and may retry on a later request. A capture
+that WAITED past `CAPTURE_QUEUE_WAIT_BUDGET_MS` (15s, one attempt's budget)
+behind a slow predecessor link is likewise dropped unrun (`skip-queue-timeout`,
+no backoff) rather than starting an attempt the platform's ~30s post-response
+waitUntil budget can no longer cover — field-observed as a navigation-shell
+capture parked ~24s and finishing only because the client's cancel record
+closed late. Queue parking is visible as `rango.background.queue_wait_ms` on
+the capture's span and `queue-wait=` on the debug event.
 
 The partial response reports the actual outcome in `x-rango-ppr-replay`:
 `HIT; freshness=fresh|stale` or `BYPASS; reason=<bounded-token>`. The matching
