@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CaptureQueueFullError,
+  CaptureQueueWaitTimeoutError,
   enqueueSerializedCapture,
   MAX_ADMITTED_CAPTURES,
 } from "../capture-queue.js";
@@ -89,5 +90,55 @@ describe("enqueueSerializedCapture", () => {
     await expect(
       enqueueSerializedCapture(async () => {}),
     ).resolves.toBeUndefined();
+  });
+
+  it("drops a task AT the wait budget while the predecessor is still parked; serialization survives", async () => {
+    let releasePrior!: () => void;
+    const priorGate = new Promise<void>((resolve) => {
+      releasePrior = resolve;
+    });
+    const prior = enqueueSerializedCapture(() => priorGate);
+
+    let ran = false;
+    const dropped = enqueueSerializedCapture(
+      async () => {
+        ran = true;
+      },
+      { maxQueueWaitMs: 10 },
+    );
+
+    // The rejection lands at the budget — WITHOUT the predecessor releasing.
+    // (Regression: the old implementation only checked elapsed time after the
+    // predecessor settled, so this await would hang here.)
+    await expect(dropped).rejects.toBeInstanceOf(CaptureQueueWaitTimeoutError);
+    await expect(dropped).rejects.toMatchObject({
+      name: "CaptureQueueWaitTimeoutError",
+      waitedMs: expect.any(Number),
+    });
+    expect(ran).toBe(false);
+
+    // Serialization is preserved through the drop: a successor enqueued now
+    // must still wait for the STILL-RUNNING predecessor, never run
+    // concurrently with it.
+    let successorRan = false;
+    const successor = enqueueSerializedCapture(async () => {
+      successorRan = true;
+    });
+    await new Promise<void>((r) => setTimeout(r, 20));
+    expect(successorRan).toBe(false);
+
+    releasePrior();
+    await prior;
+    await successor;
+    expect(successorRan).toBe(true);
+  });
+
+  it("runs a task whose wait stayed inside the budget", async () => {
+    let ran = false;
+    // Empty queue: the microtask-scale wait is far below the default budget.
+    await enqueueSerializedCapture(async () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
   });
 });

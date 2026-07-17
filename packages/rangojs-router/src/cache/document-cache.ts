@@ -24,6 +24,7 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
@@ -378,29 +379,44 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
         runBackground(requestCtx, async () => {
           try {
-            // Re-establish the request-context ALS around the background
-            // re-render: next() re-runs the full handler pipeline, and on
-            // workerd a waitUntil task runs detached from the request's I/O
-            // context, so a handler/component reading getRequestContext() would
-            // otherwise throw. Same fix as the route-level/use-cache background
-            // revalidation paths.
-            const fresh = await runWithRequestContext(requestCtx, () => next());
-            const directives = shouldCacheResponse(fresh);
+            // Re-establish the request-context ALS around the whole background
+            // task: next() re-runs the full handler pipeline, and on workerd a
+            // waitUntil task runs detached from the request's I/O context, so a
+            // handler/component reading getRequestContext() would otherwise
+            // throw. Same fix as the route-level/use-cache background
+            // revalidation paths. The rango.background span (kind=
+            // document-revalidation) wraps the re-render AND the store write so
+            // the task's spans — the re-run's own rango.* set and the drain/put
+            // platform spans — nest under one explanatory parent instead of
+            // dangling under the ended foreground phases. Running the put
+            // inside the ALS matches the MISS path, where putResponse already
+            // executes within the foreground request context.
+            await runWithRequestContext(requestCtx, () =>
+              observePhase(
+                PHASES.background("document-revalidation"),
+                async () => {
+                  const fresh = await next();
+                  const directives = shouldCacheResponse(fresh);
 
-            if (directives && fresh.body) {
-              // Background revalidation: nothing streams to a client, so drain
-              // the fresh render fully before snapshotting tags (same
-              // render-complete barrier as the miss path).
-              const body = await new Response(fresh.body).arrayBuffer();
-              await store.putResponse!(
-                cacheKey,
-                new Response(body, fresh),
-                directives.sMaxAge!,
-                directives.staleWhileRevalidate,
-                collectRequestTags(requestCtx),
-              );
-              log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
-            }
+                  if (!directives || !fresh.body) return;
+
+                  // Background revalidation: nothing streams to a client, so
+                  // drain the fresh render fully before snapshotting tags
+                  // (same render-complete barrier as the miss path).
+                  const body = await new Response(fresh.body).arrayBuffer();
+                  await store.putResponse!(
+                    cacheKey,
+                    new Response(body, fresh),
+                    directives.sMaxAge!,
+                    directives.staleWhileRevalidate,
+                    collectRequestTags(requestCtx),
+                  );
+                  log(
+                    `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
+                  );
+                },
+              ),
+            );
           } catch (error) {
             // Pass requestCtx explicitly: this runs in a detached waitUntil task
             // where the ALS context is gone, so onError only fires if we hand it

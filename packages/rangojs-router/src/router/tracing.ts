@@ -1,11 +1,12 @@
 /**
  * Span tracing hook (platform-agnostic).
  *
- * The core router emits its existing performance phases (request, middleware,
- * action, loaders, handler, render, ssr, response) as spans by calling
- * traceSpan() at a small set of execution boundaries. When no tracing is configured the call is a direct
- * pass-through: fn is invoked with a no-op span, with no wrapper and no
- * allocation, so a non-traced request behaves exactly as before.
+ * The core router emits its observable phases (request, middleware, action,
+ * loaders, handler, render, ssr, response, background) as spans by calling
+ * traceSpan() at a small set of execution boundaries. When no tracing is
+ * configured the call is a direct pass-through: fn is invoked with a no-op
+ * span, with no wrapper and no allocation, so a non-traced request behaves
+ * exactly as before.
  *
  * A platform integration supplies a SpanRunner that wraps fn in a real span.
  * Two runners ship: the Cloudflare one (createCloudflareTracing in
@@ -31,7 +32,8 @@
  * track() at the call site), rango.render (render:total:<route>; normal AND
  * action-revalidation renders), rango.ssr (ssr:render-html), rango.response
  * (span-only; final response construction + host handoff — the explicit
- * stream-handoff marker, see below).
+ * stream-handoff marker), and rango.background (span-only; detached work, see
+ * below).
  *
  * Span-duration caveat (best-effort, never buffers): a span ends when its
  * callback's value (or promise) settles. For the streaming phases (request,
@@ -48,6 +50,13 @@
  * before the handler returns the Response to the host. It is handoff-bound,
  * never drain-bound — it never reads, tees, or awaits response.body, and it is
  * absent when the request throws before a response exists.
+ *
+ * rango.background wraps DETACHED work (waitUntil tasks that outlive the
+ * response): PPR shell captures and SWR background revalidations. It is the
+ * explanatory parent for spans those tasks produce after the foreground
+ * phases ended — without it, post-handoff work reads as orphan spans dangling
+ * under an ended parent. See PHASES.background (instrument.ts) for the lane
+ * kinds and per-lane inner-span policy.
  *
  * Both shipped runners (Cloudflare, OTel) keep the core agnostic: the
  * platform-specific bridge lives at the edge behind the SpanRunner contract.
@@ -77,7 +86,8 @@ export type TracePhase =
   | "handler"
   | "render"
   | "ssr"
-  | "response";
+  | "response"
+  | "background";
 
 /**
  * Per-phase span toggles. Omitted phases default to enabled. Derived from
@@ -132,6 +142,7 @@ const ALL_PHASES_ON: Record<TracePhase, boolean> = {
   render: true,
   ssr: true,
   response: true,
+  background: true,
 };
 
 /**
@@ -161,6 +172,7 @@ export function resolveTracing(
           render: spans.render ?? true,
           ssr: spans.ssr ?? true,
           response: spans.response ?? true,
+          background: spans.background ?? true,
         }
       : ALL_PHASES_ON,
   };

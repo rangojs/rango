@@ -229,6 +229,81 @@ function runTraceSpec(f: Fixture): void {
     expect(html).toContain("Live price:");
   });
 
+  test("records a rango.background span for the shell capture after handoff", async ({
+    page,
+  }) => {
+    // A ppr'd param route gives every run a UNIQUE shell key, so the capture
+    // is always scheduled (an already-stored key skips it via the stampede/
+    // backoff guards). The token doubles as the tracer-stash key: the handoff
+    // header can never contain post-handoff spans, so the test polls
+    // __trace_read for the SAME tracer until the background capture lands.
+    //
+    // Queue-pressure hardening: the suite shares one server, so sibling
+    // suites' captures occupy the serialized per-isolate queue — this capture
+    // can legitimately terminate as skip-capacity / skip-queue-timeout. Those
+    // outcomes are TERMINAL for that tracer (re-polling can never recover),
+    // so the request+token move inside the retry: a skipped attempt starts
+    // over with a fresh key instead of flaking.
+    test.setTimeout(90_000);
+    const attemptCapture = async () => {
+      const token = `bg-${crypto.randomUUID()}`;
+      const res = await page.request.get(
+        f.url(`/ppr-nameless/${token}?__trace_debug=${token}`),
+        { headers: { accept: "text/html" } },
+      );
+      expect(res.status()).toBe(200);
+
+      // Poll THIS tracer until the capture reaches a terminal outcome.
+      const deadline = Date.now() + 25_000;
+      for (;;) {
+        const read = await page.request.get(f.url(`/?__trace_read=${token}`));
+        expect(read.status()).toBe(200);
+        const roots = decodeTraceHeader(await read.text());
+        const background = findNode(roots, "rango.background");
+        const outcome = background?.attributes["rango.background.outcome"];
+        if (outcome !== undefined) return { roots, background: background! };
+        if (Date.now() > deadline) {
+          throw new Error("capture reached no terminal outcome within 25s");
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    };
+
+    let result = await attemptCapture();
+    for (
+      let retry = 0;
+      retry < 2 &&
+      String(
+        result.background.attributes["rango.background.outcome"],
+      ).startsWith("skip-");
+      retry++
+    ) {
+      // Parked behind sibling captures — try again under a fresh key.
+      result = await attemptCapture();
+    }
+    const { roots, background } = result;
+
+    expect(background.attributes["rango.background.kind"]).toBe(
+      "shell-capture",
+    );
+    expect(typeof background.attributes["rango.shell_key"]).toBe("string");
+    // Outcome pins the whole task (queue wait -> attempt -> store) inside
+    // the span.
+    expect(background.attributes["rango.background.outcome"]).toBe("stored");
+    expect(typeof background.attributes["rango.background.queue_wait_ms"]).toBe(
+      "number",
+    );
+    // Inner suppression: the capture re-render must NOT emit its own
+    // rango.* phase set under the wrapper (platform spans are invisible to
+    // this recorder, so the wrapper records no children).
+    expect(background.children).toHaveLength(0);
+    // The wrapper is attached to the triggering request's trace, not a
+    // detached root.
+    const request = findNode(roots, "rango.request");
+    expect(request, "expected the foreground rango.request").toBeTruthy();
+    expect(hasDescendant(request!, "rango.background")).toBe(true);
+  });
+
   test("does not emit spans without __trace_debug", async ({ page }) => {
     const res = await page.request.get(f.url("/blog"));
     expect(res.status()).toBe(200);

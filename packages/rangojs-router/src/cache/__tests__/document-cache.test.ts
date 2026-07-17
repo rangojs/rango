@@ -132,10 +132,16 @@ describe("createDocumentCacheMiddleware", () => {
 
     // Mock getRequestContext to return our mock. runWithRequestContext is
     // exercised by the background document revalidation (it re-establishes the
-    // request-context ALS around next()); the mock just invokes the callback.
+    // request-context ALS around next()); delegate to the REAL implementation
+    // (statically imported above, real ALS) so ambient reads inside the
+    // background task — observePhase's _getRequestContext for the
+    // rango.background span, ctx.rendered() gating — resolve the threaded
+    // context exactly like production. _getRequestContext mirrors that for
+    // importers bound to this mocked registry.
     vi.doMock("../../server/request-context.js", () => ({
       getRequestContext: () => mockRequestCtx,
-      runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
+      _getRequestContext: () => mockRequestCtx,
+      runWithRequestContext,
     }));
   });
 
@@ -569,6 +575,30 @@ describe("createDocumentCacheMiddleware", () => {
     it("should return stale response and revalidate in background", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
+      const { resolveTracing } = await import("../../router/tracing.js");
+      const spans: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+      }> = [];
+      (mockRequestCtx as any)._tracing = resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      });
+
+      // Capture the background task WITHOUT invoking it (the shared harness
+      // mock runs it inline), so the foreground/background split is
+      // deterministic for the span assertions below.
+      const backgroundTasks: Array<() => Promise<void>> = [];
+      (mockRequestCtx as any).waitUntil = vi.fn((fn: () => Promise<void>) => {
+        backgroundTasks.push(fn);
+      });
 
       // Pre-populate cache with stale entry
       const staleResponse = new Response("Stale content", {
@@ -598,14 +628,20 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.get("x-document-cache-status")).toBe("STALE");
       expect(await response.text()).toBe("Stale content");
 
-      // Background revalidation should be scheduled
+      // Background revalidation should be scheduled but not yet run: no
+      // rango.background span exists before the task executes.
       expect(mockRequestCtx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(spans).toHaveLength(0);
 
       // Execute background task
-      await vi.runAllTimersAsync();
+      await backgroundTasks[0]!();
 
       // next() should have been called for revalidation
       expect(next).toHaveBeenCalledTimes(1);
+      expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+      expect(spans[0].attributes["rango.background.kind"]).toBe(
+        "document-revalidation",
+      );
     });
 
     it("reports a background revalidation write failure via _reportBackgroundError (captured requestCtx)", async () => {

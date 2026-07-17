@@ -77,6 +77,7 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
+import { applyStreamIdleTimeout } from "./stream-idle.js";
 import {
   checkRequestOrigin,
   ORIGIN_CHECK_PHASE_BY_MODE,
@@ -715,6 +716,59 @@ export function createRSCHandler<
             router.basename,
           );
 
+          // Stream-idle watchdog (opt-in via timeouts.streamIdleMs): bounds
+          // end-to-end idle flow on the streamed body — see rsc/stream-idle.ts
+          // for the semantics. Applied at this finalization chokepoint so every
+          // streaming exit is covered; websocket upgrades must never be
+          // reconstructed and bodiless responses have nothing to bound. The
+          // trip fires POST-handoff (the request ALS may be gone), so it
+          // reports via the eagerly captured surfaces — callOnError +
+          // router.telemetry directly — mirroring handleStore.onError.
+          // onTimeout does NOT apply: the response already left the handler,
+          // so no replacement Response can be served mid-stream.
+          let finalResponse = guarded;
+          const streamIdleMs = router.timeouts.streamIdleMs;
+          // Websocket check FIRST: a workerd upgrade response must never have
+          // its body getter poked (same invariant as the body_kind attribute
+          // below).
+          if (
+            isTimeoutEnabled(streamIdleMs) &&
+            !isWebSocketUpgradeResponse(guarded) &&
+            guarded.body
+          ) {
+            const routeKey = requestContext._routeName;
+            finalResponse = applyStreamIdleTimeout(
+              guarded,
+              streamIdleMs!,
+              (tripInfo) => {
+                callOnError(tripInfo.error, "handler", {
+                  request,
+                  url,
+                  env,
+                  routeKey,
+                  handledByBoundary: false,
+                  metadata: {
+                    timeout: true,
+                    phase: "stream-idle",
+                    durationMs: tripInfo.totalMs,
+                  },
+                });
+                if (router.telemetry) {
+                  safeEmit(resolveSink(router.telemetry), {
+                    type: "request.timeout",
+                    timestamp: performance.now(),
+                    requestId: getRequestId(request),
+                    phase: "stream-idle",
+                    pathname: url.pathname,
+                    routeKey,
+                    durationMs: tripInfo.totalMs,
+                    customHandler: false,
+                  });
+                }
+              },
+            );
+          }
+
           // Attributes describe the response actually handed to the host (after
           // unsafe-redirect replacement), low-cardinality only. body_kind checks
           // the websocket marker before the body getter so a workerd upgrade
@@ -722,7 +776,7 @@ export function createRSCHandler<
           // the stream.
           responseSpan.setAttribute(
             "http.response.status_code",
-            guarded.status,
+            finalResponse.status,
           );
           responseSpan.setAttribute(
             "rango.response.mode",
@@ -730,13 +784,13 @@ export function createRSCHandler<
           );
           responseSpan.setAttribute(
             "rango.response.body_kind",
-            isWebSocketUpgradeResponse(guarded)
+            isWebSocketUpgradeResponse(finalResponse)
               ? "websocket"
-              : guarded.body === null
+              : finalResponse.body === null
                 ? "empty"
                 : "stream",
           );
-          return guarded;
+          return finalResponse;
         });
       }),
     );
