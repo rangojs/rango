@@ -29,12 +29,9 @@ let admittedCaptures = 0;
 let captureRunning = false;
 
 interface QueuedCapture {
-  task: () => Promise<void>;
   waitStart: number;
   state: "waiting" | "running" | "settled";
-  waitTimer?: ReturnType<typeof setTimeout>;
-  resolve: () => void;
-  reject: (reason: unknown) => void;
+  signalStart: () => void;
 }
 
 const documentCaptures: QueuedCapture[] = [];
@@ -107,30 +104,69 @@ export function enqueueSerializedCapture(
   }
   admittedCaptures++;
 
-  return new Promise<void>((resolve, reject) => {
-    const queued: QueuedCapture = {
-      task,
-      waitStart: performance.now(),
-      state: "waiting",
-      resolve,
-      reject,
-    };
-    const budget = opts?.maxQueueWaitMs ?? CAPTURE_QUEUE_WAIT_BUDGET_MS;
-    queued.waitTimer = setTimeout(() => {
-      if (queued.state !== "waiting") return;
-      queued.state = "settled";
-      admittedCaptures--;
-      reject(
-        new CaptureQueueWaitTimeoutError(performance.now() - queued.waitStart),
-      );
-    }, budget);
-    (queued.waitTimer as { unref?: () => void }).unref?.();
-
-    const queue =
-      opts?.priority === "document" ? documentCaptures : navigationCaptures;
-    queue.push(queued);
-    startNextCapture();
+  let signalStart!: () => void;
+  const startGate = new Promise<void>((resolve) => {
+    signalStart = resolve;
   });
+  const queued: QueuedCapture = {
+    waitStart: performance.now(),
+    state: "waiting",
+    signalStart,
+  };
+
+  const completion = (async () => {
+    const budget = opts?.maxQueueWaitMs ?? CAPTURE_QUEUE_WAIT_BUDGET_MS;
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+    const waitTimedOut = await Promise.race([
+      startGate.then(() => false),
+      new Promise<boolean>((resolve) => {
+        waitTimer = setTimeout(() => {
+          if (queued.state !== "waiting") return;
+          queued.state = "settled";
+          admittedCaptures--;
+          resolve(true);
+        }, budget);
+        (waitTimer as { unref?: () => void }).unref?.();
+      }),
+    ]);
+    if (waitTimer) clearTimeout(waitTimer);
+    if (waitTimedOut) {
+      throw new CaptureQueueWaitTimeoutError(
+        performance.now() - queued.waitStart,
+      );
+    }
+
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const taskPromise = Promise.resolve()
+      .then(task)
+      .finally(() => {
+        // A capped capture releases serialization, but its detached task still
+        // counts against admission until it actually settles.
+        admittedCaptures--;
+      });
+    const cap = new Promise<void>((resolve) => {
+      capTimer = setTimeout(resolve, QUEUE_LINK_CAP_MS);
+      (capTimer as { unref?: () => void }).unref?.();
+    });
+
+    try {
+      await Promise.race([taskPromise, cap]);
+    } finally {
+      if (capTimer) clearTimeout(capTimer);
+      queued.state = "settled";
+      captureRunning = false;
+      // Handoff must happen before this caller's waitUntil promise settles.
+      // Resolving first lets workerd terminate the context with the queue lock
+      // still held, permanently parking later captures in the isolate.
+      startNextCapture();
+    }
+  })();
+
+  const queue =
+    opts?.priority === "document" ? documentCaptures : navigationCaptures;
+  queue.push(queued);
+  startNextCapture();
+  return completion;
 }
 
 function takeNextCapture(): QueuedCapture | undefined {
@@ -150,27 +186,5 @@ function startNextCapture(): void {
 
   captureRunning = true;
   queued.state = "running";
-  if (queued.waitTimer) clearTimeout(queued.waitTimer);
-
-  let capTimer: ReturnType<typeof setTimeout> | undefined;
-  const taskPromise = Promise.resolve()
-    .then(queued.task)
-    .finally(() => {
-      // A capped capture releases serialization, but its detached task still
-      // counts against admission until it actually settles.
-      admittedCaptures--;
-    });
-  const cap = new Promise<void>((resolve) => {
-    capTimer = setTimeout(resolve, QUEUE_LINK_CAP_MS);
-    (capTimer as { unref?: () => void }).unref?.();
-  });
-
-  Promise.race([taskPromise, cap])
-    .then(queued.resolve, queued.reject)
-    .finally(() => {
-      queued.state = "settled";
-      if (capTimer) clearTimeout(capTimer);
-      captureRunning = false;
-      startNextCapture();
-    });
+  queued.signalStart();
 }

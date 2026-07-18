@@ -120,6 +120,10 @@ navigation-only captures, while preserving FIFO within each class and never
 interrupting the active capture. This priority is load-bearing in production:
 viewport prefetch can enqueue several expensive navigation snapshots, and a
 strict FIFO let them consume the document capture's entire queue budget.
+Each waiter receives a start signal and runs the capture in its own scheduling
+request context. Queue handoff happens before that request's `waitUntil` promise
+settles; resolving first lets workerd retire the context while the isolate lock
+is still held, which permanently parks later captures.
 
 A capture that WAITED past `CAPTURE_QUEUE_WAIT_BUDGET_MS` (15s, one attempt's
 budget) behind a slow active or same-priority predecessor is dropped unrun

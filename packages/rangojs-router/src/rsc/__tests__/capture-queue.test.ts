@@ -176,4 +176,35 @@ describe("enqueueSerializedCapture", () => {
       "navigation",
     ]);
   });
+
+  it("hands off before the completed capture's caller can enqueue more work", async () => {
+    const events: string[] = [];
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+
+    const active = enqueueSerializedCapture(() => activeGate);
+    const navigation = enqueueSerializedCapture(async () => {
+      events.push("queued-navigation");
+    });
+    let lateDocument!: Promise<void>;
+    void active.then(() => {
+      lateDocument = enqueueSerializedCapture(
+        async () => {
+          events.push("late-document");
+        },
+        { priority: "document" },
+      );
+    });
+
+    releaseActive();
+    await active;
+    await Promise.all([navigation, lateDocument]);
+
+    // The navigation was already waiting when the active capture settled. Its
+    // handoff happens before the active caller observes completion; a document
+    // enqueued by that caller is therefore later work and cannot overtake it.
+    expect(events).toEqual(["queued-navigation", "late-document"]);
+  });
 });
