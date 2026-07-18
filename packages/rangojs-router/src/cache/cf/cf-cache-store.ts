@@ -267,10 +267,13 @@ interface KVItemEnvelope {
  * @internal
  */
 interface CFShellEnvelope {
-  /** base64-encoded prelude bytes */
-  p: string;
-  /** postponed state JSON, or null (DATA variant — no holes) */
-  po: string | null;
+  /**
+   * base64-encoded prelude bytes. Absent iff `no` (navigationOnly entries
+   * store no document half — ShellCacheEntry.prelude).
+   */
+  p?: string;
+  /** postponed state JSON, or null (DATA variant — no holes). Absent iff `no`. */
+  po?: string | null;
   /** React.version captured at prerender time */
   rv: string;
   /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
@@ -347,8 +350,14 @@ function isShellEnvelope(value: unknown): value is CFShellEnvelope {
   if (value == null || typeof value !== "object") return false;
   const envelope = value as Partial<CFShellEnvelope>;
   return (
-    typeof envelope.p === "string" &&
-    (envelope.po === null || typeof envelope.po === "string") &&
+    // Document half: required unless the envelope is navigationOnly (`no`),
+    // which stores neither field. Tolerate a legacy navigationOnly envelope
+    // that still carries them.
+    (typeof envelope.p === "string" ||
+      (envelope.p === undefined && envelope.no === true)) &&
+    (envelope.po === null ||
+      typeof envelope.po === "string" ||
+      (envelope.po === undefined && envelope.no === true)) &&
     typeof envelope.rv === "string" &&
     (envelope.bv === undefined || typeof envelope.bv === "string") &&
     typeof envelope.c === "number" &&
@@ -2083,8 +2092,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         }
 
         const envelope: CFShellEnvelope = {
-          p: entry.prelude,
-          po: entry.postponed,
+          // Presence-keyed: a navigationOnly entry has no document half, and an
+          // omitted key (vs an explicit undefined) also keeps it out of the
+          // serialized JSON.
+          ...(entry.prelude !== undefined ? { p: entry.prelude } : {}),
+          ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
           rv: entry.reactVersion,
           bv: entry.buildVersion,
           c: entry.createdAt,

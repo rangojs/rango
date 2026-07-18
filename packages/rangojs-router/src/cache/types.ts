@@ -264,8 +264,8 @@ export interface CacheItemResult {
 /**
  * A cached PPR (Partial Pre-rendering) shell entry.
  *
- * One entry carries BOTH artifacts a resume needs — the rendered HTML prelude
- * and React's postponed state — because the pair is version- and
+ * A DOCUMENT entry carries BOTH artifacts a resume needs — the rendered HTML
+ * prelude and React's postponed state — because the pair is version- and
  * generation-coupled and must never be mixed across a React upgrade or a build
  * change. The reactVersion and buildVersion fields are the read-time gates that
  * enforce both halves: isValidShellHit (rsc/shell-serve.ts) treats an entry
@@ -274,15 +274,28 @@ export interface CacheItemResult {
  * positions against one exact tree; resuming it against a different React or a
  * different app build tree-mismatches inside resume(), AFTER the 200 + prelude
  * are committed — an unrecoverable broken serve).
+ *
+ * A `navigationOnly` entry stores NEITHER half: nothing ever serves its HTML
+ * (document serving skips navigationOnly entries at the read gate, and partial
+ * replay consumes only `snapshot`/`docKey`), so the prelude would ride every
+ * store write and read as dead weight at KV-value scale. The capture still runs
+ * the full fizz prerender — it is the completeness arbiter and sanity gate —
+ * but its output is dropped before putShell. hasIntactShellPayload is the
+ * document-half gate; navigationOnly entries never satisfy it.
  */
 export interface ShellCacheEntry {
-  /** Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing). */
-  prelude: string;
+  /**
+   * Rendered HTML prelude bytes, base64-encoded (stores are JSON-serializing).
+   * Absent on `navigationOnly` entries (no document half is stored — see the
+   * interface doc); present on every document-servable entry.
+   */
+  prelude?: string;
   /**
    * JSON.stringify of React's postponed state, or null when the shell settled
-   * with no holes (the DATA variant — served without a fizz resume).
+   * with no holes (the DATA variant — served without a fizz resume). Absent
+   * exactly when `prelude` is (navigationOnly entries).
    */
-  postponed: string | null;
+  postponed?: string | null;
   /** React.version captured at prerender time; the read-time invalidation gate. */
   reactVersion: string;
   /**
@@ -365,6 +378,18 @@ export interface ShellCacheEntry {
   /** Capture-generation start time; tag invalidations at or after it win. */
   createdAt: number;
 }
+
+/**
+ * A shell entry whose document half is present — what the document HIT path
+ * (serveShellHit / lookupBuildShell) consumes. hasIntactShellPayload
+ * (rsc/shell-serve.ts) is the runtime gate AND the type narrowing to this
+ * shape; navigationOnly entries never pass it (their document half is not
+ * stored).
+ */
+export type DocumentShellCacheEntry = ShellCacheEntry & {
+  prelude: string;
+  postponed: string | null;
+};
 
 /**
  * The families a shell snapshot pins. The item/segment/response families are
