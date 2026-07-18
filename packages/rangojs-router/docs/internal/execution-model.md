@@ -179,7 +179,10 @@ global middleware
   corrupt, stale-build, and hard-expired artifacts schedule a navigation-only
   capture. Navigation snapshots use a separate shell key, so they cannot replace
   a document-safe shell when captures finish out of order. Document serving
-  never reads the navigation namespace.
+  never reads the navigation namespace. The cross-key capture queue remains
+  serialized, but waiting document-shell captures run before queued
+  navigation-only captures (the active capture is never preempted), so viewport
+  prefetch cannot starve a cold document through its 15-second queue budget.
   `x-rango-ppr-replay` distinguishes an actually consumed fresh/stale
   record from a bounded bypass reason. HIT is reported only after the seeded
   segment decodes and supplies the match; an explicit route `cache()` scope that

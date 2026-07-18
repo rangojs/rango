@@ -19,11 +19,23 @@
  * is bounded; a capture killed mid-queue by that bound simply recaptures on a
  * later request (the existing best-effort contract).
  *
- * The chain link resolves in `finally` and the prior link is awaited with a
- * swallow, so one rejected capture can never wedge every later one.
+ * Document shells outrank queued navigation-only snapshots. Production Link
+ * prefetching can enqueue several expensive navigation captures at once; a
+ * strict FIFO made the requesting page's document capture wait
+ * behind speculative work until its queue budget expired. The active capture
+ * is never interrupted, and each priority remains FIFO.
  */
-let captureQueue: Promise<void> = Promise.resolve();
 let admittedCaptures = 0;
+let captureRunning = false;
+
+interface QueuedCapture {
+  waitStart: number;
+  state: "waiting" | "running" | "settled";
+  signalStart: () => void;
+}
+
+const documentCaptures: QueuedCapture[] = [];
+const navigationCaptures: QueuedCapture[] = [];
 
 /** Bound queued/running capture closures retained by one isolate. */
 export const MAX_ADMITTED_CAPTURES: number = 32;
@@ -65,7 +77,7 @@ export class CaptureQueueWaitTimeoutError extends Error {
 }
 
 /**
- * Upper bound on how long one queue link may hold the queue. A capture task
+ * Upper bound on how long one running capture may hold the queue. A capture task
  * normally settles well inside this (attempt + in-place retry + writes), but
  * a task wedged on never-settling I/O — a workerd waitUntil fetch that pends
  * instead of rejecting (seen on GH runners with the dev prerender store
@@ -76,70 +88,103 @@ export class CaptureQueueWaitTimeoutError extends Error {
 const QUEUE_LINK_CAP_MS = 60_000;
 
 /**
- * Run `task` after every previously enqueued capture has settled. Returns a
- * promise for THIS task's completion (rejections propagate to the caller —
- * the queue itself is insulated).
+ * Run `task` after the active capture and every higher/equal-priority capture
+ * ahead of it have settled. Returns a promise for THIS task's completion
+ * (rejections propagate to the caller — the queue itself is insulated).
  */
 export function enqueueSerializedCapture(
   task: () => Promise<void>,
-  opts?: { maxQueueWaitMs?: number },
+  opts?: {
+    maxQueueWaitMs?: number;
+    priority?: "document" | "navigation";
+  },
 ): Promise<void> {
   if (admittedCaptures >= MAX_ADMITTED_CAPTURES) {
     return Promise.reject(new CaptureQueueFullError());
   }
   admittedCaptures++;
-  const prior = captureQueue;
-  let releaseQueue!: () => void;
-  captureQueue = new Promise<void>((resolve) => {
-    releaseQueue = resolve;
+
+  let signalStart!: () => void;
+  const startGate = new Promise<void>((resolve) => {
+    signalStart = resolve;
   });
-  return (async () => {
-    const waitStart = performance.now();
+  const queued: QueuedCapture = {
+    waitStart: performance.now(),
+    state: "waiting",
+    signalStart,
+  };
+
+  const completion = (async () => {
     const budget = opts?.maxQueueWaitMs ?? CAPTURE_QUEUE_WAIT_BUDGET_MS;
-    // The wait itself is budget-raced: the drop fires AT the budget, not once
-    // the predecessor eventually settles — a waiter parked behind a wedged
-    // link must not stay pending until that link's 60s cap just to learn it
-    // was already over budget.
     let waitTimer: ReturnType<typeof setTimeout> | undefined;
     const waitTimedOut = await Promise.race([
-      prior.catch(() => {}).then(() => false),
+      startGate.then(() => false),
       new Promise<boolean>((resolve) => {
-        waitTimer = setTimeout(() => resolve(true), budget);
+        waitTimer = setTimeout(() => {
+          if (queued.state !== "waiting") return;
+          queued.state = "settled";
+          admittedCaptures--;
+          resolve(true);
+        }, budget);
         (waitTimer as { unref?: () => void }).unref?.();
       }),
     ]);
     if (waitTimer) clearTimeout(waitTimer);
     if (waitTimedOut) {
-      // Never started: hand the admission slot back here (the taskPromise
-      // finally below does it for tasks that ran). Serialization stays
-      // intact: THIS link releases only once the predecessor settles —
-      // releasing now would let a successor run concurrently with it.
-      admittedCaptures--;
-      prior.catch(() => {}).then(releaseQueue, releaseQueue);
-      throw new CaptureQueueWaitTimeoutError(performance.now() - waitStart);
+      throw new CaptureQueueWaitTimeoutError(
+        performance.now() - queued.waitStart,
+      );
     }
+
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const taskPromise = Promise.resolve()
+      .then(task)
+      .finally(() => {
+        // A capped capture releases serialization, but its detached task still
+        // counts against admission until it actually settles.
+        admittedCaptures--;
+      });
+    const cap = new Promise<void>((resolve) => {
+      capTimer = setTimeout(resolve, QUEUE_LINK_CAP_MS);
+      (capTimer as { unref?: () => void }).unref?.();
+    });
+
     try {
-      let capTimer: ReturnType<typeof setTimeout> | undefined;
-      const taskPromise = Promise.resolve()
-        .then(task)
-        .finally(() => {
-          // A timed-out link releases serialization, but its detached task still
-          // counts against admission until it actually settles.
-          admittedCaptures--;
-        });
-      try {
-        await Promise.race([
-          taskPromise,
-          new Promise<void>((resolve) => {
-            capTimer = setTimeout(resolve, QUEUE_LINK_CAP_MS);
-            (capTimer as { unref?: () => void }).unref?.();
-          }),
-        ]);
-      } finally {
-        if (capTimer) clearTimeout(capTimer);
-      }
+      await Promise.race([taskPromise, cap]);
     } finally {
-      releaseQueue();
+      if (capTimer) clearTimeout(capTimer);
+      queued.state = "settled";
+      captureRunning = false;
+      // Handoff must happen before this caller's waitUntil promise settles.
+      // Resolving first lets workerd terminate the context with the queue lock
+      // still held, permanently parking later captures in the isolate.
+      startNextCapture();
     }
   })();
+
+  const queue =
+    opts?.priority === "document" ? documentCaptures : navigationCaptures;
+  queue.push(queued);
+  startNextCapture();
+  return completion;
+}
+
+function takeNextCapture(): QueuedCapture | undefined {
+  for (const queue of [documentCaptures, navigationCaptures]) {
+    let queued: QueuedCapture | undefined;
+    while ((queued = queue.shift())) {
+      if (queued.state === "waiting") return queued;
+    }
+  }
+  return undefined;
+}
+
+function startNextCapture(): void {
+  if (captureRunning) return;
+  const queued = takeNextCapture();
+  if (!queued) return;
+
+  captureRunning = true;
+  queued.state = "running";
+  queued.signalStart();
 }
