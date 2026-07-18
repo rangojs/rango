@@ -235,6 +235,14 @@ function describePprCaptureTimeout(mode: "dev" | "build") {
       expect(typeof queueWait).toBe("number");
       expect(queueWait).toBeGreaterThan(1_000);
       expect(queueWait).toBeLessThan(15_000);
+      // Scheduling telemetry: the document class and the backlog it was
+      // enqueued behind ride the span, so a parked capture diagnoses itself.
+      expect(background.attributes["rango.background.queue_priority"]).toBe(
+        "document",
+      );
+      const queueAhead = background.attributes["rango.background.queue_ahead"];
+      expect(typeof queueAhead).toBe("number");
+      expect(queueAhead).toBeGreaterThanOrEqual(1);
 
       await expect(async () => {
         const response = await request.get(documentUrl, {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CaptureQueueFullError,
   CaptureQueueWaitTimeoutError,
+  captureQueueDepths,
   enqueueSerializedCapture,
   MAX_ADMITTED_CAPTURES,
 } from "../capture-queue.js";
@@ -175,6 +176,41 @@ describe("enqueueSerializedCapture", () => {
       "document",
       "navigation",
     ]);
+  });
+
+  it("captureQueueDepths reports waiting counts by class and excludes timed-out waiters", async () => {
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    const active = enqueueSerializedCapture(async () => {
+      await activeGate;
+    });
+    await tick();
+
+    const navigation = enqueueSerializedCapture(async () => {});
+    const document = enqueueSerializedCapture(async () => {}, {
+      priority: "document",
+    });
+    const timedOut = enqueueSerializedCapture(async () => {}, {
+      maxQueueWaitMs: 1,
+    }).catch(() => "timed-out");
+    // Let the 1ms wait budget fire; the timed-out waiter must not count.
+    await new Promise((r) => setTimeout(r, 20));
+
+    const depths = captureQueueDepths();
+    expect(depths.running).toBe(true);
+    expect(depths.document).toBe(1);
+    expect(depths.navigation).toBe(1);
+    expect(await timedOut).toBe("timed-out");
+
+    releaseActive();
+    await Promise.all([active, navigation, document]);
+    expect(captureQueueDepths()).toEqual({
+      running: false,
+      document: 0,
+      navigation: 0,
+    });
   });
 
   it("hands off before the completed capture's caller can enqueue more work", async () => {
