@@ -943,13 +943,22 @@ export function scheduleShellCapture(
       span.setAttribute("rango.shell_key", key);
       const queueStart = performance.now();
       try {
-        await enqueueSerializedCapture(() => {
-          span.setAttribute(
-            "rango.background.queue_wait_ms",
-            Math.round(performance.now() - queueStart),
-          );
-          return captureTask(span);
-        });
+        await enqueueSerializedCapture(
+          () => {
+            span.setAttribute(
+              "rango.background.queue_wait_ms",
+              Math.round(performance.now() - queueStart),
+            );
+            return captureTask(span);
+          },
+          {
+            // A production page can enqueue several navigation-only captures
+            // through viewport prefetching. Let a later document MISS overtake
+            // that queued speculative work so it can become a shell HIT before
+            // the 15s queue budget expires. Never preempts the active capture.
+            priority: descriptor.navigationOnly ? "navigation" : "document",
+          },
+        );
       } catch (error) {
         if (error instanceof CaptureQueueFullError) {
           inFlightCaptures.delete(key);

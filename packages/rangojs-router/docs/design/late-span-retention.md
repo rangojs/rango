@@ -126,7 +126,9 @@ Two of the risks this doc surfaced are now bounded in the router:
   `CAPTURE_QUEUE_WAIT_BUDGET_MS` (15s) unrun (`skip-queue-timeout`, no
   backoff), so a parked capture can no longer start an attempt the platform's
   post-response waitUntil budget cannot cover; queue parking is observable via
-  `rango.background.queue_wait_ms`.
+  `rango.background.queue_wait_ms`. Document-shell captures outrank queued
+  navigation-only captures (without preempting the active task), so production
+  viewport prefetch cannot consume a cold document's whole queue budget first.
 
 ## Cancellation policy (decided up front)
 

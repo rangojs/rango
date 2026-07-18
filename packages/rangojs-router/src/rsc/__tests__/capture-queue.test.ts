@@ -141,4 +141,39 @@ describe("enqueueSerializedCapture", () => {
     });
     expect(ran).toBe(true);
   });
+
+  it("prioritizes a document capture over queued navigation captures", async () => {
+    const events: string[] = [];
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+
+    const active = enqueueSerializedCapture(async () => {
+      events.push("start:active-navigation");
+      await activeGate;
+      events.push("end:active-navigation");
+    });
+    await tick();
+
+    const navigation = enqueueSerializedCapture(async () => {
+      events.push("navigation");
+    });
+    const document = enqueueSerializedCapture(
+      async () => {
+        events.push("document");
+      },
+      { priority: "document" },
+    );
+
+    releaseActive();
+    await Promise.all([active, navigation, document]);
+
+    expect(events).toEqual([
+      "start:active-navigation",
+      "end:active-navigation",
+      "document",
+      "navigation",
+    ]);
+  });
 });
