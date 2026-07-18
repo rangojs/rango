@@ -36,6 +36,26 @@ const SLOW_HIT_POLL_TIMEOUT_MS = 60_000;
 // which /ppr-short-meta's capture deterministically refuses.
 const SHORT_BUDGET_REFUSAL_MS = 6_000;
 
+interface SpanNode {
+  name: string;
+  attributes: Record<string, string | number | boolean>;
+  children: SpanNode[];
+}
+
+function decodeTrace(value: string): SpanNode[] {
+  const json = decodeURIComponent(escape(atob(value)));
+  return JSON.parse(json) as SpanNode[];
+}
+
+function findSpan(nodes: SpanNode[], name: string): SpanNode | undefined {
+  for (const node of nodes) {
+    if (node.name === name) return node;
+    const child = findSpan(node.children, name);
+    if (child) return child;
+  }
+  return undefined;
+}
+
 async function fetchSplit(url: string): Promise<{
   status: string | undefined;
   prelude: string;
@@ -125,6 +145,110 @@ function describePprCaptureTimeout(mode: "dev" | "build") {
       expect(second.status).toBe("HIT");
       expect(second.prelude).toContain(`ppr-slow-meta-immediate-${seq}`);
       expect(second.prelude).toContain(`ppr-slow-meta-slow-${seq}-chained`);
+    });
+
+    test("a document capture overtakes queued navigation-only captures", async ({
+      request,
+    }) => {
+      test.setTimeout(150_000);
+      const probe = crypto.randomUUID();
+
+      // A --no-deps subset skips dev-warmup. Prime the SSR capture graph before
+      // measuring queue order; module transforms happen inside the active queue
+      // task and are intentionally not a priority signal.
+      if (mode === "dev") {
+        const warmUrl = f.url(`/ppr-shell?probe=queue-priority-warm-${probe}`);
+        await request.get(warmUrl, { headers: HTML_HEADERS });
+        await expect(async () => {
+          const response = await request.get(warmUrl, {
+            headers: HTML_HEADERS,
+          });
+          expect(response.status()).toBe(200);
+          expect(response.headers()["x-rango-shell"]).toBe("HIT");
+        }).toPass({ timeout: 40_000, intervals: [1_000] });
+      }
+
+      const partialUrls = Array.from({ length: 5 }, (_, index) =>
+        f.url(
+          `/ppr-short-meta?probe=queue-priority-${probe}-${index}&_rsc_partial=true&_rsc_segments=`,
+        ),
+      );
+      const partialHeaders = {
+        "X-RSC-Router-Client-Path": f.url("/"),
+        "X-Rango-Prefetch": "1",
+      };
+      const readTerminalBackground = async (
+        token: string,
+        timeoutMs: number,
+      ): Promise<SpanNode> => {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          const trace = await request.get(f.url(`/?__trace_read=${token}`));
+          expect(trace.status()).toBe(200);
+          const background = findSpan(
+            decodeTrace(await trace.text()),
+            "rango.background",
+          );
+          if (background?.attributes["rango.background.outcome"]) {
+            return background;
+          }
+          if (Date.now() > deadline) {
+            throw new Error(
+              `capture "${token}" had no terminal outcome within ${timeoutMs}ms`,
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      };
+
+      // Model production viewport prefetch pressure with five cold partials.
+      // Each navigation capture refuses only after two 1.5s attempts plus its
+      // retry delay, so FIFO would consume the document's entire 15s wait
+      // budget. Their response headers arrive before that detached work.
+      const partials = await Promise.all(
+        partialUrls.map((url) => fetch(url, { headers: partialHeaders })),
+      );
+      for (const partial of partials) {
+        expect(partial.status).toBe(200);
+        expect(partial.headers.get("x-rango-ppr-replay")).toBe(
+          "BYPASS; reason=no-entry",
+        );
+      }
+      const drains = partials.map((partial) => partial.arrayBuffer());
+
+      const traceToken = `queue-priority-${probe}`;
+      const documentUrl = f.url(
+        `/ppr-shell?probe=queue-priority-document-${probe}&__trace_debug=${traceToken}`,
+      );
+      const first = await request.get(documentUrl, { headers: HTML_HEADERS });
+      expect(first.status()).toBe(200);
+      expect(first.headers()["x-rango-shell"]).toBe("MISS");
+
+      // The active navigation capture finishes first; the document must run
+      // next instead of waiting behind all queued speculative snapshots and
+      // reaching the 15s skip-queue-timeout path. Read the post-handoff trace
+      // from the same workerd isolate: KV shell visibility is not the queue
+      // signal, while the terminal background span is.
+      const background = await readTerminalBackground(traceToken, 25_000);
+      expect(background.attributes["rango.background.outcome"]).toBe("stored");
+      const queueWait = background.attributes["rango.background.queue_wait_ms"];
+      expect(typeof queueWait).toBe("number");
+      expect(queueWait).toBeGreaterThan(1_000);
+      expect(queueWait).toBeLessThan(15_000);
+
+      await expect(async () => {
+        const response = await request.get(documentUrl, {
+          headers: HTML_HEADERS,
+        });
+        expect(response.status()).toBe(200);
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 20_000, intervals: [1_000] });
+
+      await Promise.all(drains);
+      // A queued request's waitUntil may be terminated by workerd without a
+      // terminal span. Allow the bounded queue window to close before another
+      // test reuses the shared server.
+      await new Promise((resolve) => setTimeout(resolve, 16_000));
     });
 
     test("budget shorter than the settlement sequence refuses: stays MISS, no partial bake (issue #715 negative)", async ({

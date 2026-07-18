@@ -523,6 +523,14 @@ frozen snapshot of the foreground Flight/HTML/response operation. It is absent
 when the deadline fired before the response-construction driver started (for
 example, in a slow route handler) or on a response route.
 
+For `"stream-idle"` (`timeouts.streamIdleMs`, opt-in) the trip happens AFTER
+the response was handed off: the body stream is errored and the source render
+canceled once no chunk flowed for the budget. `onTimeout` cannot apply — no
+replacement Response can be served mid-stream — so `customHandler` is always
+`false`; the trip also reaches `onError`. Semantics are end-to-end idle flow
+(a stalled slow client counts the same as a wedged producer), so budgets
+should be generous.
+
 ```typescript
 {
   type: "request.timeout",
@@ -582,7 +590,7 @@ The `createOTelSink` adapter maps the router's **discrete-fact events** to
 | `rango.request.origin-rejected` | `http.method`, `http.route`, `rango.phase`, `rango.origin` (error status)                               |
 
 The **phase** spans — `rango.request`, `rango.middleware`, `rango.action`,
-`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr` — are NOT produced by the sink. They are duration
+`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, `rango.background` — are NOT produced by the sink. They are duration
 spans owned by the `tracing` slot (`createOTelTracing` / `createCloudflareTracing`),
 which wraps the actual work via the callback boundary so they nest by async
 context. `createOTelSink` therefore ignores the `request.start/end/error` and
@@ -647,7 +655,7 @@ export const router = createRouter<AppBindings>({
 ```
 
 Emitted spans: `rango.request`, `rango.middleware`, `rango.action`,
-`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`. Unlike the OTel sink (which builds spans from
+`rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, `rango.background`. Unlike the OTel sink (which builds spans from
 lifecycle _events_ after the fact), `createCloudflareTracing` **wraps the actual
 work** with `executionContext.tracing.enterSpan`, so spans nest by async context
 and the platform's automatic KV/D1/fetch spans land under the right phase.
@@ -657,17 +665,15 @@ and the platform's automatic KV/D1/fetch spans land under the right phase.
 ### One instrumentation model
 
 These spans and the `debugPerformance` perf timeline above are **one model, not
-two**. Every router phase is wrapped exactly once by the internal
-`observePhase()` primitive (`src/router/instrument.ts`), which from a single
-wrap site opens the span AND — unless the phase meters its own perf metric —
-records the perf metric, reading the metrics store and tracing config off the
-request context. So the span set is always a subset of the perf phases and the
-two surfaces cannot drift (e.g. a fetchable `_rsc_loader` request appears in
-both, not one).
+two**. Every router phase uses the `PHASES` registry and the internal
+`observePhase()` primitive (`src/router/instrument.ts`), which opens the span
+and records a perf metric when that phase has one. Span-only phases stay in the
+same registry and execution boundary, so phase identity and wrapping cannot
+drift between the two surfaces.
 
-Three phases pass `metric: false` to `observePhase` — their perf metric is
-recorded elsewhere, not as a single combined metric from the wrap site (still
-one owner per surface):
+Five phases pass `metric: false` to `observePhase` — their perf metric is
+recorded elsewhere (or deliberately not at all), not as a single combined
+metric from the wrap site (still one owner per surface):
 
 - `rango.request` — `handler:total` is the grand total incl. the pre-context
   bootstrap timings.
@@ -676,6 +682,11 @@ one owner per surface):
 - `rango.handler` — the `handler:{id}` metric is owned by the call-site `track()`
   (the span is added separately by `observeHandler`), so this phase is span-only
   here; see the metric table above for when a static hit records it.
+- `rango.response` — span-only by design: this phase finalizes the
+  `Server-Timing` header itself, so a co-emitted metric would be circular.
+- `rango.background` — span-only by design: the perf timeline is finalized
+  with the response, so a metric recorded by post-handoff work could never
+  reach it.
 
 Discrete facts (cache decisions, handler errors, timeouts, …) are the **other**
 surface — `observeEvent()` → the `TelemetrySink`. Spans drive; events are
@@ -711,6 +722,40 @@ Key properties:
   declares `loading()` (its handler promise settles during the stream). Overlapping
   spans are valid; the child really did take that long. Trace consumers that
   enforce strict end-nesting should expect this.
+- **`rango.response` is the explicit handoff marker.** One span at most per
+  traced request, a direct child of `rango.request`, opened only after
+  downstream middleware/core execution returned a response. It covers response
+  finalization (partial-redirect interception, `Server-Timing` mutation, the
+  open-redirect guard) and ends immediately before the router handler returns
+  the response to the host — handoff-bound, never drain-bound. It never reads
+  or wraps `response.body`, is absent when the request throws before a response
+  exists, and carries `http.response.status_code`, `rango.response.mode` (the
+  classified request mode, or `middleware-short-circuit`), and
+  `rango.response.body_kind` (`stream` / `empty` / `websocket`) describing the
+  response actually handed to the host. For request modes that render nothing
+  (a fetchable `_rsc_loader`, a response route, a middleware short-circuit) it
+  is the terminal marker that shows the trace is complete rather than
+  truncated. On deployed Workers it may report 0 ms (non-I/O timers are
+  frozen); its position and attributes are the value. Toggle with
+  `spans: { response: false }` — one billable span per sampled response matters
+  at volume.
+- **`rango.background` wraps detached work.** waitUntil tasks that outlive the
+  response — the PPR shell capture and the SWR background revalidations — run
+  after the foreground phase spans ended, so their spans (the platform's
+  automatic KV/fetch/cache spans, and for the revalidation lanes the re-run's
+  own `rango.*` set) would otherwise dangle as unexplained orphans in the
+  trace (field-observed: a capture parked ~24 s in the per-isolate capture
+  queue read as an inexplicable late span wave). The wrapper is opened at each
+  lane's execution boundary with `rango.background.kind` =
+  `shell-capture` / `document-revalidation` / `loader-revalidation` /
+  `use-cache-revalidation`. Per-lane inner-span policy: the shell-capture lane
+  KEEPS its inner phase spans suppressed (`deriveShellCaptureContext` strips
+  `_tracing` — a capture re-render duplicating the foreground span set was the
+  original #670 leak) and instead carries `rango.shell_key`,
+  `rango.background.outcome`, and `rango.background.queue_wait_ms` (queue
+  parking made visible); the revalidation lanes keep their inner `rango.*`
+  spans, now nested under the wrapper. Toggle with
+  `spans: { background: false }`.
 - **Full phase coverage.** Intercept-route middleware emits `rango.middleware`,
   and action-revalidation renders emit `rango.render`, so an action
   revalidation's loaders nest under a `rango.render` parent like a normal
@@ -755,7 +800,7 @@ export const router = createRouter({ document: Document, tracing });
 
 Emitted spans are the same set as everywhere else: `rango.request`,
 `rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`,
-`rango.render`, `rango.ssr`. Options: `enabled`, per-phase `spans`, an
+`rango.render`, `rango.ssr`, `rango.response`, `rango.background`. Options: `enabled`, per-phase `spans`, an
 OTel-instrumentation-scope `tracerName` (default `"rango"`), and a `tracer`
 override (defaults to the global `trace.getTracer(tracerName)`).
 

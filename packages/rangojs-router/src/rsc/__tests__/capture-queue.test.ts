@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CaptureQueueFullError,
+  CaptureQueueWaitTimeoutError,
   enqueueSerializedCapture,
   MAX_ADMITTED_CAPTURES,
 } from "../capture-queue.js";
@@ -89,5 +90,121 @@ describe("enqueueSerializedCapture", () => {
     await expect(
       enqueueSerializedCapture(async () => {}),
     ).resolves.toBeUndefined();
+  });
+
+  it("drops a task AT the wait budget while the predecessor is still parked; serialization survives", async () => {
+    let releasePrior!: () => void;
+    const priorGate = new Promise<void>((resolve) => {
+      releasePrior = resolve;
+    });
+    const prior = enqueueSerializedCapture(() => priorGate);
+
+    let ran = false;
+    const dropped = enqueueSerializedCapture(
+      async () => {
+        ran = true;
+      },
+      { maxQueueWaitMs: 10 },
+    );
+
+    // The rejection lands at the budget — WITHOUT the predecessor releasing.
+    // (Regression: the old implementation only checked elapsed time after the
+    // predecessor settled, so this await would hang here.)
+    await expect(dropped).rejects.toBeInstanceOf(CaptureQueueWaitTimeoutError);
+    await expect(dropped).rejects.toMatchObject({
+      name: "CaptureQueueWaitTimeoutError",
+      waitedMs: expect.any(Number),
+    });
+    expect(ran).toBe(false);
+
+    // Serialization is preserved through the drop: a successor enqueued now
+    // must still wait for the STILL-RUNNING predecessor, never run
+    // concurrently with it.
+    let successorRan = false;
+    const successor = enqueueSerializedCapture(async () => {
+      successorRan = true;
+    });
+    await new Promise<void>((r) => setTimeout(r, 20));
+    expect(successorRan).toBe(false);
+
+    releasePrior();
+    await prior;
+    await successor;
+    expect(successorRan).toBe(true);
+  });
+
+  it("runs a task whose wait stayed inside the budget", async () => {
+    let ran = false;
+    // Empty queue: the microtask-scale wait is far below the default budget.
+    await enqueueSerializedCapture(async () => {
+      ran = true;
+    });
+    expect(ran).toBe(true);
+  });
+
+  it("prioritizes a document capture over queued navigation captures", async () => {
+    const events: string[] = [];
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+
+    const active = enqueueSerializedCapture(async () => {
+      events.push("start:active-navigation");
+      await activeGate;
+      events.push("end:active-navigation");
+    });
+    await tick();
+
+    const navigation = enqueueSerializedCapture(async () => {
+      events.push("navigation");
+    });
+    const document = enqueueSerializedCapture(
+      async () => {
+        events.push("document");
+      },
+      { priority: "document" },
+    );
+
+    releaseActive();
+    await Promise.all([active, navigation, document]);
+
+    expect(events).toEqual([
+      "start:active-navigation",
+      "end:active-navigation",
+      "document",
+      "navigation",
+    ]);
+  });
+
+  it("hands off before the completed capture's caller can enqueue more work", async () => {
+    const events: string[] = [];
+    let releaseActive!: () => void;
+    const activeGate = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+
+    const active = enqueueSerializedCapture(() => activeGate);
+    const navigation = enqueueSerializedCapture(async () => {
+      events.push("queued-navigation");
+    });
+    let lateDocument!: Promise<void>;
+    void active.then(() => {
+      lateDocument = enqueueSerializedCapture(
+        async () => {
+          events.push("late-document");
+        },
+        { priority: "document" },
+      );
+    });
+
+    releaseActive();
+    await active;
+    await Promise.all([navigation, lateDocument]);
+
+    // The navigation was already waiting when the active capture settled. Its
+    // handoff happens before the active caller observes completion; a document
+    // enqueued by that caller is therefore later work and cannot overtake it.
+    expect(events).toEqual(["queued-navigation", "late-document"]);
   });
 });

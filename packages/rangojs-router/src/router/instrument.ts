@@ -5,13 +5,11 @@
  * The router exposes the same work on three surfaces, and the rule is: each
  * surface has exactly one owner here, so they cannot drift.
  *
- *   - observePhase(): a span of work. Co-emits the `debugPerformance` perf
- *     metric (metrics store -> [RSC Perf] timeline + Server-Timing) AND the
- *     platform span (tracing runner -> Cloudflare custom spans / OTel). From one
- *     wrap site, so the span set is always a subset of the perf phases and the
- *     two can't disagree. Phases that meter their own perf metric with a finer
- *     decomposition (request, middleware) pass `metric: false` and get the span
- *     only — still co-located, still one owner per surface.
+ *   - observePhase(): a span of work. From one wrap site, emits the platform
+ *     span (tracing runner -> Cloudflare custom spans / OTel) and, when the
+ *     phase has one, its `debugPerformance` metric (metrics store -> [RSC Perf]
+ *     timeline + Server-Timing). Phases that meter their own perf metric with a
+ *     finer decomposition, or are deliberately span-only, pass `metric: false`.
  *   - observeEvent(): a discrete fact (TelemetrySink): cache decisions,
  *     revalidation decisions, handler errors, timeouts, origin rejections.
  *     Event-shaped, not phase-shaped — derived from the same call sites but a
@@ -93,6 +91,16 @@ function currentRouteName(): string | undefined {
     ? routeName
     : undefined;
 }
+
+/**
+ * The detached background lanes wrapped by the rango.background span (the
+ * `rango.background.kind` attribute). One name per task execution boundary.
+ */
+export type BackgroundTaskKind =
+  | "shell-capture"
+  | "document-revalidation"
+  | "loader-revalidation"
+  | "use-cache-revalidation";
 
 /**
  * The router's observable phases. One definition per phase keeps the `rango.*`
@@ -192,6 +200,43 @@ export const PHASES = {
     spanName: "rango.ssr",
     diagnosticLabel: "html",
   } as PhaseSpec,
+
+  /**
+   * One detached background task (waitUntil work that outlives the response):
+   * a PPR shell capture or an SWR background revalidation. The wrapper is the
+   * explanatory parent for everything the task does — the platform's automatic
+   * KV/fetch/cache spans, and (for the revalidation lanes) the re-run's own
+   * rango.* phase spans — so post-handoff work never appears as orphan spans
+   * dangling under an ended foreground phase. `kind` identifies the lane.
+   * Span only (metric:false): the perf timeline is finalized with the
+   * response, so a background metric could never reach it. The shell-capture
+   * lane keeps its INNER phase spans suppressed (derived context strips
+   * _tracing — a capture re-render duplicating the foreground's span set was
+   * the original #670 leak); the revalidation lanes keep theirs, nested here.
+   */
+  background: (kind: BackgroundTaskKind): PhaseSpec => ({
+    metric: false,
+    tracePhase: "background",
+    spanName: "rango.background",
+    attributes: { "rango.background.kind": kind },
+  }),
+
+  /** Final response construction + host handoff: opened AFTER downstream
+   * middleware/core execution returns a Response, wrapping only finalization
+   * (redirect interception/guarding, Server-Timing mutation, final response
+   * selection) and ending immediately before the router handler returns the
+   * response to the host. Handoff-bound, never drain-bound — it must never
+   * read, tee, buffer, or await response.body, so it cannot regress streaming.
+   * At most one per traced request; absent when the request throws before a
+   * response exists. Span only (metric:false) — a co-emitted metric would
+   * circularly mutate the Server-Timing header this phase itself finalizes.
+   * On Cloudflare it may report 0 ms (non-I/O timers are frozen); its position
+   * and attributes (status/mode/body kind, set by the handler) are the value. */
+  response: {
+    metric: false,
+    tracePhase: "response",
+    spanName: "rango.response",
+  } as PhaseSpec,
 } as const;
 
 /** Apply a phase spec's static attributes to a span (the no-op span ignores them). */
@@ -225,14 +270,15 @@ function recordPhaseMetric(
  * returns a promise both the metric duration and the span end when it settles.
  *
  * This is the ONLY phase primitive: every phase (request/middleware/action/
- * loader/handler/render/ssr) is construction-bound — the span and metric settle
- * when fn's own work completes (for the streaming phases, when the RSC/HTML
- * stream is constructed, NOT when the body drains). Instrumentation is strictly
- * best-effort: it never wraps or buffers the response and adds no work on the
- * streaming path, so it cannot regress response latency or streaming. A loader
- * that resolves while the body streams therefore keeps a rango.loader span that
- * may extend past its render parent — overlapping spans are valid; the loader
- * really did take that long.
+ * loader/handler/render/ssr/response/background) settles when fn's own work
+ * completes. For streaming phases that means when the RSC/HTML stream is
+ * constructed, NOT when the body drains; for response, when finalization hands
+ * the stream to the host. Instrumentation is strictly best-effort: it never
+ * wraps or buffers the response and adds no work on the streaming path, so it
+ * cannot regress response latency or streaming. A loader that resolves while
+ * the body streams therefore keeps a rango.loader span that may extend past its
+ * render parent — overlapping spans are valid; the loader really did take that
+ * long.
  *
  * Reads the metrics store + tracing off the RequestContext ALS, which is active
  * for the WHOLE request — contrast observeEvent, which reads the RouterContext

@@ -1,8 +1,18 @@
+import { Suspense } from "react";
 import { createRouter, urls } from "@rangojs/router";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
 import { Counter } from "./components/Counter.js";
 import { PrefetchInvalidationButton } from "./components/PrefetchInvalidationButton.js";
+
+/**
+ * A server component that never settles: the stream-idle e2e fixture. The
+ * shell (with the Suspense fallback) flushes, then the stream wedges — the
+ * exact hang class timeouts.streamIdleMs exists to bound.
+ */
+async function NeverSettles(): Promise<never> {
+  return new Promise<never>(() => {});
+}
 
 const urlpatterns = urls(({ path }) => [
   path(
@@ -111,6 +121,21 @@ const urlpatterns = urls(({ path }) => [
   path("/target.js", () => <h1>Static-looking prefetch target</h1>, {
     name: "prefetchScopeResourceRoute",
   }),
+  // stream-idle e2e fixture: the shell (h1 + fallback) flushes, then the
+  // stream wedges forever on NeverSettles. The router's streamIdleMs below
+  // must terminate the connection instead of holding it open indefinitely.
+  path(
+    "/stream-hang",
+    () => (
+      <main>
+        <h1 data-testid="hang-shell">Stream hang fixture</h1>
+        <Suspense fallback={<div data-testid="hang-fallback">waiting</div>}>
+          <NeverSettles />
+        </Suspense>
+      </main>
+    ),
+    { name: "prefetchScopeStreamHang" },
+  ),
 ]);
 
 export const prefetchScopeRouter = createRouter<AppBindings>({
@@ -118,4 +143,8 @@ export const prefetchScopeRouter = createRouter<AppBindings>({
   basename: "/__prefetch-scope",
   defaultPrefetch: "viewport",
   document: Document,
+  // Bounds end-to-end idle flow on streamed bodies (the /stream-hang fixture
+  // above). Scoped to THIS router so the main app's long-streaming suites
+  // (ppr-slow-meta's staged settles, blog's 1.5s sidebar) stay untouched.
+  timeouts: { streamIdleMs: 2500 },
 }).routes(urlpatterns);

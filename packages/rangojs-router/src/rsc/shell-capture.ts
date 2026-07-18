@@ -22,11 +22,13 @@ import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
 import {
   CaptureQueueFullError,
+  CaptureQueueWaitTimeoutError,
   enqueueSerializedCapture,
 } from "./capture-queue.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import type { TraceSpan } from "../router/tracing.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
@@ -427,6 +429,10 @@ export interface ShellCaptureDebugEvent {
    * - skip-backoff: the key is inside its refused-capture backoff window and
    *   the capture was not attempted
    * - skip-capacity: the isolate capture queue is full; a later request may retry
+   * - skip-queue-timeout: the capture waited past CAPTURE_QUEUE_WAIT_BUDGET_MS
+   *   behind other captures and was dropped unrun (no backoff — the route is
+   *   not doomed, the isolate was busy; a later request re-probes). Carries
+   *   queueWaitMs.
    * - backoff: the key entered (or escalated) backoff after a terminal
    *   no-shell — carries the new backoff state
    */
@@ -440,6 +446,7 @@ export interface ShellCaptureDebugEvent {
     | "skip-in-flight"
     | "skip-backoff"
     | "skip-capacity"
+    | "skip-queue-timeout"
     | "backoff";
   /** Attempt number (1 = first, 2 = in-place retry). Absent on skips. */
   attempt?: number;
@@ -470,6 +477,8 @@ export interface ShellCaptureDebugEvent {
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
   backoffRemainingMs?: number;
+  /** Ms the capture waited in the serialized queue (skip-queue-timeout). */
+  queueWaitMs?: number;
 }
 
 /**
@@ -518,6 +527,9 @@ export function describeShellCaptureEvent(
   }
   if (event.backoffRemainingMs !== undefined) {
     parts.push(`backoff-remaining=${event.backoffRemainingMs}ms`);
+  }
+  if (event.queueWaitMs !== undefined) {
+    parts.push(`queue-wait=${event.queueWaitMs}ms`);
   }
   return parts.join(" ");
 }
@@ -920,7 +932,7 @@ export function scheduleShellCapture(
     return;
   }
   inFlightCaptures.add(key);
-  const captureTask = async () => {
+  const captureTask = async (span: TraceSpan) => {
     try {
       const setupUrl = descriptor.navigationOnly
         ? stripInternalParams(url)
@@ -955,6 +967,7 @@ export function scheduleShellCapture(
         SHELL_CAPTURE_RETRY_DELAY_MS,
         publish,
       );
+      span.setAttribute("rango.background.outcome", outcome);
       // Update the negative cache off the terminal outcome. A stored shell clears
       // any prior backoff; a `no-shell` (after the in-place retry) backs the key
       // off so the next requests don't re-probe it. A `redirect` has no shell but
@@ -973,6 +986,7 @@ export function scheduleShellCapture(
       // context is gone. A genuine failure recurs, so back it off too (re-probe
       // once per window, not every request) and report it once.
       markCaptureBackoff(key);
+      span.setAttribute("rango.background.outcome", "error");
       publish(descriptor, {
         key,
         outcome: "error",
@@ -988,20 +1002,67 @@ export function scheduleShellCapture(
   // capture makes the sibling freeze a trivial prelude and store nothing
   // (rotating eternal-MISS victims on GH runners). The stampede guard above
   // stays per-key (dedupe while queued); the queue is cross-key.
+  //
+  // The whole serialized task — queue wait INCLUDED — is wrapped in the
+  // rango.background span (kind=shell-capture). The span is the explanatory
+  // parent for the capture's platform KV/fetch/cache spans (the capture's own
+  // rango.* phase spans stay suppressed — deriveShellCaptureContext strips
+  // _tracing), and queue_wait_ms makes a capture parked behind a slow
+  // predecessor link visible instead of reading as an unexplained dead gap
+  // (observed in production: ~24s of zero I/O before capture start).
+  // observePhase reads tracing off the ALS context captured when runBackground
+  // registered the task — the foreground request context, tracing intact.
   const serializedTask = async () => {
-    try {
-      await enqueueSerializedCapture(captureTask);
-    } catch (error) {
-      if (error instanceof CaptureQueueFullError) {
-        inFlightCaptures.delete(key);
-        publish(descriptor, {
-          key,
-          outcome: "skip-capacity",
-        });
-        return;
+    await observePhase(PHASES.background("shell-capture"), async (span) => {
+      span.setAttribute("rango.shell_key", key);
+      const queueStart = performance.now();
+      try {
+        await enqueueSerializedCapture(
+          () => {
+            span.setAttribute(
+              "rango.background.queue_wait_ms",
+              Math.round(performance.now() - queueStart),
+            );
+            return captureTask(span);
+          },
+          {
+            // A production page can enqueue several navigation-only captures
+            // through viewport prefetching. Let a later document MISS overtake
+            // that queued speculative work so it can become a shell HIT before
+            // the 15s queue budget expires. Never preempts the active capture.
+            priority: descriptor.navigationOnly ? "navigation" : "document",
+          },
+        );
+      } catch (error) {
+        if (error instanceof CaptureQueueFullError) {
+          inFlightCaptures.delete(key);
+          span.setAttribute("rango.background.outcome", "skip-capacity");
+          publish(descriptor, {
+            key,
+            outcome: "skip-capacity",
+          });
+          return;
+        }
+        if (error instanceof CaptureQueueWaitTimeoutError) {
+          // Dropped unrun after waiting past the queue budget: no backoff (the
+          // route is not doomed, the isolate was busy) — a later request
+          // re-probes the key.
+          inFlightCaptures.delete(key);
+          span.setAttribute("rango.background.outcome", "skip-queue-timeout");
+          span.setAttribute(
+            "rango.background.queue_wait_ms",
+            Math.round(error.waitedMs),
+          );
+          publish(descriptor, {
+            key,
+            outcome: "skip-queue-timeout",
+            queueWaitMs: Math.round(error.waitedMs),
+          });
+          return;
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   };
   // The capture's own task must NOT enter reqCtx._pendingBackgroundTasks: the
   // capture drains that list before rendering (the write-barrier ordering edge),

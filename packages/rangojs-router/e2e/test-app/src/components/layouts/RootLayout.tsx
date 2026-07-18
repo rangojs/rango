@@ -90,6 +90,20 @@ export function RootLayout(ctx: any) {
         >
           Prerender PPR action
         </Link>
+        <Link
+          to="/slow-streaming?prefetch-sequence=first"
+          data-testid="nav-prefetch-sequence-first"
+          prefetch="hover"
+        >
+          Prefetch sequence first
+        </Link>
+        <Link
+          to="/suspense-stream?prefetch-sequence=second"
+          data-testid="nav-prefetch-sequence-second"
+          prefetch="hover"
+        >
+          Prefetch sequence second
+        </Link>
         <NavigationStatus testId="nav-status" />
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />

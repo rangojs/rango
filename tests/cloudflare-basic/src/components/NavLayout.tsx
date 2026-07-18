@@ -110,6 +110,20 @@ export function NavLayout() {
         >
           Prerender PPR action
         </Link>
+        <Link
+          to="/pt-slow?prefetch-sequence=first"
+          data-testid="nav-prefetch-sequence-first"
+          prefetch="hover"
+        >
+          Prefetch sequence first
+        </Link>
+        <Link
+          to="/stream-test/1?prefetch-sequence=second"
+          data-testid="nav-prefetch-sequence-second"
+          prefetch="hover"
+        >
+          Prefetch sequence second
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

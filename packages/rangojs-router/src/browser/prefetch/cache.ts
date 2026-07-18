@@ -10,12 +10,12 @@
  * scopes are in play:
  * - Wildcard (default): built by `buildPrefetchKey(rangoState, target)` —
  *   shape `rangoState\0/target?...`. Shared across all source pages and
- *   invalidated automatically when Rango state bumps (deploy or
- *   server-action invalidation).
+ *   source segment trees; `_rsc_segments` is omitted from this key. Invalidated
+ *   automatically when Rango state bumps (deploy or server-action invalidation).
  * - Source-scoped: built by `buildSourceKey(rangoState, sourceHref, target)`
  *   — shape `rangoState\0sourceHref\0/target?...`. Embeds the Rango state
- *   (so rotation invalidates source-scoped entries too) plus the source
- *   href (so each originating page gets its own slot). Populated when the
+ *   (so rotation invalidates source-scoped entries too), the source href, and
+ *   the exact source segment tree. Populated when the
  *   server tags a response with `X-RSC-Prefetch-Scope: source` (intercept
  *   modals etc.), OR when a Link opts in with `prefetchKey=":source"` — in
  *   both cases so source-sensitive responses cannot bleed into navigations
@@ -144,7 +144,9 @@ let generation = 0;
  * - Wildcard (source-agnostic): prefix is the Rango state value from
  *   `getRangoState()`. Shared across all source pages. Invalidated
  *   automatically when Rango state bumps (deploy or server-action).
- *   Key shape: `rangoState\0/target?...`.
+ *   `_rsc_segments` is omitted so sibling payloads prefetched from one page
+ *   remain reusable after another prefetched navigation commits. Key shape:
+ *   `rangoState\0/target?...`.
  * - Source-scoped: use `buildSourceKey()`. Key shape:
  *   `rangoState\0sourceHref\0/target?...` — embeds the Rango state so
  *   rotation invalidates source-scoped entries alongside wildcard ones,
@@ -153,12 +155,15 @@ let generation = 0;
  *   `X-RSC-Prefetch-Scope: source` (intercept modals, etc.) or when a
  *   Link opts in via `prefetchKey=":source"`.
  *
- * The `_rsc_segments` query param that travels in the target URL means
- * clients with different mounted segment trees naturally get different
- * keys — so segment-level diffs remain consistent across both scopes.
+ * Source-scoped keys retain `_rsc_segments` because their exact source tree is
+ * part of the opt-in contract. Wildcard responses are source-agnostic by
+ * contract; callers use source scope when a custom revalidation decision makes
+ * the response depend on the current URL or segment tree.
  */
 export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
-  return prefix + "\0" + targetUrl.pathname + targetUrl.search;
+  const normalizedTarget = new URL(targetUrl);
+  normalizedTarget.searchParams.delete("_rsc_segments");
+  return prefix + "\0" + normalizedTarget.pathname + normalizedTarget.search;
 }
 
 /**
@@ -174,7 +179,14 @@ export function buildSourceKey(
   sourceHref: string,
   targetUrl: URL,
 ): string {
-  return buildPrefetchKey(rangoState + "\0" + sourceHref, targetUrl);
+  return (
+    rangoState +
+    "\0" +
+    sourceHref +
+    "\0" +
+    targetUrl.pathname +
+    targetUrl.search
+  );
 }
 
 /**

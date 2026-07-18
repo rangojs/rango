@@ -24,6 +24,7 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import { observePhase, PHASES } from "../router/instrument.js";
 import {
   getDevelopmentDiagnosticLink,
   recordLinkedCacheTagObservationDiagnostic,
@@ -393,54 +394,56 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         if (cached.revalidationClaimed)
           runBackground(requestCtx, async () => {
             try {
-              // Re-establish the request-context ALS around the background
-              // re-render: next() re-runs the full handler pipeline, and on
-              // workerd a waitUntil task runs detached from the request's I/O
-              // context, so a handler/component reading getRequestContext() would
-              // otherwise throw. Same fix as the route-level/use-cache background
-              // revalidation paths.
-              const fresh = await runWithRequestContext(requestCtx, () =>
-                next(),
-              );
-              const directives = shouldCacheResponse(fresh);
+              // Re-establish ALS around the whole task and keep the re-render,
+              // body drain, and store write under one background span.
+              await runWithRequestContext(requestCtx, () =>
+                observePhase(
+                  PHASES.background("document-revalidation"),
+                  async () => {
+                    const fresh = await next();
+                    const directives = shouldCacheResponse(fresh);
+                    if (!directives || !fresh.body) return;
 
-              if (directives && fresh.body) {
-                // Background revalidation: nothing streams to a client, so drain
-                // the fresh render fully before snapshotting tags (same
-                // render-complete barrier as the miss path).
-                const body = await new Response(fresh.body).arrayBuffer();
-                const tags = collectRequestTags(requestCtx);
-                const acknowledgement = await store.putResponse!(
-                  cacheKey,
-                  new Response(body, fresh),
-                  directives.sMaxAge!,
-                  directives.staleWhileRevalidate,
-                  tags,
-                );
-                if (
-                  diagnosticLink &&
-                  tags?.length &&
-                  (acknowledgement.outcome === "stored" ||
-                    acknowledgement.outcome === "scheduled")
-                ) {
-                  recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
-                    artifact: "document",
-                    phase: "write",
-                    provenance: ["request-union"],
-                    tags,
-                    identity: cacheKey,
-                    outcome: "revalidated",
-                  });
-                }
-                if (
-                  acknowledgement.outcome === "stored" ||
-                  acknowledgement.outcome === "scheduled"
-                ) {
-                  log(
-                    `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
-                  );
-                }
-              }
+                    // Nothing streams to a client, so drain the fresh render
+                    // fully before snapshotting its request tag union.
+                    const body = await new Response(fresh.body).arrayBuffer();
+                    const tags = collectRequestTags(requestCtx);
+                    const acknowledgement = await store.putResponse!(
+                      cacheKey,
+                      new Response(body, fresh),
+                      directives.sMaxAge!,
+                      directives.staleWhileRevalidate,
+                      tags,
+                    );
+                    if (
+                      diagnosticLink &&
+                      tags?.length &&
+                      (acknowledgement.outcome === "stored" ||
+                        acknowledgement.outcome === "scheduled")
+                    ) {
+                      recordLinkedCacheTagObservationDiagnostic(
+                        diagnosticLink,
+                        {
+                          artifact: "document",
+                          phase: "write",
+                          provenance: ["request-union"],
+                          tags,
+                          identity: cacheKey,
+                          outcome: "revalidated",
+                        },
+                      );
+                    }
+                    if (
+                      acknowledgement.outcome === "stored" ||
+                      acknowledgement.outcome === "scheduled"
+                    ) {
+                      log(
+                        `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
+                      );
+                    }
+                  },
+                ),
+              );
             } catch (error) {
               // Pass requestCtx explicitly: this runs in a detached waitUntil task
               // where the ALS context is gone, so onError only fires if we hand it

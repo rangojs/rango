@@ -142,6 +142,77 @@ function runSpec(f: Fixture): void {
     expect(second.prelude).toContain(`slow-meta-slow-${seq}-chained`);
   });
 
+  test("a document capture overtakes queued navigation-only captures", async ({
+    request,
+  }) => {
+    test.setTimeout(120_000);
+    const probe = crypto.randomUUID();
+
+    // Production viewport prefetch can put several slow navigation snapshots
+    // into the isolate queue before a document MISS arrives. Start three cold
+    // partials whose top-level handles hold each capture for ~6.5s. fetch()
+    // resolves at the response headers while their Flight bodies and detached
+    // captures continue, which lets the document request join behind them.
+    const partialUrls = Array.from({ length: 3 }, (_, index) =>
+      f.url(
+        `/shell-cache/slow-meta?probe=queue-priority-${probe}-${index}&_rsc_partial=true&_rsc_segments=`,
+      ),
+    );
+    const partialHeaders = {
+      "X-RSC-Router-Client-Path": f.url("/"),
+      "X-Rango-Prefetch": "1",
+    };
+    const partials = await Promise.all(
+      partialUrls.map((url) =>
+        fetch(url, {
+          headers: {
+            ...partialHeaders,
+          },
+        }),
+      ),
+    );
+    for (const partial of partials) {
+      expect(partial.status).toBe(200);
+      expect(partial.headers.get("x-rango-ppr-replay")).toBe(
+        "BYPASS; reason=no-entry",
+      );
+    }
+    const drains = partials.map((partial) => partial.arrayBuffer());
+
+    const documentUrl = f.url(
+      `/shell-cache?probe=queue-priority-document-${probe}`,
+    );
+    const first = await request.get(documentUrl, { headers: HTML_HEADERS });
+    expect(first.status()).toBe(200);
+    expect(first.headers()["x-rango-shell"]).toBe("MISS");
+
+    // The active navigation capture is not interrupted, but this document must
+    // run next. FIFO would put all three ~6.5s captures ahead of it and leave it
+    // MISS past this window (then drop it at the 15s queue budget).
+    await expect(async () => {
+      const response = await request.get(documentUrl, {
+        headers: HTML_HEADERS,
+      });
+      expect(response.status()).toBe(200);
+      expect(response.headers()["x-rango-shell"]).toBe("HIT");
+    }).toPass({ timeout: 12_000, intervals: [500] });
+
+    await Promise.all(drains);
+    // Leave the isolated server with an empty queue so this regression cannot
+    // add timing pressure to a later test when the production project is serial.
+    await Promise.all(
+      partialUrls.map((url) =>
+        expect(async () => {
+          const response = await request.get(url, { headers: partialHeaders });
+          expect(response.status()).toBe(200);
+          expect(response.headers()["x-rango-ppr-replay"]).toBe(
+            "HIT; freshness=fresh",
+          );
+        }).toPass({ timeout: 30_000, intervals: [1_000] }),
+      ),
+    );
+  });
+
   test("budget shorter than the settlement sequence refuses: stays MISS, no partial bake, once-per-key warning (issue #715 negative)", async ({
     request,
   }) => {

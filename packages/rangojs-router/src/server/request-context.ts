@@ -699,6 +699,13 @@ export interface RequestContext<
   _classifiedRoute?: import("../router/route-snapshot.js").RouteSnapshot;
 
   /**
+   * @internal Classified request mode from classifyRequest, read by the
+   * rango.response span tail (rsc/handler.ts) for the rango.response.mode
+   * attribute. Unset when middleware short-circuits before core execution.
+   */
+  _requestMode?: import("../router/request-classification.js").RequestPlan["mode"];
+
+  /**
    * @internal Coarse route-level cache signal for the X-Rango-Cache debug
    * header. Populated by match/matchPartial only when the debug cache signal
    * gate is enabled (debugCacheSignal option or RANGO_TEST_SIGNALS=1). Read by
@@ -777,6 +784,7 @@ export type PublicRequestContext<
   | "_setKeepCacheDirective"
   | "_variables"
   | "_classifiedRoute"
+  | "_requestMode"
   | "_cacheSignal"
   | "_dynamic"
   | "res"

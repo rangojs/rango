@@ -30,6 +30,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => mockGetRequestContext(),
+  // observePhase (instrument.ts) reads the underscore variant for the
+  // rango.background wrapper around the revalidation body.
+  _getRequestContext: () => mockGetRequestContext(),
   runWithRequestContext: <T>(ctx: unknown, fn: () => T): T => {
     const prev = mockGetRequestContext.getMockImplementation();
     mockGetRequestContext.mockImplementation(() => ctx);
@@ -90,6 +93,11 @@ describe("use cache stale revalidation handle preservation", () => {
   it("captures and persists handles during stale background revalidation", async () => {
     // Track waitUntil callbacks so we can run them synchronously
     const waitUntilFns: Array<() => Promise<void>> = [];
+    const { resolveTracing } = await import("../../router/tracing.js");
+    const spans: Array<{
+      name: string;
+      attributes: Record<string, unknown>;
+    }> = [];
 
     const mockStore = {
       getItem: vi.fn(),
@@ -109,6 +117,17 @@ describe("use cache stale revalidation handle preservation", () => {
       _cacheStore: mockStore,
       _cacheProfiles: { default: { ttl: 60, swr: 120 } },
       _handleStore: mockHandleStore,
+      _tracing: resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      }),
       waitUntil: (fn: () => Promise<void>) => {
         waitUntilFns.push(fn);
       },
@@ -145,6 +164,7 @@ describe("use cache stale revalidation handle preservation", () => {
       staleHandles,
       mockHandleStore,
     );
+    expect(spans).toHaveLength(0);
 
     // Now run the background revalidation callback
     expect(waitUntilFns).toHaveLength(1);
@@ -160,6 +180,10 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(setItemOptions.handles).toBeDefined();
     expect(setItemOptions.ttl).toBe(60);
     expect(setItemOptions.swr).toBe(120);
+    expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+    expect(spans[0].attributes["rango.background.kind"]).toBe(
+      "use-cache-revalidation",
+    );
   });
 
   it("re-tags the entry on stale background revalidation so it stays invalidatable (#7)", async () => {

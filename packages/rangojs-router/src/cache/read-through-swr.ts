@@ -41,13 +41,14 @@ export interface ReadThroughItemConfig<T> {
   /** Execute the underlying function/loader on miss or revalidation */
   execute: () => Promise<T>;
   /**
-   * Optional wrapper applied to execute() ONLY on the background
-   * stale-revalidation path (not the foreground miss, where the caller's context
-   * is already established). Used to re-establish the request-context ALS, which
-   * a detached waitUntil task loses on workerd. Defaults to calling execute()
-   * directly.
+   * Optional wrapper applied to the WHOLE background stale-revalidation task
+   * (execute + serialize + setItem) — not the foreground miss, where the
+   * caller's context is already established. Used to re-establish the
+   * request-context ALS, which a detached waitUntil task loses on workerd,
+   * and to open the rango.background span so the write is covered too.
+   * Defaults to running the task directly.
    */
-  wrapBackground?: (run: () => Promise<T>) => Promise<T>;
+  wrapBackground?: (run: () => Promise<void>) => Promise<void>;
   /** Serialize result for storage. Return null to skip caching. */
   serialize: (data: T) => Promise<string | null>;
   /** Deserialize cached value back to the original type */
@@ -116,30 +117,31 @@ export async function readThroughItem<T>(
       // Every stale reader reports stale; only the lock owner schedules work.
       onStale?.(cached);
       if (!cached.revalidationClaimed) return data;
+      // The whole task — execute AND serialize/setItem — goes through
+      // wrapBackground so the ALS re-establishment and the rango.background
+      // span cover the write too (a slow or failing store write is part of
+      // the revalidation, not an untraced tail). The foreground miss below
+      // stays unwrapped: its context is already established.
+      const revalidateTask = async () => {
+        const fresh = await execute();
+        const serialized = await serialize(fresh);
+        if (serialized !== null) {
+          const acknowledgement = await setItem(key, serialized, storeOptions);
+          if (
+            acknowledgement.outcome === "stored" ||
+            acknowledgement.outcome === "scheduled"
+          ) {
+            onCached?.();
+          }
+        }
+      };
       runBackground(
         host,
         async () => {
           try {
-            // Re-establish the caller's context (request-context ALS) for the
-            // detached background execution; the foreground miss below calls
-            // execute() directly since its context is already established.
-            const fresh = await (wrapBackground
-              ? wrapBackground(execute)
-              : execute());
-            const serialized = await serialize(fresh);
-            if (serialized !== null) {
-              const acknowledgement = await setItem(
-                key,
-                serialized,
-                storeOptions,
-              );
-              if (
-                acknowledgement.outcome === "stored" ||
-                acknowledgement.outcome === "scheduled"
-              ) {
-                onCached?.();
-              }
-            }
+            await (wrapBackground
+              ? wrapBackground(revalidateTask)
+              : revalidateTask());
           } catch (error) {
             reportCacheError(
               error,

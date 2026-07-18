@@ -26,6 +26,7 @@ import {
   _getRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
+import { observePhase, PHASES } from "../instrument.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
@@ -404,7 +405,17 @@ function executeLoaderData<TEnv>(
       setItem: (k, v, o) => store.setItem!(k, v, o),
       key,
       execute: () => runMiss(loaderEntry.loader),
-      wrapBackground: (run) => runWithRequestContext(requestCtxForExecute, run),
+      // The rango.background span (kind=loader-revalidation) wraps the WHOLE
+      // stale revalidation — the re-execution AND the serialize/setItem write
+      // (read-through-swr routes the full task through wrapBackground) — so
+      // the loader's rango.loader span, its fetch/KV platform spans, and the
+      // store write all nest under one explanatory parent instead of dangling
+      // under the ended foreground phases. Inside runWithRequestContext so
+      // observePhase can read tracing on workerd (ALS detaches in waitUntil).
+      wrapBackground: (run) =>
+        runWithRequestContext(requestCtxForExecute, () =>
+          observePhase(PHASES.background("loader-revalidation"), run),
+        ),
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },

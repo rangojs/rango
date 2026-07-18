@@ -1,11 +1,12 @@
 /**
  * Span tracing hook (platform-agnostic).
  *
- * The core router emits its existing performance phases (request, middleware, action,
- * loaders, render, ssr) as spans by calling traceSpan() at a small set of
- * execution boundaries. When no tracing is configured the call is a direct
- * pass-through: fn is invoked with a no-op span, with no wrapper and no
- * allocation, so a non-traced request behaves exactly as before.
+ * The core router emits its observable phases (request, middleware, action,
+ * loaders, handler, render, ssr, response, background) as spans by calling
+ * traceSpan() at a small set of execution boundaries. When no tracing is
+ * configured the call is a direct pass-through: fn is invoked with a no-op
+ * span, with no wrapper and no allocation, so a non-traced request behaves
+ * exactly as before.
  *
  * A platform integration supplies a SpanRunner that wraps fn in a real span.
  * Two runners ship: the Cloudflare one (createCloudflareTracing in
@@ -29,7 +30,10 @@
  * useLoader, plus the fetchable path), rango.handler (span-only, one per segment
  * route/layout handler execution; the handler:<id> perf metric is owned by the
  * track() at the call site), rango.render (render:total:<route>; normal AND
- * action-revalidation renders), rango.ssr (ssr:render-html).
+ * action-revalidation renders), rango.ssr (ssr:render-html), rango.response
+ * (span-only; final response construction + host handoff — the explicit
+ * stream-handoff marker), and rango.background (span-only; detached work, see
+ * below).
  *
  * Span-duration caveat (best-effort, never buffers): a span ends when its
  * callback's value (or promise) settles. For the streaming phases (request,
@@ -40,6 +44,19 @@
  * rango.loader span that can extend past its render parent; overlapping spans are
  * valid (the loader really did take that long). Phase spans bound the work up to
  * stream-handoff, which is also what the co-emitted perf metric measures.
+ * rango.response makes that handoff boundary explicit: it wraps only response
+ * finalization (redirect interception/guarding, Server-Timing mutation, final
+ * response selection) after downstream execution returns, ending immediately
+ * before the handler returns the Response to the host. It is handoff-bound,
+ * never drain-bound — it never reads, tees, or awaits response.body, and it is
+ * absent when the request throws before a response exists.
+ *
+ * rango.background wraps DETACHED work (waitUntil tasks that outlive the
+ * response): PPR shell captures and SWR background revalidations. It is the
+ * explanatory parent for spans those tasks produce after the foreground
+ * phases ended — without it, post-handoff work reads as orphan spans dangling
+ * under an ended parent. See PHASES.background (instrument.ts) for the lane
+ * kinds and per-lane inner-span policy.
  *
  * Both shipped runners (Cloudflare, OTel) keep the core agnostic: the
  * platform-specific bridge lives at the edge behind the SpanRunner contract.
@@ -68,18 +85,17 @@ export type TracePhase =
   | "loader"
   | "handler"
   | "render"
-  | "ssr";
+  | "ssr"
+  | "response"
+  | "background";
 
-/** Per-phase span toggles. Omitted phases default to enabled. */
-export interface TracePhaseToggles {
-  request?: boolean;
-  middleware?: boolean;
-  action?: boolean;
-  loader?: boolean;
-  handler?: boolean;
-  render?: boolean;
-  ssr?: boolean;
-}
+/**
+ * Per-phase span toggles. Omitted phases default to enabled. Derived from
+ * TracePhase so a new phase cannot be silently missing here — the other phase
+ * lists in this file (ALL_PHASES_ON, resolveTracing) are exhaustiveness-checked
+ * by their Record<TracePhase, boolean> annotations.
+ */
+export type TracePhaseToggles = Partial<Record<TracePhase, boolean>>;
 
 /**
  * The option pair shared by every tracing factory (enabled master switch +
@@ -125,6 +141,8 @@ const ALL_PHASES_ON: Record<TracePhase, boolean> = {
   handler: true,
   render: true,
   ssr: true,
+  response: true,
+  background: true,
 };
 
 /**
@@ -153,6 +171,8 @@ export function resolveTracing(
           handler: spans.handler ?? true,
           render: spans.render ?? true,
           ssr: spans.ssr ?? true,
+          response: spans.response ?? true,
+          background: spans.background ?? true,
         }
       : ALL_PHASES_ON,
   };

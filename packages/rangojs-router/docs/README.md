@@ -117,6 +117,10 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   performance gates, and the boundaries that remain concurrent
 - [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
   stream vs allReady mode per request
+- [Late-span retention on Cloudflare](./design/late-span-retention.md) - open
+  investigation: whether phase spans that settle after `router.fetch()` returns
+  (mid-stream loaders, SWR background revalidation) survive in the exported
+  Cloudflare trace; deployed reproduction protocol and the cancellation policy
 - [PPR shell caching and resume](./design/ppr-shell-resume.md) - the opt-in
   second render axis: caches the rendered HTML shell (React `prerender` prelude
   bytes + `postponed` state) and, on a hit, serves the shell bytes immediately

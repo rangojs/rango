@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { LoaderEntry } from "../../../server/context";
+import type { EntryData, LoaderEntry } from "../../../server/context";
 
 // PPR shell capture masks route loaders: during a capture render loader
 // functions must NOT execute, and their slots must hold a never-resolving promise
@@ -17,6 +17,7 @@ vi.mock("../../../server/request-context.js", () => ({
 }));
 
 import { resolveLoaderData } from "../loader-cache";
+import { resolveLoadersWithRevalidation } from "../revalidation";
 import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
@@ -31,6 +32,7 @@ function createMockLoader(id: string) {
 function createMockCtx() {
   return {
     params: {},
+    pathname: "/x",
     use: vi.fn((loader: any) => loader()),
   } as any;
 }
@@ -52,6 +54,33 @@ function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
     ),
     new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
   ]);
+}
+
+function createEntry(loader: any, loading?: unknown): EntryData {
+  return {
+    id: "entry-1",
+    shortCode: "R0",
+    loader: [{ loader, revalidate: [] } as LoaderEntry],
+    ...(loading !== undefined && { loading }),
+  } as EntryData;
+}
+
+function runRevalidationFunnel(entry: EntryData, ctx: any) {
+  const url = new URL("https://example.com/x");
+  return resolveLoadersWithRevalidation(
+    entry,
+    ctx,
+    true,
+    // Client has never seen the segment, so shouldRun is true without invoking
+    // evaluateRevalidation.
+    new Set<string>(),
+    {},
+    new Request(url),
+    url,
+    url,
+    "route-key",
+    { wrapLoaderPromise: (promise: Promise<unknown>) => promise } as never,
+  );
 }
 
 describe("loader masking under PPR shell capture", () => {
@@ -136,5 +165,55 @@ describe("loader masking under PPR shell capture", () => {
       expect(loader).toHaveBeenCalledTimes(1);
       expect(result).toEqual({ data: "real" });
     });
+  });
+});
+
+describe("revalidation loader lanes under PPR shell capture", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequestCtx._shellCaptureRun = undefined;
+  });
+
+  it("executes a BAKE-lane loader instead of whole-container masking", async () => {
+    mockRequestCtx._shellCaptureRun = true;
+    const loader = createMockLoader("bake#L");
+    const ctx = createMockCtx();
+
+    const { segments } = await runRevalidationFunnel(createEntry(loader), ctx);
+
+    expect(segments).toHaveLength(1);
+    expect(await settlesWithin(segments[0].loaderData!, 30)).toBe(true);
+    expect(ctx.use).toHaveBeenCalledWith(loader);
+    expect(loader).toHaveBeenCalledTimes(1);
+    await expect(segments[0].loaderData).resolves.toEqual({ data: "real" });
+  });
+
+  it("still whole-container-masks a LIVE-lane loader", async () => {
+    mockRequestCtx._shellCaptureRun = true;
+    const loader = createMockLoader("live#L");
+    const ctx = createMockCtx();
+
+    const { segments } = await runRevalidationFunnel(
+      createEntry(loader, "renderable-fallback"),
+      ctx,
+    );
+
+    expect(segments).toHaveLength(1);
+    expect(await settlesWithin(segments[0].loaderData!, 30)).toBe(false);
+    expect(ctx.use).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  it("executes normally outside capture", async () => {
+    const loader = createMockLoader("plain#L");
+
+    const { segments } = await runRevalidationFunnel(
+      createEntry(loader),
+      createMockCtx(),
+    );
+
+    expect(segments).toHaveLength(1);
+    await expect(segments[0].loaderData).resolves.toEqual({ data: "real" });
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });

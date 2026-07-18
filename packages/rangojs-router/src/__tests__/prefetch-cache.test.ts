@@ -64,15 +64,21 @@ describe("prefetch cache", () => {
     vi.restoreAllMocks();
   });
 
-  it("buildPrefetchKey concatenates prefix and target (wildcard shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
-    expect(buildPrefetchKey("v1:123", target)).toBe("v1:123\0/products?page=1");
+  it("buildPrefetchKey omits source-tree segment ids from the wildcard shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_partial=true&_rsc_segments=L0%2CR1&_rsc_v=v1",
+    );
+    expect(buildPrefetchKey("v1:123", target)).toBe(
+      "v1:123\0/products?page=1&_rsc_partial=true&_rsc_v=v1",
+    );
   });
 
-  it("buildSourceKey embeds rango state and source href (source-scoped shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
+  it("buildSourceKey keeps source-tree segment ids in the source-scoped shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_segments=L0%2CR1",
+    );
     expect(buildSourceKey("v1:123", "http://localhost/home", target)).toBe(
-      "v1:123\0http://localhost/home\0/products?page=1",
+      "v1:123\0http://localhost/home\0/products?page=1&_rsc_segments=L0%2CR1",
     );
   });
 

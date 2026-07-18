@@ -364,7 +364,10 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   snapshot bytes, backoff state); pass a function to receive each
   `ShellCaptureDebugEvent` instead. `skip-capacity` means the isolate already
   has 32 queued/running captures; the dropped best-effort capture can retry on a
-  later request. In dev, with `debugPerformance` on, the
+  later request. `skip-queue-timeout` means this capture waited 15s behind the
+  active or same-priority work and was dropped before rendering; document-shell
+  captures outrank queued navigation-only snapshots, but never interrupt the
+  active capture. In dev, with `debugPerformance` on, the
   last capture outcome for a key also rides the next document GET's
   `Server-Timing` as `ppr-capture;desc="…"`.
 - Read `ShellCaptureDebugEvent.storeWrite` separately from the attempt outcome:

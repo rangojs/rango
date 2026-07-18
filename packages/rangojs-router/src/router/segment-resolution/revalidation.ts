@@ -33,6 +33,7 @@ import {
   isTraceActive,
 } from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -46,7 +47,6 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
-import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   isDevelopmentDiagnosticsEnabled,
   recordLoaderRegistrationDiagnostic,
@@ -132,6 +132,13 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+  // PPR lane decision, same rule as the fresh funnel (fresh.ts): an entry
+  // without renderable loading() puts its loaders on the BAKE lane. The key
+  // must thread through EVERY resolveLoaderData funnel — omitting it here made
+  // a capture-active context whole-container-mask every loader on this path
+  // (a never-settling promise for a loader that should have executed).
+  // Outside capture the key only activates the _shellLoaderSeed overlay,
+  // which document-only serveShellHit seeds — inert for partial requests.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
