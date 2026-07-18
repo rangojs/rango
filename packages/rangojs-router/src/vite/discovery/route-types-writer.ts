@@ -81,7 +81,10 @@ export function writeCombinedRouteTypesWithTracking(
 /**
  * Write per-router route types files from runtime discovery data.
  */
-export function writeRouteTypesFiles(state: DiscoveryState): void {
+export function writeRouteTypesFiles(
+  state: DiscoveryState,
+  excludedSourceFiles?: ReadonlySet<string>,
+): void {
   if (state.perRouterManifests.length === 0) return;
 
   // Delete old combined named-routes.gen.ts if it exists
@@ -105,6 +108,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     sourceFile,
   } of state.perRouterManifests) {
     if (!sourceFile) continue;
+    if (excludedSourceFiles?.has(resolve(sourceFile))) continue;
 
     // Validate sourceFile points to a real project file, not node_modules or
     // a Vite internal path. A bad sourceFile leads to route types written to
@@ -153,6 +157,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
  */
 export function supplementGenFilesWithRuntimeRoutes(
   state: DiscoveryState,
+  excludedSourceFiles?: ReadonlySet<string>,
 ): void {
   // Cache static parsing results to avoid redundant I/O + parsing per router.
   const parseCache = new Map<
@@ -175,6 +180,7 @@ export function supplementGenFilesWithRuntimeRoutes(
     factoryOnlyPrefixes,
   } of state.perRouterManifests) {
     if (!sourceFile) continue;
+    if (excludedSourceFiles?.has(resolve(sourceFile))) continue;
     if (!factoryOnlyPrefixes || factoryOnlyPrefixes.size === 0) continue;
 
     const staticParsed = getParsed(sourceFile);

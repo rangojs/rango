@@ -55,7 +55,7 @@ import {
   computeExpiration,
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
-import { reportCacheError, reportingAsync } from "../cache-error.js";
+import { reportCacheError } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
 // Reuse the CF store's binary-safe base64 helpers. bufferToBase64 caps each
 // String.fromCharCode batch at 8192 and uses .apply (never a spread), so a large
@@ -121,14 +121,42 @@ export const VERCEL_MAX_TAG_BYTES: number = 256;
 const VERCEL_UNSAFE_TAG_CHARS = /[,&#%?]/;
 
 /**
- * Herd-dampening window (ms). On a stale read the store pushes the entry's
- * staleAt forward by this much and re-writes it, so other readers in the same
- * region briefly see it as fresh while one revalidates. Best-effort and
- * non-atomic: `getCache` has no compare-and-set, and storage is regional, so a
- * race can still let two readers both trigger revalidation. Matches the intent of
- * CFCacheStore's MAX_REVALIDATION_INTERVAL without its Cache-API atomicity.
+ * Herd-dampening window (ms). A stale reader writes a small generation marker
+ * in a reserved lock keyspace; readers of that generation remain stale but only
+ * the claimant revalidates. Best-effort and non-atomic: `getCache` has no
+ * compare-and-set, and storage is regional, so a race can still admit two owners.
  */
 const REVALIDATION_LOCK_MS = 30_000;
+const MAX_LOCAL_REVALIDATION_CLAIMS = 1_000;
+const localRevalidationClaims = new Map<
+  string,
+  { expiresAt: number; claimedUntil: number }
+>();
+
+function claimRevalidationLocally(lockKey: string, expiresAt: number): boolean {
+  const now = Date.now();
+  const existing = localRevalidationClaims.get(lockKey);
+  if (existing?.expiresAt === expiresAt && existing.claimedUntil > now) {
+    return false;
+  }
+  if (
+    !existing &&
+    localRevalidationClaims.size >= MAX_LOCAL_REVALIDATION_CLAIMS
+  ) {
+    for (const [candidate, claim] of localRevalidationClaims) {
+      if (claim.claimedUntil <= now) localRevalidationClaims.delete(candidate);
+    }
+    // At capacity, fail open rather than suppressing revalidation without an owner.
+    if (localRevalidationClaims.size >= MAX_LOCAL_REVALIDATION_CLAIMS) {
+      return true;
+    }
+  }
+  localRevalidationClaims.set(lockKey, {
+    expiresAt,
+    claimedUntil: Math.min(expiresAt, now + REVALIDATION_LOCK_MS),
+  });
+  return true;
+}
 
 /** Family prefixes that keep the value tiers from colliding in the single Vercel
  *  keyspace. The router's own semantic prefixes (doc:/partial:/use-cache:) become
@@ -273,10 +301,8 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
   cache: VercelRuntimeCache;
 
   /**
-   * `waitUntil` from `@vercel/functions`. Used only to run the stale-read lock
-   * write (herd dampening) off the response path - the router already
-   * backgrounds the actual writes. When omitted, the lock write runs detached
-   * (fire-and-forget) instead.
+   * `waitUntil` from `@vercel/functions`. Registers the best-effort platform
+   * lock write while the read waits for the client call to settle.
    */
   waitUntil?: (promise: Promise<unknown>) => void;
 
@@ -1036,6 +1062,7 @@ export class VercelCacheStore<
     if (safeTags.length > 0) options.tags = safeTags;
     if (this.name) options.name = this.name;
     await this.cache.set(storeKey, serialized ?? value, options);
+    localRevalidationClaims.delete(`rg:l:${storeKey}`);
     return { outcome: "stored" };
   }
 
@@ -1057,14 +1084,16 @@ export class VercelCacheStore<
 
   /**
    * Stale-read herd dampening via a tiny companion lock key. On a stale read,
-   * check `{storeKey}:lock`; if absent, claim it (write a short-TTL marker) and
-   * return true so THIS reader triggers revalidation. If present, another
-   * same-region reader already claimed it, so return false and serve the stale
-   * entry as fresh without piling on. Best-effort and non-blocking; never throws.
+   * check the reserved `rg:l:` key; if absent, claim it (write a short-TTL
+   * generation marker) and return true so THIS reader triggers revalidation. A marker for
+   * the same envelope generation means another same-region reader already
+   * claimed it, so return false. A marker from an older generation is replaced
+   * rather than deleted, avoiding a cleanup race with a successor claim.
    *
    * Only the STALE path pays the extra lock read; the fresh-hit path takes no
    * lock round trip. Unlike the prior whole-envelope re-stamp, a stale read now
-   * writes only the tiny lock, never the (potentially large) payload.
+   * writes only the tiny lock, never the (potentially large) payload. The client
+   * call settles before ownership is returned so it cannot outlive a fast refresh.
    *
    * Non-atomic (getCache has no compare-and-set): two readers can both find no
    * lock and both revalidate. The window is REVALIDATION_LOCK_MS wide, after
@@ -1076,7 +1105,10 @@ export class VercelCacheStore<
     expiresAt: number,
     label: string,
   ): Promise<boolean> {
-    const lockKey = `${storeKey}:lock`;
+    // `rg:l:` is unreachable through the public cache families, unlike a
+    // user-controlled suffix such as `${storeKey}:lock`.
+    const lockKey = `rg:l:${storeKey}`;
+    if (!claimRevalidationLocally(lockKey, expiresAt)) return false;
     let lock: unknown;
     try {
       lock = await this.cache.get(lockKey);
@@ -1084,20 +1116,22 @@ export class VercelCacheStore<
       // A lock-read failure must not break the read path: treat as unlocked.
       lock = null;
     }
-    if (lock != null) return false;
+    if (lock === expiresAt) return false;
 
     const remainingSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
     const lockTtl = Math.max(
       1,
       Math.min(Math.ceil(REVALIDATION_LOCK_MS / 1000), remainingSeconds),
     );
-    const task = (): Promise<void> =>
-      this.cache.set(lockKey, 1, { ttl: lockTtl });
-    if (this.waitUntil) {
-      this.waitUntil(reportingAsync(task, "cache-write", label));
-    } else {
-      void reportingAsync(task, "cache-write", label);
-    }
+    const lockWrite = this.cache.set(lockKey, expiresAt, { ttl: lockTtl }).then(
+      () => true,
+      (error) => {
+        reportCacheError(error, "cache-write", label);
+        return false;
+      },
+    );
+    this.waitUntil?.(lockWrite);
+    await lockWrite;
     return true;
   }
 

@@ -9,7 +9,7 @@
 import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
@@ -17,6 +17,7 @@ import {
   findNestedRouterConflict,
   findRouterFiles,
   createScanFilter,
+  genFileTsPath,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import {
@@ -613,6 +614,7 @@ export function createRouterDiscoveryPlugin(
         })();
       };
       let devServerClosed = false;
+      let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
       // Used by both discover() (route type generation) and the prerender
@@ -624,6 +626,8 @@ export function createRouterDiscoveryPlugin(
       // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
         devServerClosed = true;
+        clearTimeout(routeChangeTimer);
+        routeChangeTimer = undefined;
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
@@ -672,6 +676,7 @@ export function createRouterDiscoveryPlugin(
       }
 
       async function getOrCreateTempServer(): Promise<TempServerResult> {
+        if (devServerClosed) return { env: null, error: null };
         // Reuse path: if a temp server is already alive, prefer reusing
         // it over orphaning the existing instance and spinning up a new
         // one. This handles two cases:
@@ -742,6 +747,11 @@ export function createRouterDiscoveryPlugin(
             // capture runs, so discovery cost is unchanged.
             realSsrEntry: true,
           });
+          if (devServerClosed) {
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            return { env: null, error: null };
+          }
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
@@ -1547,14 +1557,31 @@ export function createRouterDiscoveryPlugin(
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
       // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
+        const deletedRouterSourceFiles = new Set<string>();
+        const deletedScannedSourceFiles = new Set<string>();
+        const routerSourceFiles = new Set(
+          s.perRouterManifests.flatMap(({ sourceFile }) =>
+            sourceFile ? [resolve(sourceFile)] : [],
+          ),
+        );
+        let sourceDeletionRevision = 0;
         const isGeneratedRouteFile = (filePath: string): boolean =>
           filePath.endsWith(".gen.ts") &&
           (filePath.includes("named-routes.gen.ts") ||
             filePath.includes("urls.gen.ts"));
 
+        const routerSourceExistsForGenFile = (filePath: string): boolean => {
+          const suffix = ".named-routes.gen.ts";
+          if (!filePath.endsWith(suffix)) return true;
+          const sourceBase = filePath.slice(0, -suffix.length);
+          return [".ts", ".tsx", ".js", ".jsx"].some((extension) =>
+            existsSync(`${sourceBase}${extension}`),
+          );
+        };
+
         const regenerateGeneratedRouteFiles = () => {
           if (s.perRouterManifests.length > 0) {
-            writeRouteTypesFiles(s);
+            writeRouteTypesFiles(s, deletedRouterSourceFiles);
           } else {
             writeCombinedRouteTypesWithTracking(s);
           }
@@ -1592,18 +1619,13 @@ export function createRouterDiscoveryPlugin(
           return true;
         };
 
-        // Debounce timer for batching rapid route-file changes (e.g. afterEach
-        // restoring two files in quick succession). The cheap checks (extension,
-        // scanFilter, content sniff) run synchronously to gate non-route files;
-        // only the expensive regeneration is debounced.
-        let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
-
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
         // The state-machine concerns (queued/pending/gatePending) are
         // owned by the gate created above (./discovery/gate-state.ts).
         // Here we provide just the env-specific work.
         const refreshRuntimeDiscovery = async () => {
+          if (devServerClosed) return;
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
           // Cloudflare HMR has no main RSC runner (workerd is a separate
@@ -1615,7 +1637,9 @@ export function createRouterDiscoveryPlugin(
           if (!hasMainRunner && s.perRouterManifests.length === 0) return;
           let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
+            if (devServerClosed) return;
             const hmrStart = performance.now();
+            const observedDeletionRevision = sourceDeletionRevision;
             const discoveryAttempt = mcp.beginDiscovery();
             try {
               if (hasMainRunner) {
@@ -1623,7 +1647,7 @@ export function createRouterDiscoveryPlugin(
                   discoverRouters(s, rscEnv),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                  writeRouteTypesFiles(s),
+                  writeRouteTypesFiles(s, deletedRouterSourceFiles),
                 );
                 await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
                   propagateDiscoveryState(rscEnv),
@@ -1650,8 +1674,16 @@ export function createRouterDiscoveryPlugin(
                   () => discoverRouters(s, tempRscEnv),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                  writeRouteTypesFiles(s),
+                  writeRouteTypesFiles(s, deletedRouterSourceFiles),
                 );
+              }
+              if (observedDeletionRevision === sourceDeletionRevision) {
+                deletedRouterSourceFiles.clear();
+                deletedScannedSourceFiles.clear();
+              }
+              routerSourceFiles.clear();
+              for (const { sourceFile } of s.perRouterManifests) {
+                if (sourceFile) routerSourceFiles.add(resolve(sourceFile));
               }
               publishMcpRoutes(discoveryAttempt);
               if (s.lastDiscoveryError) {
@@ -1805,14 +1837,33 @@ export function createRouterDiscoveryPlugin(
         };
 
         const scheduleRouteRegeneration = () => {
+          if (devServerClosed) return;
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
+            if (devServerClosed) return;
             const regenStart = debugDiscovery ? performance.now() : 0;
             const rscEnv = (server.environments as any)?.rsc;
             const skipStaticWrite =
               !rscEnv?.runner && s.perRouterManifests.length > 0;
             try {
+              // Atomic saves report unlink followed by add. Delay orphan cleanup
+              // until this shared debounce expires so a replacement source can
+              // clear its tombstone without making the generated type file flap.
+              for (const sourceFile of deletedRouterSourceFiles) {
+                if (existsSync(sourceFile)) {
+                  deletedRouterSourceFiles.delete(sourceFile);
+                  continue;
+                }
+                const generatedRouteFile = genFileTsPath(sourceFile);
+                if (routerSourceExistsForGenFile(generatedRouteFile)) {
+                  deletedRouterSourceFiles.delete(sourceFile);
+                  continue;
+                }
+                if (existsSync(generatedRouteFile)) {
+                  unlinkSync(generatedRouteFile);
+                }
+              }
               // In cloudflare dev with a populated runtime manifest, the
               // static parser produces a strictly smaller (and actively
               // wrong) gen file — supplementGenFilesWithRuntimeRoutes can
@@ -1827,8 +1878,14 @@ export function createRouterDiscoveryPlugin(
                 );
               } else {
                 writeCombinedRouteTypesWithTracking(s);
-                if (s.perRouterManifests.length > 0) {
-                  supplementGenFilesWithRuntimeRoutes(s);
+                if (
+                  s.perRouterManifests.length > 0 &&
+                  deletedScannedSourceFiles.size === 0
+                ) {
+                  supplementGenFilesWithRuntimeRoutes(
+                    s,
+                    deletedRouterSourceFiles,
+                  );
                 }
               }
             } catch (err: any) {
@@ -1857,28 +1914,19 @@ export function createRouterDiscoveryPlugin(
           }, 100);
         };
 
+        const isScannedSourceFile = (filePath: string): boolean =>
+          (filePath.endsWith(".ts") ||
+            filePath.endsWith(".tsx") ||
+            filePath.endsWith(".js") ||
+            filePath.endsWith(".jsx")) &&
+          (!s.scanFilter || s.scanFilter(filePath));
+
         const handleRouteFileChange = (filePath: string) => {
           if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
-          if (
-            !filePath.endsWith(".ts") &&
-            !filePath.endsWith(".tsx") &&
-            !filePath.endsWith(".js") &&
-            !filePath.endsWith(".jsx")
-          ) {
+          if (!isScannedSourceFile(filePath)) {
             if (s.lastDiscoveryError) {
               debugDiscovery?.(
-                "watcher: skip non-source %s [LASTERR %s]",
-                filePath,
-                s.lastDiscoveryError.message,
-              );
-            }
-            return;
-          }
-          // Apply scan filter as early-exit before reading file
-          if (s.scanFilter && !s.scanFilter(filePath)) {
-            if (s.lastDiscoveryError) {
-              debugDiscovery?.(
-                "watcher: skip scan-filter %s [LASTERR %s]",
+                "watcher: skip non-source or scan-filtered %s [LASTERR %s]",
                 filePath,
                 s.lastDiscoveryError.message,
               );
@@ -1896,6 +1944,9 @@ export function createRouterDiscoveryPlugin(
           const inRecoveryMode = !!s.lastDiscoveryError;
           try {
             const source = readFileSync(filePath, "utf-8");
+            const resolvedFilePath = resolve(filePath);
+            deletedScannedSourceFiles.delete(resolvedFilePath);
+            deletedRouterSourceFiles.delete(resolvedFilePath);
             const trimmed = source.trimStart();
             const isUseClient =
               trimmed.startsWith('"use client"') ||
@@ -1934,9 +1985,16 @@ export function createRouterDiscoveryPlugin(
             }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
+              routerSourceFiles.add(resolvedFilePath);
+              const generatedRouteFile = genFileTsPath(resolvedFilePath);
+              for (const deletedSourceFile of deletedRouterSourceFiles) {
+                if (genFileTsPath(deletedSourceFile) === generatedRouteFile) {
+                  deletedRouterSourceFiles.delete(deletedSourceFile);
+                }
+              }
               const nestedRouterConflict = findNestedRouterConflict([
                 ...(s.cachedRouterFiles ?? []),
-                resolve(filePath),
+                resolvedFilePath,
               ]);
               if (nestedRouterConflict) {
                 server.config.logger.error(
@@ -1982,10 +2040,37 @@ export function createRouterDiscoveryPlugin(
         // Same no-runner guard as change/add: stale perRouterManifests would
         // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
-          if (!isGeneratedRouteFile(filePath)) return;
-          const hasRunner = !!(server.environments as any)?.rsc?.runner;
-          if (!hasRunner) return;
-          regenerateGeneratedRouteFiles();
+          if (isGeneratedRouteFile(filePath)) {
+            // A router-source unlink removes its sibling gen file. Do not
+            // recreate that orphan from the last-good runtime manifest.
+            if (!routerSourceExistsForGenFile(filePath)) return;
+            const hasRunner = !!(server.environments as any)?.rsc?.runner;
+            if (hasRunner) regenerateGeneratedRouteFiles();
+            return;
+          }
+          if (!isScannedSourceFile(filePath)) return;
+          const resolvedFilePath = resolve(filePath);
+          deletedScannedSourceFiles.add(resolvedFilePath);
+          const ownsGeneratedRouteFile =
+            routerSourceFiles.delete(resolvedFilePath) ||
+            s.perRouterManifests.some(
+              ({ sourceFile }) =>
+                !!sourceFile && resolve(sourceFile) === resolvedFilePath,
+            ) ||
+            (s.cachedRouterFiles ?? []).some(
+              (sourceFile) => resolve(sourceFile) === resolvedFilePath,
+            ) ||
+            existsSync(genFileTsPath(resolvedFilePath));
+          if (ownsGeneratedRouteFile) {
+            deletedRouterSourceFiles.add(resolvedFilePath);
+          }
+          sourceDeletionRevision++;
+          s.cachedRouterFiles = undefined;
+          if (s.perRouterManifests.length > 0) {
+            gate.noteRouteEvent();
+            mcp.markDiscoveryPending();
+          }
+          scheduleRouteRegeneration();
         });
       }
     },

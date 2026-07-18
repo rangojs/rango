@@ -83,7 +83,13 @@ export function createRangoMcpHttpMiddleware(
   options: RangoMcpHttpMiddlewareOptions,
 ): RangoMcpHttpMiddleware {
   return (request, response, next) => {
-    const pathname = new URL(request.url ?? "/", "http://rango.local").pathname;
+    let pathname: string;
+    try {
+      pathname = new URL(request.url ?? "/", "http://rango.local").pathname;
+    } catch {
+      next();
+      return;
+    }
     if (pathname !== RANGO_MCP_ENDPOINT) {
       next();
       return;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   diagnosticSearchNames,
+  isDiagnosticCredentialKey,
   sanitizeDiagnosticText,
   serializeDiagnosticError,
 } from "../redaction.js";
@@ -8,13 +9,16 @@ import {
 describe("diagnostic redaction", () => {
   it("redacts URL queries and credential-shaped values before retention", () => {
     const sanitized = sanitizeDiagnosticText(
-      "https://user:pass@example.test/a?token=secret&view=full Authorization: Bearer abc123 password=hunter2",
+      "https://user:pass@example.test/a?token=secret&view=full Authorization: Bearer abc123 password=hunter2 session=abc jwt=def set-cookie=sid%3Dghi",
     );
 
     expect(sanitized).not.toContain("user:pass");
     expect(sanitized).not.toContain("secret");
     expect(sanitized).not.toContain("abc123");
     expect(sanitized).not.toContain("hunter2");
+    expect(sanitized).not.toContain("abc");
+    expect(sanitized).not.toContain("def");
+    expect(sanitized).not.toContain("ghi");
     expect(sanitized).toContain("token=[redacted]");
     expect(sanitized).toContain("password=[redacted]");
   });
@@ -25,6 +29,35 @@ describe("diagnostic redaction", () => {
     );
     expect(diagnosticSearchNames(url)).toEqual(["token", "view"]);
   });
+
+  it.each([
+    "cookie",
+    "cookies",
+    "Cookie",
+    "set-cookie",
+    "set cookies",
+    "set_cookie",
+    "api key",
+    "cf-access-jwt-assertion",
+  ])("classifies structured %s fields as credentials", (key) => {
+    expect(isDiagnosticCredentialKey(key)).toBe(true);
+  });
+
+  it("redacts spaced and plural credential assignments", () => {
+    const sanitized = sanitizeDiagnosticText(
+      "cookies: sid=visible\napi key=also-visible\nset cookies=session=visible\njwt assertion=visible",
+    );
+
+    expect(sanitized).not.toContain("visible");
+    expect(sanitized).not.toContain("also-visible");
+  });
+
+  it.each(["author", "authority", "tokenizer", "sessionCount"])(
+    "does not classify ordinary %s fields as credentials",
+    (key) => {
+      expect(isDiagnosticCredentialKey(key)).toBe(false);
+    },
+  );
 
   it("serializes bounded errors with project-relative, redacted stacks", () => {
     const error = new Error("token=secret");

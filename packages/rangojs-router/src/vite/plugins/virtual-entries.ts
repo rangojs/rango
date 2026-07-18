@@ -29,6 +29,7 @@ async function initializeApp() {
   const { strictMode, initialPayload } = await initBrowserApp({ rscStream, deps });
 
   if (import.meta.hot) {
+    const initialDocumentHref = window.location.href;
     const { startDevDiscoveryHandshake } = await import(
       "@rangojs/router/internal/browser/dev-discovery"
     );
@@ -36,10 +37,15 @@ async function initializeApp() {
       initialPayload.metadata?.devDiscoveryEpoch,
       import.meta.hot
     );
-    const { installBrowserNavigationDiagnostics } = await import(
-      "@rangojs/router/internal/browser/navigation-diagnostics"
-    );
-    installBrowserNavigationDiagnostics(import.meta.hot);
+    void import(
+        "@rangojs/router/internal/browser/navigation-diagnostics"
+      )
+      .then(({ installBrowserNavigationDiagnostics }) => {
+        installBrowserNavigationDiagnostics(import.meta.hot, initialDocumentHref);
+      })
+      .catch((error) => {
+        console.warn("[rango] Browser navigation diagnostics unavailable", error);
+      });
   }
 
   const app = createElement(Rango);

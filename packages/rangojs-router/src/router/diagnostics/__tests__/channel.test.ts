@@ -229,9 +229,74 @@ describe("diagnostic channel", () => {
       async () => response,
     );
 
+    expect(result).toBe(response);
     expect(result.headers.get("X-Rango-Request-Id")).toBe(
       getRequestIdentity(request).requestId,
     );
+  });
+
+  it("replaces its timing metric when a Response is reused", async () => {
+    const response = new Response("shared body", {
+      headers: {
+        "Server-Timing":
+          'app;desc="kept, with comma", rango-request-id;desc="req-00000000-0000-4000-8000-000000000000"',
+      },
+    });
+    const firstRequest = new Request("http://localhost/one");
+    const secondRequest = new Request("http://localhost/two");
+
+    const firstResult = await runWithRequestDiagnostics(
+      firstRequest,
+      "shop",
+      async () => response,
+    );
+    const firstId = getRequestIdentity(firstRequest).requestId;
+    const result = await runWithRequestDiagnostics(
+      secondRequest,
+      "shop",
+      async () => response,
+    );
+    const secondId = getRequestIdentity(secondRequest).requestId;
+    const timing = result.headers.get("Server-Timing")!;
+
+    expect(result.headers.get("X-Rango-Request-Id")).toBe(secondId);
+    expect(timing).toContain('app;desc="kept, with comma"');
+    expect(timing.match(/rango-request-id/gu)).toHaveLength(1);
+    expect(timing).toContain(secondId);
+    expect(timing).not.toContain(firstId);
+    expect(firstResult).not.toBe(result);
+    expect(firstResult.headers.get("X-Rango-Request-Id")).toBe(firstId);
+    expect(firstResult.headers.get("Server-Timing")).toContain(firstId);
+    expect(firstResult.headers.get("Server-Timing")).not.toContain(secondId);
+    await expect(firstResult.text()).resolves.toBe("shared body");
+    await expect(result.text()).resolves.toBe("shared body");
+  });
+
+  it("echoes the request ID on a thrown Response without changing completion semantics", async () => {
+    const request = new Request("http://localhost/redirect");
+    const response = new Response(null, {
+      status: 302,
+      headers: { location: "/products" },
+    });
+
+    let thrown: unknown;
+    try {
+      await runWithRequestDiagnostics(request, "shop", async () => {
+        throw response;
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Response);
+    expect((thrown as Response).headers.get("X-Rango-Request-Id")).toBe(
+      getRequestIdentity(request).requestId,
+    );
+    expect(
+      getDevelopmentDiagnosticHub()!
+        .getTrace(getRequestIdentity(request).requestId)!
+        .events.map((event) => event.type),
+    ).toEqual(["request.started", "request.completed"]);
   });
 
   it("does not mutate WebSocket upgrade responses", async () => {

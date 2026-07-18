@@ -23,7 +23,10 @@ import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { RouterError } from "../../errors.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
-import type { SegmentCacheStore } from "../../cache/types.js";
+import type {
+  CacheWriteAcknowledgement,
+  SegmentCacheStore,
+} from "../../cache/types.js";
 import type { OnErrorCallback } from "../../types/error-types.js";
 
 function Home() {
@@ -868,6 +871,38 @@ describe("dispatch", () => {
         category: "cache-write",
       });
     });
+
+    it.each<{
+      label: string;
+      acknowledgement: CacheWriteAcknowledgement;
+    }>([
+      {
+        label: "skipped",
+        acknowledgement: {
+          outcome: "skipped",
+          reason: "invalidated-generation",
+        },
+      },
+      { label: "failed", acknowledgement: { outcome: "failed" } },
+    ])(
+      "cache MISS + $label write acknowledgement remains fail-open",
+      async ({ acknowledgement }) => {
+        const onError = vi.fn<OnErrorCallback>();
+        const store = makeStore({
+          getResponse: async () => null,
+          putResponse: async () => acknowledgement,
+        });
+        const putSpy = vi.spyOn(store, "putResponse");
+        const router = buildCacheRouter(onError, store);
+
+        const response = await dispatch(router, { request: "/cached-err" });
+        expect(response.status).toBe(200);
+        expect((await response.json()).ts).toBeTypeOf("number");
+        await flushBackground();
+        expect(putSpy).toHaveBeenCalledOnce();
+        expect(onError).not.toHaveBeenCalled();
+      },
+    );
 
     it("SWR stale hit + store putResponse throw -> onError phase cache, category stale-revalidation (serves stale)", async () => {
       const onError = vi.fn<OnErrorCallback>();

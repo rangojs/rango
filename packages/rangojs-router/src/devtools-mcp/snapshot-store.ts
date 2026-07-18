@@ -196,7 +196,9 @@ function decodeCursor(value: string): RoutesCursor {
 
 function truncateOversizedRoute(route: RouteRecord): RouteRecord {
   return {
-    routerId: boundUtf8(route.routerId, MAX_OVERSIZED_ROUTE_FIELD_BYTES),
+    // Router IDs are already bounded and hash-suffixed by discovery. Preserve
+    // that identity so truncated route records still join the other snapshots.
+    routerId: route.routerId,
     routerFile:
       route.routerFile === null
         ? null
@@ -241,10 +243,10 @@ export function createRangoMcpSnapshotStore(
       attempt,
       generation,
       stale:
-        generation > 0 &&
-        (phase !== "ready" ||
-          runtimeConvergence === "pending" ||
-          runtimeConvergence === "timeout"),
+        generation === 0 ||
+        phase !== "ready" ||
+        runtimeConvergence === "pending" ||
+        runtimeConvergence === "timeout",
       runtimeConvergence,
       routerCount: routers.length,
       routeCount: routes.length,

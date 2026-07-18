@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   RANGO_DIAGNOSTIC_BRIDGE_VERSION,
   type DiagnosticBridgeBatch,
@@ -67,6 +67,7 @@ function navigationEvent(
   sequence: number,
   phase: BrowserNavigationEvent["phase"],
   requestId?: string,
+  overrides: Partial<BrowserNavigationEvent> = {},
 ): BrowserNavigationEvent {
   return {
     version: 1,
@@ -77,6 +78,7 @@ function navigationEvent(
     phase,
     pathname: "/blog/first",
     ...(requestId ? { requestId, role: "navigation" } : {}),
+    ...overrides,
   };
 }
 
@@ -157,6 +159,72 @@ describe("Rango MCP diagnostic store", () => {
       rejectedBatches: 1,
       bridgeDroppedEvents: 1,
     });
+  });
+
+  it("accepts out-of-order realm batches once", () => {
+    const store = createStore();
+    const later = batch(2, [
+      event(2, "request.completed", { status: 200 }, "req-1"),
+    ]);
+    const earlier = batch(1, [
+      event(1, "request.started", { method: "GET" }, "req-1"),
+    ]);
+
+    expect(store.ingestBridgeBatch(later)).toBe(true);
+    expect(store.ingestBridgeBatch(earlier)).toBe(true);
+    expect(store.ingestBridgeBatch(earlier)).toBe(true);
+
+    expect(store.listRequests()).toMatchObject({
+      requests: [expect.objectContaining({ requestId: "req-1" })],
+      stats: {
+        acceptedBatches: 2,
+        duplicateBatches: 1,
+      },
+    });
+    expect(
+      store
+        .getRequestTrace({ requestId: "req-1" })
+        .trace.events.map((item) => item.type),
+    ).toEqual(["request.started", "request.completed"]);
+  });
+
+  it("rejects reordered batches beyond the bounded window", () => {
+    const store = createStore();
+
+    expect(
+      store.ingestBridgeBatch(
+        batch(258, [event(1, "request.started", { method: "GET" })]),
+      ),
+    ).toBe(false);
+    expect(store.listRequests().stats).toMatchObject({
+      acceptedBatches: 0,
+      rejectedBatches: 1,
+    });
+  });
+
+  it("recovers after a missing realm batch without blocking later evidence", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createStore();
+      expect(
+        store.ingestBridgeBatch(
+          batch(2, [event(2, "request.completed", { status: 200 })]),
+        ),
+      ).toBe(true);
+      expect(store.listRequests().requests).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(store.listRequests().requests).toEqual([
+        expect.objectContaining({
+          requestId: "req-1",
+          completed: true,
+          truncated: true,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("attributes bridge loss to retained request traces", () => {
@@ -263,6 +331,140 @@ describe("Rango MCP diagnostic store", () => {
       requestId,
       navigationIds: ["nav-00000000-0000-4000-8000-000000000002"],
     });
+  });
+
+  it("keeps one terminal phase while accepting late request links", () => {
+    const store = createStore();
+    const requestId = "req-00000000-0000-4000-8000-000000000003";
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(1, "committed")),
+    ).toBe(false);
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(1, "started")),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(2, "committed")),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(navigationEvent(3, "failed")),
+    ).toBe(true);
+    expect(
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(4, "request-linked", requestId),
+      ),
+    ).toBe(true);
+
+    expect(
+      store
+        .getNavigationTrace({
+          navigationId: "nav-00000000-0000-4000-8000-000000000002",
+        })
+        .events.map((event) => event.phase),
+    ).toEqual(["started", "committed", "request-linked"]);
+  });
+
+  it("evicts completed navigations before active ones and releases document sequences", () => {
+    const store = createStore();
+    const id = (prefix: "doc" | "nav", value: number): string =>
+      `${prefix}-${value.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+    const activeDocument = id("doc", 1);
+    const activeNavigation = id("nav", 1);
+    store.ingestBrowserNavigationEvent(
+      navigationEvent(1, "started", undefined, {
+        documentId: activeDocument,
+        navigationId: activeNavigation,
+      }),
+    );
+    for (let index = 2; index <= 100; index++) {
+      const documentId = id("doc", index);
+      const navigationId = id("nav", index);
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(1, "started", undefined, {
+          documentId,
+          navigationId,
+        }),
+      );
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(2, "committed", undefined, {
+          documentId,
+          navigationId,
+        }),
+      );
+    }
+    const nextDocument = id("doc", 101);
+    const nextNavigation = id("nav", 101);
+    store.ingestBrowserNavigationEvent(
+      navigationEvent(1, "started", undefined, {
+        documentId: nextDocument,
+        navigationId: nextNavigation,
+      }),
+    );
+
+    expect(
+      store.getNavigationTrace({ navigationId: activeNavigation }).completed,
+    ).toBe(false);
+    const recycledNavigation = id("nav", 1_002);
+    expect(
+      store.ingestBrowserNavigationEvent(
+        navigationEvent(1, "started", undefined, {
+          documentId: id("doc", 2),
+          navigationId: recycledNavigation,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      store.getNavigationTrace({ navigationId: recycledNavigation }),
+    ).toMatchObject({ completed: false });
+  });
+
+  it("redacts structured credential fields at host ingestion", () => {
+    const store = createStore();
+    store.ingestBridgeBatch(
+      batch(1, [
+        event(1, "error.reported", {
+          error: {
+            name: "Error",
+            message: "invalid session=visible",
+            stack: "Error: jwt=visible-stack",
+            token: "visible-token",
+          },
+          authorization: "Bearer visible-auth",
+          cookie: "sid=visible-cookie",
+          "set-cookie": "session=visible-set-cookie",
+          "cf-access-jwt-assertion": "visible-jwt",
+        }),
+      ]),
+    );
+
+    const trace = JSON.stringify(store.getRequestTrace({ requestId: "req-1" }));
+    const errors = JSON.stringify(store.getErrors({ requestId: "req-1" }));
+    expect(trace).not.toContain("visible");
+    expect(errors).not.toContain("visible");
+    expect(
+      store.getErrors({ requestId: "req-1" }).errors[0]?.error,
+    ).toMatchObject({ name: "Error" });
+  });
+
+  it("retains a bounded multi-frame stack in error summaries", () => {
+    const store = createStore();
+    const stack = `Error: failed\n${Array.from(
+      { length: 20 },
+      (_, index) => `    at frame${index} (/project/source-${index}.ts:1:1)`,
+    ).join("\n")}`;
+    store.ingestBridgeBatch(
+      batch(1, [
+        event(1, "error.reported", {
+          error: { name: "Error", message: "failed", stack },
+        }),
+      ]),
+    );
+
+    const error = store.getErrors({ requestId: "req-1" }).errors[0]?.error;
+    expect(error).toMatchObject({ name: "Error", message: "failed" });
+    expect((error as { stack: string }).stack).toContain("frame10");
+    expect(
+      Buffer.byteLength((error as { stack: string }).stack),
+    ).toBeLessThanOrEqual(2_048);
   });
 
   it("bounds request links retained for one browser navigation", () => {

@@ -225,8 +225,11 @@ The predicate arg carries the action's full context, not just its identity. Matc
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
-(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
-`_rsc_stale` signal). All are `undefined` on plain navigation (no action).
+(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale`. Route,
+layout, and parallel predicates receive `stale: true` for either the browser's
+cross-tab `_rsc_stale` signal or a retained stale segment-cache value; loader
+predicates receive only the browser signal. The action-specific fields are
+`undefined` on plain navigation, while cache-derived `stale` can still be set.
 
 Two idioms, picked by what an _unrelated_ action should do. `ctx.isAction()`
 returns a raw boolean, so combine it with `|| undefined` to **defer** ("mine,

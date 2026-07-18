@@ -116,6 +116,8 @@ export class DiagnosticHub {
     const existing = this.traces.get(input.requestId);
     if (existing) {
       existing.observedAt = observedAt;
+      this.traces.delete(input.requestId);
+      this.traces.set(input.requestId, existing);
       return existing;
     }
 
@@ -152,32 +154,44 @@ export class DiagnosticHub {
   }
 
   private dropOldestEvent(reason: DiagnosticTruncationReason): boolean {
+    let emptyRequestId: string | undefined;
+    let emptyObservedAt = Number.POSITIVE_INFINITY;
+    let selected: StoredTrace | undefined;
+    let selectedSequence = Number.POSITIVE_INFINITY;
     for (const [requestId, stored] of this.traces) {
       if (stored.trace.events.length === 0) {
-        if (this.traces.size > 1) {
-          this.removeTrace(requestId);
-          this.droppedEvents++;
-          return true;
+        if (stored.observedAt < emptyObservedAt) {
+          emptyRequestId = requestId;
+          emptyObservedAt = stored.observedAt;
         }
         continue;
       }
-      stored.trace.events.shift();
-      const eventBytes = stored.eventEncodedBytes.shift() ?? 0;
-      const separatorBytes = stored.trace.events.length > 0 ? 1 : 0;
-      stored.encodedBytes -= eventBytes + separatorBytes;
-      this.totalEncodedBytes -= eventBytes + separatorBytes;
-      stored.trace.droppedEvents++;
-      this.droppedEvents++;
-      this.eventCount--;
-      const addedReason = addReason(stored.trace, reason);
-      this.addBytes(
-        stored,
-        encodedBytes(stored.trace.droppedEvents) +
-          (addedReason ? encodedBytes(reason) + 1 : 0),
-      );
+      const sequence = stored.trace.events[0]!.sequence;
+      if (sequence < selectedSequence) {
+        selected = stored;
+        selectedSequence = sequence;
+      }
+    }
+    if (emptyRequestId && this.traces.size > 1) {
+      this.removeTrace(emptyRequestId);
       return true;
     }
-    return false;
+    if (!selected) return false;
+    selected.trace.events.shift();
+    const eventBytes = selected.eventEncodedBytes.shift() ?? 0;
+    const separatorBytes = selected.trace.events.length > 0 ? 1 : 0;
+    selected.encodedBytes -= eventBytes + separatorBytes;
+    this.totalEncodedBytes -= eventBytes + separatorBytes;
+    selected.trace.droppedEvents++;
+    this.droppedEvents++;
+    this.eventCount--;
+    const addedReason = addReason(selected.trace, reason);
+    this.addBytes(
+      selected,
+      encodedBytes(selected.trace.droppedEvents) +
+        (addedReason ? encodedBytes(reason) + 1 : 0),
+    );
+    return true;
   }
 
   record(
@@ -244,7 +258,6 @@ export class DiagnosticHub {
       const oldest = this.traces.keys().next().value as string | undefined;
       if (!oldest) break;
       this.removeTrace(oldest);
-      this.droppedEvents++;
     }
   }
 

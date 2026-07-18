@@ -10,7 +10,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   applyEdits,
   modify,
@@ -42,6 +42,13 @@ interface ClientTarget {
   entryDefaults?: Record<string, unknown>;
 }
 
+interface InstallerLockOwner {
+  pid: number;
+  token: string;
+}
+
+type InstallerLock = InstallerLockOwner;
+
 const CLIENT_TARGETS: Readonly<Record<RangoMcpClient, ClientTarget>> = {
   "claude-code": { path: [".mcp.json"], parentKey: "mcpServers" },
   cursor: { path: [".cursor", "mcp.json"], parentKey: "mcpServers" },
@@ -62,9 +69,178 @@ const FORMATTING_OPTIONS: FormattingOptions = {
   eol: "\n",
 };
 
+const INSTALLER_LOCK_TOKEN_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
 function isInside(parent: string, child: string): boolean {
   const path = relative(parent, child);
-  return path === "" || (!path.startsWith(`..${sep}`) && path !== "..");
+  return (
+    path === "" ||
+    (!isAbsolute(path) && !path.startsWith(`..${sep}`) && path !== "..")
+  );
+}
+
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function readInstallerLockOwner(
+  lockPath: string,
+): Promise<InstallerLockOwner | null> {
+  try {
+    const owner = JSON.parse(await readFile(lockPath, "utf8")) as {
+      pid?: unknown;
+      token?: unknown;
+    };
+    if (
+      Number.isSafeInteger(owner.pid) &&
+      (owner.pid as number) > 0 &&
+      typeof owner.token === "string" &&
+      INSTALLER_LOCK_TOKEN_PATTERN.test(owner.token)
+    ) {
+      return { pid: owner.pid as number, token: owner.token };
+    }
+  } catch {}
+  return null;
+}
+
+async function createInstallerOwnerFile(
+  path: string,
+): Promise<InstallerLockOwner> {
+  const token = randomUUID();
+  const ownerPath = `${path}.owner.${token}`;
+  let file;
+  try {
+    file = await open(ownerPath, "wx", 0o600);
+    await file.writeFile(
+      `${JSON.stringify({ pid: process.pid, token, createdAt: Date.now() })}\n`,
+      "utf8",
+    );
+    await file.close();
+    file = undefined;
+    await link(ownerPath, path);
+    return { pid: process.pid, token };
+  } catch (error) {
+    await file?.close().catch(() => {});
+    throw error;
+  } finally {
+    await unlink(ownerPath).catch(() => {});
+  }
+}
+
+async function createInstallerLock(lockPath: string): Promise<InstallerLock> {
+  return createInstallerOwnerFile(lockPath);
+}
+
+async function acquireInstallerReclaim(
+  reclaimPath: string,
+): Promise<InstallerLockOwner> {
+  try {
+    return await createInstallerOwnerFile(reclaimPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  const observedOwner = await readInstallerLockOwner(reclaimPath);
+  if (!observedOwner || processIsRunning(observedOwner.pid)) {
+    throw new Error(
+      `Another Rango MCP client config update holds ${reclaimPath}`,
+    );
+  }
+
+  const stalePath = `${reclaimPath}.stale.${randomUUID()}`;
+  try {
+    const currentOwner = await readInstallerLockOwner(reclaimPath);
+    if (
+      !currentOwner ||
+      currentOwner.token !== observedOwner.token ||
+      processIsRunning(currentOwner.pid)
+    ) {
+      throw new Error(
+        `Another Rango MCP client config update holds ${reclaimPath}`,
+      );
+    }
+    await rename(reclaimPath, stalePath);
+    return await createInstallerOwnerFile(reclaimPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(
+        `Another Rango MCP client config update holds ${reclaimPath}`,
+      );
+    }
+    throw error;
+  } finally {
+    await unlink(stalePath).catch(() => {});
+  }
+}
+
+async function releaseInstallerOwnerFile(
+  path: string,
+  owner: InstallerLockOwner,
+): Promise<void> {
+  const currentOwner = await readInstallerLockOwner(path);
+  if (currentOwner?.token !== owner.token) return;
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function acquireInstallerLock(lockPath: string): Promise<InstallerLock> {
+  try {
+    return await createInstallerLock(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  const observedOwner = await readInstallerLockOwner(lockPath);
+  if (!observedOwner || processIsRunning(observedOwner.pid)) {
+    throw new Error(`Another Rango MCP client config update holds ${lockPath}`);
+  }
+
+  // Serialize contenders that observed the same abandoned owner. Without this
+  // claim, a delayed contender can rename the winner's live replacement.
+  const reclaimPath = `${lockPath}.reclaim.${observedOwner.token}`;
+  const reclaim = await acquireInstallerReclaim(reclaimPath);
+
+  const stalePath = `${lockPath}.stale.${randomUUID()}`;
+  try {
+    const currentOwner = await readInstallerLockOwner(lockPath);
+    if (
+      !currentOwner ||
+      currentOwner.token !== observedOwner.token ||
+      processIsRunning(currentOwner.pid)
+    ) {
+      throw new Error(
+        `Another Rango MCP client config update holds ${lockPath}`,
+      );
+    }
+    await rename(lockPath, stalePath);
+    return await createInstallerLock(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(
+        `Another Rango MCP client config update holds ${lockPath}`,
+      );
+    }
+    throw error;
+  } finally {
+    await unlink(stalePath).catch(() => {});
+    await releaseInstallerOwnerFile(reclaimPath, reclaim);
+  }
+}
+
+async function releaseInstallerLock(
+  lockPath: string,
+  lock: InstallerLock,
+): Promise<void> {
+  await releaseInstallerOwnerFile(lockPath, lock);
 }
 
 async function assertNoSymlink(
@@ -221,16 +397,7 @@ export async function installRangoMcpClientConfig(
     const lockPath = `${configPath}.rango-install.lock`;
     let lock;
     try {
-      try {
-        lock = await open(lockPath, "wx", 0o600);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error(
-            `Another Rango MCP client config update is in progress: ${configPath}`,
-          );
-        }
-        throw error;
-      }
+      lock = await acquireInstallerLock(lockPath);
       await assertNoSymlink(workspaceRoot, configPath);
       const temporary = join(
         directory,
@@ -270,8 +437,7 @@ export async function installRangoMcpClientConfig(
       }
     } finally {
       if (lock) {
-        await lock.close();
-        await unlink(lockPath);
+        await releaseInstallerLock(lockPath, lock);
       }
     }
   }

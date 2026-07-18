@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { connectRangoMcp, type RangoMcpTestSession } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
+import { RANGO_MCP_ENDPOINT } from "../src/devtools-mcp/protocol.js";
 
 const WORKFLOW_FIXTURE = process.env.RANGO_WORKFLOW_FIXTURE;
 
@@ -22,6 +23,12 @@ test.describe("MCP devtools", () => {
   });
 
   test("reports live routes and request diagnostics", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
     if (verifiesWorkflow("dev-loop")) {
       const tools = await mcp.client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
@@ -140,6 +147,22 @@ test.describe("MCP devtools", () => {
           precision: "declaration-file",
         },
       });
+      await expect
+        .poll(async () => {
+          const result = await mcp.client.callTool({
+            name: "list_navigations",
+            arguments: { kind: "document", completed: true },
+          });
+          return result.structuredContent?.navigations?.find(
+            (candidate: { requestIds?: string[] }) =>
+              candidate.requestIds?.includes(requestId!),
+          );
+        })
+        .toMatchObject({
+          kind: "document",
+          pathname: "/blog/mcp-phase-2",
+          requestIds: [requestId],
+        });
 
       await page.goto(f.url("/tx-src/a"));
       await waitForHydration(page);
@@ -190,6 +213,13 @@ test.describe("MCP devtools", () => {
           expect.objectContaining({ phase: "committed" }),
         ]),
       });
+      expect(
+        navigationTrace.structuredContent?.events
+          ?.filter((event: { phase?: string }) =>
+            ["committed", "aborted", "failed"].includes(event.phase ?? ""),
+          )
+          .map((event: { phase: string }) => event.phase),
+      ).toEqual(["committed"]);
       const linkedRequest = await mcp.client.callTool({
         name: "list_requests",
         arguments: { navigationId },
@@ -561,7 +591,13 @@ test.describe("MCP devtools (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
 
   test("does not mount the MCP endpoint", async ({ page, request }) => {
-    const response = await request.post(f.url("/__rango/mcp"), {
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
+    const response = await request.post(f.url(RANGO_MCP_ENDPOINT), {
       data: {
         jsonrpc: "2.0",
         id: 1,
@@ -574,6 +610,10 @@ test.describe("MCP devtools (production)", () => {
       },
     });
     expect(response.status()).toBe(404);
+    expect(response.headers()["x-rango-request-id"]).toBeUndefined();
+    expect(response.headers()["server-timing"] ?? "").not.toContain(
+      "rango-request-id",
+    );
     if (verifiesWorkflow("dev-loop")) {
       const appResponse = await page.goto(
         f.url("/blog/mcp-phase-2?inject-diagnostic-failure=1"),

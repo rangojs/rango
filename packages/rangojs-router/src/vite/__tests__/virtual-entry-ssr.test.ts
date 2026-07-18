@@ -13,6 +13,12 @@ describe("virtual browser entry", () => {
     expect(VIRTUAL_ENTRY_BROWSER).toContain(
       'await import(\n      "@rangojs/router/internal/browser/dev-discovery"',
     );
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      'void import(\n        "@rangojs/router/internal/browser/navigation-diagnostics"',
+    );
+    expect(VIRTUAL_ENTRY_BROWSER).toContain(
+      "Browser navigation diagnostics unavailable",
+    );
   });
 });
 

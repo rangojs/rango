@@ -339,6 +339,19 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       expect(cached).not.toBeNull();
       expect(cached!.value).toBe("value2");
     });
+
+    it("clear() drops build-shell invalidation markers", async () => {
+      const beforeInvalidation = Date.now();
+      await store.invalidateTags(["home"]);
+      expect(
+        await store.isTagsInvalidatedSince(["home"], beforeInvalidation),
+      ).toBe(true);
+
+      await store.clear();
+      expect(
+        await store.isTagsInvalidatedSince(["home"], beforeInvalidation),
+      ).toBe(false);
+    });
   });
 
   // The build-shell read-through's eviction gate (#699): a baked manifest

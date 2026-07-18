@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCombinedRouteDetailsForRouterFile } from "../../../build/route-types/router-processing.js";
 import {
+  createMcpRouteMatchIndexes,
   createMcpRouteSnapshot,
   createMcpRouterSnapshot,
   createMcpSourceOwnershipSnapshot,
@@ -117,6 +118,45 @@ describe("MCP route snapshot", () => {
       Buffer.byteLength(multibyteRoute!.pattern, "utf8"),
     ).toBeLessThanOrEqual(4_096);
     expect(multibyteRoute!.truncated).toBe(true);
+  });
+
+  it("keeps truncated router identities collision-safe across snapshots", () => {
+    const state = createDiscoveryState("/workspace/app/src/router.tsx", {
+      preset: "node",
+    });
+    state.projectRoot = "/workspace/app";
+    const sharedPrefix = "r".repeat(1_100);
+    state.perRouterManifests = [
+      {
+        id: `${sharedPrefix}-alpha`,
+        sourceFile: "/workspace/app/src/alpha.tsx",
+        routeManifest: { home: "/alpha" },
+      },
+      {
+        id: `${sharedPrefix}-beta`,
+        sourceFile: "/workspace/app/src/beta.tsx",
+        routeManifest: { home: "/beta" },
+      },
+    ];
+
+    const routeIds = createMcpRouteSnapshot(state).map(
+      (route) => route.routerId,
+    );
+    const routerIds = createMcpRouterSnapshot(state).map((router) => router.id);
+    const matchIds = createMcpRouteMatchIndexes(state).map(
+      (index) => index.routerId,
+    );
+    const ownershipIds = createMcpSourceOwnershipSnapshot(state).map(
+      (record) => record.routerId,
+    );
+
+    for (const ids of [routeIds, routerIds, matchIds, ownershipIds]) {
+      expect(new Set(ids)).toHaveLength(2);
+      expect(ids.every((id) => Buffer.byteLength(id, "utf8") <= 1_024)).toBe(
+        true,
+      );
+      expect(ids.every((id) => id.includes("...#"))).toBe(true);
+    }
   });
 
   it("maps named routes to declaration files without evaluating route code", () => {

@@ -113,7 +113,7 @@ import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
-import { SlowCachePage } from "./pages/slow-cache.js";
+import { getSlowCacheGeneration, SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
@@ -184,7 +184,12 @@ export const urlpatterns = urls(
     // the dynamic-import / module-graph race that can return an empty log.
     path.json(
       "/__test/last-error",
-      () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
+      (ctx) =>
+        ctx.url.searchParams.has("status-500")
+          ? Response.json({ error: "diagnostic status probe" }, { status: 500 })
+          : onErrorLog.length > 0
+            ? [...onErrorLog]
+            : null,
       { name: "testLastError" },
     ),
     // Test utils: clear the onError log.
@@ -196,6 +201,9 @@ export const urlpatterns = urls(
       },
       { name: "testClearErrorLog" },
     ),
+    path.json("/__test/slow-cache/:probe", (ctx) => ({
+      generation: getSlowCacheGeneration(ctx.params.probe),
+    })),
 
     // robots.txt (response route)
     path.text(
@@ -1210,7 +1218,7 @@ export const urlpatterns = urls(
         ]),
 
         // Slow cache route
-        cache({ ttl: 1, swr: 300 }, () => [
+        cache({ ttl: 2, swr: 300 }, () => [
           path("/slow-cache", SlowCachePage, { name: "slowCache" }),
         ]),
 

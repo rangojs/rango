@@ -126,6 +126,7 @@ export function createNavigationTransaction(
   let committed = false;
   let diagnosticSettled = false;
   const currentUrl = window.location.href;
+  const handle = eventController.startNavigation(url, options);
   const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
     ? getBrowserNavigationDiagnostics()
     : null;
@@ -155,14 +156,10 @@ export function createNavigationTransaction(
     navigationDiagnostics?.abort(diagnosticNavigation, failed);
   };
 
-  const handle = eventController.startNavigation(url, options);
-
   /**
    * Commit the navigation - updates store and URL atomically
    */
   function commit(opts: CommitOptions): { scroll?: boolean } {
-    committed = true;
-
     const {
       url,
       segmentIds,
@@ -185,6 +182,7 @@ export function createNavigationTransaction(
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
       handle.complete(parsedUrl);
       completeDiagnostic();
+      committed = true;
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
       return { scroll: false };
     }
@@ -204,6 +202,7 @@ export function createNavigationTransaction(
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       completeDiagnostic();
+      committed = true;
       return { scroll: false };
     }
 
@@ -224,6 +223,7 @@ export function createNavigationTransaction(
 
     handle.complete(parsedUrl);
     completeDiagnostic();
+    committed = true;
 
     debugLog(
       "[Browser] Navigation committed, historyKey:",
@@ -238,7 +238,7 @@ export function createNavigationTransaction(
     handle,
     commit,
     fail() {
-      if (!committed) abortDiagnostic(true);
+      abortDiagnostic(true);
     },
 
     with(

@@ -167,6 +167,146 @@ describe("Rango MCP client config installer", () => {
     });
   });
 
+  it("recovers a lock owned by a process that no longer exists", async () => {
+    const root = await workspace();
+    const lockPath = join(root, ".mcp.json.rango-install.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        token: "00000000-0000-4000-8000-000000000001",
+        createdAt: 0,
+      }),
+    );
+
+    await expect(
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+    ).resolves.toMatchObject({ action: "created" });
+    await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("allows only one installer to reclaim an abandoned lock", async () => {
+    const root = await workspace();
+    const lockPath = join(root, ".mcp.json.rango-install.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        token: "00000000-0000-4000-8000-000000000001",
+        createdAt: 0,
+      }),
+    );
+
+    const results = await Promise.allSettled([
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("recovers a reclaim claim owned by a process that no longer exists", async () => {
+    const root = await workspace();
+    const lockPath = join(root, ".mcp.json.rango-install.lock");
+    const reclaimPath = `${lockPath}.reclaim.00000000-0000-4000-8000-000000000001`;
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        token: "00000000-0000-4000-8000-000000000001",
+        createdAt: 0,
+      }),
+    );
+    await writeFile(
+      reclaimPath,
+      JSON.stringify({
+        pid: 2_147_483_647,
+        token: "00000000-0000-4000-8000-000000000002",
+        createdAt: 0,
+      }),
+    );
+
+    await expect(
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+    ).resolves.toMatchObject({ action: "created" });
+    await expect(readFile(reclaimPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.each([
+    [
+      "live",
+      () =>
+        JSON.stringify({
+          pid: process.pid,
+          token: "00000000-0000-4000-8000-000000000003",
+          createdAt: Date.now(),
+        }),
+    ],
+    ["malformed", () => "not-json"],
+  ])("does not reclaim a %s installer lock", async (_label, contents) => {
+    const root = await workspace();
+    const lockPath = join(root, ".mcp.json.rango-install.lock");
+    const content = contents();
+    await writeFile(lockPath, content);
+
+    await expect(
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+    ).rejects.toThrow(lockPath);
+    expect(await readFile(lockPath, "utf8")).toBe(content);
+  });
+
+  it("rejects persisted lock tokens that are unsafe as path components", async () => {
+    const root = await workspace();
+    const lockPath = join(root, ".mcp.json.rango-install.lock");
+    const content = JSON.stringify({
+      pid: 2_147_483_647,
+      token: "../outside",
+      createdAt: 0,
+    });
+    await writeFile(lockPath, content);
+
+    await expect(
+      installRangoMcpClientConfig({
+        workspaceRoot: root,
+        projectRoot: root,
+        client: "claude-code",
+      }),
+    ).rejects.toThrow(lockPath);
+    expect(await readFile(lockPath, "utf8")).toBe(content);
+  });
+
   it("is idempotent and refuses unmanaged collisions", async () => {
     const root = await workspace();
     const first = await installRangoMcpClientConfig({

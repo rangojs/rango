@@ -51,6 +51,18 @@ describe("DiagnosticHub", () => {
     expect(hub.getStats(9).evictedByAge).toBe(2);
   });
 
+  it("evicts the least recently observed request", () => {
+    const hub = new DiagnosticHub({ maxRequests: 2 });
+    hub.record(event("req-1", 1));
+    hub.record(event("req-2", 2));
+    hub.record(event("req-1", 3));
+    hub.record(event("req-3", 4));
+
+    expect(hub.getTrace("req-1", 4)).not.toBeNull();
+    expect(hub.getTrace("req-2", 4)).toBeNull();
+    expect(hub.getTrace("req-3", 4)).not.toBeNull();
+  });
+
   it("marks traces when the global event bound drops old evidence", () => {
     const hub = new DiagnosticHub({ maxEvents: 2 });
     hub.record(event("req-1", 1));
@@ -65,6 +77,21 @@ describe("DiagnosticHub", () => {
     expect(hub.getStats(3).encodedBytes).toBeGreaterThanOrEqual(
       new TextEncoder().encode(JSON.stringify(trace)).byteLength,
     );
+  });
+
+  it("drops the globally oldest event instead of the first trace's event", () => {
+    const hub = new DiagnosticHub({ maxEvents: 3 });
+    hub.record(event("req-1", 1));
+    hub.record(event("req-2", 2));
+    hub.record(event("req-2", 3));
+    hub.record(event("req-1", 4));
+
+    expect(
+      hub.getTrace("req-1", 4)!.events.map((entry) => entry.timestamp),
+    ).toEqual([4]);
+    expect(
+      hub.getTrace("req-2", 4)!.events.map((entry) => entry.timestamp),
+    ).toEqual([2, 3]);
   });
 
   it("drops an oversized event without exceeding the encoded byte cap", () => {
@@ -103,5 +130,6 @@ describe("DiagnosticHub", () => {
 
     expect(hub.getStats(1).encodedBytes).toBeLessThanOrEqual(1);
     expect(hub.getTrace("req-1", 1)).toBeNull();
+    expect(hub.getStats(1).droppedEvents).toBe(1);
   });
 });

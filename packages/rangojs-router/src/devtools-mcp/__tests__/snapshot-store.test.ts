@@ -71,6 +71,34 @@ function matchIndex(): RouteMatchIndex {
 }
 
 describe("Rango MCP snapshot store", () => {
+  it("reports stale until the first successful discovery is ready", () => {
+    const store = createStore();
+    expect(store.getDiscoveryStatus()).toMatchObject({
+      phase: "starting",
+      generation: 0,
+      stale: true,
+    });
+    const attempt = store.beginDiscovery();
+    expect(store.getDiscoveryStatus()).toMatchObject({
+      phase: "discovering",
+      generation: 0,
+      stale: true,
+    });
+    store.failDiscovery(new Error("first discovery failed"), attempt);
+    expect(store.getDiscoveryStatus()).toMatchObject({
+      phase: "error",
+      generation: 0,
+      stale: true,
+    });
+    const recovery = store.beginDiscovery();
+    store.publishRoutes([route("home", "/")], routers("app"), recovery);
+    expect(store.getDiscoveryStatus()).toMatchObject({
+      phase: "ready",
+      generation: 1,
+      stale: false,
+    });
+  });
+
   it("preserves the last successful routes when discovery fails", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-14T10:00:00.000Z"));
@@ -342,6 +370,20 @@ describe("Rango MCP snapshot store", () => {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     expect(sawTruncatedRoute).toBe(true);
+  });
+
+  it("preserves a collision-safe router ID when truncating one route", () => {
+    const store = createStore();
+    const attempt = store.beginDiscovery();
+    const routerId = `${"r".repeat(490)}...#0123456789ab`;
+    store.publishRoutes(
+      [route("oversized", `/${"x".repeat(300_000)}`, routerId)],
+      routers(routerId),
+      attempt,
+    );
+
+    const [result] = store.getRoutes().routes;
+    expect(result).toMatchObject({ routerId, truncated: true });
   });
 
   it("reports Cloudflare runtime convergence independently from discovery", () => {

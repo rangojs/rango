@@ -81,7 +81,7 @@ describe("diagnostic runtime bridge", () => {
     expect(batches[0]!.events[0]!.requestId).toBe("req-1");
   });
 
-  it("reports hub input drops and preserves them across a failed send", async () => {
+  it("retries events and hub input drops after a failed send", async () => {
     const hub = new DiagnosticHub({
       maxRequests: 1_000,
       maxEvents: 1_000,
@@ -104,17 +104,26 @@ describe("diagnostic runtime bridge", () => {
     for (let index = 0; index < 65; index++) record(hub, index + 1);
     await new Promise<void>((resolve) => setTimeout(resolve, 75));
 
-    expect(hot.send).toHaveBeenCalledTimes(2);
+    expect(hot.send).toHaveBeenCalledTimes(3);
     expect(hot.send.mock.calls[1]![1]).toMatchObject({
-      droppedEvents: 65,
-      droppedEventsByRequest: expect.arrayContaining([
-        { requestId: "oversized", droppedEvents: 1 },
-        { requestId: "req-1", droppedEvents: 1 },
+      batchSequence: 1,
+      droppedEvents: 1,
+      droppedEventsByRequest: [{ requestId: "oversized", droppedEvents: 1 }],
+      events: expect.arrayContaining([
+        expect.objectContaining({ requestId: "req-1" }),
       ]),
     });
+    expect(
+      hot.send.mock.calls
+        .slice(1)
+        .flatMap(
+          (call) =>
+            (call[1] as { events: Array<{ requestId: string }> }).events,
+        ),
+    ).toHaveLength(65);
   });
 
-  it("retries a failed final send as a drop-only batch", async () => {
+  it("retries a failed final send without replacing evidence with a drop", async () => {
     const hub = new DiagnosticHub();
     const hot = createHot();
     hot.send.mockImplementationOnce(() => {
@@ -127,9 +136,10 @@ describe("diagnostic runtime bridge", () => {
 
     expect(hot.send).toHaveBeenCalledTimes(2);
     expect(hot.send.mock.calls[1]![1]).toMatchObject({
-      droppedEvents: 1,
-      droppedEventsByRequest: [{ requestId: "req-1", droppedEvents: 1 }],
-      events: [],
+      batchSequence: 1,
+      droppedEvents: 0,
+      droppedEventsByRequest: [],
+      events: [expect.objectContaining({ requestId: "req-1" })],
     });
   });
 });

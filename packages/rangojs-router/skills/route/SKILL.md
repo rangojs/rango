@@ -290,6 +290,13 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 > decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
 > `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
+The callback can observe those independent facts. `stale` is true for a
+browser `_rsc_stale` signal and, for route/layout/parallel predicates, when the
+retained segment-cache value is stale. Every reader sees stale freshness;
+which reader claimed background revalidation does not change the predicate.
+Loader predicates see only the browser signal because loaders are not stored
+in the surrounding segment-cache entry.
+
 With no `revalidate()` configured, an entry needs no contract: on an action
 the route handler and its children re-run together by default, so handler
 data stays consistent on its own. Contracts matter in two cases:

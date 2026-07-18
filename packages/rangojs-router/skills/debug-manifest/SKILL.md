@@ -11,7 +11,8 @@ Inspect the route manifest to verify parent relationships, shortCodes, and route
 ## Inspect a running app first
 
 With the Vite dev server and `rango mcp` connected, use `get_discovery_status`
-before trusting route output. `stale: true` means the previous successful route
+before trusting route output. At generation zero, `stale: true` means no route
+generation has succeeded yet. After that, it means the previous successful
 generation is still available but does not include the latest edit; on
 Cloudflare, also require `runtimeConvergence: "ready"` before treating discovery
 as proof that workerd serves that generation.

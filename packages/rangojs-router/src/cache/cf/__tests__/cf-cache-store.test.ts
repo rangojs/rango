@@ -451,23 +451,24 @@ describe("CFCacheStore", () => {
       }
     });
 
-    it("shares concurrent claims across named-cache wrappers", async () => {
+    it("shares concurrent claims across named-cache wrappers and store instances", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
-      const mockCtx = createMockCtx();
-      const store = new CFCacheStore({
-        ctx: mockCtx,
-        namespace: "concurrent-herd",
-      });
+      const contexts = [createMockCtx(), createMockCtx(), createMockCtx()];
+      const stores = contexts.map(
+        (ctx) =>
+          new CFCacheStore({
+            ctx,
+            namespace: "concurrent-herd",
+          }),
+      );
       const data = createTestData();
-      await store.set("test-key", data, 60, 300);
-      await mockCtx.waitUntil.mock.results[0].value;
+      await stores[0]!.set("test-key", data, 60, 300);
+      await contexts[0]!.waitUntil.mock.results[0].value;
       vi.advanceTimersByTime(120 * 1000);
 
-      const results = await Promise.all([
-        store.get("test-key"),
-        store.get("test-key"),
-        store.get("test-key"),
-      ]);
+      const results = await Promise.all(
+        stores.map((store) => store.get("test-key")),
+      );
       expect(
         results.map(hit).filter((result) => result?.revalidationClaimed),
       ).toHaveLength(1);

@@ -7,7 +7,10 @@ import {
   type DiagnosticBridgeBatch,
 } from "../router/diagnostics/bridge-protocol.js";
 import { DiagnosticHub } from "../router/diagnostics/hub.js";
-import { sanitizeDiagnosticText } from "../router/diagnostics/redaction.js";
+import {
+  isDiagnosticCredentialKey,
+  sanitizeDiagnosticText,
+} from "../router/diagnostics/redaction.js";
 import type {
   DiagnosticEvent,
   DiagnosticEventInput,
@@ -72,6 +75,8 @@ const MAX_TRACE_TRANSACTION_IDS = 128;
 const MAX_NAVIGATIONS = 100;
 const MAX_NAVIGATION_EVENTS = 128;
 const MAX_NAVIGATION_REQUESTS = 64;
+const MAX_REORDERED_BATCHES = 256;
+const REORDERED_BATCH_GAP_TIMEOUT_MS = 250;
 
 interface StoreCursor {
   instanceId: string;
@@ -85,6 +90,24 @@ interface RequestReceipt {
   firstSeenAt: number;
   lastSeenAt: number;
   eventReceivedAt: Map<number, number>;
+}
+
+interface RealmBatchState {
+  nextSequence: number;
+  lastObservedAt: number;
+  pendingBatches: Map<number, PendingBridgeBatch>;
+  gapTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface PendingBridgeBatch {
+  events: DiagnosticEventInput[];
+  droppedEvents: number;
+  droppedEventsByRequest: Array<{
+    requestId: string;
+    droppedEvents: number;
+  }>;
+  observedAt: number;
+  receivedAt: number;
 }
 
 interface RetainedNavigation {
@@ -217,6 +240,9 @@ function pageWithinResultLimit<T>(
       high = length - 1;
     }
   }
+  if (available.length > 0 && best === 0) {
+    throw new Error("A diagnostic record exceeded the MCP output limit");
+  }
   return { page: available.slice(0, best), stoppedForSize: true };
 }
 
@@ -238,7 +264,9 @@ function sanitizeValue(value: unknown, depth: number = 0): DiagnosticValue {
     const result: Record<string, DiagnosticValue> = {};
     let count = 0;
     for (const [key, item] of Object.entries(value)) {
-      result[sanitizeDiagnosticText(key, 256)] = sanitizeValue(item, depth + 1);
+      result[sanitizeDiagnosticText(key, 256)] = isDiagnosticCredentialKey(key)
+        ? "[redacted]"
+        : sanitizeValue(item, depth + 1);
       if (++count === 64) break;
     }
     return result;
@@ -384,8 +412,13 @@ function routePattern(event: DiagnosticEvent | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function diagnosticString(value: DiagnosticValue | undefined): string | null {
-  return typeof value === "string" ? sanitizeDiagnosticText(value, 256) : null;
+function diagnosticString(
+  value: DiagnosticValue | undefined,
+  maxBytes: number = 256,
+): string | null {
+  return typeof value === "string"
+    ? sanitizeDiagnosticText(value, maxBytes)
+    : null;
 }
 
 function diagnosticNumber(value: DiagnosticValue | undefined): number | null {
@@ -676,9 +709,11 @@ function diagnosticErrorSummary(value: DiagnosticValue): DiagnosticValue {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const name = diagnosticString(value.name);
   const message = diagnosticString(value.message);
+  const stack = diagnosticString(value.stack, 2_048);
   return {
     ...(name ? { name } : {}),
     ...(message ? { message } : {}),
+    ...(stack ? { stack } : {}),
   };
 }
 
@@ -1120,10 +1155,11 @@ export function createRangoMcpDiagnosticStore(
   options: DiagnosticStoreOptions,
 ): RangoMcpDiagnosticStore {
   const hub = new DiagnosticHub();
-  const realmSequences = new Map<string, number>();
+  const realmSequences = new Map<string, RealmBatchState>();
   const receipts = new Map<string, RequestReceipt>();
   const navigations = new Map<string, RetainedNavigation>();
   const navigationSequences = new Map<string, number>();
+  const navigationDocumentCounts = new Map<string, number>();
   const requestNavigationIds = new Map<string, Set<string>>();
   const compilationIssues = new Map<string, CompilationIssueRecord>();
   let acceptedBatches = 0;
@@ -1137,6 +1173,27 @@ export function createRangoMcpDiagnosticStore(
   let compilationIssueId = 0;
   let droppedIssues = 0;
   let structuredErrorCapture = false;
+
+  const removeNavigation = (navigationId: string): void => {
+    const removed = navigations.get(navigationId);
+    if (!removed) return;
+    navigations.delete(navigationId);
+    const remaining =
+      (navigationDocumentCounts.get(removed.documentId) ?? 1) - 1;
+    if (remaining <= 0) {
+      navigationDocumentCounts.delete(removed.documentId);
+      navigationSequences.delete(removed.documentId);
+    } else {
+      navigationDocumentCounts.set(removed.documentId, remaining);
+    }
+    let linksRemoved = false;
+    for (const requestId of removed.requestIds) {
+      const linked = requestNavigationIds.get(requestId);
+      if (linked?.delete(navigationId)) linksRemoved = true;
+      if (linked?.size === 0) requestNavigationIds.delete(requestId);
+    }
+    if (linksRemoved) requestRevision++;
+  };
 
   const syncReceipts = (
     retained: ReadonlyMap<string, ReadonlySet<number>>,
@@ -1247,6 +1304,93 @@ export function createRangoMcpDiagnosticStore(
     };
   };
 
+  const applyBridgeBatch = (
+    batch: PendingBridgeBatch,
+    realmState: RealmBatchState,
+  ): void => {
+    const observedAt = Math.max(realmState.lastObservedAt, batch.observedAt);
+    realmState.lastObservedAt = observedAt;
+    bridgeDroppedEvents += batch.droppedEvents;
+
+    for (const input of batch.events) {
+      const recorded = hub.record(input, observedAt);
+      if (!recorded) continue;
+      const existingReceipt = receipts.get(input.requestId);
+      const receipt = existingReceipt ?? {
+        firstSeenAt: batch.receivedAt,
+        lastSeenAt: batch.receivedAt,
+        eventReceivedAt: new Map<number, number>(),
+      };
+      receipt.firstSeenAt = Math.min(receipt.firstSeenAt, batch.receivedAt);
+      receipt.lastSeenAt = Math.max(receipt.lastSeenAt, batch.receivedAt);
+      const errorEvent = isErrorEvent(recorded);
+      if (errorEvent) {
+        receipt.eventReceivedAt.set(recorded.sequence, batch.receivedAt);
+      }
+      receipts.set(input.requestId, receipt);
+      requestRevision++;
+      if (errorEvent) errorRevision++;
+    }
+
+    let attributedDrops = 0;
+    for (const entry of batch.droppedEventsByRequest) {
+      attributedDrops += entry.droppedEvents;
+      hub.noteDroppedEvents(entry.droppedEvents, entry.requestId);
+      if (hub.getTrace(entry.requestId, observedAt)) requestRevision++;
+    }
+    hub.noteDroppedEvents(batch.droppedEvents - attributedDrops);
+    syncReceipts(hub.getRetainedEventSequences(observedAt));
+  };
+
+  const flushRealmBatches = (realmState: RealmBatchState): void => {
+    let pending = realmState.pendingBatches.get(realmState.nextSequence);
+    while (pending) {
+      realmState.pendingBatches.delete(realmState.nextSequence);
+      realmState.nextSequence++;
+      applyBridgeBatch(pending, realmState);
+      pending = realmState.pendingBatches.get(realmState.nextSequence);
+    }
+    if (realmState.pendingBatches.size === 0 && realmState.gapTimer) {
+      clearTimeout(realmState.gapTimer);
+      realmState.gapTimer = undefined;
+    }
+  };
+
+  const scheduleRealmGapRecovery = (realmState: RealmBatchState): void => {
+    if (
+      realmState.gapTimer ||
+      realmState.pendingBatches.size === 0 ||
+      realmState.pendingBatches.has(realmState.nextSequence)
+    ) {
+      return;
+    }
+    realmState.gapTimer = setTimeout(() => {
+      realmState.gapTimer = undefined;
+      const firstAvailable = Math.min(...realmState.pendingBatches.keys());
+      if (!Number.isFinite(firstAvailable)) return;
+      const affectedRequestIds = new Set<string>();
+      for (const pending of realmState.pendingBatches.values()) {
+        for (const event of pending.events) {
+          affectedRequestIds.add(event.requestId);
+        }
+      }
+      realmState.nextSequence = firstAvailable;
+      flushRealmBatches(realmState);
+      if (affectedRequestIds.size === 0) {
+        hub.noteDroppedEvent();
+      } else {
+        for (const requestId of affectedRequestIds) {
+          hub.noteDroppedEvent(requestId);
+          if (hub.getTrace(requestId, realmState.lastObservedAt)) {
+            requestRevision++;
+          }
+        }
+      }
+      scheduleRealmGapRecovery(realmState);
+    }, REORDERED_BATCH_GAP_TIMEOUT_MS);
+    realmState.gapTimer.unref?.();
+  };
+
   const store: RangoMcpDiagnosticStore = {
     ingestBridgeBatch(
       value: unknown,
@@ -1291,19 +1435,21 @@ export function createRangoMcpDiagnosticStore(
         return false;
       }
 
-      const realmId = sanitizeDiagnosticText(batch.realmId, 128);
-      const previousSequence = realmSequences.get(realmId) ?? 0;
-      if (batch.batchSequence! <= previousSequence) {
-        duplicateBatches++;
-        return true;
-      }
-      const sanitizedEvents = batch.events.map(sanitizeBridgeEvent);
-      if (sanitizedEvents.some((event) => event === null)) {
+      const sanitizedEvents = batch.events.map((event) => ({
+        sourceSequence:
+          event && typeof event === "object" && !Array.isArray(event)
+            ? (event as Partial<DiagnosticEvent>).sequence
+            : undefined,
+        input: sanitizeBridgeEvent(event),
+      }));
+      if (sanitizedEvents.some((event) => event.input === null)) {
         rejectedBatches++;
         return false;
       }
       const requestDrops = batch.droppedEventsByRequest;
       const dropRequestIds = new Set<string>();
+      const sanitizedRequestDrops: PendingBridgeBatch["droppedEventsByRequest"] =
+        [];
       let attributedDrops = 0;
       for (const value of requestDrops) {
         if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1315,56 +1461,73 @@ export function createRangoMcpDiagnosticStore(
           typeof entry.requestId !== "string" ||
           entry.requestId.length === 0 ||
           Buffer.byteLength(entry.requestId, "utf8") > 128 ||
-          dropRequestIds.has(entry.requestId) ||
           !Number.isSafeInteger(entry.droppedEvents) ||
           (entry.droppedEvents as number) <= 0
         ) {
           rejectedBatches++;
           return false;
         }
-        dropRequestIds.add(entry.requestId);
+        const requestId = sanitizeDiagnosticText(entry.requestId, 128);
+        if (dropRequestIds.has(requestId)) {
+          rejectedBatches++;
+          return false;
+        }
+        dropRequestIds.add(requestId);
         attributedDrops += entry.droppedEvents as number;
         if (!Number.isSafeInteger(attributedDrops)) {
           rejectedBatches++;
           return false;
         }
+        sanitizedRequestDrops.push({
+          requestId,
+          droppedEvents: entry.droppedEvents as number,
+        });
       }
       if (attributedDrops > batch.droppedEvents!) {
         rejectedBatches++;
         return false;
       }
 
-      if (!realmSequences.has(realmId) && realmSequences.size >= MAX_REALMS) {
-        realmSequences.delete(realmSequences.keys().next().value as string);
+      const realmId = sanitizeDiagnosticText(batch.realmId, 128);
+      let realmState = realmSequences.get(realmId);
+      if (!realmState && realmSequences.size >= MAX_REALMS) {
+        const evictedRealmId = realmSequences.keys().next().value as string;
+        clearTimeout(realmSequences.get(evictedRealmId)?.gapTimer);
+        realmSequences.delete(evictedRealmId);
       }
-      realmSequences.set(realmId, batch.batchSequence!);
-      bridgeDroppedEvents += batch.droppedEvents!;
-
-      for (const input of sanitizedEvents as DiagnosticEventInput[]) {
-        const recorded = hub.record(input, observedAt);
-        if (!recorded) continue;
-        const receipt = receipts.get(input.requestId) ?? {
-          firstSeenAt: receivedAt,
-          lastSeenAt: receivedAt,
-          eventReceivedAt: new Map<number, number>(),
-        };
-        receipt.lastSeenAt = receivedAt;
-        const errorEvent = isErrorEvent(recorded);
-        if (errorEvent) {
-          receipt.eventReceivedAt.set(recorded.sequence, receivedAt);
-        }
-        receipts.set(input.requestId, receipt);
-        requestRevision++;
-        if (errorEvent) errorRevision++;
+      realmState ??= {
+        nextSequence: 1,
+        lastObservedAt: 0,
+        pendingBatches: new Map<number, PendingBridgeBatch>(),
+      };
+      const sequence = batch.batchSequence!;
+      if (
+        sequence < realmState.nextSequence ||
+        realmState.pendingBatches.has(sequence)
+      ) {
+        duplicateBatches++;
+        return true;
       }
-      for (const entry of requestDrops) {
-        const requestId = sanitizeDiagnosticText(entry.requestId, 128);
-        hub.noteDroppedEvents(entry.droppedEvents, requestId);
-        if (hub.getTrace(requestId, observedAt)) requestRevision++;
+      if (sequence - realmState.nextSequence > MAX_REORDERED_BATCHES) {
+        rejectedBatches++;
+        return false;
       }
-      hub.noteDroppedEvents(batch.droppedEvents! - attributedDrops);
+      sanitizedEvents.sort(
+        (left, right) => left.sourceSequence! - right.sourceSequence!,
+      );
+      realmState.pendingBatches.set(sequence, {
+        events: sanitizedEvents.map(
+          (event) => event.input as DiagnosticEventInput,
+        ),
+        droppedEvents: batch.droppedEvents!,
+        droppedEventsByRequest: sanitizedRequestDrops,
+        observedAt,
+        receivedAt,
+      });
+      realmSequences.set(realmId, realmState);
       acceptedBatches++;
-      syncReceipts(hub.getRetainedEventSequences(observedAt));
+      flushRealmBatches(realmState);
+      scheduleRealmGapRecovery(realmState);
       return true;
     },
 
@@ -1393,20 +1556,19 @@ export function createRangoMcpDiagnosticStore(
       ) {
         return false;
       }
-      navigationSequences.set(event.documentId, event.sequence);
       if (!navigation) {
+        if (event.phase !== "started") return false;
         while (navigations.size >= MAX_NAVIGATIONS) {
-          const oldestId = navigations.keys().next().value as
-            | string
-            | undefined;
-          if (!oldestId) break;
-          const removed = navigations.get(oldestId);
-          navigations.delete(oldestId);
-          for (const requestId of removed?.requestIds ?? []) {
-            const linked = requestNavigationIds.get(requestId);
-            linked?.delete(oldestId);
-            if (linked?.size === 0) requestNavigationIds.delete(requestId);
+          let oldestId: string | undefined;
+          for (const [candidateId, candidate] of navigations) {
+            if (candidate.completed) {
+              oldestId = candidateId;
+              break;
+            }
+            oldestId ??= candidateId;
           }
+          if (!oldestId) break;
+          removeNavigation(oldestId);
         }
         navigation = {
           navigationId: event.navigationId,
@@ -1421,7 +1583,18 @@ export function createRangoMcpDiagnosticStore(
           truncated: false,
         };
         navigations.set(event.navigationId, navigation);
+        navigationDocumentCounts.set(
+          event.documentId,
+          (navigationDocumentCounts.get(event.documentId) ?? 0) + 1,
+        );
+      } else if (navigation.completed && event.phase !== "request-linked") {
+        navigationSequences.set(event.documentId, event.sequence);
+        return true;
+      } else if (event.phase === "started") {
+        navigationSequences.set(event.documentId, event.sequence);
+        return true;
       }
+      navigationSequences.set(event.documentId, event.sequence);
       navigation.lastSeenAt = receivedAt;
       if (navigation.events.length < MAX_NAVIGATION_EVENTS) {
         navigation.events.push(event);
@@ -1805,7 +1978,7 @@ export function createRangoMcpDiagnosticStore(
             phase: typeof phase === "string" ? phase : null,
             timestamp: event.timestamp,
             receivedAt: new Date(eventReceivedAt).toISOString(),
-            error: event.data.error ?? event.data,
+            error: diagnosticErrorSummary(event.data.error ?? event.data),
             source,
           });
         }

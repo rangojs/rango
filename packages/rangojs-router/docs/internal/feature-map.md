@@ -50,6 +50,12 @@ while only the lock claimant reports `revalidationClaimed: true`. These current
 types in `src/cache/types.ts` supersede older compact wording in the `./cache`
 row above.
 
+Vercel stale-generation markers live in the reserved `rg:l:` key family, so a
+consumer key cannot collide with a lock. A bounded same-process claim runs
+before the platform marker because the official client does not acknowledge
+backend write failures; fresh writes release that claim. The platform marker
+still coordinates across isolates/regions on a best-effort basis.
+
 `dispatch()` still emits public telemetry only when the router has a consumer
 sink. In development, the same public testing primitive also drives the internal
 diagnostic channel with a no-op sink, so no-sink calls retain request/match
@@ -121,7 +127,8 @@ selection. The endpoint exists only in `configureServer`; build and preview do n
 mount it. Discovery snapshots are last-good and attempt-ordered; cursors bind to
 one process and generation. Request/error cursors bind to their own host-retention
 revisions. Cloudflare status separately reports workerd route-generation
-convergence.
+convergence. Discovery is also stale before the first accepted generation, when
+there is no last-good route snapshot yet.
 
 `rango mcp install --client <claude-code|cursor|vscode|gemini> [--root <path>]
 [--dry-run]` installs the project-local stdio entry with comment-preserving JSONC
@@ -399,6 +406,11 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - `revalidate()` DSL primitive
 - Segment-level revalidation defaults, request-method aware behavior
 - Custom revalidate callback composition, SWR background revalidation
+- `ShouldRevalidateFn.stale` keeps the two freshness axes explicit. Route,
+  layout, and parallel predicates see either the browser `_rsc_stale` signal or
+  a retained stale segment-cache value, regardless of which request claimed
+  background revalidation. Loader predicates see only `_rsc_stale` because
+  loader-cache freshness is resolved after their revalidation decision.
 - `ctx.isAction(...refs)` on the revalidate predicate context — typed,
   rename-safe action matching by reference (single, variadic, or `import * as`
   namespace); resolves the same id (`$id ?? $$id`) as the action boundary, so it
@@ -475,13 +487,14 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 ### Development Request Diagnostics
 
 - `router/request-identity.ts` owns one request identity and nested transaction IDs for logging, telemetry, and diagnostics. IDs are request-object stable; transaction IDs distinguish request, match, partial-match, and error-recovery work
-- Ordinary development responses echo the server ID as `X-Rango-Request-Id` from the outer request adapter, after cache capture/retrieval; protocol-switch/WebSocket responses are exempt. The header is absent in production
+- Ordinary development responses echo the server ID as `X-Rango-Request-Id` and `Server-Timing: rango-request-id;desc="..."` from the outer request adapter, after cache capture/retrieval. Normal and thrown responses carry the same ID; protocol-switch/WebSocket responses are exempt. Both signals are absent in production, and the timing metric links the initial browser document lifecycle to its server trace
 - `router/diagnostics/hub.ts` retains development-only request traces under request-count (100), event-count (5,000), age (5 minutes), encoded-size (4 MiB), and per-event (32 KiB) bounds. Traces report dropped events and event-count/encoded-size/event-size truncation
 - `router/diagnostics/redaction.ts` bounds untrusted labels and errors, strips control characters, redacts credential-shaped text and URL query values, stores search names rather than values, and makes retained stack paths project-relative
 - `router/diagnostics/channel.ts` is the fail-open projection boundary. Existing request classification, phase instrumentation, public telemetry owners, `invokeOnError`, revalidation tracing, render-stage events, cache lookups, exact bounded cache-tag activity, loader lanes, and PPR serve/capture decisions feed the hub; a diagnostic failure cannot replace a response or suppress a public telemetry event
 - Collection is transaction-scoped, not merely development-global. PPR background shell capture suppresses internal capture work while terminal capture outcomes remain linked to the triggering foreground request
-- `router/diagnostics/runtime-bridge.ts` subscribes to accepted hub events and sends bounded bridge-v2 batches over the RSC environment's hot channel. Node's module runner and Cloudflare workerd share the same envelope; queue overflow and send failure drop evidence rather than delaying a response, and bounded per-request attribution marks affected traces incomplete
-- `devtools-mcp/diagnostic-store.ts` validates and redacts batches again, deduplicates realm sequences, retains traces against Vite host receipt time, and owns bounded pagination, browser-navigation/request linkage, and render/cache-tag/revalidation projections. Tool schema version 5 remains independent from diagnostic event schema version 1
+- `router/diagnostics/runtime-bridge.ts` subscribes to accepted hub events and sends bounded bridge-v2 batches over the RSC environment's hot channel. Node's module runner and Cloudflare workerd share the same envelope. A synchronous send failure requeues the complete batch without advancing its sequence; only encoding or bounded queue overflow drops evidence, with per-request attribution marking affected traces incomplete
+- `browser/navigation-diagnostics-bridge.ts` exposes a bounded development-only proxy before the diagnostic chunk loads. Hydration never waits for that chunk, but navigation operations that occur first replay after installation; the initial document keeps the URL captured before hydration
+- `devtools-mcp/diagnostic-store.ts` validates and redacts batches again, buffers and deduplicates recent out-of-order realm sequences within a bounded 256-sequence window, and advances a missing sequence after a bounded wait while marking affected traces incomplete. It retains traces against Vite host receipt time and owns bounded pagination, browser-navigation/request linkage, and render/cache-tag/revalidation projections. Tool schema version 5 remains independent from diagnostic event schema version 1
 - Route source ownership is a Vite-only side table generated by static include-tree parsing. Resolvable named routes point to their declaration module; dynamic/factory-only routes fall back to the router module without executing inspection-time user code
 - Structured Vite hot-channel errors remain current until a successful update for their file. Logger warnings are labeled `recent-only`; MCP does not claim Vite exposes a complete current-warning registry
 - Production constant-folding removes the hub, retention/redaction implementation, event vocabulary, and client-correlation storage. `e2e/build-test-app.setup.ts` guards the Node test app, while `tools/check-bundle-guards.mjs` scans Node and Cloudflare production chunks
@@ -490,7 +503,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Dev and HMR
 
-`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. In Cloudflare dev, successful discovery advances a worker generation epoch only when the path, name, trailing-slash, or search-schema shape changes; after invalidating workerd, the plugin probes until the active router reports that epoch, then broadcasts readiness over the browser hot channel. Each document also queries the latest acknowledged epoch at startup and after reconnecting. Only an older document reloads, so content-only `rsc:update` keeps navigation and client state. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
+`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. Router-source unlinks are ownership-aware tombstones: the generated sibling is removed only when no atomic-save replacement owns it, stale runtime manifests cannot recreate it, and successful rediscovery retires the tombstone. Any deleted scanned source suppresses stale factory-route supplementation until rediscovery succeeds. In Cloudflare dev, successful discovery advances a worker generation epoch only when the path, name, trailing-slash, or search-schema shape changes; after invalidating workerd, the plugin probes until the active router reports that epoch, then broadcasts readiness over the browser hot channel. Each document also queries the latest acknowledged epoch at startup and after reconnecting. Only an older document reloads, so content-only `rsc:update` keeps navigation and client state. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
 
 ---
 

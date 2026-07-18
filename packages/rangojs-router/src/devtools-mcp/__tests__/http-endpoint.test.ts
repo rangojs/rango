@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { createServer, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRangoMcpHttpMiddleware } from "../http-endpoint.js";
 import { jsonToolResult } from "../server.js";
 
@@ -54,6 +54,19 @@ async function startEndpoint(): Promise<URL> {
 }
 
 describe("Rango MCP HTTP endpoint", () => {
+  it("passes malformed request URLs to the next middleware", () => {
+    const middleware = createRangoMcpHttpMiddleware({
+      token: "test-token-that-is-long-enough-for-auth",
+      version: "1.0.0",
+      handlers: {} as never,
+    });
+    const next = vi.fn();
+
+    middleware({ url: "http://[" } as never, {} as never, next);
+
+    expect(next).toHaveBeenCalledOnce();
+  });
+
   it("serves stateless MCP calls with the runtime bearer token", async () => {
     const url = await startEndpoint();
     const client = new Client({ name: "test", version: "1.0.0" });

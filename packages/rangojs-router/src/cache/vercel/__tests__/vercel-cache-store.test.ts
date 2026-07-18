@@ -895,7 +895,7 @@ describe("VercelCacheStore", () => {
       // Main key + companion lock = two reads.
       expect(getSpy).toHaveBeenCalledTimes(2);
       // Only the tiny lock was written; the payload envelope is untouched.
-      expect(store.has(`${storeKey}:lock`)).toBe(true);
+      expect(store.has(`rg:l:${storeKey}`)).toBe(true);
       expect(store.get(storeKey)!.value).toBe(payloadBefore);
     });
 
@@ -923,6 +923,115 @@ describe("VercelCacheStore", () => {
         freshness: "stale",
         revalidationClaimed: false,
       });
+    });
+
+    it("a prior generation lock does not suppress the next revalidation", async () => {
+      const { cache, store } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (promise) => {
+          pending.push(promise);
+        },
+      });
+      await s.setItem("fn", "generation-1", { ttl: 1, swr: 300 });
+      vi.setSystemTime(new Date(T0 + 2_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      await Promise.all(pending);
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
+      const priorGeneration = store.get("rg:l:rg:i:fn")!.value;
+
+      await s.setItem("fn", "generation-2", { ttl: 1, swr: 300 });
+      expect(store.get("rg:l:rg:i:fn")!.value).toBe(priorGeneration);
+      vi.setSystemTime(new Date(T0 + 4_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(store.get("rg:l:rg:i:fn")!.value).not.toBe(priorGeneration);
+    });
+
+    it("keeps lock markers separate from user-controlled cache keys", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn:lock", "USER", { ttl: 600 });
+      await s.setItem("fn", "PAYLOAD", { ttl: 60, swr: 300 });
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(await s.getItem("fn:lock")).toMatchObject({
+        value: "USER",
+        freshness: "fresh",
+      });
+    });
+
+    it("dampens repeated claims locally when the lock write fails", async () => {
+      const { cache } = makeFakeCache();
+      const originalSet = cache.set.bind(cache);
+      vi.spyOn(cache, "set").mockImplementation((key, value, options) =>
+        key.startsWith("rg:l:")
+          ? Promise.reject(new Error("lock unavailable"))
+          : originalSet(key, value, options),
+      );
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "PAYLOAD", { ttl: 60, swr: 300 });
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
+    });
+
+    it("settles the lock write before exposing revalidation ownership", async () => {
+      const { cache, store } = makeFakeCache();
+      const originalSet = cache.set.bind(cache);
+      let releaseLockWrite!: () => void;
+      let markLockWriteStarted!: () => void;
+      const lockWriteGate = new Promise<void>((resolve) => {
+        releaseLockWrite = resolve;
+      });
+      const lockWriteStarted = new Promise<void>((resolve) => {
+        markLockWriteStarted = resolve;
+      });
+      vi.spyOn(cache, "set").mockImplementation(async (key, value, options) => {
+        if (key.startsWith("rg:l:")) {
+          markLockWriteStarted();
+          await lockWriteGate;
+        }
+        await originalSet(key, value, options);
+      });
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "generation-1", { ttl: 1, swr: 300 });
+      vi.setSystemTime(new Date(T0 + 2_000));
+
+      let readSettled = false;
+      const read = s.getItem("fn").then((result) => {
+        readSettled = true;
+        return result;
+      });
+      await lockWriteStarted;
+      expect(readSettled).toBe(false);
+
+      releaseLockWrite();
+      await expect(read).resolves.toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
+
+      await s.setItem("fn", "generation-2", { ttl: 1, swr: 300 });
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
     });
   });
 });

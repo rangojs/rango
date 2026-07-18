@@ -77,9 +77,11 @@ export function connectDiagnosticRuntimeBridge(
     if (!active) return;
     while (queue.length > 0 || droppedEvents > 0) {
       const events: DiagnosticEvent[] = [];
+      const selected: Array<{ event: DiagnosticEvent; bytes: number }> = [];
       const requestDrops = [...droppedEventsByRequest].map(
         ([requestId, count]) => ({ requestId, droppedEvents: count }),
       );
+      const batchDroppedEvents = droppedEvents;
       let batchBytes = 256 + encodedBytes(requestDrops);
       while (
         queue.length > 0 &&
@@ -94,6 +96,7 @@ export function connectDiagnosticRuntimeBridge(
         }
         queue.shift();
         queuedBytes -= next.bytes;
+        selected.push(next);
         events.push(next.event);
         batchBytes += next.bytes + 1;
       }
@@ -102,25 +105,28 @@ export function connectDiagnosticRuntimeBridge(
         bridgeVersion: RANGO_DIAGNOSTIC_BRIDGE_VERSION,
         diagnosticSchemaVersion: 1,
         realmId,
-        batchSequence: ++batchSequence,
-        droppedEvents,
+        batchSequence: batchSequence + 1,
+        droppedEvents: batchDroppedEvents,
         droppedEventsByRequest: requestDrops,
         events,
       };
-      droppedEvents = 0;
-      droppedEventsByRequest.clear();
       try {
         hot.send(RANGO_DIAGNOSTIC_BRIDGE_EVENT, batch);
-      } catch {
-        const attributed = batch.droppedEventsByRequest.reduce(
-          (total, entry) => total + entry.droppedEvents,
-          0,
-        );
-        noteDroppedEvents(batch.droppedEvents - attributed);
-        for (const entry of batch.droppedEventsByRequest) {
-          noteDroppedEvents(entry.droppedEvents, entry.requestId);
+        batchSequence = batch.batchSequence;
+        droppedEvents -= batchDroppedEvents;
+        for (const entry of requestDrops) {
+          const remaining =
+            (droppedEventsByRequest.get(entry.requestId) ?? 0) -
+            entry.droppedEvents;
+          if (remaining > 0) {
+            droppedEventsByRequest.set(entry.requestId, remaining);
+          } else {
+            droppedEventsByRequest.delete(entry.requestId);
+          }
         }
-        for (const event of events) noteDroppedEvents(1, event.requestId);
+      } catch {
+        queue.unshift(...selected);
+        queuedBytes += selected.reduce((total, item) => total + item.bytes, 0);
         scheduleRetry();
         break;
       }

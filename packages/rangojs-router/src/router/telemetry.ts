@@ -296,9 +296,8 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
 
 /**
  * Get or create a request ID for telemetry correlation.
- * The ID is always server-owned. Inbound x-rsc-router-request-id, x-request-id,
- * and cf-ray values are retained separately as bounded client correlation by
- * request-identity.ts and never become the trace identity.
+ * The ID is always server-owned. Inbound platform and client correlation
+ * values stay separate and never become the trace identity.
  */
 export function getRequestId(request: Request): string {
   return getServerRequestId(request);

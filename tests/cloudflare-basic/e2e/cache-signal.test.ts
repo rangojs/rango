@@ -15,7 +15,7 @@ import {
 // pattern (/slow-cache). The app under test enables `debugCacheSignal` so the
 // header is present (see src/router.tsx).
 //
-// /slow-cache is a single component route wrapped in cache({ ttl: 1, swr: 300 }),
+// /slow-cache is a single component route wrapped in cache({ ttl: 2, swr: 300 }),
 // so its segment cache status appears in X-Rango-Cache. A unique query forces a
 // cold cache key per invocation (retry-safe), so the first request is a
 // guaranteed miss and the second, within the TTL, a hit.
@@ -30,20 +30,35 @@ function target(res: APIResponse): { headers: Headers } {
   return { headers: new Headers(res.headers()) };
 }
 
+async function generation(res: APIResponse): Promise<number> {
+  const match = /cache-generation:(\d+)/u.exec(await res.text());
+  expect(match, "Flight response contains the cache generation").toBeTruthy();
+  return Number(match![1]);
+}
+
 function runCacheSignalSpec(f: Fixture): void {
   test("assertCacheStatus validates a real X-Rango-Cache response (route-name key, miss -> hit)", async ({
     page,
   }) => {
-    const probe = `sig-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    const url = f.url(`${CACHED_ROUTE}?probe=${probe}`);
-
     // The miss -> hit signal is a flight-transport contract: HTML document
     // requests re-render (miss) on every fetch regardless of the store. */*
     // used to negotiate to flight implicitly; flight is now explicit opt-in,
     // so pin the transport with the wire-format Accept.
     const flightHeaders = { Accept: "text/x-component" };
-    const res1 = await page.request.get(url, { headers: flightHeaders }); // cold key -> miss (renders)
-    const res2 = await page.request.get(url, { headers: flightHeaders }); // same key -> hit (cached)
+    let probe = "";
+    let url = "";
+    let res1!: APIResponse;
+    let res2!: APIResponse;
+    await expect(async () => {
+      // Abandon a probe if its asynchronous first write has not landed yet.
+      // Retrying the same cold key would start another render and make the
+      // generation count measure test retries instead of SWR ownership.
+      probe = `sig-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      url = f.url(`${CACHED_ROUTE}?probe=${probe}`);
+      res1 = await page.request.get(url, { headers: flightHeaders });
+      res2 = await page.request.get(url, { headers: flightHeaders });
+      assertCacheStatus(target(res2), ROUTE_NAME, "hit");
+    }).toPass({ timeout: 15_000 });
 
     const h1 = res1.headers()["x-rango-cache"];
     const h2 = res2.headers()["x-rango-cache"];
@@ -63,18 +78,45 @@ function runCacheSignalSpec(f: Fixture): void {
 
     // The full contract: a cold key misses, the repeat hits.
     assertCacheStatus(target(res1), ROUTE_NAME, "miss");
-    assertCacheStatus(target(res2), ROUTE_NAME, "hit");
+    const initialGeneration = await generation(res2);
 
-    // Past TTL, the first reader claims background SWR. The second reader sees
-    // the same stale entry behind the store's guard but owns no background work.
-    // Both responses must still report stale freshness.
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const staleOwner = await page.request.get(url, { headers: flightHeaders });
-    const guardedStaleReader = await page.request.get(url, {
-      headers: flightHeaders,
-    });
+    // Every reader sees stale freshness. Ownership is separate: only one
+    // background render may produce the next generation.
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    const [staleOwner, guardedStaleReader] = await Promise.all([
+      page.request.get(url, { headers: flightHeaders }),
+      page.request.get(url, { headers: flightHeaders }),
+    ]);
     assertCacheStatus(target(staleOwner), ROUTE_NAME, "stale");
     assertCacheStatus(target(guardedStaleReader), ROUTE_NAME, "stale");
+    expect(await generation(staleOwner)).toBe(initialGeneration);
+    expect(await generation(guardedStaleReader)).toBe(initialGeneration);
+
+    const probeStatus = async () => {
+      const response = await page.request.get(
+        f.url(`/__test/slow-cache/${probe}`),
+      );
+      return (await response.json()) as {
+        generation: number;
+      };
+    };
+    await expect
+      .poll(async () => (await probeStatus()).generation - initialGeneration, {
+        timeout: 15_000,
+      })
+      .toBe(1);
+    await expect
+      .poll(
+        async () => {
+          const refreshed = await page.request.get(url, {
+            headers: flightHeaders,
+          });
+          return generation(refreshed);
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(initialGeneration + 1);
+    expect((await probeStatus()).generation - initialGeneration).toBe(1);
 
     // The wrong (pattern-shaped) key must NOT resolve — so a consumer copying
     // the URL pattern gets a clear failure, not a silent miss.

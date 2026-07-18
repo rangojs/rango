@@ -59,6 +59,8 @@ const DIAGNOSTIC_IMPLEMENTATION_MARKERS = [
   "rango:diagnostics:batch",
   "rango:diagnostics:navigation",
   "X-Rango-Navigation-Id",
+  "X-Rango-Request-Id",
+  "rango-request-id",
   "list_navigations",
   "internal/dev-diagnostics",
   "acceptedBatches",
@@ -161,7 +163,14 @@ function checkLeaks(app, rows, failures) {
 }
 
 function checkDiagnosticLeaks(app, appDir, failures) {
-  const leaked = collectJsFiles(resolve(appDir, "dist")).filter((file) => {
+  const files = collectJsFiles(resolve(appDir, "dist"));
+  if (files.length === 0) {
+    failures.push(
+      `[${app}] DIAGNOSTICS: no production JavaScript files found.`,
+    );
+    return;
+  }
+  const leaked = files.filter((file) => {
     const source = readFileSync(file, "utf8");
     return DIAGNOSTIC_IMPLEMENTATION_MARKERS.some((marker) =>
       source.includes(marker),

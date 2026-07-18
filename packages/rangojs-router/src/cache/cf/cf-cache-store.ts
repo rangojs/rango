@@ -2081,9 +2081,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Get a cached PPR shell entry from an accepted pending write or Cache API,
    * falling through to KV and promoting a valid KV hit. Every tier carries one
    * coupled envelope so the prelude, postponed state, snapshot, versions, and
-   * generation metadata cannot mix. SWR remains a plain staleness flag; the
-   * capture scheduler's module-level
-   * in-flight set is the recapture stampede guard.
+   * generation metadata cannot mix. Staleness and bounded revalidation
+   * ownership remain independent; the capture scheduler's module-level
+   * in-flight set is a secondary same-isolate guard.
    */
   async getShell(
     key: string,
@@ -2124,7 +2124,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           entry: this.shellEnvelopeToEntry(pendingWrite),
           freshness,
           revalidationClaimed:
-            freshness === "stale" && options?.claimRevalidation !== false,
+            freshness === "stale" &&
+            options?.claimRevalidation !== false &&
+            claimKvRevalidation(this.kv, kvKey, pendingWrite.e),
           tags: pendingWrite.t,
         };
       }
@@ -2238,7 +2240,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         entry: this.shellEnvelopeToEntry(value),
         freshness,
         revalidationClaimed:
-          freshness === "stale" && options?.claimRevalidation !== false,
+          freshness === "stale" &&
+          options?.claimRevalidation !== false &&
+          claimKvRevalidation(this.kv, kvKey, value.e),
         tags: value.t,
       };
     } catch (error) {
@@ -2374,7 +2378,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             })(),
           );
         }
-        await Promise.all(writes);
+        const stored = (await Promise.all(writes)).some(Boolean);
+        if (stored) clearKvRevalidationClaim(this.kv!, kvKey);
       })();
       void write.then(() => {
         if (pendingWrites.get(kvKey) === envelope) {
@@ -2493,7 +2498,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         entry: this.shellEnvelopeToEntry(envelope),
         freshness,
         revalidationClaimed:
-          freshness === "stale" && options?.claimRevalidation !== false,
+          freshness === "stale" &&
+          options?.claimRevalidation !== false &&
+          claimKvRevalidation(this.kv, kvKey, envelope.e),
         tags: envelope.t,
       };
     } catch (error) {

@@ -316,6 +316,10 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
   it("reports shell freshness independently from revalidation ownership", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const secondStore = new CFCacheStore({
+      ctx: createMockCtx(),
+      kv: mockKV as any,
+    });
     const T0 = Date.now();
     await store.putShell("k", shellEntry(), 60, 300); // stale +60s, expire +360s
     await drain(mockCtx);
@@ -332,14 +336,43 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       revalidationClaimed: true,
     });
     expect(
-      await store.getShell("k", { claimRevalidation: false }),
+      await secondStore.getShell("k", { claimRevalidation: false }),
     ).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: false,
+    });
+    expect(await secondStore.getShell("k")).toMatchObject({
       freshness: "stale",
       revalidationClaimed: false,
     });
 
     vi.setSystemTime(new Date(T0 + 400_000));
     expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("a successful shell write releases the prior generation claim", async () => {
+    const firstStore = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const secondCtx = createMockCtx();
+    const secondStore = new CFCacheStore({
+      ctx: secondCtx,
+      kv: mockKV as any,
+    });
+    const startedAt = Date.now();
+    await firstStore.putShell("k", shellEntry(), 1, 300);
+    await drain(mockCtx);
+    vi.setSystemTime(new Date(startedAt + 2_000));
+    expect(await firstStore.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
+
+    await secondStore.putShell("k", shellEntry(), 1, 300);
+    await drain(secondCtx);
+    vi.setSystemTime(new Date(startedAt + 4_000));
+    expect(await firstStore.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
   });
 
   it("is invalidated by tag via the shared KV tag markers", async () => {

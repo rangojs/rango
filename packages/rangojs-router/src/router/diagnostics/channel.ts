@@ -17,6 +17,7 @@ import {
 } from "./hub.js";
 import {
   diagnosticSearchNames,
+  isDiagnosticCredentialKey,
   sanitizeDiagnosticText,
   serializeDiagnosticError,
 } from "./redaction.js";
@@ -135,16 +136,19 @@ const sanitizeValue:
         let count = 0;
         for (const key in value) {
           if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+          const projectedKey = sanitizeDiagnosticText(key, 256);
+          if (isDiagnosticCredentialKey(key)) {
+            result[projectedKey] = "[redacted]";
+            if (++count === 64) break;
+            continue;
+          }
           let item: unknown;
           try {
             item = (value as Record<string, unknown>)[key];
           } catch {
             item = "[unsupported]";
           }
-          result[sanitizeDiagnosticText(key, 256)] = sanitizeDiagnosticValue(
-            item,
-            depth + 1,
-          );
+          result[projectedKey] = sanitizeDiagnosticValue(item, depth + 1);
           if (++count === 64) break;
         }
         return result;
@@ -265,6 +269,79 @@ export function runWithDevelopmentDiagnosticsDisabled<T>(
   });
 }
 
+function withoutRequestIdTiming(value: string | null): string {
+  if (!value) return "";
+  const metrics: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index <= value.length; index++) {
+    const char = value[index];
+    if (index === value.length || (char === "," && !quoted)) {
+      const metric = value.slice(start, index).trim();
+      if (!/^rango-request-id(?:\s*;|$)/iu.test(metric)) metrics.push(metric);
+      start = index + 1;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+    } else if (char === "\\" && quoted) {
+      escaped = true;
+    } else if (char === '"') {
+      quoted = !quoted;
+    }
+  }
+  return metrics.filter(Boolean).join(", ");
+}
+
+function echoRequestId(response: Response, requestId: string): Response {
+  if (isWebSocketUpgradeResponse(response)) return response;
+  const apply = (headers: Headers): void => {
+    headers.set("X-Rango-Request-Id", requestId);
+    const existing = withoutRequestIdTiming(headers.get("Server-Timing"));
+    headers.set(
+      "Server-Timing",
+      `${existing ? `${existing}, ` : ""}rango-request-id;desc="${requestId}"`,
+    );
+  };
+
+  // Preserve the response identity and stream when its headers are mutable.
+  // A response reused by another request already carries a different ID; clone
+  // that case so updating the second result cannot contaminate the first one.
+  const existingRequestId = response.headers.get("X-Rango-Request-Id");
+  if (existingRequestId === null || existingRequestId === requestId) {
+    try {
+      apply(response.headers);
+      return response;
+    } catch {
+      // Immutable headers fall through to the isolated reconstruction path.
+    }
+  }
+
+  let isolated: Response;
+  try {
+    isolated = response.clone();
+  } catch {
+    return response;
+  }
+  try {
+    apply(isolated.headers);
+    return isolated;
+  } catch {
+    try {
+      const headers = new Headers(isolated.headers);
+      apply(headers);
+      return new Response(isolated.body, {
+        status: isolated.status,
+        statusText: isolated.statusText,
+        headers,
+      });
+    } catch {
+      return response;
+    }
+  }
+}
+
 export function runWithRequestDiagnostics(
   request: Request,
   routerId: string,
@@ -297,33 +374,8 @@ export function runWithRequestDiagnostics(
         } catch {}
         try {
           let response = await fn();
-          if (
-            options.echoRequestId !== false &&
-            !isWebSocketUpgradeResponse(response)
-          ) {
-            try {
-              response.headers.set("X-Rango-Request-Id", identity.requestId);
-              response.headers.append(
-                "Server-Timing",
-                `rango-request-id;desc="${identity.requestId}"`,
-              );
-            } catch {
-              try {
-                const headers = new Headers(response.headers);
-                headers.set("X-Rango-Request-Id", identity.requestId);
-                headers.append(
-                  "Server-Timing",
-                  `rango-request-id;desc="${identity.requestId}"`,
-                );
-                response = new Response(response.body, {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers,
-                });
-              } catch {
-                // Some platform responses cannot be reconstructed. Keep them.
-              }
-            }
+          if (options.echoRequestId !== false) {
+            response = echoRequestId(response, identity.requestId);
           }
           recordRequestCompleted(
             request,
@@ -333,15 +385,20 @@ export function runWithRequestDiagnostics(
           return response;
         } catch (error) {
           if (error instanceof Response) {
+            const response =
+              options.echoRequestId === false
+                ? error
+                : echoRequestId(error, identity.requestId);
             recordRequestCompleted(
               request,
-              error.status,
+              response.status,
               performance.now() - startedAt,
             );
+            throw response;
           } else {
             recordRequestFailed(request, error, performance.now() - startedAt);
+            throw error;
           }
-          throw error;
         }
       },
       { routerId, diagnosticsEnabled: true },

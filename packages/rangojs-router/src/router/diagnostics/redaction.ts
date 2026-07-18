@@ -55,12 +55,18 @@ function redactCredentialAssignment(
   _quote: string,
   key: string,
 ): string {
-  const normalized = key.toLowerCase().replaceAll(/[_-]/g, "");
-  return /secret|token|password|passwd|credential|privatekey|accesskey|apikey|databaseurl/.test(
-    normalized,
-  )
-    ? `${key}=[redacted]`
-    : match;
+  return isDiagnosticCredentialKey(key) ? `${key}=[redacted]` : match;
+}
+
+export function isDiagnosticCredentialKey(key: string): boolean {
+  const normalized = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+  return (
+    normalized === "auth" ||
+    normalized === "sid" ||
+    /authorization|cookies?|setcookies?|jwt|(?:secret|token|password|passwd|credential|privatekey|accesskey|apikey|databaseurl|session|sessionid)$/.test(
+      normalized,
+    )
+  );
 }
 
 export function sanitizeDiagnosticText(
@@ -73,12 +79,19 @@ export function sanitizeDiagnosticText(
       .replace(/([?&][^=\s&]+)=([^&\s]+)/g, "$1=[redacted]")
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]*\.\.\.$/gi, "$1[redacted]...")
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, "$1[redacted]@")
-      .replace(/\b(cookie|set-cookie)\s*:\s*[^\r\n]*/gi, "$1=[redacted]")
+      .replace(
+        /\b((?:set[\s_-]*)?cookies?)\s*[:=]\s*[^\r\n]*/gi,
+        "$1=[redacted]",
+      )
       .replace(
         /\b(authorization)\s*[:=]\s*(?:(?:bearer|basic)\s+)?\S+/gi,
         "$1=[redacted]",
       )
       .replace(/\b(bearer|basic)\s+[a-z0-9._~+/=-]+/gi, "$1 [redacted]")
+      .replace(
+        /\b(secret|token|password|passwd|credential|private[\s_-]?key|access[\s_-]?key|api[\s_-]?key|database[\s_-]?url|authorization|auth|session(?:[\s_-]?id)?|sid|jwt(?:[\s_-]?assertion)?)\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+        "$1=[redacted]",
+      )
       .replace(
         /(["']?)([a-z][a-z0-9_-]{0,127})\1\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
         redactCredentialAssignment,

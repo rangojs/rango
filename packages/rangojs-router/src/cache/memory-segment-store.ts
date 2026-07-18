@@ -362,6 +362,7 @@ export class MemorySegmentCacheStore<
     this.shellCache.clear();
     this.tagIndex.clear();
     this.keyTags.clear();
+    this.tagInvalidatedAt.clear();
     this.revalidationClaims.clear();
   }
 
@@ -640,6 +641,7 @@ export class MemorySegmentCacheStore<
     delete (globalThis as any)[SHELL_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[TAG_INDEX_REGISTRY_KEY];
     delete (globalThis as any)[KEY_TAGS_REGISTRY_KEY];
+    delete (globalThis as any)[TAG_INVALIDATED_AT_REGISTRY_KEY];
     delete (globalThis as any)[REVALIDATION_CLAIMS_REGISTRY_KEY];
   }
 }
