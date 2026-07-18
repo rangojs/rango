@@ -1755,11 +1755,23 @@ async function captureAndStoreShell(
     if (store?.putShell) {
       try {
         const entry: ShellCacheEntry = {
-          // slice() copies just this view's bytes into a fresh ArrayBuffer, so a
-          // prelude that is a subarray of a larger backing buffer encodes only its
-          // own region — bufferToBase64 reads the whole ArrayBuffer it is handed.
-          prelude: bufferToBase64(result.prelude.slice().buffer as ArrayBuffer),
-          postponed: result.postponed,
+          // Document half only for document captures. A navigationOnly entry's
+          // HTML is never served (document reads skip the flag; partial replay
+          // consumes only snapshot/docKey), so storing it would ride every KV
+          // write/read as dead weight — the prerender still ran above as the
+          // completeness arbiter and sanity gate, its output is dropped here.
+          ...(capture.navigationOnly
+            ? {}
+            : {
+                // slice() copies just this view's bytes into a fresh
+                // ArrayBuffer, so a prelude that is a subarray of a larger
+                // backing buffer encodes only its own region — bufferToBase64
+                // reads the whole ArrayBuffer it is handed.
+                prelude: bufferToBase64(
+                  result.prelude.slice().buffer as ArrayBuffer,
+                ),
+                postponed: result.postponed,
+              }),
           reactVersion: React.version,
           buildVersion: capture.buildVersion,
           // The theme this capture's payload was built with (buildFullPayload

@@ -365,6 +365,23 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     });
   });
 
+  it("never serves a slim navigation-only entry (no stored document half) as an HTML document", async () => {
+    // The write path drops prelude/postponed on navigationOnly entries; the
+    // document read must keep treating them as a MISS on the flag alone.
+    const store = new MemorySegmentCacheStore();
+    const slim = shellEntry({ navigationOnly: true, snapshot: [] });
+    delete slim.prelude;
+    delete slim.postponed;
+    await store.putShell(KEY, slim, 300);
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
   // Corrupt stored payloads previously exploded AFTER the commit point: an
   // unparseable postponed blob threw inside resumeShellHTML with the 200 + full
   // static prelude already flushed — a visually complete page that never
@@ -1731,6 +1748,41 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       }),
       300,
     );
+    let replayArmed = false;
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      matchPartial: async () => {
+        const active = getRequestContext();
+        replayArmed = active._shellImplicitCache !== undefined;
+        active._shellImplicitCache?.onHit?.();
+        return emptyMatchResult();
+      },
+    });
+
+    expect(replayArmed).toBe(true);
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  it("replays a slim navigation snapshot (no stored document half)", async () => {
+    // The write path drops prelude/postponed on navigationOnly entries — the
+    // payload integrity gate must not apply to them, and replay must stay
+    // eligible from snapshot/docKey alone.
+    const store = new MemorySegmentCacheStore();
+    const slim = shellEntry({
+      navigationOnly: true,
+      snapshot: [segmentRecord],
+      docKey: DOC_KEY,
+    });
+    delete slim.prelude;
+    delete slim.postponed;
+    await store.putShell(NAVIGATION_KEY, slim, 300);
     let replayArmed = false;
 
     const { response } = await run({

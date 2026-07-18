@@ -184,10 +184,13 @@ interface VercelResponseEnvelope {
 
 /** Stored envelope for a PPR shell entry (getShell/putShell). */
 interface VercelShellEnvelope {
-  /** base64-encoded prelude bytes. */
-  p: string;
-  /** postponed state JSON, or null (DATA variant). */
-  po: string | null;
+  /**
+   * base64-encoded prelude bytes. Absent iff `no` (navigationOnly entries
+   * store no document half — ShellCacheEntry.prelude).
+   */
+  p?: string;
+  /** postponed state JSON, or null (DATA variant). Absent iff `no`. */
+  po?: string | null;
   /** React.version at capture. */
   rv: string;
   /** Build version at capture (ShellCacheEntry.buildVersion). */
@@ -868,8 +871,11 @@ export class VercelCacheStore<
           ? Math.min(totalTtl, TAG_MARKER_TTL_SECONDS)
           : totalTtl;
       const env: VercelShellEnvelope = {
-        p: entry.prelude,
-        po: entry.postponed,
+        // Presence-keyed: a navigationOnly entry has no document half, and an
+        // omitted key (vs an explicit undefined) also keeps it out of the
+        // serialized JSON.
+        ...(entry.prelude !== undefined ? { p: entry.prelude } : {}),
+        ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
         rv: entry.reactVersion,
         bv: entry.buildVersion,
         c: entry.createdAt,
@@ -1210,13 +1216,21 @@ export class VercelCacheStore<
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
     const { p, po, rv, bv, c, s, e, t, i, sn, dk, lh, tw, no } = raw;
-    if (typeof p !== "string" || typeof rv !== "string") return null;
-    if (po !== null && typeof po !== "string") return null;
+    if (typeof rv !== "string") return null;
+    // Document half: required unless navigationOnly (`no`), which stores
+    // neither field. Tolerate a legacy navigationOnly envelope that still
+    // carries them.
+    if (p === undefined ? no !== true : typeof p !== "string") return null;
+    if (
+      po === undefined ? no !== true : po !== null && typeof po !== "string"
+    ) {
+      return null;
+    }
     if (typeof c !== "number") return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
     return {
-      p,
-      po: po as string | null,
+      ...(typeof p === "string" ? { p } : {}),
+      ...(po !== undefined ? { po: po as string | null } : {}),
       rv,
       bv: typeof bv === "string" ? bv : undefined,
       c,

@@ -99,12 +99,18 @@ can also read a fresh local build-manifest entry. Dev never foreground-fetches
 `/__rsc_shell`; it uses the same local background capture. Custom stores opt in with
 `supportsPassiveShellReads: true`; without that declaration replay declines.
 
-The capture still produces a prelude/postponed pair, but stores it under a
-navigation-only shell key. Document serving never reads that namespace, so a
-late navigation capture cannot downgrade a document-safe shell. Partial replay
-prefers the document shell and falls back to the navigation snapshot, using only
-its segment snapshot and eligibility flags. The `navigationOnly` entry marker is
-also preserved through memory, Cloudflare, and Vercel stores as defense in depth.
+The capture still produces a prelude/postponed pair — the fizz prerender is the
+completeness arbiter and sanity gate — but the stored navigation-only entry
+DROPS both: nothing ever serves a navigation entry's HTML (document serving
+never reads that namespace, and partial replay consumes only the segment
+snapshot and eligibility flags), so the document half would ride every store
+write and read as dead weight at KV-value scale. `hasIntactShellPayload` is the
+document-half gate a navigationOnly entry never passes; the CF/Vercel envelopes
+accept the absent fields only under the `navigationOnly` marker, which is
+preserved through memory, Cloudflare, and Vercel stores as defense in depth. A
+late navigation capture therefore cannot downgrade a document-safe shell.
+Partial replay prefers the document shell and falls back to the navigation
+snapshot.
 Corruption repair is the one key-placement exception: it overwrites the exact
 runtime key that supplied the bad snapshot. A repair at the document key still
 carries `navigationOnly`, so document serving refuses it and performs a normal

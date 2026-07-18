@@ -25,7 +25,11 @@
  *   markers say whether it is still current.
  */
 
-import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
+import type {
+  DocumentShellCacheEntry,
+  SegmentCacheStore,
+  ShellCacheEntry,
+} from "../cache/types.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import {
@@ -88,20 +92,29 @@ function loadManifest(): Promise<ShellManifestModule | null> {
  * Spec-only keying is sound because buildVersion is process-constant on the
  * manifest path (folded into the shipped worker; dev never loads a manifest).
  */
-const validatedSpecs = new Map<string, BuildShellEntry | null>();
+const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
+
+/**
+ * A manifest record whose document half passed hasIntactShellPayload — the
+ * casts below sit directly on that runtime gate (build entries are always
+ * document-shaped; the predicate narrows entry, not the record around it).
+ */
+type ValidatedBuildShellEntry = BuildShellEntry & {
+  entry: DocumentShellCacheEntry;
+};
 
 async function validatedManifestRecord(
   mod: ShellManifestModule,
   spec: string,
   buildVersion: string,
-): Promise<BuildShellEntry | undefined> {
+): Promise<ValidatedBuildShellEntry | undefined> {
   let verdict = validatedSpecs.get(spec);
   if (verdict === undefined) {
     const record = (await mod.loadShellAsset(spec)).default;
     verdict =
       isValidShellHit(record.entry, buildVersion) &&
       hasIntactShellPayload(record.entry)
-        ? record
+        ? (record as ValidatedBuildShellEntry)
         : null;
     validatedSpecs.set(spec, verdict);
   }
@@ -118,7 +131,7 @@ export function resetBuildShellManifestForTests(): void {
 const warnedTagCheckUnsupported = new Set<string>();
 
 export interface BuildShellHit {
-  entry: ShellCacheEntry;
+  entry: DocumentShellCacheEntry;
   /** Past createdAt + ttl: serve, but schedule the runtime recapture. */
   stale: boolean;
 }
@@ -273,7 +286,7 @@ export async function lookupBuildShell(
     const hasManifest = globalThis.__loadShellManifestModule !== undefined;
     if (!hasManifest && !dev) return null;
     if (sortedSearchString(url.searchParams, filter) !== "") return null;
-    let record: BuildShellEntry | undefined;
+    let record: ValidatedBuildShellEntry | undefined;
     if (hasManifest) {
       const mod = await loadManifest();
       if (!mod) return null;
@@ -286,7 +299,7 @@ export async function lookupBuildShell(
         fetched !== undefined &&
         isValidShellHit(fetched.entry, buildVersion) &&
         hasIntactShellPayload(fetched.entry)
-          ? fetched
+          ? (fetched as ValidatedBuildShellEntry)
           : undefined;
     }
     if (!record) return null;

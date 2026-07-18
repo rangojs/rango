@@ -79,6 +79,7 @@ import { reportCacheError } from "../cache/cache-error.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type {
+  DocumentShellCacheEntry,
   SegmentCacheStore,
   ShellCacheEntry,
   ShellSnapshotRecord,
@@ -212,7 +213,14 @@ function replayableShellSnapshot(
   if (!isValidShellHit(entry, buildVersion)) {
     return { reason: "invalid-version" };
   }
-  if (!hasIntactShellPayload(entry)) return { reason: "corrupt-entry" };
+  // navigationOnly entries store no document half (prelude/postponed absent),
+  // so the payload gate applies to document-snapshot entries alone. Replay
+  // consumes only the snapshot; fragment corruption inside it is caught by the
+  // consumer-side Flight decoders (SegmentFragmentDecodeError →
+  // segmentReplayCorrupt → healing capture at the document key).
+  if (!entry.navigationOnly && !hasIntactShellPayload(entry)) {
+    return { reason: "corrupt-entry" };
+  }
   if (entry.handlerLiveHoles) return { reason: "handler-live-holes" };
   if (entry.transitionWhen) return { reason: "transition-when" };
   // Eligibility requires the CANONICAL doc segment record (`docKey`), not just
@@ -386,7 +394,7 @@ async function handleRscRenderingInner<TEnv>(
           // build-manifest hit further down): schedule the background
           // recapture when asked, then commit the composed response.
           const serveHit = (
-            entry: ShellCacheEntry,
+            entry: DocumentShellCacheEntry,
             revalidate: boolean | undefined,
           ): Response => {
             if (revalidate) {
@@ -1159,7 +1167,7 @@ function serveShellHit(
   reqCtx: RequestContext<any>,
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   ssrModule: SSRModule,
-  entry: ShellCacheEntry,
+  entry: DocumentShellCacheEntry,
   descriptor: ShellCaptureDescriptor,
 ): Response {
   const preludeBytes = base64ToBytes(entry.prelude);
