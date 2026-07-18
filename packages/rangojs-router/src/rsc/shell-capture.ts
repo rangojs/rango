@@ -23,6 +23,7 @@ import { runBackground } from "../cache/background-task.js";
 import {
   CaptureQueueFullError,
   CaptureQueueWaitTimeoutError,
+  captureQueueDepths,
   enqueueSerializedCapture,
 } from "./capture-queue.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
@@ -398,6 +399,43 @@ function warnSnapshotOverCapOnce(
 }
 
 /**
+ * Dev warning threshold (ms) for the slowest bake-source settlement wait. Bake
+ * time is by-design shell latency (top-level pushed handle promises and
+ * bake-lane loader containers settle before the freeze), but it recurs on
+ * EVERY capture of the route and occupies the per-isolate serialized capture
+ * queue — silently: the served response's own timing never shows it (a route
+ * can read 13ms TTFB while each of its captures holds the queue for seconds).
+ * Past this threshold the source gets named once per key with the remedy
+ * ladder.
+ */
+const SHELL_CAPTURE_BAKE_WARN_MS = 2_000;
+
+/** Keys already warned about an expensive bake source (once per key). */
+const warnedBakeCosts = new Set<string>();
+
+/**
+ * Dev-only, once per key: name the slowest bake source and the three remedies
+ * in preference order. The doctrine ("nesting = liveness") makes the cost
+ * legitimate, so this is a cost report with an exit, not a deprecation.
+ */
+function warnBakeCostOnce(key: string, source: string, ms: number): void {
+  if (warnedBakeCosts.has(key)) return;
+  warnedBakeCosts.add(key);
+  console.warn(
+    `[rango] Shell capture for "${key}" waited ${ms}ms for ${source} to ` +
+      "settle before the shell could freeze. This cost recurs on every capture " +
+      "of the route and occupies the per-isolate capture queue; the served " +
+      "response never shows it. Top-level promises BAKE by design (the " +
+      "container settles; nested promises stay live). To make the value " +
+      "per-request instead, nest it ({ data: promise }) and read it with use() " +
+      "under Suspense; to keep it baked but cheap, wrap the work in cache() " +
+      "(the capture replays the cached value); for a segment loader, add a " +
+      "loading() boundary to its entry (live lane, masked at capture). See the " +
+      "/ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md).",
+  );
+}
+
+/**
  * One structured event from the background capture pipeline, mirroring the
  * CFCacheReadDebugEvent pattern (cache/cf/cf-cache-types.ts): typed fields an
  * operator can assert against, emitted per attempt and per skip, so the
@@ -418,6 +456,10 @@ export interface ShellCaptureDebugEvent {
    * - skip-backoff: the key is inside its refused-capture backoff window and
    *   the capture was not attempted
    * - skip-capacity: the isolate capture queue is full; a later request may retry
+   * - skip-inert-store: the resolved store's shell family is missing or
+   *   declared inert (SegmentCacheStore.shellFamilyInert — a CFCacheStore
+   *   without a KV namespace); nothing could store the result, so the
+   *   background render was not scheduled at all
    * - skip-queue-timeout: the capture waited past CAPTURE_QUEUE_WAIT_BUDGET_MS
    *   behind other captures and was dropped unrun (no backoff — the route is
    *   not doomed, the isolate was busy; a later request re-probes). Carries
@@ -434,6 +476,7 @@ export interface ShellCaptureDebugEvent {
     | "skip-in-flight"
     | "skip-backoff"
     | "skip-capacity"
+    | "skip-inert-store"
     | "skip-queue-timeout"
     | "backoff";
   /** Attempt number (1 = first, 2 = in-place retry). Absent on skips. */
@@ -466,6 +509,22 @@ export interface ShellCaptureDebugEvent {
   backoffRemainingMs?: number;
   /** Ms the capture waited in the serialized queue (skip-queue-timeout). */
   queueWaitMs?: number;
+  /** Queue priority class at enqueue: document outranks queued navigation. */
+  queuePriority?: "document" | "navigation";
+  /**
+   * Captures ahead at enqueue: the active one plus every waiting capture of
+   * same-or-higher priority. 0 = this capture starts immediately.
+   */
+  queueAhead?: number;
+  /**
+   * Ms the capture gate was HELD waiting for the slowest bake source — a
+   * top-level pushed handle promise or a bake-lane loader container — to
+   * settle, measured from capture start. Bake time is by-design shell latency
+   * (the hole doctrine: top-level promises bake), but it recurs on EVERY
+   * capture of the route and occupies the serialized queue; this field makes
+   * it attributable. Absent when nothing held the gate.
+   */
+  bakeWaitMs?: number;
 }
 
 /**
@@ -514,6 +573,15 @@ export function describeShellCaptureEvent(
   }
   if (event.queueWaitMs !== undefined) {
     parts.push(`queue-wait=${event.queueWaitMs}ms`);
+  }
+  if (event.queuePriority !== undefined) {
+    parts.push(`queue-priority=${event.queuePriority}`);
+  }
+  if (event.queueAhead !== undefined) {
+    parts.push(`queue-ahead=${event.queueAhead}`);
+  }
+  if (event.bakeWaitMs !== undefined) {
+    parts.push(`bake=${event.bakeWaitMs}ms`);
   }
   return parts.join(" ");
 }
@@ -864,6 +932,16 @@ export function scheduleShellCapture(
     });
     return;
   }
+  // A capture whose write can only no-op is dead work that still occupies the
+  // serialized queue (a promise-heavy route bakes for seconds per MISS),
+  // starving captures that CAN store. Skip scheduling entirely when the
+  // resolved store (same defaulting as captureAndStoreShell) has no shell
+  // family or declared it inert (CFCacheStore without a KV namespace).
+  const scheduledStore = descriptor.store ?? reqCtx._cacheStore;
+  if (!scheduledStore?.putShell || scheduledStore.shellFamilyInert) {
+    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-inert-store" });
+    return;
+  }
   inFlightCaptures.add(key);
   const captureTask = async (span: TraceSpan) => {
     try {
@@ -941,6 +1019,22 @@ export function scheduleShellCapture(
   const serializedTask = async () => {
     await observePhase(PHASES.background("shell-capture"), async (span) => {
       span.setAttribute("rango.shell_key", key);
+      // A production page can enqueue several navigation-only captures through
+      // viewport prefetching. Let a later document MISS overtake that queued
+      // speculative work so it can become a shell HIT before the 15s queue
+      // budget expires. Never preempts the active capture. Priority and the
+      // backlog ahead at enqueue ride the span (and the skip event below), so
+      // a skip-queue-timeout diagnoses itself instead of needing a trace dive.
+      const queuePriority = descriptor.navigationOnly
+        ? ("navigation" as const)
+        : ("document" as const);
+      const depths = captureQueueDepths();
+      const queueAhead =
+        (depths.running ? 1 : 0) +
+        depths.document +
+        (queuePriority === "navigation" ? depths.navigation : 0);
+      span.setAttribute("rango.background.queue_priority", queuePriority);
+      span.setAttribute("rango.background.queue_ahead", queueAhead);
       const queueStart = performance.now();
       try {
         await enqueueSerializedCapture(
@@ -951,13 +1045,7 @@ export function scheduleShellCapture(
             );
             return captureTask(span);
           },
-          {
-            // A production page can enqueue several navigation-only captures
-            // through viewport prefetching. Let a later document MISS overtake
-            // that queued speculative work so it can become a shell HIT before
-            // the 15s queue budget expires. Never preempts the active capture.
-            priority: descriptor.navigationOnly ? "navigation" : "document",
-          },
+          { priority: queuePriority },
         );
       } catch (error) {
         if (error instanceof CaptureQueueFullError) {
@@ -983,6 +1071,8 @@ export function scheduleShellCapture(
             key,
             outcome: "skip-queue-timeout",
             queueWaitMs: Math.round(error.waitedMs),
+            queuePriority,
+            queueAhead,
           });
           return;
         }
@@ -1044,6 +1134,7 @@ type CaptureAttemptStats = Pick<
   | "snapshotSkipped"
   | "untaggedBake"
   | "storeWrite"
+  | "bakeWaitMs"
 >;
 
 /**
@@ -1520,6 +1611,29 @@ async function captureAndStoreShell(
     loaderRecordsForHold && loaderRecordsForHold.size > 0
       ? Promise.allSettled([handlesBaked, ...loaderRecordsForHold.values()])
       : handlesBaked;
+  // Bake-cost attribution: record how long each bake source held the gate,
+  // measured from capture start. Side-channel observers only — holdUntil and
+  // its consumers are untouched, and a rejected source is recorded the same
+  // (allSettled swallows it; the drain below owns the refusal). Folded into
+  // stats.bakeWaitMs (+ a once-per-key dev warning) after a successful
+  // capture; on a refusal the other warnings own the story.
+  const bakeStart = performance.now();
+  const bakeWaits: { source: string; ms: number }[] = [];
+  const observeBake = (source: string, promise: Promise<unknown>): void => {
+    const record = (): void => {
+      bakeWaits.push({
+        source,
+        ms: Math.round(performance.now() - bakeStart),
+      });
+    };
+    promise.then(record, record);
+  };
+  observeBake("top-level pushed handle promises", handlesBaked);
+  if (loaderRecordsForHold) {
+    for (const [loaderId, promise] of loaderRecordsForHold) {
+      observeBake(`bake-lane segment loader "${loaderId}"`, promise);
+    }
+  }
   const gate = gateFlightForCapture(rscStream, undefined, holdUntil);
   // Quiesce = handles settled AND the Flight shell rows went task-quiet. Either
   // half stalling is bounded by captureShellHTML's maxWaitMs.
@@ -1598,6 +1712,23 @@ async function captureAndStoreShell(
       return "no-shell";
     }
     if (stats) stats.preludeBytes = result.prelude.length;
+
+    // Every bake source has settled by here (quiesce gates on holdUntil).
+    // Surface the slowest one: sub-ms settles are noise, threshold-crossers
+    // get the dev warning with the remedy ladder.
+    let slowestBake: { source: string; ms: number } | undefined;
+    for (const wait of bakeWaits) {
+      if (!slowestBake || wait.ms > slowestBake.ms) slowestBake = wait;
+    }
+    if (slowestBake && slowestBake.ms > 0) {
+      if (stats) stats.bakeWaitMs = slowestBake.ms;
+      if (
+        process.env.NODE_ENV !== "production" &&
+        slowestBake.ms >= SHELL_CAPTURE_BAKE_WARN_MS
+      ) {
+        warnBakeCostOnce(capture.key, slowestBake.source, slowestBake.ms);
+      }
+    }
 
     // Store per the flag's key/ttl/swr/tags, into the flag's store: the middleware
     // threads the SAME store it resolved for its getShell read (options.store ??

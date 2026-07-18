@@ -199,6 +199,16 @@ export interface SegmentCacheStore<TEnv = unknown> {
   ): Promise<"stored" | "invalidated" | void>;
 
   /**
+   * Declares the shell family present-but-inert: getShell/putShell exist but
+   * no-op (CFCacheStore without a KV namespace). scheduleShellCapture skips
+   * captures whose only write target is inert — the background render would be
+   * dead work that still occupies the per-isolate serialized capture queue
+   * (a promise-heavy route bakes for seconds per MISS with nothing stored).
+   * Absent/false means the family, when present, actually stores.
+   */
+  shellFamilyInert?: boolean;
+
+  /**
    * Get a cached function result by key.
    * Returns the serialized value, optional handle data, and staleness flag.
    */

@@ -223,6 +223,12 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       );
 
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
+    // Declared, not just warned: scheduleShellCapture reads this flag to skip
+    // captures whose write could only no-op (dead background renders).
+    expect(store.shellFamilyInert).toBe(true);
+    expect(
+      new CFCacheStore({ ctx: mockCtx, kv: mockKV as any }).shellFamilyInert,
+    ).toBeUndefined();
     await store.putShell("k", shellEntry(), 300, 30);
     await drain(mockCtx);
     expect(await store.getShell("k")).toBeNull();

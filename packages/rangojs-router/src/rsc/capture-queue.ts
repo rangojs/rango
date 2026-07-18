@@ -40,6 +40,34 @@ const navigationCaptures: QueuedCapture[] = [];
 /** Bound queued/running capture closures retained by one isolate. */
 export const MAX_ADMITTED_CAPTURES: number = 32;
 
+/** Point-in-time queue occupancy, for capture-scheduling telemetry. */
+export interface CaptureQueueDepths {
+  /** A capture is currently executing (never preempted). */
+  running: boolean;
+  /** Waiting document-priority captures (run before every navigation capture). */
+  document: number;
+  /** Waiting navigation-priority captures. */
+  navigation: number;
+}
+
+/**
+ * Snapshot the queue's waiting/running state. Wait-timed-out entries still
+ * sitting in the arrays (pruned lazily by takeNextCapture) are excluded — they
+ * will never run, so counting them would overstate the backlog.
+ */
+export function captureQueueDepths(): CaptureQueueDepths {
+  const waiting = (queue: QueuedCapture[]): number => {
+    let count = 0;
+    for (const queued of queue) if (queued.state === "waiting") count++;
+    return count;
+  };
+  return {
+    running: captureRunning,
+    document: waiting(documentCaptures),
+    navigation: waiting(navigationCaptures),
+  };
+}
+
 /** The caller may drop this best-effort capture and retry on a later request. */
 export class CaptureQueueFullError extends Error {
   constructor() {

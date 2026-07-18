@@ -400,6 +400,8 @@ interface KVResponseEnvelope {
 
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   readonly supportsPassiveShellReads: true = true;
+  /** True when constructed without KV: the shell family no-ops (see ctor). */
+  readonly shellFamilyInert?: boolean;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -471,6 +473,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
+    // The shell family requires KV (getShell/putShell no-op without it — see
+    // warnShellFamilyInertOnce). Declaring it lets scheduleShellCapture skip
+    // captures whose write could only no-op instead of burning a background
+    // render per MISS that still occupies the serialized capture queue.
+    this.shellFamilyInert = options.kv ? undefined : true;
     this.onRevalidateTag = options.onRevalidateTag;
     // tagPurge accepts a ready purge function or a credentials object; the
     // object form is normalized through the built-in zone purge client, which

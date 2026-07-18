@@ -666,6 +666,96 @@ describe("captureAndStoreShell", () => {
     ).toBe("<html><body>shell</body></html>");
   });
 
+  it("attributes the slowest bake source: bakeWaitMs stat + once-per-key dev warning naming it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let now = 0;
+    const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      let resolveLoader!: (value: unknown) => void;
+      const loaderPromise = new Promise((resolve) => {
+        resolveLoader = resolve;
+      });
+      const reqCtx = makeReqCtx();
+      reqCtx._shellCaptureLoaderRecords = new Map([
+        ["products.list", loaderPromise],
+      ]);
+      const captureShellHTML = vi.fn(async () => {
+        // One macrotask first so the (instant) handles bake records at 0, then
+        // jump the mocked clock and settle the loader — its observer records
+        // the 3456ms hold. The extra microtask lets that observer run before
+        // the capture result is consumed.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        now = 3456;
+        resolveLoader({ ok: true });
+        await loaderPromise;
+        await Promise.resolve();
+        return {
+          prelude: enc("<html><body>shell</body></html>"),
+          postponed: null,
+        };
+      });
+      const ssrModule = {
+        renderHTML: vi.fn(),
+        captureShellHTML,
+      } as unknown as SSRModule;
+
+      const stats: { bakeWaitMs?: number } = {};
+      const outcome = await captureAndStoreShell(
+        ssrModule,
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        {
+          key: "/bake-cost:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell: makePutShell() } as any,
+        },
+        stats,
+      );
+
+      expect(outcome).toBe("stored");
+      expect(stats.bakeWaitMs).toBe(3456);
+      const bakeWarnings = warn.mock.calls.filter((call) =>
+        String(call[0]).includes("waited 3456ms"),
+      );
+      expect(bakeWarnings).toHaveLength(1);
+      expect(String(bakeWarnings[0]![0])).toContain(
+        'bake-lane segment loader "products.list"',
+      );
+      // Remedy ladder is present: nest / cache() / loading().
+      expect(String(bakeWarnings[0]![0])).toContain(
+        "nest it ({ data: promise })",
+      );
+      expect(String(bakeWarnings[0]![0])).toContain("cache()");
+      expect(String(bakeWarnings[0]![0])).toContain("loading()");
+
+      // Once per key: a second expensive capture of the SAME key stays silent.
+      now = 0;
+      const again = await captureAndStoreShell(
+        ssrModule,
+        emptyStream(),
+        createHandleStore(),
+        makeReqCtx(),
+        {
+          key: "/bake-cost:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell: makePutShell() } as any,
+        },
+      );
+      expect(again).toBe("stored");
+      expect(
+        warn.mock.calls.filter((call) =>
+          String(call[0]).includes("/bake-cost:shell"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      perfSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it("stores the capture context's theme as entry.initialTheme (resume theme fidelity)", async () => {
     const putShell = makePutShell();
     const ssrModule = {

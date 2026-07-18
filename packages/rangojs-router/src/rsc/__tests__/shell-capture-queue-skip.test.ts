@@ -94,6 +94,10 @@ describe("scheduleShellCapture queue-wait timeout", () => {
 
     expect(events.map((e) => e.outcome)).toEqual(["skip-queue-timeout"]);
     expect(events[0].queueWaitMs).toBe(20_000);
+    // Priority class and enqueue backlog ride the skip event so the drop
+    // diagnoses itself (the real queue is empty here: ahead = 0).
+    expect(events[0].queuePriority).toBe("document");
+    expect(events[0].queueAhead).toBe(0);
     // The capture never ran.
     expect(ssrModule.captureShellHTML).not.toHaveBeenCalled();
 
@@ -102,6 +106,10 @@ describe("scheduleShellCapture queue-wait timeout", () => {
       "skip-queue-timeout",
     );
     expect(spans[0].attributes["rango.background.queue_wait_ms"]).toBe(20_000);
+    expect(spans[0].attributes["rango.background.queue_priority"]).toBe(
+      "document",
+    );
+    expect(spans[0].attributes["rango.background.queue_ahead"]).toBe(0);
 
     // No backoff, and the in-flight key was released: a later schedule for
     // the same key is admitted again (not skip-in-flight).
@@ -117,5 +125,68 @@ describe("scheduleShellCapture queue-wait timeout", () => {
     );
     expect(captured).toHaveLength(2);
     await runWithRequestContext(reqCtx as any, () => captured[1]!());
+  });
+});
+
+describe("scheduleShellCapture inert-store guard", () => {
+  function makeScheduleArgs() {
+    const events: ShellCaptureDebugEvent[] = [];
+    const captured: Array<() => Promise<void>> = [];
+    const reqCtx = createRequestContext({
+      env: {},
+      request: new Request("http://localhost/inert"),
+      url: new URL("http://localhost/inert"),
+      variables: {},
+    }) as RequestContext;
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    const ctx = { version: "v-test" } as unknown as HandlerContext<any>;
+    const ssrModule = {
+      renderHTML: vi.fn(),
+      resumeShellHTML: vi.fn(),
+      captureShellHTML: vi.fn(),
+    } as unknown as SSRModule;
+    const schedule = (store: unknown, key: string) =>
+      scheduleShellCapture(
+        ctx,
+        new Request("http://localhost/inert"),
+        {},
+        new URL("http://localhost/inert"),
+        reqCtx,
+        ssrModule,
+        {
+          key,
+          buildVersion: "test-build",
+          store: store as any,
+          debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+        },
+      );
+    return { events, captured, schedule };
+  }
+
+  it("skips scheduling when the store has no putShell (nothing could store the result)", () => {
+    const { events, captured, schedule } = makeScheduleArgs();
+    schedule({}, "/inert-no-putshell:shell");
+    expect(events.map((e) => e.outcome)).toEqual(["skip-inert-store"]);
+    // No background task was registered — the render never starts.
+    expect(captured).toHaveLength(0);
+  });
+
+  it("skips scheduling when the store declared its shell family inert (KV-less CFCacheStore shape)", () => {
+    const { events, captured, schedule } = makeScheduleArgs();
+    schedule(
+      { putShell: vi.fn(), shellFamilyInert: true },
+      "/inert-declared:shell",
+    );
+    expect(events.map((e) => e.outcome)).toEqual(["skip-inert-store"]);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("schedules normally for a store whose shell family works", () => {
+    const { events, captured, schedule } = makeScheduleArgs();
+    schedule({ putShell: vi.fn() }, "/inert-viable:shell");
+    expect(events).toHaveLength(0);
+    expect(captured).toHaveLength(1);
   });
 });

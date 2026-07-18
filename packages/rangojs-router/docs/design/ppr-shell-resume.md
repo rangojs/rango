@@ -119,7 +119,14 @@ may retry on a later request. Waiting document-shell captures run before queued
 navigation-only captures, while preserving FIFO within each class and never
 interrupting the active capture. This priority is load-bearing in production:
 viewport prefetch can enqueue several expensive navigation snapshots, and a
-strict FIFO let them consume the document capture's entire queue budget.
+strict FIFO let them consume the document capture's entire queue budget. The
+priority class and the backlog at enqueue ride the `rango.background` span
+(`queue_priority`, `queue_ahead`) and the skip-queue-timeout debug event, so a
+parked capture diagnoses itself. Scheduling also checks write viability first:
+a store without the shell family, or one that declared it inert
+(`SegmentCacheStore.shellFamilyInert` — a KV-less `CFCacheStore`), skips the
+capture at the gate (`skip-inert-store`) instead of burning a background render
+whose write could only no-op.
 Each waiter receives a start signal and runs the capture in its own scheduling
 request context. Queue handoff happens before that request's `waitUntil` promise
 settles; resolving first lets workerd retire the context while the isolate lock

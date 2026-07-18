@@ -358,7 +358,11 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   falls through to KV on a miss, and promotes the KV hit back into that colo.
   WITHOUT a KV namespace its shell family remains inert: every ppr route stays
   `MISS` forever. The store warns once per isolate — bind KV
-  (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store.
+  (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store. An
+  inert store also stops captures at the gate: the store declares
+  `shellFamilyInert` and the scheduler skips the background render entirely
+  (`skip-inert-store` on the debug event) instead of burning a full capture per
+  MISS whose write could only no-op.
 - Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
   logs one line per capture attempt/skip (outcome, durations, prelude and
   snapshot bytes, backoff state); pass a function to receive each
@@ -367,8 +371,14 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   later request. `skip-queue-timeout` means this capture waited 15s behind the
   active or same-priority work and was dropped before rendering; document-shell
   captures outrank queued navigation-only snapshots, but never interrupt the
-  active capture. In dev, with `debugPerformance` on, the
-  last capture outcome for a key also rides the next document GET's
+  active capture — the skip event and the `rango.background` span carry
+  `queuePriority`/`queueAhead` (class and backlog at enqueue) so a parked
+  capture diagnoses itself. A stored attempt reports `bakeWaitMs`: how long the
+  slowest bake source (a top-level pushed handle promise or a bake-lane loader
+  container) held the capture gate — in dev, past 2s, the source is also named
+  once per key in a console warning with the remedies (nest the promise /
+  `cache()` the work / add `loading()`). In dev, with `debugPerformance` on,
+  the last capture outcome for a key also rides the next document GET's
   `Server-Timing` as `ppr-capture;desc="…"`.
 - For deployed Cloudflare tier diagnostics, build with
   `INTERNAL_RANGO_DEBUG=1` and run `wrangler tail`. `[CFCacheStore][shell]`
@@ -623,6 +633,34 @@ handler-INVOKED loader bodies (`await ctx.use(loader)`): they execute at
 capture with identity reads permitted, and the value bakes as a shared
 capture-time copy — mirroring `cache()` semantics (the consumption-lane
 rule; semantic-matrix row PPR3).
+
+### Designing routes for cheap captures (the cost model)
+
+The hole doctrine has a cost corollary that bites silently: **everything that
+bakes is awaited at capture, and that wait recurs on EVERY capture of the
+route**. A top-level pushed handle promise that takes 5s and a Meta promise
+chained 2s further make every capture occupy the per-isolate serialized queue
+for ~7s — while the served response still reads 13ms TTFB, because captures are
+detached. You will not see this cost in any request timing; you see it as slow
+MISS→HIT flips, `skip-queue-timeout` under prefetch pressure, and (in dev, past
+2s) the bake-cost warning naming the source.
+
+Three levers, in preference order:
+
+1. **Nest it** (`{ data: promise }` instead of the promise): the value becomes
+   a hole — per-request, streamed under the consumer's `<Suspense>`, zero
+   capture cost. Choose this whenever the value may be dynamic anyway.
+2. **`cache()` the work inside it**: the value stays baked (shell material,
+   tag-invalidatable), but the capture replays the cached value instead of
+   re-executing the expensive body (mixed-chain). Choose this for shared,
+   expensive-to-compute shell content.
+3. **`loading()` on the entry** (loaders only): moves the loader to the live
+   lane — masked at capture, fresh per serve — at the cost of a fallback in
+   the shell.
+
+Head material (Meta) generally cannot be a hole — the head is shell — so its
+promises bake by design; make them cheap with lever 2. `bakeWaitMs` on the
+capture debug event tells you what each capture actually paid.
 
 ## Execution matrix
 
