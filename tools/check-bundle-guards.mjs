@@ -18,6 +18,8 @@
  *     route data inlined eagerly (commit d10a2470, -219KB when fixed). The
  *     single-router shape of this is also guarded structurally by
  *     e2e/build-test-app.setup.ts; this asserts it at stress scale.
+ *  4. DEVELOPMENT DIAGNOSTICS (every app): production output contains none of
+ *     the request-trace retention, redaction, or event-vocabulary markers.
  *
  * Default apps balance coverage against CI minutes (CF + node presets +
  * stress scale). `--all` sweeps every analyzer-wired app (bundle-analysis
@@ -43,6 +45,27 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const ROUTER_CHUNK_GZIP_MAX = 40 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
+const DIAGNOSTIC_IMPLEMENTATION_MARKERS = [
+  "clientCorrelationId",
+  "event-too-large",
+  "request.started",
+  "revalidation.trace",
+  "cache.tags",
+  "explain_cache_tags",
+  "match_route",
+  "/__rango/mcp",
+  "@modelcontextprotocol/sdk",
+  "sanitizeDiagnosticText",
+  "rango:diagnostics:batch",
+  "rango:diagnostics:navigation",
+  "X-Rango-Navigation-Id",
+  "X-Rango-Request-Id",
+  "rango-request-id",
+  "list_navigations",
+  "internal/dev-diagnostics",
+  "acceptedBatches",
+  "[unsupported]",
+];
 
 const DEFAULT_APPS = [
   "tests/cloudflare-basic",
@@ -70,6 +93,21 @@ const apps = process.argv.includes("--all") ? ALL_APPS : DEFAULT_APPS;
 
 function shorten(p) {
   return p.replace(`${ROOT}/`, "");
+}
+
+function collectJsFiles(dir) {
+  if (!existsSync(dir)) return [];
+  const found = [];
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile() && entry.name.endsWith(".js")) found.push(full);
+    }
+  }
+  return found;
 }
 
 function buildApp(appDir) {
@@ -122,6 +160,29 @@ function checkLeaks(app, rows, failures) {
     }
   }
   console.log(`[${app}] leak scan: ${rows.length} client modules.`);
+}
+
+function checkDiagnosticLeaks(app, appDir, failures) {
+  const files = collectJsFiles(resolve(appDir, "dist"));
+  if (files.length === 0) {
+    failures.push(
+      `[${app}] DIAGNOSTICS: no production JavaScript files found.`,
+    );
+    return;
+  }
+  const leaked = files.filter((file) => {
+    const source = readFileSync(file, "utf8");
+    return DIAGNOSTIC_IMPLEMENTATION_MARKERS.some((marker) =>
+      source.includes(marker),
+    );
+  });
+  if (leaked.length > 0) {
+    failures.push(
+      `[${app}] DIAGNOSTICS: production output retains development diagnostic implementation in ${leaked
+        .map(shorten)
+        .join(", ")}`,
+    );
+  }
 }
 
 function checkRouterRatchet(app, appDir, failures) {
@@ -185,6 +246,7 @@ for (const app of apps) {
     continue;
   }
   checkLeaks(app, clientRows, failures);
+  checkDiagnosticLeaks(app, appDir, failures);
   if (app === "tests/cloudflare-basic") {
     checkRouterRatchet(app, appDir, failures);
   }

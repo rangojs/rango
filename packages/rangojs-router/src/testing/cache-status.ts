@@ -19,7 +19,7 @@
  * Both paths report the SAME coarse route-level signal — pick by TRANSPORT, not
  * by meaning: the header is the only signal a black-box Playwright `Response`
  * carries (needs the debug gate ON); the sink is the only zero-production-surface
- * option and the only one exposing per-segment `shouldRevalidate`.
+ * option and the only one exposing per-segment revalidation ownership.
  *
  * v1 cache status is COARSE (route-level): the router reports a single entry
  * keyed by the route key (the route NAME), not per individual segment.

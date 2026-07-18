@@ -29,6 +29,7 @@ async function initializeApp() {
   const { strictMode, initialPayload } = await initBrowserApp({ rscStream, deps });
 
   if (import.meta.hot) {
+    const initialDocumentHref = window.location.href;
     const { startDevDiscoveryHandshake } = await import(
       "@rangojs/router/internal/browser/dev-discovery"
     );
@@ -36,6 +37,15 @@ async function initializeApp() {
       initialPayload.metadata?.devDiscoveryEpoch,
       import.meta.hot
     );
+    void import(
+        "@rangojs/router/internal/browser/navigation-diagnostics"
+      )
+      .then(({ installBrowserNavigationDiagnostics }) => {
+        installBrowserNavigationDiagnostics(import.meta.hot, initialDocumentHref);
+      })
+      .catch((error) => {
+        console.warn("[rango] Browser navigation diagnostics unavailable", error);
+      });
   }
 
   const app = createElement(Rango);
@@ -141,10 +151,28 @@ export const RSC_ENTRY_BOOTSTRAP_IMPORTS: readonly string[] = [
   "virtual:rsc-router/loader-manifest",
 ];
 
-export function getVirtualEntryRSC(routerPath: string): string {
-  const bootstrapImports = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
-    (id) => `import "${id}";`,
-  ).join("\n");
+const DEV_DIAGNOSTICS_RUNTIME_ID = "@rangojs/router/internal/dev-diagnostics";
+
+export function getRscEntryBootstrapImports(
+  developmentDiagnostics: boolean,
+): readonly string[] {
+  return [
+    ...RSC_ENTRY_BOOTSTRAP_IMPORTS,
+    ...(developmentDiagnostics ? [DEV_DIAGNOSTICS_RUNTIME_ID] : []),
+  ];
+}
+
+function rscEntryBootstrapImports(developmentDiagnostics: boolean): string {
+  return getRscEntryBootstrapImports(developmentDiagnostics)
+    .map((id) => `import "${id}";`)
+    .join("\n");
+}
+
+export function getVirtualEntryRSC(
+  routerPath: string,
+  developmentDiagnostics: boolean = false,
+): string {
+  const bootstrapImports = rscEntryBootstrapImports(developmentDiagnostics);
   return `
 import {
   renderToReadableStream,
@@ -193,7 +221,11 @@ export default function handler(request, env) {
 `.trim();
 }
 
-export function getVirtualEntryRSCHost(hostEntryPath: string): string {
+export function getVirtualEntryRSCHost(
+  hostEntryPath: string,
+  developmentDiagnostics: boolean = false,
+): string {
+  const bootstrapImports = rscEntryBootstrapImports(developmentDiagnostics);
   return `
 import * as __hostEntry from "${hostEntryPath}";
 import { isNoRouteMatchError } from "@rangojs/router/host";
@@ -201,8 +233,7 @@ import { isNoRouteMatchError } from "@rangojs/router/host";
 // Register every sub-app's fetchable loaders + route manifests at startup, same
 // as the single-router entry. Discovery's host fallback populates these for all
 // mounted sub-apps, so the aggregate manifests cover the whole host tree.
-import "virtual:rsc-router/loader-manifest";
-import "virtual:rsc-router/routes-manifest";
+${bootstrapImports}
 
 // The host entry module must export the HostRouter instance (createHostRouter()),
 // as a default export or a named \`hostRouter\`/\`router\` export. A Cloudflare-style

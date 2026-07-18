@@ -117,6 +117,11 @@ import { resolveStateCookieName } from "./router/state-cookie-name.js";
 import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
 import { resolveDefaultPrefetch } from "./router/prefetch-default.js";
 import {
+  isDevelopmentDiagnosticsEnabled,
+  runWithRequestDiagnostics,
+} from "./router/diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./router/diagnostics/hub.js";
+import {
   resolvePrefetchCacheSize,
   resolvePrefetchConcurrency,
 } from "./router/prefetch-limits.js";
@@ -476,7 +481,11 @@ export function createRouter<TEnv = any>(
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    if (reqCtx && onError) {
+    if (
+      reqCtx &&
+      (onError ||
+        (DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled()))
+    ) {
       tracked.catch((error) => {
         callOnError(error, "handler", {
           request: reqCtx.request,
@@ -740,6 +749,7 @@ export function createRouter<TEnv = any>(
     defaultErrorBoundary,
     findMatch,
     findInterceptForRoute,
+    routerId,
     telemetry: telemetrySink,
     cacheSignalEnabled,
   });
@@ -1134,27 +1144,32 @@ export function createRouter<TEnv = any>(
           });
         }
 
-        // Trigger lazy import of per-router manifest data before route matching.
-        // No-op if data is already loaded or no loader is registered.
-        await ensureRouterManifest(routerId);
-        if (!handler) {
-          // Lazy import deferred to first request to avoid dev mode issues
-          const { createRSCHandler } = await import("./rsc/handler.js");
-          // Cast: createRSCHandler receives `router as any`, which erases TEnv
-          // and infers its handler as RouterRequestInput<unknown>. Re-narrow the
-          // returned handler to RouterRequestInput<TEnv> so the call below stays
-          // typed. (The handler already accepts (request, RouterRequestInput).)
-          handler = createRSCHandler({
-            router: router as any,
-            cache,
-            nonce,
-            version,
-          }) as (
-            request: Request,
-            input: RouterRequestInput<TEnv>,
-          ) => Promise<Response>;
-        }
-        return handler!(request, input);
+        const execute = async (): Promise<Response> => {
+          // Trigger lazy import of per-router manifest data before route matching.
+          // No-op if data is already loaded or no loader is registered.
+          await ensureRouterManifest(routerId);
+          if (!handler) {
+            // Lazy import deferred to first request to avoid dev mode issues
+            const { createRSCHandler } = await import("./rsc/handler.js");
+            // Cast: createRSCHandler receives `router as any`, which erases TEnv
+            // and infers its handler as RouterRequestInput<unknown>. Re-narrow the
+            // returned handler to RouterRequestInput<TEnv> so the call below stays
+            // typed. (The handler already accepts (request, RouterRequestInput).)
+            handler = createRSCHandler({
+              router: router as any,
+              cache,
+              nonce,
+              version,
+            }) as (
+              request: Request,
+              input: RouterRequestInput<TEnv>,
+            ) => Promise<Response>;
+          }
+          return handler!(request, input);
+        };
+        return DEVELOPMENT_DIAGNOSTICS_ENABLED
+          ? runWithRequestDiagnostics(request, routerId, execute)
+          : execute();
       };
     })(),
 

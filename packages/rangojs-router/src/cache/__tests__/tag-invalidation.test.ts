@@ -7,6 +7,11 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
+import { runWithRequestTransaction } from "../../router/request-identity.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
 
 function makeCtx(opts: {
   cacheStore?: SegmentCacheStore;
@@ -25,6 +30,7 @@ function makeCtx(opts: {
 describe("updateTag (read-your-own-writes)", () => {
   beforeEach(() => {
     MemorySegmentCacheStore.resetGlobalCache();
+    resetDevelopmentDiagnosticHub();
   });
 
   it("invalidates app-store entries and resolves after completion", async () => {
@@ -62,7 +68,7 @@ describe("updateTag (read-your-own-writes)", () => {
     // rather than short-circuit or silently report success.
     const failing = {
       get: async () => null,
-      set: async () => {},
+      set: async () => ({ outcome: "stored" as const }),
       delete: async () => false,
       invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as SegmentCacheStore;
@@ -120,7 +126,9 @@ describe("updateTag (read-your-own-writes)", () => {
       async getItem() {
         return null;
       },
-      async setItem() {},
+      async setItem() {
+        return { outcome: "stored" as const };
+      },
     } as unknown as SegmentCacheStore;
     const explicit = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
@@ -162,6 +170,7 @@ describe("updateTag (read-your-own-writes)", () => {
 describe("revalidateTag (background hard-purge)", () => {
   beforeEach(() => {
     MemorySegmentCacheStore.resetGlobalCache();
+    resetDevelopmentDiagnosticHub();
   });
 
   it("schedules invalidation via ctx.waitUntil", async () => {
@@ -184,6 +193,36 @@ describe("revalidateTag (background hard-purge)", () => {
     // Memory store invalidateTag is synchronous; flush microtasks to be safe.
     await Promise.resolve();
     expect(await app.getItem("k")).toBeNull();
+  });
+
+  it("links scheduled and completed diagnostics across waitUntil", async () => {
+    const app = new MemorySegmentCacheStore();
+    await app.setItem("k", "v", { ttl: 60, tags: ["products"] });
+    const ctx = makeCtx({ cacheStore: app });
+    const pending: Promise<void>[] = [];
+    ctx.waitUntil = (fn: () => Promise<void>) => {
+      pending.push(Promise.resolve().then(fn));
+    };
+
+    await runWithRequestTransaction(
+      ctx.request,
+      "request",
+      () =>
+        runWithRequestContext(ctx, async () => {
+          revalidateTag("products");
+        }),
+      { routerId: "app", diagnosticsEnabled: true },
+    );
+    await Promise.all(pending);
+
+    const trace = getDevelopmentDiagnosticHub()!.listTraces()[0]!;
+    expect(
+      trace.events.map((event) => [event.type, event.data.outcome]),
+    ).toEqual([
+      ["cache.tags", "scheduled"],
+      ["cache.tags", "completed"],
+    ]);
+    expect(trace.events[1]?.transactionId).toBe(trace.events[0]?.transactionId);
   });
 
   it("fans out across app + explicit stores, deduplicated", async () => {
@@ -210,7 +249,7 @@ describe("revalidateTag (background hard-purge)", () => {
     // ALS context is gone, so the captured ctx must be threaded to the reporter.
     const failing = {
       get: async () => null,
-      set: async () => {},
+      set: async () => ({ outcome: "stored" as const }),
       delete: async () => false,
       invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as SegmentCacheStore;

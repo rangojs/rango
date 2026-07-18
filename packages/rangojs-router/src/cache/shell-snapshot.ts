@@ -35,6 +35,9 @@ import type {
   ShellSnapshotResponseValue,
   ShellSnapshotLoaderValue,
   CacheReadError,
+  CacheResponseResult,
+  CacheShellResult,
+  CacheWriteAcknowledgement,
 } from "./types.js";
 import { CACHE_READ_ERROR } from "./types.js";
 import { bufferToBase64, base64ToBuffer } from "./cf/cf-base64.js";
@@ -48,6 +51,7 @@ function recordKey(family: ShellSnapshotRecord["family"], key: string): string {
 /** Serialize a Response to the snapshot's stored shape (base64 body). */
 async function serializeResponse(
   response: Response,
+  tags?: string[],
 ): Promise<ShellSnapshotResponseValue> {
   const body = await response.clone().arrayBuffer();
   const headers: [string, string][] = [];
@@ -56,7 +60,7 @@ async function serializeResponse(
     if (isPerClientSignalHeader(name)) return;
     headers.push([name, value]);
   });
-  return { status: response.status, headers, body: bufferToBase64(body) };
+  return { status: response.status, headers, body: bufferToBase64(body), tags };
 }
 
 /** Rebuild a live Response from a snapshot's stored response shape. */
@@ -173,7 +177,7 @@ export class RecordingShellStore<
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     this.record("segment", key, data);
     return this.inner.set(key, data, ttl, swr);
   }
@@ -186,13 +190,15 @@ export class RecordingShellStore<
     return this.inner.clear?.();
   }
 
-  async getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  async getResponse(key: string): Promise<CacheResponseResult | null> {
     if (!this.inner.getResponse) return null;
     const result = await this.inner.getResponse(key);
     if (result)
-      this.record("response", key, await serializeResponse(result.response));
+      this.record(
+        "response",
+        key,
+        await serializeResponse(result.response, result.tags),
+      );
     return result;
   }
 
@@ -202,9 +208,10 @@ export class RecordingShellStore<
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> {
-    if (!this.inner.putResponse) return;
-    this.record("response", key, await serializeResponse(response));
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.putResponse)
+      return { outcome: "skipped", reason: "unsupported" };
+    this.record("response", key, await serializeResponse(response, tags));
     return this.inner.putResponse(key, response, ttl, swr, tags);
   }
 
@@ -226,8 +233,9 @@ export class RecordingShellStore<
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> {
-    if (!this.inner.setItem) return;
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.setItem)
+      return { outcome: "skipped", reason: "unsupported" };
     const stored: ShellSnapshotItemValue = {
       value,
       handles: options?.handles,
@@ -240,7 +248,7 @@ export class RecordingShellStore<
   async getShell(
     key: string,
     options?: { claimRevalidation?: boolean },
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+  ): Promise<CacheShellResult | null> {
     return this.inner.getShell ? this.inner.getShell(key, options) : null;
   }
 
@@ -250,8 +258,10 @@ export class RecordingShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
-    return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.putShell)
+      return { outcome: "skipped", reason: "unsupported" };
+    return this.inner.putShell(key, entry, ttlSeconds, swrSeconds, tags);
   }
 
   async invalidateTags(tags: string[]): Promise<void> {
@@ -291,8 +301,12 @@ export class SnapshotOnlySegmentStore<
     return this.recording.get(key);
   }
 
-  async set(key: string, data: CachedEntryData): Promise<void> {
+  async set(
+    key: string,
+    data: CachedEntryData,
+  ): Promise<CacheWriteAcknowledgement> {
     this.recording.recordSegmentWrite(key, data);
+    return { outcome: "stored" };
   }
 
   async delete(key: string): Promise<boolean> {
@@ -365,7 +379,7 @@ export async function buildShellLoaderSeed(
 
 /**
  * A read-through overlay the HIT tail render reads through. For a key present in
- * the snapshot it serves the recorded value AS FRESH (shouldRevalidate: false —
+ * the snapshot it serves the recorded value AS FRESH without SWR ownership —
  * a pinned key must NOT kick SWR background revalidation) so the tail's payload
  * matches the frozen prelude. Every other read falls through to the real store
  * (the holes — masked loaders were never recorded — stay live). Writes pass
@@ -423,7 +437,12 @@ export class SeededShellStore<
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     const seeded = this.segments.get(key);
-    if (seeded) return { data: seeded, shouldRevalidate: false };
+    if (seeded)
+      return {
+        data: seeded,
+        freshness: "fresh",
+        revalidationClaimed: false,
+      };
     if (this.segmentsOnly) return null;
     return this.inner.get(key);
   }
@@ -433,10 +452,10 @@ export class SeededShellStore<
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     if (this.segmentsOnly) {
       this.segments.set(key, data);
-      return;
+      return { outcome: "stored" };
     }
     return this.inner.set(key, data, ttl, swr);
   }
@@ -452,12 +471,15 @@ export class SeededShellStore<
     return this.inner.clear?.();
   }
 
-  async getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  async getResponse(key: string): Promise<CacheResponseResult | null> {
     const seeded = this.responses?.get(key);
     if (seeded) {
-      return { response: deserializeResponse(seeded), shouldRevalidate: false };
+      return {
+        response: deserializeResponse(seeded),
+        freshness: "fresh",
+        revalidationClaimed: false,
+        tags: seeded.tags,
+      };
     }
     return this.inner.getResponse ? this.inner.getResponse(key) : null;
   }
@@ -468,8 +490,10 @@ export class SeededShellStore<
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> {
-    return this.inner.putResponse?.(key, response, ttl, swr, tags);
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.putResponse)
+      return { outcome: "skipped", reason: "unsupported" };
+    return this.inner.putResponse(key, response, ttl, swr, tags);
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
@@ -479,7 +503,8 @@ export class SeededShellStore<
         value: seeded.value,
         handles: seeded.handles,
         tags: seeded.tags,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       };
     }
     return this.inner.getItem ? this.inner.getItem(key) : null;
@@ -489,14 +514,16 @@ export class SeededShellStore<
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> {
-    return this.inner.setItem?.(key, value, options);
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.setItem)
+      return { outcome: "skipped", reason: "unsupported" };
+    return this.inner.setItem(key, value, options);
   }
 
   async getShell(
     key: string,
     options?: { claimRevalidation?: boolean },
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+  ): Promise<CacheShellResult | null> {
     return this.inner.getShell ? this.inner.getShell(key, options) : null;
   }
 
@@ -506,8 +533,10 @@ export class SeededShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
-    return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
+  ): Promise<CacheWriteAcknowledgement> {
+    if (!this.inner.putShell)
+      return { outcome: "skipped", reason: "unsupported" };
+    return this.inner.putShell(key, entry, ttlSeconds, swrSeconds, tags);
   }
 
   async invalidateTags(tags: string[]): Promise<void> {

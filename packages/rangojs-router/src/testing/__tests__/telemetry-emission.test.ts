@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 
 // createRouter's match path transitively imports @vitejs/plugin-rsc/rsc, whose
 // top-level body imports Vite virtual modules that do not resolve in plain
@@ -15,7 +15,7 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
   createTemporaryReferenceSet: vi.fn(),
 }));
 
-import { dispatch } from "../dispatch.js";
+import { dispatch } from "../index.js";
 import { createRouter } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
@@ -26,6 +26,13 @@ import type {
   RequestEndEvent,
   RequestErrorEvent,
 } from "../../router/telemetry.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
+import { getRequestIdentity } from "../../router/request-identity.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { updateTag } from "../../cache/tag-invalidation.js";
 
 // Pins dispatch's match-transaction telemetry emission — the dogfood gap the
 // RSC-free dispatch left: a consumer configuring createRouter({ telemetry })
@@ -44,6 +51,8 @@ function collectSink(): { sink: TelemetrySink; events: TelemetryEvent[] } {
 }
 
 describe("dispatch telemetry emission", () => {
+  beforeEach(() => resetDevelopmentDiagnosticHub());
+
   it("emits request.start then request.end sharing one requestId for a response route", async () => {
     const { sink, events } = collectSink();
     let mwRan = false;
@@ -61,7 +70,11 @@ describe("dispatch telemetry emission", () => {
         ]),
       ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, { request: "/api/data" });
+    const res = await dispatch(router, {
+      request: new Request("http://localhost/api/data", {
+        headers: { "x-rsc-router-request-id": "browser-navigation-7" },
+      }),
+    });
     expect(res.status).toBe(200);
     expect(mwRan).toBe(true);
 
@@ -87,6 +100,7 @@ describe("dispatch telemetry emission", () => {
     // One correlation id spans the whole transaction.
     expect(start.requestId).toBeDefined();
     expect(end.requestId).toBe(start.requestId);
+    expect(start.requestId).not.toBe("browser-navigation-7");
     // Duration is a finite, non-negative number.
     expect(Number.isFinite(end.durationMs)).toBe(true);
     expect(end.durationMs).toBeGreaterThanOrEqual(0);
@@ -96,6 +110,51 @@ describe("dispatch telemetry emission", () => {
     // dispatch builds the final response before request.end, so it stamps the
     // response status (200 for this json route).
     expect(end.status).toBe(200);
+  });
+
+  it("records exact awaited cache-tag invalidation through public dispatch", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.setItem("product-alpha", "cached", {
+      ttl: 60,
+      tags: ["product:alpha"],
+    });
+    const router = createRouter({ cache: { store } }).routes(
+      urls(({ path }) => [
+        path.json("/invalidate", async () => {
+          await updateTag("product:alpha");
+          return { ok: true };
+        }),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+    const request = new Request("http://localhost/invalidate", {
+      method: "POST",
+    });
+
+    const response = await dispatch(router, { request });
+
+    expect(response.status).toBe(200);
+    expect(await store.getItem("product-alpha")).toBeNull();
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(
+      trace.events
+        .filter((event) => event.type === "cache.tags")
+        .map((event) => event.data),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "invalidate",
+        verb: "updateTag",
+        outcome: "requested",
+        tags: ["product:alpha"],
+      }),
+      expect.objectContaining({
+        kind: "invalidate",
+        verb: "updateTag",
+        outcome: "completed",
+        tags: ["product:alpha"],
+      }),
+    ]);
   });
 
   it("carries isPartial=true on a partial (?_rsc_partial) request", async () => {
@@ -108,13 +167,30 @@ describe("dispatch telemetry emission", () => {
       ]),
     ) as Parameters<typeof dispatch>[0];
 
-    await dispatch(router, { request: "/api/data?_rsc_partial=1" });
+    const request = new Request(
+      "http://localhost/api/data?_rsc_partial=1&token=secret",
+    );
+    await dispatch(router, { request });
 
     const start = events.find(
       (e): e is RequestStartEvent => e.type === "request.start",
     )!;
     expect(start.isPartial).toBe(true);
     expect(events.some((e) => e.type === "request.end")).toBe(true);
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "request.started",
+      "match.started",
+      "match.completed",
+      "request.completed",
+    ]);
+    expect(
+      trace.events.find((event) => event.type === "match.started")?.data,
+    ).toMatchObject({ isPartial: true });
+    expect(JSON.stringify(trace)).not.toContain("secret");
   });
 
   it("emits request.error (phase routing) and NO request.end when middleware throws a non-Response error", async () => {
@@ -172,5 +248,36 @@ describe("dispatch telemetry emission", () => {
     // With a sink the lifecycle fired exactly once; the no-sink router has
     // nowhere to emit and produced the same Response.
     expect(events.map((e) => e.type)).toEqual(["request.start", "request.end"]);
+  });
+
+  it("collects a request trace without requiring a consumer telemetry sink", async () => {
+    const request = new Request("http://localhost/api/data?token=secret", {
+      headers: { "x-rsc-router-request-id": "browser-navigation-7" },
+    });
+    const router = createRouter<{}>({ id: "diagnostic-router" }).routes(
+      urls(({ path }) => [
+        path.json("/api/data", () => ({ hello: "world" }), {
+          name: "api.data",
+        }),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+
+    const response = await dispatch(router, { request });
+    expect(response.status).toBe(200);
+
+    const identity = getRequestIdentity(request);
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(identity.requestId)!;
+    expect(trace.clientCorrelationId).toBe("browser-navigation-7");
+    expect(trace.routerId).toBe("diagnostic-router");
+    expect(trace.transactionIds[0]).toBe("request-tx-1");
+    expect(trace.transactionIds[1]).toMatch(/^match-tx-[0-9a-z]+$/);
+    expect(new Set(trace.transactionIds).size).toBe(2);
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "request.started",
+      "match.started",
+      "match.completed",
+      "request.completed",
+    ]);
+    expect(JSON.stringify(trace)).not.toContain("secret");
   });
 });

@@ -61,15 +61,106 @@ task-focused guides written for LLM coding agents. Start at
 `skills/rango/SKILL.md` (the mental model + catalog); a machine-readable index
 is at `skills/catalog.json`.
 
-- **Claude Code**: point it at the skills (e.g. "read
-  node_modules/@rangojs/router/skills/rango/SKILL.md before routing work"), or
-  copy/symlink the directories you use into your project's `.claude/skills/`.
-- **Other agents (Cursor, Codex CLI, Gemini CLI, ...)**: these harnesses
-  auto-discover skills from `.agents/skills/` in your project (or
-  `~/.agents/skills/`) — copy or symlink the skill directories you use from
-  `node_modules/@rangojs/router/skills/<name>` into `.agents/skills/<name>`.
-  The files are plain markdown; cross-references like `/loader` name sibling
-  skill directories.
+Install the `/rango` entry skill into an existing app with the standard Agent
+Skills CLI:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+`universal` installs the shared `.agents/skills/rango` entry used by Cursor,
+Codex, OpenCode, Gemini CLI, and other compatible agents; `claude-code` also
+registers `.claude/skills/rango`. Restart an agent session that was already
+running, then invoke `/rango` where slash skills are supported or ask the agent
+to load the Rango skill. Before running it, inspect both target paths and stop if
+either already contains a `rango` skill. The external CLI may auto-confirm when
+it detects an agent session, so omitting `--yes` is not collision protection.
+
+Installing the entry skill is enough: when a sibling such as `/loader` is not
+registered as its own slash command, `/rango` directs the agent to the
+version-matched file under `node_modules/@rangojs/router/skills/`. To register
+every sibling command, rerun with `--skill '*'` only after checking every target
+name; names such as `route`, `layout`, and `testing` commonly collide with
+project skills.
+
+Agents that read repository rules but do not support skills can use the managed
+[`rango-agent-rules` block](./skills/rango/agent-rules.md) in the app's root
+`AGENTS.md`. Keep project instructions outside its `BEGIN`/`END` markers.
+
+For evidence-driven work, use `/dev-loop` after an edit,
+`/render-cache-adoption` before adding `cache()` or PPR,
+`/render-cache-optimizer` for measured warm-path improvements, and
+`/stale-data-debugger` when mutations or navigation leave visible data stale.
+
+## Inspecting a running app with MCP
+
+Rango's development server exposes live project, route, and discovery metadata
+to MCP-compatible coding agents. Install the project-local connector entry for
+your client (supported values: `claude-code`, `cursor`, `vscode`, `gemini`):
+
+```bash
+pnpm exec rango mcp install --client claude-code
+```
+
+Use `--dry-run` to inspect the target and `--root <path>` when the Rango app is
+below the workspace root. The installer preserves JSONC comments and unrelated
+servers, refuses collisions/symlinked targets, writes atomically, and stores only
+the stdio command — never the live endpoint or bearer credential. The equivalent
+manual configuration is:
+
+```json
+{
+  "mcpServers": {
+    "rango-devtools": {
+      "command": "npx",
+      "args": ["-y", "@rangojs/router@experimental", "mcp"]
+    }
+  }
+}
+```
+
+Start the app with `pnpm dev`. The connector discovers the running Rango server
+for the project and provides thirteen read-only tools under tool schema v5:
+
+- `get_project_metadata` - root, preset, entry, version, server URLs, and routers;
+- `get_routes` - paginated runtime-discovered routes, including dynamic factories;
+- `match_route` - canonical-trie matching and declared route structure for a URL
+  without running middleware, handlers, loaders, stores, or runtime predicates;
+- `get_discovery_status` - generation, freshness, route counts, and the latest
+  discovery error. On Cloudflare it also reports whether workerd has adopted the
+  discovered route generation;
+- `get_compilation_issues` - current transform errors and recent Vite warnings;
+- `list_requests` - bounded request summaries with transport, route, status, and
+  linked browser navigation IDs; accepts an exact `navigationId` filter;
+- `get_request_trace` - the retained execution trace for an exact request ID;
+- `list_navigations` - bounded browser-owned document/navigation lifecycles;
+- `get_navigation_trace` - one exact document, navigate, refresh, popstate, or
+  action lifecycle with linked prefetch/mutation/revalidation requests;
+- `explain_render` - segment `cache()`, PPR, handler, loader-cache, and loader
+  visible-generation decisions for one request;
+- `explain_cache_tags` - exact bounded tag attachment and invalidation activity
+  observed for one request, without reading or mutating cache entries;
+- `explain_revalidation` - the separate segment and loader recomputation
+  decisions for one request, optionally narrowed to one of its transactions;
+- `get_errors` - runtime errors with request, route, phase, and source context.
+
+The workflow skills combine these development facts with a real browser and
+paired production verification. They do not treat MCP output as a substitute for
+DOM/network checks. Request-attributed bridge loss marks affected traces and
+explanations truncated, and the MCP endpoint remains absent from production.
+
+Use `rango mcp --root <path>` when the MCP process does not start in the project
+root. When multiple dev servers use one root, select one with
+`--instance <id>`. The Streamable HTTP endpoint is development-only,
+loopback-only, and protected by a per-process credential that the connector
+reads from an owner-only runtime descriptor. It is not mounted by `vite build`
+or `vite preview`. The connector ignores HTTP proxy environment variables for
+this credential-bearing loopback connection. For a local HTTPS server with a
+self-signed certificate, use Node's standard `NODE_TLS_REJECT_UNAUTHORIZED=0`
+development override.
 
 ## 1. Pages
 

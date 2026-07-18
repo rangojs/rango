@@ -2,7 +2,8 @@
  * Router Telemetry Sink
  *
  * Internal event model for structured lifecycle events.
- * The sink is optional and zero-cost when not configured.
+ * The sink is optional. Without one, public delivery is disabled; development
+ * may still project the same local facts into the compile-gated diagnostic hub.
  *
  * Emit points:
  *   - request.start / request.end   (match-handlers.ts)
@@ -14,10 +15,14 @@
  *   - revalidation.decision          (revalidation evaluation)
  */
 
+import { recordTelemetryDiagnostic } from "./diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
+import { getServerRequestId } from "./request-identity.js";
+
 interface BaseEvent {
   /** Monotonic timestamp from performance.now() */
   timestamp: number;
-  /** Request ID (from header or generated) */
+  /** Cryptographically random, server-owned request ID. */
   requestId?: string;
 }
 
@@ -39,11 +44,10 @@ export interface RequestEndEvent extends BaseEvent {
   segmentCount: number;
   cacheHit: boolean;
   /**
-   * HTTP status when a Response ended the transaction — a thrown-Response
-   * short-circuit (redirect / auth gate carries the Response's status, e.g. 302),
-   * or dispatch()'s final response status. Absent for a normal render completion:
-   * the Response is built after match(), so match()/matchPartial() have no status
-   * to stamp there. Lets a sink split 3xx short-circuits from 2xx completions.
+   * HTTP status when a Response ended the transaction, dispatch() produced its
+   * final response, or matching completed as a RouteNotFoundError (404). Absent
+   * for a normal successful render completion: the Response is built after
+   * match(), so match()/matchPartial() have no status to stamp there.
    */
   status?: number;
 }
@@ -99,7 +103,7 @@ export interface HandlerErrorEvent extends BaseEvent {
  * cache.decision telemetry event and the X-Rango-Cache debug header.
  *
  * v1 is COARSE: the router's pipeline tracks cache decisions at the
- * route/entry level (cacheHit/cacheSource/shouldRevalidate), not per
+ * route/entry level (cacheHit/cacheSource/cacheFreshness), not per
  * individual segment. The `segments` array therefore contains a single
  * route-level entry keyed by the route key. The shape is forward-compatible
  * with genuine per-segment status if the pipeline later exposes it.
@@ -118,8 +122,8 @@ export interface CacheSegmentSignal {
   type: string;
   /** Resolved cache status for this segment. */
   cacheStatus: CacheSegmentStatus;
-  /** Whether stale-while-revalidate was triggered for this segment. */
-  shouldRevalidate?: boolean;
+  /** Whether this request acquired stale-while-revalidate ownership. */
+  revalidationClaimed?: boolean;
 }
 
 export interface CacheDecisionEvent extends BaseEvent {
@@ -127,8 +131,9 @@ export interface CacheDecisionEvent extends BaseEvent {
   pathname: string;
   routeKey: string;
   hit: boolean;
-  /** Whether stale-while-revalidate was triggered */
-  shouldRevalidate: boolean;
+  freshness: "fresh" | "stale" | null;
+  /** Whether this request acquired stale-while-revalidate ownership. */
+  revalidationClaimed: boolean;
   source?: "runtime" | "prerender";
   /**
    * Optional per-segment (v1: coarse route-level) cache status. Present only
@@ -188,7 +193,7 @@ export type TelemetryEvent =
  *
  * v1 mapping (route-level — see CacheSegmentSignal):
  *   - prerender hit                         -> "prerendered"
- *   - runtime hit + shouldRevalidate (SWR)  -> "stale"
+ *   - runtime stale hit                     -> "stale"
  *   - runtime hit                           -> "hit"
  *   - no hit                                -> "miss"
  *
@@ -201,11 +206,11 @@ export type TelemetryEvent =
 export function deriveCacheStatus(state: {
   cacheHit: boolean;
   cacheSource?: "runtime" | "prerender";
-  shouldRevalidate?: boolean;
+  cacheFreshness?: "fresh" | "stale";
 }): CacheSegmentStatus {
   if (state.cacheHit) {
     if (state.cacheSource === "prerender") return "prerendered";
-    if (state.shouldRevalidate) return "stale";
+    if (state.cacheFreshness === "stale") return "stale";
     return "hit";
   }
   return "miss";
@@ -221,7 +226,8 @@ export function buildCacheSignalSegments(
   state: {
     cacheHit: boolean;
     cacheSource?: "runtime" | "prerender";
-    shouldRevalidate?: boolean;
+    cacheFreshness?: "fresh" | "stale";
+    revalidationClaimed?: boolean;
   },
 ): CacheSegmentSignal[] {
   return [
@@ -229,7 +235,7 @@ export function buildCacheSignalSegments(
       id: routeKey,
       type: "route",
       cacheStatus: deriveCacheStatus(state),
-      shouldRevalidate: !!state.shouldRevalidate,
+      revalidationClaimed: !!state.revalidationClaimed,
     },
   ];
 }
@@ -271,6 +277,13 @@ export function resolveSink(sink: TelemetrySink | undefined): TelemetrySink {
  * telemetry failures from affecting request handling.
  */
 export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
+  if (DEVELOPMENT_DIAGNOSTICS_ENABLED) {
+    try {
+      recordTelemetryDiagnostic(event);
+    } catch {
+      // Development diagnostics must never prevent public telemetry delivery.
+    }
+  }
   try {
     sink.emit(event);
   } catch (e) {
@@ -281,37 +294,13 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
   }
 }
 
-const requestIds = new WeakMap<Request, string>();
-let telemetryRequestCounter = 0;
-
 /**
  * Get or create a request ID for telemetry correlation.
- * Checks standard headers first (x-rsc-router-request-id, x-request-id,
- * cf-ray), then generates an internal ID when none is present.
- * Generated IDs use format "t-{base36}" to distinguish from header values.
+ * The ID is always server-owned. Inbound platform and client correlation
+ * values stay separate and never become the trace identity.
  */
 export function getRequestId(request: Request): string {
-  const existing = requestIds.get(request);
-  if (existing) return existing;
-
-  const candidate =
-    request.headers.get("x-rsc-router-request-id") ??
-    request.headers.get("x-request-id") ??
-    request.headers.get("cf-ray");
-
-  let id: string;
-  if (candidate) {
-    const trimmed = candidate.trim();
-    id =
-      trimmed.length > 0
-        ? trimmed
-        : `t-${(++telemetryRequestCounter).toString(36)}`;
-  } else {
-    id = `t-${(++telemetryRequestCounter).toString(36)}`;
-  }
-
-  requestIds.set(request, id);
-  return id;
+  return getServerRequestId(request);
 }
 
 /**
@@ -362,7 +351,7 @@ export function createConsoleSink(): TelemetrySink {
           break;
         case "cache.decision":
           console.log(
-            `[telemetry] ${event.type} ${event.pathname} hit=${event.hit} swr=${event.shouldRevalidate}${event.source ? ` source=${event.source}` : ""}`,
+            `[telemetry] ${event.type} ${event.pathname} hit=${event.hit} freshness=${event.freshness ?? "none"} revalidationClaimed=${event.revalidationClaimed}${event.source ? ` source=${event.source}` : ""}`,
           );
           break;
         case "revalidation.decision":

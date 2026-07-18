@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { connectRangoMcp, type RangoMcpTestSession } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import {
   ROUTE_REDISCOVERY_PATTERN,
@@ -52,6 +53,7 @@ test.describe.serial("route-types-hmr", () => {
 
   const blogUrlsPath = path.resolve("./e2e/test-app/src/urls/blog.tsx");
   const mainUrlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
+  const routerSourcePath = path.resolve("./e2e/test-app/src/router.tsx");
   const genFilePath = path.resolve(
     "./e2e/test-app/src/router.named-routes.gen.ts",
   );
@@ -64,17 +66,20 @@ test.describe.serial("route-types-hmr", () => {
 
   let originalBlogContent: string;
   let originalMainUrlsContent: string;
+  let originalRouterContent: string;
   let originalHandlersContent: string;
   let originalFactoryHmrContent: string;
   let originalGenContent: string;
   let dirtyGuardMessage = "";
+  let routerSourceWasDeleted = false;
+  let mcp: RangoMcpTestSession | undefined;
 
   test.beforeAll(async () => {
     // Check for uncommitted changes BEFORE touching files. If a developer
     // has local edits in the target files, bail out rather than overwriting.
     try {
       const dirty = execSync(
-        `git diff --name-only -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}" "${factoryHmrPath}" "${genFilePath}"`,
+        `git diff --name-only HEAD -- "${blogUrlsPath}" "${mainUrlsPath}" "${routerSourcePath}" "${handlersPath}" "${factoryHmrPath}" "${genFilePath}"`,
         { encoding: "utf-8" },
       ).trim();
       if (dirty) {
@@ -101,6 +106,7 @@ test.describe.serial("route-types-hmr", () => {
 
     originalBlogContent = gitBaseline(blogUrlsPath);
     originalMainUrlsContent = gitBaseline(mainUrlsPath);
+    originalRouterContent = gitBaseline(routerSourcePath);
     originalHandlersContent = gitBaseline(handlersPath);
     originalFactoryHmrContent = gitBaseline(factoryHmrPath);
     originalGenContent = gitBaseline(genFilePath);
@@ -114,6 +120,7 @@ test.describe.serial("route-types-hmr", () => {
       })
       .toBe(true);
     await expect(expectBaselineApplied).toPass({ timeout: WATCHER_TIMEOUT });
+    mcp = await connectRangoMcp(f.root, f.url());
   });
 
   // Deferred skip: test.skip() cannot be called from beforeAll, so we
@@ -153,14 +160,21 @@ test.describe.serial("route-types-hmr", () => {
 
   test.afterEach(async ({ page }) => {
     if (dirtyGuardMessage) return;
+    if (routerSourceWasDeleted) {
+      await fs.writeFile(routerSourcePath, originalRouterContent);
+      await fs.writeFile(genFilePath, originalGenContent);
+      return;
+    }
     const baselines = [
       [blogUrlsPath, originalBlogContent],
       [mainUrlsPath, originalMainUrlsContent],
+      [routerSourcePath, originalRouterContent],
       [handlersPath, originalHandlersContent],
       [factoryHmrPath, originalFactoryHmrContent],
     ] as const;
     for (const [filePath, baseline] of baselines) {
-      if ((await fs.readFile(filePath, "utf-8")) === baseline) continue;
+      const current = await fs.readFile(filePath, "utf-8").catch(() => null);
+      if (current === baseline) continue;
       await writeRouteFileAndAwait(
         page,
         filePath,
@@ -175,6 +189,7 @@ test.describe.serial("route-types-hmr", () => {
   // afterEach couldn't wait long enough for the watcher to regenerate.
   // Prevents the dirty gen file from failing typecheck in subsequent runs.
   test.afterAll(async () => {
+    await mcp?.close();
     if (dirtyGuardMessage || !originalGenContent) return;
     await fs.writeFile(genFilePath, originalGenContent);
   });
@@ -426,6 +441,57 @@ test.describe.serial("route-types-hmr", () => {
       expect(result["blog.burstA"]).toBeNull();
       expect(result["blog.burstB"]).toBeNull();
     }).toPass({ timeout: RUNTIME_TIMEOUT });
+  });
+
+  test("should preserve generated types across an unlink-add atomic save", async () => {
+    expect(mcp).toBeDefined();
+    const baseline = await mcp!.client.callTool({
+      name: "get_discovery_status",
+    });
+    const baselineGeneration = baseline.structuredContent!.generation as number;
+    const modified = originalBlogContent.replace(
+      'path("/:postId", BlogPostHandler, { name: "post" }),',
+      `path("/:postId", BlogPostHandler, { name: "post" }),
+    path("/:postId/atomic", BlogPostHandler, { name: "atomic" }),`,
+    );
+    let generatedFileMissing = false;
+    const monitor = setInterval(() => {
+      void fs.access(genFilePath).catch(() => {
+        generatedFileMissing = true;
+      });
+    }, 5);
+
+    try {
+      await fs.unlink(routerSourcePath);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await fs.writeFile(
+        routerSourcePath,
+        `${originalRouterContent}\n// Atomic-save watcher probe.\n`,
+      );
+      await expect
+        .poll(async () => {
+          const status = await mcp!.client.callTool({
+            name: "get_discovery_status",
+          });
+          return {
+            phase: status.structuredContent?.phase,
+            stale: status.structuredContent?.stale,
+            advanced:
+              (status.structuredContent?.generation as number) >
+              baselineGeneration,
+          };
+        })
+        .toEqual({ phase: "ready", stale: false, advanced: true });
+      await fs.unlink(blogUrlsPath);
+      await fs.writeFile(blogUrlsPath, modified);
+      await expect(async () => {
+        const generated = await fs.readFile(genFilePath, "utf8");
+        expect(generated).toContain('"blog.atomic"');
+      }).toPass({ timeout: WATCHER_TIMEOUT });
+      expect(generatedFileMissing).toBe(false);
+    } finally {
+      clearInterval(monitor);
+    }
   });
 
   // -- Runtime reverse() tests --
@@ -733,6 +799,101 @@ test.describe.serial("route-types-hmr", () => {
       // Restore the route file (afterEach also does this; we do it
       // here for promptness so a subsequent test sees a clean state).
       writeFileBumpMtime(blogUrlsPath, originalBlogContent);
+    }
+  });
+
+  // Router-source deletion can leave a long rediscovery tail while the missing
+  // import recovers, so keep this last in the serial suite.
+  test("removes generated types and marks MCP stale when a router source is deleted", async () => {
+    expect(mcp).toBeDefined();
+    const baseline = await mcp!.client.callTool({
+      name: "get_discovery_status",
+    });
+    expect(baseline.structuredContent).toMatchObject({
+      phase: "ready",
+      stale: false,
+      generation: expect.any(Number),
+    });
+    const generation = baseline.structuredContent!.generation;
+    const stderrAtStart = f.proc().stderr().length;
+    let sourceRestored = false;
+
+    try {
+      routerSourceWasDeleted = true;
+      await fs.unlink(routerSourcePath);
+      await expect
+        .poll(
+          async () =>
+            fs
+              .stat(genFilePath)
+              .then(() => true)
+              .catch(() => false),
+          { timeout: WATCHER_TIMEOUT },
+        )
+        .toBe(false);
+      await expect
+        .poll(
+          async () => {
+            const result = await mcp!.client.callTool({
+              name: "get_discovery_status",
+            });
+            return {
+              stale: result.structuredContent?.stale,
+              generation: result.structuredContent?.generation,
+            };
+          },
+          { timeout: WATCHER_TIMEOUT },
+        )
+        .toEqual({ stale: true, generation });
+      await expect(async () => {
+        expect(f.proc().stderr().slice(stderrAtStart)).toContain(
+          "Runtime re-discovery failed",
+        );
+      }).toPass({ timeout: WATCHER_TIMEOUT });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await expect(fs.stat(genFilePath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const routes = await mcp!.client.callTool({
+        name: "get_routes",
+        arguments: { limit: 1_000 },
+      });
+      expect(routes.structuredContent?.routes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "blog.post" }),
+        ]),
+      );
+      await fs.writeFile(routerSourcePath, originalRouterContent);
+      sourceRestored = true;
+      await expect(async () => {
+        expect(await fs.readFile(genFilePath, "utf8")).toBe(originalGenContent);
+      }).toPass({ timeout: WATCHER_TIMEOUT });
+      await expect
+        .poll(
+          async () => {
+            const result = await mcp!.client.callTool({
+              name: "get_discovery_status",
+            });
+            return {
+              phase: result.structuredContent?.phase,
+              stale: result.structuredContent?.stale,
+              advanced:
+                (result.structuredContent?.generation as number) > generation,
+            };
+          },
+          { timeout: WATCHER_TIMEOUT },
+        )
+        .toEqual({ phase: "ready", stale: false, advanced: true });
+    } finally {
+      if (!sourceRestored) {
+        await fs.writeFile(routerSourcePath, originalRouterContent);
+      }
+      const generated = await fs
+        .readFile(genFilePath, "utf8")
+        .catch(() => null);
+      if (generated !== originalGenContent) {
+        await fs.writeFile(genFilePath, originalGenContent);
+      }
     }
   });
 });

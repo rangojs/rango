@@ -9,7 +9,7 @@
 import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
@@ -17,6 +17,7 @@ import {
   findNestedRouterConflict,
   findRouterFiles,
   createScanFilter,
+  genFileTsPath,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import {
@@ -75,6 +76,13 @@ import {
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { createDiscoveryGate } from "./discovery/gate-state.js";
+import {
+  createMcpRouteMatchIndexes,
+  createMcpRouteSnapshot,
+  createMcpRouterSnapshot,
+  createMcpSourceOwnershipSnapshot,
+} from "./discovery/mcp-snapshot.js";
+import { installRangoMcp } from "./devtools-mcp.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 import { resolveRscEntryFromConfig } from "./utils/shared-utils.js";
 import {
@@ -545,7 +553,68 @@ export function createRouterDiscoveryPlugin(
       const getDevServerOrigin = () =>
         server.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
         `http://localhost:${server.config.server.port || 5173}`;
+      const mcp = installRangoMcp({
+        server,
+        projectRoot: s.projectRoot,
+        preset: opts?.preset ?? "node",
+        mode: viteMode,
+        entryFile: s.resolvedEntryPath,
+      });
+      const publishMcpRoutes = (
+        attempt: ReturnType<typeof mcp.beginDiscovery>,
+      ): void => {
+        try {
+          mcp.publishRoutes(
+            createMcpRouteSnapshot(s),
+            createMcpRouterSnapshot(s),
+            attempt,
+            createMcpSourceOwnershipSnapshot(s),
+            createMcpRouteMatchIndexes(s),
+          );
+        } catch (error) {
+          mcp.failDiscovery(error, attempt);
+          server.config.logger.warn(
+            "[rango] MCP route snapshot projection failed; route discovery remains active",
+          );
+        }
+      };
+      const probeInitialCloudflareConvergence = (
+        expectedEpoch: number,
+      ): void => {
+        void (async () => {
+          const deadline = Date.now() + 15_000;
+          do {
+            if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch)
+              return;
+            try {
+              const response = await fetch(getDevServerOrigin() + "/", {
+                cache: "no-store",
+                headers: {
+                  [DEV_DISCOVERY_PROBE_HEADER]: String(expectedEpoch),
+                },
+                signal: AbortSignal.timeout(1_000),
+              });
+              if (
+                !devServerClosed &&
+                expectedEpoch === s.devDiscoveryEpoch &&
+                response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
+                  String(expectedEpoch)
+              ) {
+                mcp.markRuntimeConvergence("ready");
+                publishDevDiscoveryReady(expectedEpoch);
+                return;
+              }
+            } catch {}
+            await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          } while (Date.now() < deadline);
+
+          if (expectedEpoch === s.devDiscoveryEpoch) {
+            mcp.markRuntimeConvergence("timeout");
+          }
+        })();
+      };
       let devServerClosed = false;
+      let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
       // Used by both discover() (route type generation) and the prerender
@@ -557,6 +626,8 @@ export function createRouterDiscoveryPlugin(
       // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
         devServerClosed = true;
+        clearTimeout(routeChangeTimer);
+        routeChangeTimer = undefined;
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
@@ -605,6 +676,7 @@ export function createRouterDiscoveryPlugin(
       }
 
       async function getOrCreateTempServer(): Promise<TempServerResult> {
+        if (devServerClosed) return { env: null, error: null };
         // Reuse path: if a temp server is already alive, prefer reusing
         // it over orphaning the existing instance and spinning up a new
         // one. This handles two cases:
@@ -675,6 +747,11 @@ export function createRouterDiscoveryPlugin(
             // capture runs, so discovery cost is unchanged.
             realSsrEntry: true,
           });
+          if (devServerClosed) {
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            return { env: null, error: null };
+          }
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
@@ -827,6 +904,7 @@ export function createRouterDiscoveryPlugin(
 
       const discover = async () => {
         const discoverStart = performance.now();
+        const discoveryAttempt = mcp.beginDiscovery();
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           // Cloudflare dev: no module runner available (workerd-based RSC env).
@@ -857,17 +935,22 @@ export function createRouterDiscoveryPlugin(
                 getOrCreateTempServer(),
               )
             ).env;
-            if (tempRscEnv) {
-              optimizerHashBefore =
-                tempRscEnv.depsOptimizer?.metadata?.browserHash;
-              await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
-                discoverRouters(s, tempRscEnv),
-              );
-              timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
-                writeRouteTypesFiles(s),
+            if (!tempRscEnv) {
+              throw new Error(
+                "temp runner unavailable for cloudflare route discovery",
               );
             }
+            optimizerHashBefore =
+              tempRscEnv.depsOptimizer?.metadata?.browserHash;
+            await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
+              discoverRouters(s, tempRscEnv),
+            );
+            timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
+              writeRouteTypesFiles(s),
+            );
+            publishMcpRoutes(discoveryAttempt);
           } catch (err: any) {
+            mcp.failDiscovery(err, discoveryAttempt);
             emitDiscoveryFailure(
               err,
               optimizerHashBefore,
@@ -938,7 +1021,9 @@ export function createRouterDiscoveryPlugin(
           await timed(debugDiscovery, "propagateDiscoveryState", () =>
             propagateDiscoveryState(rscEnv),
           );
+          publishMcpRoutes(discoveryAttempt);
         } catch (err: any) {
+          mcp.failDiscovery(err, discoveryAttempt);
           emitDiscoveryFailure(
             err,
             optimizerHashBefore,
@@ -958,10 +1043,21 @@ export function createRouterDiscoveryPlugin(
       // resolved when discover() finishes, so the virtual manifest module's
       // load() awaits the populated state.
       beginDiscoveryGate();
-      setTimeout(
-        () => discover().then(resolveDiscoveryGate, resolveDiscoveryGate),
-        0,
-      );
+      setTimeout(() => {
+        const finishInitialDiscovery = (): void => {
+          resolveDiscoveryGate();
+          const rscEnv = (server.environments as any)?.rsc;
+          if (
+            !rscEnv?.runner &&
+            s.devDiscoveryEpoch !== undefined &&
+            mcp.getDiscoveryStatus().phase === "ready"
+          ) {
+            mcp.markRuntimeConvergence("pending");
+            probeInitialCloudflareConvergence(s.devDiscoveryEpoch);
+          }
+        };
+        void discover().then(finishInitialDiscovery, finishInitialDiscovery);
+      }, 0);
 
       // Dev-mode on-demand prerender endpoint.
       // When workerd hits a prerender route, it fetches this endpoint instead of
@@ -1461,14 +1557,31 @@ export function createRouterDiscoveryPlugin(
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
       // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
+        const deletedRouterSourceFiles = new Set<string>();
+        const deletedScannedSourceFiles = new Set<string>();
+        const routerSourceFiles = new Set(
+          s.perRouterManifests.flatMap(({ sourceFile }) =>
+            sourceFile ? [resolve(sourceFile)] : [],
+          ),
+        );
+        let sourceDeletionRevision = 0;
         const isGeneratedRouteFile = (filePath: string): boolean =>
           filePath.endsWith(".gen.ts") &&
           (filePath.includes("named-routes.gen.ts") ||
             filePath.includes("urls.gen.ts"));
 
+        const routerSourceExistsForGenFile = (filePath: string): boolean => {
+          const suffix = ".named-routes.gen.ts";
+          if (!filePath.endsWith(suffix)) return true;
+          const sourceBase = filePath.slice(0, -suffix.length);
+          return [".ts", ".tsx", ".js", ".jsx"].some((extension) =>
+            existsSync(`${sourceBase}${extension}`),
+          );
+        };
+
         const regenerateGeneratedRouteFiles = () => {
           if (s.perRouterManifests.length > 0) {
-            writeRouteTypesFiles(s);
+            writeRouteTypesFiles(s, deletedRouterSourceFiles);
           } else {
             writeCombinedRouteTypesWithTracking(s);
           }
@@ -1506,18 +1619,13 @@ export function createRouterDiscoveryPlugin(
           return true;
         };
 
-        // Debounce timer for batching rapid route-file changes (e.g. afterEach
-        // restoring two files in quick succession). The cheap checks (extension,
-        // scanFilter, content sniff) run synchronously to gate non-route files;
-        // only the expensive regeneration is debounced.
-        let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
-
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
         // The state-machine concerns (queued/pending/gatePending) are
         // owned by the gate created above (./discovery/gate-state.ts).
         // Here we provide just the env-specific work.
         const refreshRuntimeDiscovery = async () => {
+          if (devServerClosed) return;
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
           // Cloudflare HMR has no main RSC runner (workerd is a separate
@@ -1529,14 +1637,17 @@ export function createRouterDiscoveryPlugin(
           if (!hasMainRunner && s.perRouterManifests.length === 0) return;
           let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
+            if (devServerClosed) return;
             const hmrStart = performance.now();
+            const observedDeletionRevision = sourceDeletionRevision;
+            const discoveryAttempt = mcp.beginDiscovery();
             try {
               if (hasMainRunner) {
                 await timed(debugDiscovery, "hmr discoverRouters", () =>
                   discoverRouters(s, rscEnv),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                  writeRouteTypesFiles(s),
+                  writeRouteTypesFiles(s, deletedRouterSourceFiles),
                 );
                 await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
                   propagateDiscoveryState(rscEnv),
@@ -1563,9 +1674,18 @@ export function createRouterDiscoveryPlugin(
                   () => discoverRouters(s, tempRscEnv),
                 );
                 timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                  writeRouteTypesFiles(s),
+                  writeRouteTypesFiles(s, deletedRouterSourceFiles),
                 );
               }
+              if (observedDeletionRevision === sourceDeletionRevision) {
+                deletedRouterSourceFiles.clear();
+                deletedScannedSourceFiles.clear();
+              }
+              routerSourceFiles.clear();
+              for (const { sourceFile } of s.perRouterManifests) {
+                if (sourceFile) routerSourceFiles.add(resolve(sourceFile));
+              }
+              publishMcpRoutes(discoveryAttempt);
               if (s.lastDiscoveryError) {
                 debugDiscovery?.(
                   "hmr: cleared lastDiscoveryError (%s) after successful rediscovery",
@@ -1593,9 +1713,13 @@ export function createRouterDiscoveryPlugin(
                   s.devDiscoveryEpoch = expectedEpoch;
                 }
                 previousRouteShape = nextRouteShape;
+                if (expectedEpoch !== undefined) {
+                  mcp.markRuntimeConvergence("pending");
+                }
                 forceCloudflareWorkerReload(rscEnv, expectedEpoch);
               }
             } catch (err: any) {
+              mcp.failDiscovery(err, discoveryAttempt);
               s.lastDiscoveryError = {
                 message: err?.message ?? String(err),
                 at: Date.now(),
@@ -1646,7 +1770,12 @@ export function createRouterDiscoveryPlugin(
           rscEnv: any,
           expectedEpoch: number | undefined,
         ) => {
-          if (!rscEnv?.hot) return;
+          if (!rscEnv?.hot) {
+            if (expectedEpoch !== undefined) {
+              mcp.markRuntimeConvergence("timeout");
+            }
+            return;
+          }
 
           const graph = rscEnv.moduleGraph;
           const reloadWorkerd = () => {
@@ -1686,6 +1815,7 @@ export function createRouterDiscoveryPlugin(
                   response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
                     String(expectedEpoch)
                 ) {
+                  mcp.markRuntimeConvergence("ready");
                   publishDevDiscoveryReady(expectedEpoch);
                   return;
                 }
@@ -1700,18 +1830,40 @@ export function createRouterDiscoveryPlugin(
               "hmr: workerd readiness probe timed out at epoch %d",
               expectedEpoch,
             );
+            if (expectedEpoch === s.devDiscoveryEpoch) {
+              mcp.markRuntimeConvergence("timeout");
+            }
           })();
         };
 
         const scheduleRouteRegeneration = () => {
+          if (devServerClosed) return;
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
+            if (devServerClosed) return;
             const regenStart = debugDiscovery ? performance.now() : 0;
             const rscEnv = (server.environments as any)?.rsc;
             const skipStaticWrite =
               !rscEnv?.runner && s.perRouterManifests.length > 0;
             try {
+              // Atomic saves report unlink followed by add. Delay orphan cleanup
+              // until this shared debounce expires so a replacement source can
+              // clear its tombstone without making the generated type file flap.
+              for (const sourceFile of deletedRouterSourceFiles) {
+                if (existsSync(sourceFile)) {
+                  deletedRouterSourceFiles.delete(sourceFile);
+                  continue;
+                }
+                const generatedRouteFile = genFileTsPath(sourceFile);
+                if (routerSourceExistsForGenFile(generatedRouteFile)) {
+                  deletedRouterSourceFiles.delete(sourceFile);
+                  continue;
+                }
+                if (existsSync(generatedRouteFile)) {
+                  unlinkSync(generatedRouteFile);
+                }
+              }
               // In cloudflare dev with a populated runtime manifest, the
               // static parser produces a strictly smaller (and actively
               // wrong) gen file — supplementGenFilesWithRuntimeRoutes can
@@ -1726,8 +1878,14 @@ export function createRouterDiscoveryPlugin(
                 );
               } else {
                 writeCombinedRouteTypesWithTracking(s);
-                if (s.perRouterManifests.length > 0) {
-                  supplementGenFilesWithRuntimeRoutes(s);
+                if (
+                  s.perRouterManifests.length > 0 &&
+                  deletedScannedSourceFiles.size === 0
+                ) {
+                  supplementGenFilesWithRuntimeRoutes(
+                    s,
+                    deletedRouterSourceFiles,
+                  );
                 }
               }
             } catch (err: any) {
@@ -1756,28 +1914,19 @@ export function createRouterDiscoveryPlugin(
           }, 100);
         };
 
+        const isScannedSourceFile = (filePath: string): boolean =>
+          (filePath.endsWith(".ts") ||
+            filePath.endsWith(".tsx") ||
+            filePath.endsWith(".js") ||
+            filePath.endsWith(".jsx")) &&
+          (!s.scanFilter || s.scanFilter(filePath));
+
         const handleRouteFileChange = (filePath: string) => {
           if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
-          if (
-            !filePath.endsWith(".ts") &&
-            !filePath.endsWith(".tsx") &&
-            !filePath.endsWith(".js") &&
-            !filePath.endsWith(".jsx")
-          ) {
+          if (!isScannedSourceFile(filePath)) {
             if (s.lastDiscoveryError) {
               debugDiscovery?.(
-                "watcher: skip non-source %s [LASTERR %s]",
-                filePath,
-                s.lastDiscoveryError.message,
-              );
-            }
-            return;
-          }
-          // Apply scan filter as early-exit before reading file
-          if (s.scanFilter && !s.scanFilter(filePath)) {
-            if (s.lastDiscoveryError) {
-              debugDiscovery?.(
-                "watcher: skip scan-filter %s [LASTERR %s]",
+                "watcher: skip non-source or scan-filtered %s [LASTERR %s]",
                 filePath,
                 s.lastDiscoveryError.message,
               );
@@ -1795,6 +1944,9 @@ export function createRouterDiscoveryPlugin(
           const inRecoveryMode = !!s.lastDiscoveryError;
           try {
             const source = readFileSync(filePath, "utf-8");
+            const resolvedFilePath = resolve(filePath);
+            deletedScannedSourceFiles.delete(resolvedFilePath);
+            deletedRouterSourceFiles.delete(resolvedFilePath);
             const trimmed = source.trimStart();
             const isUseClient =
               trimmed.startsWith('"use client"') ||
@@ -1833,9 +1985,16 @@ export function createRouterDiscoveryPlugin(
             }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
+              routerSourceFiles.add(resolvedFilePath);
+              const generatedRouteFile = genFileTsPath(resolvedFilePath);
+              for (const deletedSourceFile of deletedRouterSourceFiles) {
+                if (genFileTsPath(deletedSourceFile) === generatedRouteFile) {
+                  deletedRouterSourceFiles.delete(deletedSourceFile);
+                }
+              }
               const nestedRouterConflict = findNestedRouterConflict([
                 ...(s.cachedRouterFiles ?? []),
-                resolve(filePath),
+                resolvedFilePath,
               ]);
               if (nestedRouterConflict) {
                 server.config.logger.error(
@@ -1855,6 +2014,7 @@ export function createRouterDiscoveryPlugin(
             // by the trailing refreshRuntimeDiscovery() cycle.
             if (s.perRouterManifests.length > 0) {
               gate.noteRouteEvent();
+              mcp.markDiscoveryPending();
             }
             scheduleRouteRegeneration();
           } catch (readErr: any) {
@@ -1880,10 +2040,37 @@ export function createRouterDiscoveryPlugin(
         // Same no-runner guard as change/add: stale perRouterManifests would
         // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
-          if (!isGeneratedRouteFile(filePath)) return;
-          const hasRunner = !!(server.environments as any)?.rsc?.runner;
-          if (!hasRunner) return;
-          regenerateGeneratedRouteFiles();
+          if (isGeneratedRouteFile(filePath)) {
+            // A router-source unlink removes its sibling gen file. Do not
+            // recreate that orphan from the last-good runtime manifest.
+            if (!routerSourceExistsForGenFile(filePath)) return;
+            const hasRunner = !!(server.environments as any)?.rsc?.runner;
+            if (hasRunner) regenerateGeneratedRouteFiles();
+            return;
+          }
+          if (!isScannedSourceFile(filePath)) return;
+          const resolvedFilePath = resolve(filePath);
+          deletedScannedSourceFiles.add(resolvedFilePath);
+          const ownsGeneratedRouteFile =
+            routerSourceFiles.delete(resolvedFilePath) ||
+            s.perRouterManifests.some(
+              ({ sourceFile }) =>
+                !!sourceFile && resolve(sourceFile) === resolvedFilePath,
+            ) ||
+            (s.cachedRouterFiles ?? []).some(
+              (sourceFile) => resolve(sourceFile) === resolvedFilePath,
+            ) ||
+            existsSync(genFileTsPath(resolvedFilePath));
+          if (ownsGeneratedRouteFile) {
+            deletedRouterSourceFiles.add(resolvedFilePath);
+          }
+          sourceDeletionRevision++;
+          s.cachedRouterFiles = undefined;
+          if (s.perRouterManifests.length > 0) {
+            gate.noteRouteEvent();
+            mcp.markDiscoveryPending();
+          }
+          scheduleRouteRegeneration();
         });
       }
     },

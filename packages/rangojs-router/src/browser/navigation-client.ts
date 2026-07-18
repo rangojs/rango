@@ -37,6 +37,10 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
+import {
+  BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED,
+  getBrowserNavigationDiagnostics,
+} from "./navigation-diagnostics-bridge.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -83,7 +87,15 @@ export function createNavigationClient(
         version,
         routerId,
         hmr,
+        diagnosticNavigation: requestedDiagnosticNavigation,
+        diagnosticRequestRole,
       } = options;
+      const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+        ? getBrowserNavigationDiagnostics()
+        : null;
+      const diagnosticNavigation = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+        ? requestedDiagnosticNavigation
+        : undefined;
 
       const debugEnabled = isBrowserDebugEnabled();
       const tx = debugEnabled
@@ -175,6 +187,9 @@ export function createNavigationClient(
         const reloadResult = handleReloadHeader(response, {
           onBlocked: resolveStreamComplete,
           onReload: (url) => {
+            if (diagnosticNavigation) {
+              navigationDiagnostics?.abort(diagnosticNavigation);
+            }
             if (tx) {
               browserDebugLog(tx, `version mismatch, reloading (${source})`, {
                 reloadUrl: url,
@@ -212,6 +227,9 @@ export function createNavigationClient(
             browserDebugLog(tx, `router id mismatch, reloading (${source})`);
           }
           resolveStreamComplete();
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.abort(diagnosticNavigation);
+          }
           window.location.href = targetUrl;
           return new Promise<Response>(() => {});
         }
@@ -262,6 +280,9 @@ export function createNavigationClient(
               [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
             }),
             ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+            ...(diagnosticNavigation && {
+              "X-Rango-Navigation-Id": diagnosticNavigation.id,
+            }),
             ...(interceptSourceUrl && {
               "X-RSC-Router-Intercept-Source": interceptSourceUrl,
             }),
@@ -269,6 +290,14 @@ export function createNavigationClient(
           },
           signal,
         }).then((response) => {
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.linkResponse(
+              diagnosticNavigation,
+              response,
+              diagnosticRequestRole ??
+                (staleRevalidation ? "revalidation" : "navigation"),
+            );
+          }
           const validated = validateRscHeaders(
             response,
             "fetch",
@@ -300,6 +329,13 @@ export function createNavigationClient(
       let fullyPrefetched = false;
 
       if (cachedEntry) {
+        if (diagnosticNavigation) {
+          navigationDiagnostics?.linkRequest(
+            diagnosticNavigation,
+            cachedEntry.sourceRequestId ?? null,
+            "prefetch-source",
+          );
+        }
         if (tx) {
           browserDebugLog(tx, "prefetch cache hit (warm)", {
             key: hitKey,
@@ -338,6 +374,13 @@ export function createNavigationClient(
           ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
             freshResult());
         } else {
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.linkRequest(
+              diagnosticNavigation,
+              entry.sourceRequestId ?? null,
+              "prefetch-source",
+            );
+          }
           payloadPromise = entry.payload;
           streamCompletePromise = entry.streamComplete;
           // Adopted inflight is normally still streaming (false), but read the

@@ -18,6 +18,17 @@ function collectJsFiles(dir: string): string[] {
   return found;
 }
 
+function hasFileNewerThan(target: string, timestamp: number): boolean {
+  if (!fs.existsSync(target)) return false;
+  const stat = fs.statSync(target);
+  if (stat.isFile()) return stat.mtimeMs > timestamp;
+  if (!stat.isDirectory()) return false;
+  if (stat.mtimeMs > timestamp) return true;
+  return fs
+    .readdirSync(target)
+    .some((entry) => hasFileNewerThan(path.join(target, entry), timestamp));
+}
+
 /**
  * Dev-build artifacts of React (e.g.
  * `react-dom-server.edge.development-<hash>.js`). These should never appear in
@@ -108,9 +119,20 @@ test("build test-app", async () => {
   // starting the dev server on cold starts. Rebuilding here would overwrite
   // node_modules/.vite/deps, corrupting the running dev server's optimizer cache.
   const markerPath = path.join(cwd, "dist", "ssr", "index.js");
+  const markerMtime = fs.existsSync(markerPath)
+    ? fs.statSync(markerPath).mtimeMs
+    : 0;
+  const buildInputs = [
+    path.join(cwd, "src"),
+    path.join(cwd, "vite.config.ts"),
+    path.resolve(cwd, "../..", "src"),
+    path.resolve(cwd, "../..", "dist", "vite"),
+    path.resolve(cwd, "../../../..", "tools"),
+  ];
   const recentBuild =
-    fs.existsSync(markerPath) &&
-    Date.now() - fs.statSync(markerPath).mtimeMs < 5 * 60 * 1000 &&
+    markerMtime > 0 &&
+    Date.now() - markerMtime < 5 * 60 * 1000 &&
+    !buildInputs.some((input) => hasFileNewerThan(input, markerMtime)) &&
     !hasStalePublicRouteTypes();
 
   if (!recentBuild) {
@@ -126,6 +148,54 @@ test("build test-app", async () => {
     `Production build must not emit React .development.js chunks. Found:\n${devArtifacts
       .map((f) => `  ${path.relative(cwd, f)}`)
       .join("\n")}`,
+  ).toEqual([]);
+
+  const productionFiles = readJsFiles(path.join(cwd, "dist"));
+  expect(
+    productionFiles.length,
+    "Production diagnostic scan requires emitted JavaScript files",
+  ).toBeGreaterThan(0);
+  const mcpLeaks = productionFiles
+    .filter(
+      (file) =>
+        file.src.includes("/__rango/mcp") ||
+        file.src.includes("@modelcontextprotocol/sdk"),
+    )
+    .map((file) => path.relative(cwd, file.file));
+  expect(
+    mcpLeaks,
+    "Production application bundles must not contain the dev-only MCP endpoint or SDK",
+  ).toEqual([]);
+
+  const diagnosticImplementationMarkers = [
+    "clientCorrelationId",
+    "event-too-large",
+    "request.started",
+    "revalidation.trace",
+    "cache.tags",
+    "explain_cache_tags",
+    "match_route",
+    "sanitizeDiagnosticText",
+    "rango:diagnostics:batch",
+    "rango:diagnostics:navigation",
+    "X-Rango-Navigation-Id",
+    "X-Rango-Request-Id",
+    "rango-request-id",
+    "list_navigations",
+    "internal/dev-diagnostics",
+    "acceptedBatches",
+    "[unsupported]",
+  ];
+  const diagnosticLeaks = productionFiles
+    .filter((file) =>
+      diagnosticImplementationMarkers.some((marker) =>
+        file.src.includes(marker),
+      ),
+    )
+    .map((file) => path.relative(cwd, file.file));
+  expect(
+    diagnosticLeaks,
+    "Production application bundles must not contain development diagnostic collection or retention code",
   ).toEqual([]);
 
   // Prefetch fetch/queue machinery must stay off the eager startup path. The

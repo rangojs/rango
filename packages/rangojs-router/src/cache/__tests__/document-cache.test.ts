@@ -32,7 +32,9 @@ function createMockCacheStore() {
       const isStale = Date.now() > entry.staleAt;
       return {
         response: entry.response.clone(),
-        shouldRevalidate: isStale,
+        freshness: isStale ? ("stale" as const) : ("fresh" as const),
+        revalidationClaimed: isStale,
+        tags: entry.tags,
       };
     },
     async putResponse(
@@ -48,6 +50,7 @@ function createMockCacheStore() {
         staleAt: Date.now() + ttl * 1000,
         tags,
       });
+      return { outcome: "stored" as const };
     },
   };
 }

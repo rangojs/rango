@@ -54,9 +54,15 @@ vi.mock("../preview-match.js", () => ({
 
 vi.mock("../../errors.js", () => ({
   sanitizeError: (e: unknown) => e,
+  isRouteNotFoundError: (e: unknown) =>
+    e instanceof Error && e.name === "RouteNotFoundError",
 }));
 
 import { createMatchHandlers } from "../match-handlers.js";
+import {
+  createMatchContextForFull,
+  createMatchContextForPartial,
+} from "../match-api.js";
 import { collectMatchResult } from "../match-result.js";
 
 function recordingSink(): { sink: TelemetrySink; events: TelemetryEvent[] } {
@@ -79,6 +85,10 @@ function makeDeps(telemetry: TelemetrySink): any {
 describe("thrown-Response telemetry (request.end, not request.error)", () => {
   beforeEach(() => {
     (collectMatchResult as any).mockReset();
+    (createMatchContextForFull as any).mockReset();
+    (createMatchContextForFull as any).mockResolvedValue(mockCtx);
+    (createMatchContextForPartial as any).mockReset();
+    (createMatchContextForPartial as any).mockResolvedValue(mockCtx);
   });
 
   it("match() emits request.end (not request.error) when the pipeline throws a Response", async () => {
@@ -190,5 +200,62 @@ describe("thrown-Response telemetry (request.end, not request.error)", () => {
     expect(err).toBeDefined();
     expect(err.phase).toBe("action");
     expect(deps.callOnError).toHaveBeenCalledTimes(1);
+  });
+
+  it("match() closes the lifecycle when context construction fails", async () => {
+    (createMatchContextForFull as any).mockRejectedValueOnce(
+      new Error("context boom"),
+    );
+    const { sink, events } = recordingSink();
+    const deps = makeDeps(sink);
+    const handlers = createMatchHandlers(deps);
+
+    await expect(
+      handlers.match(new Request("http://localhost/protected"), {}),
+    ).rejects.toThrow("context boom");
+
+    expect(events.map((event) => event.type)).toEqual([
+      "request.start",
+      "request.error",
+    ]);
+    expect(deps.callOnError).not.toHaveBeenCalled();
+  });
+
+  it("matchPartial() closes the lifecycle when context construction fails", async () => {
+    (createMatchContextForPartial as any).mockRejectedValueOnce(
+      new Error("partial context boom"),
+    );
+    const { sink, events } = recordingSink();
+    const deps = makeDeps(sink);
+    const handlers = createMatchHandlers(deps);
+
+    await expect(
+      handlers.matchPartial(new Request("http://localhost/protected"), {}),
+    ).rejects.toThrow("partial context boom");
+
+    expect(events.map((event) => event.type)).toEqual([
+      "request.start",
+      "request.error",
+    ]);
+    expect(deps.callOnError).not.toHaveBeenCalled();
+  });
+
+  it("preserves RouteNotFoundError and closes it as a 404 match", async () => {
+    const notFound = Object.assign(new Error("missing"), {
+      name: "RouteNotFoundError",
+    });
+    (createMatchContextForFull as any).mockRejectedValueOnce(notFound);
+    const { sink, events } = recordingSink();
+    const handlers = createMatchHandlers(makeDeps(sink));
+
+    await expect(
+      handlers.match(new Request("http://localhost/missing"), {}),
+    ).rejects.toBe(notFound);
+
+    expect(events.map((event) => event.type)).toEqual([
+      "request.start",
+      "request.end",
+    ]);
+    expect(events[1]).toMatchObject({ status: 404 });
   });
 });

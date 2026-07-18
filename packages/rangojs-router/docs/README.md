@@ -103,6 +103,11 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   waterfall, `Server-Timing` headers, middleware pre/post timeline,
   structured lifecycle events, console sink, OpenTelemetry adapter, custom
   sinks
+- [MCP and agent skills design](./design/mcp-and-agent-skills.md) - the shipped
+  development-only tool schema v5: route discovery and static matching, browser
+  navigation/request correlation, request-attributed bridge loss, render/cache/
+  revalidation explanations, project-local client installation, and the
+  `/dev-loop`, render-cache, and stale-data workflow skills
 
 ## Design Notes
 

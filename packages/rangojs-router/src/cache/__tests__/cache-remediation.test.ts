@@ -499,7 +499,8 @@ describe("segment self-heal (corrupt cached segments via CacheScope)", () => {
     const store = {
       get: vi.fn().mockResolvedValue({
         data: { segments: ["truncated"], handles: {} },
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       }),
       set: vi.fn(),
       delete: vi.fn().mockResolvedValue(true),

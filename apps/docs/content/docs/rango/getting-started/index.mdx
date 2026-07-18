@@ -116,6 +116,33 @@ export default {
 
 `pnpm vite dev` runs the app in miniflare; `pnpm vite build` produces the production worker; `wrangler deploy` ships it.
 
+## Install the Rango agent skill
+
+`@rangojs/router` ships version-matched Agent Skills in its npm package. Register
+the `/rango` entry skill in an existing app:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+The shared `universal` target covers agents that discover
+`.agents/skills/rango`; the Claude target also registers
+`.claude/skills/rango`. Restart a running agent session after installation. If a
+sibling command such as `/loader` is not installed, `/rango` reads its
+version-matched guide directly from `node_modules/@rangojs/router/skills/`.
+Inspect both target paths before installing and stop if either already contains a
+`rango` skill. The external CLI may auto-confirm inside an agent session, so
+omitting `--yes` does not prevent replacement.
+
+For agents that read repository rules but do not support skills, copy the
+managed block from
+`node_modules/@rangojs/router/skills/rango/agent-rules.md` into the root
+`AGENTS.md`. Keep project-specific instructions outside its `BEGIN`/`END`
+markers.
+
 ## Typed environment
 
 Pass your bindings as the router's type parameter and register them globally, so `ctx.env` is typed in every handler, loader, and middleware:

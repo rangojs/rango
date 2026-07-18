@@ -1,0 +1,18 @@
+diff --git a/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx b/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
+--- a/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
++++ b/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
+@@ -732,13 +732,8 @@ export const shellCachePatterns = urls(
+           "/shell-cache/scoped",
+           ShellScopedHomePage,
+           {
+             name: "shellCacheScoped",
+-            ppr: {
+-              ttl: 300,
+-              swr: 120,
+-              tags: ["mcp-shell-scoped"],
+-            },
+           },
+           () => [
+             loader(ShellPriceLoader),
+             loading(
+             loading(

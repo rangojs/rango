@@ -1,7 +1,7 @@
 ---
 name: theme
 description: Opt-in theme system with FOUC prevention for light/dark mode. Use when adding a light/dark mode toggle, or the page flashes the wrong theme on load (FOUC).
-argument-hint: [setup]
+argument-hint: "[setup]"
 ---
 
 # Theme Support

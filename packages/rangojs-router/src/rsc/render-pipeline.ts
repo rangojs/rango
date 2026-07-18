@@ -7,6 +7,11 @@ import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { RscPayload } from "./types.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordRenderStageEvent,
+} from "../router/diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "../router/diagnostics/hub.js";
 
 // Canonical unions live in router/timeout.ts (the dependency-free leaf); these
 // aliases keep the render-pipeline names stable for existing importers.
@@ -251,9 +256,22 @@ function emitStageEvent(
   sink: StageSink | undefined,
   createEvent: () => RscRenderStageEvent,
 ): void {
+  const diagnosticsEnabled =
+    DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled();
+  if (!sink && !diagnosticsEnabled) return;
+  let event: RscRenderStageEvent;
+  try {
+    event = createEvent();
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[RSC] render stage event creation failed:", error);
+    }
+    return;
+  }
+  if (diagnosticsEnabled) recordRenderStageEvent(event);
   if (!sink) return;
   try {
-    sink(createEvent());
+    sink(event);
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
       console.error("[RSC] render stage event sink failed:", error);
@@ -327,8 +345,11 @@ export async function driveRscRenderPlan<TEnv>(
 ): Promise<Response> {
   const sink = options.tracking?.onEvent;
   const requestContext = _getRequestContext();
+  const developmentDiagnostics =
+    DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled();
   const diagnosticsEnabled =
     sink !== undefined ||
+    developmentDiagnostics ||
     requestContext?._renderDiagnosticsEnabled === true ||
     requestContext?._metricsStore !== undefined ||
     requestContext?._tracing !== undefined;
@@ -357,16 +378,17 @@ export async function driveRscRenderPlan<TEnv>(
         metricsStore !== undefined;
       const measured = diagnosticsEnabled || recordMetric;
       const phaseStartedAt = measured ? performance.now() : 0;
-      const startContext = sink
-        ? createStageContext(
-            options,
-            command.type,
-            pipelineStartedAt,
-            phaseStartedAt,
-            completed,
-            total,
-          )
-        : undefined;
+      const startContext =
+        sink || developmentDiagnostics
+          ? createStageContext(
+              options,
+              command.type,
+              pipelineStartedAt,
+              phaseStartedAt,
+              completed,
+              total,
+            )
+          : undefined;
 
       if (requestContext && diagnosticsEnabled) {
         requestContext._renderForeground = {
@@ -416,16 +438,17 @@ export async function driveRscRenderPlan<TEnv>(
           requestContext._renderForeground.total = total;
           requestContext._renderForeground.phaseStartedAt = undefined;
         }
-        const completeContext = sink
-          ? createStageContext(
-              options,
-              command.type,
-              pipelineStartedAt,
-              phaseStartedAt,
-              completed,
-              total,
-            )
-          : undefined;
+        const completeContext =
+          sink || developmentDiagnostics
+            ? createStageContext(
+                options,
+                command.type,
+                pipelineStartedAt,
+                phaseStartedAt,
+                completed,
+                total,
+              )
+            : undefined;
         emitStageEvent(sink, () => ({
           type: "stage:complete",
           context: completeContext!,
@@ -501,21 +524,24 @@ export function renderRscFlightStage<TEnv>(
   init: ResponseInit = {},
 ): RscFlightStage {
   const sink = input.tracking?.onEvent;
+  const developmentDiagnostics =
+    DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled();
   const metricsStore = _getRequestContext()?._metricsStore;
   const recordMetric =
     input.recordSerializeMetric === true && metricsStore !== undefined;
-  const measured = sink !== undefined || recordMetric;
+  const measured = sink !== undefined || developmentDiagnostics || recordMetric;
   const startedAt = measured ? performance.now() : 0;
-  const context = sink
-    ? createStageContext(
-        { url: input.url, tracking: input.tracking, phases: ["flight"] },
-        "flight",
-        startedAt,
-        startedAt,
-        0,
-        1,
-      )
-    : undefined;
+  const context =
+    sink || developmentDiagnostics
+      ? createStageContext(
+          { url: input.url, tracking: input.tracking, phases: ["flight"] },
+          "flight",
+          startedAt,
+          startedAt,
+          0,
+          1,
+        )
+      : undefined;
 
   emitStageEvent(sink, () => ({ type: "stage:start", context: context! }));
   try {

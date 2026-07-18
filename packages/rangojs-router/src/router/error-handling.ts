@@ -19,6 +19,8 @@ import type {
   OnErrorCallback,
   OnErrorContext,
 } from "../types";
+import { recordReportedError } from "./diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
 
 /**
  * Context required to invoke the onError callback.
@@ -62,6 +64,13 @@ export function invokeOnError<TEnv = any>(
   context: InvokeOnErrorContext<TEnv>,
   logPrefix: string = "Router",
 ): void {
+  if (DEVELOPMENT_DIAGNOSTICS_ENABLED) {
+    try {
+      recordReportedError(error, phase, context);
+    } catch {
+      // Development diagnostics must never suppress the application callback.
+    }
+  }
   if (!onError) return;
 
   const errorObj = error instanceof Error ? error : new Error(String(error));

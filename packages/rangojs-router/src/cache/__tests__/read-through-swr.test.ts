@@ -6,7 +6,7 @@ import type { CacheErrorCategory } from "../cache-error.js";
 function createMockStore(cached: CacheItemResult | null = null) {
   return {
     getItem: vi.fn().mockResolvedValue(cached),
-    setItem: vi.fn().mockResolvedValue(undefined),
+    setItem: vi.fn().mockResolvedValue({ outcome: "stored" }),
   };
 }
 
@@ -31,7 +31,8 @@ describe("readThroughItem", () => {
     it("returns deserialized cached data", async () => {
       const store = createMockStore({
         value: "ser:cached-data",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
 
       const result = await readThroughItem({
@@ -52,7 +53,8 @@ describe("readThroughItem", () => {
     it("calls onHit callback with cached result", async () => {
       const cached: CacheItemResult = {
         value: "ser:data",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       };
       const store = createMockStore(cached);
       const onHit = vi.fn();
@@ -73,7 +75,8 @@ describe("readThroughItem", () => {
     it("does not call onStale or onMiss on fresh hit", async () => {
       const store = createMockStore({
         value: "ser:data",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
       const onStale = vi.fn();
       const onMiss = vi.fn();
@@ -98,7 +101,8 @@ describe("readThroughItem", () => {
     it("returns stale data immediately", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
 
       const result = await readThroughItem({
@@ -113,14 +117,45 @@ describe("readThroughItem", () => {
       expect(result).toBe("stale-data");
     });
 
+    it("reports and serves stale data without revalidating when ownership was not claimed", async () => {
+      const cached: CacheItemResult = {
+        value: "ser:stale-data",
+        freshness: "stale",
+        revalidationClaimed: false,
+      };
+      const store = createMockStore(cached);
+      const localExecute = vi.fn(async () => "fresh-data");
+      const onStale = vi.fn();
+      const waitUntil = vi.fn();
+
+      const result = await readThroughItem({
+        ...store,
+        key: "test-key",
+        execute: localExecute,
+        serialize,
+        deserialize,
+        storeOptions,
+        host: { waitUntil },
+        onStale,
+      });
+
+      expect(result).toBe("stale-data");
+      expect(onStale).toHaveBeenCalledWith(cached);
+      expect(localExecute).not.toHaveBeenCalled();
+      expect(waitUntil).not.toHaveBeenCalled();
+      expect(store.setItem).not.toHaveBeenCalled();
+    });
+
     it("revalidates in background when waitUntil is available", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const bgTasks: Array<() => Promise<void>> = [];
       const host = { waitUntil: (fn: () => Promise<void>) => bgTasks.push(fn) };
       const localExecute = vi.fn(async () => "fresh-data");
+      const onCached = vi.fn();
 
       await readThroughItem({
         ...store,
@@ -130,6 +165,7 @@ describe("readThroughItem", () => {
         deserialize,
         storeOptions,
         host,
+        onCached,
       });
 
       // Background task scheduled but not yet run
@@ -144,12 +180,14 @@ describe("readThroughItem", () => {
         "ser:fresh-data",
         storeOptions,
       );
+      expect(onCached).toHaveBeenCalledOnce();
     });
 
     it("revalidates inline (fire-and-forget) when no waitUntil", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const localExecute = vi.fn(async () => "fresh-data");
 
@@ -170,7 +208,8 @@ describe("readThroughItem", () => {
     it("calls onStale callback", async () => {
       const cached: CacheItemResult = {
         value: "ser:stale",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       };
       const store = createMockStore(cached);
       const onStale = vi.fn();
@@ -191,7 +230,8 @@ describe("readThroughItem", () => {
     it("does not throw when background revalidation fails", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const failingExecute = vi.fn().mockRejectedValue(new Error("boom"));
 
@@ -211,7 +251,8 @@ describe("readThroughItem", () => {
     it("skips setItem when serialize returns null", async () => {
       const store = createMockStore({
         value: "ser:stale",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const nullSerialize = vi.fn(async () => null);
 
@@ -383,7 +424,8 @@ describe("readThroughItem", () => {
     it("falls through to execute when deserialize throws on fresh hit", async () => {
       const store = createMockStore({
         value: "corrupt",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
       const failDeserialize = vi.fn().mockRejectedValue(new Error("bad data"));
       const localExecute = vi.fn(async () => "fallback-data");
@@ -403,7 +445,8 @@ describe("readThroughItem", () => {
     it("falls through to execute when deserialize throws on stale hit", async () => {
       const store = createMockStore({
         value: "corrupt",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const failDeserialize = vi.fn().mockRejectedValue(new Error("bad data"));
       const localExecute = vi.fn(async () => "fallback-data");
@@ -442,7 +485,8 @@ describe("readThroughItem", () => {
     it("reports cache-corrupt when a stored entry fails to deserialize", async () => {
       const store = createMockStore({
         value: "corrupt",
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
       const failDeserialize = vi.fn().mockRejectedValue(new Error("bad data"));
       const { host, reported } = reporterHost();
@@ -464,7 +508,8 @@ describe("readThroughItem", () => {
     it("reports stale-revalidation when the background refresh fails", async () => {
       const store = createMockStore({
         value: "ser:stale-data",
-        shouldRevalidate: true,
+        freshness: "stale",
+        revalidationClaimed: true,
       });
       const bgTasks: Array<() => Promise<void>> = [];
       const { host, reported } = reporterHost({

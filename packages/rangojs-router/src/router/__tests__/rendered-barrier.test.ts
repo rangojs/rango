@@ -5,6 +5,19 @@ let mockInsideLoaderScope = false;
 
 // Track mock request context
 let mockRequestContext: any = null;
+const { recordLoaderConsumerDiagnostic } = vi.hoisted(() => ({
+  recordLoaderConsumerDiagnostic: vi.fn(),
+}));
+
+vi.mock("../diagnostics/channel.js", async (importActual) => {
+  const actual =
+    await importActual<typeof import("../diagnostics/channel.js")>();
+  return {
+    ...actual,
+    isDevelopmentDiagnosticsEnabled: () => true,
+    recordLoaderConsumerDiagnostic,
+  };
+});
 
 // isInsideLoaderScope is mocked (controlled per test), but the push-callback
 // scope uses the REAL AsyncLocalStorage implementation so the "scope survives
@@ -15,7 +28,9 @@ vi.mock("../../server/context", async (importActual) => {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    getCurrentLoaderBodyId: () => undefined,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
+    getPushCallbackOwnerSegmentId: actual.getPushCallbackOwnerSegmentId,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };
 });
@@ -26,7 +41,9 @@ vi.mock("../../server/context.js", async (importActual) => {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    getCurrentLoaderBodyId: () => undefined,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
+    getPushCallbackOwnerSegmentId: actual.getPushCallbackOwnerSegmentId,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };
 });
@@ -135,6 +152,7 @@ describe("rendered barrier", () => {
   beforeEach(() => {
     mockInsideLoaderScope = false;
     mockRequestContext = null;
+    recordLoaderConsumerDiagnostic.mockClear();
   });
 
   describe("rendered() guard: handler-invoked loader", () => {
@@ -575,6 +593,17 @@ describe("rendered barrier", () => {
         base: "base-data",
         products: ["product-x"],
       });
+      expect(recordLoaderConsumerDiagnostic).toHaveBeenCalledWith(
+        "baseLoader",
+        {
+          kind: "loader-dependency",
+          consumerId: "depLoader",
+          lane: "inherit",
+          boundary: "inherit",
+          containerValue: "request",
+          nestedPromises: "request",
+        },
+      );
     });
   });
 

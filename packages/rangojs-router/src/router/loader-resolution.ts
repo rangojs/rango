@@ -29,8 +29,14 @@ import {
   runInsideLoaderBodyScope,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
+  getCurrentLoaderBodyId,
+  getPushCallbackOwnerSegmentId,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordLoaderConsumerDiagnostic,
+} from "./diagnostics/channel.js";
 
 /**
  * Internal callback signature for loader error notifications.
@@ -331,6 +337,16 @@ function createLoaderExecutor<TEnv>(
         }
 
         // Loader case
+        if (isDevelopmentDiagnosticsEnabled()) {
+          recordLoaderConsumerDiagnostic(item.$$id, {
+            kind: "loader-dependency",
+            consumerId: currentLoaderId,
+            lane: isDslLoader ? "inherit" : "baked",
+            boundary: isDslLoader ? "inherit" : "none",
+            containerValue: "request",
+            nestedPromises: "request",
+          });
+        }
         return useLoader(item as LoaderDefinition<any, any>, currentLoaderId);
       }) as LoaderContext["use"],
       method: "GET",
@@ -487,6 +503,38 @@ export function setupLoaderAccess<TEnv>(
   const handleStoreRef = reqCtxRef?._handleStore;
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  const recordLoaderConsumer = isDevelopmentDiagnosticsEnabled()
+    ? (
+        item: LoaderDefinition<any, any>,
+        insideLoaderScope: boolean,
+        insidePushCallback: boolean,
+      ): void => {
+        if (insideLoaderScope) return;
+        const dependencyLoaderId = getCurrentLoaderBodyId();
+        recordLoaderConsumerDiagnostic(item.$$id, {
+          kind: dependencyLoaderId ? "loader-dependency" : "handler",
+          consumerId:
+            dependencyLoaderId ??
+            (insidePushCallback
+              ? (getPushCallbackOwnerSegmentId() ?? internal._currentSegmentId)
+              : internal._currentSegmentId) ??
+            null,
+          lane: insidePushCallback ? "live" : "baked",
+          boundary: "none",
+          containerValue: "request",
+          nestedPromises: "request",
+        });
+      }
+    : undefined;
+  if (recordLoaderConsumer) {
+    internal._recordLoaderConsumer = (item: LoaderDefinition<any, any>) =>
+      recordLoaderConsumer(
+        item,
+        isInsideLoaderScope(),
+        isInsidePushCallbackScope(),
+      );
+  }
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
@@ -514,8 +562,9 @@ export function setupLoaderAccess<TEnv>(
             // handleStore.settled and does not block segment resolution, so it
             // cannot form a rendered() deadlock. The ALS scope (not a plain
             // boolean) is what survives the callback's awaits.
-            const result = runInsidePushCallbackScope(() =>
-              (dataOrFn as () => Promise<unknown>)(),
+            const result = runInsidePushCallbackScope(
+              () => (dataOrFn as () => Promise<unknown>)(),
+              segmentId,
             );
             store.push(handle.$$id, segmentId, result);
             return;
@@ -535,7 +584,10 @@ export function setupLoaderAccess<TEnv>(
     // after its first await — relevant on streaming trees, where the guard
     // state now stays live until handleStore.settled.
     const loader = item as LoaderDefinition<any, any>;
-    if (!isInsideLoaderScope() && !isInsidePushCallbackScope()) {
+    const insideLoaderScope = isInsideLoaderScope();
+    const insidePushCallback = isInsidePushCallbackScope();
+    recordLoaderConsumer?.(loader, insideLoaderScope, insidePushCallback);
+    if (!insideLoaderScope && !insidePushCallback) {
       const reqCtx = reqCtxRef ?? _getRequestContext();
       if (reqCtx) {
         // Direction 1: handler awaits loader that already called rendered()

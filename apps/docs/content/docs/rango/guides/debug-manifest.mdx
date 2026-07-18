@@ -6,6 +6,20 @@ type: guide
 
 A path resolves to the wrong handler, a layout isn't wrapping its children, or an intercept never fires. The debug manifest shows you the route tree Rango actually built — parent relationships, shortCodes, and per-route flags — so you can verify structure instead of guessing.
 
+## Inspect a running app first
+
+With the Vite dev server and `rango mcp` connected, call
+`get_discovery_status` before trusting route output. `stale: true` means the
+previous successful generation does not include the latest edit; on Cloudflare,
+also require `runtimeConvergence: "ready"` before treating discovery as proof
+that workerd serves it.
+
+Then use `get_routes` for runtime patterns, names, search schemas, router source
+ownership, and pagination/truncation state. It does not execute lazy providers,
+handlers, middleware, or loaders. Use `router.debugManifest()` below when you
+need the deeper in-process graph: shortCodes, parent relationships, flags,
+parallel counts, and intercept counts.
+
 ## Programmatic access
 
 Call `router.debugManifest()` in development — an `async` method that returns a summarized `{ routes, layouts, totalRoutes, totalLayouts }` shape:

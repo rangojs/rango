@@ -37,6 +37,7 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import type { CacheItemResult } from "../../cache/types.js";
 import {
   maskNestedContainerThenables,
   overlayLoaderContainer,
@@ -46,6 +47,14 @@ import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
 } from "./loader-mask.js";
+import {
+  getDevelopmentDiagnosticLink,
+  isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+  recordLoaderCacheDiagnostic,
+  recordLoaderConsumerDiagnostic,
+} from "../diagnostics/channel.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -141,6 +150,21 @@ export function resolveLoaderData<TEnv>(
   // One ALS read serves the capture check, the record registration, and the
   // seed lookup — this runs for every loader on every request.
   const reqCtx = _getRequestContext();
+  const loaderId = loaderEntry.loader.$$id;
+  const recordClientConsumer = (
+    containerValue: "request" | "capture-generation",
+    nestedPromises: "request" | "none",
+  ): void => {
+    if (!isDevelopmentDiagnosticsEnabled()) return;
+    recordLoaderConsumerDiagnostic(loaderId, {
+      kind: "dsl-client",
+      consumerId: bakeSegmentKey ?? null,
+      lane: bakeSegmentKey ? "baked" : "live",
+      boundary: bakeSegmentKey ? "consumer-suspense" : "loading",
+      containerValue,
+      nestedPromises,
+    });
+  };
   // PPR shell capture policy — gated here, the single funnel every loader
   // segment path routes through (fresh resolveLoaders, cache-hit
   // resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation).
@@ -158,8 +182,13 @@ export function resolveLoaderData<TEnv>(
   //   payload matches the frozen prelude byte-for-byte.
   if (isShellCaptureActive(reqCtx)) {
     if (!bakeSegmentKey) {
+      recordClientConsumer("request", "none");
+      recordLoaderCacheDiagnostic(loaderId, "bypass", {
+        reason: "live-lane-capture",
+      });
       return createMaskedLoaderPromise();
     }
+    recordClientConsumer("capture-generation", "request");
     const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
     // Pre-attach a no-op catch: a bake-lane rejection during capture must
     // surface through the drain's refusal (and the wrapper's error boundary),
@@ -187,6 +216,10 @@ export function resolveLoaderData<TEnv>(
     const seed = reqCtx?._shellLoaderSeed;
     if (seed && seed.has(bakeSegmentKey)) {
       const recorded = seed.get(bakeSegmentKey)!;
+      recordClientConsumer(
+        "capture-generation",
+        recorded.holes ? "request" : "none",
+      );
       if (!recorded.holes) {
         // Pin-first (hole-free record): the pinned container is what the
         // payload serves either way (recorded paths win wholesale), so
@@ -229,6 +262,7 @@ export function resolveLoaderData<TEnv>(
     }
   }
 
+  recordClientConsumer("request", "request");
   return executeLoaderData(loaderEntry, ctx, pathname);
 }
 
@@ -239,14 +273,21 @@ function executeLoaderData<TEnv>(
   pathname: string,
 ): Promise<any> {
   const cacheConfig = loaderEntry.cache;
+  const loaderId = loaderEntry.loader.$$id;
 
   // No cache config or disabled — run fresh (zero overhead path)
   if (!cacheConfig || cacheConfig.options === false) {
+    recordLoaderCacheDiagnostic(loaderId, "bypass", {
+      reason: cacheConfig ? "disabled" : "not-configured",
+    });
     return ctx.use(loaderEntry.loader);
   }
 
   const store = getLoaderStore(loaderEntry);
   if (!store?.getItem || !store?.setItem) {
+    recordLoaderCacheDiagnostic(loaderId, "bypass", {
+      reason: "store-unavailable",
+    });
     return ctx.use(loaderEntry.loader);
   }
 
@@ -255,11 +296,12 @@ function executeLoaderData<TEnv>(
   if (options.condition) {
     const requestCtx = getRequestContext();
     if (requestCtx && !options.condition(requestCtx)) {
+      recordLoaderCacheDiagnostic(loaderId, "bypass", {
+        reason: "condition",
+      });
       return ctx.use(loaderEntry.loader);
     }
   }
-
-  const loaderId = loaderEntry.loader.$$id;
 
   // A handler that later awaits this same loader via ctx.use(loader) must get
   // THIS memoized promise, not a fresh execution. Rather than rebind ctx.use
@@ -277,7 +319,10 @@ function executeLoaderData<TEnv>(
     internal._loaderCacheOriginalUse = originalUse;
     ctx.use = ((item: any) => {
       const cached = overrides!.get(item?.$$id);
-      if (cached) return cached;
+      if (cached) {
+        internal._recordLoaderConsumer?.(item);
+        return cached;
+      }
       return originalUse(item);
     }) as typeof ctx.use;
   }
@@ -305,6 +350,7 @@ function executeLoaderData<TEnv>(
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
   recordRequestTags(tags);
+  const diagnosticLink = getDevelopmentDiagnosticLink();
 
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -315,6 +361,36 @@ function executeLoaderData<TEnv>(
       pathname,
       ctx.params,
     );
+    const recordTagLookup = (): void => {
+      if (!tags?.length) return;
+      recordCacheTagObservationDiagnostic({
+        artifact: "loader",
+        phase: "lookup",
+        provenance: [
+          typeof options.tags === "function"
+            ? "dynamic-policy"
+            : "static-policy",
+        ],
+        tags,
+        identity: key,
+        outcome: loaderId,
+      });
+    };
+    recordTagLookup();
+    const recordStoredTagActivity = (
+      cached: CacheItemResult,
+      phase: "hit" | "stale",
+    ): void => {
+      if (!cached.tags?.length) return;
+      recordCacheTagObservationDiagnostic({
+        artifact: "loader",
+        phase,
+        provenance: ["stored"],
+        tags: cached.tags,
+        identity: key,
+        outcome: loaderId,
+      });
+    };
 
     // Capture the request context up front (foreground, ALS present) so the
     // background stale revalidation can re-establish it. On workerd a waitUntil
@@ -343,10 +419,41 @@ function executeLoaderData<TEnv>(
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
-      onHit: () => debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`),
-      onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
-      onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
-      onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
+      onHit: (cached) => {
+        debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`);
+        recordStoredTagActivity(cached, "hit");
+        recordLoaderCacheDiagnostic(loaderId, "hit", { ttl, swr });
+      },
+      onStale: (cached) => {
+        debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
+        recordStoredTagActivity(cached, "stale");
+        recordLoaderCacheDiagnostic(loaderId, "stale", {
+          ttl,
+          swr,
+          backgroundRevalidationRequested: cached.revalidationClaimed,
+        });
+      },
+      onMiss: () => {
+        debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
+        recordLoaderCacheDiagnostic(loaderId, "miss", { ttl, swr });
+      },
+      onCached: () => {
+        debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
+        if (diagnosticLink && tags?.length) {
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "loader",
+            phase: "write",
+            provenance: [
+              typeof options.tags === "function"
+                ? "dynamic-policy"
+                : "static-policy",
+            ],
+            tags,
+            identity: key,
+            outcome: loaderId,
+          });
+        }
+      },
       host: requestCtxForExecute,
     });
   })();

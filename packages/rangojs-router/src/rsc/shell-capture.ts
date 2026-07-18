@@ -47,6 +47,7 @@ import type {
   ShellCacheEntry,
   SegmentCacheStore,
   ShellSnapshotRecord,
+  CacheWriteSkipReason,
 } from "../cache/types.js";
 import {
   elideLoaderContainer,
@@ -58,6 +59,16 @@ import {
   getRecordingStore,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
+import {
+  getDevelopmentDiagnosticLink,
+  isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+  recordLinkedPprCaptureDiagnostic,
+  recordPprDiagnostic,
+  runWithDevelopmentDiagnosticsDisabled,
+  type DevelopmentDiagnosticLink,
+} from "../router/diagnostics/channel.js";
 import type { SSRModule } from "./types.js";
 import { buildFullPayload } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
@@ -409,7 +420,7 @@ export interface ShellCaptureDebugEvent {
   key: string;
   /**
    * What happened:
-   * - stored / redirect / no-shell / refused: one capture ATTEMPT's outcome
+   * - stored / redirect / no-shell / refused / write-failed: one capture ATTEMPT's outcome
    *   (see CaptureAttemptOutcome for the semantics of each)
    * - error: the capture task failed with a genuine error (also routed through
    *   reportCacheError; the key is backed off)
@@ -430,6 +441,7 @@ export interface ShellCaptureDebugEvent {
     | "redirect"
     | "no-shell"
     | "refused"
+    | "write-failed"
     | "error"
     | "skip-in-flight"
     | "skip-backoff"
@@ -458,8 +470,9 @@ export interface ShellCaptureDebugEvent {
   snapshotSkipped?: boolean;
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
-  /** Outcome reported by a store that supports shell-write acknowledgements. */
-  storeWrite?: "stored" | "invalidated";
+  /** Result reported by the store's shell-write path; scheduled is not durable. */
+  storeWrite?: "stored" | "scheduled" | "skipped" | "failed";
+  storeWriteReason?: CacheWriteSkipReason;
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -506,6 +519,9 @@ export function describeShellCaptureEvent(
   if (event.storeWrite !== undefined) {
     parts.push(`store-write=${event.storeWrite}`);
   }
+  if (event.storeWriteReason !== undefined) {
+    parts.push(`store-write-reason=${event.storeWriteReason}`);
+  }
   if (event.backoffFailures !== undefined) {
     parts.push(`backoff-failures=${event.backoffFailures}`);
   }
@@ -550,6 +566,7 @@ const TIMING_RECORDED_OUTCOMES = new Set<ShellCaptureDebugEvent["outcome"]>([
   "redirect",
   "no-shell",
   "refused",
+  "write-failed",
   "error",
 ]);
 
@@ -585,9 +602,42 @@ export function takeCaptureDebugEventForTiming(
  * throwing sink is swallowed — diagnostics must never fail a capture.
  */
 function publishCaptureDebugEvent(
-  descriptor: Pick<ShellCaptureDescriptor, "debugSink">,
+  descriptor: Pick<ShellCaptureDescriptor, "debugSink" | "navigationOnly">,
   event: ShellCaptureDebugEvent,
+  diagnosticReason?: string,
+  diagnosticLink?: DevelopmentDiagnosticLink,
 ): void {
+  if (diagnosticLink || isDevelopmentDiagnosticsEnabled()) {
+    const reason =
+      diagnosticReason ??
+      (event.outcome === "skip-in-flight"
+        ? "in-flight"
+        : event.outcome === "skip-backoff" || event.outcome === "backoff"
+          ? "backoff"
+          : event.outcome === "skip-capacity"
+            ? "capacity"
+            : event.outcome === "error"
+              ? "internal-error"
+              : event.outcome === "redirect"
+                ? "redirect"
+                : event.outcome === "no-shell"
+                  ? "timeout-or-empty-shell"
+                  : null);
+    const diagnosticData = {
+      outcome: event.outcome,
+      reason,
+      navigationOnly: descriptor.navigationOnly === true,
+      attempt: event.attempt ?? null,
+      durationMs: event.attemptMs ?? null,
+      snapshotSkipped: event.snapshotSkipped ?? false,
+      storeWrite: event.storeWrite ?? null,
+    };
+    if (diagnosticLink) {
+      recordLinkedPprCaptureDiagnostic(diagnosticLink, diagnosticData);
+    } else {
+      recordPprDiagnostic("capture", diagnosticData);
+    }
+  }
   if (isDevMode() && TIMING_RECORDED_OUTCOMES.has(event.outcome)) {
     // Refresh insertion order for the FIFO cap, then evict the oldest key.
     lastCaptureEventsForTiming.delete(event.key);
@@ -605,6 +655,8 @@ function publishCaptureDebugEvent(
     // Diagnostics only: a throwing consumer sink must never fail the capture.
   }
 }
+
+type CaptureEventPublisher = typeof publishCaptureDebugEvent;
 
 /** Current backoff state fields for `key` (empty when no backoff entry). */
 function backoffFields(
@@ -797,6 +849,8 @@ export interface ShellCaptureDescriptor {
   ttl?: number;
   swr?: number;
   tags?: string[];
+  /** @internal Links detached capture tag evidence to its foreground request. */
+  diagnosticLink?: DevelopmentDiagnosticLink;
   /**
    * Per-route capture settle budget in ms (`ppr.captureTimeout`, resolved by
    * resolvePprConfig). Feeds captureShellHTML's maxWaitMs — the ONE deadline
@@ -848,16 +902,29 @@ export function scheduleShellCapture(
     | SSRModule
     | ((request: Request, url: URL) => Promise<SSRModule | null>),
   descriptor: ShellCaptureDescriptor,
+  diagnosticLink: DevelopmentDiagnosticLink | null = getDevelopmentDiagnosticLink(),
 ): void {
   const key = descriptor.key;
+  const linkedDescriptor = diagnosticLink
+    ? { ...descriptor, diagnosticLink }
+    : descriptor;
+  const publish: CaptureEventPublisher = diagnosticLink
+    ? (captureDescriptor, event, reason) =>
+        publishCaptureDebugEvent(
+          captureDescriptor,
+          event,
+          reason,
+          diagnosticLink,
+        )
+    : publishCaptureDebugEvent;
   if (inFlightCaptures.has(key)) {
-    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
+    publish(descriptor, { key, outcome: "skip-in-flight" });
     return;
   }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
   if (isCaptureBackedOff(key)) {
-    publishCaptureDebugEvent(descriptor, {
+    publish(descriptor, {
       key,
       outcome: "skip-backoff",
       ...backoffFields(key),
@@ -882,6 +949,11 @@ export function scheduleShellCapture(
         !resolvedSsrModule.resumeShellHTML ||
         !resolvedSsrModule.captureShellHTML
       ) {
+        publish(
+          descriptor,
+          { key, outcome: "refused" },
+          "unsupported-renderer",
+        );
         return;
       }
       const outcome = await runShellCapture(
@@ -891,7 +963,9 @@ export function scheduleShellCapture(
         url,
         reqCtx,
         resolvedSsrModule,
-        descriptor,
+        linkedDescriptor,
+        SHELL_CAPTURE_RETRY_DELAY_MS,
+        publish,
       );
       span.setAttribute("rango.background.outcome", outcome);
       // Update the negative cache off the terminal outcome. A stored shell clears
@@ -901,7 +975,7 @@ export function scheduleShellCapture(
       if (outcome === "stored") clearCaptureBackoff(key);
       else if (outcome === "no-shell") {
         markCaptureBackoff(key);
-        publishCaptureDebugEvent(descriptor, {
+        publish(descriptor, {
           key,
           outcome: "backoff",
           ...backoffFields(key),
@@ -913,7 +987,7 @@ export function scheduleShellCapture(
       // once per window, not every request) and report it once.
       markCaptureBackoff(key);
       span.setAttribute("rango.background.outcome", "error");
-      publishCaptureDebugEvent(descriptor, {
+      publish(descriptor, {
         key,
         outcome: "error",
         ...backoffFields(key),
@@ -963,7 +1037,7 @@ export function scheduleShellCapture(
         if (error instanceof CaptureQueueFullError) {
           inFlightCaptures.delete(key);
           span.setAttribute("rango.background.outcome", "skip-capacity");
-          publishCaptureDebugEvent(descriptor, {
+          publish(descriptor, {
             key,
             outcome: "skip-capacity",
           });
@@ -979,7 +1053,7 @@ export function scheduleShellCapture(
             "rango.background.queue_wait_ms",
             Math.round(error.waitedMs),
           );
-          publishCaptureDebugEvent(descriptor, {
+          publish(descriptor, {
             key,
             outcome: "skip-queue-timeout",
             queueWaitMs: Math.round(error.waitedMs),
@@ -1002,15 +1076,20 @@ export function scheduleShellCapture(
 
 /**
  * The outcome of one capture attempt.
- * - `stored`: a usable shell was captured (and a putShell was attempted; a store
- *   I/O failure is reported separately and does NOT make the attempt retryable —
- *   the capture itself worked).
+ * - `stored`: a usable shell was captured and its store accepted the write.
  * - `redirect`: the matched route redirects, so there is no shell to capture.
  * - `no-shell`: captureShellHTML returned null because the prelude was unusable
  *   or its private capture abort landed before the shell completed. This is the
  *   only RETRYABLE outcome.
+ * - `write-failed`: capture succeeded but transient store persistence failed.
+ *   It is not retried in-place and does not trigger deterministic-refusal backoff.
  */
-type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
+type CaptureAttemptOutcome =
+  | "stored"
+  | "redirect"
+  | "no-shell"
+  | "refused"
+  | "write-failed";
 
 function createNavigationCaptureRequest(request: Request, url: URL): Request {
   const headers = new Headers(request.headers);
@@ -1044,7 +1123,8 @@ type CaptureAttemptStats = Pick<
   | "snapshotSkipped"
   | "untaggedBake"
   | "storeWrite"
->;
+  | "storeWriteReason"
+> & { diagnosticReason?: string };
 
 /**
  * Run the shell capture with a single in-place retry, then store the result.
@@ -1073,6 +1153,7 @@ async function runShellCapture(
   ssrModule: SSRModule,
   descriptor: ShellCaptureDescriptor,
   retryDelayMs: number = SHELL_CAPTURE_RETRY_DELAY_MS,
+  publish: CaptureEventPublisher = publishCaptureDebugEvent,
 ): Promise<CaptureAttemptOutcome> {
   const captureUrl = descriptor.navigationOnly ? stripInternalParams(url) : url;
   const captureRequest = descriptor.navigationOnly
@@ -1102,13 +1183,18 @@ async function runShellCapture(
       descriptor,
       stats,
     );
-    publishCaptureDebugEvent(descriptor, {
-      key: descriptor.key,
-      outcome,
-      attempt,
-      attemptMs: Math.round(performance.now() - start),
-      ...stats,
-    });
+    const { diagnosticReason, ...eventStats } = stats;
+    publish(
+      descriptor,
+      {
+        key: descriptor.key,
+        outcome,
+        attempt,
+        attemptMs: Math.round(performance.now() - start),
+        ...eventStats,
+      },
+      diagnosticReason,
+    );
     return outcome;
   };
 
@@ -1220,49 +1306,56 @@ async function attemptCapture(
   );
   const captureStartedAt = Date.now();
 
-  return runWithRequestContext(derivedCtx, async () => {
-    const match = await ctx.router.match(request, { env });
-    // A route that redirects has no shell to capture — bail (no store write, no
-    // retry: a redirect is deterministic).
-    if (match.redirect) return "redirect";
+  const capture = () =>
+    runWithRequestContext(derivedCtx, async () => {
+      const match = await ctx.router.match(request, { env });
+      // A route that redirects has no shell to capture — bail (no store write, no
+      // retry: a redirect is deterministic).
+      if (match.redirect) return "redirect";
 
-    setRequestContextParams(match.params, match.routeName);
+      setRequestContextParams(match.params, match.routeName);
 
-    const payload = buildFullPayload(
-      match,
-      ctx,
-      url,
-      derivedCtx,
-      freshHandleStore,
-    );
-    const flightStage = renderRscFlightStage({
-      ctx,
-      request,
-      env,
-      url,
-      payload,
-      tracking: {
-        mode: "full",
-        routeKey: derivedCtx._routeName,
-      },
+      const payload = buildFullPayload(
+        match,
+        ctx,
+        url,
+        derivedCtx,
+        freshHandleStore,
+      );
+      const flightStage = renderRscFlightStage({
+        ctx,
+        request,
+        env,
+        url,
+        payload,
+        tracking: {
+          mode: "full",
+          routeKey: derivedCtx._routeName,
+        },
+      });
+
+      // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
+      // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
+      // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
+      // content (and tags propagated by async cache()/"use cache" reads) lands after
+      // this synchronous construction point, so snapshotting here dropped it — the
+      // shell-tag snapshot must sit behind the quiesce gate (issue #676).
+      return captureAndStoreShell(
+        ssrModule,
+        flightStage.stream,
+        freshHandleStore,
+        derivedCtx,
+        descriptor,
+        stats,
+        captureStartedAt,
+      );
     });
-
-    // Pass the descriptor with its STATIC ppr.tags unchanged. The shell's own
-    // render-recorded tags are snapshotted at the putShell WRITE BARRIER inside
-    // captureAndStoreShell, not here: a tag recorded AFTER an await in async shell
-    // content (and tags propagated by async cache()/"use cache" reads) lands after
-    // this synchronous construction point, so snapshotting here dropped it — the
-    // shell-tag snapshot must sit behind the quiesce gate (issue #676).
-    return captureAndStoreShell(
-      ssrModule,
-      flightStage.stream,
-      freshHandleStore,
-      derivedCtx,
-      descriptor,
-      stats,
-      captureStartedAt,
-    );
-  });
+  return runWithDevelopmentDiagnosticsDisabled(
+    request,
+    ctx.router.id,
+    "shellCapture",
+    capture,
+  );
 }
 
 /**
@@ -1457,9 +1550,9 @@ export function deriveShellCaptureContext(
  * captureShellHTML, and store the result. Returns the attempt outcome (the caller
  * owns retry/warn decisions — this function no longer warns). Never throws out of
  * the store write: a failed putShell is routed through reportCacheError so the
- * background task stays best-effort, and the attempt still counts as `stored` (the
- * capture worked; only the store I/O failed). `ssrModule.captureShellHTML` MUST be
- * present (eligibility is checked before scheduling).
+ * background task stays best-effort, and the attempt reports `write-failed`
+ * without entering deterministic-refusal backoff. `ssrModule.captureShellHTML`
+ * MUST be present (eligibility is checked before scheduling).
  *
  * A `no-shell` result from captureShellHTML is the only retryable outcome. Every
  * captureShellHTML error propagates to reportCacheError and is NOT retried. The
@@ -1535,6 +1628,7 @@ async function captureAndStoreShell(
   const refuseOnGuardTrip = (): "refused" | undefined => {
     const fnName = reqCtx._shellCaptureGuardTripped;
     if (!fnName) return undefined;
+    if (stats) stats.diagnosticReason = "identity-read";
     // Name the recorded source instead of hardcoding a lane. Under the
     // consumption-lane rule, handler-INVOKED loader bodies are exempt from
     // the guard (their value is a baked shared copy, mirroring cache()), so a
@@ -1595,6 +1689,7 @@ async function captureAndStoreShell(
     if (refused) return refused;
 
     if (result === null) {
+      if (stats) stats.diagnosticReason = "timeout-or-empty-shell";
       return "no-shell";
     }
     if (stats) stats.preludeBytes = result.prelude.length;
@@ -1667,6 +1762,7 @@ async function captureAndStoreShell(
       for (const [segmentKey, containerPromise] of loaderRecords) {
         const elided = await elideLoaderContainer(containerPromise);
         if (elided.state === "rejected") {
+          if (stats) stats.diagnosticReason = "loader-error";
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" rejected during capture; its error UI must not bake into the shared shell. ` +
@@ -1739,6 +1835,27 @@ async function captureAndStoreShell(
     const collected = [...reqCtx._requestTags];
     const union = new Set<string>([...(capture.tags ?? []), ...collected]);
     const shellTags = union.size > 0 ? [...union] : undefined;
+    if (shellTags) {
+      const provenance = [
+        ...(capture.tags?.length ? (["static-policy"] as const) : []),
+        ...(collected.length ? (["request-union"] as const) : []),
+      ];
+      const diagnostic = {
+        artifact: "runtime-shell" as const,
+        phase: "capture" as const,
+        provenance: [...provenance],
+        tags: shellTags,
+        identity: capture.key,
+      };
+      if (capture.diagnosticLink) {
+        recordLinkedCacheTagObservationDiagnostic(
+          capture.diagnosticLink,
+          diagnostic,
+        );
+      } else {
+        recordCacheTagObservationDiagnostic(diagnostic);
+      }
+    }
 
     // Missing tags are valid: the shell follows TTL/SWR-only invalidation. Expose
     // that choice only to operators who enabled structured capture diagnostics.
@@ -1752,7 +1869,15 @@ async function captureAndStoreShell(
     }
 
     const store = capture.store ?? reqCtx._cacheStore;
-    if (store?.putShell) {
+    if (!store?.putShell) {
+      if (stats) {
+        stats.storeWrite = "skipped";
+        stats.storeWriteReason = "unsupported";
+        stats.diagnosticReason = "store-write-unsupported";
+      }
+      return "refused";
+    }
+    {
       try {
         const entry: ShellCacheEntry = {
           // slice() copies just this view's bytes into a fresh ArrayBuffer, so a
@@ -1792,17 +1917,47 @@ async function captureAndStoreShell(
           capture.swr,
           shellTags,
         );
-        if (stats && storeWrite) stats.storeWrite = storeWrite;
-        if (storeWrite === "invalidated") {
+        if (stats) {
+          stats.storeWrite = storeWrite.outcome;
+          if (storeWrite.outcome === "skipped") {
+            stats.storeWriteReason = storeWrite.reason;
+          }
+        }
+        if (
+          storeWrite.outcome === "stored" ||
+          storeWrite.outcome === "scheduled"
+        ) {
+          return "stored";
+        }
+        if (
+          storeWrite.outcome === "skipped" &&
+          storeWrite.reason === "invalidated-generation"
+        ) {
+          if (stats) stats.diagnosticReason = "invalidated-generation";
           warnCaptureRefusedOnce(
             capture.key,
             "one of the shell's tags was invalidated after this capture generation started, so the store rejected the write. " +
               "If capture code deterministically calls updateTag() on its own shell tag, move that mutation out of the render; " +
               "otherwise every generation is invalidated before it can be served.",
           );
+        } else if (storeWrite.outcome === "skipped") {
+          if (stats)
+            stats.diagnosticReason = `store-write-${storeWrite.outcome}`;
+          warnCaptureRefusedOnce(
+            capture.key,
+            `the shell store skipped the write (${storeWrite.reason}).`,
+          );
           return "refused";
+        } else {
+          if (stats) stats.diagnosticReason = "store-write-failed";
+          return "write-failed";
         }
+        return "refused";
       } catch (error) {
+        if (stats) {
+          stats.storeWrite = "failed";
+          stats.diagnosticReason = "store-write-failed";
+        }
         // Best-effort: a failed put must never throw out of the background task.
         reportCacheError(
           error,
@@ -1810,12 +1965,9 @@ async function captureAndStoreShell(
           "[ShellCache] capture put",
           reqCtx,
         );
+        return "write-failed";
       }
     }
-    // A shell was captured (ordinary store I/O failure is reported, not retried).
-    // An acknowledged invalidation rejection returned `refused` above so the
-    // scheduler backs the key off instead of recapturing on every request.
-    return "stored";
   } finally {
     // Stop the hop loop for the pathological never-quiets path (quiesce never
     // fired, capture returned via maxWaitMs). On the normal path the loop already

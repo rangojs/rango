@@ -8,6 +8,10 @@ import type {
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
+import {
+  BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED,
+  getBrowserNavigationDiagnostics,
+} from "./navigation-diagnostics-bridge.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -184,73 +188,92 @@ export function createNavigationBridge(
         options?.revalidate === false &&
         targetUrl.pathname === new URL(window.location.href).pathname
       ) {
-        // Preserve intercept context from the current history entry so that
-        // popstate uses the correct cache key (:intercept suffix) and restores
-        // the right full-page vs modal semantics.
-        const currentHistoryState = window.history.state;
-        const isIntercept = currentHistoryState?.intercept === true;
-        const interceptSourceUrl = isIntercept
-          ? currentHistoryState?.sourceUrl
-          : undefined;
-
-        const historyKey = generateHistoryKey(url, { intercept: isIntercept });
-
-        // Copy current segments to the new history key so back/forward restores instantly
-        const currentKey = store.getHistoryKey();
-        const currentCache = store.getCachedSegments(currentKey);
-        if (currentCache?.segments) {
-          const currentHandleData = eventController.getHandleState().data;
-          store.cacheSegmentsForHistory(
-            historyKey,
-            currentCache.segments,
-            currentHandleData,
-          );
-        }
-
-        // Save current scroll position before changing URL
-        handleNavigationStart();
-
-        // Snapshot old state before pushState/replaceState overwrites it
-        const oldState = window.history.state;
-
-        // Update browser URL (carry intercept context into history state)
-        const historyState = buildHistoryState(
-          resolvedState,
-          {
-            intercept: isIntercept || undefined,
-            sourceUrl: interceptSourceUrl,
-          },
-          {},
+        const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+          ? getBrowserNavigationDiagnostics()
+          : null;
+        const diagnosticNavigation = navigationDiagnostics?.start(
+          "navigate",
+          targetUrl.href,
         );
-        pushHistoryWithIdx(historyState, url, options?.replace ?? false);
+        try {
+          // Preserve intercept context from the current history entry so that
+          // popstate uses the correct cache key (:intercept suffix) and restores
+          // the right full-page vs modal semantics.
+          const currentHistoryState = window.history.state;
+          const isIntercept = currentHistoryState?.intercept === true;
+          const interceptSourceUrl = isIntercept
+            ? currentHistoryState?.sourceUrl
+            : undefined;
 
-        // Ensure new history entry has a scroll restoration key
-        ensureHistoryKey();
+          const historyKey = generateHistoryKey(url, {
+            intercept: isIntercept,
+          });
 
-        // Notify useLocationState() hooks when state changes
-        const hasOldState =
-          oldState &&
-          typeof oldState === "object" &&
-          ("state" in oldState ||
-            Object.keys(oldState).some((k) => k.startsWith("__rsc_ls_")));
-        const hasNewState =
-          historyState &&
-          ("state" in historyState ||
-            Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")));
-        if (hasOldState || hasNewState) {
-          window.dispatchEvent(new Event("__rsc_locationstate"));
+          // Copy current segments to the new history key so back/forward restores instantly
+          const currentKey = store.getHistoryKey();
+          const currentCache = store.getCachedSegments(currentKey);
+          if (currentCache?.segments) {
+            const currentHandleData = eventController.getHandleState().data;
+            store.cacheSegmentsForHistory(
+              historyKey,
+              currentCache.segments,
+              currentHandleData,
+            );
+          }
+
+          // Save current scroll position before changing URL
+          handleNavigationStart();
+
+          // Snapshot old state before pushState/replaceState overwrites it
+          const oldState = window.history.state;
+
+          // Update browser URL (carry intercept context into history state)
+          const historyState = buildHistoryState(
+            resolvedState,
+            {
+              intercept: isIntercept || undefined,
+              sourceUrl: interceptSourceUrl,
+            },
+            {},
+          );
+          pushHistoryWithIdx(historyState, url, options?.replace ?? false);
+
+          // Ensure new history entry has a scroll restoration key
+          ensureHistoryKey();
+
+          // Notify useLocationState() hooks when state changes
+          const hasOldState =
+            oldState &&
+            typeof oldState === "object" &&
+            ("state" in oldState ||
+              Object.keys(oldState).some((k) => k.startsWith("__rsc_ls_")));
+          const hasNewState =
+            historyState &&
+            ("state" in historyState ||
+              Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")));
+          if (hasOldState || hasNewState) {
+            window.dispatchEvent(new Event("__rsc_locationstate"));
+          }
+
+          // Update store history key so future navigations reference the right cache
+          store.setHistoryKey(historyKey);
+          store.setCurrentUrl(url);
+
+          // Notify hooks — location updates, state stays idle
+          eventController.setLocation(targetUrl);
+
+          // Handle post-navigation scroll
+          handleNavigationEnd({ scroll: options.scroll });
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.complete(diagnosticNavigation);
+          }
+          return;
+        } catch (error) {
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.abort(diagnosticNavigation, true);
+          }
+          throw error;
         }
-
-        // Update store history key so future navigations reference the right cache
-        store.setHistoryKey(historyKey);
-        store.setCurrentUrl(url);
-
-        // Notify hooks — location updates, state stays idle
-        eventController.setLocation(targetUrl);
-
-        // Handle post-navigation scroll
-        handleNavigationEnd({ scroll: options.scroll });
-        return;
       }
 
       // Only abort pending requests when navigating to a different route
@@ -406,6 +429,7 @@ export function createNavigationBridge(
           operation: "navigation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during navigation:",
             networkError,
@@ -420,6 +444,7 @@ export function createNavigationBridge(
         // silently. Prefetched responses funnel here too: a failed warm-prefetch
         // payload rejects on consumption and propagates to this catch.
         console.error("[Browser] Unprocessable navigation response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();
@@ -437,6 +462,7 @@ export function createNavigationBridge(
         eventController,
         window.location.href,
         { replace: true },
+        { kind: "refresh" },
       );
 
       try {
@@ -462,6 +488,7 @@ export function createNavigationBridge(
           operation: "revalidation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during refresh:",
             networkError,
@@ -474,6 +501,7 @@ export function createNavigationBridge(
         // popstate, so an unprocessable response must surface the error boundary
         // here too rather than become an uncaught rejection.
         console.error("[Browser] Unprocessable refresh response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, window.location.href);
       } finally {
         tx[Symbol.dispose]();
@@ -489,6 +517,13 @@ export function createNavigationBridge(
       eventController.abortNavigation();
 
       const url = window.location.href;
+      const navigationDiagnostics = BROWSER_NAVIGATION_DIAGNOSTICS_ENABLED
+        ? getBrowserNavigationDiagnostics()
+        : null;
+      const diagnosticNavigation = navigationDiagnostics?.start(
+        "popstate",
+        url,
+      );
 
       // Check if this history entry is an intercept
       const historyState = window.history.state;
@@ -613,6 +648,9 @@ export function createNavigationBridge(
           } else {
             onUpdate(popstateUpdate);
           }
+          if (diagnosticNavigation) {
+            navigationDiagnostics?.complete(diagnosticNavigation);
+          }
 
           // SWR: If stale, trigger background revalidation
           if (isStale) {
@@ -636,6 +674,13 @@ export function createNavigationBridge(
               eventController,
               url,
               { skipLoadingState: true, replace: true },
+              diagnosticNavigation
+                ? {
+                    navigation: diagnosticNavigation,
+                    kind: "popstate",
+                    settle: false,
+                  }
+                : undefined,
             );
 
             fetchPartialUpdate(
@@ -677,9 +722,18 @@ export function createNavigationBridge(
       }
 
       // Fetch if not cached
-      const tx = createNavigationTransaction(store, eventController, url, {
-        replace: true,
-      });
+      const tx = createNavigationTransaction(
+        store,
+        eventController,
+        url,
+        {
+          replace: true,
+        },
+        {
+          navigation: diagnosticNavigation,
+          kind: "popstate",
+        },
+      );
 
       try {
         await fetchPartialUpdate(
@@ -718,6 +772,7 @@ export function createNavigationBridge(
           operation: "navigation",
         });
         if (networkError) {
+          tx.fail();
           console.error(
             "[Browser] Network error during popstate:",
             networkError,
@@ -729,6 +784,7 @@ export function createNavigationBridge(
         // Unprocessable response on a back/forward navigation: surface the
         // error boundary instead of an uncaught rejection (see navigate()).
         console.error("[Browser] Unprocessable popstate response:", error);
+        tx.fail();
         emitNavigationError(onUpdate, error, url);
       } finally {
         tx[Symbol.dispose]();

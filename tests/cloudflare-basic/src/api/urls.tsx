@@ -98,7 +98,15 @@ export const apiPatterns = urls(({ path }) => [
 
   path.json(
     "/products/:id",
-    (ctx) => {
+    async (ctx) => {
+      if (
+        import.meta.env.DEV &&
+        ctx.url.searchParams.has("inject-diagnostic-failure")
+      ) {
+        const { injectDevelopmentDiagnosticFailureForTesting } =
+          await import("@rangojs/router/internal/dev-diagnostics");
+        injectDevelopmentDiagnosticFailureForTesting();
+      }
       const product = products.find((p) => p.id === ctx.params.id);
       if (!product) {
         throw new RouterError(

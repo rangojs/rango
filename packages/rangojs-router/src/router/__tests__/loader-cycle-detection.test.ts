@@ -6,6 +6,7 @@ vi.mock("../../server/context", () => ({
   isInsideLoaderScope: () => false,
   runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
   isInsidePushCallbackScope: () => false,
+  getPushCallbackOwnerSegmentId: () => undefined,
   runInsidePushCallbackScope: <T>(fn: () => T): T => fn(),
 }));
 

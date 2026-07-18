@@ -402,7 +402,8 @@ describe("response-route-handler", () => {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
 
       const scope = createMockCacheScope(() => false, store);
@@ -489,7 +490,8 @@ describe("response-route-handler", () => {
       const store = createMockStore();
       store.getResponse.mockResolvedValue({
         response: cachedResponse,
-        shouldRevalidate: false,
+        freshness: "fresh",
+        revalidationClaimed: false,
       });
 
       const scope = createMockCacheScope(() => true, store);

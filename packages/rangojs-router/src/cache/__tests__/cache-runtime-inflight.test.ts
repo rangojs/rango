@@ -49,6 +49,8 @@ vi.mock("../handle-snapshot.js", () => ({
 
 vi.mock("../../internal-debug.js", () => ({ INTERNAL_RANGO_DEBUG: false }));
 
+const STORED = { outcome: "stored" as const };
+
 describe('"use cache" in-flight dedup (C1)', () => {
   let registerCachedFunction: typeof import("../cache-runtime.js").registerCachedFunction;
 
@@ -78,7 +80,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
   it("runs fn once for concurrent identical misses; both callers resolve correctly", async () => {
     const store = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
 
@@ -104,7 +106,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
   it("does NOT dedup calls with different keys (fn runs per key)", async () => {
     const store = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
 
@@ -126,7 +128,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
   it("a rejected leader clears the entry so a later call re-runs fresh", async () => {
     const store = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
 
@@ -149,7 +151,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
   it("a rejected leader propagates to concurrent waiters, which then retry fresh", async () => {
     const store = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
 
@@ -179,7 +181,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
   it("delivers tags and handles to both the leader and the follower", async () => {
     const store = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     // Shared handle store (the mock returns one ctx for both concurrent calls);
     // startHandleCapture wraps its push so a push inside fn is captured.

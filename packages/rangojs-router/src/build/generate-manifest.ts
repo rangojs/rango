@@ -116,6 +116,8 @@ async function buildPrefixTreeNode(
   responseTypeRoutes?: Record<string, string>,
   routeSearchSchemas?: Record<string, Record<string, string>>,
   routerId?: string,
+  collectEntries?: ManifestEntryCollector,
+  inheritedAncestors: readonly EntryData[] = [],
 ): Promise<PrefixTreeNode> {
   // Resolve an async include provider (`() => import("./routes")`) so its routes
   // are walked into the build-time manifest/types/href. Runtime matching still
@@ -174,6 +176,8 @@ async function buildPrefixTreeNode(
       },
     );
 
+    collectEntries?.(manifest, inheritedAncestors);
+
     // Collect route names defined in this include (routes have prefixes applied)
     const routes = [...patternsMap.keys()];
     Object.assign(routeManifest, Object.fromEntries(patternsMap));
@@ -215,8 +219,15 @@ async function buildPrefixTreeNode(
     }
 
     const children: Record<string, PrefixTreeNode> = {};
-    await mergeIncludeNodes(children, trackedIncludes, (include) =>
-      buildPrefixTreeNode(
+    await mergeIncludeNodes(children, trackedIncludes, (include) => {
+      const localAncestors: EntryData[] = [];
+      for (let entry = include.parent; entry; entry = entry.parent) {
+        localAncestors.unshift(entry);
+      }
+      // Every discovery evaluation creates a synthetic MapRootLayout. It is
+      // transport scaffolding, not a declaration in the consumer's route tree.
+      if (localAncestors[0]?.parent === null) localAncestors.shift();
+      return buildPrefixTreeNode(
         include.fullPrefix,
         include.namePrefix,
         include.patterns as UrlPatterns<any> | IncludeProvider<any>,
@@ -230,8 +241,10 @@ async function buildPrefixTreeNode(
         responseTypeRoutes,
         routeSearchSchemas,
         routerId,
-      ),
-    );
+        collectEntries,
+        [...inheritedAncestors, ...localAncestors],
+      );
+    });
 
     return {
       staticPrefix: extractStaticPrefix(urlPrefix),
@@ -255,6 +268,11 @@ async function buildPrefixTreeNode(
 export interface FullManifest extends GeneratedManifest {
   _prerenderDefs?: Record<string, any>;
 }
+
+export type ManifestEntryCollector = (
+  entries: ReadonlyMap<string, EntryData>,
+  inheritedAncestors: readonly EntryData[],
+) => void;
 
 /**
  * Generate manifest from UrlPatterns (public API).
@@ -313,6 +331,13 @@ export async function generateManifestFull<TEnv>(
      * EntryData map built below is local; this is the only seam that surfaces it.
      */
     collectClientFallbackRef?: (refKey: string) => void;
+    /**
+     * Development-discovery seam for projecting route declarations while the
+     * local EntryData map still exists. Callers must immediately convert values
+     * to plain data; retaining handlers, stores, predicates, or React nodes is
+     * unsupported.
+     */
+    collectEntries?: ManifestEntryCollector;
   },
 ): Promise<FullManifest> {
   const routeManifest: Record<string, string> = {};
@@ -350,6 +375,8 @@ export async function generateManifestFull<TEnv>(
       });
     },
   );
+
+  options?.collectEntries?.(manifest, []);
 
   // Surface the "use client" components registered as error/notFound fallbacks
   // (route-tree errorBoundary()/notFoundBoundary() helpers, stored on EntryData).
@@ -413,6 +440,7 @@ export async function generateManifestFull<TEnv>(
       responseTypeRoutes,
       routeSearchSchemas,
       options?.routerId,
+      options?.collectEntries,
     ),
   );
 

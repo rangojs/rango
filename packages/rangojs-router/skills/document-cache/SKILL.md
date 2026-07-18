@@ -1,7 +1,7 @@
 ---
 name: document-cache
 description: Cache complete HTTP responses in Rango's configured app store with createDocumentCacheMiddleware, using Cache-Control s-maxage as policy. Use when reusing a whole HTML/RSC response, comparing the store-backed middleware with a platform CDN cache, or deciding whether full-response caching is safe.
-argument-hint: [setup]
+argument-hint: "[setup]"
 ---
 
 # Store-backed Document Cache

@@ -20,6 +20,7 @@ import {
   resolveImportedVariable,
   resolveImportPath,
   buildCombinedRouteMapWithSearch,
+  type CombinedRouteMap,
   type UnresolvableInclude,
 } from "./include-resolution.js";
 import { findUrlsVariableNames } from "./per-module-writer.js";
@@ -343,15 +344,9 @@ export function extractBasenameFromRouter(code: string): string | undefined {
 
 /** Apply a basename prefix to all route patterns in a result set. */
 function applyBasenameToRoutes(
-  result: {
-    routes: Record<string, string>;
-    searchSchemas: Record<string, Record<string, string>>;
-  },
+  result: CombinedRouteMap,
   basename: string,
-): {
-  routes: Record<string, string>;
-  searchSchemas: Record<string, Record<string, string>>;
-} {
+): CombinedRouteMap {
   const prefixed: Record<string, string> = {};
   for (const [name, pattern] of Object.entries(result.routes)) {
     if (pattern === "/") {
@@ -362,7 +357,11 @@ function applyBasenameToRoutes(
       prefixed[name] = basename + pattern;
     }
   }
-  return { routes: prefixed, searchSchemas: result.searchSchemas };
+  return {
+    routes: prefixed,
+    searchSchemas: result.searchSchemas,
+    sourceFiles: result.sourceFiles,
+  };
 }
 
 // Filesystem path of the generated route-types file for a router source file.
@@ -404,16 +403,24 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
   routes: Record<string, string>;
   searchSchemas: Record<string, Record<string, string>>;
 } {
+  const { routes, searchSchemas } =
+    buildCombinedRouteDetailsForRouterFile(routerFilePath);
+  return { routes, searchSchemas };
+}
+
+export function buildCombinedRouteDetailsForRouterFile(
+  routerFilePath: string,
+): CombinedRouteMap {
   let routerSource: string;
   try {
     routerSource = readFileSync(routerFilePath, "utf-8");
   } catch {
-    return { routes: {}, searchSchemas: {} };
+    return { routes: {}, searchSchemas: {}, sourceFiles: {} };
   }
 
   const extraction = extractUrlsFromRouter(routerSource);
   if (!extraction) {
-    return { routes: {}, searchSchemas: {} };
+    return { routes: {}, searchSchemas: {}, sourceFiles: {} };
   }
 
   // Detect basename from createRouter({ basename: "..." })
@@ -422,10 +429,7 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
     ? ("/" + rawBasename.replace(/^\/+|\/+$/g, "")).replace(/^\/$/, "")
     : undefined;
 
-  let result: {
-    routes: Record<string, string>;
-    searchSchemas: Record<string, Record<string, string>>;
-  };
+  let result: CombinedRouteMap;
 
   // Inline builder: extract routes directly from the function body
   if (extraction.kind === "inline") {
@@ -442,7 +446,7 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
     if (imported) {
       const targetFile = resolveImportPath(imported.specifier, routerFilePath);
       if (!targetFile) {
-        return { routes: {}, searchSchemas: {} };
+        return { routes: {}, searchSchemas: {}, sourceFiles: {} };
       }
       result = buildCombinedRouteMapWithSearch(
         targetFile,

@@ -1,0 +1,11 @@
+diff --git a/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx b/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
+--- a/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
++++ b/packages/rangojs-router/e2e/test-app/src/urls/shell-cache.tsx
+@@ -725,6 +725,6 @@ export const shellCachePatterns = urls(
+     // explicit tier's warm window test-controllable; long swr mirrors the
+     // storefront config.
+-    cache({ ttl: 30, swr: 604_800 }, () => [
++    cache(false, () => [
+       layout(ShellScopedChromeLayout, () => [
+         loader(ShellSettledLoader, () => [cache({ ttl: 300 })]),
+         path(

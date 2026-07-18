@@ -104,6 +104,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         namePrefix: fullNamePrefix,
         patterns,
         lazy: true,
+        parent: capturedParent,
       });
     }
 

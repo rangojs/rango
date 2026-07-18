@@ -3,12 +3,12 @@ import {
   CFCacheStore,
   KV_READ_TIMEOUT_MS,
   TAG_MARKER_PREFIX,
-} from "../cf-cache-store";
-import type { CachedEntryData } from "../../types";
+} from "../cf-cache-store.js";
+import type { CachedEntryData } from "../../types.js";
 import {
   createRequestContext,
   runWithRequestContext,
-} from "../../../server/request-context";
+} from "../../../server/request-context.js";
 import {
   CACHE_READ_ERROR,
   type CacheReadError as CacheReadErrorT,
@@ -283,8 +283,13 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       const hit = await store.getResponse!("k");
       expect(hit).not.toBeNull();
+      expect(hit!.tags).toEqual(["page"]);
       expect(hit!.response.headers.get("x-edge-cache-tags")).toBeNull();
       expect(hit!.response.headers.get("x-edge-cache-tagged-at")).toBeNull();
+
+      mockCaches.clear();
+      const kvHit = await store.getResponse!("k");
+      expect(kvHit?.tags).toEqual(["page"]);
     });
   });
 
@@ -1081,11 +1086,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       // A misconfigured keyGenerator returning "__tag__/x" must NOT overwrite
       // the marker; the write is a reported no-op.
       const { reqCtx, reported } = ctxWithReporter();
-      await runWithRequestContext(reqCtx, () =>
+      const acknowledgement = await runWithRequestContext(reqCtx, () =>
         store.set("__tag__/x", createTestData(), 300),
       );
       await ctx.flush();
 
+      expect(acknowledgement).toEqual({
+        outcome: "skipped",
+        reason: "invalid-input",
+      });
       expect(kv.store.get("v/v1/__tag__/x")).toBe(markerBefore); // untouched
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
     });
@@ -1482,7 +1491,10 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         vi.advanceTimersByTime(1500);
         const stale = hit(await store.get("k"));
         expect(stale).not.toBeNull();
-        expect(stale!.shouldRevalidate).toBe(true);
+        expect(stale).toMatchObject({
+          freshness: "stale",
+          revalidationClaimed: true,
+        });
         await ctx.flush(); // markRevalidating re-put lands
 
         // Invalidate the tag; the REVALIDATING entry's tag check must run first
@@ -1521,7 +1533,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         await ctx.flush();
         mockCaches.clear();
 
-        expect(await store.getResponse!("k")).not.toBeNull(); // KV serve + promote
+        expect(await store.getResponse!("k")).toMatchObject({ tags: ["page"] }); // KV serve + promote
         await ctx.flush();
 
         vi.advanceTimersByTime(10);

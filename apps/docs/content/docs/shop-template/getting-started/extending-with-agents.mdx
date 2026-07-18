@@ -48,9 +48,18 @@ Some sections of `AGENTS.md` are managed by external tools and wrapped in HTML c
 ```md
 <!-- BEGIN:rango-agent-rules -->
 
-## This runs on @rangojs/router, not Next.js
+# Rango: read the version-matched skills before coding
 
-...
+This application uses `@rangojs/router`, not Next.js. Do not infer routing,
+caching, revalidation, middleware, or rendering behavior from Next.js APIs.
+
+Before Rango work, load `/rango` when that skill is installed. Otherwise read
+`node_modules/@rangojs/router/skills/rango/SKILL.md`, then open the relevant
+sibling skill under `node_modules/@rangojs/router/skills/`. These files match the
+installed router version and are the source of truth over training data.
+
+After adding, removing, or renaming routes, run `npx rango generate src/` and
+commit every regenerated `*.gen.ts` file with the route change.
 
 <!-- END:rango-agent-rules -->
 ```
@@ -65,6 +74,20 @@ The template ships with two blocks:
 | `vercel-shop-style` | Vercel Shop | Code style conventions: alphabetized exports and keys, no barrel files, push `"use client"` to leaves, naming rules, Tailwind patterns. Remove the block if your team prefers different conventions. |
 
 Everything outside these markers is yours. Add team conventions or domain constraints anywhere else and no upgrade will overwrite them.
+
+To register `/rango` as a project skill instead of relying only on the managed
+rule, run:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+Inspect `.agents/skills/rango` and `.claude/skills/rango` first and stop if
+either exists. The external CLI may auto-confirm inside an agent session, so
+omitting `--yes` is not collision protection.
 
 ## Skills
 

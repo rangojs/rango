@@ -10,7 +10,7 @@ import { cookies, getRequestContext, urls } from "@rangojs/router";
  */
 export const responseCachePatterns = urls(({ path, cache, middleware }) => [
   // Cached routes: wrapped in cache() boundary
-  cache({ ttl: 600 }, () => [
+  cache({ ttl: 600, tags: ["mcp-response-cache"] }, () => [
     path.json(
       "/cached-json",
       (ctx) => {

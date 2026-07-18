@@ -1,0 +1,658 @@
+import { expect, test } from "@playwright/test";
+import { connectRangoMcp, type RangoMcpTestSession } from "@shared/e2e";
+import { RANGO_MCP_ENDPOINT } from "../../../packages/rangojs-router/src/devtools-mcp/protocol.js";
+import { useFixture } from "./fixture";
+import { waitForHydration } from "./helper";
+
+const WORKFLOW_FIXTURE = process.env.RANGO_WORKFLOW_FIXTURE;
+
+function verifiesWorkflow(...fixtures: string[]): boolean {
+  return !WORKFLOW_FIXTURE || fixtures.includes(WORKFLOW_FIXTURE);
+}
+
+test.describe("MCP devtools", () => {
+  const f = useFixture({ root: ".", mode: "dev" });
+  let mcp: RangoMcpTestSession;
+
+  test.beforeAll(async () => {
+    mcp = await connectRangoMcp(f.root, f.url());
+  });
+
+  test.afterAll(async () => {
+    await mcp.close();
+  });
+
+  test("reports Cloudflare routes and request diagnostics", async ({
+    page,
+  }) => {
+    test.skip(!verifiesWorkflow("dev-loop"), "not part of this workflow");
+    test.setTimeout(60_000);
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
+    const [project, routes] = await Promise.all([
+      mcp.client.callTool({ name: "get_project_metadata" }),
+      mcp.client.callTool({
+        name: "get_routes",
+        arguments: { limit: 1_000 },
+      }),
+    ]);
+    expect(project.structuredContent).toMatchObject({
+      preset: "cloudflare",
+      mode: "development",
+      capabilities: {
+        routeMatching: true,
+        recentRequests: true,
+        runtimeErrors: true,
+        renderExplanation: true,
+        revalidationExplanation: true,
+        cacheTagExplanation: true,
+        browserState: true,
+        sourceOwnership: true,
+      },
+    });
+
+    await expect
+      .poll(async () => {
+        const status = await mcp.client.callTool({
+          name: "get_discovery_status",
+        });
+        return status.structuredContent;
+      })
+      .toMatchObject({
+        phase: "ready",
+        stale: false,
+        runtimeConvergence: "ready",
+      });
+
+    expect(routes.structuredContent?.routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "api.productDetail",
+          pattern: "/api/products/:id",
+        }),
+      ]),
+    );
+    const productRoute = routes.structuredContent?.routes?.find(
+      (route: { name?: string }) => route.name === "api.productDetail",
+    );
+    const matchedRoute = await mcp.client.callTool({
+      name: "match_route",
+      arguments: {
+        url: "/api/products/1",
+        routerId: productRoute?.routerId,
+      },
+    });
+    expect(matchedRoute.isError, JSON.stringify(matchedRoute.content)).not.toBe(
+      true,
+    );
+    expect(matchedRoute.structuredContent).toMatchObject({
+      pathname: "/api/products/1",
+      matched: true,
+      route: {
+        name: "api.productDetail",
+        pattern: "/api/products/:id",
+        params: { id: "1" },
+        structure: { responseType: "json" },
+      },
+    });
+
+    const response = await page.goto(f.url("/api/products/1"));
+    expect(response?.status()).toBe(200);
+    const requestId = await response?.headerValue("x-rango-request-id");
+    expect(requestId).toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_requests",
+          arguments: { requestId },
+        });
+        return result.structuredContent?.requests;
+      })
+      .toEqual([
+        expect.objectContaining({
+          requestId,
+          transport: "response-route",
+          routePattern: "/api/products/:id",
+          completed: true,
+          source: expect.objectContaining({
+            file: "src/api/urls.tsx",
+            precision: "declaration-file",
+          }),
+        }),
+      ]);
+
+    const trace = await mcp.client.callTool({
+      name: "get_request_trace",
+      arguments: { requestId },
+    });
+    expect(trace.structuredContent).toMatchObject({
+      trace: { requestId, completed: true },
+      source: { file: "src/api/urls.tsx", precision: "declaration-file" },
+    });
+
+    const documentResponse = await page.goto(f.url("/tx-src/a"));
+    await waitForHydration(page);
+    const documentRequestId =
+      await documentResponse?.headerValue("x-rango-request-id");
+    expect(documentRequestId).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_navigations",
+          arguments: { kind: "document", completed: true },
+        });
+        return result.structuredContent?.navigations?.find(
+          (candidate: { requestIds?: string[] }) =>
+            candidate.requestIds?.includes(documentRequestId!),
+        );
+      })
+      .toMatchObject({
+        kind: "document",
+        pathname: "/tx-src/a",
+        requestIds: [documentRequestId],
+      });
+    const navigationResponse = page.waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname === "/tx-src/b" &&
+        new URL(candidate.url()).searchParams.has("_rsc_partial"),
+    );
+    await page.getByTestId("tx-src-to-b").click();
+    await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+    const navigationRequestId = await (
+      await navigationResponse
+    ).headerValue("x-rango-request-id");
+    expect(navigationRequestId).toBeTruthy();
+    let navigationId: string | undefined;
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_navigations",
+          arguments: { kind: "navigate", completed: true },
+        });
+        const navigation = result.structuredContent?.navigations?.find(
+          (candidate: { pathname?: string }) =>
+            candidate.pathname === "/tx-src/b",
+        );
+        navigationId = navigation?.navigationId;
+        return navigation;
+      })
+      .toMatchObject({
+        pathname: "/tx-src/b",
+        requestIds: [navigationRequestId],
+      });
+    const navigationTrace = await mcp.client.callTool({
+      name: "get_navigation_trace",
+      arguments: { navigationId },
+    });
+    expect(navigationTrace.structuredContent).toMatchObject({
+      navigationId,
+      completed: true,
+      requestIds: [navigationRequestId],
+      events: expect.arrayContaining([
+        expect.objectContaining({ phase: "started" }),
+        expect.objectContaining({
+          phase: "request-linked",
+          requestId: navigationRequestId,
+          role: "navigation",
+        }),
+        expect.objectContaining({ phase: "committed" }),
+      ]),
+    });
+    expect(
+      navigationTrace.structuredContent?.events
+        ?.filter((event: { phase?: string }) =>
+          ["committed", "aborted", "failed"].includes(event.phase ?? ""),
+        )
+        .map((event: { phase: string }) => event.phase),
+    ).toEqual(["committed"]);
+    const linkedRequest = await mcp.client.callTool({
+      name: "list_requests",
+      arguments: { navigationId },
+    });
+    expect(linkedRequest.structuredContent?.requests).toEqual([
+      expect.objectContaining({ requestId: navigationRequestId }),
+    ]);
+
+    const errorResponse = await page.goto(
+      f.url("/features/mcp-missing-feature"),
+    );
+    const errorRequestId =
+      await errorResponse?.headerValue("x-rango-request-id");
+    expect(errorRequestId).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "get_errors",
+          arguments: { requestId: errorRequestId },
+        });
+        return result.structuredContent?.errors;
+      })
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            requestId: errorRequestId,
+            type: expect.stringMatching(/failed|error/),
+          }),
+        ]),
+      );
+  });
+
+  test("reports render-cache diagnostics", async ({ page }) => {
+    test.skip(
+      !verifiesWorkflow("render-cache-adoption", "render-cache-optimizer"),
+      "not part of this workflow",
+    );
+    test.setTimeout(60_000);
+    const renderUrl = f.url(
+      `/ppr-scoped?probe=mcp-render-${crypto.randomUUID()}`,
+    );
+    const coldRender = await page.goto(renderUrl);
+    expect(await coldRender?.headerValue("x-rango-shell")).toBe("MISS");
+    const captureRequestId =
+      await coldRender?.headerValue("x-rango-request-id");
+    expect(captureRequestId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_render",
+            arguments: { requestId: captureRequestId },
+          });
+          return result.structuredContent?.ppr?.capture;
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            outcome: "captured",
+            storeWrite: "scheduled",
+          }),
+        ]),
+      );
+
+    let renderRequestId: string | null = null;
+    await expect
+      .poll(
+        async () => {
+          const scoped = await page.goto(renderUrl);
+          if ((await scoped?.headerValue("x-rango-shell")) !== "HIT") {
+            return null;
+          }
+          renderRequestId =
+            (await scoped?.headerValue("x-rango-request-id")) ?? null;
+          return renderRequestId;
+        },
+        { timeout: 30_000 },
+      )
+      .toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "explain_render",
+          arguments: { requestId: renderRequestId },
+        });
+        return result.structuredContent;
+      })
+      .toMatchObject({
+        request: { requestId: renderRequestId, transport: "document" },
+        renderCache: expect.arrayContaining([
+          expect.objectContaining({ kind: "inherited", outcome: "hit" }),
+        ]),
+        ppr: {
+          document: expect.arrayContaining([
+            expect.objectContaining({ outcome: "hit" }),
+          ]),
+        },
+        loaders: expect.arrayContaining([
+          expect.objectContaining({
+            registrations: expect.arrayContaining([
+              expect.objectContaining({ lane: "live" }),
+            ]),
+            consumers: expect.arrayContaining([
+              expect.objectContaining({ containerValue: "request" }),
+            ]),
+          }),
+          expect.objectContaining({
+            registrations: expect.arrayContaining([
+              expect.objectContaining({ lane: "baked" }),
+            ]),
+            cacheDecisions: expect.arrayContaining([
+              expect.objectContaining({ outcome: "hit" }),
+            ]),
+            consumers: expect.arrayContaining([
+              expect.objectContaining({
+                containerValue: "capture-generation",
+              }),
+            ]),
+          }),
+        ]),
+      });
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "explain_cache_tags",
+          arguments: { requestId: renderRequestId },
+        });
+        return result.structuredContent?.operations;
+      })
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            artifact: "runtime-shell",
+            phase: "hit",
+            provenance: ["stored"],
+            tags: expect.arrayContaining([
+              expect.objectContaining({ value: "mcp-ppr-scoped" }),
+            ]),
+          }),
+        ]),
+      );
+    const warmedExecution = await page
+      .getByTestId("ppr-scoped-home")
+      .textContent();
+    const repeatedRender = await page.goto(renderUrl);
+    expect(await repeatedRender?.headerValue("x-rango-shell")).toBe("HIT");
+    await expect(page.getByTestId("ppr-scoped-home")).toHaveText(
+      warmedExecution!,
+    );
+  });
+
+  test("reports cache-tag and revalidation diagnostics", async ({
+    page,
+    request,
+  }) => {
+    test.skip(
+      !verifiesWorkflow("stale-data-debugger"),
+      "not part of this workflow",
+    );
+    test.setTimeout(60_000);
+    const taggedResponse = await page.goto(
+      f.url(`/cache-lab?probe=mcp-tags-${crypto.randomUUID()}`),
+    );
+    expect(taggedResponse?.status()).toBe(200);
+    const taggedRequestId =
+      await taggedResponse?.headerValue("x-rango-request-id");
+    expect(taggedRequestId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: taggedRequestId },
+          });
+          return result.structuredContent?.operations;
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "observe",
+            artifact: "function",
+            tags: expect.arrayContaining([
+              expect.objectContaining({ value: "cache-lab:catalog" }),
+              expect.objectContaining({
+                value: "cache-lab:product:alpha",
+              }),
+            ]),
+          }),
+        ]),
+      );
+
+    const invalidationResponse = await request.post(
+      f.url("/api/cache/invalidate"),
+      { data: { tags: ["cache-lab:product:alpha"] } },
+    );
+    expect(invalidationResponse.status()).toBe(200);
+    const invalidationRequestId =
+      invalidationResponse.headers()["x-rango-request-id"];
+    expect(invalidationRequestId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_cache_tags",
+            arguments: { requestId: invalidationRequestId },
+          });
+          return result.structuredContent?.operations;
+        },
+        { timeout: 30_000 },
+      )
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "invalidate",
+            verb: "updateTag",
+            outcome: "completed",
+            tags: [
+              expect.objectContaining({
+                value: "cache-lab:product:alpha",
+              }),
+            ],
+          }),
+        ]),
+      );
+
+    await page.goto(f.url("/swr-action?probe=mcp-revalidation"));
+    await waitForHydration(page);
+    const actionResponse = page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "POST" &&
+        new URL(candidate.url()).searchParams.has("_rsc_action"),
+    );
+    await page.getByTestId("swr-action-btn").click();
+    const actionRequestId = await (
+      await actionResponse
+    ).headerValue("x-rango-request-id");
+    expect(actionRequestId).toBeTruthy();
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "explain_revalidation",
+            arguments: { requestId: actionRequestId },
+          });
+          return result.structuredContent;
+        },
+        { timeout: 30_000 },
+      )
+      .toMatchObject({
+        requestId: actionRequestId,
+        isAction: true,
+        actionId: expect.any(String),
+        decisions: expect.arrayContaining([
+          expect.objectContaining({ finalShouldRevalidate: true }),
+        ]),
+      });
+    let actionNavigationId: string | undefined;
+    await expect
+      .poll(
+        async () => {
+          const result = await mcp.client.callTool({
+            name: "list_navigations",
+            arguments: { kind: "action", completed: true },
+          });
+          const navigation = result.structuredContent?.navigations?.find(
+            (candidate: { requestIds?: string[] }) =>
+              candidate.requestIds?.includes(actionRequestId!),
+          );
+          actionNavigationId = navigation?.navigationId;
+          return navigation;
+        },
+        { timeout: 30_000 },
+      )
+      .toMatchObject({ requestIds: [actionRequestId] });
+    const actionNavigation = await mcp.client.callTool({
+      name: "get_navigation_trace",
+      arguments: { navigationId: actionNavigationId },
+    });
+    expect(actionNavigation.structuredContent).toMatchObject({
+      completed: true,
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          phase: "request-linked",
+          requestId: actionRequestId,
+          role: "action",
+        }),
+        expect.objectContaining({ phase: "committed" }),
+      ]),
+    });
+  });
+
+  test("reports fail-open diagnostic loss", async ({ page }) => {
+    test.skip(!!WORKFLOW_FIXTURE, "full-suite diagnostic only");
+    const failOpenResponse = await page.goto(
+      f.url("/api/products/1?inject-diagnostic-failure=1"),
+    );
+    expect(failOpenResponse?.status()).toBe(200);
+    const failOpenRequestId =
+      await failOpenResponse?.headerValue("x-rango-request-id");
+    await expect
+      .poll(async () => {
+        const result = await mcp.client.callTool({
+          name: "list_requests",
+          arguments: { requestId: failOpenRequestId },
+        });
+        const content = result.structuredContent;
+        const retainedRequest = content?.requests?.[0];
+        return retainedRequest?.requestId === failOpenRequestId &&
+          retainedRequest.droppedEvents > 0 &&
+          retainedRequest.truncated === true &&
+          content.stats?.bridgeDroppedEvents > 0
+          ? retainedRequest
+          : null;
+      })
+      .toMatchObject({ requestId: failOpenRequestId, truncated: true });
+    const lossyExplanation = await mcp.client.callTool({
+      name: "explain_render",
+      arguments: { requestId: failOpenRequestId },
+    });
+    expect(lossyExplanation.structuredContent).toMatchObject({
+      truncated: true,
+    });
+  });
+});
+
+test.describe("MCP devtools (production)", () => {
+  const f = useFixture({ root: ".", mode: "build" });
+
+  test("does not return an MCP response", async ({ page, request }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: undefined,
+        configurable: true,
+      });
+    });
+    const response = await request.post(f.url(RANGO_MCP_ENDPOINT), {
+      data: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" },
+        },
+      },
+    });
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("text/html");
+    expect(response.headers()["x-rango-request-id"]).toBeUndefined();
+    expect(response.headers()["server-timing"] ?? "").not.toContain(
+      "rango-request-id",
+    );
+    expect(await response.text()).not.toContain('"jsonrpc"');
+    if (verifiesWorkflow("dev-loop")) {
+      const appResponse = await page.goto(
+        f.url("/api/products/1?inject-diagnostic-failure=1"),
+      );
+      expect(appResponse?.status()).toBe(200);
+      expect(await appResponse?.headerValue("x-rango-request-id")).toBeNull();
+
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      const navigationResponse = page.waitForResponse(
+        (candidate) =>
+          new URL(candidate.url()).pathname === "/tx-src/b" &&
+          new URL(candidate.url()).searchParams.has("_rsc_partial"),
+      );
+      await page.getByTestId("tx-src-to-b").click();
+      await expect(page.getByTestId("tx-src-n")).toHaveText("b");
+      const productionNavigationResponse = await navigationResponse;
+      expect(
+        productionNavigationResponse.request().headers()[
+          "x-rango-navigation-id"
+        ],
+      ).toBeUndefined();
+      expect(
+        await productionNavigationResponse.headerValue("x-rango-request-id"),
+      ).toBeNull();
+    }
+    if (verifiesWorkflow("render-cache-adoption", "render-cache-optimizer")) {
+      const renderUrl = f.url(
+        `/ppr-scoped?probe=mcp-render-production-${crypto.randomUUID()}`,
+      );
+      const coldRender = await page.goto(renderUrl);
+      expect(await coldRender?.headerValue("x-rango-shell")).toBe("MISS");
+      let renderResponse = coldRender;
+      await expect
+        .poll(
+          async () => {
+            renderResponse = await page.goto(renderUrl);
+            return renderResponse?.headerValue("x-rango-shell");
+          },
+          { timeout: 30_000 },
+        )
+        .toBe("HIT");
+      expect(
+        await renderResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+      await expect(page.getByTestId("ppr-scoped-home")).toBeVisible();
+      const warmedExecution = await page
+        .getByTestId("ppr-scoped-home")
+        .textContent();
+      const repeatedRender = await page.goto(renderUrl);
+      expect(await repeatedRender?.headerValue("x-rango-shell")).toBe("HIT");
+      await expect(page.getByTestId("ppr-scoped-home")).toHaveText(
+        warmedExecution!,
+      );
+    }
+    if (verifiesWorkflow("stale-data-debugger")) {
+      const taggedResponse = await page.goto(
+        f.url(`/cache-lab?probe=mcp-tags-production-${crypto.randomUUID()}`),
+      );
+      expect(taggedResponse?.status()).toBe(200);
+      expect(
+        await taggedResponse?.headerValue("x-rango-request-id"),
+      ).toBeNull();
+      const invalidationResponse = await request.post(
+        f.url("/api/cache/invalidate"),
+        { data: { tags: ["cache-lab:product:alpha"] } },
+      );
+      expect(invalidationResponse.status()).toBe(200);
+      expect(
+        invalidationResponse.headers()["x-rango-request-id"],
+      ).toBeUndefined();
+
+      await page.goto(f.url("/swr-action?probe=mcp-revalidation-production"));
+      await waitForHydration(page);
+      const actionResponse = page.waitForResponse(
+        (candidate) =>
+          candidate.request().method() === "POST" &&
+          new URL(candidate.url()).searchParams.has("_rsc_action"),
+      );
+      await page.getByTestId("swr-action-btn").click();
+      expect(
+        await (await actionResponse).headerValue("x-rango-request-id"),
+      ).toBeNull();
+      await expect(page.getByTestId("swr-action-page")).toBeVisible();
+    }
+  });
+});

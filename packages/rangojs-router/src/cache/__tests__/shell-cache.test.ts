@@ -35,11 +35,17 @@ describe("MemorySegmentCacheStore shell family", () => {
   it("round-trips a shell entry", async () => {
     const store = new MemorySegmentCacheStore();
     const entry = shellEntry();
-    await store.putShell("k", entry, 300, 30);
+    const acknowledgement = await store.putShell("k", entry, 300, 30, [
+      "home",
+      "shared",
+    ]);
     const hit = await store.getShell("k");
+    expect(acknowledgement).toEqual({ outcome: "stored" });
     expect(hit).not.toBeNull();
     expect(hit?.entry).toEqual(entry);
-    expect(hit?.shouldRevalidate).toBe(false);
+    expect(hit?.freshness).toBe("fresh");
+    expect(hit?.revalidationClaimed).toBe(false);
+    expect(hit?.tags).toEqual(["home", "shared"]);
   });
 
   it("returns null on a miss", async () => {
@@ -47,15 +53,37 @@ describe("MemorySegmentCacheStore shell family", () => {
     expect(await store.getShell("absent")).toBeNull();
   });
 
-  it("is fresh before staleAt, stale (shouldRevalidate) within the SWR window, gone after expiry", async () => {
+  it("reports freshness and revalidation claims independently within SWR", async () => {
     const store = new MemorySegmentCacheStore();
     await store.putShell("k", shellEntry(), 60, 300); // stale +60s, expire +360s
 
     vi.setSystemTime(new Date(T0 + 30_000));
-    expect((await store.getShell("k"))?.shouldRevalidate).toBe(false);
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "fresh",
+      revalidationClaimed: false,
+    });
 
     vi.setSystemTime(new Date(T0 + 120_000));
-    expect((await store.getShell("k"))?.shouldRevalidate).toBe(true);
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: false,
+    });
+    expect(
+      await store.getShell("k", { claimRevalidation: false }),
+    ).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: false,
+    });
+
+    vi.setSystemTime(new Date(T0 + 150_000));
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
 
     vi.setSystemTime(new Date(T0 + 400_000));
     expect(await store.getShell("k")).toBeNull();
@@ -74,9 +102,10 @@ describe("MemorySegmentCacheStore shell family", () => {
     const captured = shellEntry({ createdAt: T0 });
     vi.setSystemTime(new Date(T0 + 1));
     await store.invalidateTags(["home"]);
-    expect(await store.putShell("k", captured, 300, 30, ["home"])).toBe(
-      "invalidated",
-    );
+    expect(await store.putShell("k", captured, 300, 30, ["home"])).toEqual({
+      outcome: "skipped",
+      reason: "invalidated-generation",
+    });
 
     expect(await store.getShell("k")).toBeNull();
   });

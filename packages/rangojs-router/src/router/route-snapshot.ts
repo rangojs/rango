@@ -223,9 +223,13 @@ function buildEntriesAndCacheScope(manifestEntry: EntryData): {
 } {
   const entries = [...traverseBack(manifestEntry)];
   let cacheScope: CacheScope | null = null;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.cache) {
-      cacheScope = createCacheScope(entry.cache, cacheScope);
+      cacheScope = createCacheScope(entry.cache, cacheScope, {
+        segmentId: entry.id,
+        segmentType: entry.type,
+        inherited: index < entries.length - 2,
+      });
     }
   }
   return { entries, cacheScope };

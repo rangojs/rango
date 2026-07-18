@@ -727,10 +727,25 @@ export const shellCachePatterns = urls(
     // storefront config.
     cache({ ttl: 30, swr: 604_800 }, () => [
       layout(ShellScopedChromeLayout, () => [
-        path("/shell-cache/scoped", ShellScopedHomePage, {
-          name: "shellCacheScoped",
-          ppr: { ttl: 300, swr: 120 },
-        }),
+        loader(ShellSettledLoader, () => [cache({ ttl: 300 })]),
+        path(
+          "/shell-cache/scoped",
+          ShellScopedHomePage,
+          {
+            name: "shellCacheScoped",
+            ppr: {
+              ttl: 300,
+              swr: 120,
+              tags: ["mcp-shell-scoped"],
+            },
+          },
+          () => [
+            loader(ShellPriceLoader),
+            loading(
+              <div data-testid="shell-scoped-fallback">Loading scoped...</div>,
+            ),
+          ],
+        ),
       ]),
       // Consumer opt-outs stay absolute on the replay path: cache(false) and
       // a false condition() report `cache-disabled` before any shell read.

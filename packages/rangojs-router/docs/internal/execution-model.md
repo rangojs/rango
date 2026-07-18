@@ -240,9 +240,10 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   `prerender-ppr` and `ppr-shell`, and the
   `cache-lookup-shell-replay-fallback` / `cache-store-shell-doc-record` units.
 - **Capture-generation invalidation is observable.** Built-in shell stores return
-  `invalidated` when a tag marker rejects a capture that started before the
-  invalidation. The capture emits a `refused` event with
-  `storeWrite: "invalidated"`, warns once, and enters normal refused-capture
+  `skipped` with reason `invalidated-generation` when a tag marker rejects a
+  capture that started before the invalidation. The capture emits a `refused`
+  event with `storeWrite: "skipped"` and the same `storeWriteReason`, warns once,
+  and enters normal refused-capture
   backoff. A render that deterministically invalidates its own shell tag therefore
   stays uncached, but it no longer fails silently or recaptures on every request.
 - **The consumption-lane rule.** For every shared-artifact capture — `cache()`,

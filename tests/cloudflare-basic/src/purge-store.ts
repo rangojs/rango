@@ -26,6 +26,8 @@ import type {
   CacheReadError,
   CacheItemResult,
   CacheItemOptions,
+  CacheResponseResult,
+  CacheWriteAcknowledgement,
 } from "@rangojs/router/cache";
 import type { AppBindings } from "./env.js";
 
@@ -76,11 +78,10 @@ export const purgeModeStore: SegmentCacheStore = {
     data: CachedEntryData,
     ttl: number,
     swr?: number,
-  ): Promise<void> => resolveStore().set(key, data, ttl, swr),
+  ): Promise<CacheWriteAcknowledgement> =>
+    resolveStore().set(key, data, ttl, swr),
   delete: (key: string): Promise<boolean> => resolveStore().delete(key),
-  getResponse: (
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> =>
+  getResponse: (key: string): Promise<CacheResponseResult | null> =>
     resolveStore().getResponse(key),
   putResponse: (
     key: string,
@@ -88,14 +89,16 @@ export const purgeModeStore: SegmentCacheStore = {
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> => resolveStore().putResponse(key, response, ttl, swr, tags),
+  ): Promise<CacheWriteAcknowledgement> =>
+    resolveStore().putResponse(key, response, ttl, swr, tags),
   getItem: (key: string): Promise<CacheItemResult | null> =>
     resolveStore().getItem(key),
   setItem: (
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> => resolveStore().setItem(key, value, options),
+  ): Promise<CacheWriteAcknowledgement> =>
+    resolveStore().setItem(key, value, options),
   invalidateTags: (tags: string[]): Promise<void> =>
     resolveStore().invalidateTags(tags),
   isTagsInvalidatedSince: (tags: string[], sinceMs: number): Promise<boolean> =>

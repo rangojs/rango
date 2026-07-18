@@ -57,6 +57,11 @@ const { createRequestContext, runWithRequestContext } =
 
 import type { SegmentCacheStore, CachedEntryData } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
+import { runWithRequestTransaction } from "../../router/request-identity.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -303,6 +308,8 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
   // /CFCacheStore which return tags in data on a hit.
   async function makeHitStore(
     tags: string[] | undefined,
+    diagnosticLoaderConsumers?: CachedEntryData["diagnosticLoaderConsumers"],
+    diagnosticCachePolicy?: CachedEntryData["diagnosticCachePolicy"],
   ): Promise<SegmentCacheStore> {
     const segments = await serializeSegments([makeSegment()]);
     const data: CachedEntryData = {
@@ -310,9 +317,15 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
       handles: "",
       expiresAt: Date.now() + 60_000,
       tags,
+      diagnosticLoaderConsumers,
+      diagnosticCachePolicy,
     };
     return {
-      get: async () => ({ data, shouldRevalidate: false }),
+      get: async () => ({
+        data,
+        freshness: "fresh",
+        revalidationClaimed: false,
+      }),
     } as unknown as SegmentCacheStore;
   }
 
@@ -358,6 +371,189 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
 
     expect(result).not.toBeNull();
     expect(ctx._requestTags.size).toBe(0);
+  });
+
+  it("projects inherited hits through the bounded tag envelope", async () => {
+    const store = await makeHitStore(["tenant-secret"], undefined, {
+      ttl: 60,
+      swr: 30,
+    });
+    const ctx = makeCtx(store);
+    const scope = new CacheScope({ ttl: 60, store }, null, undefined, {
+      segmentId: "catalog.layout",
+      segmentType: "layout",
+      inherited: true,
+    });
+
+    await runWithRequestContext(ctx, () =>
+      runWithRequestTransaction(
+        ctx.request,
+        "request",
+        () => scope.lookupRouteDetailed("/products", {}, false),
+        { routerId: "shop", diagnosticsEnabled: true },
+      ),
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.listTraces()[0]!;
+    const scopeDiagnostic = trace.events.find(
+      (event) => event.type === "cache.scope",
+    )!;
+    expect(scopeDiagnostic.data).toMatchObject({
+      kind: "inherited",
+      outcome: "hit",
+      reason: null,
+      ttl: 60,
+      swr: 30,
+      tags: [],
+    });
+    expect(scopeDiagnostic.data.identityDigest).toMatch(/^cache-[0-9a-f]{16}$/);
+    expect(JSON.stringify(scopeDiagnostic)).not.toContain("tenant-secret");
+    expect(JSON.stringify(scopeDiagnostic)).not.toContain(
+      "example.com/products",
+    );
+
+    const tagDiagnostic = trace.events.find(
+      (event) => event.type === "cache.tags",
+    )!;
+    expect(tagDiagnostic.data).toMatchObject({
+      artifact: "segment",
+      phase: "hit",
+      provenance: ["stored"],
+      tags: ["tenant-secret"],
+      tagDigests: [expect.stringMatching(/^cache-[0-9a-f]{16}$/)],
+    });
+    expect(JSON.stringify(tagDiagnostic)).not.toContain("example.com/products");
+    resetDevelopmentDiagnosticHub();
+  });
+
+  it("retains handler loader generations with cached handler segments", async () => {
+    const set = vi.fn(async () => ({ outcome: "stored" as const }));
+    const store = {
+      get: vi.fn(async () => null),
+      set,
+    } as unknown as SegmentCacheStore;
+    const ctx = makeCtx(store);
+    ctx._diagnosticLoaderConsumers = [
+      {
+        loaderId: "cart-loader",
+        kind: "handler",
+        consumerId: "catalog.route",
+      },
+      {
+        loaderId: "prices-loader",
+        kind: "loader-dependency",
+        consumerId: "cart-loader",
+      },
+      {
+        loaderId: "unrelated-loader",
+        kind: "loader-dependency",
+        consumerId: "other-loader",
+      },
+    ];
+
+    await runWithRequestContext(ctx, () =>
+      runWithRequestTransaction(
+        ctx.request,
+        "request",
+        () =>
+          new CacheScope({ ttl: 60, store }).cacheRoute("/products", {}, [
+            makeSegment({ id: "catalog.route" }),
+          ]),
+        { routerId: "shop", diagnosticsEnabled: true },
+      ),
+    );
+    ctx._handleStore.seal();
+    await Promise.all(ctx._pendingBackgroundTasks ?? []);
+
+    expect(set).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        diagnosticLoaderConsumers: [
+          {
+            loaderId: "cart-loader",
+            kind: "handler",
+            consumerId: "catalog.route",
+          },
+          {
+            loaderId: "prices-loader",
+            kind: "loader-dependency",
+            consumerId: "cart-loader",
+          },
+        ],
+        diagnosticCachePolicy: { ttl: 60, swr: null },
+      }),
+      60,
+      undefined,
+    );
+  });
+
+  it("bounds loader generations retained with a cache entry", async () => {
+    let cached: CachedEntryData | undefined;
+    const set = vi.fn(async (_key: string, data: CachedEntryData) => {
+      cached = data;
+      return { outcome: "stored" as const };
+    });
+    const store = {
+      get: vi.fn(async () => null),
+      set,
+    } as unknown as SegmentCacheStore;
+    const ctx = makeCtx(store);
+    ctx._diagnosticLoaderConsumers = Array.from(
+      { length: 160 },
+      (_, index) => ({
+        loaderId: `loader-${index}`,
+        kind: "handler" as const,
+        consumerId: "catalog.route",
+      }),
+    );
+
+    await runWithRequestContext(ctx, () =>
+      runWithRequestTransaction(
+        ctx.request,
+        "request",
+        () =>
+          new CacheScope({ ttl: 60, store }).cacheRoute("/products", {}, [
+            makeSegment({ id: "catalog.route" }),
+          ]),
+        { routerId: "shop", diagnosticsEnabled: true },
+      ),
+    );
+    ctx._handleStore.seal();
+    await Promise.all(ctx._pendingBackgroundTasks ?? []);
+
+    expect(cached?.diagnosticLoaderConsumers).toHaveLength(128);
+  });
+
+  it("replays cached handler loader generations into the request trace", async () => {
+    const store = await makeHitStore(undefined, [
+      {
+        loaderId: "cart-loader",
+        kind: "handler",
+        consumerId: "catalog.route",
+      },
+    ]);
+    const ctx = makeCtx(store);
+
+    await runWithRequestContext(ctx, () =>
+      runWithRequestTransaction(
+        ctx.request,
+        "request",
+        () => makeScope(store).lookupRoute("/products", {}),
+        { routerId: "shop", diagnosticsEnabled: true },
+      ),
+    );
+
+    const consumer = getDevelopmentDiagnosticHub()!
+      .listTraces()[0]!
+      .events.find((event) => event.type === "loader.consumer")!;
+    expect(consumer.data).toMatchObject({
+      loaderId: "cart-loader",
+      kind: "handler",
+      consumerId: "catalog.route",
+      containerValue: "capture-generation",
+      nestedPromises: "none",
+    });
+    resetDevelopmentDiagnosticHub();
   });
 });
 

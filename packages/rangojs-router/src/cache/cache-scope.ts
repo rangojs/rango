@@ -41,6 +41,18 @@ import {
   resolveTagsOption,
 } from "./cache-policy.js";
 import type { RequestContext } from "../server/request-context.js";
+import {
+  areDevelopmentDiagnosticsAvailable,
+  cacheDiagnosticIdentity,
+  getDevelopmentDiagnosticLink,
+  isDevelopmentDiagnosticsEnabled,
+  recordCacheTagObservationDiagnostic,
+  recordCacheScopeDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+  recordLoaderConsumerDiagnostic,
+} from "../router/diagnostics/channel.js";
+
+const MAX_CACHED_LOADER_CONSUMERS = 128;
 
 export function resolveCacheTags(
   config: PartialCacheOptions | false,
@@ -111,6 +123,50 @@ function getDefaultRouteCacheKey(
 
 const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
 
+function diagnosticConsumersForSegments(
+  segments: ResolvedSegment[],
+  consumers: RequestContext["_diagnosticLoaderConsumers"],
+): NonNullable<CachedEntryData["diagnosticLoaderConsumers"]> | undefined {
+  if (!consumers?.length) return undefined;
+  const consumersByOwner = new Map<string, typeof consumers>();
+  for (const consumer of consumers) {
+    const owned = consumersByOwner.get(consumer.consumerId);
+    if (owned) owned.push(consumer);
+    else consumersByOwner.set(consumer.consumerId, [consumer]);
+  }
+  const selected: NonNullable<CachedEntryData["diagnosticLoaderConsumers"]> =
+    [];
+  const owners = segments.map((segment) => segment.id);
+  const visitedOwners = new Set<string>();
+  for (let index = 0; index < owners.length; index++) {
+    const owner = owners[index]!;
+    if (visitedOwners.has(owner)) continue;
+    visitedOwners.add(owner);
+    for (const consumer of consumersByOwner.get(owner) ?? []) {
+      selected.push(consumer);
+      if (selected.length >= MAX_CACHED_LOADER_CONSUMERS) return selected;
+      owners.push(consumer.loaderId);
+    }
+  }
+  return selected.length > 0 ? selected : undefined;
+}
+
+function replayCachedLoaderConsumers(cached: CachedEntryData): void {
+  if (!isDevelopmentDiagnosticsEnabled()) return;
+  try {
+    for (const consumer of cached.diagnosticLoaderConsumers ?? []) {
+      recordLoaderConsumerDiagnostic(consumer.loaderId, {
+        kind: consumer.kind,
+        consumerId: consumer.consumerId,
+        lane: "baked",
+        boundary: "none",
+        containerValue: "capture-generation",
+        nestedPromises: "none",
+      });
+    }
+  } catch {}
+}
+
 /**
  * Discriminated outcome of a route cache lookup — see
  * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
@@ -118,7 +174,11 @@ const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
 export type CacheRouteLookupOutcome =
   | {
       status: "hit";
-      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
+      result: {
+        segments: ResolvedSegment[];
+        freshness: "fresh" | "stale";
+        revalidationClaimed: boolean;
+      };
     }
   | { status: "miss" | "bypass" | "error" };
 
@@ -149,11 +209,72 @@ export class CacheScope {
     config: PartialCacheOptions | false,
     parent: CacheScope | null = null,
     private readonly defaultKeyPrefix?: "doc",
+    private readonly owner?: {
+      segmentId: string;
+      segmentType: string;
+      inherited: boolean;
+    },
   ) {
     this.config = config;
     this.parent = parent;
     // Extract and store explicit store reference
     this.explicitStore = config !== false ? config.store : undefined;
+  }
+
+  private recordLookup(
+    outcome:
+      | "hit"
+      | "miss"
+      | "stale"
+      | "prerendered"
+      | "bypass"
+      | "error"
+      | (() => "hit" | "stale"),
+    reason?: string,
+    store: SegmentCacheStore | null = null,
+    details: {
+      key?: string;
+      cached?: CachedEntryData;
+      backgroundRevalidationClaimed?: boolean;
+    } = {},
+  ): void {
+    recordCacheScopeDiagnostic(() => {
+      const expiresAt = details.cached?.expiresAt;
+      return {
+        kind: !this.enabled
+          ? "disabled"
+          : this.isShellImplicitDocScope
+            ? "implicit-shell"
+            : this.owner?.inherited
+              ? "inherited"
+              : "explicit",
+        ownerType: this.owner?.segmentType ?? null,
+        outcome: typeof outcome === "function" ? outcome() : outcome,
+        reason,
+        source: "runtime",
+        storeKind: store ? "segment-cache" : null,
+        ttl:
+          details.cached?.diagnosticCachePolicy?.ttl ??
+          (this.enabled ? this.ttl : null),
+        swr:
+          details.cached?.diagnosticCachePolicy?.swr ??
+          (this.enabled ? (this.swr ?? null) : null),
+        freshForMs: expiresAt === undefined ? null : expiresAt - Date.now(),
+        // Exact values use the bounded cache.tags envelope. Keeping this legacy
+        // field empty avoids exposing the same untrusted values without digests.
+        tags: [],
+        identityDigest: details.key
+          ? cacheDiagnosticIdentity(details.key)
+          : null,
+        backgroundRevalidationClaimed:
+          details.backgroundRevalidationClaimed ?? false,
+      };
+    }, this.owner?.segmentId);
+  }
+
+  /** @internal Record a pipeline bypass that occurs before lookupRouteDetailed. */
+  recordDiagnosticBypass(reason: "action" | "disabled"): void {
+    this.recordLookup("bypass", reason);
   }
 
   /**
@@ -311,7 +432,7 @@ export class CacheScope {
 
   /**
    * Lookup cached segments for a route (single cache entry per request).
-   * Returns { segments, shouldRevalidate } or null if cache miss.
+   * Returns cached segments with independent freshness and SWR ownership.
    *
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
@@ -323,7 +444,8 @@ export class CacheScope {
     isIntercept?: boolean,
   ): Promise<{
     segments: ResolvedSegment[];
-    shouldRevalidate: boolean;
+    freshness: "fresh" | "stale";
+    revalidationClaimed: boolean;
   } | null> {
     const outcome = await this.lookupRouteDetailed(
       pathname,
@@ -356,11 +478,20 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<CacheRouteLookupOutcome> {
-    if (!this.enabled) return { status: "bypass" };
-    if (!this.conditionAllows("read")) return { status: "bypass" };
+    if (!this.enabled) {
+      this.recordLookup("bypass", "disabled");
+      return { status: "bypass" };
+    }
+    if (!this.conditionAllows("read")) {
+      this.recordLookup("bypass", "condition");
+      return { status: "bypass" };
+    }
 
     const store = this.getStore();
-    if (!store) return { status: "bypass" };
+    if (!store) {
+      this.recordLookup("bypass", "store-unavailable");
+      return { status: "bypass" };
+    }
 
     // Resolve cache key INSIDE the try so a throwing consumer key() (or a
     // store.keyGenerator) degrades to a cache miss (return null -> render
@@ -379,15 +510,17 @@ export class CacheScope {
       // replay composition renders uncached instead of substituting the
       // seeded doc record for a tier whose backend never answered.
       if (result === CACHE_READ_ERROR) {
+        this.recordLookup("error", "store-read", store, { key });
         return { status: "error" };
       }
 
       if (!result) {
         debugCacheLog(`[CacheScope] MISS: ${key}`);
+        this.recordLookup("miss", undefined, store, { key });
         return { status: "miss" };
       }
 
-      const { data: cached, shouldRevalidate } = result;
+      const { data: cached, freshness, revalidationClaimed } = result;
 
       // Deserialize segments. A failure means the cached segments are corrupt/
       // partial: evict the entry (self-heal - the re-render re-caches under the
@@ -418,6 +551,7 @@ export class CacheScope {
           .catch((e) =>
             reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
           );
+        this.recordLookup("miss", "corrupt-entry", store, { key });
         if (this.isShellImplicitDocScope) {
           ambientContext?._shellImplicitCache?.onCorrupt?.();
         }
@@ -429,6 +563,20 @@ export class CacheScope {
       // to invalidate any full-page entry built on top of it. The write path
       // records via cacheRoute (resolveCacheTags); the hit path records here.
       recordRequestTags(cached.tags);
+      const tagPhase = freshness === "stale" ? "stale" : "hit";
+      if (cached.tags?.length) {
+        recordCacheTagObservationDiagnostic(
+          {
+            artifact: "segment",
+            phase: tagPhase,
+            provenance: ["stored"],
+            tags: cached.tags,
+            identity: key,
+          },
+          this.owner?.segmentId,
+        );
+      }
+      replayCachedLoaderConsumers(cached);
 
       // Replay handle data. An empty string means the route pushed no handles —
       // skip the decode entirely (the common case). Otherwise decode the
@@ -447,12 +595,20 @@ export class CacheScope {
           s.type === "parallel" ? s.slot : s.type,
         );
         debugCacheLog(
-          `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`,
+          `[CacheScope] ${freshness === "stale" ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`,
         );
       }
 
       CACHE_HIT_OBSERVERS.get(this)?.();
-      return { status: "hit", result: { segments, shouldRevalidate } };
+      this.recordLookup(tagPhase, undefined, store, {
+        key,
+        cached,
+        backgroundRevalidationClaimed: revalidationClaimed,
+      });
+      return {
+        status: "hit",
+        result: { segments, freshness, revalidationClaimed },
+      };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
       // (resolveKey). Either way degrade to an uncached render — reported as
@@ -463,6 +619,7 @@ export class CacheScope {
         "cache-read",
         `[CacheScope] lookup ${key ?? "(key resolution failed)"}`,
       );
+      this.recordLookup("error", "lookup-failed", store, { key });
       return { status: "error" };
     }
   }
@@ -484,7 +641,24 @@ export class CacheScope {
   recordTags(requestCtx: RequestContext | undefined): void {
     if (!this.enabled) return;
     if (!this.conditionAllows("write")) return;
-    recordRequestTags(resolveCacheTags(this.config, requestCtx), requestCtx);
+    const tags = resolveCacheTags(this.config, requestCtx);
+    recordRequestTags(tags, requestCtx);
+    if (tags?.length) {
+      recordCacheTagObservationDiagnostic(
+        {
+          artifact: "segment",
+          phase: "lookup",
+          provenance: [
+            typeof this.config === "object" &&
+            typeof this.config.tags === "function"
+              ? "dynamic-policy"
+              : "static-policy",
+          ],
+          tags,
+        },
+        this.owner?.segmentId,
+      );
+    }
   }
 
   /**
@@ -537,6 +711,7 @@ export class CacheScope {
     // Resolve tags early (while request context is available, before waitUntil)
     const tags = resolveCacheTags(this.config, requestCtx);
     recordRequestTags(tags, requestCtx);
+    const diagnosticLink = getDevelopmentDiagnosticLink();
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
@@ -612,15 +787,45 @@ export class CacheScope {
           handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
           tags,
+          ...(areDevelopmentDiagnosticsAvailable()
+            ? {
+                diagnosticLoaderConsumers: diagnosticConsumersForSegments(
+                  nonLoaderSegments,
+                  requestCtx._diagnosticLoaderConsumers,
+                ),
+                diagnosticCachePolicy: { ttl, swr: swr ?? null },
+              }
+            : {}),
         };
 
         if (INTERNAL_RANGO_DEBUG) {
           debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);
         }
 
-        await store.set(key, data, ttl, swr);
+        const acknowledgement = await store.set(key, data, ttl, swr);
+        const persisted =
+          acknowledgement.outcome === "stored" ||
+          acknowledgement.outcome === "scheduled";
+        if (diagnosticLink && tags?.length && persisted) {
+          recordLinkedCacheTagObservationDiagnostic(
+            diagnosticLink,
+            {
+              artifact: "segment",
+              phase: "write",
+              provenance: [
+                typeof this.config === "object" &&
+                typeof this.config.tags === "function"
+                  ? "dynamic-policy"
+                  : "static-policy",
+              ],
+              tags,
+              identity: key,
+            },
+            this.owner?.segmentId,
+          );
+        }
 
-        if (INTERNAL_RANGO_DEBUG) {
+        if (INTERNAL_RANGO_DEBUG && persisted) {
           const segmentTypes = nonLoaderSegments.map((s) =>
             s.type === "parallel" ? s.slot : s.type,
           );
@@ -645,9 +850,10 @@ export class CacheScope {
 export function createCacheScope(
   config: { options: PartialCacheOptions | false } | undefined,
   parent: CacheScope | null = null,
+  owner?: { segmentId: string; segmentType: string; inherited: boolean },
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
-  return new CacheScope(config.options, parent);
+  return new CacheScope(config.options, parent, undefined, owner);
 }
 
 type ShellImplicitCacheMarker = NonNullable<

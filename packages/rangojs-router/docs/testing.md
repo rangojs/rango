@@ -1186,7 +1186,7 @@ signal reaches you:
 | You are in...                                  | Use                                                                     | Why                                                                                                                         |
 | ---------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | a Playwright e2e (you only see a `Response`)   | `assertCacheStatus(res, routeKey, expected)`                            | the `X-Rango-Cache` header is the only signal a black-box `Response` carries; needs the debug gate ON in the app under test |
-| a Vitest unit/integration (you own the router) | `createCacheSink()` + `assertCacheDecision(events, routeKey, expected)` | zero production surface (no header to enable); also the only path exposing per-segment `shouldRevalidate`                   |
+| a Vitest unit/integration (you own the router) | `createCacheSink()` + `assertCacheDecision(events, routeKey, expected)` | zero production surface (no header to enable); also exposes decision freshness and per-segment revalidation ownership       |
 | you need the raw `{ routeKey: status }` map    | `parseCacheHeader(headerValue)`                                         | escape hatch under `assertCacheStatus`                                                                                      |
 
 The telemetry path has no header at all; you wire a sink, drive a request, then
@@ -1205,7 +1205,8 @@ const router = createRouter({ telemetry: sink }).routes(urlpatterns);
 // ...drive a request...
 assertCacheDecision(events, "product.detail", "stale"); // one-call assert
 const decision = filterCacheDecisions(events)[0]; // or inspect per-segment detail
-expect(decision.segments?.[0].shouldRevalidate).toBe(true);
+expect(decision.freshness).toBe("stale");
+expect(decision.segments?.[0].revalidationClaimed).toBe(true);
 ```
 
 Prerender: a pre-rendered route is **indistinguishable from a cache hit by

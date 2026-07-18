@@ -370,6 +370,15 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   active capture. In dev, with `debugPerformance` on, the
   last capture outcome for a key also rides the next document GET's
   `Server-Timing` as `ppr-capture;desc="…"`.
+- Read `ShellCaptureDebugEvent.storeWrite` separately from the attempt outcome:
+  `stored` is the store's reported result, `invalidated` rejects a generation
+  invalidated by its own tags, and `failed` means `putShell` rejected. It is not
+  independent durability proof: a platform adapter can report and skip a write
+  internally (for example, Vercel's item-size guard). `CFCacheStore`
+  intentionally returns no result after accepting an isolate-local pending
+  envelope and scheduling its L1/KV writes through `waitUntil`, so a successful
+  capture can report `outcome: "stored"` with no `storeWrite`; same-isolate reads
+  can use the pending envelope, but tier durability is not claimed yet.
 - For deployed Cloudflare tier diagnostics, build with
   `INTERNAL_RANGO_DEBUG=1` and run `wrangler tail`. `[CFCacheStore][shell]`
   JSON events distinguish L1 hit/miss, KV fallback/promotion, tier writes, and

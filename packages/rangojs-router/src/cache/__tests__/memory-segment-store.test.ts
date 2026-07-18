@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { MemorySegmentCacheStore } from "../memory-segment-store";
-import type { CachedEntryData } from "../types";
+import { MemorySegmentCacheStore } from "../memory-segment-store.js";
+import type { CachedEntryData } from "../types.js";
 
 describe("MemorySegmentCacheStore", () => {
   beforeEach(() => {
@@ -130,22 +130,27 @@ describe("MemorySegmentCacheStore", () => {
       const store = new MemorySegmentCacheStore();
       const data = createTestData();
 
-      await store.set("test-key", data, 60);
+      const acknowledgement = await store.set("test-key", data, 60);
       const result = await store.get("test-key");
 
+      expect(acknowledgement).toEqual({ outcome: "stored" });
       expect(result).not.toBeNull();
       expect(result!.data.segments).toEqual(data.segments);
       expect(result!.data.handles).toEqual(data.handles);
+      expect(result!.freshness).toBe("fresh");
+      expect(result!.revalidationClaimed).toBe(false);
     });
 
-    it("should always return shouldRevalidate=false (no SWR support)", async () => {
+    it("should keep segment reads fresh without claiming revalidation", async () => {
       const store = new MemorySegmentCacheStore();
       const data = createTestData();
 
       await store.set("test-key", data, 60, 300); // SWR param is ignored
       const result = await store.get("test-key");
 
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result!.freshness).toBe("fresh");
+      expect(result!.revalidationClaimed).toBe(false);
+      expect(result).not.toHaveProperty("shouldRevalidate");
     });
 
     it("should handle multiple entries", async () => {
@@ -541,12 +546,14 @@ describe("MemorySegmentCacheStore", () => {
 
     it("should store and retrieve a value", async () => {
       const store = new MemorySegmentCacheStore();
-      await store.setItem("fn:key", "serialized-value");
+      const acknowledgement = await store.setItem("fn:key", "serialized-value");
       const result = await store.getItem("fn:key");
 
+      expect(acknowledgement).toEqual({ outcome: "stored" });
       expect(result).not.toBeNull();
       expect(result!.value).toBe("serialized-value");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result!.freshness).toBe("fresh");
+      expect(result!.revalidationClaimed).toBe(false);
     });
 
     it("should persist the encoded handle string alongside value", async () => {
@@ -599,7 +606,7 @@ describe("MemorySegmentCacheStore", () => {
       expect(await store.getItem("fn:fallback-ttl")).toBeNull();
     });
 
-    it("should return shouldRevalidate=true when stale within SWR window", async () => {
+    it("should report stale freshness and claim revalidation within SWR", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new MemorySegmentCacheStore();
@@ -608,13 +615,23 @@ describe("MemorySegmentCacheStore", () => {
       // Still fresh
       vi.advanceTimersByTime(30 * 1000);
       let result = await store.getItem("fn:swr");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result!.freshness).toBe("fresh");
+      expect(result!.revalidationClaimed).toBe(false);
 
       // Past TTL, within SWR window — stale
       vi.advanceTimersByTime(60 * 1000);
       result = await store.getItem("fn:swr");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.freshness).toBe("stale");
+      expect(result!.revalidationClaimed).toBe(true);
       expect(result!.value).toBe("stale-value");
+
+      result = await store.getItem("fn:swr");
+      expect(result!.freshness).toBe("stale");
+      expect(result!.revalidationClaimed).toBe(false);
+
+      vi.advanceTimersByTime(30 * 1000);
+      result = await store.getItem("fn:swr");
+      expect(result!.revalidationClaimed).toBe(true);
     });
 
     it("should expire after TTL + SWR window", async () => {
@@ -643,11 +660,12 @@ describe("MemorySegmentCacheStore", () => {
       // Past TTL, within default SWR
       vi.advanceTimersByTime(90 * 1000);
       const result = await store.getItem("fn:default-swr");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.freshness).toBe("stale");
+      expect(result!.revalidationClaimed).toBe(true);
       expect(result!.value).toBe("value");
     });
 
-    it("should return shouldRevalidate=false when no SWR configured", async () => {
+    it("should expire at TTL when no SWR is configured", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new MemorySegmentCacheStore();
@@ -699,16 +717,17 @@ describe("MemorySegmentCacheStore", () => {
         headers: { "Content-Type": "text/plain" },
       });
 
-      await store.putResponse("doc:key", response, 60);
+      const acknowledgement = await store.putResponse("doc:key", response, 60);
       const result = await store.getResponse("doc:key");
 
+      expect(acknowledgement).toEqual({ outcome: "stored" });
       expect(result).not.toBeNull();
       expect(result!.response.status).toBe(200);
       expect(await result!.response.text()).toBe("hello");
       expect(result!.response.headers.get("Content-Type")).toBe("text/plain");
     });
 
-    it("should return shouldRevalidate=false for fresh responses", async () => {
+    it("should report fresh responses without claiming revalidation", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new MemorySegmentCacheStore();
@@ -716,10 +735,11 @@ describe("MemorySegmentCacheStore", () => {
 
       vi.advanceTimersByTime(30 * 1000);
       const result = await store.getResponse("doc:fresh");
-      expect(result!.shouldRevalidate).toBe(false);
+      expect(result!.freshness).toBe("fresh");
+      expect(result!.revalidationClaimed).toBe(false);
     });
 
-    it("should return shouldRevalidate=true for stale responses within SWR", async () => {
+    it("should report stale responses and claim revalidation within SWR", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new MemorySegmentCacheStore();
@@ -728,8 +748,17 @@ describe("MemorySegmentCacheStore", () => {
       // Past TTL, within SWR
       vi.advanceTimersByTime(120 * 1000);
       const result = await store.getResponse("doc:stale");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.freshness).toBe("stale");
+      expect(result!.revalidationClaimed).toBe(true);
       expect(await result!.response.text()).toBe("stale-body");
+
+      expect((await store.getResponse("doc:stale"))!.revalidationClaimed).toBe(
+        false,
+      );
+      vi.advanceTimersByTime(30 * 1000);
+      expect((await store.getResponse("doc:stale"))!.revalidationClaimed).toBe(
+        true,
+      );
     });
 
     it("should expire after TTL + SWR", async () => {
@@ -751,7 +780,35 @@ describe("MemorySegmentCacheStore", () => {
       // Past TTL, within default SWR
       vi.advanceTimersByTime(90 * 1000);
       const result = await store.getResponse("doc:default-swr");
-      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.freshness).toBe("stale");
+      expect(result!.revalidationClaimed).toBe(true);
+    });
+
+    it("should round-trip response tags", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putResponse("doc:tags", new Response("body"), 60, 0, [
+        "home",
+        "shared",
+      ]);
+
+      const result = await store.getResponse("doc:tags");
+
+      expect(result!.tags).toEqual(["home", "shared"]);
+    });
+
+    it("should return a failed acknowledgement when a response write fails", async () => {
+      const store = new MemorySegmentCacheStore();
+      const response = new Response("consumed");
+      await response.text();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        expect(await store.putResponse("doc:failed", response, 60)).toEqual({
+          outcome: "failed",
+        });
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
 
     it("should preserve multiple headers", async () => {

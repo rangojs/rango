@@ -12,6 +12,9 @@ import type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  CacheResponseResult,
+  CacheShellResult,
+  CacheWriteAcknowledgement,
   ShellCacheEntry,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
@@ -32,6 +35,8 @@ const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 const KEY_TAGS_REGISTRY_KEY = "__rsc_router_key_tags_registry__";
 const TAG_INVALIDATED_AT_REGISTRY_KEY =
   "__rsc_router_tag_invalidated_at_registry__";
+const REVALIDATION_CLAIMS_REGISTRY_KEY =
+  "__rsc_router_revalidation_claims_registry__";
 
 /**
  * Get or create a named Map from a globalThis-backed registry.
@@ -59,6 +64,7 @@ interface CachedResponseEntry {
   headers: [string, string][];
   expiresAt: number;
   staleAt: number;
+  tags?: string[];
 }
 
 interface CachedItemEntry {
@@ -150,6 +156,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
 
 /** Default per-family entry cap for MemorySegmentCacheStore (FIFO eviction). */
 const DEFAULT_MAX_ENTRIES = 1000;
+const REVALIDATION_CLAIM_MS = 30_000;
 
 /**
  * In-memory segment cache store.
@@ -203,6 +210,8 @@ export class MemorySegmentCacheStore<
    * shell generation start. Per-isolate, like every other map here.
    */
   private tagInvalidatedAt: Map<string, number>;
+  /** prefixed cache key -> claim expiry (epoch ms) */
+  private revalidationClaims: Map<string, number>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -241,6 +250,10 @@ export class MemorySegmentCacheStore<
         TAG_INVALIDATED_AT_REGISTRY_KEY,
         options.name,
       );
+      this.revalidationClaims = getNamedMap<number>(
+        REVALIDATION_CLAIMS_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
@@ -249,6 +262,7 @@ export class MemorySegmentCacheStore<
       this.tagIndex = new Map<string, Set<string>>();
       this.keyTags = new Map<string, Set<string>>();
       this.tagInvalidatedAt = new Map<string, number>();
+      this.revalidationClaims = new Map<string, number>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -272,8 +286,21 @@ export class MemorySegmentCacheStore<
       const oldest = map.keys().next().value;
       if (oldest === undefined) break;
       map.delete(oldest);
-      this.unregisterTags(`${prefix}:${oldest}`);
+      const prefixedKey = `${prefix}:${oldest}`;
+      this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
     }
+  }
+
+  private claimRevalidation(prefixedKey: string, expiresAt: number): boolean {
+    const now = Date.now();
+    const claimedUntil = this.revalidationClaims.get(prefixedKey) ?? 0;
+    if (claimedUntil > now) return false;
+    this.revalidationClaims.set(
+      prefixedKey,
+      Math.min(expiresAt, now + REVALIDATION_CLAIM_MS),
+    );
+    return true;
   }
 
   async get(key: string): Promise<CacheGetResult | null> {
@@ -285,13 +312,19 @@ export class MemorySegmentCacheStore<
 
     // Check expiration
     if (Date.now() > cached.expiresAt) {
-      this.unregisterTags(`seg:${key}`);
+      const prefixedKey = `seg:${key}`;
+      this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
       this.cache.delete(key);
       return null;
     }
 
-    // Memory store doesn't support SWR - never triggers revalidation
-    return { data: cached, shouldRevalidate: false };
+    // The segment family keeps its existing TTL-only behavior.
+    return {
+      data: cached,
+      freshness: "fresh",
+      revalidationClaimed: false,
+    };
   }
 
   async set(
@@ -299,22 +332,26 @@ export class MemorySegmentCacheStore<
     data: CachedEntryData,
     ttl: number,
     _swr?: number,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     const entry: CachedEntryData = {
       ...data,
       expiresAt: Date.now() + ttl * 1000,
     };
     const prefixedKey = `seg:${key}`;
     this.unregisterTags(prefixedKey);
+    this.revalidationClaims.delete(prefixedKey);
     this.evictIfNeeded(this.cache, key, "seg");
     this.cache.set(key, entry);
     if (data.tags && data.tags.length > 0) {
       this.registerTags(data.tags, prefixedKey);
     }
+    return { outcome: "stored" };
   }
 
   async delete(key: string): Promise<boolean> {
-    this.unregisterTags(`seg:${key}`);
+    const prefixedKey = `seg:${key}`;
+    this.unregisterTags(prefixedKey);
+    this.revalidationClaims.delete(prefixedKey);
     return this.cache.delete(key);
   }
 
@@ -325,28 +362,34 @@ export class MemorySegmentCacheStore<
     this.shellCache.clear();
     this.tagIndex.clear();
     this.keyTags.clear();
+    this.tagInvalidatedAt.clear();
+    this.revalidationClaims.clear();
   }
 
-  async getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+  async getResponse(key: string): Promise<CacheResponseResult | null> {
     const cached = this.responseCache.get(key);
     if (!cached) return null;
 
     if (Date.now() > cached.expiresAt) {
-      this.unregisterTags(`res:${key}`);
+      const prefixedKey = `res:${key}`;
+      this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
       this.responseCache.delete(key);
       return null;
     }
 
     const isStale = cached.staleAt > 0 && Date.now() > cached.staleAt;
+    const revalidationClaimed =
+      isStale && this.claimRevalidation(`res:${key}`, cached.expiresAt);
     const headers = new Headers(cached.headers);
     return {
       response: new Response(cached.body, {
         status: cached.status,
         headers,
       }),
-      shouldRevalidate: isStale,
+      freshness: isStale ? "stale" : "fresh",
+      revalidationClaimed,
+      tags: cached.tags,
     };
   }
 
@@ -356,7 +399,7 @@ export class MemorySegmentCacheStore<
     ttl: number,
     swr?: number,
     tags?: string[],
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     try {
       const body = await response.clone().arrayBuffer();
       const headers: [string, string][] = [];
@@ -370,6 +413,7 @@ export class MemorySegmentCacheStore<
 
       const prefixedKey = `res:${key}`;
       this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
       this.evictIfNeeded(this.responseCache, key, "res");
       this.responseCache.set(key, {
         body,
@@ -377,16 +421,19 @@ export class MemorySegmentCacheStore<
         headers,
         expiresAt,
         staleAt,
+        tags,
       });
       if (tags && tags.length > 0) {
         this.registerTags(tags, prefixedKey);
       }
+      return { outcome: "stored" };
     } catch (error) {
       reportCacheError(
         error,
         "cache-write",
         "[MemorySegmentCacheStore] putResponse",
       );
+      return { outcome: "failed" };
     }
   }
 
@@ -396,16 +443,21 @@ export class MemorySegmentCacheStore<
 
     const now = Date.now();
     if (now > cached.expiresAt) {
-      this.unregisterTags(`item:${key}`);
+      const prefixedKey = `item:${key}`;
+      this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
       this.itemCache.delete(key);
       return null;
     }
 
     const isStale = now > cached.staleAt;
+    const revalidationClaimed =
+      isStale && this.claimRevalidation(`item:${key}`, cached.expiresAt);
     return {
       value: cached.value,
       handles: cached.handles,
-      shouldRevalidate: isStale,
+      freshness: isStale ? "stale" : "fresh",
+      revalidationClaimed,
       tags: cached.tags,
     };
   }
@@ -414,12 +466,13 @@ export class MemorySegmentCacheStore<
     key: string,
     value: string,
     options?: CacheItemOptions,
-  ): Promise<void> {
+  ): Promise<CacheWriteAcknowledgement> {
     const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
     const prefixedKey = `item:${key}`;
     this.unregisterTags(prefixedKey);
+    this.revalidationClaims.delete(prefixedKey);
     this.evictIfNeeded(this.itemCache, key, "item");
     this.itemCache.set(key, {
       value,
@@ -431,25 +484,38 @@ export class MemorySegmentCacheStore<
     if (options?.tags && options.tags.length > 0) {
       this.registerTags(options.tags, prefixedKey);
     }
+    return { outcome: "stored" };
   }
 
   async getShell(
     key: string,
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    options?: { claimRevalidation?: boolean },
+  ): Promise<CacheShellResult | null> {
     const cached = this.shellCache.get(key);
     if (!cached) return null;
 
     const now = Date.now();
     if (now > cached.expiresAt) {
-      this.unregisterTags(`shell:${key}`);
+      const prefixedKey = `shell:${key}`;
+      this.unregisterTags(prefixedKey);
+      this.revalidationClaims.delete(prefixedKey);
       this.shellCache.delete(key);
       return null;
     }
 
-    // SWR mirrors the item family: stale within the swr window still serves, and
-    // signals shouldRevalidate so the middleware schedules a background recapture.
-    const shouldRevalidate = cached.staleAt > 0 && now > cached.staleAt;
-    return { entry: cached.entry, shouldRevalidate };
+    // SWR mirrors the item family: stale within the window still serves. Passive
+    // shell reads surface staleness without claiming a background recapture.
+    const isStale = cached.staleAt > 0 && now > cached.staleAt;
+    const revalidationClaimed =
+      isStale &&
+      options?.claimRevalidation !== false &&
+      this.claimRevalidation(`shell:${key}`, cached.expiresAt);
+    return {
+      entry: cached.entry,
+      freshness: isStale ? "stale" : "fresh",
+      revalidationClaimed,
+      tags: cached.tags,
+    };
   }
 
   async putShell(
@@ -458,25 +524,26 @@ export class MemorySegmentCacheStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated"> {
+  ): Promise<CacheWriteAcknowledgement> {
     if (
       tags &&
       tags.length > 0 &&
       this.tagsInvalidatedSince(tags, entry.createdAt)
     ) {
-      return "invalidated";
+      return { outcome: "skipped", reason: "invalidated-generation" };
     }
     const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
     const prefixedKey = `shell:${key}`;
     this.unregisterTags(prefixedKey);
+    this.revalidationClaims.delete(prefixedKey);
     this.evictIfNeeded(this.shellCache, key, "shell");
     this.shellCache.set(key, { entry, expiresAt, staleAt, tags });
     if (tags && tags.length > 0) {
       this.registerTags(tags, prefixedKey);
     }
-    return "stored";
+    return { outcome: "stored" };
   }
 
   async isTagsInvalidatedSince(
@@ -523,6 +590,7 @@ export class MemorySegmentCacheStore<
         }
 
         this.unregisterTags(prefixedKey);
+        this.revalidationClaims.delete(prefixedKey);
       }
     }
   }
@@ -573,5 +641,7 @@ export class MemorySegmentCacheStore<
     delete (globalThis as any)[SHELL_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[TAG_INDEX_REGISTRY_KEY];
     delete (globalThis as any)[KEY_TAGS_REGISTRY_KEY];
+    delete (globalThis as any)[TAG_INVALIDATED_AT_REGISTRY_KEY];
+    delete (globalThis as any)[REVALIDATION_CLAIMS_REGISTRY_KEY];
   }
 }

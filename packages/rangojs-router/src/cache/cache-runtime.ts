@@ -53,6 +53,12 @@ import {
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
 import type { CacheItemResult } from "./types.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagObservationDiagnostic,
+  type CacheTagProvenance,
+} from "../router/diagnostics/channel.js";
 
 /**
  * DJB2 hash returning an 8-char hex string. Deterministic across runtimes
@@ -227,6 +233,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 ): T {
   const wrapped = async function (this: any, ...args: any[]): Promise<any> {
     const requestCtx = getRequestContext();
+    const diagnosticLink = getDevelopmentDiagnosticLink();
     const store = requestCtx?._cacheStore;
     const resolvedProfileName = profileName || "default";
 
@@ -261,6 +268,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Still record the runtime tags into the request set so a cacheTag() in an
       // uncached function tags the document, even with no item-capable store.
       recordRequestTags(scoped.tags, requestCtx);
+      if (scoped.tags.size > 0) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "bypass",
+          provenance: ["runtime"],
+          tags: scoped.tags,
+          outcome: id,
+        });
+      }
       return result;
     }
 
@@ -366,6 +382,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       const result = await scoped.result;
       recordRequestTags(scoped.tags, requestCtx);
+      if (scoped.tags.size > 0) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "bypass",
+          provenance: ["runtime"],
+          tags: scoped.tags,
+          outcome: id,
+        });
+      }
       return result;
     }
 
@@ -378,7 +403,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // tags are only available from the stored entry). Shared by the fresh-hit
     // and stale-hit branches; the only divergence is the stale branch scheduling
     // background revalidation, which it does after this returns.
-    const serveCached = async (entry: CacheItemResult): Promise<any> => {
+    const serveCached = async (
+      entry: CacheItemResult,
+      phase: "hit" | "stale",
+      recordStoredTags: boolean = true,
+    ): Promise<any> => {
       const result = await deserializeResult(entry.value);
       if (entry.handles && hasTaintedArgs) {
         const handleStore = requestCtx?._handleStore;
@@ -388,13 +417,23 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         }
       }
       recordRequestTags(entry.tags, requestCtx);
+      if (recordStoredTags && entry.tags?.length) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase,
+          provenance: ["stored"],
+          tags: entry.tags,
+          identity: cacheKey,
+          outcome: id,
+        });
+      }
       return result;
     };
 
-    if (cached && !cached.shouldRevalidate) {
+    if (cached?.freshness === "fresh") {
       // Fresh hit: deserialize and return
       try {
-        return await serveCached(cached);
+        return await serveCached(cached, "hit");
       } catch (error) {
         // The stored value is corrupt/partial (failed RSC deserialize). Report
         // it, then fall through to fresh execution - the miss path below re-runs
@@ -413,112 +452,138 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const foregroundOnActionRevalidation =
       requestCtx?._inActionRevalidation === true &&
       profile.foregroundOnAction === true;
-    if (cached?.shouldRevalidate && !foregroundOnActionRevalidation) {
+    if (cached?.freshness === "stale" && !foregroundOnActionRevalidation) {
       // Stale hit: return stale value, revalidate in background
       try {
-        const result = await serveCached(cached);
-        // Background revalidation — must capture handles if tainted args present.
-        runBackground(requestCtx, async () => {
-          // The background body runs under a DERIVED context with an OWN
-          // _handleStore (the shell-capture isolation pattern —
-          // shell-capture.ts attemptCapture): its handle pushes land in the
-          // isolated store (captured below, persisted with the entry) while
-          // the foreground keeps pushing into the ORIGINAL store, untouched.
-          // Derivation matters because the foreground is STILL RENDERING here
-          // — runBackground/waitUntil starts the task on the next microtask,
-          // not after the response. The previous shape swapped
-          // requestCtx._handleStore in place (restore in finally), which
-          // routed the whole overlap window's foreground pushes into the
-          // background store: lost from the live document AND persisted into
-          // the revalidated entry (issue #684, plan 010).
-          const bgHandleStore =
-            hasTaintedArgs && requestCtx ? createHandleStore() : undefined;
-          const bgCtx: typeof requestCtx = bgHandleStore
-            ? Object.assign(Object.create(requestCtx), {
-                _handleStore: bgHandleStore,
-              })
-            : requestCtx;
-          let bgCapture: HandleCapture | undefined;
-          let bgStopCapture: (() => void) | undefined;
-          if (bgHandleStore) {
-            const c = startHandleCapture(bgHandleStore);
-            bgCapture = c.capture;
-            bgStopCapture = c.stop;
-          }
+        const result = await serveCached(cached, "stale");
+        // Only the reader that acquired the store's SWR lock owns background work.
+        if (cached.revalidationClaimed)
+          runBackground(requestCtx, async () => {
+            // The background body runs under a DERIVED context with an OWN
+            // _handleStore (the shell-capture isolation pattern —
+            // shell-capture.ts attemptCapture): its handle pushes land in the
+            // isolated store (captured below, persisted with the entry) while
+            // the foreground keeps pushing into the ORIGINAL store, untouched.
+            // Derivation matters because the foreground is STILL RENDERING here
+            // — runBackground/waitUntil starts the task on the next microtask,
+            // not after the response. The previous shape swapped
+            // requestCtx._handleStore in place (restore in finally), which
+            // routed the whole overlap window's foreground pushes into the
+            // background store: lost from the live document AND persisted into
+            // the revalidated entry (issue #684, plan 010).
+            const bgHandleStore =
+              hasTaintedArgs && requestCtx ? createHandleStore() : undefined;
+            const bgCtx: typeof requestCtx = bgHandleStore
+              ? Object.assign(Object.create(requestCtx), {
+                  _handleStore: bgHandleStore,
+                })
+              : requestCtx;
+            let bgCapture: HandleCapture | undefined;
+            let bgStopCapture: (() => void) | undefined;
+            if (bgHandleStore) {
+              const c = startHandleCapture(bgHandleStore);
+              bgCapture = c.capture;
+              bgStopCapture = c.stop;
+            }
 
-          // Tainted args are NOT stamped here, in contrast to the foreground
-          // miss path below. The args include the live HandlerContext the
-          // still-rendering foreground holds, and INSIDE_CACHE_EXEC is a
-          // property stamped onto that SHARED object — so for the whole
-          // revalidation window a concurrent foreground ctx.set() /
-          // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
-          // not stamped for the same reason. In-fn misuse is already caught
-          // by the miss path's stamps on the function's FIRST execution — the
-          // background re-runs the same function with the same request.
+            // Tainted args are NOT stamped here, in contrast to the foreground
+            // miss path below. The args include the live HandlerContext the
+            // still-rendering foreground holds, and INSIDE_CACHE_EXEC is a
+            // property stamped onto that SHARED object — so for the whole
+            // revalidation window a concurrent foreground ctx.set() /
+            // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
+            // not stamped for the same reason. In-fn misuse is already caught
+            // by the miss path's stamps on the function's FIRST execution — the
+            // background re-runs the same function with the same request.
 
-          try {
-            // Re-establish the request-context ALS so a "use cache" body that
-            // reads the ambient getRequestContext() (e.g.
-            // getRequestContext().env.ApiKey) resolves during the background
-            // revalidation instead of throwing "called outside of a request
-            // context". runWithRequestContext sets the store for fn's
-            // synchronous kickoff; its async continuations inherit it. The
-            // DERIVED context goes in, so ambient _handleStore reads inside
-            // the body resolve to the isolated store.
-            //
-            // The span opens inside the request ALS and wraps the WHOLE task —
-            // fn kickoff through the store write — so its platform spans nest
-            // under rango.background and a slow or failing setItem is part of
-            // the traced revalidation, not an untraced tail.
-            await runWithRequestContext(bgCtx, () =>
-              observePhase(
-                PHASES.background("use-cache-revalidation"),
-                async () => {
-                  const scoped = runWithCacheTagScope(() =>
-                    fn.apply(this, args),
-                  );
-                  const freshResult = await scoped.result;
-                  bgStopCapture?.();
-                  // Merge profile/DSL tags with runtime cacheTag() tags, read
-                  // after awaiting so post-await cacheTag() calls are included.
-                  // Normalize (drops empty profile tags, matching the
-                  // invalidate path) + dedupe.
-                  const freshTags = [
-                    ...new Set(
-                      normalizeTags([...(profile.tags ?? []), ...scoped.tags]),
-                    ),
-                  ];
-                  recordRequestTags(freshTags, requestCtx);
-                  const serialized = await serializeResult(freshResult);
-                  if (serialized !== null) {
-                    const encodedHandles = bgCapture?.data
-                      ? await encodeHandles(bgCapture.data)
-                      : undefined;
-                    await store.setItem!(cacheKey, serialized, {
-                      handles: encodedHandles,
-                      ttl: profile.ttl,
-                      swr: profile.swr,
-                      tags: freshTags.length > 0 ? freshTags : undefined,
-                    });
-                  }
-                },
-              ),
-            );
-          } catch (bgError) {
-            bgStopCapture?.();
-            // Pass requestCtx explicitly: this runs in a detached background
-            // task where the ALS context is gone, so onError can only fire if
-            // we hand it the context captured up front.
-            reportCacheError(
-              bgError,
-              "stale-revalidation",
-              "[use cache] background revalidation failed",
-              requestCtx,
-            );
-          }
-          // No finally: nothing shared was mutated — the derived context and
-          // its handle store are garbage after the task settles.
-        });
+            try {
+              // Re-establish the request-context ALS so a "use cache" body that
+              // reads the ambient getRequestContext() (e.g.
+              // getRequestContext().env.ApiKey) resolves during the background
+              // revalidation instead of throwing "called outside of a request
+              // context". runWithRequestContext sets the store for fn's
+              // synchronous kickoff; its async continuations inherit it. The
+              // DERIVED context goes in, so ambient _handleStore reads inside
+              // the body resolve to the isolated store.
+              // The span opens inside the request ALS and wraps the WHOLE task,
+              // including serialization and the store write.
+              await runWithRequestContext(bgCtx, () =>
+                observePhase(
+                  PHASES.background("use-cache-revalidation"),
+                  async () => {
+                    const scoped = runWithCacheTagScope(() =>
+                      fn.apply(this, args),
+                    );
+                    const freshResult = await scoped.result;
+                    bgStopCapture?.();
+                    // Merge profile/DSL tags with runtime cacheTag() tags, read
+                    // after awaiting so post-await cacheTag() calls are included.
+                    const freshTags = [
+                      ...new Set(
+                        normalizeTags([
+                          ...(profile.tags ?? []),
+                          ...scoped.tags,
+                        ]),
+                      ),
+                    ];
+                    recordRequestTags(freshTags, requestCtx);
+                    const serialized = await serializeResult(freshResult);
+                    if (serialized !== null) {
+                      const encodedHandles = bgCapture?.data
+                        ? await encodeHandles(bgCapture.data)
+                        : undefined;
+                      const acknowledgement = await store.setItem!(
+                        cacheKey,
+                        serialized,
+                        {
+                          handles: encodedHandles,
+                          ttl: profile.ttl,
+                          swr: profile.swr,
+                          tags: freshTags.length > 0 ? freshTags : undefined,
+                        },
+                      );
+                      if (
+                        diagnosticLink &&
+                        freshTags.length > 0 &&
+                        (acknowledgement.outcome === "stored" ||
+                          acknowledgement.outcome === "scheduled")
+                      ) {
+                        const provenance: CacheTagProvenance[] = [];
+                        if (profile.tags?.length) {
+                          provenance.push("static-policy");
+                        }
+                        if (scoped.tags.size > 0) provenance.push("runtime");
+                        recordLinkedCacheTagObservationDiagnostic(
+                          diagnosticLink,
+                          {
+                            artifact: "function",
+                            phase: "write",
+                            provenance,
+                            tags: freshTags,
+                            identity: cacheKey,
+                            outcome: id,
+                          },
+                        );
+                      }
+                    }
+                  },
+                ),
+              );
+            } catch (bgError) {
+              bgStopCapture?.();
+              // Pass requestCtx explicitly: this runs in a detached background
+              // task where the ALS context is gone, so onError can only fire if
+              // we hand it the context captured up front.
+              reportCacheError(
+                bgError,
+                "stale-revalidation",
+                "[use cache] background revalidation failed",
+                requestCtx,
+              );
+            }
+            // No finally: nothing shared was mutated — the derived context and
+            // its handle store are garbage after the task settles.
+          });
         return result;
       } catch (error) {
         // Stale value is corrupt/partial; report and fall through to a fresh
@@ -551,12 +616,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
       if (envelope) {
         try {
-          return await serveCached({
-            value: envelope.serialized,
-            handles: envelope.handles,
-            tags: envelope.tags,
-            shouldRevalidate: false,
-          });
+          return await serveCached(
+            {
+              value: envelope.serialized,
+              handles: envelope.handles,
+              tags: envelope.tags,
+              freshness: "fresh",
+              revalidationClaimed: false,
+            },
+            "hit",
+            false,
+          );
         } catch (error) {
           reportCacheError(
             error,
@@ -677,6 +747,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
       clearSelf();
       if (serialized === null) {
+        if (diagnosticLink && allTags.length > 0) {
+          const provenance: CacheTagProvenance[] = [];
+          if (profile.tags?.length) provenance.push("static-policy");
+          if (scoped!.tags.size > 0) provenance.push("runtime");
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "function",
+            phase: "bypass",
+            provenance,
+            tags: allTags,
+            outcome: id,
+          });
+        }
         // Non-serializable result: no store write (matches the prior silent
         // skip); reject so any waiter falls through to a fresh execution.
         rejectEnvelope(
@@ -690,12 +772,30 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // write never stalls them.
       resolveEnvelope({ serialized, tags: allTags, handles: encodedHandles });
       try {
-        await store.setItem!(cacheKey, serialized, {
+        const acknowledgement = await store.setItem!(cacheKey, serialized, {
           handles: encodedHandles,
           ttl: profile.ttl,
           swr: profile.swr,
           tags: allTags.length > 0 ? allTags : undefined,
         });
+        if (
+          diagnosticLink &&
+          allTags.length > 0 &&
+          (acknowledgement.outcome === "stored" ||
+            acknowledgement.outcome === "scheduled")
+        ) {
+          const provenance: CacheTagProvenance[] = [];
+          if (profile.tags?.length) provenance.push("static-policy");
+          if (scoped!.tags.size > 0) provenance.push("runtime");
+          recordLinkedCacheTagObservationDiagnostic(diagnosticLink, {
+            artifact: "function",
+            phase: "write",
+            provenance,
+            tags: allTags,
+            identity: cacheKey,
+            outcome: id,
+          });
+        }
       } catch (writeError) {
         requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }

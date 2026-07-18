@@ -78,11 +78,18 @@ import { nonce as nonceToken } from "./nonce.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagObservationDiagnostic,
+  recordPprDiagnostic,
+  type DevelopmentDiagnosticLink,
+} from "../router/diagnostics/channel.js";
 import type {
   SegmentCacheStore,
   ShellCacheEntry,
   ShellSnapshotRecord,
 } from "../cache/types.js";
+import { isPprEntry } from "../server/context.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
@@ -284,6 +291,7 @@ async function handleRscRenderingInner<TEnv>(
   renderSpan: TraceSpan,
 ): Promise<Response> {
   const reqCtx = getRequestContext();
+  const requestDiagnosticLink = getDevelopmentDiagnosticLink();
 
   let payload: RscPayload;
   let hasInterceptSlots = false;
@@ -300,14 +308,23 @@ async function handleRscRenderingInner<TEnv>(
   let pprMiss: {
     descriptor: ShellCaptureDescriptor;
     ssrModule: SSRModule;
+    reason: string;
   } | null = null;
-  if (
+  const isPprDocumentRequest =
     !isPartial &&
     request.method === "GET" &&
     !url.searchParams.has("__prerender_collect") &&
-    !isRscRequest(request, url, false) &&
-    !reqCtx._dynamic
-  ) {
+    !isRscRequest(request, url, false);
+  if (requestDiagnosticLink && isPprDocumentRequest && reqCtx._dynamic) {
+    const manifestEntry = reqCtx._classifiedRoute?.manifestEntry;
+    if (manifestEntry && isPprEntry(manifestEntry)) {
+      recordPprDiagnostic("document", {
+        outcome: "bypass",
+        reason: "dynamic",
+      });
+    }
+  }
+  if (isPprDocumentRequest && !reqCtx._dynamic) {
     const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
     if (pprConfig) {
       // A per-request CSP nonce pins the route to axis 1: a shared shell would
@@ -357,10 +374,18 @@ async function handleRscRenderingInner<TEnv>(
         // undeclared route, which is silent): a ppr route gated off by an active
         // per-request nonce warns once per key. Axis 1 after the warning.
         warnPprNonceActiveOnce(key);
+        recordPprDiagnostic("document", {
+          outcome: "bypass",
+          reason: "nonce",
+        });
       } else if (!hasShellFamily(store)) {
         // Declared intent that cannot be honored deserves a diagnostic (unlike an
         // undeclared route, which is silent). Axis 1 after the warning.
         warnShellStoreMissingOnce(key);
+        recordPprDiagnostic("document", {
+          outcome: "bypass",
+          reason: "store-unavailable",
+        });
       } else {
         // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
         // streaming, so bots/SEO crawlers get one complete axis-1 document.
@@ -387,8 +412,16 @@ async function handleRscRenderingInner<TEnv>(
           // recapture when asked, then commit the composed response.
           const serveHit = (
             entry: ShellCacheEntry,
-            revalidate: boolean | undefined,
+            freshness: "fresh" | "stale",
+            revalidate: boolean,
+            source: "runtime" | "build",
           ): Response => {
+            recordPprDiagnostic("document", {
+              outcome: "hit",
+              freshness,
+              source,
+              backgroundCaptureRequested: revalidate === true,
+            });
             if (revalidate) {
               scheduleShellCapture(
                 ctx,
@@ -398,6 +431,7 @@ async function handleRscRenderingInner<TEnv>(
                 reqCtx,
                 ssrModule,
                 descriptor,
+                requestDiagnosticLink,
               );
             }
             return serveShellHit(
@@ -410,15 +444,18 @@ async function handleRscRenderingInner<TEnv>(
               ssrModule,
               entry,
               descriptor,
+              requestDiagnosticLink,
             );
           };
           let cached: Awaited<ReturnType<typeof store.getShell>> = null;
+          let missReason = "no-entry";
           const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
           try {
             cached = await store.getShell(key);
           } catch (error) {
             // A failing store read degrades to axis 1 (MISS), never a 500.
             reportCacheError(error, "cache-read", "[ShellServe] getShell");
+            missReason = "read-error";
           }
           if (reqCtx._metricsStore) {
             // Raw store outcome (pre-validity-gates), so a version-mismatch
@@ -450,11 +487,30 @@ async function handleRscRenderingInner<TEnv>(
                 "cache-read",
                 "[ShellServe] getShell",
               );
+              missReason = "corrupt-entry";
             } else {
               // Stale (SWR) hit: serve the stale shell now, recapture in the
               // background (stampede-guarded + backoff inside scheduleShellCapture).
-              return serveHit(cached.entry, cached.shouldRevalidate);
+              if (cached.tags?.length) {
+                recordCacheTagObservationDiagnostic({
+                  artifact: "runtime-shell",
+                  phase: cached.freshness === "stale" ? "stale" : "hit",
+                  provenance: ["stored"],
+                  tags: cached.tags,
+                  identity: key,
+                });
+              }
+              return serveHit(
+                cached.entry,
+                cached.freshness,
+                cached.revalidationClaimed,
+                "runtime",
+              );
             }
+          } else if (cached) {
+            missReason = cached.entry.navigationOnly
+              ? "navigation-only-entry"
+              : "invalid-version";
           }
           // Build-time shell read-through (producer B, #699): on a runtime
           // store MISS a Prerender+ppr route serves its `vite build`-baked
@@ -475,11 +531,24 @@ async function handleRscRenderingInner<TEnv>(
           );
           if (buildHit) {
             // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
-            return serveHit(buildHit.entry, buildHit.stale);
+            return serveHit(
+              buildHit.entry,
+              buildHit.stale ? "stale" : "fresh",
+              buildHit.stale,
+              "build",
+            );
           }
           // MISS (no entry, invalid reactVersion, or store read failure): axis 1
           // + a background capture scheduled once the response is known servable.
-          pprMiss = { descriptor, ssrModule };
+          pprMiss = { descriptor, ssrModule, reason: missReason };
+        } else {
+          recordPprDiagnostic("document", {
+            outcome: "bypass",
+            reason:
+              streamMode === "allReady"
+                ? "all-ready"
+                : "ssr-module-unsupported",
+          });
         }
       }
     }
@@ -683,22 +752,36 @@ async function handleRscRenderingInner<TEnv>(
   // Capture only a 200 HTML document (a 404/error render is not a cacheable
   // shell). Capture does not flow through the HTTP pipeline — middleware never
   // re-runs (it already ran for this request; guarding is serve-time).
-  if (pprMiss && !reqCtx._dynamic) {
-    if (
-      response.status === 200 &&
-      (response.headers.get("content-type") ?? "").includes("text/html")
-    ) {
-      scheduleShellCapture(
-        ctx,
-        request,
-        env,
-        url,
-        reqCtx,
-        pprMiss.ssrModule,
-        pprMiss.descriptor,
-      );
+  if (pprMiss) {
+    if (reqCtx._dynamic) {
+      recordPprDiagnostic("document", {
+        outcome: "bypass",
+        reason: "dynamic",
+      });
+    } else {
+      const captureScheduled =
+        response.status === 200 &&
+        (response.headers.get("content-type") ?? "").includes("text/html");
+      if (captureScheduled) {
+        scheduleShellCapture(
+          ctx,
+          request,
+          env,
+          url,
+          reqCtx,
+          pprMiss.ssrModule,
+          pprMiss.descriptor,
+          requestDiagnosticLink,
+        );
+      }
+      recordPprDiagnostic("document", {
+        outcome: "miss",
+        reason: pprMiss.reason,
+        source: "runtime",
+        backgroundCaptureRequested: captureScheduled,
+      });
+      response.headers.set(SHELL_STATUS_HEADER, "MISS");
     }
-    response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
 
   if (
@@ -733,7 +816,12 @@ async function handleRscRenderingInner<TEnv>(
         store,
         true,
       ),
+      requestDiagnosticLink,
     );
+    recordPprDiagnostic("navigation-replay", {
+      outcome: "capture-requested",
+      navigationOnly: true,
+    });
   }
 
   return response;
@@ -770,6 +858,18 @@ async function matchPartialWithPprReplay<TEnv>(
   const finalizeReplayStatus = (status: PprReplayStatus): PprReplayStatus => {
     const finalStatus = reclassifyReplayStatus(reqCtx, status);
     recordReplayStatus(finalStatus);
+    recordPprDiagnostic(
+      "navigation-replay",
+      finalStatus.outcome === "HIT"
+        ? {
+            outcome: "hit",
+            freshness: finalStatus.freshness,
+          }
+        : {
+            outcome: "bypass",
+            reason: finalStatus.reason,
+          },
+    );
     return finalStatus;
   };
   let armFragments = false;
@@ -907,7 +1007,17 @@ async function matchPartialWithPprReplay<TEnv>(
     if ("snapshot" in decision) {
       snapshot = decision.snapshot;
       snapshotStoreKey = key;
-      freshness = cached.shouldRevalidate ? "stale" : "fresh";
+      freshness = cached.freshness;
+      if (cached.tags?.length) {
+        recordCacheTagObservationDiagnostic({
+          artifact: "runtime-shell",
+          phase: freshness === "stale" ? "stale" : "hit",
+          provenance: ["stored"],
+          tags: cached.tags,
+          identity: key,
+          outcome: "navigation-replay",
+        });
+      }
     } else {
       bypassReason = decision.reason;
     }
@@ -935,7 +1045,17 @@ async function matchPartialWithPprReplay<TEnv>(
       if ("snapshot" in decision) {
         snapshot = decision.snapshot;
         snapshotStoreKey = navigationKey;
-        freshness = navigationCached.shouldRevalidate ? "stale" : "fresh";
+        freshness = navigationCached.freshness;
+        if (navigationCached.tags?.length) {
+          recordCacheTagObservationDiagnostic({
+            artifact: "runtime-shell",
+            phase: freshness === "stale" ? "stale" : "hit",
+            provenance: ["stored"],
+            tags: navigationCached.tags,
+            identity: navigationKey,
+            outcome: "navigation-replay",
+          });
+        }
       } else {
         bypassReason = decision.reason;
       }
@@ -1161,6 +1281,7 @@ function serveShellHit(
   ssrModule: SSRModule,
   entry: ShellCacheEntry,
   descriptor: ShellCaptureDescriptor,
+  requestDiagnosticLink: DevelopmentDiagnosticLink | null,
 ): Response {
   const preludeBytes = base64ToBytes(entry.prelude);
   // Per-stage tail timing for the dev `ppr:tail` Server-Timing mirror. Dev
@@ -1424,6 +1545,7 @@ function serveShellHit(
           reqCtx,
           ssrModule,
           descriptor,
+          requestDiagnosticLink,
         );
         if (tailTiming) {
           tailTiming.outcome = "error";

@@ -644,6 +644,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "install-the-rango-agent-skill",
+        "text": "Install the Rango agent skill"
+      },
+      {
+        "depth": 2,
         "id": "typed-environment",
         "text": "Typed environment"
       },
@@ -949,8 +954,8 @@ export const pageMeta: PageMeta[] = [
     "toc": [
       {
         "depth": 2,
-        "id": "quick-look-in-the-browser",
-        "text": "Quick look in the browser"
+        "id": "inspect-a-running-app-first",
+        "text": "Inspect a running app first"
       },
       {
         "depth": 2,
@@ -1367,6 +1372,11 @@ export const pageMeta: PageMeta[] = [
     "slug": "rango/guides/migrate-from-nextjs",
     "title": "Migrate from Next.js",
     "toc": [
+      {
+        "depth": 2,
+        "id": "replace-nextjs-agent-rules",
+        "text": "Replace Next.js agent rules"
+      },
       {
         "depth": 2,
         "id": "replace-imports--never-shim-next",
@@ -2405,6 +2415,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "prefetchcachettl",
         "text": "prefetchCacheTTL"
+      },
+      {
+        "depth": 2,
+        "id": "defaultprefetch",
+        "text": "defaultPrefetch"
       },
       {
         "depth": 2,

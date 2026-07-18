@@ -91,7 +91,8 @@ jobs:
   # and the e2e test-app with RANGO_ANALYZE=1, then asserts (1) no server-only
   # module contributes bytes to any client bundle beyond the allowlist in
   # tools/check-bundle-guards.mjs, (2) the client router chunk gzip ratchet,
-  # (3) the stress-demo eager routes-manifest ceiling.
+  # (3) the stress-demo eager routes-manifest ceiling, and (4) no development
+  # diagnostic implementation remains in production chunks.
   bundle-guards:
     needs: [debounce]
     runs-on: ubuntu-latest

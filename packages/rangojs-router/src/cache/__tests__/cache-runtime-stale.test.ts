@@ -68,6 +68,8 @@ vi.mock("../../internal-debug.js", () => ({
   INTERNAL_RANGO_DEBUG: false,
 }));
 
+const STORED = { outcome: "stored" as const };
+
 describe("use cache stale revalidation handle preservation", () => {
   let registerCachedFunction: typeof import("../cache-runtime.js").registerCachedFunction;
 
@@ -99,7 +101,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -136,7 +138,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: staleHandles,
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     // The underlying function pushes handle data when re-executed
@@ -188,7 +191,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -211,7 +214,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: {},
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
       tags: ["products"],
     });
 
@@ -300,7 +304,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -325,7 +329,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: {},
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     // The function reads the taint flag during background execution
@@ -369,7 +374,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const liveHandleStore = {
@@ -393,7 +398,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: {},
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     // Gate the background body open so the overlap window can be inspected.
@@ -448,7 +454,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -468,12 +474,13 @@ describe("use cache stale revalidation handle preservation", () => {
       },
     });
 
-    // Fresh hit (shouldRevalidate: false)
+    // Fresh hit does not own revalidation.
     const freshHandles = { seg1: { breadcrumbs: ["Cached"] } };
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("cached-result"),
       handles: freshHandles,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
     });
 
     const fn = async (_ctx: any) => "should-not-run";
@@ -496,7 +503,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("miss path captures and stores handles", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null), // Cache miss
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -532,7 +539,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("concurrent cache misses sharing the same ctx keep the guard until all finish", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null), // Cache miss
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -605,7 +612,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const liveHandleStore = {
@@ -630,7 +637,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: {},
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     // Track whether the handle store was swapped during background execution
@@ -663,7 +671,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -690,7 +698,8 @@ describe("use cache stale revalidation handle preservation", () => {
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
       handles: {},
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     const bgError = new Error("revalidation boom");
@@ -755,7 +764,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("produces separate cache entries for different hosts with same pathname/params", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -810,7 +819,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("produces separate cache entries for different route names with same pathname/params", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const mockHandleStore = {
@@ -870,7 +879,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const requestCtxObj: any = {
@@ -908,7 +917,7 @@ describe("use cache stale revalidation handle preservation", () => {
 
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
 
     const requestCtxObj: any = {
@@ -923,7 +932,8 @@ describe("use cache stale revalidation handle preservation", () => {
     // Return stale cache entry
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-theme"),
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     let stampedDuringBgExec = false;
@@ -948,7 +958,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("produces separate cache entries for different response types at the same URL", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     const mockHandleStore = {
       push: vi.fn(),
@@ -991,7 +1001,7 @@ describe("use cache stale revalidation handle preservation", () => {
   it("throws at invocation when the cached function references an unknown profile", async () => {
     const mockStore = {
       getItem: vi.fn().mockResolvedValue(null),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     mockGetRequestContext.mockReturnValue({
       _cacheStore: mockStore,
@@ -1018,7 +1028,7 @@ describe("use cache stale revalidation handle preservation", () => {
     const waitUntilFns: Array<() => Promise<void>> = [];
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     const mockHandleStore = {
       push: vi.fn(),
@@ -1041,7 +1051,8 @@ describe("use cache stale revalidation handle preservation", () => {
     // Stale entry present.
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     let callCount = 0;
@@ -1072,7 +1083,7 @@ describe("use cache stale revalidation handle preservation", () => {
     const waitUntilFns: Array<() => Promise<void>> = [];
     const mockStore = {
       getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
+      setItem: vi.fn().mockResolvedValue(STORED),
     };
     const mockHandleStore = {
       push: vi.fn(),
@@ -1094,7 +1105,8 @@ describe("use cache stale revalidation handle preservation", () => {
 
     mockStore.getItem.mockResolvedValueOnce({
       value: JSON.stringify("stale-result"),
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: true,
     });
 
     let callCount = 0;

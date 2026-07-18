@@ -76,6 +76,12 @@
       "path": "skills/deployment-caching/SKILL.md"
     },
     {
+      "name": "dev-loop",
+      "description": "Run an evidence-driven Rango development loop after an edit. Use when verifying a route, loader, action, cache, or rendering change with browser behavior and MCP request diagnostics, or when local output may be stale or ambiguous.",
+      "argumentHint": "[route-or-test]",
+      "path": "skills/dev-loop/SKILL.md"
+    },
+    {
       "name": "document-cache",
       "description": "Cache complete HTTP responses in Rango's configured app store with createDocumentCacheMiddleware, using Cache-Control s-maxage as policy. Use when reusing a whole HTML/RSC response, comparing the store-backed middleware with a platform CDN cache, or deciding whether full-response caching is safe.",
       "argumentHint": "[setup]",
@@ -196,6 +202,18 @@
       "path": "skills/react-compiler/SKILL.md"
     },
     {
+      "name": "render-cache-adoption",
+      "description": "Adopt Rango segment cache and PPR without freezing live request data. Use when adding cache() or ppr to a route, deciding which rendered artifact to reuse, or diagnosing a cache hit that changed loader or middleware semantics.",
+      "argumentHint": "[route]",
+      "path": "skills/render-cache-adoption/SKILL.md"
+    },
+    {
+      "name": "render-cache-optimizer",
+      "description": "Optimize a semantically correct Rango cached route with measured browser and MCP evidence. Use when warm documents or soft navigations still do unnecessary handler work, useful shell output is late, or loading flashes remain after cache adoption.",
+      "argumentHint": "[route]",
+      "path": "skills/render-cache-optimizer/SKILL.md"
+    },
+    {
       "name": "response-routes",
       "description": "Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.",
       "argumentHint": "[json|text|html|xml|md|image|stream]",
@@ -230,6 +248,12 @@
       "description": "Shell manifest pattern — replayed handles as cache metadata that live loaders read, e.g. a prerendered product list with batched live prices. Use when a cached/prerendered shell needs to feed IDs or metadata to a live loader for freshly-fetched data.",
       "argumentHint": "",
       "path": "skills/shell-manifest/SKILL.md"
+    },
+    {
+      "name": "stale-data-debugger",
+      "description": "Diagnose stale Rango UI data across loader lanes, cache freshness, tags, revalidation, and client reuse. Use when a mutation succeeds but the page stays stale, one user sees an old value, or invalidation appears ineffective.",
+      "argumentHint": "[route-or-action]",
+      "path": "skills/stale-data-debugger/SKILL.md"
     },
     {
       "name": "streams-and-websockets",

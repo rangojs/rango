@@ -48,6 +48,10 @@ import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
+  isDevelopmentDiagnosticsEnabled,
+  recordLoaderRegistrationDiagnostic,
+} from "../diagnostics/channel.js";
+import {
   track,
   RangoContext,
   runInsideLoaderScope,
@@ -128,6 +132,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+  // PPR lane decision, same rule as the fresh funnel (fresh.ts): an entry
+  // without renderable loading() puts its loaders on the BAKE lane. The key
+  // must thread through EVERY resolveLoaderData funnel — omitting it here made
+  // a capture-active context whole-container-mask every loader on this path
+  // (a never-settling promise for a loader that should have executed).
+  // Outside capture the key only activates the _shellLoaderSeed overlay,
+  // which document-only serveShellHit seeds — inert for partial requests.
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
     loaderEntry,
@@ -136,6 +148,25 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     segmentId: `${shortCode}D${i}.${loaderEntry.loader.$$id}`,
     index: i,
   }));
+
+  if (isDevelopmentDiagnosticsEnabled()) {
+    for (const { loaderEntry, segmentId } of loaderMeta) {
+      recordLoaderRegistrationDiagnostic(
+        {
+          loaderId: loaderEntry.loader.$$id,
+          registeredBy: entry.id,
+          lane: bakeLane ? "baked" : "live",
+          boundary: bakeLane ? "none" : "loading",
+          dataCache: !loaderEntry.cache
+            ? "none"
+            : loaderEntry.cache.options === false
+              ? "disabled"
+              : "configured",
+        },
+        segmentId,
+      );
+    }
+  }
 
   const matchedIds = loaderMeta.map((m) => m.segmentId);
 
@@ -206,15 +237,6 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // Partial (revalidation) render path: a throwing DSL loader must still fire
   // onError/loader.error. isPartial flags the reporting phase accordingly.
   const errorContext = { ...buildLoaderErrorContext(ctx), isPartial: true };
-
-  // PPR lane decision, same rule as the fresh funnel (fresh.ts): an entry
-  // without renderable loading() puts its loaders on the BAKE lane. The key
-  // must thread through EVERY resolveLoaderData funnel — omitting it here made
-  // a capture-active context whole-container-mask every loader on this path
-  // (a never-settling promise for a loader that should have executed).
-  // Outside capture the key only activates the _shellLoaderSeed overlay,
-  // which document-only serveShellHit seeds — inert for partial requests.
-  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(

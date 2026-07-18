@@ -1,7 +1,7 @@
 ---
 name: loader
 description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.
-argument-hint: [loader]
+argument-hint: "[loader]"
 ---
 
 # Data Loaders with loader()
@@ -288,6 +288,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 > cache decides hit/miss/ttl/swr independently and never reads `revalidate()`.
 > Caching a loader is a separate, opt-in step (`loader(Fn, () => [cache({...})])`).
 > See `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
+
+The callback can still observe freshness without controlling it. `stale` is
+true for a browser `_rsc_stale` signal; route/layout/parallel predicates also
+see it when their retained segment-cache value is stale. Every stale reader
+sees that fact, independently of which reader owns background revalidation.
+Loader predicates see only the browser signal because loaders are not stored
+in the surrounding segment-cache entry.
 
 A `revalidate(fn)` callback can return one of four shapes. The chain
 processes revalidators in order; each call's return controls how the

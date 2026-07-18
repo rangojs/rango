@@ -14,7 +14,7 @@ import {
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
 import { RecordingShellStore } from "../../cache/shell-snapshot.js";
-import type { ShellCacheEntry } from "../../cache/types.js";
+import type { SegmentCacheStore, ShellCacheEntry } from "../../cache/types.js";
 import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
@@ -28,6 +28,14 @@ import { CacheScope } from "../../cache/cache-scope.js";
 import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
+import {
+  getRequestIdentity,
+  runWithRequestTransaction,
+} from "../../router/request-identity.js";
 
 // The drain lazily imports the Flight codec only for SETTLED bake-lane
 // containers; the real module pulls the virtual @vitejs/plugin-rsc import that
@@ -234,7 +242,7 @@ function makePutShell() {
       _ttl?: number,
       _swr?: number,
       _tags?: string[],
-    ) => {},
+    ) => ({ outcome: "stored" as const }),
   );
 }
 
@@ -248,7 +256,9 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 describe("captureAndStoreShell", () => {
-  function makeReqCtx(putShell?: ReturnType<typeof makePutShell>): any {
+  function makeReqCtx(
+    putShell?: NonNullable<SegmentCacheStore["putShell"]>,
+  ): any {
     return {
       _cacheStore: putShell ? { putShell } : undefined,
       _reportBackgroundError: vi.fn(),
@@ -373,7 +383,10 @@ describe("captureAndStoreShell", () => {
     const store = new MemorySegmentCacheStore();
     const reqCtx = makeReqCtx();
     reqCtx._cacheStore = store;
-    const stats: Pick<ShellCaptureDebugEvent, "storeWrite"> = {};
+    const stats: Pick<
+      ShellCaptureDebugEvent,
+      "storeWrite" | "storeWriteReason"
+    > = {};
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const captureStartedAt = Date.now();
     const ssrModule = {
@@ -403,12 +416,38 @@ describe("captureAndStoreShell", () => {
     );
 
     expect(outcome).toBe("refused");
-    expect(stats.storeWrite).toBe("invalidated");
+    expect(stats).toMatchObject({
+      storeWrite: "skipped",
+      storeWriteReason: "invalidated-generation",
+    });
     expect(await store.getShell("/self-invalidating:shell")).toBeNull();
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("store rejected the write"),
     );
     warnSpy.mockRestore();
+  });
+
+  it("reports a transient shell-store failure without classifying it as refused", async () => {
+    const putShell = vi.fn(async () => ({ outcome: "failed" as const }));
+    const reqCtx = makeReqCtx(putShell);
+    const stats: Pick<ShellCaptureDebugEvent, "storeWrite"> & {
+      diagnosticReason?: string;
+    } = {};
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      { key: "/write-failed:shell", buildVersion: "test-build", ttl: 300 },
+      stats,
+    );
+
+    expect(outcome).toBe("write-failed");
+    expect(stats).toMatchObject({
+      storeWrite: "failed",
+      diagnosticReason: "store-write-failed",
+    });
   });
 
   // Identity guard (loader-container-bake): the cookies()/headers() capture
@@ -2227,6 +2266,51 @@ describe("runShellCapture", () => {
     );
 
     expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
+  });
+
+  it("retains the terminal capture outcome without internal render stages", async () => {
+    resetDevelopmentDiagnosticHub();
+    const putShell = makePutShell();
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({ prelude: enc("<body>x</body>"), postponed: null })),
+    );
+    const reqCtx = makeReqCtx();
+    const request = new Request("http://localhost/p");
+
+    try {
+      await runWithRequestTransaction(
+        request,
+        "request",
+        () =>
+          runShellCapture(
+            ctx,
+            request,
+            {},
+            new URL(request.url),
+            reqCtx,
+            ssrModule,
+            {
+              key: "/p:shell",
+              buildVersion: "test-build",
+              store: { putShell } as any,
+            },
+          ),
+        { routerId: "test-router", diagnosticsEnabled: true },
+      );
+
+      const trace = getDevelopmentDiagnosticHub()!.getTrace(
+        getRequestIdentity(request).requestId,
+      )!;
+      expect(trace.events).toEqual([
+        expect.objectContaining({
+          type: "ppr.capture",
+          data: expect.objectContaining({ outcome: "stored" }),
+        }),
+      ]);
+    } finally {
+      resetDevelopmentDiagnosticHub();
+    }
   });
 });
 

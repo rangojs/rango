@@ -1,0 +1,12 @@
+diff --git a/packages/rangojs-router/e2e/test-app/src/urls/revalidation-contract.tsx b/packages/rangojs-router/e2e/test-app/src/urls/revalidation-contract.tsx
+--- a/packages/rangojs-router/e2e/test-app/src/urls/revalidation-contract.tsx
++++ b/packages/rangojs-router/e2e/test-app/src/urls/revalidation-contract.tsx
+@@ -57,7 +57,7 @@ export const revalidationContractPatterns = urls(
+           },
+           () => [
+             // The child reruns after actions; the layout intentionally does not.
+-            revalidate(() => true),
++            revalidate(() => false),
+           ],
+         ),
+       ],

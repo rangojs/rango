@@ -12,7 +12,7 @@
 // src/index.rsc.ts) so this module shares the one interface rather than
 // declaring a second that could drift.
 import type { ExecutionContext } from "../../types/request-scope.js";
-import type { CacheDefaults } from "../types.js";
+import type { CacheDefaults, CacheFreshness } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import type { CloudflareZonePurgeOptions } from "./cf-zone-purge.js";
 
@@ -103,7 +103,8 @@ export interface CFCacheReadDebugEvent {
   ageHeader?: string | null;
   isStale?: boolean;
   isRevalidating?: boolean;
-  shouldRevalidate?: boolean;
+  freshness?: CacheFreshness;
+  revalidationClaimed?: boolean;
   /** Wall-clock ms spent in cache.match (bounded by edgeLookupTimeoutMs). */
   matchMs?: number;
   /**

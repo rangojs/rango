@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createVersionInjectorPlugin } from "../plugins/version-injector.js";
 
-function initPlugin() {
+function initPlugin(command: "serve" | "build" = "build") {
   const plugin = createVersionInjectorPlugin(
     "src/worker.rsc.tsx",
   ) as ReturnType<typeof createVersionInjectorPlugin> & {
@@ -9,7 +9,7 @@ function initPlugin() {
     transform: (code: string, id: string) => any;
   };
 
-  plugin.configResolved({ root: "/project" });
+  plugin.configResolved({ root: "/project", command });
   return plugin;
 }
 
@@ -102,5 +102,22 @@ export default {
     expect(result.code).toMatch(
       /import "virtual:rsc-router\/routes-manifest";\nimport "virtual:rsc-router\/loader-manifest";/,
     );
+  });
+
+  it("injects the diagnostic bridge only into development workers", () => {
+    const code = `export default { fetch() { return new Response("ok"); } };`;
+    const development = initPlugin("serve").transform(
+      code,
+      "/project/src/worker.rsc.tsx",
+    );
+    const production = initPlugin("build").transform(
+      code,
+      "/project/src/worker.rsc.tsx",
+    );
+
+    expect(development.code).toContain(
+      'import "@rangojs/router/internal/dev-diagnostics";',
+    );
+    expect(production.code).not.toContain("dev-diagnostics");
   });
 });

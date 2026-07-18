@@ -109,7 +109,8 @@ describe("createOTelSink instant spans (real SDK)", () => {
       pathname: "/blog",
       routeKey: "blog",
       hit: true,
-      shouldRevalidate: false,
+      freshness: "fresh",
+      revalidationClaimed: false,
       source: "runtime",
     });
     sink.emit({
@@ -128,6 +129,10 @@ describe("createOTelSink instant spans (real SDK)", () => {
     const timeout = spanByName(spans, "rango.request.timeout");
     expect(decision, "expected a rango.cache.decision span").toBeTruthy();
     expect(decision!.attributes["rango.cache.hit"]).toBe(true);
+    expect(decision!.attributes["rango.cache.freshness"]).toBe("fresh");
+    expect(decision!.attributes["rango.cache.revalidation_claimed"]).toBe(
+      false,
+    );
     expect(decision!.attributes["http.route"]).toBe("/blog");
     expect(timeout, "expected a rango.request.timeout span").toBeTruthy();
     expect(timeout!.status.code).toBe(SpanStatusCode.ERROR);

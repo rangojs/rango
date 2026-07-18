@@ -104,6 +104,15 @@
       "types": "./dist/types/browser/dev-discovery.d.ts",
       "default": "./src/browser/dev-discovery.ts"
     },
+    "./internal/browser/navigation-diagnostics": {
+      "types": "./dist/types/browser/navigation-diagnostics.d.ts",
+      "default": "./src/browser/navigation-diagnostics.ts"
+    },
+    "./internal/dev-diagnostics": {
+      "types": "./dist/types/router/diagnostics/runtime-bridge.d.ts",
+      "react-server": "./src/router/diagnostics/runtime-bridge.ts",
+      "default": "./src/router/diagnostics/runtime-bridge.ts"
+    },
     "./cache": {
       "types": "./dist/types/cache/index.d.ts",
       "react-server": "./src/cache/index.ts",
@@ -190,15 +199,19 @@
     "test:unit:rsc": "vitest run --config vitest.rsc.config.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@types/debug": "^4.1.12",
     "@vitejs/plugin-rsc": "^0.5.27",
     "debug": "^4.4.1",
+    "jsonc-parser": "^3.3.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
     "rsc-html-stream": "^0.0.7",
     "srvx": "^0.11.15",
     "tinyexec": "^0.3.2",
-    "typescript": "^5.3.0 || ^6.0.0"
+    "typescript": "^5.3.0 || ^6.0.0",
+    "undici": "^7.28.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.0",

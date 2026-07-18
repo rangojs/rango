@@ -69,6 +69,11 @@ It implements the full `SegmentCacheStore` surface (`src/cache/types.ts`):
 | `invalidateTags`              | `getCache().expireTag`                   | One call per invalidation batch.                      |
 | `defaults` / `keyGenerator`   | config passthrough                       | ttl/swr inheritance and key segmentation.             |
 
+Every store write returns `CacheWriteAcknowledgement`: `stored`, `skipped` with
+a bounded reason, or `failed`. Ordinary Vercel writes acknowledge `stored` only
+after `cache.set` resolves, preserving the router's shell-capture write barrier.
+The injected `waitUntil` is reserved for short-lived revalidation lock writes.
+
 `clear()` is deliberately **not** implemented: `getCache` has no key enumeration,
 so a wipe-all is impossible. `clear` is optional in the interface and only used by
 test teardown, which uses `MemorySegmentCacheStore` anyway.
@@ -125,9 +130,10 @@ single-keyspace backend; the prefix is what prevents it.
 `getCache` has no stale-but-serve. A TTL'd entry is fresh until it expires, then
 it is simply gone — there is no window where you can serve the old value while
 refreshing. Rango's SWR contract needs that window, and the `SegmentCacheStore`
-contract makes the _store_ responsible for it: `get` returns
-`{ data, shouldRevalidate }`, and `shouldRevalidate: true` means "serve this, but
-kick off a refresh."
+contract makes the _store_ responsible for it. `get` returns the value with
+`freshness: "fresh" | "stale"` and a separate `revalidationClaimed` boolean.
+Every stale reader remains visibly stale; only the reader that acquires the
+best-effort lock claims the refresh.
 
 The store reconstructs SWR with an envelope. Every write stores
 `{ d, s, e }` — the data, a `staleAt`, and an `expiresAt` (computed by the shared
@@ -137,7 +143,7 @@ store compares `now` against the envelope's `s`/`e`:
 
 - `now > e` → treat as a miss (and evict; Vercel should already have dropped it
   by TTL, but the guard covers clock skew).
-- `now > s` → return `shouldRevalidate: true`.
+- `now > s` → return `freshness: "stale"`.
 - otherwise → fresh.
 
 This is the same `{d,s,e}` envelope shape `CFCacheStore` uses for its KV tier, and
@@ -147,8 +153,9 @@ not reinvent the TTL math, it lives in `cache-policy.ts` for exactly this reason
 #### Herd dampening is best-effort here
 
 When `get` sees a stale entry, it tries to claim a short-lived companion key
-(`{entryKey}:lock`). Only the claimant receives `shouldRevalidate: true`; other
-readers keep serving the stale payload without scheduling duplicate work. The
+(`{entryKey}:lock`). Only the claimant receives `revalidationClaimed: true`;
+other readers return `freshness: "stale", revalidationClaimed: false` and keep
+serving the stale payload without scheduling duplicate work. The
 payload envelope is never rewritten merely to dampen the herd, so a read cannot
 push its hard expiry forward. `getCache` has no compare-and-set and storage is
 regional, so two readers can still claim concurrently; duplicated revalidation
@@ -197,7 +204,7 @@ forget them. The store handles each; this is what it is doing and why.
 
 | Limit                       | Value                                                             | What the store does                                                                                                                                                                                                                         |
 | --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; skips + reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.                                                      |
+| Max item size               | **2 MB** (writes above silently no-op)                            | Measures the serialized envelope; returns `{ outcome: "skipped", reason: "size-limit" }` and reports a `cache-write` error above `VERCEL_MAX_ITEM_BYTES`. Large Flight payloads simply go uncached rather than vanishing without a trace.   |
 | Tags per item               | **128**                                                           | Clamps to `VERCEL_MAX_TAGS_PER_ITEM` on write, with a warning. Does **not** clamp `invalidateTags` — an invalidation must reach every requested tag.                                                                                        |
 | Tag length                  | **256 bytes**, no commas                                          | Drops over-length or comma-bearing tags (commas are the header delimiter) on both write and invalidate, with a warning.                                                                                                                     |
 | Cross-deploy reconciliation | **none** — TTL/tag updates are not reconciled between deployments | Fold a build id into the key. Use the `version` option (`v/{version}/...` prefix) or, better, the `getCache({ namespace })` argument. Without it, an entry written by a prior deploy with a now-changed shape can be served after a deploy. |
@@ -205,9 +212,10 @@ forget them. The store handles each; this is what it is doing and why.
 
 The 2 MB cap is the one most likely to surprise you. On Cloudflare an oversized
 entry just fails the KV write; on Vercel the `set` resolves successfully and the
-entry is simply never stored. If you see tagged routes that never seem to cache,
-check the payload size first — the store will have logged a `cache-write` error,
-but only if you wired `onError` or read the console.
+entry is simply never stored. Rango turns that ambiguity into a `skipped`
+acknowledgement; other backend write errors return `failed`. If you see tagged
+routes that never seem to cache, check the payload size first — the store also
+reports a `cache-write` error through `onError` and the console.
 
 ### Wiring it into a router
 
@@ -251,8 +259,8 @@ On Vercel there is no per-request `env`/`ctx` argument — bindings are
 
 Pass `debug: true` to log each read outcome, or `debug: (event) => …` to capture
 the structured `VercelCacheReadDebugEvent` (`op`, `key`, `outcome`,
-`staleAt`/`expiresAt`, `shouldRevalidate`, `readMs`). Outcomes are
-`miss | fresh | stale-revalidate | expired | corrupt | error`. Write failures,
+`staleAt`/`expiresAt`, `freshness`, `revalidationClaimed`, `readMs`). Outcomes are
+`miss | fresh | stale | expired | corrupt | error`. Write failures,
 oversized skips, dropped tags, and corrupt-entry evictions all route through
 `reportCacheError`, so they reach the router's `onError` as well as the console.
 

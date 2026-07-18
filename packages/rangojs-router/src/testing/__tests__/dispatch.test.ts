@@ -23,7 +23,10 @@ import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { RouterError } from "../../errors.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
-import type { SegmentCacheStore } from "../../cache/types.js";
+import type {
+  CacheWriteAcknowledgement,
+  SegmentCacheStore,
+} from "../../cache/types.js";
 import type { OnErrorCallback } from "../../types/error-types.js";
 
 function Home() {
@@ -468,7 +471,7 @@ describe("dispatch", () => {
       let n = 0;
       const store: SegmentCacheStore = {
         get: async () => null,
-        set: async () => {},
+        set: async () => ({ outcome: "stored" }),
         delete: async () => false,
         getResponse: async () => ({
           response: new Response(JSON.stringify({ n: 99 }), {
@@ -478,9 +481,10 @@ describe("dispatch", () => {
               "Set-Cookie": "session=leaked; Path=/",
             },
           }),
-          shouldRevalidate: false,
+          freshness: "fresh",
+          revalidationClaimed: false,
         }),
-        putResponse: async () => {},
+        putResponse: async () => ({ outcome: "stored" }),
       };
       const router = createRouter<{}>({ cache: { store } }).routes(
         urls(({ path, cache }) => [
@@ -495,6 +499,47 @@ describe("dispatch", () => {
       const res = await dispatch(router, { request: "/cached-poison" });
       expect(await res.json()).toEqual({ n: 1 });
       expect(res.headers.get("Set-Cookie")).toBeNull();
+    });
+
+    it("serves an unclaimed stale response without running the handler or scheduling a write", async () => {
+      let handlerRuns = 0;
+      const putResponse = vi.fn(async () => ({ outcome: "stored" as const }));
+      const store: SegmentCacheStore = {
+        get: async () => null,
+        set: async () => ({ outcome: "stored" }),
+        delete: async () => false,
+        getResponse: async () => ({
+          response: new Response(JSON.stringify({ source: "stale" }), {
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+          freshness: "stale",
+          revalidationClaimed: false,
+        }),
+        putResponse,
+      };
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 60, swr: 300 }, () => [
+            path.json(
+              "/cached-stale-unclaimed",
+              () => {
+                handlerRuns++;
+                return { source: "handler" };
+              },
+              { name: "cached.stale-unclaimed" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, {
+        request: "/cached-stale-unclaimed",
+      });
+      await flushWrites();
+
+      expect(await res.json()).toEqual({ source: "stale" });
+      expect(handlerRuns).toBe(0);
+      expect(putResponse).not.toHaveBeenCalled();
     });
 
     it("does not write the cache from a HEAD request", async () => {
@@ -696,10 +741,10 @@ describe("dispatch", () => {
     ): SegmentCacheStore {
       return {
         get: async () => null,
-        set: async () => {},
+        set: async () => ({ outcome: "stored" }),
         delete: async () => false,
         getResponse: async () => null,
-        putResponse: async () => {},
+        putResponse: async () => ({ outcome: "stored" }),
         ...overrides,
       };
     }
@@ -827,6 +872,38 @@ describe("dispatch", () => {
       });
     });
 
+    it.each<{
+      label: string;
+      acknowledgement: CacheWriteAcknowledgement;
+    }>([
+      {
+        label: "skipped",
+        acknowledgement: {
+          outcome: "skipped",
+          reason: "invalidated-generation",
+        },
+      },
+      { label: "failed", acknowledgement: { outcome: "failed" } },
+    ])(
+      "cache MISS + $label write acknowledgement remains fail-open",
+      async ({ acknowledgement }) => {
+        const onError = vi.fn<OnErrorCallback>();
+        const store = makeStore({
+          getResponse: async () => null,
+          putResponse: async () => acknowledgement,
+        });
+        const putSpy = vi.spyOn(store, "putResponse");
+        const router = buildCacheRouter(onError, store);
+
+        const response = await dispatch(router, { request: "/cached-err" });
+        expect(response.status).toBe(200);
+        expect((await response.json()).ts).toBeTypeOf("number");
+        await flushBackground();
+        expect(putSpy).toHaveBeenCalledOnce();
+        expect(onError).not.toHaveBeenCalled();
+      },
+    );
+
     it("SWR stale hit + store putResponse throw -> onError phase cache, category stale-revalidation (serves stale)", async () => {
       const onError = vi.fn<OnErrorCallback>();
       const staleBody = JSON.stringify({ ts: "STALE" });
@@ -837,7 +914,8 @@ describe("dispatch", () => {
             status: 200,
             headers: { "content-type": "application/json;charset=utf-8" },
           }),
-          shouldRevalidate: true,
+          freshness: "stale",
+          revalidationClaimed: true,
         }),
         // Background revalidation re-runs the handler then writes; the write throws.
         putResponse: async () => {

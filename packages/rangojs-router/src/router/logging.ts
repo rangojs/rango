@@ -1,5 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import {
+  areDevelopmentDiagnosticsAvailable,
+  recordRevalidationTrace,
+} from "./diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "./diagnostics/hub.js";
+import {
+  getActiveRequestTransaction,
+  getServerRequestId,
+  runWithRequestTransaction,
+} from "./request-identity.js";
 
 export interface RevalidationTraceEntry {
   segmentId: string;
@@ -26,6 +36,7 @@ export interface RevalidationTraceMeta {
   nextUrl: string;
   routeKey: string;
   isAction: boolean;
+  actionId?: string;
   stale?: boolean;
 }
 
@@ -35,8 +46,6 @@ export interface RevalidationTrace {
 }
 
 interface RouterLogContext {
-  requestId: string;
-  transactionId: string;
   depth: number;
   revalidationTrace?: RevalidationTrace;
 }
@@ -44,6 +53,8 @@ interface RouterLogContext {
 interface RouterLogOptions {
   request: Request;
   transaction: string;
+  routerId?: string;
+  diagnosticsEnabled?: boolean;
 }
 
 interface LogDetails {
@@ -51,60 +62,37 @@ interface LogDetails {
 }
 
 const routerLogContext = new AsyncLocalStorage<RouterLogContext>();
-const requestIds = new WeakMap<Request, string>();
-
-let requestCounter = 0;
-let transactionCounter = 0;
-
-function nextId(prefix: string, counter: number): string {
-  return `${prefix}${counter.toString(36)}`;
-}
-
-function getHeaderRequestId(request: Request): string | null {
-  const candidate =
-    request.headers.get("x-rsc-router-request-id") ??
-    request.headers.get("x-request-id") ??
-    request.headers.get("cf-ray");
-  if (!candidate) return null;
-  const trimmed = candidate.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 export function getOrCreateRequestId(request: Request): string {
-  const existing = requestIds.get(request);
-  if (existing) return existing;
-
-  const fromHeaders = getHeaderRequestId(request);
-  if (fromHeaders) {
-    requestIds.set(request, fromHeaders);
-    return fromHeaders;
-  }
-
-  requestCounter += 1;
-  const generated = nextId("req-", requestCounter);
-  requestIds.set(request, generated);
-  return generated;
+  return getServerRequestId(request);
 }
 
 export function runWithRouterLogContext<T>(
   options: RouterLogOptions,
   fn: () => T,
 ): T {
-  if (!INTERNAL_RANGO_DEBUG) {
+  if (!INTERNAL_RANGO_DEBUG && !DEVELOPMENT_DIAGNOSTICS_ENABLED) return fn();
+  const parent = getActiveRequestTransaction();
+  const diagnosticsEnabled =
+    options.diagnosticsEnabled ??
+    parent?.diagnosticsEnabled ??
+    areDevelopmentDiagnosticsAvailable();
+  if (
+    !INTERNAL_RANGO_DEBUG &&
+    !diagnosticsEnabled &&
+    parent?.diagnosticsEnabled !== true
+  ) {
     return fn();
   }
 
-  const requestId = getOrCreateRequestId(options.request);
-  transactionCounter += 1;
-  const transactionId = `${options.transaction}-${nextId("tx-", transactionCounter)}`;
-
-  return routerLogContext.run(
+  return runWithRequestTransaction(
+    options.request,
+    options.transaction,
+    () => routerLogContext.run({ depth: 0 }, fn),
     {
-      requestId,
-      transactionId,
-      depth: 0,
+      routerId: options.routerId,
+      diagnosticsEnabled,
     },
-    fn,
   );
 }
 
@@ -117,10 +105,9 @@ export function withRouterLogScope<T>(
   label: string,
   fn: () => Promise<T> | T,
 ): Promise<T> | T {
+  if (!INTERNAL_RANGO_DEBUG) return fn();
   const ctx = routerLogContext.getStore();
-  if (!INTERNAL_RANGO_DEBUG || !ctx) {
-    return fn();
-  }
+  if (!ctx) return fn();
 
   debugLog(label, "start");
 
@@ -154,9 +141,10 @@ export function isRouterDebugEnabled(): boolean {
 
 function formatPrefix(scope: string): string {
   const ctx = routerLogContext.getStore();
-  if (!ctx) return `[Router][${scope}]`;
+  const transaction = getActiveRequestTransaction();
+  if (!ctx || !transaction) return `[Router][${scope}]`;
   const indent = "  ".repeat(ctx.depth);
-  return `[Router][req:${ctx.requestId}][tx:${ctx.transactionId}] ${indent}[${scope}]`;
+  return `[Router][req:${transaction.requestId}][tx:${transaction.transactionId}] ${indent}[${scope}]`;
 }
 
 export function debugLog(
@@ -192,30 +180,35 @@ export function debugWarn(
 }
 
 export function isTraceActive(): boolean {
-  if (!INTERNAL_RANGO_DEBUG) return false;
+  if (!INTERNAL_RANGO_DEBUG && !DEVELOPMENT_DIAGNOSTICS_ENABLED) return false;
   const ctx = routerLogContext.getStore();
   return !!ctx?.revalidationTrace;
 }
 
 export function startRevalidationTrace(meta: RevalidationTraceMeta): void {
+  if (!INTERNAL_RANGO_DEBUG && !DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
   const ctx = routerLogContext.getStore();
-  if (!ctx || !INTERNAL_RANGO_DEBUG) return;
+  if (!ctx) return;
   ctx.revalidationTrace = { meta, entries: [] };
 }
 
 export function pushRevalidationTraceEntry(
   entry: RevalidationTraceEntry,
 ): void {
+  if (!INTERNAL_RANGO_DEBUG && !DEVELOPMENT_DIAGNOSTICS_ENABLED) return;
   const ctx = routerLogContext.getStore();
   if (!ctx?.revalidationTrace) return;
   ctx.revalidationTrace.entries.push(entry);
 }
 
 export function flushRevalidationTrace(): RevalidationTrace | null {
+  if (!INTERNAL_RANGO_DEBUG && !DEVELOPMENT_DIAGNOSTICS_ENABLED) return null;
   const ctx = routerLogContext.getStore();
   if (!ctx?.revalidationTrace) return null;
   const trace = ctx.revalidationTrace;
   ctx.revalidationTrace = undefined;
+
+  recordRevalidationTrace(trace);
 
   if (trace.entries.length === 0) return trace;
 

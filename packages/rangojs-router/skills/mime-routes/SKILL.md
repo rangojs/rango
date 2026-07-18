@@ -1,7 +1,7 @@
 ---
 name: mime-routes
 description: Content negotiation — serve different response types (RSC, JSON, text, XML) from the same URL based on Accept header. Use when the same URL needs to return JSON for API clients and HTML/RSC for browsers, or branching a handler on the Accept header.
-argument-hint: [negotiate|vary|accept]
+argument-hint: "[negotiate|vary|accept]"
 ---
 
 # Content Negotiation (MIME Routes)

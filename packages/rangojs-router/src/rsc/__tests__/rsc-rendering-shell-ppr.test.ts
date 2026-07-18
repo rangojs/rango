@@ -47,6 +47,11 @@ import { nonce as nonceToken } from "../nonce.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
+import { runWithRequestTransaction } from "../../router/request-identity.js";
+import {
+  getDevelopmentDiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../../router/diagnostics/hub.js";
 
 const scheduleMock = vi.mocked(scheduleShellCapture);
 
@@ -156,6 +161,7 @@ interface RunOpts {
   >;
   arm?: (reqCtx: RequestContext<unknown>) => void;
   router?: HandlerContext<unknown>["router"];
+  diagnostics?: boolean;
 }
 
 async function run(opts: RunOpts): Promise<{
@@ -217,7 +223,7 @@ async function run(opts: RunOpts): Promise<{
   };
   opts.arm?.(reqCtx);
 
-  const response = await runWithRequestContext(reqCtx, () =>
+  const render = () =>
     handleRscRendering(
       ctx,
       request,
@@ -226,7 +232,14 @@ async function run(opts: RunOpts): Promise<{
       opts.partial ?? false,
       reqCtx._handleStore,
       opts.nonce,
-    ),
+    );
+  const response = await runWithRequestContext(reqCtx, () =>
+    opts.diagnostics
+      ? runWithRequestTransaction(request, "request", render, {
+          routerId: "test-router",
+          diagnosticsEnabled: true,
+        })
+      : render(),
   );
   return { response, reqCtx, ctx, store };
 }
@@ -247,6 +260,7 @@ const NAVIGATION_KEY = `${KEY}:navigation`;
 
 beforeEach(() => {
   scheduleMock.mockClear();
+  resetDevelopmentDiagnosticHub();
 });
 
 describe("handleRscRendering — integrated PPR serve: MISS", () => {
@@ -416,12 +430,17 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
       return streamOf("<html>axis1</html>");
     });
 
-    const { response } = await run({ ssrModule, ppr: true });
+    const { response } = await run({ ssrModule, ppr: true, diagnostics: true });
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-rango-shell")).toBeNull();
     expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
     expect(scheduleMock).not.toHaveBeenCalled();
+    expect(
+      getDevelopmentDiagnosticHub()!
+        .listTraces()[0]!
+        .events.find((event) => event.type === "ppr.document")?.data,
+    ).toMatchObject({ outcome: "bypass", reason: "dynamic" });
   });
 });
 
@@ -1129,7 +1148,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     const store = new MemorySegmentCacheStore();
     const getShell = vi.spyOn(store, "getShell").mockResolvedValue({
       entry: shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
-      shouldRevalidate: true,
+      freshness: "stale",
+      revalidationClaimed: false,
     });
     let replayArmed = false;
 

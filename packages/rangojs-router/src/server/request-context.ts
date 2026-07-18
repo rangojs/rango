@@ -45,7 +45,7 @@ import { withDefer } from "../defer.js";
 import { type MetricsStore } from "./context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
-import type { SegmentCacheStore } from "../cache/types.js";
+import type { CachedEntryData, SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
 import type { TransitionWhenFn } from "../types/segments.js";
@@ -223,6 +223,13 @@ export interface RequestContext<
 
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
+
+  /** @internal Value-free loader consumers retained with development cache entries. */
+  _diagnosticLoaderConsumers?: NonNullable<
+    CachedEntryData["diagnosticLoaderConsumers"]
+  >;
+  /** @internal Deduplicates the bounded development consumer list. */
+  _diagnosticLoaderConsumerKeys?: Set<string>;
 
   /**
    * @internal Compiled `cache.searchParams` filter for default cache-key

@@ -110,6 +110,12 @@ import {
   type RequestPlan,
   type ExecutableRequestPlan,
 } from "../router/request-classification.js";
+import {
+  isDevelopmentDiagnosticsEnabled,
+  recordRequestClassified,
+  runWithRequestDiagnostics,
+} from "../router/diagnostics/channel.js";
+import { DEVELOPMENT_DIAGNOSTICS_ENABLED } from "../router/diagnostics/hub.js";
 
 /**
  * Create an RSC request handler.
@@ -281,7 +287,10 @@ export function createRSCHandler<
       },
     });
 
-    if (router.telemetry) {
+    if (
+      router.telemetry ||
+      (DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled())
+    ) {
       safeEmit(resolveSink(router.telemetry), {
         type: "request.timeout",
         timestamp: performance.now(),
@@ -412,7 +421,7 @@ export function createRSCHandler<
     },
   };
 
-  return async function handler(
+  async function handleRequest(
     request: Request,
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
@@ -794,6 +803,17 @@ export function createRSCHandler<
         });
       }),
     );
+  }
+
+  return function handler(
+    request: Request,
+    input: RouterRequestInput<TEnv> = {},
+  ): Promise<Response> {
+    return DEVELOPMENT_DIAGNOSTICS_ENABLED
+      ? runWithRequestDiagnostics(request, router.id, () =>
+          handleRequest(request, input),
+        )
+      : handleRequest(request, input);
   };
 
   // Core request handling logic (separated for middleware wrapping).
@@ -846,6 +866,9 @@ export function createRSCHandler<
     }
     const classifyDur = performance.now() - classifyStart;
     handlerTiming.push(`handler-classify;dur=${classifyDur.toFixed(2)}`);
+    if (DEVELOPMENT_DIAGNOSTICS_ENABLED) {
+      recordRequestClassified(request, plan, router.id);
+    }
 
     // Stash the classified mode for the rango.response span (rango.response.mode)
     // — the outer handler tail cannot see the plan. Stays unset when middleware
@@ -907,7 +930,10 @@ export function createRSCHandler<
           },
         });
 
-        if (router.telemetry) {
+        if (
+          router.telemetry ||
+          (DEVELOPMENT_DIAGNOSTICS_ENABLED && isDevelopmentDiagnosticsEnabled())
+        ) {
           safeEmit(resolveSink(router.telemetry), {
             type: "request.origin-rejected",
             timestamp: performance.now(),

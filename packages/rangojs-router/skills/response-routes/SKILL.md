@@ -1,7 +1,7 @@
 ---
 name: response-routes
 description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.
-argument-hint: [json|text|html|xml|md|image|stream]
+argument-hint: "[json|text|html|xml|md|image|stream]"
 ---
 
 # Response Routes

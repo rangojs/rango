@@ -170,7 +170,8 @@ describe("MemorySegmentCacheStore + shellCacheKey (public store dogfood)", () =>
     const hit = await store.getShell(key);
     expect(hit).not.toBeNull();
     expect(hit!.entry.buildVersion).toBe("test-build");
-    expect(hit!.shouldRevalidate).toBe(false);
+    expect(hit!.freshness).toBe("fresh");
+    expect(hit!.revalidationClaimed).toBe(false);
 
     // A different host must not collide (multi-tenant key contract).
     expect(

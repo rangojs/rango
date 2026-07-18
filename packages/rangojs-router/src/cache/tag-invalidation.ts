@@ -24,7 +24,12 @@
  */
 
 import { _getRequestContext } from "../server/request-context.js";
-import { reportingAsync } from "./cache-error.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagInvalidationDiagnostic,
+  recordLinkedCacheTagInvalidationDiagnostic,
+} from "../router/diagnostics/channel.js";
+import { reportCacheError } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
 
@@ -156,13 +161,45 @@ export async function updateTag(...tags: string[]): Promise<void> {
 
   const { capable, incapable, hasContext } = collectStores();
   if (capable.length === 0) {
+    recordCacheTagInvalidationDiagnostic({
+      verb: "updateTag",
+      outcome: hasContext ? "no-capable-store" : "no-context",
+      tags: valid,
+      capableStoreCount: 0,
+      incapableStoreCount: incapable,
+    });
     if (hasContext) warnNoTagStore("updateTag", valid);
     else warnNoRequestContext("updateTag", valid);
     return;
   }
   if (incapable > 0) warnPartialTagStore("updateTag", incapable);
 
-  await invalidateAcross(capable, valid);
+  recordCacheTagInvalidationDiagnostic({
+    verb: "updateTag",
+    outcome: "requested",
+    tags: valid,
+    capableStoreCount: capable.length,
+    incapableStoreCount: incapable,
+  });
+  try {
+    await invalidateAcross(capable, valid);
+    recordCacheTagInvalidationDiagnostic({
+      verb: "updateTag",
+      outcome: incapable > 0 ? "partial" : "completed",
+      tags: valid,
+      capableStoreCount: capable.length,
+      incapableStoreCount: incapable,
+    });
+  } catch (error) {
+    recordCacheTagInvalidationDiagnostic({
+      verb: "updateTag",
+      outcome: "failed",
+      tags: valid,
+      capableStoreCount: capable.length,
+      incapableStoreCount: incapable,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -202,6 +239,13 @@ export function revalidateTag(...tags: string[]): void {
 
   const { capable, incapable, hasContext } = collectStores();
   if (capable.length === 0) {
+    recordCacheTagInvalidationDiagnostic({
+      verb: "revalidateTag",
+      outcome: hasContext ? "no-capable-store" : "no-context",
+      tags: valid,
+      capableStoreCount: 0,
+      incapableStoreCount: incapable,
+    });
     if (hasContext) warnNoTagStore("revalidateTag", valid);
     else warnNoRequestContext("revalidateTag", valid);
     return;
@@ -209,18 +253,44 @@ export function revalidateTag(...tags: string[]): void {
   if (incapable > 0) warnPartialTagStore("revalidateTag", incapable);
 
   const ctx = _getRequestContext();
-  // reportingAsync never rejects: it catches a failed durable write and routes
-  // it through reportCacheError (loud log + onError). This is the only place a
-  // revalidateTag failure can be observed, since it is not awaitable. Pass ctx
-  // explicitly - the run executes in a detached waitUntil where the ALS context
-  // is gone, so onError fires only if we hand it the captured context.
-  const run = () =>
-    reportingAsync(
-      () => invalidateAcross(capable, valid),
-      "cache-invalidate",
-      "[revalidateTag] background invalidation",
-      ctx,
-    );
+  const diagnosticLink = getDevelopmentDiagnosticLink();
+  recordCacheTagInvalidationDiagnostic({
+    verb: "revalidateTag",
+    outcome: "scheduled",
+    tags: valid,
+    capableStoreCount: capable.length,
+    incapableStoreCount: incapable,
+  });
+  const run = async (): Promise<void> => {
+    try {
+      await invalidateAcross(capable, valid);
+      if (diagnosticLink) {
+        recordLinkedCacheTagInvalidationDiagnostic(diagnosticLink, {
+          verb: "revalidateTag",
+          outcome: incapable > 0 ? "partial" : "completed",
+          tags: valid,
+          capableStoreCount: capable.length,
+          incapableStoreCount: incapable,
+        });
+      }
+    } catch (error) {
+      if (diagnosticLink) {
+        recordLinkedCacheTagInvalidationDiagnostic(diagnosticLink, {
+          verb: "revalidateTag",
+          outcome: "failed",
+          tags: valid,
+          capableStoreCount: capable.length,
+          incapableStoreCount: incapable,
+        });
+      }
+      reportCacheError(
+        error,
+        "cache-invalidate",
+        "[revalidateTag] background invalidation",
+        ctx,
+      );
+    }
+  };
   if (ctx?.waitUntil) {
     ctx.waitUntil(run);
   } else {

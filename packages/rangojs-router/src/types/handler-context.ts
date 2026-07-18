@@ -455,6 +455,8 @@ export type InternalHandlerContext<
    * table (so a loader cannot await its own in-flight memoized promise).
    */
   _loaderCacheOriginalUse?: (item: any) => any;
+  /** @internal Consumer recorder called by loader-cache overrides before reuse. */
+  _recordLoaderConsumer?: (item: LoaderDefinition<any, any>) => void;
 };
 
 /**
@@ -698,12 +700,13 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   // ── Staleness signal ─────────────────────────────────────────────────
 
   /**
-   * `true` when the browser signals that data may be stale — typically because
-   * a server action was executed in this or another tab (`_rsc_stale` header).
+   * `true` when the browser signals that data may be stale, typically after a
+   * server action (`_rsc_stale`), or when a route/layout/parallel predicate is
+   * evaluating a retained stale segment-cache value. Every reader of that value
+   * sees `stale: true`; background-revalidation ownership is independent.
    *
-   * This is NOT segment cache staleness (loaders are never segment-cached).
-   * Use this to decide whether loader data should be re-fetched after an
-   * action that may have mutated backend state.
+   * Loader predicates see only the browser signal because loaders are not
+   * stored in the surrounding segment-cache entry.
    */
   stale?: boolean;
 }) => boolean | { defaultShouldRevalidate: boolean } | null | void;

@@ -1,7 +1,7 @@
 ---
 name: hooks
 description: Client-side React hooks for navigation, loaders, and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, or loader data — e.g. "how do I read the route param in a component".
-argument-hint: [hook-name]
+argument-hint: "[hook-name]"
 ---
 
 # Client-Side React Hooks

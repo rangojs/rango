@@ -1,0 +1,502 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { invokeOnError } from "../../error-handling.js";
+import { observePhase, PHASES } from "../../instrument.js";
+import {
+  flushRevalidationTrace,
+  pushRevalidationTraceEntry,
+  runWithRouterLogContext,
+  startRevalidationTrace,
+} from "../../logging.js";
+import {
+  getRequestIdentity,
+  runWithRequestTransaction,
+} from "../../request-identity.js";
+import { resolveSink, safeEmit } from "../../telemetry.js";
+import {
+  getDevelopmentDiagnosticHub,
+  DiagnosticHub,
+  resetDevelopmentDiagnosticHub,
+} from "../hub.js";
+import {
+  getDevelopmentDiagnosticLink,
+  recordCacheTagInvalidationDiagnostic,
+  recordCacheTagObservationDiagnostic,
+  recordLinkedCacheTagInvalidationDiagnostic,
+  recordCacheScopeDiagnostic,
+  recordLinkedPprCaptureDiagnostic,
+  recordLoaderCacheDiagnostic,
+  recordLoaderConsumerDiagnostic,
+  recordLoaderRegistrationDiagnostic,
+  recordPhaseStarted,
+  recordPprDiagnostic,
+  recordRequestStarted,
+  runWithRequestDiagnostics,
+} from "../channel.js";
+
+describe("diagnostic channel", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetDevelopmentDiagnosticHub();
+  });
+
+  it("records only inside an explicitly enabled request transaction", () => {
+    const request = new Request("http://localhost/products?token=secret");
+
+    recordRequestStarted(request, new URL(request.url), "shop");
+    expect(getDevelopmentDiagnosticHub()!.listTraces()).toEqual([]);
+
+    runWithRequestTransaction(
+      request,
+      "request",
+      () => recordRequestStarted(request, new URL(request.url), "shop"),
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.listTraces()[0]!;
+    expect(trace.events[0].type).toBe("request.started");
+    expect(trace.events[0].data).toEqual({
+      method: "GET",
+      searchNames: ["token"],
+    });
+    expect(JSON.stringify(trace)).not.toContain("secret");
+  });
+
+  it("records a linked background capture after its request transaction exits", () => {
+    const request = new Request("http://localhost/products");
+    const link = runWithRequestTransaction(
+      request,
+      "request",
+      () => getDevelopmentDiagnosticLink(),
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    expect(link).not.toBeNull();
+    recordLinkedPprCaptureDiagnostic(link!, { outcome: "captured" });
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    );
+    expect(trace?.events).toEqual([
+      expect.objectContaining({
+        type: "ppr.capture",
+        data: { outcome: "captured" },
+      }),
+    ]);
+  });
+
+  it("records bounded exact cache tags and linked invalidation outcomes", () => {
+    const request = new Request("http://localhost/products");
+    const tags = Array.from({ length: 18 }, (_, index) => `product:${index}`);
+    const link = runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "write",
+          provenance: ["runtime"],
+          tags,
+          identity: "use-cache:products:tenant-a",
+          outcome: "catalog#getProduct",
+        });
+        recordCacheTagInvalidationDiagnostic({
+          verb: "revalidateTag",
+          outcome: "scheduled",
+          tags: ["product:0"],
+          capableStoreCount: 1,
+          incapableStoreCount: 0,
+        });
+        return getDevelopmentDiagnosticLink();
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    recordLinkedCacheTagInvalidationDiagnostic(link!, {
+      verb: "revalidateTag",
+      outcome: "completed",
+      tags: ["product:0"],
+      capableStoreCount: 1,
+      incapableStoreCount: 0,
+    });
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "cache.tags",
+      "cache.tags",
+      "cache.tags",
+    ]);
+    expect(trace.events[0]?.data).toMatchObject({
+      kind: "observe",
+      tags: tags.slice(0, 16),
+      tagCount: 18,
+      tagsTruncated: true,
+      identityDigest: expect.stringMatching(/^cache-[0-9a-f]{16}$/),
+    });
+    expect(trace.events[0]?.data.tagDigests).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^cache-[0-9a-f]{16}$/)]),
+    );
+    expect(trace.events[2]?.data).toMatchObject({
+      kind: "invalidate",
+      verb: "revalidateTag",
+      outcome: "completed",
+      tags: ["product:0"],
+    });
+  });
+
+  it("bounds individual cache-tag values before recording the event", () => {
+    const request = new Request("http://localhost/products");
+    const longTag = `product:${"x".repeat(32_768)}`;
+
+    runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheTagObservationDiagnostic({
+          artifact: "function",
+          phase: "write",
+          provenance: ["runtime"],
+          tags: [longTag],
+        });
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events).toHaveLength(1);
+    expect(trace.events[0]?.data).toMatchObject({
+      tagCount: 1,
+      tagsTruncated: true,
+      tagDigests: [expect.stringMatching(/^cache-[0-9a-f]{16}$/)],
+    });
+    expect((trace.events[0]!.data.tags as string[])[0]?.endsWith("...")).toBe(
+      true,
+    );
+  });
+
+  it("masks an inherited diagnostic transaction when a nested run disables it", async () => {
+    const request = new Request("http://localhost/products");
+
+    await runWithRequestDiagnostics(request, "shop", async () => {
+      runWithRouterLogContext(
+        {
+          request,
+          transaction: "shellCapture",
+          routerId: "shop",
+          diagnosticsEnabled: false,
+        },
+        () =>
+          recordPhaseStarted(PHASES.loader("hidden-loader"), performance.now()),
+      );
+      return new Response("ok");
+    });
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "request.started",
+      "request.completed",
+    ]);
+  });
+
+  it("redacts retained client correlation values", async () => {
+    const request = new Request("http://localhost/products", {
+      headers: { "x-request-id": "password=hunter2" },
+    });
+
+    await runWithRequestDiagnostics(request, "shop", async () =>
+      Response.json({ ok: true }),
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.clientCorrelationId).toBe("password=[redacted]");
+  });
+
+  it("echoes the request ID when a normal response exposes a null webSocket member", async () => {
+    const request = new Request("http://localhost/products");
+    const response = new Response("ok");
+    Object.defineProperty(response, "webSocket", { value: null });
+
+    const result = await runWithRequestDiagnostics(
+      request,
+      "shop",
+      async () => response,
+    );
+
+    expect(result).toBe(response);
+    expect(result.headers.get("X-Rango-Request-Id")).toBe(
+      getRequestIdentity(request).requestId,
+    );
+  });
+
+  it("replaces its timing metric when a Response is reused", async () => {
+    const response = new Response("shared body", {
+      headers: {
+        "Server-Timing":
+          'app;desc="kept, with comma", rango-request-id;desc="req-00000000-0000-4000-8000-000000000000"',
+      },
+    });
+    const firstRequest = new Request("http://localhost/one");
+    const secondRequest = new Request("http://localhost/two");
+
+    const firstResult = await runWithRequestDiagnostics(
+      firstRequest,
+      "shop",
+      async () => response,
+    );
+    const firstId = getRequestIdentity(firstRequest).requestId;
+    const result = await runWithRequestDiagnostics(
+      secondRequest,
+      "shop",
+      async () => response,
+    );
+    const secondId = getRequestIdentity(secondRequest).requestId;
+    const timing = result.headers.get("Server-Timing")!;
+
+    expect(result.headers.get("X-Rango-Request-Id")).toBe(secondId);
+    expect(timing).toContain('app;desc="kept, with comma"');
+    expect(timing.match(/rango-request-id/gu)).toHaveLength(1);
+    expect(timing).toContain(secondId);
+    expect(timing).not.toContain(firstId);
+    expect(firstResult).not.toBe(result);
+    expect(firstResult.headers.get("X-Rango-Request-Id")).toBe(firstId);
+    expect(firstResult.headers.get("Server-Timing")).toContain(firstId);
+    expect(firstResult.headers.get("Server-Timing")).not.toContain(secondId);
+    await expect(firstResult.text()).resolves.toBe("shared body");
+    await expect(result.text()).resolves.toBe("shared body");
+  });
+
+  it("echoes the request ID on a thrown Response without changing completion semantics", async () => {
+    const request = new Request("http://localhost/redirect");
+    const response = new Response(null, {
+      status: 302,
+      headers: { location: "/products" },
+    });
+
+    let thrown: unknown;
+    try {
+      await runWithRequestDiagnostics(request, "shop", async () => {
+        throw response;
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Response);
+    expect((thrown as Response).headers.get("X-Rango-Request-Id")).toBe(
+      getRequestIdentity(request).requestId,
+    );
+    expect(
+      getDevelopmentDiagnosticHub()!
+        .getTrace(getRequestIdentity(request).requestId)!
+        .events.map((event) => event.type),
+    ).toEqual(["request.started", "request.completed"]);
+  });
+
+  it("does not mutate WebSocket upgrade responses", async () => {
+    const request = new Request("http://localhost/socket");
+    const response = new Response(null);
+    Object.defineProperty(response, "webSocket", { value: {} });
+
+    const result = await runWithRequestDiagnostics(
+      request,
+      "shop",
+      async () => response,
+    );
+
+    expect(result).toBe(response);
+    expect(result.headers.has("X-Rango-Request-Id")).toBe(false);
+  });
+
+  it("fails open when hub insertion or label projection throws", () => {
+    const request = new Request("http://localhost/products");
+    vi.spyOn(DiagnosticHub.prototype, "record").mockImplementation(() => {
+      throw new Error("hub unavailable");
+    });
+
+    expect(() =>
+      runWithRequestTransaction(
+        request,
+        "request",
+        () => {
+          recordRequestStarted(request, new URL(request.url), "shop");
+          recordPhaseStarted(
+            {
+              ...PHASES.request,
+              diagnosticLabel: () => {
+                throw new Error("untrusted label");
+              },
+            },
+            performance.now(),
+          );
+        },
+        { routerId: "shop", diagnosticsEnabled: true },
+      ),
+    ).not.toThrow();
+
+    expect(getDevelopmentDiagnosticHub()!.getStats().droppedEvents).toBe(2);
+  });
+
+  it("projects phase, error, cache, and revalidation owners without public sinks", async () => {
+    const request = new Request("http://localhost/products?view=grid");
+    const url = new URL(request.url);
+
+    await runWithRequestTransaction(
+      request,
+      "request",
+      async () => {
+        await observePhase(PHASES.loader("catalog#products"), async () => 42);
+        invokeOnError(undefined, new Error("loader token=secret"), "loader", {
+          request,
+          url,
+          routeKey: "catalog.products",
+          segmentId: "products-loader",
+          segmentType: "loader",
+          loaderName: "ProductsLoader",
+          handledByBoundary: true,
+        });
+        safeEmit(resolveSink(undefined), {
+          type: "cache.decision",
+          timestamp: performance.now(),
+          requestId: getRequestIdentity(request).requestId,
+          pathname: url.pathname,
+          routeKey: "catalog.products",
+          hit: true,
+          freshness: "fresh",
+          revalidationClaimed: false,
+          source: "runtime",
+        });
+        runWithRouterLogContext(
+          {
+            request,
+            transaction: "matchPartial",
+            routerId: "shop",
+            diagnosticsEnabled: true,
+          },
+          () => {
+            startRevalidationTrace({
+              method: "GET",
+              prevUrl: "http://localhost/products?view=list",
+              nextUrl: url.href,
+              routeKey: "catalog.products",
+              isAction: false,
+            });
+            pushRevalidationTraceEntry({
+              segmentId: "products-loader",
+              segmentType: "loader",
+              belongsToRoute: true,
+              source: "loader",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: false,
+              reason: "custom:false",
+            });
+            flushRevalidationTrace();
+          },
+        );
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const requestId = getRequestIdentity(request).requestId;
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(requestId)!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "phase.started",
+      "phase.completed",
+      "error.reported",
+      "cache.decision",
+      "revalidation.trace",
+    ]);
+    expect(
+      trace.events.find((event) => event.type === "cache.decision"),
+    ).toMatchObject({
+      data: {
+        freshness: "fresh",
+        revalidationClaimed: false,
+      },
+    });
+    expect(JSON.stringify(trace)).not.toContain("secret");
+    expect(trace.events.at(-1)).toMatchObject({
+      transactionId: "matchPartial-tx-2",
+      routeKey: "catalog.products",
+      data: {
+        previousSearchNames: ["view"],
+        nextSearchNames: ["view"],
+      },
+    });
+  });
+
+  it("records render-cache, PPR, and loader generation facts", () => {
+    const request = new Request("http://localhost/products");
+    runWithRequestTransaction(
+      request,
+      "request",
+      () => {
+        recordCacheScopeDiagnostic(
+          {
+            kind: "explicit",
+            ownerType: "route",
+            outcome: "stale",
+            source: "runtime",
+            storeKind: "MemorySegmentCacheStore",
+            ttl: 60,
+            swr: 30,
+            freshForMs: -10,
+            tags: ["products"],
+            identityDigest: "cache-12345678",
+            backgroundRevalidationClaimed: true,
+          },
+          "products.route",
+        );
+        recordPprDiagnostic("document", {
+          outcome: "hit",
+          freshness: "fresh",
+          source: "runtime",
+        });
+        recordLoaderRegistrationDiagnostic(
+          {
+            loaderId: "products-loader",
+            registeredBy: "products.route",
+            lane: "baked",
+            boundary: "none",
+            dataCache: "configured",
+          },
+          "products.loader",
+        );
+        recordLoaderCacheDiagnostic("products-loader", "hit", { ttl: 60 });
+        recordLoaderConsumerDiagnostic("products-loader", {
+          kind: "dsl-client",
+          consumerId: "products.loader",
+          lane: "baked",
+          boundary: "consumer-suspense",
+          containerValue: "capture-generation",
+          nestedPromises: "request",
+        });
+      },
+      { routerId: "shop", diagnosticsEnabled: true },
+    );
+
+    const trace = getDevelopmentDiagnosticHub()!.getTrace(
+      getRequestIdentity(request).requestId,
+    )!;
+    expect(trace.events.map((event) => event.type)).toEqual([
+      "cache.scope",
+      "ppr.document",
+      "loader.registered",
+      "loader.cache",
+      "loader.consumer",
+    ]);
+    expect(trace.events.at(-1)).toMatchObject({
+      data: {
+        lane: "baked",
+        containerValue: "capture-generation",
+        nestedPromises: "request",
+      },
+    });
+  });
+});

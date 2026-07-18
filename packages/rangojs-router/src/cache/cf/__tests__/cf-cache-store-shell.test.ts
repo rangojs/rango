@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CFCacheStore } from "../cf-cache-store";
-import type { ShellCacheEntry } from "../../types";
+import { CFCacheStore } from "../cf-cache-store.js";
+import type { ShellCacheEntry } from "../../types.js";
 
 // ============================================================================
 // Mock Cache API (L1) + KV (L2)
@@ -98,7 +98,9 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
   it("serves a shell entry from L1 without reading KV", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     const entry = shellEntry();
-    await store.putShell("k", entry, 300, 30);
+    await expect(store.putShell("k", entry, 300, 30)).resolves.toEqual({
+      outcome: "scheduled",
+    });
     await drain(mockCtx);
     expect(mockCache.store.size).toBe(1);
     mockKV.store.clear();
@@ -106,7 +108,67 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     const hit = await store.getShell("k");
     expect(hit).not.toBeNull();
     expect(hit?.entry).toEqual(entry);
-    expect(hit?.shouldRevalidate).toBe(false);
+    expect(hit).toMatchObject({
+      freshness: "fresh",
+      revalidationClaimed: false,
+    });
+  });
+
+  it("returns after scheduling the waitUntil tier writes", async () => {
+    const originalPut = mockKV.put.bind(mockKV);
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.spyOn(mockKV, "put").mockImplementation(async (...args) => {
+      await originalPut(...args);
+      await writeGate;
+    });
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+    await expect(store.putShell("k", shellEntry(), 300, 30)).resolves.toEqual({
+      outcome: "scheduled",
+    });
+    expect(mockCtx.waitUntil).toHaveBeenCalledOnce();
+
+    releaseWrite();
+    await drain(mockCtx);
+  });
+
+  it("returns failed when shell serialization throws", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    await expect(
+      store.putShell("k", shellEntry({ snapshot: [cyclic as any] }), 300, 30),
+    ).resolves.toEqual({ outcome: "failed" });
+    error.mockRestore();
+  });
+
+  it("serves a pending shell without another KV read", async () => {
+    const originalPut = mockKV.put.bind(mockKV);
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.spyOn(mockKV, "put").mockImplementation(async (...args) => {
+      await writeGate;
+      await originalPut(...args);
+    });
+    const writer = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const reader = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const get = vi.spyOn(mockKV, "get");
+
+    await writer.putShell("k", shellEntry(), 300, 30);
+    await expect(reader.getShell("k")).resolves.toMatchObject({
+      entry: { prelude: shellEntry().prelude },
+    });
+    expect(get).not.toHaveBeenCalled();
+
+    releaseWrite();
+    await drain(mockCtx);
   });
 
   it("promotes a KV fallback into L1 for the next read", async () => {
@@ -223,7 +285,10 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       );
 
     const store = new CFCacheStore({ ctx: mockCtx }); // no kv
-    await store.putShell("k", shellEntry(), 300, 30);
+    await expect(store.putShell("k", shellEntry(), 300, 30)).resolves.toEqual({
+      outcome: "skipped",
+      reason: "unsupported",
+    });
     await drain(mockCtx);
     expect(await store.getShell("k")).toBeNull();
 
@@ -249,27 +314,74 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(mockKV.store.size).toBe(0);
   });
 
-  it("SWR: fresh before staleAt, shouldRevalidate within the window, gone after expiry", async () => {
+  it("reports shell freshness independently from revalidation ownership", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const secondStore = new CFCacheStore({
+      ctx: createMockCtx(),
+      kv: mockKV as any,
+    });
     const T0 = Date.now();
     await store.putShell("k", shellEntry(), 60, 300); // stale +60s, expire +360s
     await drain(mockCtx);
 
     vi.setSystemTime(new Date(T0 + 30_000));
-    expect((await store.getShell("k"))?.shouldRevalidate).toBe(false);
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "fresh",
+      revalidationClaimed: false,
+    });
 
     vi.setSystemTime(new Date(T0 + 120_000));
-    expect((await store.getShell("k"))?.shouldRevalidate).toBe(true);
+    expect(await store.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
+    expect(
+      await secondStore.getShell("k", { claimRevalidation: false }),
+    ).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: false,
+    });
+    expect(await secondStore.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: false,
+    });
 
     vi.setSystemTime(new Date(T0 + 400_000));
     expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("a successful shell write releases the prior generation claim", async () => {
+    const firstStore = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const secondCtx = createMockCtx();
+    const secondStore = new CFCacheStore({
+      ctx: secondCtx,
+      kv: mockKV as any,
+    });
+    const startedAt = Date.now();
+    await firstStore.putShell("k", shellEntry(), 1, 300);
+    await drain(mockCtx);
+    vi.setSystemTime(new Date(startedAt + 2_000));
+    expect(await firstStore.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
+
+    await secondStore.putShell("k", shellEntry(), 1, 300);
+    await drain(secondCtx);
+    vi.setSystemTime(new Date(startedAt + 4_000));
+    expect(await firstStore.getShell("k")).toMatchObject({
+      freshness: "stale",
+      revalidationClaimed: true,
+    });
   });
 
   it("is invalidated by tag via the shared KV tag markers", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     await store.putShell("k", shellEntry(), 300, 30, ["home"]);
     await drain(mockCtx);
-    expect(await store.getShell("k")).not.toBeNull();
+    expect(await store.getShell("k")).toMatchObject({ tags: ["home"] });
+    mockCache.store.clear();
+    expect(await store.getShell("k")).toMatchObject({ tags: ["home"] });
 
     await store.invalidateTags(["home"]);
     expect(await store.getShell("k")).toBeNull();
@@ -309,7 +421,10 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
         30,
         ["home"],
       ),
-    ).toBe("invalidated");
+    ).toEqual({
+      outcome: "skipped",
+      reason: "invalidated-generation",
+    });
     await drain(mockCtx);
 
     expect(await store.getShell("k")).toBeNull();
@@ -412,8 +527,8 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
         { CFCacheStore: DebugCFCacheStore },
         { createRequestContext, runWithRequestContext },
       ] = await Promise.all([
-        import("../cf-cache-store"),
-        import("../../../server/request-context"),
+        import("../cf-cache-store.js"),
+        import("../../../server/request-context.js"),
       ]);
       const store = new DebugCFCacheStore({
         ctx: mockCtx,

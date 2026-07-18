@@ -13,6 +13,33 @@ skills gives nothing to slot details into, so a reader free-associates from loca
 vocabulary — which is exactly how `revalidate()` gets misread as caching. Start
 with the shape, then pick a primitive.
 
+## Consumer registration
+
+This is the package's installable entry skill. In an existing Rango app, register
+it with:
+
+```bash
+npx skills add ./node_modules/@rangojs/router \
+  --skill rango \
+  --agent universal \
+  --agent claude-code
+```
+
+The installed `/rango` command is the entry point; the complete version-matched
+catalog remains under `node_modules/@rangojs/router/skills/`. When a sibling
+slash command named below is not registered, read its `SKILL.md` from that
+package directory rather than guessing from training data. Registering all
+sibling commands with `--skill '*'` is optional and may collide with generic
+project skill names such as `route`, `layout`, or `testing`.
+
+Before installation, inspect `.agents/skills/rango` and
+`.claude/skills/rango`. Stop and ask before replacing either path: the external
+CLI may auto-confirm when it detects an agent session, so the absence of
+`--yes` does not make a collision safe.
+
+For an agent that reads repository rules but does not load skills, add the
+[managed Rango rule](./agent-rules.md) to the app's root `AGENTS.md`.
+
 ## The shape of rango (read first)
 
 - **Routes are expressed, not configured.** The `urls()` tree shows where every
@@ -198,8 +225,11 @@ The predicate arg carries the action's full context, not just its identity. Matc
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
-(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
-`_rsc_stale` signal). All are `undefined` on plain navigation (no action).
+(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale`. Route,
+layout, and parallel predicates receive `stale: true` for either the browser's
+cross-tab `_rsc_stale` signal or a retained stale segment-cache value; loader
+predicates receive only the browser signal. The action-specific fields are
+`undefined` on plain navigation, while cache-derived `stale` can still be set.
 
 Two idioms, picked by what an _unrelated_ action should do. `ctx.isAction()`
 returns a raw boolean, so combine it with `|| undefined` to **defer** ("mine,
@@ -295,6 +325,15 @@ Grouped by concern — read when you need to…
 | `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
 | `/debug-manifest`  | Inspect route manifest structure                                         |
 
+**Evidence-driven workflows**:
+
+| Skill                     | Description                                                        |
+| ------------------------- | ------------------------------------------------------------------ |
+| `/dev-loop`               | Correlate one browser interaction with exact MCP request evidence  |
+| `/render-cache-adoption`  | Add `cache()`/PPR while preserving live loader and middleware data |
+| `/render-cache-optimizer` | Measure and improve a semantically correct cached route            |
+| `/stale-data-debugger`    | Separate loader, cache, revalidation, and browser-staleness axes   |
+
 **Deployment**:
 
 | Skill                 | Description                                                                                                      |
@@ -338,6 +377,57 @@ export default createRouter({ document: Document }).routes(urlpatterns);
 ```
 
 Use `/typesafety` for type-safe href and environment setup.
+
+## CLI: `rango mcp`
+
+`rango mcp` is the stdio connector for Rango's development-only MCP endpoint.
+With the Vite dev server running, an agent can inspect live project metadata,
+runtime-discovered routes, static canonical-trie matches, route-discovery
+freshness, compilation issues, browser navigation lifecycles, request summaries,
+exact request traces, runtime errors, render decisions, cache-tag activity, and
+revalidation decisions. The tools are read-only; DOM, console, network payloads,
+and arbitrary application logs are not part of the surface. Install a project
+client entry with `rango mcp install --client
+<claude-code|cursor|vscode|gemini> [--root <path>] [--dry-run]`.
+
+Treat `stale: true` as last-good route data, not current readiness. Route edits
+mark it immediately, before HMR's debounce. On Cloudflare,
+`runtimeConvergence: "pending" | "timeout"` means workerd has not yet proven it
+is serving the discovered route generation. Follow `nextCursor` until null;
+route records and pages report `truncated` when safety limits apply.
+Project metadata similarly reports `routersTruncated` when its router summary is
+bounded and `urlsTruncated` when its server URL summary is bounded. Complete tool
+results are capped at 256 KiB.
+
+For browser failures, select the exact lifecycle with `list_navigations` and
+`get_navigation_trace`, then pass its `navigationId` to `list_requests`. An exact
+`X-Rango-Request-Id` remains the direct path for one response. Use the selected
+request with `get_request_trace`, `explain_render`, and `get_errors`; actions use
+`explain_cache_tags` and `explain_revalidation` separately. Add a transaction ID
+only to select one transaction within that request. Treat `outputTruncated`,
+`omittedTransactions`, `truncated`, and drop counters as evidence that the
+retained trace is incomplete.
+
+Keep the two freshness axes separate. `explain_render` reports which stored
+segment, loader, or shell generation was served. `explain_revalidation` reports
+which client-visible segments recomputed. A cache hit does not imply that a
+segment should skip revalidation, and a revalidation decision does not describe
+cache freshness.
+
+`explain_cache_tags` exposes exact bounded tag values as untrusted application
+data because spelling and composition are the facts needed to diagnose a missed
+invalidation. It does not enumerate cache entries or claim global provider state;
+`storeState: "not-inspected"` makes that boundary explicit.
+
+```bash
+rango mcp
+rango mcp --root ./apps/store
+rango mcp --root ./apps/store --instance <id>
+```
+
+The connector discovers a token-protected loopback endpoint and bypasses HTTP
+proxy environment variables. Production builds and preview servers do not mount
+it.
 
 ## CLI: `npx rango generate`
 

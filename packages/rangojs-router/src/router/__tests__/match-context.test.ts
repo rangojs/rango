@@ -18,7 +18,8 @@ describe("match-context", () => {
 
       expect(state.cachedSegments).toBeUndefined();
       expect(state.cachedMatchedIds).toBeUndefined();
-      expect(state.shouldRevalidate).toBeUndefined();
+      expect(state.cacheFreshness).toBeUndefined();
+      expect(state.revalidationClaimed).toBeUndefined();
     });
 
     it("should allow mutation of state properties", () => {
@@ -64,7 +65,8 @@ describe("match-context", () => {
       const state = createPipelineState();
 
       state.cacheHit = true;
-      state.shouldRevalidate = true;
+      state.cacheFreshness = "stale";
+      state.revalidationClaimed = true;
       state.cachedSegments = [
         {
           id: "cached1",
@@ -78,7 +80,8 @@ describe("match-context", () => {
       state.cachedMatchedIds = ["cached1"];
 
       expect(state.cacheHit).toBe(true);
-      expect(state.shouldRevalidate).toBe(true);
+      expect(state.cacheFreshness).toBe("stale");
+      expect(state.revalidationClaimed).toBe(true);
       expect(state.cachedSegments).toHaveLength(1);
       expect(state.cachedMatchedIds).toContain("cached1");
     });

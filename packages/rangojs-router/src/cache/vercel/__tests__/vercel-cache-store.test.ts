@@ -110,11 +110,31 @@ describe("VercelCacheStore", () => {
     it("round-trips a fresh entry", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
-      await s.set("k", segment(), 60, 300);
+      await expect(s.set("k", segment(), 60, 300)).resolves.toEqual({
+        outcome: "stored",
+      });
       const hit = okHit(await s.get("k"));
       expect(hit).not.toBeNull();
-      expect(hit?.shouldRevalidate).toBe(false);
+      expect(hit).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
       expect(hit?.data.segments).toEqual([]);
+    });
+
+    it("keeps ordinary writes blocking when waitUntil is available", async () => {
+      const { cache } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (promise) => pending.push(promise),
+      });
+
+      await expect(s.set("k", segment(), 60, 300)).resolves.toEqual({
+        outcome: "stored",
+      });
+      expect(pending).toEqual([]);
+      expect(okHit(await s.get("k"))).toMatchObject({ freshness: "fresh" });
     });
 
     it("returns null on a miss", async () => {
@@ -153,16 +173,22 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300); // staleAt=+60s, expiresAt=+360s
 
       vi.setSystemTime(new Date(T0 + 30_000));
-      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
+      expect(okHit(await s.get("k"))).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
+      expect(okHit(await s.get("k"))).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
 
       vi.setSystemTime(new Date(T0 + 400_000));
       expect(okHit(await s.get("k"))).toBeNull();
     });
 
-    it("dampens the herd: a stale read re-stamps so the next read is fresh", async () => {
+    it("dampens the herd while preserving stale freshness", async () => {
       const { cache } = makeFakeCache();
       const pending: Promise<unknown>[] = [];
       const s = new VercelCacheStore({
@@ -174,11 +200,17 @@ describe("VercelCacheStore", () => {
       await s.set("k", segment(), 60, 300);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(true);
-      await Promise.all(pending); // let the re-stamp settle
+      expect(okHit(await s.get("k"))).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      await Promise.all(pending); // let the lock write settle
 
-      // Same instant: staleAt was pushed forward, so this read is fresh again.
-      expect(okHit(await s.get("k"))?.shouldRevalidate).toBe(false);
+      // Same instant: the entry remains stale, but the existing lock guards it.
+      expect(okHit(await s.get("k"))).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
     });
   });
 
@@ -300,7 +332,7 @@ describe("VercelCacheStore", () => {
   });
 
   describe("size guard", () => {
-    it("skips a write above maxItemBytes (fail-open)", async () => {
+    it("skips a segment write above maxItemBytes (fail-open)", async () => {
       const { cache, store } = makeFakeCache();
       const s = new VercelCacheStore({ cache, maxItemBytes: 100 });
       const big: CachedEntryData = {
@@ -313,9 +345,48 @@ describe("VercelCacheStore", () => {
         handles: "",
         expiresAt: 0,
       };
-      await s.set("k", big, 60, 300);
+      await expect(s.set("k", big, 60, 300)).resolves.toEqual({
+        outcome: "skipped",
+        reason: "size-limit",
+      });
       expect(store.has("rg:s:k")).toBe(false);
       expect(consoleError).toHaveBeenCalled();
+    });
+
+    it("returns size-limit when response and item writes are oversized", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, maxItemBytes: 1 });
+
+      await expect(
+        s.putResponse("doc:k", new Response("x"), 60),
+      ).resolves.toEqual({ outcome: "skipped", reason: "size-limit" });
+      await expect(s.setItem("fn", "x", { ttl: 60 })).resolves.toEqual({
+        outcome: "skipped",
+        reason: "size-limit",
+      });
+      expect(store.has("rg:r:doc:k")).toBe(false);
+      expect(store.has("rg:i:fn")).toBe(false);
+    });
+
+    it("returns failed when Runtime Cache rejects any value-family write", async () => {
+      const { cache } = makeFakeCache();
+      cache.set = vi.fn(async () => {
+        throw new Error("set failed");
+      });
+      const s = new VercelCacheStore({ cache });
+
+      await expect(s.set("segment", segment(), 60)).resolves.toEqual({
+        outcome: "failed",
+      });
+      await expect(
+        s.putResponse("response", new Response("x"), 60),
+      ).resolves.toEqual({ outcome: "failed" });
+      await expect(s.setItem("item", "x", { ttl: 60 })).resolves.toEqual({
+        outcome: "failed",
+      });
+      await expect(s.putShell("shell", shellEntry(), 60)).resolves.toEqual({
+        outcome: "failed",
+      });
     });
 
     it("defaults the cap to 2 MB", () => {
@@ -327,25 +398,33 @@ describe("VercelCacheStore", () => {
     it("round-trips a value with handles and tags", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
-      await s.setItem("use-cache:fn", "SERIALIZED", {
-        handles: "HANDLES",
-        ttl: 60,
-        swr: 300,
-        tags: ["t"],
-      });
+      await expect(
+        s.setItem("use-cache:fn", "SERIALIZED", {
+          handles: "HANDLES",
+          ttl: 60,
+          swr: 300,
+          tags: ["t"],
+        }),
+      ).resolves.toEqual({ outcome: "stored" });
       const hit = await s.getItem("use-cache:fn");
       expect(hit?.value).toBe("SERIALIZED");
       expect(hit?.handles).toBe("HANDLES");
       expect(hit?.tags).toEqual(["t"]);
-      expect(hit?.shouldRevalidate).toBe(false);
+      expect(hit).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
     });
 
-    it("surfaces shouldRevalidate when stale", async () => {
+    it("reports stale freshness and revalidation ownership independently", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.setItem("use-cache:fn", "v", { ttl: 60, swr: 300 });
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.getItem("use-cache:fn"))?.shouldRevalidate).toBe(true);
+      expect(await s.getItem("use-cache:fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
     });
 
     it("is invalidated by tag", async () => {
@@ -365,13 +444,40 @@ describe("VercelCacheStore", () => {
         status: 201,
         headers: { "content-type": "text/plain", "x-custom": "1" },
       });
-      await s.putResponse("doc:k", res, 60, 300);
+      await expect(
+        s.putResponse("doc:k", res, 60, 300, ["response-tag"]),
+      ).resolves.toEqual({ outcome: "stored" });
       const hit = await s.getResponse("doc:k");
       expect(hit).not.toBeNull();
       expect(hit?.response.status).toBe(201);
       expect(hit?.response.headers.get("x-custom")).toBe("1");
       expect(await hit?.response.text()).toBe("hello body");
-      expect(hit?.shouldRevalidate).toBe(false);
+      expect(hit).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+        tags: ["response-tag"],
+      });
+    });
+
+    it("keeps guarded response hits stale without transferring ownership", async () => {
+      const { cache } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (promise) => pending.push(promise),
+      });
+      await s.putResponse("doc:k", new Response("x"), 60, 300);
+      vi.setSystemTime(new Date(T0 + 120_000));
+
+      expect(await s.getResponse("doc:k")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      await Promise.all(pending);
+      expect(await s.getResponse("doc:k")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
     });
 
     it("round-trips a large binary body (>32 KB spanning bytes 0-255) with no call-stack overflow", async () => {
@@ -454,10 +560,21 @@ describe("VercelCacheStore", () => {
       await s.getResponse("doc:k"); // miss
       await s.putResponse("doc:k", new Response("x"), 60, 300);
       await s.getResponse("doc:k"); // fresh
+      vi.setSystemTime(new Date(T0 + 120_000));
+      await s.getResponse("doc:k"); // stale, claims lock
+      await s.getResponse("doc:k"); // stale, guarded
       expect(events.map((e) => [e.op, e.outcome])).toEqual([
         ["getResponse", "miss"],
         ["getResponse", "fresh"],
+        ["getResponse", "stale"],
+        ["getResponse", "stale"],
       ]);
+      expect(events.slice(1)).toMatchObject([
+        { freshness: "fresh", revalidationClaimed: false },
+        { freshness: "stale", revalidationClaimed: true },
+        { freshness: "stale", revalidationClaimed: false },
+      ]);
+      expect(events[1]).not.toHaveProperty("shouldRevalidate");
     });
   });
 
@@ -499,11 +616,17 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       const entry = shellEntry();
-      await s.putShell("k", entry, 60, 300);
+      await expect(
+        s.putShell("k", entry, 60, 300, ["shell-tag"]),
+      ).resolves.toEqual({ outcome: "stored" });
       const hit = await s.getShell("k");
       expect(hit).not.toBeNull();
       expect(hit?.entry).toEqual(entry);
-      expect(hit?.shouldRevalidate).toBe(false);
+      expect(hit).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+        tags: ["shell-tag"],
+      });
     });
 
     it("round-trips a DATA-variant entry (postponed === null)", async () => {
@@ -565,16 +688,22 @@ describe("VercelCacheStore", () => {
       expect((await s.getShell("k"))?.entry.docKey).toBe("doc:localhost/p");
     });
 
-    it("surfaces shouldRevalidate when stale, then expires after ttl+swr", async () => {
+    it("reports freshness and revalidation ownership, then expires after ttl+swr", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.putShell("k", shellEntry(), 60, 300);
 
       vi.setSystemTime(new Date(T0 + 30_000));
-      expect((await s.getShell("k"))?.shouldRevalidate).toBe(false);
+      expect(await s.getShell("k")).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.getShell("k"))?.shouldRevalidate).toBe(true);
+      expect(await s.getShell("k")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
 
       vi.setSystemTime(new Date(T0 + 400_000));
       expect(await s.getShell("k")).toBeNull();
@@ -586,9 +715,12 @@ describe("VercelCacheStore", () => {
       await s.putShell("k", shellEntry(), 60, 300);
 
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect(
-        (await s.getShell("k", { claimRevalidation: false }))?.shouldRevalidate,
-      ).toBe(true);
+      expect(await s.getShell("k", { claimRevalidation: false })).toMatchObject(
+        {
+          freshness: "stale",
+          revalidationClaimed: false,
+        },
+      );
       expect(store.has("rg:h:k:lock")).toBe(false);
     });
 
@@ -607,9 +739,10 @@ describe("VercelCacheStore", () => {
       const captured = shellEntry({ createdAt: T0 });
       vi.setSystemTime(new Date(T0 + 1));
       await s.invalidateTags(["home"]);
-      expect(await s.putShell("k", captured, 60, 300, ["home"])).toBe(
-        "invalidated",
-      );
+      expect(await s.putShell("k", captured, 60, 300, ["home"])).toEqual({
+        outcome: "skipped",
+        reason: "invalidated-generation",
+      });
 
       expect(await s.getShell("k")).toBeNull();
       expect(store.has("rg:h:k")).toBe(false);
@@ -653,12 +786,14 @@ describe("VercelCacheStore", () => {
     it("skips a shell write above maxItemBytes (fail-open) and misses", async () => {
       const { cache, store } = makeFakeCache();
       const s = new VercelCacheStore({ cache, maxItemBytes: 100 });
-      await s.putShell(
-        "k",
-        shellEntry({ prelude: btoa("x".repeat(500)) }),
-        60,
-        300,
-      );
+      await expect(
+        s.putShell(
+          "k",
+          shellEntry({ prelude: btoa("x".repeat(500)) }),
+          60,
+          300,
+        ),
+      ).resolves.toEqual({ outcome: "skipped", reason: "size-limit" });
       expect(store.has("rg:h:k")).toBe(false);
       expect(consoleError).toHaveBeenCalled();
       expect(await s.getShell("k")).toBeNull();
@@ -727,7 +862,10 @@ describe("VercelCacheStore", () => {
       await s.setItem("fn", "v", { ttl: 60, swr: 300 });
       const getSpy = vi.spyOn(cache, "get");
       vi.setSystemTime(new Date(T0 + 10_000)); // still fresh
-      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "fresh",
+        revalidationClaimed: false,
+      });
       // Exactly one read (the main key), no companion-lock read.
       expect(getSpy).toHaveBeenCalledTimes(1);
       expect(getSpy).toHaveBeenCalledWith("rg:i:fn");
@@ -748,13 +886,16 @@ describe("VercelCacheStore", () => {
 
       const getSpy = vi.spyOn(cache, "get");
       vi.setSystemTime(new Date(T0 + 120_000));
-      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(true);
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       await Promise.all(pending); // settle the lock write
 
       // Main key + companion lock = two reads.
       expect(getSpy).toHaveBeenCalledTimes(2);
       // Only the tiny lock was written; the payload envelope is untouched.
-      expect(store.has(`${storeKey}:lock`)).toBe(true);
+      expect(store.has(`rg:l:${storeKey}`)).toBe(true);
       expect(store.get(storeKey)!.value).toBe(payloadBefore);
     });
 
@@ -771,11 +912,126 @@ describe("VercelCacheStore", () => {
 
       vi.setSystemTime(new Date(T0 + 120_000));
       // First stale reader claims the lock -> triggers revalidation.
-      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(true);
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
       await Promise.all(pending);
 
-      // Same instant, still stale, but the lock is held -> served as fresh.
-      expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
+      // Same instant, still stale, but the lock is held by another reader.
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
+    });
+
+    it("a prior generation lock does not suppress the next revalidation", async () => {
+      const { cache, store } = makeFakeCache();
+      const pending: Promise<unknown>[] = [];
+      const s = new VercelCacheStore({
+        cache,
+        waitUntil: (promise) => {
+          pending.push(promise);
+        },
+      });
+      await s.setItem("fn", "generation-1", { ttl: 1, swr: 300 });
+      vi.setSystemTime(new Date(T0 + 2_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      await Promise.all(pending);
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
+      const priorGeneration = store.get("rg:l:rg:i:fn")!.value;
+
+      await s.setItem("fn", "generation-2", { ttl: 1, swr: 300 });
+      expect(store.get("rg:l:rg:i:fn")!.value).toBe(priorGeneration);
+      vi.setSystemTime(new Date(T0 + 4_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(store.get("rg:l:rg:i:fn")!.value).not.toBe(priorGeneration);
+    });
+
+    it("keeps lock markers separate from user-controlled cache keys", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn:lock", "USER", { ttl: 600 });
+      await s.setItem("fn", "PAYLOAD", { ttl: 60, swr: 300 });
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(await s.getItem("fn:lock")).toMatchObject({
+        value: "USER",
+        freshness: "fresh",
+      });
+    });
+
+    it("dampens repeated claims locally when the lock write fails", async () => {
+      const { cache } = makeFakeCache();
+      const originalSet = cache.set.bind(cache);
+      vi.spyOn(cache, "set").mockImplementation((key, value, options) =>
+        key.startsWith("rg:l:")
+          ? Promise.reject(new Error("lock unavailable"))
+          : originalSet(key, value, options),
+      );
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "PAYLOAD", { ttl: 60, swr: 300 });
+
+      vi.setSystemTime(new Date(T0 + 120_000));
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(await s.getItem("fn")).toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: false,
+      });
+    });
+
+    it("settles the lock write before exposing revalidation ownership", async () => {
+      const { cache, store } = makeFakeCache();
+      const originalSet = cache.set.bind(cache);
+      let releaseLockWrite!: () => void;
+      let markLockWriteStarted!: () => void;
+      const lockWriteGate = new Promise<void>((resolve) => {
+        releaseLockWrite = resolve;
+      });
+      const lockWriteStarted = new Promise<void>((resolve) => {
+        markLockWriteStarted = resolve;
+      });
+      vi.spyOn(cache, "set").mockImplementation(async (key, value, options) => {
+        if (key.startsWith("rg:l:")) {
+          markLockWriteStarted();
+          await lockWriteGate;
+        }
+        await originalSet(key, value, options);
+      });
+      const s = new VercelCacheStore({ cache });
+      await s.setItem("fn", "generation-1", { ttl: 1, swr: 300 });
+      vi.setSystemTime(new Date(T0 + 2_000));
+
+      let readSettled = false;
+      const read = s.getItem("fn").then((result) => {
+        readSettled = true;
+        return result;
+      });
+      await lockWriteStarted;
+      expect(readSettled).toBe(false);
+
+      releaseLockWrite();
+      await expect(read).resolves.toMatchObject({
+        freshness: "stale",
+        revalidationClaimed: true,
+      });
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
+
+      await s.setItem("fn", "generation-2", { ttl: 1, swr: 300 });
+      expect(store.has("rg:l:rg:i:fn")).toBe(true);
     });
   });
 });

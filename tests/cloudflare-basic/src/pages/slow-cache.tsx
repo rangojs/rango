@@ -1,7 +1,15 @@
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 
-async function DataTable() {
+const generations = new Map<string, number>();
+
+export function getSlowCacheGeneration(probe: string): number {
+  return generations.get(probe) ?? 0;
+}
+
+async function DataTable({ probe }: { probe: string }) {
+  const generation = (generations.get(probe) ?? 0) + 1;
+  generations.set(probe, generation);
   const renderTime = new Date().toISOString();
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -20,6 +28,7 @@ async function DataTable() {
       >
         Rendered at: {renderTime}
       </p>
+      <p data-testid="cache-generation">{`cache-generation:${generation}`}</p>
       <p style={{ color: "#666", marginBottom: "1rem" }}>
         This component has a 2s delay. Cached requests show the same render
         time.
@@ -98,7 +107,7 @@ export function SlowCachePage(ctx: HandlerContext) {
       <p style={{ marginBottom: "1rem" }}>
         This page tests edge caching behavior.
       </p>
-      <DataTable />
+      <DataTable probe={ctx.searchParams.get("probe") ?? "default"} />
     </main>
   );
 }

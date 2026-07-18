@@ -74,6 +74,10 @@ function makeSegment(
 function makeCtx(
   clientSegmentIds: string[],
   cacheSegments: ResolvedSegment[],
+  cacheResult: {
+    freshness?: "fresh" | "stale";
+    revalidationClaimed?: boolean;
+  } = {},
 ): MatchContext<any> {
   const clientSegmentSet = new Set(clientSegmentIds);
   return {
@@ -106,7 +110,11 @@ function makeCtx(
       enabled: true,
       lookupRouteDetailed: async () => ({
         status: "hit",
-        result: { segments: cacheSegments, shouldRevalidate: false },
+        result: {
+          segments: cacheSegments,
+          freshness: cacheResult.freshness ?? "fresh",
+          revalidationClaimed: cacheResult.revalidationClaimed ?? false,
+        },
       }),
       storeRoute: vi.fn(async () => {}),
     },
@@ -116,7 +124,8 @@ function makeCtx(
 function makeState(): MatchPipelineState {
   return {
     cacheHit: false,
-    shouldRevalidate: false,
+    cacheFreshness: "fresh",
+    revalidationClaimed: false,
     cachedSegments: undefined,
     cachedMatchedIds: undefined,
   } as any;
@@ -285,6 +294,31 @@ describe("cache-hit trace entries", () => {
     mockRevalidateRules.value = null;
     consoleSpy.mockRestore();
   });
+
+  it.each([true, false])(
+    "forwards stale cache freshness independently from ownership (claimed: %s)",
+    async (revalidationClaimed) => {
+      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      mockEvaluateRevalidation.mockClear();
+      mockEvaluateRevalidation.mockResolvedValue(false);
+      mockRevalidateRules.value = new Map([
+        ["L0", { revalidate: [() => true] }],
+      ]);
+      const seg = makeSegment("L0", "layout");
+      const ctx = makeCtx(["L0"], [seg], {
+        freshness: "stale",
+        revalidationClaimed,
+      });
+
+      await collect(withCacheLookup(ctx, makeState())(empty()));
+
+      expect(mockEvaluateRevalidation).toHaveBeenCalledWith(
+        expect.objectContaining({ stale: true }),
+      );
+      mockRevalidateRules.value = null;
+      consoleSpy.mockRestore();
+    },
+  );
 
   // This exercises the runtime cache-hit loader path (cache-lookup.ts ~662),
   // not the prerender store-hit path (~242) which requires full prerender

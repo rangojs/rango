@@ -74,6 +74,9 @@ export interface DecodedPrefetch {
    * (still streaming → stream its fallbacks like a cold load). Starts false.
    */
   complete: boolean;
+  /** Development-only server request provenance used when a later navigation
+   * adopts this entry without issuing a new HTTP request. */
+  sourceRequestId?: string;
 }
 
 let cacheTTL = 300_000;
