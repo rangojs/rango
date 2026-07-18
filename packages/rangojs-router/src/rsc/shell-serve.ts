@@ -20,7 +20,11 @@ import React from "react";
 import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
-import type { ShellCacheEntry, SegmentCacheStore } from "../cache/types.js";
+import type {
+  DocumentShellCacheEntry,
+  ShellCacheEntry,
+  SegmentCacheStore,
+} from "../cache/types.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
 
 /** Debug/status header the browser (and e2e assertions) can read: HIT | MISS. */
@@ -150,18 +154,29 @@ export function isValidShellHit(
 }
 
 /**
- * Payload integrity gate, run BEFORE the HIT response commits: a stored entry
- * whose prelude is not decodable base64 or whose postponed blob is not
- * parseable JSON would otherwise throw AFTER the 200 + full static prelude
- * flushed (`serveShellHit` decodes at stream construction, `resumeShellHTML`
- * parses in the tail) — the client gets a visually complete page that never
- * hydrates, re-served on every request until the entry ages out (no eviction
- * path exists; failure schedules no recapture by itself). Checking here turns
- * a corrupt entry (store-layer fault) into a plain MISS the recapture
- * overwrites. Cost: one duplicate decode/parse per HIT, sub-ms against a
- * prelude flush that dominates the path.
+ * DOCUMENT-half integrity gate and type narrowing, run BEFORE the HIT response
+ * commits: a stored entry whose prelude is not decodable base64 or whose
+ * postponed blob is not parseable JSON would otherwise throw AFTER the 200 +
+ * full static prelude flushed (`serveShellHit` decodes at stream construction,
+ * `resumeShellHTML` parses in the tail) — the client gets a visually complete
+ * page that never hydrates, re-served on every request until the entry ages
+ * out (no eviction path exists; failure schedules no recapture by itself).
+ * Checking here turns a corrupt entry (store-layer fault) into a plain MISS
+ * the recapture overwrites. Cost: one duplicate decode/parse per HIT, sub-ms
+ * against a prelude flush that dominates the path.
+ *
+ * navigationOnly entries store no document half (prelude/postponed absent) and
+ * therefore never pass. The partial-replay path skips this gate for them
+ * (replayableShellSnapshot) — snapshot fragment corruption is caught by the
+ * consumer-side Flight decoders instead (SegmentFragmentDecodeError → healing
+ * capture).
  */
-export function hasIntactShellPayload(entry: ShellCacheEntry): boolean {
+export function hasIntactShellPayload(
+  entry: ShellCacheEntry,
+): entry is DocumentShellCacheEntry {
+  if (typeof entry.prelude !== "string" || entry.postponed === undefined) {
+    return false;
+  }
   try {
     base64ToBytes(entry.prelude);
     if (entry.postponed !== null) JSON.parse(entry.postponed);

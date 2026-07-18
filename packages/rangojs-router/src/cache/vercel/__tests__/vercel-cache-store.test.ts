@@ -554,6 +554,25 @@ describe("VercelCacheStore", () => {
       expect(entry?.navigationOnly).toBe(true);
     });
 
+    it("round-trips a slim navigationOnly entry (no document half)", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const slim = shellEntry({
+        navigationOnly: true,
+        docKey: "doc:localhost/p",
+      });
+      delete slim.prelude;
+      delete slim.postponed;
+      await s.putShell("k", slim, 60, 300);
+      const entry = (await s.getShell("k"))?.entry;
+      expect(entry?.navigationOnly).toBe(true);
+      expect(entry?.docKey).toBe("doc:localhost/p");
+      // asShellEnvelope accepts the absent document half only under `no`;
+      // nothing re-materializes it on the way out.
+      expect(entry?.prelude).toBeUndefined();
+      expect(entry?.postponed).toBeUndefined();
+    });
+
     // docKey names the canonical doc segment record navigation replay
     // consumes; dropping it in either direction reads back as "no consumable
     // record" and every partial navigation reports no-segment-snapshot after

@@ -662,7 +662,7 @@ describe("captureAndStoreShell", () => {
     expect(entry.buildVersion).toBe("test-build");
     expect(typeof entry.createdAt).toBe("number");
     expect(
-      new TextDecoder().decode(new Uint8Array(base64ToBytes(entry.prelude))),
+      new TextDecoder().decode(new Uint8Array(base64ToBytes(entry.prelude!))),
     ).toBe("<html><body>shell</body></html>");
   });
 
@@ -754,6 +754,43 @@ describe("captureAndStoreShell", () => {
       perfSpy.mockRestore();
       warn.mockRestore();
     }
+  });
+
+  it("navigationOnly capture drops the document half: no prelude/postponed stored", async () => {
+    const putShell = makePutShell();
+    const captureShellHTML = vi.fn(async () => ({
+      prelude: enc("<html><body>nav shell</body></html>"),
+      postponed: '{"h":1}',
+    }));
+    const ssrModule = {
+      renderHTML: vi.fn(),
+      captureShellHTML,
+    } as unknown as SSRModule;
+
+    const outcome = await captureAndStoreShell(
+      ssrModule,
+      emptyStream(),
+      createHandleStore(),
+      makeReqCtx(),
+      {
+        key: "/p:shell:navigation",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+        navigationOnly: true,
+      },
+    );
+
+    expect(outcome).toBe("stored");
+    // The prerender still ran — it is the completeness arbiter and sanity gate.
+    expect(captureShellHTML).toHaveBeenCalledTimes(1);
+    const entry = putShell.mock.calls[0]![1];
+    // Dropped, not stored empty: nothing serves a navigationOnly entry's HTML
+    // (document reads skip the flag; replay consumes only snapshot/docKey).
+    expect("prelude" in entry).toBe(false);
+    expect("postponed" in entry).toBe(false);
+    expect(entry.navigationOnly).toBe(true);
+    expect(entry.reactVersion).toBe(React.version);
   });
 
   it("stores the capture context's theme as entry.initialTheme (resume theme fidelity)", async () => {

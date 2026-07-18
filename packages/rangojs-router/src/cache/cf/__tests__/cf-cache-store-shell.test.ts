@@ -181,6 +181,43 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(entry?.navigationOnly).toBe(true);
   });
 
+  it("round-trips a slim navigationOnly entry (no document half) through KV", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const slim = shellEntry({
+      navigationOnly: true,
+      docKey: "doc:localhost/p",
+    });
+    delete slim.prelude;
+    delete slim.postponed;
+    await store.putShell("k", slim, 300, 30);
+    await drain(mockCtx);
+    mockCache.store.clear();
+
+    const hit = await store.getShell("k");
+    expect(hit?.entry.navigationOnly).toBe(true);
+    expect(hit?.entry.docKey).toBe("doc:localhost/p");
+    // The envelope validator accepts the absent document half only under `no`;
+    // nothing re-materializes it on the way out.
+    expect(hit?.entry.prelude).toBeUndefined();
+    expect(hit?.entry.postponed).toBeUndefined();
+  });
+
+  it("still rejects a DOCUMENT envelope missing its prelude (loosening is navigationOnly-scoped)", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    await store.putShell("k", shellEntry(), 300, 30);
+    await drain(mockCtx);
+    mockCache.store.clear();
+    // Strip the prelude from the stored document envelope in place.
+    for (const [key, stored] of mockKV.store) {
+      const parsed = JSON.parse(stored.value);
+      if (parsed && typeof parsed === "object" && "p" in parsed) {
+        delete parsed.p;
+        mockKV.store.set(key, { ...stored, value: JSON.stringify(parsed) });
+      }
+    }
+    expect(await store.getShell("k")).toBeNull();
+  });
+
   // docKey names the canonical doc segment record navigation replay consumes;
   // dropping it in either direction reads back as "no consumable record" and
   // every partial navigation reports no-segment-snapshot after a KV round trip
