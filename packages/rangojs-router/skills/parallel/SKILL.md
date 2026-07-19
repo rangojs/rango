@@ -273,7 +273,7 @@ parallel(
 
 Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items. See [skills/handler-use § `loading()` is a single-assignment item — scope it correctly](../handler-use/SKILL.md#loading-is-a-single-assignment-item--scope-it-correctly) for the full reasoning.
 
-Typing note: a BARE arrow slot handler infers its ctx (`"@cart": (ctx) => ...`), but an arrow inside a DESCRIPTOR needs an explicit annotation — `handler: (ctx: HandlerContext) => ...` — because `StaticHandlerDefinition` in the slot union contributes a second callable to the contextual type and TS declines to pick a signature.
+Both a bare arrow slot handler (`"@cart": (ctx) => ...`) and an arrow inside a descriptor (`handler: (ctx) => ...`) infer their `ctx`; no explicit annotation is needed.
 
 ## Slot Override Semantics
 

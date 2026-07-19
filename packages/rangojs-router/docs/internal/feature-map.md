@@ -390,7 +390,10 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Prerender and Build-time Pre-rendering
 
-- `Prerender()`/`Static()` handler types, `BuildContext`, `GetParamsContext`
+- `Prerender()`/`Static()` handler types, `BuildContext`, `GetParamsContext`.
+  Parallel slots accept Static definitions through the internal opaque,
+  handler-less `StaticHandlerRef` seam so descriptor arrows retain contextual
+  `ctx` typing.
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
 - `Passthrough(prerenderDef, liveHandler)` wrapper for live runtime fallback
