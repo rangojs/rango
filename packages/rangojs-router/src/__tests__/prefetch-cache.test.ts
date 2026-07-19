@@ -276,4 +276,84 @@ describe("prefetch cache", () => {
       expect(hasPrefetch(keys[3])).toBe(true);
     });
   });
+
+  describe("respawnable entries", () => {
+    it("re-arms the slot in place when the entry carries respawn", () => {
+      const key = "s\0/products";
+      const gen = currentGeneration();
+      const replacement = makeEntry();
+      const original = makeEntry();
+      original.respawn = () => replacement;
+      storePrefetch(key, original, gen);
+
+      expect(consumePrefetch(key)).toBe(original);
+      // Slot re-armed with the respawned entry instead of deleted.
+      expect(hasPrefetch(key)).toBe(true);
+      expect(consumePrefetch(key)).toBe(replacement);
+      // The replacement had no respawn of its own: back to one-shot.
+      expect(hasPrefetch(key)).toBe(false);
+    });
+
+    it("expires a re-armed slot by the ORIGINAL fetch age, not the last adoption", () => {
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const key = "s\0/products";
+        const gen = currentGeneration();
+        const entry = makeEntry();
+        entry.respawn = () => {
+          const next = makeEntry();
+          next.respawn = entry.respawn;
+          return next;
+        };
+        storePrefetch(key, entry, gen);
+
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBe(entry); // re-arms at t=600
+
+        // TTL bounds data age: expired at t=1200 even though the slot was
+        // refreshed at t=600 — respawn must not extend staleness.
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBeNull();
+        expect(hasPrefetch(key)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+    });
+
+    it("releases buffered bytes via dispose on eviction paths", () => {
+      const gen = currentGeneration();
+
+      const clearDispose = vi.fn();
+      const cleared = makeEntry();
+      cleared.dispose = clearDispose;
+      storePrefetch("s\0/cleared", cleared, gen);
+      clearPrefetchCache();
+      expect(clearDispose).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const expiredDispose = vi.fn();
+        const expired = makeEntry();
+        expired.dispose = expiredDispose;
+        storePrefetch("s\0/expired", expired, currentGeneration());
+        vi.advanceTimersByTime(2_000);
+        expect(hasPrefetch("s\0/expired")).toBe(false);
+        expect(expiredDispose).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+
+      // Consumption is NOT an eviction: the adopter owns the entry.
+      const consumedDispose = vi.fn();
+      const consumed = makeEntry();
+      consumed.dispose = consumedDispose;
+      storePrefetch("s\0/consumed", consumed, currentGeneration());
+      expect(consumePrefetch("s\0/consumed")).toBe(consumed);
+      expect(consumedDispose).not.toHaveBeenCalled();
+    });
+  });
 });

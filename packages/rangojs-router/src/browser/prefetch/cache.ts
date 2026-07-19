@@ -72,8 +72,31 @@ export interface DecodedPrefetch {
    * tell a FULLY warmed prefetch (payload commits without suspending → safe to
    * commit in a startTransition, no fallback flash) from a partially-warmed one
    * (still streaming → stream its fallbacks like a cold load). Starts false.
+   *
+   * On a respawned entry (see `respawn`) this starts true: the buffered bytes
+   * are a complete stream by construction.
    */
   complete: boolean;
+  /**
+   * Re-create this entry from its buffered raw Flight bytes. Attached (by
+   * `executePrefetchFetch`) only after the stream ended cleanly AND the eager
+   * decode succeeded — a truncated or failed prefetch must stay one-shot.
+   *
+   * Why bytes and not the decoded payload: the revived payload is a live graph
+   * with one-shot stream edges (the handle stream is an async generator drained
+   * during commit; userland payloads may embed serialized ReadableStreams).
+   * Re-decoding from the wire bytes manufactures fresh instances of every
+   * stream, which no amount of cloning the revived graph can do. Each call tees
+   * the reserve branch, so the replacement entry carries its own `respawn` —
+   * one prefetch serves unlimited adoptions within TTL/state validity.
+   */
+  respawn?: () => DecodedPrefetch;
+  /**
+   * Release the buffered reserve bytes. Called when the entry is evicted
+   * without being consumed (expiry, FIFO, sweep, cache clear) so the tee
+   * buffer is dropped promptly instead of waiting for GC.
+   */
+  dispose?: () => void;
 }
 
 let cacheTTL = 300_000;
@@ -208,6 +231,7 @@ export function hasPrefetch(key: string): boolean {
   const entry = cache.get(key);
   if (!entry) return false;
   if (Date.now() - entry.timestamp > cacheTTL) {
+    entry.entry.dispose?.();
     cache.delete(key);
     return false;
   }
@@ -216,22 +240,34 @@ export function hasPrefetch(key: string): boolean {
 
 /**
  * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
- * expired. One-time consumption: the entry is deleted after retrieval.
- * Returns null when caching is disabled (TTL <= 0).
+ * expired. Returns null when caching is disabled (TTL <= 0).
+ *
+ * A decoded payload is single-render (its handle stream is drained during the
+ * commit), so the returned entry is never served twice. When the entry carries
+ * `respawn` (clean-EOF prefetch with buffered bytes), the slot is re-armed in
+ * place with a fresh decode of those bytes — the ORIGINAL timestamp is kept so
+ * TTL bounds the age of the data, not of the latest adoption. Without
+ * `respawn` the entry is deleted (legacy one-shot behavior).
  *
  * Does NOT check in-flight prefetches — use consumeInflightPrefetch()
  * for that (returns a Promise instead of a resolved entry).
  */
 export function consumePrefetch(key: string): DecodedPrefetch | null {
   if (cacheTTL <= 0) return null;
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > cacheTTL) {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > cacheTTL) {
+    cached.entry.dispose?.();
     cache.delete(key);
     return null;
   }
-  cache.delete(key);
-  return entry.entry;
+  const entry = cached.entry;
+  if (entry.respawn) {
+    cached.entry = entry.respawn();
+  } else {
+    cache.delete(key);
+  }
+  return entry;
 }
 
 /**
@@ -301,6 +337,7 @@ export function storePrefetch(
     let min = Infinity;
     for (const [k, cached] of cache) {
       if (now - cached.timestamp > cacheTTL) {
+        cached.entry.dispose?.();
         cache.delete(k);
       } else if (cached.timestamp < min) {
         min = cached.timestamp;
@@ -312,7 +349,10 @@ export function storePrefetch(
   // FIFO eviction if at capacity
   if (cache.size >= maxPrefetchCacheSize) {
     const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
+    if (oldest) {
+      cache.get(oldest)?.entry.dispose?.();
+      cache.delete(oldest);
+    }
   }
 
   cache.set(key, { entry, timestamp: now });
@@ -335,7 +375,10 @@ export function storePrefetch(
  * entry.
  */
 export function removePrefetch(key: string, entry: DecodedPrefetch): void {
-  if (cache.get(key)?.entry === entry) cache.delete(key);
+  if (cache.get(key)?.entry === entry) {
+    entry.dispose?.();
+    cache.delete(key);
+  }
 }
 
 /**
@@ -405,6 +448,7 @@ export function clearPrefetchCache(rotateRangoState = true): void {
   inflightPromises.clear();
   inflightAliases.clear();
   adoptedKeys.clear();
+  for (const cached of cache.values()) cached.entry.dispose?.();
   cache.clear();
   earliestTimestamp = Infinity;
   abortAllPrefetches();

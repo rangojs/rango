@@ -236,6 +236,65 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
+    test("a consumed prefetch re-arms: revisiting the route is warm with no refetch", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Prefetch fully (body received -> entry.complete + respawn armed).
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/slow-streaming"),
+      );
+      await page.hover('[data-testid="slow-streaming-prefetch-link"]');
+      const resp = await prefetchResponse;
+      await resp.finished();
+
+      // Every /slow-streaming partial request from here on is a re-fetch the
+      // re-armed cache should have made unnecessary.
+      const refetches: string[] = [];
+      page.on("request", (req) => {
+        if (
+          req.method() === "GET" &&
+          isPrefetchFor(req.url(), "/slow-streaming")
+        ) {
+          refetches.push(req.url());
+        }
+      });
+
+      // First navigation adopts the entry — and re-arms the slot from the
+      // buffered bytes instead of spending it.
+      await testId(page, "slow-streaming-prefetch-link").click();
+      await expect(testId(page, "slow-streaming-message")).toContainText(
+        "Slow data loaded",
+        { timeout: 8000 },
+      );
+
+      // Leave via history (popstate restores from the FE history cache and
+      // does not touch the prefetch map), then forward-click the same route
+      // again. Pre-respawn this second click found an empty slot: the click's
+      // own hover fired a fresh prefetch, the 1s loader streamed the skeleton,
+      // and a second network request was issued.
+      await page.goBack();
+      await expect(testId(page, "slow-streaming-prefetch-link")).toBeVisible();
+
+      await watchFlash(page, "slow-streaming-loading");
+      await testId(page, "slow-streaming-prefetch-link").click();
+      await expect(testId(page, "slow-streaming-message")).toContainText(
+        "Slow data loaded",
+        { timeout: 8000 },
+      );
+      expect(
+        await readFlash(page),
+        "the re-armed entry must serve the revisit without a skeleton flash",
+      ).toBe(false);
+      expect(
+        refetches,
+        "one prefetch serves both navigations: no request after the original",
+      ).toEqual([]);
+    });
+
     test("fully-prefetched nav whose CLIENT component suspends on mount reveals the layout fallback (does NOT hold the old page)", async ({
       page,
     }) => {
