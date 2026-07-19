@@ -560,37 +560,32 @@ describe('prefetchKey=":source" opt-out', () => {
     expect(adopted).not.toBeNull();
 
     // Resolve the fetch so .finally runs clearPrefetchInflight. The response
-    // has no `x-rsc-prefetch-scope` header, so it would store under wildcardKey
-    // — but because the in-flight promise was adopted, storePrefetch must NOT
-    // publish the now-owned (single-use) entry to the cache. A leftover here is
-    // exactly the bug that drops a route's handles on a later navigation served
-    // the drained entry.
+    // has no `x-rsc-prefetch-scope` header, so it stores under wildcardKey.
+    // Because the in-flight promise was adopted, storePrefetch must NOT
+    // publish the now-owned (single-use) entry — serving the drained object
+    // later is exactly the bug that drops a route's handles. The clean EOF
+    // instead REFILLS the slot with a respawned sibling: a fresh decode of
+    // the buffered bytes, never the exhausted object.
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
-    await adopted;
+    const adoptedEntry = await adopted;
     await new Promise((r) => setTimeout(r, 0));
-    expect(consumePrefetch(wildcardKey)).toBeNull();
 
-    // No cache entry was published and no inflight flag is stuck — neither key
-    // reports prefetched after an adopted+resolved fetch.
+    const refilled = consumePrefetch(wildcardKey);
+    expect(refilled).not.toBeNull();
+    expect(refilled).not.toBe(adoptedEntry);
+    expect(refilled!.complete).toBe(true);
+
+    // The source alias flag is not stuck after the adopted fetch resolved,
+    // and consuming the refilled entry re-armed the wildcard slot in place.
     expect(hasPrefetch(sourceKeyA)).toBe(false);
-    expect(hasPrefetch(wildcardKey)).toBe(false);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
 
-    // And a fresh prefetch for the same (source, target) pair must
-    // actually go to the network rather than being silently deduped.
-    let secondResolve: (r: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          secondResolve = resolve;
-        }),
-    );
+    // A fresh prefetch for the same (source, target) pair dedups against the
+    // warm slot instead of going to the network again.
     prefetchDirect("/target", ["A0"], "v1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    secondResolve!(
-      new Response("payload-2", { status: 200, headers: { "X-Test": "1" } }),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("consuming one inflight alias atomically clears its sibling (no double-adopt)", async () => {

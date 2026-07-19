@@ -9,6 +9,7 @@ import { prefetchDirect, setPrefetchDecoder } from "../browser/prefetch/fetch";
 import {
   buildPrefetchKey,
   clearPrefetchCache,
+  consumeInflightPrefetch,
   consumePrefetch,
   hasPrefetch,
 } from "../browser/prefetch/cache";
@@ -118,6 +119,75 @@ describe("prefetch respawn", () => {
     expect(decodeMock).toHaveBeenCalledTimes(4);
     // Exactly one network request served every adoption.
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it("refills the slot after a mid-stream cache adoption", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+        c.enqueue(new TextEncoder().encode("head"));
+      },
+    });
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(body)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    prefetchDirect("/blog", ["segment.a"], "v1");
+    // Headers arrived and the entry is published, but the stream is still
+    // open: one macrotask turn flushes the header-time microtask chain.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Adopt mid-stream: respawn cannot be armed yet, so this consume is
+    // one-shot and the slot goes empty — the pre-refill behavior.
+    const midStream = consumePrefetch(KEY);
+    expect(midStream).not.toBeNull();
+    expect(midStream!.complete).toBe(false);
+    expect(midStream!.respawn).toBeUndefined();
+    await vi.waitFor(() => expect(hasPrefetch(KEY)).toBe(false));
+
+    // The stream the adopter is rendering finishes cleanly -> the completion
+    // handler publishes a respawned sibling into the empty slot.
+    controller.enqueue(new TextEncoder().encode("-tail"));
+    controller.close();
+    await vi.waitFor(() => expect(hasPrefetch(KEY)).toBe(true));
+
+    const revisit = consumePrefetch(KEY);
+    expect(revisit).not.toBeNull();
+    expect(revisit!.complete).toBe(true);
+    await expect(revisit!.payload).resolves.toEqual({ text: "head-tail" });
+    // The adopted mid-stream entry also drained the full stream.
+    await expect(midStream!.payload).resolves.toEqual({ text: "head-tail" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refills the slot after a pre-headers inflight adoption", async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(
+      () => new Promise<Response>((resolve) => (resolveFetch = resolve)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    prefetchDirect("/blog", ["segment.a"], "v1");
+    // Adopt the in-flight promise BEFORE any response exists — the path
+    // navigation takes on a hover-then-instant-click. storePrefetch will see
+    // adoptedKeys and skip publication.
+    const adopted = consumeInflightPrefetch(KEY);
+    expect(adopted).not.toBeNull();
+
+    resolveFetch(new Response("flight-bytes"));
+    const entry = await adopted!;
+    expect(entry).not.toBeNull();
+    await expect(entry!.payload).resolves.toEqual({ text: "flight-bytes" });
+
+    // Clean EOF refills the never-published slot with a respawned sibling.
+    await vi.waitFor(() => expect(hasPrefetch(KEY)).toBe(true));
+    const revisit = consumePrefetch(KEY);
+    expect(revisit).not.toBeNull();
+    expect(revisit).not.toBe(entry);
+    expect(revisit!.complete).toBe(true);
+    await expect(revisit!.payload).resolves.toEqual({ text: "flight-bytes" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("stays one-shot when the stream did not end cleanly", async () => {

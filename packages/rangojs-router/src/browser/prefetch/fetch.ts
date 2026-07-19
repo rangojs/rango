@@ -370,7 +370,22 @@ function executePrefetchFetch(
       Promise.allSettled([payload, streamComplete]).then(([decode]) => {
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
-          if (reserve) entry.respawn = makeRespawn(storageKey, reserve, scope);
+          if (reserve) {
+            entry.respawn = makeRespawn(storageKey, reserve, scope);
+            // Refill after an early adoption. A click that lands before this
+            // point adopts the entry with respawn unarmed and leaves the slot
+            // empty — via either path: pre-headers inflight adoption makes
+            // storePrefetch skip publication (adoptedKeys), and a mid-stream
+            // cache adoption deletes the incomplete entry. Now that the bytes
+            // proved themselves complete, publish a respawned sibling so the
+            // revisit is warm. Guards: hasPrefetch skips when the slot is
+            // live again (our own un-adopted entry, a fresh entry, or a new
+            // in-flight prefetch), and storePrefetch's generation check drops
+            // the sibling if the cache was invalidated since the fetch began.
+            if (!hasPrefetch(storageKey)) {
+              storePrefetch(storageKey, entry.respawn(), gen);
+            }
+          }
         }
         clearTimeout(timeoutId);
       });
