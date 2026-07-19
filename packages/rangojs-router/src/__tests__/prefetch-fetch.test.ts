@@ -212,14 +212,21 @@ describe("prefetch fetch reduced-data behavior", () => {
     // client chunks before any click.
     await vi.waitFor(() => expect(decodeMock).toHaveBeenCalledTimes(1));
 
-    const { consumePrefetch } = await import("../browser/prefetch/cache");
+    const { consumePrefetch, hasPrefetch } =
+      await import("../browser/prefetch/cache");
     const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
     const entry = consumePrefetch(wildcardKey);
     expect(entry).not.toBeNull();
 
-    // Navigation reuses the already-decoded payload — no second decode.
+    // Navigation reuses the already-decoded payload: the adopted entry's
+    // payload IS the eager decode's result, not a click-time re-decode.
     expect(await entry!.payload).toEqual({});
-    expect(decodeMock).toHaveBeenCalledTimes(1);
+    expect(entry!.payload).toBe(decodeMock.mock.results[0]!.value);
+
+    // The extra decode is the background re-arm of the slot (respawn from the
+    // buffered bytes), not on the click path — and it keeps the slot warm.
+    expect(decodeMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
   });
 
   it("does not warm (or decode) a response carrying a control header", async () => {
@@ -553,37 +560,32 @@ describe('prefetchKey=":source" opt-out', () => {
     expect(adopted).not.toBeNull();
 
     // Resolve the fetch so .finally runs clearPrefetchInflight. The response
-    // has no `x-rsc-prefetch-scope` header, so it would store under wildcardKey
-    // — but because the in-flight promise was adopted, storePrefetch must NOT
-    // publish the now-owned (single-use) entry to the cache. A leftover here is
-    // exactly the bug that drops a route's handles on a later navigation served
-    // the drained entry.
+    // has no `x-rsc-prefetch-scope` header, so it stores under wildcardKey.
+    // Because the in-flight promise was adopted, storePrefetch must NOT
+    // publish the now-owned (single-use) entry — serving the drained object
+    // later is exactly the bug that drops a route's handles. The clean EOF
+    // instead REFILLS the slot with a respawned sibling: a fresh decode of
+    // the buffered bytes, never the exhausted object.
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
-    await adopted;
+    const adoptedEntry = await adopted;
     await new Promise((r) => setTimeout(r, 0));
-    expect(consumePrefetch(wildcardKey)).toBeNull();
 
-    // No cache entry was published and no inflight flag is stuck — neither key
-    // reports prefetched after an adopted+resolved fetch.
+    const refilled = consumePrefetch(wildcardKey);
+    expect(refilled).not.toBeNull();
+    expect(refilled).not.toBe(adoptedEntry);
+    expect(refilled!.complete).toBe(true);
+
+    // The source alias flag is not stuck after the adopted fetch resolved,
+    // and consuming the refilled entry re-armed the wildcard slot in place.
     expect(hasPrefetch(sourceKeyA)).toBe(false);
-    expect(hasPrefetch(wildcardKey)).toBe(false);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
 
-    // And a fresh prefetch for the same (source, target) pair must
-    // actually go to the network rather than being silently deduped.
-    let secondResolve: (r: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          secondResolve = resolve;
-        }),
-    );
+    // A fresh prefetch for the same (source, target) pair dedups against the
+    // warm slot instead of going to the network again.
     prefetchDirect("/target", ["A0"], "v1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    secondResolve!(
-      new Response("payload-2", { status: 200, headers: { "X-Test": "1" } }),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("consuming one inflight alias atomically clears its sibling (no double-adopt)", async () => {
@@ -1035,11 +1037,15 @@ describe("same-page cache poisoning regression", () => {
     expect(key).toBe("");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    // The slot re-armed from the ORIGINAL prefetch's buffered bytes — no
+    // network happened after consumption (fetchMock still 1), so whatever is
+    // here cannot be a same-page poisoned diff; it is the replayed original.
     const recheck = consumePrefetch(wildcardKey);
-    expect(recheck).toBeNull();
+    expect(recheck).not.toBeNull();
+    expect(recheck!.complete).toBe(true);
   });
 
-  it("after consuming a prefetch, cross-page re-prefetch IS allowed", async () => {
+  it("after consuming a prefetch, cross-page re-prefetch dedups against the re-armed slot", async () => {
     setupBrowser();
 
     const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
@@ -1057,9 +1063,11 @@ describe("same-page cache poisoning regression", () => {
     prefetchDirect("/page/1", ["A0"], "v1");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
+    // Let the eager decode + clean EOF settle so respawn is armed before
+    // consuming (microtask chains flush exhaustively before the macrotask).
+    await vi.waitFor(() => expect(decodeMock).toHaveBeenCalled());
+    await decodeMock.mock.results[0]!.value;
+    await new Promise((r) => setTimeout(r, 0));
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     const wildcardKey = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
@@ -1070,7 +1078,9 @@ describe("same-page cache poisoning regression", () => {
 
     prefetchDirect("/page/1", ["A0"], "v1");
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Consumption re-armed the slot from buffered bytes, so the cross-page
+    // re-prefetch dedups instead of refetching: one network request total.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("full pagination flow: forward through /1→/2→/3 then back to /1 uses correct entry", async () => {
@@ -1129,11 +1139,15 @@ describe("same-page cache poisoning regression", () => {
     prefetchDirect("/page/3", ["A0"], "v1");
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
-    const staleEntry = consumePrefetch(key1);
-    expect(staleEntry).toBeNull();
+    // The earlier consume re-armed key1 from its buffered bytes: going back
+    // to /1 reuses the replayed original entry, and the hover re-prefetch
+    // dedups — still only the three original network requests.
+    const rearmed = consumePrefetch(key1);
+    expect(rearmed).not.toBeNull();
+    expect(rearmed).not.toBe(res1);
 
     prefetchDirect("/page/1", ["A0"], "v1");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 

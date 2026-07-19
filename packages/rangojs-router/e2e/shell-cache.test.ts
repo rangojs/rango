@@ -13,7 +13,6 @@ import { guardHydrationErrors } from "@shared/e2e";
 import {
   assertPprReplayStatus,
   assertShellStatus,
-  parsePprReplayStatus,
 } from "@rangojs/router/testing/e2e";
 import type { ShellExecCounters } from "./test-app/src/urls/shell-cache.defs";
 
@@ -1373,20 +1372,13 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     ]);
     await expect(page).toHaveTitle(`Stale replay 1: ${capturedData}`);
 
-    const returnToTwoPromise = waitForPartialResponse(
-      "/shell-cache/stale-replay/2",
-    );
+    // Return to /2, synchronized on the committed UI rather than a network
+    // response: in production the injected anchor's viewport prefetch entry
+    // is respawnable (PR #804), so this click adopts the re-armed entry and
+    // issues NO request. (Pre-#804 this awaited a partial and tolerated
+    // BYPASS/no-entry vs HIT/fresh — the first /2 visit races its background
+    // capture; PPR5 separately pins that a later request becomes a HIT.)
     await testId(page, "shell-stale-replay-2").click();
-    const returnToTwo = await returnToTwoPromise;
-    const returnToTwoStatus = parsePprReplayStatus({
-      headers: new Headers(returnToTwo.headers()),
-    });
-    // The first /2 visit schedules capture. This return can race that background
-    // work; PPR5 separately pins that a later request eventually becomes a HIT.
-    expect([
-      { outcome: "BYPASS", reason: "no-entry" },
-      { outcome: "HIT", freshness: "fresh" },
-    ]).toContainEqual(returnToTwoStatus);
     await expect(testId(page, "shell-stale-replay-data")).toContainText(
       /^shell-stale-2-execution-\d+$/,
     );
