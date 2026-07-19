@@ -40,7 +40,10 @@ import type {
   PrerenderHandlerDefinition,
   PassthroughHandlerDefinition,
 } from "../prerender.js";
-import type { StaticHandlerDefinition } from "../static-handler.js";
+import type {
+  StaticHandlerDefinition,
+  StaticHandlerRef,
+} from "../static-handler.js";
 import type {
   ResponseHandler,
   ResponseHandlerContext,
@@ -271,22 +274,18 @@ export type PathHelpers<TEnv> = {
    *
    * Not generic over the slots record: an inferred type parameter makes the
    * object literal an inference site, which suppresses contextual typing of
-   * arrow slot handlers (`(ctx) => ...` was implicit any). Bare handlers infer
-   * now; a descriptor's `handler:` arrow still needs an explicit ctx annotation
-   * because StaticHandlerDefinition's own `.handler` joins the contextual union
-   * (two callables — see parallel-slot-handler-types.test.ts).
+   * arrow slot handlers (`(ctx) => ...` was implicit any). Static() values use
+   * an opaque handler-less reference here so their own `.handler` cannot
+   * contribute a second call signature or expose internal fields in completion.
    */
   parallel: (
     slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
-      | StaticHandlerDefinition
+      | StaticHandlerRef
       | {
-          handler:
-            | Handler<any, any, TEnv>
-            | ReactNode
-            | StaticHandlerDefinition;
+          handler: Handler<any, any, TEnv> | ReactNode | StaticHandlerRef;
           use?: () => ParallelUseItem[];
         }
     >,
