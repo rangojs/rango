@@ -28,7 +28,7 @@ payload stage have been removed from `rsc/helpers.ts`.
 
 The request-level orchestration ABOVE this design's payload boundary has since
 become a plan of its own: `requestRenderPlan` in `src/rsc/rsc-rendering.ts`,
-driven by the generic routine interpreter — see
+executed by the generic routine runner — see
 [routine-plans.md](./routine-plans.md). That layer delegates to this driver
 unchanged and bridges its stage events into the flow trace; everything below
 the payload boundary remains as specified here.

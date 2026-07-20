@@ -110,6 +110,7 @@ import {
   type RequestPlan,
   type ExecutableRequestPlan,
 } from "../router/request-classification.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 /**
  * Create an RSC request handler.
@@ -247,7 +248,8 @@ export function createRSCHandler<
     actionId?: string,
   ): Promise<Response> {
     const timeoutError = new RouterTimeoutError(phase, durationMs);
-    const cursor = _getRequestContext<TEnv>()?._renderForeground;
+    const requestContext = _getRequestContext<TEnv>();
+    const cursor = requestContext?._renderForeground;
     const render: RenderTimeoutContext | undefined =
       phase === "render-start" && cursor
         ? {
@@ -261,11 +263,29 @@ export function createRSCHandler<
             }),
           }
         : undefined;
+    const trace =
+      phase === "render-start" ? requestContext?._activeRoutine : undefined;
+    const activeEntries = trace?.active() ?? [];
+    const activeStep = activeEntries.at(-1);
+    const activeAt = performance.now();
+    const routineSnapshot =
+      trace && activeStep
+        ? {
+            name: trace.name,
+            path: activeEntries.map((entry) => entry.name),
+            durationMs: activeAt - activeStep.startedAt,
+          }
+        : undefined;
 
-    // Each surface gets its OWN shallow copy of the snapshot. onError, telemetry,
-    // and onTimeout are independent consumers; a consumer that mutates its
-    // `render` (e.g. an onError redacting metadata) must not corrupt what the
-    // other two observe.
+    if (INTERNAL_RANGO_DEBUG && trace && activeStep) {
+      console.log(
+        `[routine] TIMEOUT ${request.method} ${url.pathname} (${trace.name})\n${trace.formatActive(activeEntries, activeAt)}`,
+      );
+    }
+
+    // Each surface gets its OWN shallow render snapshot. A consumer that mutates
+    // its copy must not corrupt what the other two observe. The internal-debug
+    // routine snapshot is bounded metadata sent only to onError.
     callOnError(timeoutError, phase === "action" ? "action" : "handler", {
       request,
       url,
@@ -278,6 +298,7 @@ export function createRSCHandler<
         phase,
         durationMs,
         ...(render && { render: { ...render } }),
+        ...(routineSnapshot && { routine: routineSnapshot }),
       },
     });
 

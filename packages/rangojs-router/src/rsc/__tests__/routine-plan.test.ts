@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   createRoutineTrace,
-  driveRoutinePlan,
-  run,
-  schedule,
-  start,
-  subplan,
+  handoff,
+  runRoutine,
+  scope,
+  step,
   type RoutinePlan,
 } from "../routine-plan.js";
 
@@ -25,14 +24,14 @@ function deferred<T>(): {
 
 function fakeClockTrace(): ReturnType<typeof createRoutineTrace> {
   let tick = 0;
-  return createRoutineTrace(() => ++tick);
+  return createRoutineTrace("test", () => ++tick);
 }
 
 describe("routine plan protocol", () => {
   it("yields the command before the work runs", () => {
     let executed = false;
     function* plan(): RoutinePlan<string> {
-      return yield* run("only", () => {
+      return yield* step("only", () => {
         executed = true;
         return "value";
       });
@@ -40,7 +39,7 @@ describe("routine plan protocol", () => {
     const generator = plan();
     const first = generator.next();
     expect(first.done).toBe(false);
-    expect(first.value).toMatchObject({ kind: "run", name: "only" });
+    expect(first.value).toMatchObject({ kind: "step", name: "only" });
     expect(executed).toBe(false);
   });
 
@@ -48,11 +47,11 @@ describe("routine plan protocol", () => {
     const sentinel = { marker: "exact" };
     let received: unknown;
     function* plan(): RoutinePlan<string> {
-      const first = yield* run("first", () => sentinel);
+      const first = yield* step("first", () => sentinel);
       received = first;
-      return yield* run("second", () => `next(${String(first === sentinel)})`);
+      return yield* step("second", () => `next(${String(first === sentinel)})`);
     }
-    const result = await driveRoutinePlan(plan());
+    const result = await runRoutine(plan());
     expect(received).toBe(sentinel);
     expect(result).toBe("next(true)");
   });
@@ -60,71 +59,47 @@ describe("routine plan protocol", () => {
   it("propagates an uncaught step error with exact identity", async () => {
     const boom = new Error("flight failed");
     function* plan(): RoutinePlan<string> {
-      return yield* run("explodes", () => {
+      return yield* step("explodes", () => {
         throw boom;
       });
     }
-    await expect(driveRoutinePlan(plan())).rejects.toBe(boom);
+    await expect(runRoutine(plan())).rejects.toBe(boom);
   });
 
   it("lets the plan recover from a step failure with plain try/catch", async () => {
     const boom = new Error("html failed");
     function* plan(): RoutinePlan<string> {
       try {
-        return yield* run("html", () => {
+        return yield* step("html", () => {
           throw boom;
         });
       } catch (error) {
         expect(error).toBe(boom);
-        return yield* run("fallback", () => "flight-only response");
+        return yield* step("fallback", () => "flight-only response");
       }
     }
-    await expect(driveRoutinePlan(plan())).resolves.toBe(
-      "flight-only response",
-    );
+    await expect(runRoutine(plan())).resolves.toBe("flight-only response");
   });
 
   it("rejects a mismatched result handshake", () => {
     function* plan(): RoutinePlan<string> {
-      return yield* run("expects-run", () => "value");
+      return yield* step("expects-step", () => "value");
     }
     const generator = plan();
     generator.next();
-    expect(() => generator.next({ kind: "schedule" })).toThrow(
-      /expected run result, received schedule/,
+    expect(() => generator.next({ kind: "handoff" })).toThrow(
+      /expected step result, received handoff/,
     );
   });
 
-  it("start forks without blocking and a later step joins the handle", async () => {
-    const ssr = deferred<string>();
-    const order: string[] = [];
-    function* plan(): RoutinePlan<string> {
-      const handle = yield* start("ssr-setup", () => ssr.promise);
-      yield* run("match", () => {
-        order.push("match");
-      });
-      return yield* run("html", async () => {
-        const setup = await handle;
-        order.push("join");
-        return `html(${setup})`;
-      });
-    }
-    const driving = driveRoutinePlan(plan());
-    // match ran while ssr-setup was still pending: fork did not serialize.
-    expect(order).toEqual(["match"]);
-    ssr.resolve("ssr-ready");
-    await expect(driving).resolves.toBe("html(ssr-ready)");
-    expect(order).toEqual(["match", "join"]);
-  });
-
-  it("schedule completes at scheduling; settlement and failure stay background", async () => {
+  it("handoff completes at scheduling; settlement stays background", async () => {
     const capture = deferred<void>();
     const trace = fakeClockTrace();
     function* plan(): RoutinePlan<string> {
-      yield* schedule("shell-capture", () => capture.promise);
-      return yield* run("response", () => "served");
+      yield* handoff("shell-capture", () => capture.promise);
+      return yield* step("response", () => "served");
     }
-    await expect(driveRoutinePlan(plan(), { trace })).resolves.toBe("served");
+    await expect(runRoutine(plan(), { trace })).resolves.toBe("served");
     const entry = trace.entries.find((e) => e.name === "shell-capture")!;
     expect(entry.state).toBe("pending");
     capture.resolve();
@@ -132,106 +107,214 @@ describe("routine plan protocol", () => {
     expect(entry.state).toBe("settled");
   });
 
-  it("a schedule rejection marks the trace entry failed without failing the plan", async () => {
+  it("an asynchronous handoff rejection marks the trace without failing the plan", async () => {
     const trace = fakeClockTrace();
     const boom = new Error("capture failed");
     function* plan(): RoutinePlan<string> {
-      yield* schedule("shell-capture", () => Promise.reject(boom));
-      return yield* run("response", () => "served");
+      yield* handoff("shell-capture", () => Promise.reject(boom));
+      return yield* step("response", () => "served");
     }
-    await expect(driveRoutinePlan(plan(), { trace })).resolves.toBe("served");
+    await expect(runRoutine(plan(), { trace })).resolves.toBe("served");
     await Promise.resolve();
     const entry = trace.entries.find((e) => e.name === "shell-capture")!;
     expect(entry.state).toBe("failed");
     expect(entry.error).toBe(boom);
   });
 
-  it("subplans flatten into one stream and scope the trace", async () => {
+  it("propagates a synchronous handoff failure with exact identity", async () => {
+    const trace = fakeClockTrace();
+    const boom = new Error("waitUntil registration failed");
+    let continued = false;
+    function* plan(): RoutinePlan<string> {
+      yield* handoff("shell-capture", () => {
+        throw boom;
+      });
+      continued = true;
+      return "served";
+    }
+
+    await expect(runRoutine(plan(), { trace })).rejects.toBe(boom);
+    expect(continued).toBe(false);
+    expect(trace.entries[0]).toMatchObject({
+      name: "shell-capture",
+      state: "failed",
+      error: boom,
+    });
+  });
+
+  it("records an undefined rejection reason as a failed handoff", async () => {
+    const trace = fakeClockTrace();
+    function* plan(): RoutinePlan<string> {
+      yield* handoff("shell-capture", () => Promise.reject(undefined));
+      return "served";
+    }
+
+    await expect(runRoutine(plan(), { trace })).resolves.toBe("served");
+    await Promise.resolve();
+    expect(trace.entries[0]).toMatchObject({
+      name: "shell-capture",
+      state: "failed",
+      error: undefined,
+    });
+  });
+
+  it("rejects promise-valued plan returns so async work stays visible", async () => {
+    function* plan(): RoutinePlan<Promise<string>> {
+      yield* step("before-return", () => undefined);
+      return Promise.resolve("hidden work");
+    }
+    await expect(runRoutine(plan())).rejects.toThrow(
+      /plans cannot return promises.*step/,
+    );
+  });
+
+  it("scopes flatten into one stream and group the trace", async () => {
     const trace = fakeClockTrace();
     function* inner(input: string): RoutinePlan<string> {
-      const flight = yield* run("flight", () => `flight(${input})`);
-      return yield* run("response", () => `response(${flight})`);
+      const flight = yield* step("flight", () => `flight(${input})`);
+      return yield* step("response", () => `response(${flight})`);
     }
     function* outer(): RoutinePlan<string> {
-      const payload = yield* run("payload", () => "payload");
-      return yield* subplan("render", inner(payload));
+      const payload = yield* step("payload", () => "payload");
+      return yield* scope("render", inner(payload));
     }
-    await expect(driveRoutinePlan(outer(), { trace })).resolves.toBe(
+    await expect(runRoutine(outer(), { trace })).resolves.toBe(
       "response(flight(payload))",
     );
     expect(
       trace.entries.map((e) => `${"  ".repeat(e.depth)}${e.kind}:${e.name}`),
-    ).toEqual(["run:payload", "plan:render", "  run:flight", "  run:response"]);
+    ).toEqual([
+      "step:payload",
+      "scope:render",
+      "  step:flight",
+      "  step:response",
+    ]);
   });
 
   it("trace.begin honors an explicit depth for bridged child entries", async () => {
     const trace = fakeClockTrace();
     function* plan(): RoutinePlan<string> {
-      return yield* run("render", () => {
+      return yield* step("render", () => {
         // A bridge created while a step runs records children one level down.
         const depth = trace.currentDepth() + 1;
-        const child = trace.begin("flight", "run", depth);
+        const child = trace.begin("flight", "step", depth);
         trace.end(child);
         return "ok";
       });
     }
-    await expect(driveRoutinePlan(plan(), { trace })).resolves.toBe("ok");
+    await expect(runRoutine(plan(), { trace })).resolves.toBe("ok");
     expect(trace.entries.map((e) => `${e.depth}:${e.name}`)).toEqual([
       "0:render",
       "1:flight",
     ]);
   });
 
-  it("an error unwinding through a subplan still exits the scope", async () => {
+  it("marks a scope done when it recovers internally", async () => {
+    const trace = fakeClockTrace();
+    function* inner(): RoutinePlan<string> {
+      try {
+        return yield* step("primary", () => {
+          throw new Error("primary failed");
+        });
+      } catch {
+        return yield* step("fallback", () => "recovered");
+      }
+    }
+    function* outer(): RoutinePlan<string> {
+      return yield* scope("recovering", inner());
+    }
+
+    await expect(runRoutine(outer(), { trace })).resolves.toBe("recovered");
+    const recovered = trace.entries.find((entry) => entry.kind === "scope")!;
+    expect(recovered).toMatchObject({
+      name: "recovering",
+      state: "done",
+    });
+    expect(recovered.error).toBeUndefined();
+    expect(recovered.endedAt).toBeDefined();
+  });
+
+  it("marks every scope crossed by an escaping error as failed", async () => {
     const trace = fakeClockTrace();
     const boom = new Error("nested failure");
     function* inner(): RoutinePlan<string> {
-      return yield* run("flight", () => {
+      return yield* step("flight", () => {
         throw boom;
       });
     }
-    function* outer(): RoutinePlan<string> {
-      return yield* subplan("render", inner());
+    function* middle(): RoutinePlan<string> {
+      return yield* scope("inner", inner());
     }
-    await expect(driveRoutinePlan(outer(), { trace })).rejects.toBe(boom);
-    const scope = trace.entries.find((e) => e.kind === "plan")!;
+    function* outer(): RoutinePlan<string> {
+      return yield* scope("outer", middle());
+    }
+    await expect(runRoutine(outer(), { trace })).rejects.toBe(boom);
+    const scopes = trace.entries.filter((entry) => entry.kind === "scope");
     const failed = trace.entries.find((e) => e.name === "flight")!;
     expect(failed.state).toBe("failed");
-    expect(scope.state).toBe("failed");
+    expect(scopes).toHaveLength(2);
+    for (const failedScope of scopes) {
+      expect(failedScope.state).toBe("failed");
+      expect(failedScope.error).toBe(boom);
+      expect(failedScope.endedAt).toBeDefined();
+    }
+  });
+
+  it("publishes the active routine to its owner until completion", async () => {
+    const pending = deferred<string>();
+    const trace = fakeClockTrace();
+    const owner: { _activeRoutine?: typeof trace } = {};
+    function* plan(): RoutinePlan<string> {
+      return yield* scope(
+        "prepare:full",
+        (function* (): RoutinePlan<string> {
+          return yield* step("match", () => pending.promise);
+        })(),
+      );
+    }
+
+    const driving = runRoutine(plan(), { trace, owner });
+    expect(owner._activeRoutine).toBe(trace);
+    expect(trace.active().map((entry) => entry.name)).toEqual([
+      "prepare:full",
+      "match",
+    ]);
+    expect(trace.formatActive()).toContain("step match");
+
+    pending.resolve("matched");
+    await expect(driving).resolves.toBe("matched");
+    expect(owner._activeRoutine).toBeUndefined();
   });
 });
 
 describe("request plan shape (handleRscRenderingInner spine)", () => {
   it("expresses the request lifecycle as one readable instruction stream", async () => {
-    const ssrSetup = deferred<string>();
     const captureSettled = deferred<void>();
     const trace = fakeClockTrace();
 
-    function* renderPlan(
-      payload: string,
-      ssr: Promise<string>,
-    ): RoutinePlan<string> {
-      const flight = yield* run("flight", () => `flight(${payload})`);
-      const html = yield* run("html", async () => `${await ssr}+${flight}`);
-      return yield* run("response", () => `response(${html})`);
+    function* shellServePlan(): RoutinePlan<"miss"> {
+      return yield* step("shell-read", () => "miss" as const);
+    }
+
+    function* preparePlan(): RoutinePlan<string> {
+      const match = yield* step("match", () => "route");
+      return `payload(${match})`;
     }
 
     function* requestPlan(): RoutinePlan<string> {
-      const ctx = yield* run("context", () => "ctx");
-      const ssr = yield* start("ssr-setup", () => ssrSetup.promise);
-      const match = yield* run("match+onion", () => `match(${ctx})`);
-      const payload = yield* run("payload", () => `payload(${match})`);
-      const response = yield* subplan("render", renderPlan(payload, ssr));
-      yield* schedule("shell-capture", () => captureSettled.promise);
+      yield* scope("shell-serve", shellServePlan());
+      const payload = yield* scope("prepare:full", preparePlan());
+      const response = yield* step("render", async () =>
+        Promise.resolve(`response(${payload})`),
+      );
+      yield* handoff("shell-capture", () => captureSettled.promise);
       return response;
     }
 
-    const driving = driveRoutinePlan(requestPlan(), { trace });
-    ssrSetup.resolve("ssr");
+    const driving = runRoutine(requestPlan(), { trace });
     const response = await driving;
 
-    // Data flowed through every step, including the forked join.
-    expect(response).toBe("response(ssr+flight(payload(match(ctx))))");
+    expect(response).toBe("response(payload(route))");
 
     // The response returned while shell-capture was still background-pending.
     const capture = trace.entries.find((e) => e.name === "shell-capture")!;
@@ -245,15 +328,12 @@ describe("request plan shape (handleRscRenderingInner spine)", () => {
         (e) => `${"  ".repeat(e.depth)}${e.kind}:${e.name}:${e.state}`,
       ),
     ).toEqual([
-      "run:context:done",
-      "start:ssr-setup:settled",
-      "run:match+onion:done",
-      "run:payload:done",
-      "plan:render:done",
-      "  run:flight:done",
-      "  run:html:done",
-      "  run:response:done",
-      "schedule:shell-capture:settled",
+      "scope:shell-serve:done",
+      "  step:shell-read:done",
+      "scope:prepare:full:done",
+      "  step:match:done",
+      "step:render:done",
+      "handoff:shell-capture:settled",
     ]);
   });
 });

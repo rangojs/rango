@@ -1,17 +1,17 @@
 import { bench, describe } from "vitest";
 import {
   createRoutineTrace,
-  driveRoutinePlan,
-  run,
-  schedule,
-  subplan,
+  handoff,
+  runRoutine,
+  scope,
+  step,
   type RoutinePlan,
 } from "../routine-plan.js";
 
 /**
  * Isolated driver overhead: the same six-effect request spine (shell gates,
  * match, payload, render flight+response, capture handoff) written as direct
- * awaits vs driven through driveRoutinePlan, so React/render noise cannot hide
+ * awaits vs driven through runRoutine, so React/render noise cannot hide
  * the orchestration cost. Mirrors the shape of requestRenderPlan in
  * rsc-rendering.ts.
  */
@@ -37,30 +37,30 @@ async function directBaseline(): Promise<string> {
 }
 
 function* renderPlan(): RoutinePlan<string> {
-  const flight = yield* run("flight", effectAsync);
-  const response = yield* run("response", effectSync);
+  const flight = yield* step("flight", effectAsync);
+  const response = yield* step("response", effectSync);
   return flight + response;
 }
 
 function* spinePlan(): RoutinePlan<string> {
-  const shell = yield* run("shell-serve", effectSync);
-  const match = yield* run("match", effectAsync);
-  const payload = yield* run("payload", effectSync);
-  const rendered = yield* subplan("render", renderPlan());
-  yield* schedule("capture", effectAsync);
+  const shell = yield* step("shell-serve", effectSync);
+  const match = yield* step("match", effectAsync);
+  const payload = yield* step("payload", effectSync);
+  const rendered = yield* scope("render", renderPlan());
+  yield* handoff("capture", effectAsync);
   return shell + match + payload + rendered;
 }
 
-describe("routine-plan driver overhead (six-effect request spine)", () => {
+describe("routine-plan runner overhead (six-effect request spine)", () => {
   bench("direct await sequence baseline", async () => {
     await directBaseline();
   });
 
-  bench("driveRoutinePlan, trace off", async () => {
-    await driveRoutinePlan(spinePlan());
+  bench("runRoutine, trace off", async () => {
+    await runRoutine(spinePlan());
   });
 
-  bench("driveRoutinePlan, trace on", async () => {
-    await driveRoutinePlan(spinePlan(), { trace: createRoutineTrace() });
+  bench("runRoutine, trace on", async () => {
+    await runRoutine(spinePlan(), { trace: createRoutineTrace("bench") });
   });
 });

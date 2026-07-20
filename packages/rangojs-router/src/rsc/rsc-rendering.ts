@@ -27,6 +27,7 @@ import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
+  matchAndRecordParams,
 } from "./helpers.js";
 import {
   createRenderStageTraceBridge,
@@ -35,12 +36,11 @@ import {
 } from "./render-pipeline.js";
 import {
   createRoutineTrace,
-  driveRoutinePlan,
-  run,
-  schedule,
-  subplan,
+  handoff,
+  runRoutine,
+  scope,
+  step,
   type RoutinePlan,
-  type RoutineTrace,
 } from "./routine-plan.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
@@ -304,8 +304,6 @@ interface RequestRenderInput<TEnv> {
   nonce: string | undefined;
   renderSpan: TraceSpan;
   reqCtx: ReturnType<typeof getRequestContext>;
-  /** Flow trace, active when INTERNAL_RANGO_DEBUG is baked on; else absent. */
-  trace?: RoutineTrace;
 }
 
 type ShellServeOutcome =
@@ -336,9 +334,11 @@ async function handleRscRenderingInner<TEnv>(
 ): Promise<Response> {
   // Flow trace rides the internal debug surface (INTERNAL_RANGO_DEBUG=1): the
   // Vite pipeline bakes the flag at build/dev-server start (inject-client-debug),
-  // so the whole branch folds out of ordinary production builds while an
-  // explicit debug build keeps it.
-  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace() : undefined;
+  // so trace allocation and output fold out of ordinary production builds while
+  // an explicit debug build keeps them. The routine itself remains the executor.
+  const mode = isPartial ? "partial" : "document";
+  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace(mode) : undefined;
+  const reqCtx = getRequestContext();
   const input: RequestRenderInput<TEnv> = {
     ctx,
     request,
@@ -348,16 +348,17 @@ async function handleRscRenderingInner<TEnv>(
     handleStore,
     nonce,
     renderSpan,
-    reqCtx: getRequestContext(),
-    trace,
+    reqCtx,
   };
   try {
-    return await driveRoutinePlan(requestRenderPlan(input), { trace });
+    return await runRoutine(requestRenderPlan(input), {
+      trace,
+      owner: reqCtx,
+    });
   } finally {
     if (trace) {
-      const mode = isPartial ? "partial" : "document";
       console.log(
-        `[routine] ${request.method} ${url.pathname} (${mode})\n${trace.format()}`,
+        `[routine] ${request.method} ${url.pathname} (${trace.name})\n${trace.format()}`,
       );
     }
   }
@@ -367,7 +368,7 @@ async function handleRscRenderingInner<TEnv>(
  * The request-level render plan. Reads top to bottom as the request executes:
  * serve a stored PPR shell if one commits, otherwise match and build the
  * payload, render it through the stage driver, then hand off background
- * captures. Effects run through the routine driver (yield-before-execute,
+ * captures. Effects run through the routine runner (yield-before-execute,
  * exact result/error identity — see routine-plan.ts).
  */
 function* requestRenderPlan<TEnv>(
@@ -381,12 +382,12 @@ function* requestRenderPlan<TEnv>(
   // chain (executeRender wraps it), so no shell byte can precede a guard
   // decision — that ordering is what makes a shared shell safe. Routes
   // without the `ppr` option stay pure axis 1 at zero cost.
-  const shell = yield* subplan("shell-serve", shellServePlan(input));
+  const shell = yield* scope("shell-serve", shellServePlan(input));
   if (shell.kind === "serve") return shell.response;
 
   // Match + payload. A control response (redirect, prerender collection)
   // ends the plan before any rendering.
-  const prepared = yield* subplan(
+  const prepared = yield* scope(
     isPartial ? "prepare:partial" : "prepare:full",
     preparePayloadPlan(input),
   );
@@ -399,7 +400,7 @@ function* requestRenderPlan<TEnv>(
     attachLocationStateIfPresent(prepared.payload);
   }
 
-  const response = yield* run("render", () =>
+  const response = yield* step("render", () =>
     renderPreparedRscResponse(input, prepared),
   );
 
@@ -415,7 +416,7 @@ function* requestRenderPlan<TEnv>(
       (response.headers.get("content-type") ?? "").includes("text/html")
     ) {
       const { descriptor, ssrModule } = shell;
-      yield* schedule("shell-capture", () =>
+      yield* handoff("shell-capture", () =>
         scheduleShellCapture(
           input.ctx,
           input.request,
@@ -437,7 +438,7 @@ function* requestRenderPlan<TEnv>(
     response.status === 200
   ) {
     const captureKey = prepared.partialCaptureKey;
-    yield* schedule("navigation-shell-capture", () =>
+    yield* handoff("navigation-shell-capture", () =>
       scheduleNavigationShellCapture(input, captureKey),
     );
   }
@@ -494,7 +495,7 @@ function* shellServePlan<TEnv>(
 
   // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
   // streaming, so bots/SEO crawlers get one complete axis-1 document.
-  const [ssrModule, streamMode] = yield* run("ssr-setup", () =>
+  const [ssrModule, streamMode] = yield* step("ssr-setup", () =>
     getSSRSetup(ctx, request, env, url, reqCtx._metricsStore),
   );
   if (
@@ -506,7 +507,7 @@ function* shellServePlan<TEnv>(
   }
   const descriptor = createShellCaptureDescriptor(ctx, key, pprConfig, store);
 
-  const cached = yield* run("shell-read", () =>
+  const cached = yield* step("shell-read", () =>
     readShellEntry(store, key, reqCtx),
   );
 
@@ -532,7 +533,7 @@ function* shellServePlan<TEnv>(
       // Stale (SWR) hit: serve the stale shell now, recapture in the
       // background (stampede-guarded + backoff inside scheduleShellCapture).
       if (cached.shouldRevalidate) {
-        yield* schedule("shell-recapture", () =>
+        yield* handoff("shell-recapture", () =>
           scheduleShellCapture(
             ctx,
             request,
@@ -545,7 +546,7 @@ function* shellServePlan<TEnv>(
         );
       }
       const entry = cached.entry;
-      const response = yield* run("shell-hit", () =>
+      const response = yield* step("shell-hit", () =>
         serveShellHit(
           ctx,
           request,
@@ -568,7 +569,7 @@ function* shellServePlan<TEnv>(
   // gate and fails to null (ordinary MISS path takes over); past
   // ppr.ttl the baked entry still serves while SWR recaptures — the
   // upgrade path from build entry to runtime entry.
-  const buildHit = yield* run("build-shell-lookup", () =>
+  const buildHit = yield* step("build-shell-lookup", () =>
     lookupBuildShell(
       url,
       ctx.version,
@@ -584,7 +585,7 @@ function* shellServePlan<TEnv>(
   if (buildHit) {
     // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
     if (buildHit.stale) {
-      yield* schedule("shell-recapture", () =>
+      yield* handoff("shell-recapture", () =>
         scheduleShellCapture(
           ctx,
           request,
@@ -596,7 +597,7 @@ function* shellServePlan<TEnv>(
         ),
       );
     }
-    const response = yield* run("shell-hit", () =>
+    const response = yield* step("shell-hit", () =>
       serveShellHit(
         ctx,
         request,
@@ -629,7 +630,7 @@ function* preparePayloadPlan<TEnv>(
 
   if (isPartial) {
     // Partial render (navigation)
-    const replay = yield* run("match:ppr-replay", () =>
+    const replay = yield* step("match:ppr-replay", () =>
       matchPartialAndRecordParams(ctx, request, env, url, reqCtx, nonce),
     );
     const result = replay.result;
@@ -641,7 +642,7 @@ function* preparePayloadPlan<TEnv>(
 
     if (!result) {
       // Fall back to full render
-      const match = yield* run("match:fallback", () =>
+      const match = yield* step("match:fallback", () =>
         matchAndRecordParams(ctx, request, env),
       );
 
@@ -712,7 +713,7 @@ function* preparePayloadPlan<TEnv>(
   }
 
   // Full render (initial page load)
-  const match = yield* run("match", () =>
+  const match = yield* step("match", () =>
     matchAndRecordParams(ctx, request, env),
   );
 
@@ -730,7 +731,7 @@ function* preparePayloadPlan<TEnv>(
   // match.segments already contains cached or fresh segments as appropriate
 
   if (url.searchParams.has("__prerender_collect")) {
-    const response = yield* run("prerender-collect", () =>
+    const response = yield* step("prerender-collect", () =>
       collectPrerenderArtifacts(match, handleStore),
     );
     return { kind: "control", response };
@@ -742,17 +743,6 @@ function* preparePayloadPlan<TEnv>(
     hasInterceptSlots: false,
     partialCaptureNeeded: false,
   };
-}
-
-/** Match and stamp params/routeName on the request context in one effect. */
-export async function matchAndRecordParams<TEnv>(
-  ctx: HandlerContext<TEnv>,
-  request: Request,
-  env: TEnv,
-): Promise<Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>> {
-  const match = await ctx.router.match(request, { env });
-  setRequestContextParams(match.params, match.routeName);
-  return match;
 }
 
 /**
@@ -938,7 +928,9 @@ function renderPreparedRscResponse<TEnv>(
     mode: isPartial ? ("partial" as const) : ("full" as const),
     routeKey: reqCtx._routeName,
     span: renderSpan,
-    onEvent: input.trace && createRenderStageTraceBridge(input.trace),
+    onEvent:
+      reqCtx._activeRoutine &&
+      createRenderStageTraceBridge(reqCtx._activeRoutine),
   };
   return renderRscResponse(
     {

@@ -29,6 +29,7 @@ import {
   createSimpleRedirectResponse,
   interceptRedirectForPartial,
   attachLocationStateIfPresent,
+  matchAndRecordParams,
 } from "./helpers.js";
 import {
   createRenderStageTraceBridge,
@@ -36,12 +37,10 @@ import {
 } from "./render-pipeline.js";
 import {
   createRoutineTrace,
-  driveRoutinePlan,
-  run,
+  runRoutine,
+  step,
   type RoutinePlan,
-  type RoutineTrace,
 } from "./routine-plan.js";
-import { matchAndRecordParams } from "./rsc-rendering.js";
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { MatchResult } from "../types.js";
@@ -371,8 +370,6 @@ interface ActionRevalidationInput<TEnv> {
   continuation: ActionContinuation;
   renderSpan: TraceSpan;
   reqCtx: ReturnType<typeof getRequestContext>;
-  /** Flow trace, active when INTERNAL_RANGO_DEBUG is baked on; else absent. */
-  trace?: RoutineTrace;
 }
 
 async function revalidateAfterActionInner<TEnv>(
@@ -400,7 +397,9 @@ async function revalidateAfterActionInner<TEnv>(
   // in the background. See registerCachedFunction in cache/cache-runtime.ts.
   reqCtx._inActionRevalidation = true;
 
-  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace() : undefined;
+  const trace = INTERNAL_RANGO_DEBUG
+    ? createRoutineTrace("action-revalidation")
+    : undefined;
   const input: ActionRevalidationInput<TEnv> = {
     ctx,
     request,
@@ -410,14 +409,16 @@ async function revalidateAfterActionInner<TEnv>(
     continuation,
     renderSpan,
     reqCtx,
-    trace,
   };
   try {
-    return await driveRoutinePlan(actionRevalidationPlan(input), { trace });
+    return await runRoutine(actionRevalidationPlan(input), {
+      trace,
+      owner: reqCtx,
+    });
   } finally {
     if (trace) {
       console.log(
-        `[routine] ${request.method} ${url.pathname} (action-revalidation)\n${trace.format()}`,
+        `[routine] ${request.method} ${url.pathname} (${trace.name})\n${trace.format()}`,
       );
     }
   }
@@ -438,19 +439,19 @@ function* actionRevalidationPlan<TEnv>(
   // boundary here so it runs inside the route-middleware wrapper, exactly like
   // the success branch below.
   if (errorBoundary) {
-    return yield* run("render", () =>
+    return yield* step("render", () =>
       renderActionBoundaryResponse(input, errorBoundary),
     );
   }
 
-  const matchResult = yield* run("match:partial", () =>
+  const matchResult = yield* step("match:partial", () =>
     matchPartialAndRecord(ctx, request, env, actionContext),
   );
 
   if (!matchResult) {
     // matchPartial returns null when the route is a redirect or no previous-URL
     // context could be resolved. Check for redirect first.
-    const fullMatch = yield* run("match:fallback", () =>
+    const fullMatch = yield* step("match:fallback", () =>
       matchAndRecordParams(ctx, request, env),
     );
 
@@ -478,7 +479,7 @@ function* actionRevalidationPlan<TEnv>(
     );
   }
 
-  return yield* run("render", () =>
+  return yield* step("render", () =>
     renderRevalidationResponse(input, matchResult),
   );
 }
@@ -566,7 +567,9 @@ function renderActionBoundaryResponse<TEnv>(
       routeKey: input.reqCtx._routeName,
       actionId: actionContext?.actionId,
       span: input.renderSpan,
-      onEvent: input.trace && createRenderStageTraceBridge(input.trace),
+      onEvent:
+        reqCtx._activeRoutine &&
+        createRenderStageTraceBridge(reqCtx._activeRoutine),
     },
   });
 }
@@ -628,7 +631,9 @@ function renderRevalidationResponse<TEnv>(
       routeKey: reqCtx._routeName,
       actionId: actionContext?.actionId,
       span: input.renderSpan,
-      onEvent: input.trace && createRenderStageTraceBridge(input.trace),
+      onEvent:
+        reqCtx._activeRoutine &&
+        createRenderStageTraceBridge(reqCtx._activeRoutine),
     },
   });
 }

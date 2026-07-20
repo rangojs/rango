@@ -1,8 +1,6 @@
 /**
- * Single thenable predicate for the resolve-by-default handle machinery
- * (`handles/deferred-resolution.ts`, its sole owner) — it decides which top-level
- * handle entries are deferred (`Promise`) values to await before any consumer
- * sees them, and which pass through verbatim.
+ * Shared thenable predicate for framework orchestration. It decides which values
+ * participate in promise lifecycles and which pass through synchronously.
  *
  * Requires a CALLABLE `then` (`typeof obj.then === "function"`), not merely a
  * `"then" in obj` membership check, so a non-promise carrying a `then` field

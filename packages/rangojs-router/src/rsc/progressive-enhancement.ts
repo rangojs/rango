@@ -28,8 +28,8 @@ import {
 } from "./render-pipeline.js";
 import {
   createRoutineTrace,
-  driveRoutinePlan,
-  run,
+  runRoutine,
+  step,
   type RoutinePlan,
   type RoutineTrace,
 } from "./routine-plan.js";
@@ -75,7 +75,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   // Flow trace: shared by every plan this request drives (error-boundary
   // renders and the re-render), so a PE request prints ONE tree. A non-PE form
   // POST (no $ACTION fields) drives no plan and stays silent.
-  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace() : undefined;
+  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace("pe") : undefined;
   try {
     return await handleProgressiveEnhancementInner(
       ctx,
@@ -90,7 +90,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   } finally {
     if (trace && trace.entries.length > 0) {
       console.log(
-        `[routine] ${request.method} ${url.pathname} (pe)\n${trace.format()}`,
+        `[routine] ${request.method} ${url.pathname} (${trace.name})\n${trace.format()}`,
       );
     }
   }
@@ -335,7 +335,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
     peReqCtx._gateActionResult = actionResult;
     peReqCtx._gateFormData = formData;
 
-    return driveRoutinePlan(
+    return runRoutine(
       peRenderPlan({
         ctx,
         request,
@@ -347,9 +347,8 @@ async function handleProgressiveEnhancementInner<TEnv>(
         reactFormState,
         boundarylessErrorStatus,
         directActionId,
-        trace,
       }),
-      { trace },
+      { trace, owner: getRequestContext() },
     );
   };
 
@@ -383,7 +382,6 @@ interface PeRenderInput<TEnv> {
   reactFormState: ReactFormState | null;
   boundarylessErrorStatus: number | undefined;
   directActionId: string | null;
-  trace?: RoutineTrace;
 }
 
 /** PE re-render: match the bodyless GET mirror, then render full HTML. */
@@ -392,7 +390,7 @@ function* peRenderPlan<TEnv>(
 ): RoutinePlan<Response> {
   const { ctx, env, renderRequest } = input;
 
-  const match = yield* run("match", () =>
+  const match = yield* step("match", () =>
     ctx.router.match(renderRequest, { env }),
   );
 
@@ -403,7 +401,7 @@ function* peRenderPlan<TEnv>(
     });
   }
 
-  return yield* run("render", () => renderPeResponse(input, match));
+  return yield* step("render", () => renderPeResponse(input, match));
 }
 
 /** Build the PE full-document payload and render it through the stage driver. */
@@ -450,11 +448,13 @@ function renderPeResponse<TEnv>(
     },
   };
 
+  const trace = getRequestContext()._activeRoutine;
+
   const stageTracking = {
     mode: "progressive-enhancement" as const,
     routeKey: getRequestContext()._routeName,
     actionId: directActionId ?? undefined,
-    onEvent: input.trace && createRenderStageTraceBridge(input.trace),
+    onEvent: trace && createRenderStageTraceBridge(trace),
   };
   return renderRscResponse(
     {
@@ -501,7 +501,6 @@ interface PeErrorBoundaryInput<TEnv> {
   nonce: string | undefined;
   actionId: string | null | undefined;
   actionRan: boolean;
-  trace?: RoutineTrace;
 }
 
 type PeErrorMatch<TEnv> = NonNullable<
@@ -529,7 +528,7 @@ async function renderPeErrorBoundary<TEnv>(
   // and throw with no $$id (actionId === undefined) yet still be an action error.
   actionRan = false,
 ): Promise<Response | null> {
-  return driveRoutinePlan(
+  return runRoutine(
     peErrorBoundaryPlan({
       ctx,
       request,
@@ -540,9 +539,8 @@ async function renderPeErrorBoundary<TEnv>(
       nonce,
       actionId,
       actionRan,
-      trace,
     }),
-    { trace },
+    { trace, owner: getRequestContext() },
   );
 }
 
@@ -550,9 +548,11 @@ async function renderPeErrorBoundary<TEnv>(
 function* peErrorBoundaryPlan<TEnv>(
   input: PeErrorBoundaryInput<TEnv>,
 ): RoutinePlan<Response | null> {
-  const boundary = yield* run("match:error", () => matchPeErrorBoundary(input));
+  const boundary = yield* step("match:error", () =>
+    matchPeErrorBoundary(input),
+  );
   if (!boundary) return null;
-  return yield* run("render", () => renderPeErrorResponse(input, boundary));
+  return yield* step("render", () => renderPeErrorResponse(input, boundary));
 }
 
 /**
@@ -650,11 +650,13 @@ function renderPeErrorResponse<TEnv>(
     },
   };
 
+  const trace = getRequestContext()._activeRoutine;
+
   const stageTracking = {
     mode: "progressive-enhancement-error" as const,
     routeKey: getRequestContext()._routeName,
     actionId: actionId ?? undefined,
-    onEvent: input.trace && createRenderStageTraceBridge(input.trace),
+    onEvent: trace && createRenderStageTraceBridge(trace),
   };
   return renderRscResponse(
     {

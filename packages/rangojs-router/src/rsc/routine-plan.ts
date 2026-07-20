@@ -2,39 +2,36 @@
  * Routine plans — the request-level extension of the render stage driver
  * (docs/design/routine-plans.md; protocol lineage in render-stage-driver.md).
  * A plan is a synchronous generator that EMITS instructions before their work
- * runs; the driver is the only code that executes them. Three effect shapes:
+ * runs; the runner is the only code that executes them. Two effect shapes:
  *
- *   run(name, fn)      — sequential effect; the plan suspends until its result.
- *   start(name, fn)    — fork; completes at invocation, returns the promise as
- *                        a handle a later step may join. Settlement is tracked,
- *                        never awaited by the driver.
- *   schedule(name, fn) — background handoff (waitUntil-shaped); completes at
- *                        scheduling, returns nothing.
+ *   step(name, fn)     — sequential work; the plan suspends until its result.
+ *   handoff(name, fn)  — background registration (waitUntil-shaped); completes
+ *                        at scheduling and returns nothing.
  *
- * Plans compose by level: `yield* subplan(name, plan)` flattens a nested plan
+ * Plans compose by level: `yield* scope(name, plan)` flattens a nested plan
  * into the same instruction stream while the trace records the scope. Tracking
  * is derived, not declared — "what is running" is the instruction in hand.
  *
  * Deliberate boundaries (see the design doc's "Not built yet, on purpose"):
- * the interpreter opens no observability spans — effects own their own
+ * the runner opens no observability spans — effects own their own
  * instrumentation, and the render driver keeps PHASES.ssr — and there is no
  * plan.return abort/cleanup path; the render driver's cleanup rules are the
  * template if a caller ever needs one.
  */
 
-export type RoutineEffectKind = "run" | "start" | "schedule";
+import { isThenable } from "../handles/is-thenable.js";
+
+export type RoutineEffectKind = "step" | "handoff";
 
 export type RoutineCommand =
-  | { kind: "run"; name: string; execute: () => unknown }
-  | { kind: "start"; name: string; execute: () => Promise<unknown> }
-  | { kind: "schedule"; name: string; execute: () => unknown }
+  | { kind: "step"; name: string; execute: () => unknown }
+  | { kind: "handoff"; name: string; execute: () => unknown }
   | { kind: "enter"; name: string }
-  | { kind: "exit" };
+  | { kind: "exit"; outcome: "done" | "failed"; error?: unknown };
 
 export type RoutineCommandResult =
-  | { kind: "run"; value: unknown }
-  | { kind: "start"; handle: Promise<unknown> }
-  | { kind: "schedule" }
+  | { kind: "step"; value: unknown }
+  | { kind: "handoff" }
   | { kind: "enter" }
   | { kind: "exit" };
 
@@ -58,34 +55,22 @@ function expectResultKind<K extends RoutineCommandResult["kind"]>(
 }
 
 /**
- * Sequential effect. The `as Awaited<T>` narrow is the trust boundary with the
- * driver, which resumes with the exact value `execute` produced.
+ * Sequential work. The `as Awaited<T>` narrow is the trust boundary with the
+ * runner, which resumes with the exact value `execute` produced.
  */
-export function* run<T>(
+export function* step<T>(
   name: string,
   execute: () => T | Promise<T>,
 ): RoutineStep<Awaited<T>> {
-  const result = yield { kind: "run", name, execute };
-  return expectResultKind(result, "run", name).value as Awaited<T>;
+  const result = yield { kind: "step", name, execute };
+  return expectResultKind(result, "step", name).value as Awaited<T>;
 }
 
 /**
- * Fork: begins concurrent work and returns its promise as a handle. The step
- * completes at invocation — settlement is a background fact recorded by the
- * trace, joined (if ever) by a later effect awaiting the handle.
- */
-export function* start<T>(
-  name: string,
-  execute: () => Promise<T>,
-): RoutineStep<Promise<T>> {
-  const result = yield { kind: "start", name, execute };
-  return expectResultKind(result, "start", name).handle as Promise<T>;
-}
-
-/**
- * Background handoff: scheduling completes the effect. A rejection marks the
- * trace entry failed but never fails the plan — background work is best-effort
- * from the foreground's point of view.
+ * Background handoff: successful registration completes the foreground step.
+ * A synchronous registration failure is thrown back into the plan, matching a
+ * direct waitUntil/scheduler call. A returned promise settles in the background;
+ * its rejection marks the trace but never fails the foreground response.
  *
  * Settlement tracking follows the RETURNED value: a returned promise is
  * observed until it settles; a scheduler that fires-and-forgets internally
@@ -93,36 +78,40 @@ export function* start<T>(
  * entry settles at the scheduling call, not at background completion. That is
  * deliberate — the plan's contract ends at the handoff.
  */
-export function* schedule(
+export function* handoff(
   name: string,
   execute: () => unknown,
 ): RoutineStep<void> {
-  const result = yield { kind: "schedule", name, execute };
-  expectResultKind(result, "schedule", name);
+  const result = yield { kind: "handoff", name, execute };
+  expectResultKind(result, "handoff", name);
 }
 
 /**
  * Run a nested plan as a named scope. `yield*` flattens its instructions into
- * the parent stream; enter/exit only inform the trace. The finally clause
- * emits exit even while an error unwinds through the nested plan.
+ * the parent stream; enter/exit only inform the trace. The scope reports its
+ * terminal outcome after internal recovery has either succeeded or escaped.
  */
-export function* subplan<TReturn>(
+export function* scope<TReturn>(
   name: string,
   plan: RoutinePlan<TReturn>,
 ): RoutineStep<TReturn> {
   yield { kind: "enter", name };
   try {
-    return yield* plan;
-  } finally {
-    yield { kind: "exit" };
+    const value = yield* plan;
+    assertSynchronousReturn(value);
+    yield { kind: "exit", outcome: "done" };
+    return value;
+  } catch (error) {
+    yield { kind: "exit", outcome: "failed", error };
+    throw error;
   }
 }
 
 export interface RoutineTraceEntry {
   name: string;
-  kind: RoutineEffectKind | "plan";
+  kind: RoutineEffectKind | "scope";
   depth: number;
-  /** run/plan: running -> done|failed. start/schedule: pending -> settled|failed. */
+  /** step/scope: running -> done|failed. handoff: pending -> settled|failed. */
   state: "running" | "pending" | "done" | "settled" | "failed";
   startedAt: number;
   endedAt?: number;
@@ -131,9 +120,10 @@ export interface RoutineTraceEntry {
 }
 
 export interface RoutineTrace {
+  readonly name: string;
   readonly entries: readonly RoutineTraceEntry[];
   enterScope(name: string): void;
-  exitScope(): void;
+  exitScope(outcome: "done" | "failed", error?: unknown): void;
   /** Scope depth entries currently record at. Bridges (e.g. render stage
    * events feeding child entries under a running step) capture this once and
    * pass `depth + 1` explicitly. */
@@ -145,13 +135,21 @@ export interface RoutineTrace {
   ): RoutineTraceEntry;
   end(entry: RoutineTraceEntry): void;
   fail(entry: RoutineTraceEntry, error: unknown): void;
-  settle(entry: RoutineTraceEntry, error?: unknown): void;
-  /** Foreground instruction in hand plus unsettled background work. */
+  settle(
+    entry: RoutineTraceEntry,
+    outcome: { status: "fulfilled" } | { status: "rejected"; error: unknown },
+  ): void;
+  /** Running scopes plus the foreground instruction currently in hand. */
   active(): RoutineTraceEntry[];
   format(): string;
+  formatActive(
+    entries?: readonly RoutineTraceEntry[],
+    activeAt?: number,
+  ): string;
 }
 
 export function createRoutineTrace(
+  name: string,
   now: () => number = () => performance.now(),
 ): RoutineTrace {
   const entries: RoutineTraceEntry[] = [];
@@ -174,23 +172,28 @@ export function createRoutineTrace(
     return entry;
   };
 
+  const active = (): RoutineTraceEntry[] =>
+    entries.filter((entry) => entry.state === "running");
+
   return {
+    name,
     entries,
     enterScope(name) {
-      scopes.push(push(name, "plan", "running"));
+      scopes.push(push(name, "scope", "running"));
     },
-    exitScope() {
+    exitScope(outcome, error) {
       const scope = scopes.pop();
-      if (scope && scope.state === "running") {
-        scope.state = "done";
+      if (scope) {
+        scope.state = outcome;
         scope.endedAt = now();
+        if (outcome === "failed") scope.error = error;
       }
     },
     currentDepth() {
       return scopes.length;
     },
     begin(name, kind, depth) {
-      return push(name, kind, kind === "run" ? "running" : "pending", depth);
+      return push(name, kind, kind === "step" ? "running" : "pending", depth);
     },
     end(entry) {
       entry.state = "done";
@@ -200,25 +203,17 @@ export function createRoutineTrace(
       entry.state = "failed";
       entry.endedAt = now();
       entry.error = error;
-      // A failure inside a scope fails the scope unless something recovers;
-      // recovery paths that continue will overwrite via exitScope's guard.
-      const scope = scopes[scopes.length - 1];
-      if (scope) scope.state = "failed";
     },
-    settle(entry, error) {
+    settle(entry, outcome) {
       entry.settledAt = now();
-      if (error === undefined) {
+      if (outcome.status === "fulfilled") {
         entry.state = "settled";
       } else {
         entry.state = "failed";
-        entry.error = error;
+        entry.error = outcome.error;
       }
     },
-    active() {
-      return entries.filter(
-        (entry) => entry.state === "running" || entry.state === "pending",
-      );
-    },
+    active,
     format() {
       return entries
         .map((entry) => {
@@ -241,18 +236,32 @@ export function createRoutineTrace(
         })
         .join("\n");
     },
+    formatActive(activeEntries = active(), activeAt = now()) {
+      return activeEntries
+        .map((entry) => {
+          const indent = "  ".repeat(entry.depth);
+          const duration = (activeAt - entry.startedAt).toFixed(1);
+          return `${indent}${entry.kind} ${entry.name} ${duration}ms RUNNING`;
+        })
+        .join("\n");
+    },
   };
 }
 
-export interface RoutineDriverOptions {
-  trace?: RoutineTrace;
+export interface RoutineTraceOwner {
+  _activeRoutine?: RoutineTrace;
 }
 
-function invokeAsHandle(execute: () => unknown): Promise<unknown> {
-  try {
-    return Promise.resolve(execute());
-  } catch (error) {
-    return Promise.reject(error);
+export interface RoutineRunnerOptions {
+  trace?: RoutineTrace;
+  owner?: RoutineTraceOwner;
+}
+
+function assertSynchronousReturn(value: unknown): void {
+  if (isThenable(value)) {
+    throw new Error(
+      "[routine] plans cannot return promises; await asynchronous work with step()",
+    );
   }
 }
 
@@ -265,10 +274,12 @@ function observeSettlement(
   // fire-and-forget failure never surfaces as an unhandled rejection.
   handle.then(
     () => {
-      if (trace && entry) trace.settle(entry);
+      if (trace && entry) trace.settle(entry, { status: "fulfilled" });
     },
     (error) => {
-      if (trace && entry) trace.settle(entry, error);
+      if (trace && entry) {
+        trace.settle(entry, { status: "rejected", error });
+      }
     },
   );
 }
@@ -279,55 +290,70 @@ function observeSettlement(
  * errors resume the plan with exact identity, and a plan-level try/catch
  * around a step is the recovery mechanism.
  */
-export async function driveRoutinePlan<TReturn>(
+export async function runRoutine<TReturn>(
   plan: RoutinePlan<TReturn>,
-  options: RoutineDriverOptions = {},
+  options: RoutineRunnerOptions = {},
 ): Promise<TReturn> {
   const trace = options.trace;
-  let step = plan.next();
-  while (!step.done) {
-    const command = step.value;
-    switch (command.kind) {
-      case "enter": {
-        trace?.enterScope(command.name);
-        step = plan.next({ kind: "enter" });
-        break;
-      }
-      case "exit": {
-        trace?.exitScope();
-        step = plan.next({ kind: "exit" });
-        break;
-      }
-      case "run": {
-        const entry = trace?.begin(command.name, "run");
-        let value: unknown;
-        try {
-          value = await command.execute();
-        } catch (error) {
-          if (trace && entry) trace.fail(entry, error);
-          // Throw INTO the plan: a catching plan branches to recovery; an
-          // uncaught error propagates out of plan.throw with exact identity.
-          step = plan.throw(error);
+  const owner = options.owner;
+  const previousTrace = owner?._activeRoutine;
+  if (trace && owner) owner._activeRoutine = trace;
+
+  try {
+    let current = plan.next();
+    while (!current.done) {
+      const command = current.value;
+      switch (command.kind) {
+        case "enter": {
+          trace?.enterScope(command.name);
+          current = plan.next({ kind: "enter" });
           break;
         }
-        if (trace && entry) trace.end(entry);
-        step = plan.next({ kind: "run", value });
-        break;
-      }
-      case "start": {
-        const entry = trace?.begin(command.name, "start");
-        const handle = invokeAsHandle(command.execute);
-        observeSettlement(handle, trace, entry);
-        step = plan.next({ kind: "start", handle });
-        break;
-      }
-      case "schedule": {
-        const entry = trace?.begin(command.name, "schedule");
-        observeSettlement(invokeAsHandle(command.execute), trace, entry);
-        step = plan.next({ kind: "schedule" });
-        break;
+        case "exit": {
+          trace?.exitScope(command.outcome, command.error);
+          current = plan.next({ kind: "exit" });
+          break;
+        }
+        case "step": {
+          const entry = trace?.begin(command.name, "step");
+          let value: unknown;
+          try {
+            value = await command.execute();
+          } catch (error) {
+            if (trace && entry) trace.fail(entry, error);
+            // Throw INTO the plan: a catching plan branches to recovery; an
+            // uncaught error propagates out of plan.throw with exact identity.
+            current = plan.throw(error);
+            break;
+          }
+          if (trace && entry) trace.end(entry);
+          current = plan.next({ kind: "step", value });
+          break;
+        }
+        case "handoff": {
+          const entry = trace?.begin(command.name, "handoff");
+          try {
+            const result = command.execute();
+            if (isThenable(result)) {
+              observeSettlement(Promise.resolve(result), trace, entry);
+            } else if (trace && entry) {
+              trace.settle(entry, { status: "fulfilled" });
+            }
+          } catch (error) {
+            if (trace && entry) trace.fail(entry, error);
+            current = plan.throw(error);
+            break;
+          }
+          current = plan.next({ kind: "handoff" });
+          break;
+        }
       }
     }
+    assertSynchronousReturn(current.value);
+    return current.value;
+  } finally {
+    if (trace && owner?._activeRoutine === trace) {
+      owner._activeRoutine = previousTrace;
+    }
   }
-  return step.value;
 }

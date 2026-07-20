@@ -577,7 +577,7 @@ export function createRenderStageTraceBridge(
   let current: RoutineTraceEntry | undefined;
   return (event) => {
     if (event.type === "stage:start") {
-      current = trace.begin(event.context.phase, "run", depth);
+      current = trace.begin(event.context.phase, "step", depth);
       return;
     }
     if (!current) return;

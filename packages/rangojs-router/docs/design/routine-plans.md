@@ -9,7 +9,7 @@ real, but nothing made it visible — not to a reader, and not to diagnostics.
 
 Routine plans make the order the artifact. Every standard render orchestration
 is now a synchronous generator that emits each unit of work as data before it
-runs, executed by one interpreter (`driveRoutinePlan` in
+runs, executed by one runner (`runRoutine` in
 `src/rsc/routine-plan.ts`): `requestRenderPlan` in `src/rsc/rsc-rendering.ts`
 (navigation documents and partials), `actionRevalidationPlan` in
 `src/rsc/server-action.ts` (post-action revalidation, success and deferred
@@ -29,14 +29,23 @@ recovery mechanism.
 
 ## The vocabulary
 
-Three effect shapes plus composition, all in `src/rsc/routine-plan.ts`:
+Two effect shapes plus composition, all in `src/rsc/routine-plan.ts`:
 
-| Primitive             | Contract                                                                                                        |
-| --------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `run(name, fn)`       | Sequential effect; the plan suspends until its result.                                                          |
-| `start(name, fn)`     | Fork: completes at invocation, returns the promise as a handle a later step may join. Settlement is background. |
-| `schedule(name, fn)`  | Background handoff: scheduling completes the effect; a rejection marks the trace, never fails the plan.         |
-| `subplan(name, plan)` | Nested plan as a named scope; `yield*` flattens it into one instruction stream.                                 |
+| Primitive           | Contract                                                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step(name, fn)`    | Sequential work; the plan suspends until its result.                                                                                                     |
+| `handoff(name, fn)` | Background registration. A synchronous registration failure fails the step; a returned promise settles in the background without failing the foreground. |
+| `scope(name, plan)` | Nested plan as a named scope; `yield*` flattens it into one instruction stream.                                                                          |
+
+The names are deliberately plain. A request plan should read as a high-level
+program: enter the shell scope, prepare the route, render, hand off capture. The
+helpers use `yield*` rather than raw `yield` because TypeScript can then preserve
+the result type of each individual step instead of widening every resumed value
+to one command-result union.
+
+Plans return completed values, never promises. `runRoutine` rejects a thenable
+return so asynchronous work cannot outlive the active trace invisibly; put that
+work in a named `step` instead.
 
 Settlement tracking follows the returned value. A scheduler that
 fires-and-forgets internally (`scheduleShellCapture` via `runBackground`)
@@ -65,33 +74,42 @@ compose by level, not by absorption.
 
 `INTERNAL_RANGO_DEBUG=1` (the existing internal debug surface —
 `vite/inject-client-debug.ts` bakes the flag at build/dev-server start, so
-ordinary production builds fold the whole branch away) prints one tree per
+ordinary production builds fold trace collection and output away) prints one tree per
 request. The header names the path: `(document)`, `(partial)`,
 `(action-revalidation)`, or `(pe)` — a PE request shares one trace across its
 error-boundary and re-render plans, so it still prints a single tree:
 
 ```
 [routine] GET / (document)
-plan shell-serve 0.0ms
-plan prepare:full 2.8ms
-  run match 2.7ms
-run render 420.1ms
-  run flight 0.3ms
-  run html 418.8ms
-  run response 0.5ms
+scope shell-serve 0.0ms
+scope prepare:full 2.8ms
+  step match 2.7ms
+step render 420.1ms
+  step flight 0.3ms
+  step html 418.8ms
+  step response 0.5ms
 ```
 
-Nothing declares this; it is the interpreter's program counter. A failed step
-prints `FAILED` on the exact instruction in hand, and `trace.active()` answers
-"what is running now" for timeouts. The render step's children come from
-`createRenderStageTraceBridge` in `rsc-rendering.ts`, which feeds the render
+Nothing declares this; it is the runner's program counter. A failed step prints
+`FAILED` on the exact instruction in hand. While `runRoutine` is suspended, it
+publishes the trace on the request context. A render-start timeout therefore logs
+the live stack immediately and includes a bounded snapshot in internal-debug
+`onError` metadata, for example `prepare:full > match` or `render > html`; it does
+not wait for the hung promise to settle. The render step's children come from
+`createRenderStageTraceBridge` in `render-pipeline.ts`, which feeds the render
 stage driver's existing `tracking.onEvent` stream into the trace as depth+1
 entries — no new machinery inside the render driver.
 
+Scope outcome belongs to the scope, not the first failed child. If a scope catches
+a step failure and completes its fallback, the scope is `done`. If the error
+escapes, every scope it crosses is `failed` with the same error identity and a
+terminal timestamp. This is why the exit command carries its outcome explicitly.
+
 ## Costs, stated plainly
 
-This is not a simplification. The change is net +~900 lines (+330 machinery,
-+325 tests/bench, +235 reorganization), `rsc-rendering.ts` grew, and
+This is not a simplification. The change adds a runner, protocol tests, trace
+integration coverage, and substantial render-path reorganization;
+`rsc-rendering.ts` grew, and
 contributors must learn the plan/effect discipline. A plain-function
 decomposition with the same outcome unions would have delivered most of the
 readability for less. What plain functions cannot deliver is the derived
@@ -100,25 +118,28 @@ which is the reason this design exists. The layer earns its keep by becoming
 the diagnostics substrate, not by existing once.
 
 Overhead is measured, not assumed (`src/rsc/__tests__/routine-plan.bench.ts`,
-dev-machine diagnostic numbers): a six-effect spine costs ~0.14us as direct
-awaits, ~0.88us through the driver with tracing off, ~1.18us with tracing on.
-Per request that is roughly 0.7us against paths measured in milliseconds —
+dev-machine diagnostic numbers): one current run measured a six-effect spine at
+~0.1us as direct awaits, ~0.9us through the runner with tracing off, and ~1.2us
+with tracing on. Per request that is roughly 0.8us against paths measured in milliseconds —
 three orders of magnitude under the repo's 3% regression gate. The
 render-pipeline bench keeps Flight-only ahead of the removed legacy
 choreography; the Flight+HTML microbench read ~6% behind legacy on one busy-
 machine run at 1.8us vs 1.7us means — rerun idle medians before publishing a
 percentage.
 
-## Verification record (2026-07-20)
+## Verification record (2026-07-21)
 
 Behavior preservation was pinned by running, on the converted tree: the full
-router unit suite (5599), `semantic-matrix` plus all six router PPR suites
+router unit suite (5604) plus the RSC suite (71), `semantic-matrix` in dev (25)
+and production (28), the routine flow and timeout diagnostics e2e in both modes,
+`semantic-matrix` plus all six router PPR suites
 (222 in the combined shared-server run), cloudflare-basic's four PPR suites
 (417), and — after the action/PE conversions — `semantic-matrix` again with
 the progressive-enhancement suite and all nine action suites (139 in that
 combined run). Protocol invariants (yield-before-execute, exact identity,
-recovery, fork non-blocking, schedule isolation, subplan flattening,
-error-unwind-through-scope) are unit-pinned in
+recovery, exact scope outcomes, synchronous handoff failure, asynchronous
+handoff isolation, scope flattening, and error-unwind-through-scope) are
+unit-pinned in
 `src/rsc/__tests__/routine-plan.test.ts`.
 
 ## Not built yet, on purpose
@@ -128,7 +149,7 @@ error-unwind-through-scope) are unit-pinned in
   interpreter does not open spans. If a step ever needs one, the command
   gains an `observe` spec and the driver executes inside the callback — do not
   reconstruct spans from trace events.
-- **No abort/cleanup discipline.** `driveRoutinePlan` has no `plan.return`
+- **No abort/cleanup discipline.** `runRoutine` has no `plan.return`
   early-exit path; the render driver's cleanup rules are the template when a
   caller needs one.
 - **Action-execution preludes stay plain code.** `executeServerAction` and the
