@@ -9,9 +9,10 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
  * A fully-prefetched navigation must:
  *  - commit the already-resolved ROUTER data with NO loading() flash (the
  *    forceAwait content unwrap), and
- *  - NOT hold the previous page when a CLIENT component suspends on mount under a
- *    persistent layout boundary — the normal commit reveals that boundary's
- *    loading() fallback instead.
+ *  - commit inside a bare startTransition, so a CLIENT component that suspends
+ *    during its first render under a persistent (already-revealed) layout
+ *    boundary HOLDS the previous page until it resolves — no fallback flash
+ *    anywhere (#622 -> #624 -> reinstated transition).
  * A still-streaming (partial) prefetch must keep streaming its fallback.
  *
  * Routes (cloudflare-basic):
@@ -147,7 +148,7 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
-    test("fully-prefetched nav whose CLIENT component suspends on mount reveals the layout fallback (does NOT hold the old page)", async ({
+    test("fully-prefetched nav whose CLIENT component suspends on mount HOLDS the old page (no fallback flash)", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -162,16 +163,50 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       const resp = await prefetchResponse;
       await resp.finished();
 
+      // The startTransition commit must HOLD the old /from content across the
+      // client mount-suspense; the persistent layout boundary's fallback must
+      // never be inserted.
+      await watchFlash(page, "pt-layout-loading");
       await testId(page, "pt-to-link").click();
 
-      // The persistent layout boundary must reveal its fallback (the regression:
-      // the old /from content would otherwise be held). Then the client resolves.
-      await expect(testId(page, "pt-layout-loading")).toBeVisible({
-        timeout: 8000,
-      });
+      await expect(testId(page, "pt-from-content")).toBeVisible();
       await expect(testId(page, "cf-cs-content")).toHaveText("client-mounted", {
         timeout: 8000,
       });
+      expect(await readFlash(page)).toBe(false);
+    });
+
+    test("fully-prefetched nav whose CLIENT component has its OWN boundary reveals the LOCAL fallback (escape hatch from the hold)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/pt-layout/from"));
+      await waitForHydration(page);
+      await expect(testId(page, "pt-from-content")).toBeVisible();
+
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/pt-layout/to-bounded"),
+      );
+      await page.hover('[data-testid="pt-to-bounded-link"]');
+      const resp = await prefetchResponse;
+      await resp.finished();
+
+      // Same warm startTransition commit as above, but the component ships its
+      // OWN <Suspense>. Newly mounted by this nav, so React reveals the LOCAL
+      // fallback immediately even inside the transition; the persistent layout
+      // fallback must never be inserted.
+      await watchFlash(page, "pt-layout-loading");
+      await testId(page, "pt-to-bounded-link").click();
+
+      await expect(testId(page, "pt-local-fallback")).toBeVisible({
+        timeout: 8000,
+      });
+      await expect(testId(page, "pt-from-content")).toBeHidden();
+      await expect(testId(page, "cf-cs-bounded-content")).toHaveText(
+        "client-mounted-bounded",
+        { timeout: 8000 },
+      );
+      expect(await readFlash(page)).toBe(false);
     });
   });
 }

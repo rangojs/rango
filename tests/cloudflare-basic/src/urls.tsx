@@ -1372,8 +1372,8 @@ export const urlpatterns = urls(
           name: "renderedBarrier",
         }),
 
-        // #622 follow-up: fully-prefetched no-flash + client-mount-suspense
-        // layout-hold regression (mirrors the router e2e app).
+        // Fully-prefetched commit mode: no-flash + client-mount-suspense
+        // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).

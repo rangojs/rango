@@ -11,21 +11,22 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
  *
  *  - cold nav                          -> stream fallback/skeleton
  *  - partially-prefetched (in-flight)  -> stream fallback/skeleton (NOT held)
- *  - fully-prefetched (stream drained) -> forceAwait the ROUTER loaders + NORMAL
- *                                         commit: no loading()/fallback flash for
- *                                         router data, but a CLIENT component that
- *                                         suspends on mount STILL shows its
- *                                         fallback (a normal commit does not hold
- *                                         content)
+ *  - fully-prefetched (stream drained) -> forceAwait the ROUTER loaders + commit
+ *                                         inside a bare startTransition: nothing
+ *                                         flashes; a CLIENT component that
+ *                                         suspends during its first render under
+ *                                         an already-revealed boundary HOLDS the
+ *                                         old content until it resolves
  *  - FE history-cache hit (popstate)   -> no flash (resolved-before-commit)
  *
- * The fully-prefetched row changed in the #622 follow-up: the commit used to run
- * inside startTransition (which holds the OLD page until ALL suspense in the new
- * tree settles, including client-initiated mount suspense). It now forceAwait-s
- * the already-resolved router loaders during render and commits NORMALLY, so the
- * router data never flashes while client-initiated suspense correctly reveals the
- * new route's fallback. Explicit transition() routes keep the broader
- * content-hold (the documented opt-in).
+ * History of the fully-prefetched row: #622 committed in startTransition, #624
+ * reverted to a normal commit so client mount-suspense revealed the persistent
+ * boundary's fallback, then the transition commit was reinstated as the
+ * deliberate trade-off — on a warm nav, holding the old content beats flashing
+ * a skeleton, and the client component's render happens pre-commit inside the
+ * transition (its effects cannot run first). Boundaries newly mounted by the
+ * nav still reveal their fallbacks (React shows new boundaries inside
+ * transitions); only already-revealed boundaries hold.
  *
  * Flash detection uses a MutationObserver on addedNodes so even a single-frame
  * fallback that is added then immediately removed is caught — a plain
@@ -236,7 +237,7 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       ).toBe(false);
     });
 
-    test("fully-prefetched nav whose CLIENT component suspends on mount reveals the layout fallback (does NOT hold the old page)", async ({
+    test("fully-prefetched nav whose CLIENT component suspends on mount HOLDS the old page (no fallback flash)", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -256,23 +257,56 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await resp.finished();
 
       // Navigate from -> to. The SHARED layout segment persists, so its
-      // loading() boundary is the boundary whose behavior differs:
-      //  - OLD startTransition commit held /from's outlet content until the
-      //    client mount-suspense settled (old page retained, no feedback).
-      //  - NEW normal commit reveals the layout's loading() fallback while the
-      //    client-initiated mount suspense resolves.
+      // loading() boundary is already revealed — the startTransition commit
+      // must HOLD /from's outlet content across the client mount-suspense
+      // instead of swapping in the layout fallback.
+      await watchFlash(page, "cs-layout-fallback");
       await testId(page, "cs-to-link").click();
 
-      // The persistent layout boundary must reveal its fallback (the regression:
-      // the old /from content would otherwise be held in place). Then the client
-      // promise resolves to the new content.
-      await expect(testId(page, "cs-layout-fallback")).toBeVisible({
-        timeout: 8000,
-      });
+      // The old content stays visible while the client promise resolves…
+      await expect(testId(page, "cs-from-content")).toBeVisible();
+      // …then the new content lands, and the layout fallback was NEVER
+      // inserted (MutationObserver catches even a single-frame flash).
       await expect(testId(page, "client-suspense-content")).toHaveText(
         "client-mounted",
         { timeout: 8000 },
       );
+      expect(await readFlash(page)).toBe(false);
+    });
+
+    test("fully-prefetched nav whose CLIENT component has its OWN boundary reveals the LOCAL fallback (escape hatch from the hold)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/cs-layout/from"));
+      await waitForHydration(page);
+      await expect(testId(page, "cs-from-content")).toBeVisible();
+
+      const prefetchResponse = page.waitForResponse((resp) =>
+        isPrefetchFor(resp.url(), "/cs-layout/to-bounded"),
+      );
+      await page.hover('[data-testid="cs-to-bounded-link"]');
+      const resp = await prefetchResponse;
+      await resp.finished();
+
+      // Same warm startTransition commit as above, but the suspending client
+      // component ships its OWN <Suspense>. That boundary is NEWLY MOUNTED by
+      // this nav, and a transition only waits to avoid hiding already-revealed
+      // content — so React commits immediately, revealing the LOCAL fallback
+      // in place while the old /from content unmounts. The persistent layout
+      // fallback must never be inserted.
+      await watchFlash(page, "cs-layout-fallback");
+      await testId(page, "cs-to-bounded-link").click();
+
+      await expect(testId(page, "cs-local-fallback")).toBeVisible({
+        timeout: 8000,
+      });
+      await expect(testId(page, "cs-from-content")).toBeHidden();
+      await expect(testId(page, "client-suspense-bounded-content")).toHaveText(
+        "client-mounted-bounded",
+        { timeout: 8000 },
+      );
+      expect(await readFlash(page)).toBe(false);
     });
 
     test("fully-prefetched nav with a deferred Meta does not flash, and the title still lands", async ({

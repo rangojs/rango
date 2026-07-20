@@ -27,6 +27,11 @@ export const NamedRoutes = {
   "vt.off.y": "/vt-off-y",
   "vt.user.x": "/vt-user-x",
   "vt.user.y": "/vt-user-y",
+  "xcs.from": "/xcs/from",
+  "xcs.to": "/xcs/to",
+  "xcs.toBounded": "/xcs/to-bounded",
+  "xcsTx.from": "/xcs-tx/from",
+  "xcsTx.to": "/xcs-tx/to",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

@@ -102,6 +102,7 @@ export const NamedRoutes = {
   "crB.searchRoute": { path: "/cr/b/:tenantId/search", search: { q: "string", page: "number?" } },
   csLayoutFrom: "/cs-layout/from",
   csLayoutTo: "/cs-layout/to",
+  csLayoutToBounded: "/cs-layout/to-bounded",
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
   delayedBreadcrumbs: "/delayed-breadcrumbs",

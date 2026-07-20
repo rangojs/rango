@@ -3,26 +3,22 @@
 import { use } from "react";
 
 /**
- * #622 follow-up (HIGH) regression component.
+ * Fully-prefetched commit-mode fixture component.
  *
- * A CLIENT component that starts its OWN suspending data request only when it
- * MOUNTS (post-commit) — NOT a promise passed from the server, and NOT a router
- * loader, and with NO <Suspense> of its own. The server/RSC render of this route
- * completes immediately (the client component is just a reference during
+ * A CLIENT component that starts its OWN suspending data request during its
+ * FIRST client render — NOT a promise passed from the server, NOT a router
+ * loader, no <Suspense> of its own, and not an effect (the suspension happens
+ * pre-commit, so effects never get to run first). The server/RSC render of this
+ * route completes immediately (the client component is just a reference during
  * prefetch), so a hover prefetch's stream drains fully and the entry is
  * `complete` (fullyPrefetched).
  *
- * The route wraps this in a loading() skeleton (a router-level Suspense). Because
- * the client component has no boundary of its own, its post-mount suspension
- * bubbles to that loading() boundary.
- *
- * The bug this guards: a fully-prefetched nav used to commit inside
- * startTransition, which holds the OLD page until ALL suspense in the new tree
- * settles — including this client-initiated mount suspense — so the previous page
- * was retained for the whole delay with NO visible feedback. The fix commits
- * normally (router loaders/content forceAwait-ed, no flash for ROUTER data), so
- * this client suspense reveals the route's fallback instead of holding the old
- * page.
+ * Because the component has no boundary of its own, its suspension bubbles to
+ * the layout's already-revealed loading() boundary. The contract this pins
+ * (#622 -> #624 -> reinstated transition): a fully-prefetched nav commits
+ * inside startTransition, so that boundary HOLDS the previous page's content
+ * across this suspension instead of flashing the fallback; the new content
+ * swaps in when the promise resolves.
  */
 
 const CLIENT_MOUNT_DELAY = 1500;
