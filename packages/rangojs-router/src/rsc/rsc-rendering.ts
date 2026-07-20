@@ -493,8 +493,15 @@ function* shellServePlan<TEnv>(
     return { kind: "pass" };
   }
 
+  // SSR setup starts before route handling, so read the shell before joining it
+  // to overlap the remaining setup work with cache I/O.
+  const cached = yield* step("shell-read", () =>
+    readShellEntry(store, key, reqCtx),
+  );
+
   // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
-  // streaming, so bots/SEO crawlers get one complete axis-1 document.
+  // streaming, so bots/SEO crawlers get one complete axis-1 document. These
+  // routes pay one unnecessary shell read to keep the PPR hot path concurrent.
   const [ssrModule, streamMode] = yield* step("ssr-setup", () =>
     getSSRSetup(ctx, request, env, url, reqCtx._metricsStore),
   );
@@ -506,10 +513,6 @@ function* shellServePlan<TEnv>(
     return { kind: "pass" };
   }
   const descriptor = createShellCaptureDescriptor(ctx, key, pprConfig, store);
-
-  const cached = yield* step("shell-read", () =>
-    readShellEntry(store, key, reqCtx),
-  );
 
   if (
     cached &&
