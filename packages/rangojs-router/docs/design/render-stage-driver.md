@@ -26,6 +26,13 @@ enhancement success/error rendering, and not-found rendering all use
 `renderRscResponse`. The previous async-generator choreography and its fake
 payload stage have been removed from `rsc/helpers.ts`.
 
+The request-level orchestration ABOVE this design's payload boundary has since
+become a plan of its own: `requestRenderPlan` in `src/rsc/rsc-rendering.ts`,
+driven by the generic routine interpreter — see
+[routine-plans.md](./routine-plans.md). That layer delegates to this driver
+unchanged and bridges its stage events into the flow trace; everything below
+the payload boundary remains as specified here.
+
 PPR shell capture/resume and the synchronous redirect-interception callback keep
 the low-level direct Flight constructor. That is deliberate: PPR work runs after
 the response commit, while redirect interception must return a `Response`

@@ -28,7 +28,20 @@ import {
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
 } from "./helpers.js";
-import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
+import {
+  createRenderStageTraceBridge,
+  renderRscFlightStage,
+  renderRscResponse,
+} from "./render-pipeline.js";
+import {
+  createRoutineTrace,
+  driveRoutinePlan,
+  run,
+  schedule,
+  subplan,
+  type RoutinePlan,
+  type RoutineTrace,
+} from "./routine-plan.js";
 import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
 import { buildFullPayload } from "./full-payload.js";
@@ -281,6 +294,36 @@ export function handleRscRendering<TEnv>(
   );
 }
 
+interface RequestRenderInput<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  isPartial: boolean;
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
+  nonce: string | undefined;
+  renderSpan: TraceSpan;
+  reqCtx: ReturnType<typeof getRequestContext>;
+  /** Flow trace, active when INTERNAL_RANGO_DEBUG is baked on; else absent. */
+  trace?: RoutineTrace;
+}
+
+type ShellServeOutcome =
+  | { kind: "serve"; response: Response }
+  | { kind: "miss"; descriptor: ShellCaptureDescriptor; ssrModule: SSRModule }
+  | { kind: "pass" };
+
+type PreparedRender =
+  | { kind: "control"; response: Response }
+  | {
+      kind: "payload";
+      payload: RscPayload;
+      hasInterceptSlots: boolean;
+      pprReplayStatus?: PprReplayStatus;
+      partialCaptureNeeded: boolean;
+      partialCaptureKey?: string;
+    };
+
 async function handleRscRenderingInner<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
@@ -291,13 +334,46 @@ async function handleRscRenderingInner<TEnv>(
   nonce: string | undefined,
   renderSpan: TraceSpan,
 ): Promise<Response> {
-  const reqCtx = getRequestContext();
+  // Flow trace rides the internal debug surface (INTERNAL_RANGO_DEBUG=1): the
+  // Vite pipeline bakes the flag at build/dev-server start (inject-client-debug),
+  // so the whole branch folds out of ordinary production builds while an
+  // explicit debug build keeps it.
+  const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace() : undefined;
+  const input: RequestRenderInput<TEnv> = {
+    ctx,
+    request,
+    env,
+    url,
+    isPartial,
+    handleStore,
+    nonce,
+    renderSpan,
+    reqCtx: getRequestContext(),
+    trace,
+  };
+  try {
+    return await driveRoutinePlan(requestRenderPlan(input), { trace });
+  } finally {
+    if (trace) {
+      const mode = isPartial ? "partial" : "document";
+      console.log(
+        `[routine] ${request.method} ${url.pathname} (${mode})\n${trace.format()}`,
+      );
+    }
+  }
+}
 
-  let payload: RscPayload;
-  let hasInterceptSlots = false;
-  let pprReplayStatus: PprReplayStatus | undefined;
-  let partialCaptureNeeded = false;
-  let partialCaptureKey: string | undefined;
+/**
+ * The request-level render plan. Reads top to bottom as the request executes:
+ * serve a stored PPR shell if one commits, otherwise match and build the
+ * payload, render it through the stage driver, then hand off background
+ * captures. Effects run through the routine driver (yield-before-execute,
+ * exact result/error identity — see routine-plan.ts).
+ */
+function* requestRenderPlan<TEnv>(
+  input: RequestRenderInput<TEnv>,
+): RoutinePlan<Response> {
+  const { isPartial, reqCtx } = input;
 
   // --- Axis 2: integrated PPR shell serve (docs/design/ppr-shell-resume.md) ---
   //
@@ -305,214 +381,269 @@ async function handleRscRenderingInner<TEnv>(
   // chain (executeRender wraps it), so no shell byte can precede a guard
   // decision — that ordering is what makes a shared shell safe. Routes
   // without the `ppr` option stay pure axis 1 at zero cost.
-  let pprMiss: {
-    descriptor: ShellCaptureDescriptor;
-    ssrModule: SSRModule;
-  } | null = null;
+  const shell = yield* subplan("shell-serve", shellServePlan(input));
+  if (shell.kind === "serve") return shell.response;
+
+  // Match + payload. A control response (redirect, prerender collection)
+  // ends the plan before any rendering.
+  const prepared = yield* subplan(
+    isPartial ? "prepare:partial" : "prepare:full",
+    preparePayloadPlan(input),
+  );
+  if (prepared.kind === "control") return prepared.response;
+
+  // For partial requests, include any server-set location state in the payload.
+  // SSR (full page) requests ignore location state since there's no history.state
+  // to write to on a fresh page load.
+  if (isPartial && prepared.payload.metadata) {
+    attachLocationStateIfPresent(prepared.payload);
+  }
+
+  const response = yield* run("render", () =>
+    renderPreparedRscResponse(input, prepared),
+  );
+
+  // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
+  // Capture only a 200 HTML document (a 404/error render is not a cacheable
+  // shell). Capture does not flow through the HTTP pipeline — middleware never
+  // re-runs (it already ran for this request; guarding is serve-time).
+  // reqCtx._dynamic is re-read here on purpose: a loader may have marked the
+  // request dynamic while rendering.
+  if (shell.kind === "miss" && !reqCtx._dynamic) {
+    if (
+      response.status === 200 &&
+      (response.headers.get("content-type") ?? "").includes("text/html")
+    ) {
+      const { descriptor, ssrModule } = shell;
+      yield* schedule("shell-capture", () =>
+        scheduleShellCapture(
+          input.ctx,
+          input.request,
+          input.env,
+          input.url,
+          reqCtx,
+          ssrModule,
+          descriptor,
+        ),
+      );
+    }
+    response.headers.set(SHELL_STATUS_HEADER, "MISS");
+  }
+
   if (
-    !isPartial &&
-    request.method === "GET" &&
-    !url.searchParams.has("__prerender_collect") &&
-    !isRscRequest(request, url, false) &&
-    !reqCtx._dynamic
+    isPartial &&
+    prepared.partialCaptureNeeded &&
+    !reqCtx._dynamic &&
+    response.status === 200
   ) {
-    const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
-    if (pprConfig) {
-      // A per-request CSP nonce pins the route to axis 1: a shared shell would
-      // freeze the capture request's nonce and CSP would reject it for every
-      // other visitor. BOTH nonce sources must gate — the createRouter({ nonce })
-      // provider (`nonce` param) and a middleware ctx.set(nonce, …) token write;
-      // the provider-only check missed the latter (issue #656).
-      const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
-      const store = reqCtx._cacheStore;
-      const key = buildShellKey(url, reqCtx._searchParamsFilter);
-      // Dev Server-Timing mirror (issue #651): a capture completes AFTER its
-      // triggering response committed, so its outcome can only ride a LATER
-      // response's header. Read-and-clear keeps one capture = one report;
-      // dev-only (see takeCaptureDebugEventForTiming).
-      if (process.env.NODE_ENV !== "production" && reqCtx._metricsStore) {
-        const lastCapture = takeCaptureDebugEventForTiming(key);
-        if (lastCapture) {
-          appendMetric(
-            reqCtx._metricsStore,
-            "ppr:capture",
-            performance.now(),
-            lastCapture.attemptMs ?? 0,
-            undefined,
-            // attemptMs already rides as this entry's dur — drop it from desc.
-            describeShellCaptureEvent({ ...lastCapture, attemptMs: undefined }),
-          );
-        }
-        // Same mirror for the previous HIT's tail: its per-stage numbers
-        // (seed/match/handover/first-html/complete) finished after that
-        // response's headers were committed, so they ride THIS request's
-        // Server-Timing as `ppr:tail;dur=<complete ms>`.
-        const lastTail = takeShellTailTimingForServerTiming(key);
-        if (lastTail) {
-          appendMetric(
-            reqCtx._metricsStore,
-            "ppr:tail",
-            performance.now(),
-            lastTail.completeMs ?? 0,
-            undefined,
-            // completeMs already rides as this entry's dur — drop it from desc.
-            describeShellTailTiming({ ...lastTail, completeMs: undefined }),
-          );
-        }
+    const captureKey = prepared.partialCaptureKey;
+    yield* schedule("navigation-shell-capture", () =>
+      scheduleNavigationShellCapture(input, captureKey),
+    );
+  }
+
+  return response;
+}
+
+/**
+ * Axis 2 shell serve. Sync gates stay plan code; store and SSR effects run as
+ * named steps. Outcomes: serve a composed shell response, report a MISS (the
+ * top-level plan schedules the capture after the response commits), or pass
+ * (route not eligible — pure axis 1).
+ */
+function* shellServePlan<TEnv>(
+  input: RequestRenderInput<TEnv>,
+): RoutinePlan<ShellServeOutcome> {
+  const { ctx, request, env, url, isPartial, handleStore, nonce, reqCtx } =
+    input;
+
+  if (
+    isPartial ||
+    request.method !== "GET" ||
+    url.searchParams.has("__prerender_collect") ||
+    isRscRequest(request, url, false) ||
+    reqCtx._dynamic
+  ) {
+    return { kind: "pass" };
+  }
+  const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
+  if (!pprConfig) return { kind: "pass" };
+
+  // A per-request CSP nonce pins the route to axis 1: a shared shell would
+  // freeze the capture request's nonce and CSP would reject it for every
+  // other visitor. BOTH nonce sources must gate — the createRouter({ nonce })
+  // provider (`nonce` param) and a middleware ctx.set(nonce, …) token write;
+  // the provider-only check missed the latter (issue #656).
+  const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
+  const store = reqCtx._cacheStore;
+  const key = buildShellKey(url, reqCtx._searchParamsFilter);
+  mirrorPprServerTimingsForDev(key, reqCtx);
+  if (activeNonce !== undefined) {
+    // Declared intent that cannot be honored deserves a diagnostic (unlike an
+    // undeclared route, which is silent): a ppr route gated off by an active
+    // per-request nonce warns once per key. Axis 1 after the warning.
+    warnPprNonceActiveOnce(key);
+    return { kind: "pass" };
+  }
+  if (!hasShellFamily(store)) {
+    // Declared intent that cannot be honored deserves a diagnostic (unlike an
+    // undeclared route, which is silent). Axis 1 after the warning.
+    warnShellStoreMissingOnce(key);
+    return { kind: "pass" };
+  }
+
+  // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
+  // streaming, so bots/SEO crawlers get one complete axis-1 document.
+  const [ssrModule, streamMode] = yield* run("ssr-setup", () =>
+    getSSRSetup(ctx, request, env, url, reqCtx._metricsStore),
+  );
+  if (
+    streamMode === "allReady" ||
+    !ssrModule.resumeShellHTML ||
+    !ssrModule.captureShellHTML
+  ) {
+    return { kind: "pass" };
+  }
+  const descriptor = createShellCaptureDescriptor(ctx, key, pprConfig, store);
+
+  const cached = yield* run("shell-read", () =>
+    readShellEntry(store, key, reqCtx),
+  );
+
+  if (
+    cached &&
+    !cached.entry.navigationOnly &&
+    isValidShellHit(cached.entry, ctx.version)
+  ) {
+    if (!hasIntactShellPayload(cached.entry)) {
+      // Corrupt stored payload (undecodable prelude / unparseable
+      // postponed): a store-layer fault worth a diagnostic, unlike the
+      // silent version-mismatch lifecycle misses above. Degrade to MISS
+      // — the top-level plan schedules the recapture that overwrites it.
+      reportCacheError(
+        new Error(
+          `corrupt shell entry for "${key}": prelude/postponed failed ` +
+            "the integrity check; serving axis 1 and recapturing",
+        ),
+        "cache-read",
+        "[ShellServe] getShell",
+      );
+    } else {
+      // Stale (SWR) hit: serve the stale shell now, recapture in the
+      // background (stampede-guarded + backoff inside scheduleShellCapture).
+      if (cached.shouldRevalidate) {
+        yield* schedule("shell-recapture", () =>
+          scheduleShellCapture(
+            ctx,
+            request,
+            env,
+            url,
+            reqCtx,
+            ssrModule,
+            descriptor,
+          ),
+        );
       }
-      if (activeNonce !== undefined) {
-        // Declared intent that cannot be honored deserves a diagnostic (unlike an
-        // undeclared route, which is silent): a ppr route gated off by an active
-        // per-request nonce warns once per key. Axis 1 after the warning.
-        warnPprNonceActiveOnce(key);
-      } else if (!hasShellFamily(store)) {
-        // Declared intent that cannot be honored deserves a diagnostic (unlike an
-        // undeclared route, which is silent). Axis 1 after the warning.
-        warnShellStoreMissingOnce(key);
-      } else {
-        // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
-        // streaming, so bots/SEO crawlers get one complete axis-1 document.
-        const [ssrModule, streamMode] = await getSSRSetup(
+      const entry = cached.entry;
+      const response = yield* run("shell-hit", () =>
+        serveShellHit(
           ctx,
           request,
           env,
           url,
-          reqCtx._metricsStore,
-        );
-        if (
-          streamMode !== "allReady" &&
-          ssrModule.resumeShellHTML &&
-          ssrModule.captureShellHTML
-        ) {
-          const descriptor = createShellCaptureDescriptor(
-            ctx,
-            key,
-            pprConfig,
-            store,
-          );
-          // One serve funnel for BOTH entry sources (runtime store hit below,
-          // build-manifest hit further down): schedule the background
-          // recapture when asked, then commit the composed response.
-          const serveHit = (
-            entry: DocumentShellCacheEntry,
-            revalidate: boolean | undefined,
-          ): Response => {
-            if (revalidate) {
-              scheduleShellCapture(
-                ctx,
-                request,
-                env,
-                url,
-                reqCtx,
-                ssrModule,
-                descriptor,
-              );
-            }
-            return serveShellHit(
-              ctx,
-              request,
-              env,
-              url,
-              reqCtx,
-              handleStore,
-              ssrModule,
-              entry,
-              descriptor,
-            );
-          };
-          let cached: Awaited<ReturnType<typeof store.getShell>> = null;
-          const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
-          try {
-            cached = await store.getShell(key);
-          } catch (error) {
-            // A failing store read degrades to axis 1 (MISS), never a 500.
-            reportCacheError(error, "cache-read", "[ShellServe] getShell");
-          }
-          if (reqCtx._metricsStore) {
-            // Raw store outcome (pre-validity-gates), so a version-mismatch
-            // lifecycle miss is still distinguishable from a store miss.
-            appendMetric(
-              reqCtx._metricsStore,
-              "ppr:shell-read",
-              shellReadStart,
-              performance.now() - shellReadStart,
-              undefined,
-              cached ? "hit" : "miss",
-            );
-          }
-          if (
-            cached &&
-            !cached.entry.navigationOnly &&
-            isValidShellHit(cached.entry, ctx.version)
-          ) {
-            if (!hasIntactShellPayload(cached.entry)) {
-              // Corrupt stored payload (undecodable prelude / unparseable
-              // postponed): a store-layer fault worth a diagnostic, unlike the
-              // silent version-mismatch lifecycle misses above. Degrade to MISS
-              // — pprMiss below schedules the recapture that overwrites it.
-              reportCacheError(
-                new Error(
-                  `corrupt shell entry for "${key}": prelude/postponed failed ` +
-                    "the integrity check; serving axis 1 and recapturing",
-                ),
-                "cache-read",
-                "[ShellServe] getShell",
-              );
-            } else {
-              // Stale (SWR) hit: serve the stale shell now, recapture in the
-              // background (stampede-guarded + backoff inside scheduleShellCapture).
-              return serveHit(cached.entry, cached.shouldRevalidate);
-            }
-          }
-          // Build-time shell read-through (producer B, #699): on a runtime
-          // store MISS a Prerender+ppr route serves its `vite build`-baked
-          // shell through the SAME serveShellHit. lookupBuildShell owns every
-          // gate and fails to null (ordinary MISS path takes over); past
-          // ppr.ttl the baked entry still serves while SWR recaptures — the
-          // upgrade path from build entry to runtime entry.
-          const buildHit = await lookupBuildShell(
-            url,
-            ctx.version,
-            store,
-            // Dev: no build manifest exists; producer B runs on demand via
-            // the dev server's /__rsc_shell endpoint for PRERENDERED routes
-            // only (production's exact candidate set). Folded away in
-            // production builds (NODE_ENV is a compile-time constant).
-            resolveDevShellLookup(reqCtx, pprConfig),
-            reqCtx._searchParamsFilter,
-          );
-          if (buildHit) {
-            // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
-            return serveHit(buildHit.entry, buildHit.stale);
-          }
-          // MISS (no entry, invalid reactVersion, or store read failure): axis 1
-          // + a background capture scheduled once the response is known servable.
-          pprMiss = { descriptor, ssrModule };
-        }
-      }
+          reqCtx,
+          handleStore,
+          ssrModule,
+          entry,
+          descriptor,
+        ),
+      );
+      return { kind: "serve", response };
     }
   }
 
+  // Build-time shell read-through (producer B, #699): on a runtime
+  // store MISS a Prerender+ppr route serves its `vite build`-baked
+  // shell through the SAME serve path. lookupBuildShell owns every
+  // gate and fails to null (ordinary MISS path takes over); past
+  // ppr.ttl the baked entry still serves while SWR recaptures — the
+  // upgrade path from build entry to runtime entry.
+  const buildHit = yield* run("build-shell-lookup", () =>
+    lookupBuildShell(
+      url,
+      ctx.version,
+      store,
+      // Dev: no build manifest exists; producer B runs on demand via
+      // the dev server's /__rsc_shell endpoint for PRERENDERED routes
+      // only (production's exact candidate set). Folded away in
+      // production builds (NODE_ENV is a compile-time constant).
+      resolveDevShellLookup(reqCtx, pprConfig),
+      reqCtx._searchParamsFilter,
+    ),
+  );
+  if (buildHit) {
+    // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
+    if (buildHit.stale) {
+      yield* schedule("shell-recapture", () =>
+        scheduleShellCapture(
+          ctx,
+          request,
+          env,
+          url,
+          reqCtx,
+          ssrModule,
+          descriptor,
+        ),
+      );
+    }
+    const response = yield* run("shell-hit", () =>
+      serveShellHit(
+        ctx,
+        request,
+        env,
+        url,
+        reqCtx,
+        handleStore,
+        ssrModule,
+        buildHit.entry,
+        descriptor,
+      ),
+    );
+    return { kind: "serve", response };
+  }
+
+  // MISS (no entry, invalid reactVersion, or store read failure): axis 1
+  // + a background capture scheduled once the response is known servable.
+  return { kind: "miss", descriptor, ssrModule };
+}
+
+/**
+ * Match the request and assemble the RSC payload, or produce a control
+ * response (redirect, prerender collection) that ends the request plan.
+ */
+function* preparePayloadPlan<TEnv>(
+  input: RequestRenderInput<TEnv>,
+): RoutinePlan<PreparedRender> {
+  const { ctx, request, env, url, isPartial, handleStore, nonce, reqCtx } =
+    input;
+
   if (isPartial) {
     // Partial render (navigation)
-    const replay = await matchPartialWithPprReplay(
-      ctx,
-      request,
-      env,
-      url,
-      reqCtx,
-      nonce,
+    const replay = yield* run("match:ppr-replay", () =>
+      matchPartialAndRecordParams(ctx, request, env, url, reqCtx, nonce),
     );
     const result = replay.result;
-    pprReplayStatus = replay.status;
-    partialCaptureNeeded =
+    const pprReplayStatus = replay.status;
+    const partialCaptureNeeded =
       "captureNeeded" in replay && replay.captureNeeded === true;
-    partialCaptureKey = "captureKey" in replay ? replay.captureKey : undefined;
+    const partialCaptureKey =
+      "captureKey" in replay ? replay.captureKey : undefined;
 
     if (!result) {
       // Fall back to full render
-      const match = await ctx.router.match(request, { env });
-      setRequestContextParams(match.params, match.routeName);
+      const match = yield* run("match:fallback", () =>
+        matchAndRecordParams(ctx, request, env),
+      );
 
       if (match.redirect) {
         // Partial request: use X-RSC-Redirect header so the client can
@@ -529,16 +660,22 @@ async function handleRscRenderingInner<TEnv>(
             serializePprReplayStatus(pprReplayStatus),
           );
         }
-        return redirectResponse;
+        return { kind: "control", response: redirectResponse };
       }
 
-      payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
-    } else {
-      setRequestContextParams(result.params, result.routeName);
+      return {
+        kind: "payload",
+        payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
+        hasInterceptSlots: false,
+        pprReplayStatus,
+        partialCaptureNeeded,
+        partialCaptureKey,
+      };
+    }
 
-      hasInterceptSlots = !!result.slots;
-
-      payload = {
+    return {
+      kind: "payload",
+      payload: {
         metadata: {
           pathname: url.pathname,
           // routerId is serialized on every payload (including within-session
@@ -566,62 +703,202 @@ async function handleRscRenderingInner<TEnv>(
           defaultPrefetch: ctx.router.defaultPrefetch,
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
-      };
-    }
-  } else {
-    // Full render (initial page load)
-    const match = await ctx.router.match(request, { env });
-    setRequestContextParams(match.params, match.routeName);
+      },
+      hasInterceptSlots: !!result.slots,
+      pprReplayStatus,
+      partialCaptureNeeded,
+      partialCaptureKey,
+    };
+  }
 
-    if (match.redirect) {
-      return createResponseWithMergedHeaders(null, {
+  // Full render (initial page load)
+  const match = yield* run("match", () =>
+    matchAndRecordParams(ctx, request, env),
+  );
+
+  if (match.redirect) {
+    return {
+      kind: "control",
+      response: createResponseWithMergedHeaders(null, {
         status: 308,
         headers: { Location: match.redirect },
-      });
-    }
-
-    // Caching is now handled in router.match() via cache provider in request context
-    // match.segments already contains cached or fresh segments as appropriate
-
-    if (url.searchParams.has("__prerender_collect")) {
-      // Build-time prerender collection: serialize segments and handle data
-      // to JSON for storage as build artifacts. At runtime the worker
-      // deserializes these and feeds them through the normal segment pipeline.
-      const nonLoaderSegments = match.segments.filter(
-        (s) => s.type !== "loader",
-      );
-      handleStore.seal();
-      await handleStore.settled;
-      const { serializeSegments } = await import("../cache/segment-codec.js");
-      const serializedSegments = await serializeSegments(nonLoaderSegments);
-      const handles: Record<string, Record<string, unknown[]>> = {};
-      for (const seg of nonLoaderSegments) {
-        const segHandles = handleStore.getDataForSegment(seg.id);
-        if (Object.keys(segHandles).length > 0) {
-          handles[seg.id] = segHandles;
-        }
-      }
-      return new Response(
-        JSON.stringify({
-          segments: serializedSegments,
-          handles,
-          routeName: match.routeName,
-          params: match.params,
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
-    } else {
-      payload = buildFullPayload(match, ctx, url, reqCtx, handleStore);
-    }
+      }),
+    };
   }
 
-  // For partial requests, include any server-set location state in the payload.
-  // SSR (full page) requests ignore location state since there's no history.state
-  // to write to on a fresh page load.
-  if (isPartial && payload.metadata) {
-    attachLocationStateIfPresent(payload);
+  // Caching is now handled in router.match() via cache provider in request context
+  // match.segments already contains cached or fresh segments as appropriate
+
+  if (url.searchParams.has("__prerender_collect")) {
+    const response = yield* run("prerender-collect", () =>
+      collectPrerenderArtifacts(match, handleStore),
+    );
+    return { kind: "control", response };
   }
 
+  return {
+    kind: "payload",
+    payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
+    hasInterceptSlots: false,
+    partialCaptureNeeded: false,
+  };
+}
+
+/** Match and stamp params/routeName on the request context in one effect. */
+export async function matchAndRecordParams<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+): Promise<Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>> {
+  const match = await ctx.router.match(request, { env });
+  setRequestContextParams(match.params, match.routeName);
+  return match;
+}
+
+/**
+ * PPR replay match that stamps params/routeName when a replay result exists.
+ * A null result records nothing — the fallback match records its own.
+ */
+async function matchPartialAndRecordParams<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  reqCtx: RequestContext<any>,
+  nonce: string | undefined,
+): Promise<Awaited<ReturnType<typeof matchPartialWithPprReplay<TEnv>>>> {
+  const replay = await matchPartialWithPprReplay(
+    ctx,
+    request,
+    env,
+    url,
+    reqCtx,
+    nonce,
+  );
+  if (replay.result) {
+    setRequestContextParams(replay.result.params, replay.result.routeName);
+  }
+  return replay;
+}
+
+/**
+ * Shell store read that degrades to null on failure (axis 1 MISS, never a 500)
+ * and records the raw `ppr:shell-read` outcome (pre-validity-gates, so a
+ * version-mismatch lifecycle miss stays distinguishable from a store miss).
+ */
+async function readShellEntry<
+  TStore extends { getShell(key: string): Promise<unknown> },
+>(
+  store: TStore,
+  key: string,
+  reqCtx: ReturnType<typeof getRequestContext>,
+): Promise<Awaited<ReturnType<TStore["getShell"]>> | null> {
+  let cached: Awaited<ReturnType<TStore["getShell"]>> | null = null;
+  const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
+  try {
+    // The constraint types the call as Promise<unknown>; the instantiated
+    // TStore carries the real entry type, so the assertion restores it.
+    cached = (await store.getShell(key)) as Awaited<
+      ReturnType<TStore["getShell"]>
+    >;
+  } catch (error) {
+    reportCacheError(error, "cache-read", "[ShellServe] getShell");
+  }
+  if (reqCtx._metricsStore) {
+    appendMetric(
+      reqCtx._metricsStore,
+      "ppr:shell-read",
+      shellReadStart,
+      performance.now() - shellReadStart,
+      undefined,
+      cached ? "hit" : "miss",
+    );
+  }
+  return cached;
+}
+
+/**
+ * Dev Server-Timing mirror (issue #651): a capture completes AFTER its
+ * triggering response committed, so its outcome can only ride a LATER
+ * response's header. Read-and-clear keeps one capture = one report;
+ * dev-only (see takeCaptureDebugEventForTiming).
+ */
+function mirrorPprServerTimingsForDev(
+  key: string,
+  reqCtx: ReturnType<typeof getRequestContext>,
+): void {
+  if (process.env.NODE_ENV !== "production" && reqCtx._metricsStore) {
+    const lastCapture = takeCaptureDebugEventForTiming(key);
+    if (lastCapture) {
+      appendMetric(
+        reqCtx._metricsStore,
+        "ppr:capture",
+        performance.now(),
+        lastCapture.attemptMs ?? 0,
+        undefined,
+        // attemptMs already rides as this entry's dur — drop it from desc.
+        describeShellCaptureEvent({ ...lastCapture, attemptMs: undefined }),
+      );
+    }
+    // Same mirror for the previous HIT's tail: its per-stage numbers
+    // (seed/match/handover/first-html/complete) finished after that
+    // response's headers were committed, so they ride THIS request's
+    // Server-Timing as `ppr:tail;dur=<complete ms>`.
+    const lastTail = takeShellTailTimingForServerTiming(key);
+    if (lastTail) {
+      appendMetric(
+        reqCtx._metricsStore,
+        "ppr:tail",
+        performance.now(),
+        lastTail.completeMs ?? 0,
+        undefined,
+        // completeMs already rides as this entry's dur — drop it from desc.
+        describeShellTailTiming({ ...lastTail, completeMs: undefined }),
+      );
+    }
+  }
+}
+
+/**
+ * Build-time prerender collection: serialize segments and handle data
+ * to JSON for storage as build artifacts. At runtime the worker
+ * deserializes these and feeds them through the normal segment pipeline.
+ */
+async function collectPrerenderArtifacts<TEnv>(
+  match: Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>,
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
+): Promise<Response> {
+  const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
+  handleStore.seal();
+  await handleStore.settled;
+  const { serializeSegments } = await import("../cache/segment-codec.js");
+  const serializedSegments = await serializeSegments(nonLoaderSegments);
+  const handles: Record<string, Record<string, unknown[]>> = {};
+  for (const seg of nonLoaderSegments) {
+    const segHandles = handleStore.getDataForSegment(seg.id);
+    if (Object.keys(segHandles).length > 0) {
+      handles[seg.id] = segHandles;
+    }
+  }
+  return new Response(
+    JSON.stringify({
+      segments: serializedSegments,
+      handles,
+      routeName: match.routeName,
+      params: match.params,
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
+
+/** Assemble headers + tracking and run the foreground stage-driver render. */
+function renderPreparedRscResponse<TEnv>(
+  input: RequestRenderInput<TEnv>,
+  prepared: Extract<PreparedRender, { kind: "payload" }>,
+): Promise<Response> {
+  const { ctx, request, env, url, isPartial, nonce, reqCtx, renderSpan } =
+    input;
+  const { payload, pprReplayStatus, hasInterceptSlots } = prepared;
   const metricsStore = reqCtx._metricsStore;
 
   const rscHeaders: Record<string, string> = {
@@ -661,8 +938,9 @@ async function handleRscRenderingInner<TEnv>(
     mode: isPartial ? ("partial" as const) : ("full" as const),
     routeKey: reqCtx._routeName,
     span: renderSpan,
+    onEvent: input.trace && createRenderStageTraceBridge(input.trace),
   };
-  const response = await renderRscResponse(
+  return renderRscResponse(
     {
       ctx,
       request,
@@ -686,65 +964,45 @@ async function handleRscRenderingInner<TEnv>(
           }),
         },
   );
+}
 
-  // --- Axis 2: PPR shell CAPTURE on MISS (background task; see design doc) ---
-  // Capture only a 200 HTML document (a 404/error render is not a cacheable
-  // shell). Capture does not flow through the HTTP pipeline — middleware never
-  // re-runs (it already ran for this request; guarding is serve-time).
-  if (pprMiss && !reqCtx._dynamic) {
-    if (
-      response.status === 200 &&
-      (response.headers.get("content-type") ?? "").includes("text/html")
-    ) {
-      scheduleShellCapture(
+/**
+ * Background capture for a navigation-only shell (partial replay reported
+ * captureNeeded). SSR setup is resolved lazily inside the capture because the
+ * partial request itself never touched HTML rendering.
+ */
+function scheduleNavigationShellCapture<TEnv>(
+  input: RequestRenderInput<TEnv>,
+  partialCaptureKey: string | undefined,
+): void {
+  const { ctx, request, env, url, reqCtx } = input;
+  const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
+  const store = reqCtx._cacheStore!;
+  scheduleShellCapture(
+    ctx,
+    request,
+    env,
+    url,
+    reqCtx,
+    async (captureRequest, captureUrl) => {
+      const [ssrModule, streamMode] = await getSSRSetup(
         ctx,
-        request,
+        captureRequest,
         env,
-        url,
-        reqCtx,
-        pprMiss.ssrModule,
-        pprMiss.descriptor,
+        captureUrl,
+        undefined,
       );
-    }
-    response.headers.set(SHELL_STATUS_HEADER, "MISS");
-  }
-
-  if (
-    isPartial &&
-    partialCaptureNeeded &&
-    !reqCtx._dynamic &&
-    response.status === 200
-  ) {
-    const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
-    const store = reqCtx._cacheStore!;
-    scheduleShellCapture(
+      return streamMode === "allReady" ? null : ssrModule;
+    },
+    createShellCaptureDescriptor(
       ctx,
-      request,
-      env,
-      url,
-      reqCtx,
-      async (captureRequest, captureUrl) => {
-        const [ssrModule, streamMode] = await getSSRSetup(
-          ctx,
-          captureRequest,
-          env,
-          captureUrl,
-          undefined,
-        );
-        return streamMode === "allReady" ? null : ssrModule;
-      },
-      createShellCaptureDescriptor(
-        ctx,
-        partialCaptureKey ??
-          buildNavigationShellKey(url, reqCtx._searchParamsFilter),
-        pprConfig,
-        store,
-        true,
-      ),
-    );
-  }
-
-  return response;
+      partialCaptureKey ??
+        buildNavigationShellKey(url, reqCtx._searchParamsFilter),
+      pprConfig,
+      store,
+      true,
+    ),
+  );
 }
 
 /**
