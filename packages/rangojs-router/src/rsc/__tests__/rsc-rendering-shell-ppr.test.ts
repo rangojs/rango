@@ -45,6 +45,7 @@ import type { ShellSnapshotRecord } from "../../cache/types.js";
 import { contextSet } from "../../context-var.js";
 import { nonce as nonceToken } from "../nonce.js";
 import type { HandlerContext } from "../handler-context.js";
+import { SSR_SETUP_VAR, type SSRSetup } from "../ssr-setup.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
 
@@ -250,6 +251,29 @@ beforeEach(() => {
 });
 
 describe("handleRscRendering — integrated PPR serve: MISS", () => {
+  it("reads the shell while early SSR setup is still pending", async () => {
+    const store = new MemorySegmentCacheStore();
+    const getShell = vi.spyOn(store, "getShell");
+    const ssrModule = fullSsrModule();
+    let resolveSSRSetup!: (setup: SSRSetup) => void;
+    const ssrSetup = new Promise<SSRSetup>((resolve) => {
+      resolveSSRSetup = resolve;
+    });
+
+    const rendering = run({
+      ssrModule,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        reqCtx._variables[SSR_SETUP_VAR] = ssrSetup;
+      },
+    });
+
+    await vi.waitFor(() => expect(getShell).toHaveBeenCalledTimes(1));
+    resolveSSRSetup([ssrModule, "stream"]);
+    await rendering;
+  });
+
   it("ppr: true — serves axis 1 tagged MISS and schedules a capture with the DEFAULT policy (ttl 300)", async () => {
     const ssrModule = fullSsrModule();
     const { response, store } = await run({ ssrModule, ppr: true });

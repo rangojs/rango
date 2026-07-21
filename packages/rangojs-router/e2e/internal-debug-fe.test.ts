@@ -47,6 +47,28 @@ async function softNavigate(page: Page, f: ReturnType<typeof useFixture>) {
   await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 }
 
+async function expectRoutineOutput(
+  f: ReturnType<typeof useFixture>,
+  since: number,
+  expected: ReadonlyArray<{
+    header: string;
+    includes: readonly string[];
+  }>,
+): Promise<void> {
+  await expect
+    .poll(() => {
+      const output = f.proc().stdout().slice(since);
+      return expected.flatMap(({ header, includes }) => {
+        const start = output.indexOf(header);
+        if (start === -1) return [header];
+        const next = output.indexOf("[routine]", start + header.length);
+        const block = output.slice(start, next === -1 ? undefined : next);
+        return includes.filter((fragment) => !block.includes(fragment));
+      });
+    })
+    .toEqual([]);
+}
+
 const withFlag = () =>
   useFixture({
     root: "./e2e/test-app",
@@ -87,12 +109,34 @@ test.describe("INTERNAL_RANGO_DEBUG client injection (dev)", () => {
 test.describe("INTERNAL_RANGO_DEBUG FE logs (dev)", () => {
   const f = withFlag();
 
-  test("a soft navigation emits FE debug logs to the browser console", async ({
+  test("a soft navigation emits client logs and server routine output", async ({
     page,
   }) => {
+    const stdoutStart = f.proc().stdout().length;
     const debugLogs = collectClientDebug(page);
     await softNavigate(page, f);
     expect(debugLogs.length).toBeGreaterThan(0);
+    await expectRoutineOutput(f, stdoutStart, [
+      {
+        header: "[routine] GET / (document)",
+        includes: [
+          "scope prepare:full",
+          "  step match",
+          "step render",
+          "  step html",
+        ],
+      },
+      {
+        header: "[routine] GET /product/product-a (partial)",
+        includes: [
+          "scope prepare:partial",
+          "  step match:ppr-replay",
+          "step render",
+          "  step flight",
+          "  step response",
+        ],
+      },
+    ]);
   });
 });
 
@@ -124,14 +168,36 @@ test.describe("INTERNAL_RANGO_DEBUG FE logs (production)", () => {
     cliOptions: { env: { INTERNAL_RANGO_DEBUG: "true" } },
   });
 
-  test("a soft navigation emits FE debug logs to the browser console", async ({
+  test("a soft navigation emits client logs and server routine output", async ({
     page,
   }) => {
+    const stdoutStart = f.proc().stdout().length;
     const debugLogs = collectClientDebug(page);
     await page.goto(f.url("/app/shop"));
     await waitForHydration(page);
     await page.getByTestId("product-link-1").click();
     await expect(page.getByTestId("product-modal")).toBeVisible();
     expect(debugLogs.length).toBeGreaterThan(0);
+    await expectRoutineOutput(f, stdoutStart, [
+      {
+        header: "[routine] GET /app/shop (document)",
+        includes: [
+          "scope prepare:full",
+          "  step match",
+          "step render",
+          "  step html",
+        ],
+      },
+      {
+        header: "[routine] GET /app/shop/product/widget (partial)",
+        includes: [
+          "scope prepare:partial",
+          "  step match:ppr-replay",
+          "step render",
+          "  step flight",
+          "  step response",
+        ],
+      },
+    ]);
   });
 });

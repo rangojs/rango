@@ -7,6 +7,7 @@ import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { RscPayload } from "./types.js";
+import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
 // Canonical unions live in router/timeout.ts (the dependency-free leaf); these
 // aliases keep the render-pipeline names stable for existing importers.
@@ -192,6 +193,34 @@ function expectCommandResult(
 }
 
 /**
+ * Step helpers: each yields one command and returns its narrowed result, so a
+ * plan body reads imperatively while the yielded value stays the plain command
+ * the driver interprets (yield-before-execute, exact identity — see
+ * docs/design/render-stage-driver.md).
+ */
+function* flightStep<TEnv>(
+  execute: () => RscFlightStage,
+  recordSerializeMetric: boolean,
+): Generator<RscRenderCommand<TEnv>, RscFlightStage, RscRenderCommandResult> {
+  return expectCommandResult(
+    yield { type: "flight", execute, recordSerializeMetric },
+    "flight",
+  );
+}
+
+function* htmlStep<TEnv>(
+  prepare: () => RscPreparedHtmlRender | Promise<RscPreparedHtmlRender>,
+): Generator<RscRenderCommand<TEnv>, RscHtmlResult, RscRenderCommandResult> {
+  return expectCommandResult(yield { type: "html", prepare }, "html");
+}
+
+function* responseStep<TEnv>(
+  execute: () => Response,
+): Generator<RscRenderCommand<TEnv>, Response, RscRenderCommandResult> {
+  return expectCommandResult(yield { type: "response", execute }, "response");
+}
+
+/**
  * Describe the foreground response-construction work without executing it.
  * Each command is yielded before its work starts; the driver owns execution,
  * attribution, and resumption.
@@ -200,36 +229,24 @@ export function* createRscRenderPlan<TEnv>(
   input: RscRenderInput<TEnv>,
   options: RscRenderOptions = {},
 ): RscRenderPlan<TEnv> {
-  const flight = expectCommandResult(
-    yield {
-      type: "flight",
-      recordSerializeMetric: input.recordSerializeMetric ?? true,
-      execute: () => createFlightStage(input, input.init),
-    },
-    "flight",
+  const flight = yield* flightStep<TEnv>(
+    () => createFlightStage(input, input.init),
+    input.recordSerializeMetric ?? true,
   );
 
-  let body: BodyInit | null = flight.stream;
-  let init = input.init;
-
   if (options.html) {
-    const html = expectCommandResult(
-      yield {
-        type: "html",
-        prepare: () => options.html!(flight),
-      },
-      "html",
+    const html = options.html;
+    const page = yield* htmlStep<TEnv>(() => html(flight));
+    return yield* responseStep<TEnv>(() =>
+      createResponseWithMergedHeaders(page.body, {
+        ...input.init,
+        ...page.init,
+      }),
     );
-    body = html.body;
-    init = { ...init, ...html.init };
   }
 
-  return expectCommandResult(
-    yield {
-      type: "response",
-      execute: () => createResponseWithMergedHeaders(body, init),
-    },
-    "response",
+  return yield* responseStep<TEnv>(() =>
+    createResponseWithMergedHeaders(flight.stream, input.init),
   );
 }
 
@@ -544,6 +561,33 @@ export function renderRscFlightStage<TEnv>(
     }));
     throw error;
   }
+}
+
+/**
+ * Feed this driver's stage events (flight/html/response) into a routine flow
+ * trace as child entries of the currently running plan step. Stages are
+ * strictly sequential, so one `current` slot suffices. Depth is captured at
+ * creation: the bridge is built while the caller's render step executes, so
+ * children sit one level under it.
+ */
+export function createRenderStageTraceBridge(
+  trace: RoutineTrace,
+): (event: RscRenderStageEvent) => void {
+  const depth = trace.currentDepth() + 1;
+  let current: RoutineTraceEntry | undefined;
+  return (event) => {
+    if (event.type === "stage:start") {
+      current = trace.begin(event.context.phase, "step", depth);
+      return;
+    }
+    if (!current) return;
+    if (event.type === "stage:complete") {
+      trace.end(current);
+    } else {
+      trace.fail(current, event.error);
+    }
+    current = undefined;
+  };
 }
 
 export function createRscStageDebugSink(

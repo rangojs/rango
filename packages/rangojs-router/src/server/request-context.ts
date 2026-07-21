@@ -57,6 +57,7 @@ import {
   warnInvalidTheme,
 } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import type { RoutineTrace } from "../rsc/routine-plan.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
   assertCachedHeaderWriteAllowed,
@@ -663,6 +664,9 @@ export interface RequestContext<
    */
   _renderForeground?: RenderForegroundCursor;
 
+  /** @internal Request routine currently executing, used by timeout diagnostics. */
+  _activeRoutine?: RoutineTrace;
+
   /** @internal Keep the render cursor active for timeout support. */
   _renderDiagnosticsEnabled?: boolean;
 
@@ -767,6 +771,7 @@ export type PublicRequestContext<
   | "_debugPerformance"
   | "_metricsStore"
   | "_renderForeground"
+  | "_activeRoutine"
   | "_renderDiagnosticsEnabled"
   | "_handlerStart"
   | "_tracing"
@@ -1323,6 +1328,7 @@ export function createRequestContext<TEnv>(
     _reportedErrors: new WeakSet<object>(),
     _metricsStore: undefined,
     _renderForeground: undefined,
+    _activeRoutine: undefined,
     _renderDiagnosticsEnabled: undefined,
     _handlerStart: undefined,
 

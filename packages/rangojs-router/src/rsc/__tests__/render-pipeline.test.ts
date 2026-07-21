@@ -5,12 +5,19 @@ import {
 } from "../../server/request-context.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import {
+  createRenderStageTraceBridge,
   createRscStageDebugSink,
   createRscRenderPlan,
   driveRscRenderPlan,
   renderRscFlightStage,
   renderRscResponse,
 } from "../render-pipeline.js";
+import {
+  createRoutineTrace,
+  runRoutine,
+  step,
+  type RoutinePlan,
+} from "../routine-plan.js";
 import type {
   RscRenderCommand,
   RscRenderCommandResult,
@@ -140,6 +147,38 @@ describe("RSC render pipeline", () => {
     ]);
     expect(events.map((event) => event.context.progress.completed)).toEqual([
       0, 1, 1, 2, 2, 3,
+    ]);
+  });
+
+  it("bridges real render stages beneath the high-level render step", async () => {
+    const trace = createRoutineTrace("document");
+    const { input, requestContext } = makeInput(
+      () => new ReadableStream<Uint8Array>(),
+    );
+    function* routine(): RoutinePlan<Response> {
+      return yield* step("render", () =>
+        renderRscResponse({
+          ...input,
+          tracking: {
+            mode: "full",
+            onEvent: createRenderStageTraceBridge(trace),
+          },
+        }),
+      );
+    }
+
+    await runWithRequestContext(requestContext, () =>
+      runRoutine(routine(), { trace, owner: requestContext }),
+    );
+
+    expect(
+      trace.entries.map(
+        (entry) => `${entry.depth}:${entry.kind}:${entry.name}:${entry.state}`,
+      ),
+    ).toEqual([
+      "0:step:render:done",
+      "1:step:flight:done",
+      "1:step:response:done",
     ]);
   });
 

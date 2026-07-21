@@ -7,6 +7,7 @@
 import {
   _getRequestContext,
   getLocationState,
+  setRequestContextParams,
 } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
@@ -23,6 +24,7 @@ import {
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
 import type { RscPayload } from "./types.js";
+import type { HandlerContext } from "./handler-context.js";
 
 /**
  * DEVELOPMENT/TEST ONLY. When the debug cache signal gate is on,
@@ -380,4 +382,15 @@ export function finalizeResponse(response: Response): Response {
   const ctx = _getRequestContext();
   if (!ctx) return response;
   return drainOnResponseCallbacks(ctx, response);
+}
+
+/** Match and stamp params/routeName on the request context as one operation. */
+export async function matchAndRecordParams<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+): Promise<Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>> {
+  const match = await ctx.router.match(request, { env });
+  setRequestContextParams(match.params, match.routeName);
+  return match;
 }
