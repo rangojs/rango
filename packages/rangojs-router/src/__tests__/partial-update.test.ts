@@ -1299,19 +1299,22 @@ describe("partial-update", () => {
   });
 
   /**
-   * Fully-prefetched commit branch (#622 follow-up, HIGH).
+   * Fully-prefetched commit branch.
    *
    * A fully-prefetched navigation must render with `forceAwait` (so the
    * already-resolved ROUTER loader data lands with no fallback frame) AND commit
-   * NORMALLY — never inside startTransition. Committing in a transition would
-   * hold the OLD UI until ALL suspense in the new tree settled, including a
-   * CLIENT component that suspends on mount (post-commit), retaining the previous
-   * page indefinitely with no fallback. A normal commit shows the new route's
-   * fallback for client-initiated suspense while router data never flashes.
+   * inside a bare startTransition (no addTransitionType) so the current UI is
+   * held across the synchronous resolution — no fallback flash anywhere.
+   * Deliberate trade-off (#622 introduced this, #624 reverted it for client
+   * mount-suspense, then reinstated): a client component that suspends during
+   * its first render under an already-revealed boundary holds the old content
+   * until it resolves — it renders pre-commit inside the transition, so its
+   * effects cannot run first.
    *
-   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait, so its
-   * fallbacks stream like a cold load. An explicit transition() route still
-   * holds content via startTransition + addTransitionType.
+   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait and commits
+   * normally, so its fallbacks stream like a cold load. An explicit transition()
+   * route still commits via the hasTransition branch (addTransitionType
+   * "navigation").
    */
   describe("fully-prefetched commit branch (#622 follow-up)", () => {
     it("renders with forceAwait when fullyPrefetched=true", async () => {
@@ -1348,7 +1351,7 @@ describe("partial-update", () => {
       );
     });
 
-    it("commits NORMALLY (no startTransition, no addTransitionType) when fullyPrefetched=true", async () => {
+    it("commits inside a bare startTransition when fullyPrefetched=true", async () => {
       const captured: Array<(...args: any[]) => any> = [];
       const React = await import("react");
       const spy = vi.spyOn(React, "startTransition").mockImplementation(((
@@ -1386,9 +1389,10 @@ describe("partial-update", () => {
           type: "navigate",
         });
 
-        // Normal commit: onUpdate ran, but NOT through startTransition.
+        // Transition commit: onUpdate ran exactly once, wrapped in
+        // startTransition (the spy captures the callback before running it).
         expect(onUpdate).toHaveBeenCalledOnce();
-        expect(captured.length).toBe(0);
+        expect(captured.length).toBe(1);
       } finally {
         spy.mockRestore();
       }

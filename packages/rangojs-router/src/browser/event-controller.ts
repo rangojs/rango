@@ -234,6 +234,12 @@ export interface EventController {
     listener: ActionStateListener,
   ): () => void;
   subscribeToHandles(listener: HandleListener): () => void;
+  /**
+   * Deliver queued location, params, navigation, and handle notifications now.
+   * NavigationProvider calls this inside the payload update so React assigns
+   * every route-state hook update to the same normal or transition lane.
+   */
+  flushRouteState(): void;
 
   // Handle operations
   setHandleData(
@@ -367,19 +373,32 @@ function matchesActionId(
   return entryActionId.endsWith(`#${subscriptionId}`);
 }
 
-// Batch rapid notifications into one microtask to prevent render storms
-function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
+interface DebouncedNotifier {
+  schedule(): void;
+  flush(): void;
+}
+
+// Batch rapid notifications into one task to prevent render storms. The
+// explicit flush lets a React update owner preserve its scheduling lane.
+function makeDebouncedNotifier(listeners: Set<() => void>): DebouncedNotifier {
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  return () => {
-    if (timeout !== null) clearTimeout(timeout);
-    timeout = setTimeout(() => {
-      timeout = null;
-      notifyListeners(
-        [...listeners],
-        (listener) => listener(),
-        (listener) => listeners.has(listener),
-      );
-    }, 0);
+  const flush = () => {
+    if (timeout === null) return;
+    clearTimeout(timeout);
+    timeout = null;
+    notifyListeners(
+      [...listeners],
+      (listener) => listener(),
+      (listener) => listeners.has(listener),
+    );
+  };
+
+  return {
+    schedule() {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(flush, 0);
+    },
+    flush,
   };
 }
 
@@ -459,7 +478,7 @@ export function createEventController(
 
   function notify(): void {
     cachedDerivedState = null;
-    notifyStateListeners();
+    notifyStateListeners.schedule();
   }
 
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -516,6 +535,11 @@ export function createEventController(
   }
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
+
+  function flushRouteState(): void {
+    notifyStateListeners.flush();
+    notifyHandles.flush();
+  }
 
   function getState(): DerivedNavigationState {
     if (cachedDerivedState) return cachedDerivedState;
@@ -1001,7 +1025,7 @@ export function createEventController(
     handleSegmentOrder = newSegmentOrder;
     routeSegmentIds = newRouteSegmentIds;
 
-    notifyHandles();
+    notifyHandles.schedule();
   }
 
   function getHandleState(): HandleState {
@@ -1021,7 +1045,7 @@ export function createEventController(
       return;
     }
     routeSegmentIds = next;
-    notifyHandles();
+    notifyHandles.schedule();
   }
 
   // ========================================================================
@@ -1102,6 +1126,7 @@ export function createEventController(
     subscribe,
     subscribeToAction,
     subscribeToHandles,
+    flushRouteState,
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

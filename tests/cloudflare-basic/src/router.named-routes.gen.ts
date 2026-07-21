@@ -85,6 +85,7 @@ export const NamedRoutes = {
   productReviews: "/item/:productId/reviews",
   ptLayoutFrom: "/pt-layout/from",
   ptLayoutTo: "/pt-layout/to",
+  ptLayoutToBounded: "/pt-layout/to-bounded",
   ptSlow: "/pt-slow",
   redirectGuardGo: "/redirect-guard/go",
   "releases.index": "/releases",

@@ -26,6 +26,11 @@ import {
   VtGroupCard,
   VtGroupRefreshButton,
 } from "./components/RefreshDemo.js";
+import {
+  XcsBare,
+  XcsBounded,
+  XcsPathnameProbe,
+} from "./components/ClientMountSuspenseX.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -1530,6 +1535,83 @@ export const urlpatterns = urls(
           loader(RevenueLoader),
           loader(ProductLoader),
         ]),
+
+        // Fully-prefetched commit mode on experimental React: shared layout
+        // with a loading() boundary, NO transition() — exercises the automatic
+        // warm-hit startTransition branch. /xcs/to suspends bare (layout-hold),
+        // /xcs/to-bounded ships its own <Suspense> (local fallback reveals).
+        layout(
+          () => (
+            <div data-testid="xcs-layout">
+              <Link to={href("/xcs/from")} data-testid="xcs-from-link">
+                from
+              </Link>
+              <Link
+                to={href("/xcs/to")}
+                data-testid="xcs-to-link"
+                prefetch="hover"
+              >
+                to
+              </Link>
+              <Link
+                to={href("/xcs/to-bounded")}
+                data-testid="xcs-to-bounded-link"
+                prefetch="hover"
+              >
+                to-bounded
+              </Link>
+              <XcsPathnameProbe />
+              <Outlet />
+            </div>
+          ),
+          () => [
+            loading(<div data-testid="xcs-layout-fallback">xcs-loading</div>),
+            path(
+              "/xcs/from",
+              () => <div data-testid="xcs-from-content">from-content</div>,
+              { name: "xcs.from" },
+            ),
+            path("/xcs/to", () => <XcsBare />, { name: "xcs.to" }),
+            path("/xcs/to-bounded", () => <XcsBounded />, {
+              name: "xcs.toBounded",
+            }),
+          ],
+        ),
+
+        // Warm-nav branch ordering: a fully-prefetched nav on a transition()
+        // route must commit via the FULL hasTransition branch (startTransition
+        // + addTransitionType "navigation"), never the bare warm-hit branch —
+        // prefetch-hold.test.ts pins it via the startViewTransition types.
+        layout(
+          () => (
+            <div data-testid="xcs-tx-layout">
+              <Link to={href("/xcs-tx/from")} data-testid="xcs-tx-from-link">
+                from
+              </Link>
+              <Link
+                to={href("/xcs-tx/to")}
+                data-testid="xcs-tx-to-link"
+                prefetch="hover"
+              >
+                to
+              </Link>
+              <Outlet />
+            </div>
+          ),
+          () => [
+            transition({}),
+            path(
+              "/xcs-tx/from",
+              () => <div data-testid="xcs-tx-from-content">tx-from</div>,
+              { name: "xcsTx.from" },
+            ),
+            path(
+              "/xcs-tx/to",
+              () => <div data-testid="xcs-tx-to-content">tx-to</div>,
+              { name: "xcsTx.to" },
+            ),
+          ],
+        ),
 
         // Layout-level transition (no-children form, sibling of path()).
         // Pins that back-nav fires the navigation-back transition type when the

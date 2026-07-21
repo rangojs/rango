@@ -97,6 +97,7 @@ function createSsrEventController(opts: {
     }),
     subscribeToAction: () => () => {},
     subscribeToHandles: () => () => {},
+    flushRouteState: () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
     setRouteSegmentIds: () => {},

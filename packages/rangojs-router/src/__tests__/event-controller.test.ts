@@ -1291,6 +1291,27 @@ describe("createEventController", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
+    it("flushes pending route-state notifications synchronously", () => {
+      const ctrl = createController();
+      const stateListener = vi.fn();
+      const handleListener = vi.fn();
+      ctrl.subscribe(stateListener);
+      ctrl.subscribeToHandles(handleListener);
+
+      ctrl.startNavigation("/about");
+      ctrl.setHandleData({}, ["R0"]);
+      expect(stateListener).not.toHaveBeenCalled();
+      expect(handleListener).not.toHaveBeenCalled();
+
+      ctrl.flushRouteState();
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(0);
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+    });
+
     it("aggregates every state-listener error after fan-out", () => {
       const ctrl = createController();
       const firstError = new Error("first state listener failed");

@@ -1,23 +1,31 @@
 import { urls, type Handler } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { ClientMountSuspense } from "../components/ClientMountSuspense.js";
+import {
+  ClientMountSuspense,
+  ClientPathnameProbe,
+} from "../components/ClientMountSuspense.js";
+import { ClientMountSuspenseBounded } from "../components/ClientMountSuspenseBounded.js";
 import { PtSlowContent } from "../components/PtSlowContent.js";
 import { PtSlowLoader } from "../loaders/pt-slow.js";
 
 /**
- * #622 follow-up prefetch-transition coverage (mirrors the router e2e app).
+ * Fully-prefetched commit-mode coverage (mirrors the router e2e app).
  *
- * Two scenarios, both reached via a fully-prefetched navigation (the entry's
- * stream drains so navigation takes the no-flash fast path):
+ * Scenarios, all reached via a fully-prefetched navigation (the entry's
+ * stream drains so navigation takes the no-flash startTransition path):
  *
  *  1. /pt-slow : a loading() route whose content depends on a slow loader. A
  *     fully-prefetched commit must NOT flash pt-slow-loading — the forceAwait
  *     unwrap lands the resolved router data inline.
  *  2. /pt-layout/{from,to} : a SHARED layout with a loading() boundary; /to's
- *     CLIENT component suspends on MOUNT with no <Suspense> of its own. On the
- *     fully-prefetched nav the persistent layout boundary reveals pt-layout-loading
- *     (a NORMAL commit) instead of holding /from's content (the old startTransition
- *     bug).
+ *     CLIENT component suspends during its first render with no <Suspense> of
+ *     its own. The startTransition commit HOLDS /from's content at the
+ *     already-revealed layout boundary until the client promise resolves
+ *     (#622 -> #624 -> reinstated transition).
+ *  3. /pt-layout/to-bounded : the same pattern WITH a component-own
+ *     <Suspense>. That boundary is newly mounted by the nav, so React reveals
+ *     its LOCAL fallback immediately even inside the transition — the escape
+ *     hatch from the layout-level hold.
  */
 
 const PtSlowPage: Handler = () => <PtSlowContent loader={PtSlowLoader} />;
@@ -30,6 +38,14 @@ const PtLayout: Handler = () => (
     <Link to="/pt-layout/to" data-testid="pt-to-link" prefetch="hover">
       to
     </Link>
+    <Link
+      to="/pt-layout/to-bounded"
+      data-testid="pt-to-bounded-link"
+      prefetch="hover"
+    >
+      to-bounded
+    </Link>
+    <ClientPathnameProbe />
     <Outlet />
     <div style={{ height: "2000px" }} aria-hidden="true" />
     <Link
@@ -48,6 +64,8 @@ const PtFrom: Handler = () => (
 
 const PtTo: Handler = () => <ClientMountSuspense />;
 
+const PtToBounded: Handler = () => <ClientMountSuspenseBounded />;
+
 export const prefetchTransitionPatterns = urls(
   ({ layout, path, loading, loader }) => [
     path("/pt-slow", PtSlowPage, { name: "ptSlow" }, () => [
@@ -58,6 +76,9 @@ export const prefetchTransitionPatterns = urls(
       loading(<div data-testid="pt-layout-loading">pt-layout-loading</div>),
       path("/pt-layout/from", PtFrom, { name: "ptLayoutFrom" }),
       path("/pt-layout/to", PtTo, { name: "ptLayoutTo" }),
+      path("/pt-layout/to-bounded", PtToBounded, {
+        name: "ptLayoutToBounded",
+      }),
     ]),
   ],
 );
