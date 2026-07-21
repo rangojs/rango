@@ -33,6 +33,7 @@ import type {
   TransitionItem,
   UseItems,
 } from "../route-types.js";
+import type { StaticHandlerRef } from "../static-handler.js";
 
 // Re-export route item types for backward compatibility
 export type {
@@ -140,8 +141,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   },
    * })
    * ```
-   * @param slots - Object with slot names (prefixed with @) mapped to handlers
-   *                or `{ handler, use? }` slot descriptors.
+   * @param slots - Object with slot names (prefixed with @) mapped to handlers,
+   *                Static() definitions, or `{ handler, use? }` descriptors.
    * @param use - Optional callback for loaders, loading, revalidate, etc.
    *              Items here apply to every slot in the call (broadcast).
    *              For per-slot single-assignment items, use the slot descriptor's
@@ -157,8 +158,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
+      | StaticHandlerRef
       | {
-          handler: Handler<any, any, TEnv> | ReactNode;
+          handler: Handler<any, any, TEnv> | ReactNode | StaticHandlerRef;
           use?: () => UseItems<ParallelUseItem>;
         }
     >,

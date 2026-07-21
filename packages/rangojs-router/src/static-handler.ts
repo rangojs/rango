@@ -46,9 +46,24 @@ export interface StaticHandlerOptions {
   passthrough?: boolean;
 }
 
+declare const STATIC_HANDLER_REF: unique symbol;
+
+/**
+ * Opaque identity used by DSL type seams that accept Static() values.
+ *
+ * The brand is required, never optional: an optional brand makes this a weak
+ * type, and weak-type checking lets `{}` through — `parallel({ "@x": {} })`
+ * would typecheck and then die at render as an invalid React child. The
+ * symbol never exists at runtime; Static() casts its return instead.
+ */
+export interface StaticHandlerRef {
+  /** @internal Type-only brand; see interface doc. */
+  readonly [STATIC_HANDLER_REF]: true;
+}
+
 export interface StaticHandlerDefinition<
   TParams extends Record<string, any> = any,
-> {
+> extends StaticHandlerRef {
   readonly __brand: "staticHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;
@@ -103,12 +118,13 @@ export function Static<TParams extends Record<string, any>>(
     id = `__rango_runtime_static_${runtimeStaticIdCounter++}`;
   }
 
+  // Cast: STATIC_HANDLER_REF is a type-only brand with no runtime field.
   return {
     __brand: "staticHandler" as const,
     $$id: id,
     handler: handler as Handler<TParams>,
     ...(options ? { options } : {}),
-  };
+  } as StaticHandlerDefinition<TParams>;
 }
 
 export function isStaticHandler(
