@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { usePathname } from "@rangojs/router/client";
 
 /**
  * Fully-prefetched commit-mode fixture (mirrors the router e2e app).
@@ -30,7 +31,15 @@ function getMountPromise(): Promise<string> {
   return mountPromise;
 }
 
+export function ClientPathnameProbe() {
+  const pathname = usePathname();
+  return <output data-testid="pt-pathname">{pathname}</output>;
+}
+
 export function ClientMountSuspense() {
+  (
+    window as unknown as { __rangoClientSuspenseStarted?: boolean }
+  ).__rangoClientSuspenseStarted = true;
   const value = use(getMountPromise());
   return <div data-testid="cf-cs-content">{value}</div>;
 }

@@ -26,7 +26,11 @@ import {
   VtGroupCard,
   VtGroupRefreshButton,
 } from "./components/RefreshDemo.js";
-import { XcsBare, XcsBounded } from "./components/ClientMountSuspenseX.js";
+import {
+  XcsBare,
+  XcsBounded,
+  XcsPathnameProbe,
+} from "./components/ClientMountSuspenseX.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -1556,6 +1560,7 @@ export const urlpatterns = urls(
               >
                 to-bounded
               </Link>
+              <XcsPathnameProbe />
               <Outlet />
             </div>
           ),

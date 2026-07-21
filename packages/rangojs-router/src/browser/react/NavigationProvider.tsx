@@ -456,6 +456,13 @@ export function NavigationProvider({
           cached === undefined ? update.metadata.resolvedIds : undefined,
         );
       }
+
+      // tx.commit() and the metadata updates above mutate the controller
+      // synchronously, but its ordinary notifications are task-debounced. Flush
+      // them here so hook setState calls inherit this payload update's lane. In
+      // a transition that suspends, the source tree therefore keeps its source
+      // pathname/params until the destination payload commits with them.
+      eventController.flushRouteState();
     });
 
     return unsubscribe;

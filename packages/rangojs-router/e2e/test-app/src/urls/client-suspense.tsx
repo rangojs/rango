@@ -1,6 +1,9 @@
 import { urls, type Handler } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { ClientMountSuspense } from "../components/ClientMountSuspense.js";
+import {
+  ClientMountSuspense,
+  ClientPathnameProbe,
+} from "../components/ClientMountSuspense.js";
 import { ClientMountSuspenseBounded } from "../components/ClientMountSuspenseBounded.js";
 
 /**
@@ -43,6 +46,7 @@ const CsLayout: Handler = () => (
     >
       to-bounded
     </Link>
+    <ClientPathnameProbe />
     <Outlet />
   </div>
 );

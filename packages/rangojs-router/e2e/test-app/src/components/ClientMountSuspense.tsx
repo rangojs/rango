@@ -1,6 +1,7 @@
 "use client";
 
 import { use } from "react";
+import { usePathname } from "@rangojs/router/client";
 
 /**
  * Fully-prefetched commit-mode fixture component.
@@ -35,9 +36,17 @@ function getMountPromise(): Promise<string> {
   return mountPromise;
 }
 
+export function ClientPathnameProbe() {
+  const pathname = usePathname();
+  return <output data-testid="cs-pathname">{pathname}</output>;
+}
+
 // No <Suspense> here: the post-mount suspension bubbles to the route's loading()
 // boundary, which is the boundary the old startTransition behavior would hold.
 export function ClientMountSuspense() {
+  (
+    window as unknown as { __rangoClientSuspenseStarted?: boolean }
+  ).__rangoClientSuspenseStarted = true;
   const value = use(getMountPromise());
   return <div data-testid="client-suspense-content">{value}</div>;
 }

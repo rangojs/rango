@@ -294,10 +294,28 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await watchFlash(page, "pt-layout-loading");
       await testId(page, "pt-to-link").click();
 
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (
+                window as unknown as {
+                  __rangoClientSuspenseStarted?: boolean;
+                }
+              ).__rangoClientSuspenseStarted === true,
+          ),
+        )
+        .toBe(true);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+      );
+
       await expect(testId(page, "pt-from-content")).toBeVisible();
+      await expect(testId(page, "pt-pathname")).toHaveText("/pt-layout/from");
       await expect(testId(page, "cf-cs-content")).toHaveText("client-mounted", {
         timeout: 8000,
       });
+      await expect(testId(page, "pt-pathname")).toHaveText("/pt-layout/to");
       expect(await readFlash(page)).toBe(false);
     });
 

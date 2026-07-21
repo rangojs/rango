@@ -393,14 +393,37 @@ function prefetchTransitionTests(mode: "dev" | "build") {
       await watchFlash(page, "cs-layout-fallback");
       await testId(page, "cs-to-link").click();
 
-      // The old content stays visible while the client promise resolves…
+      // Wait until the destination render has actually suspended, then cross
+      // the controller's notification timer. Route hooks belong to the same
+      // transition as the payload: while /from is held, they must still expose
+      // /from rather than urgently publishing destination state into old UI.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (
+                window as unknown as {
+                  __rangoClientSuspenseStarted?: boolean;
+                }
+              ).__rangoClientSuspenseStarted === true,
+          ),
+        )
+        .toBe(true);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+      );
+
+      // The old content and its route-hook state stay visible while the client
+      // promise resolves…
       await expect(testId(page, "cs-from-content")).toBeVisible();
+      await expect(testId(page, "cs-pathname")).toHaveText("/cs-layout/from");
       // …then the new content lands, and the layout fallback was NEVER
       // inserted (MutationObserver catches even a single-frame flash).
       await expect(testId(page, "client-suspense-content")).toHaveText(
         "client-mounted",
         { timeout: 8000 },
       );
+      await expect(testId(page, "cs-pathname")).toHaveText("/cs-layout/to");
       expect(await readFlash(page)).toBe(false);
     });
 

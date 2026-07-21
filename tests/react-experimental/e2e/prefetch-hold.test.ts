@@ -84,12 +84,30 @@ function defineTests(f: Fixture) {
     await watchFlash(page, "xcs-layout-fallback");
     await testId(page, "xcs-to-link").click();
 
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __rangoClientSuspenseStarted?: boolean;
+              }
+            ).__rangoClientSuspenseStarted === true,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    );
+
     // Old content held while the client promise resolves; the layout fallback
     // is never inserted; no view transition fires (no boundary involved).
     await expect(testId(page, "xcs-from-content")).toBeVisible();
+    await expect(testId(page, "xcs-pathname")).toHaveText("/xcs/from");
     await expect(testId(page, "xcs-content")).toHaveText("client-mounted", {
       timeout: 8000,
     });
+    await expect(testId(page, "xcs-pathname")).toHaveText("/xcs/to");
     expect(await readFlash(page)).toBe(false);
     expect(await vtCount(page)).toBe(0);
   });

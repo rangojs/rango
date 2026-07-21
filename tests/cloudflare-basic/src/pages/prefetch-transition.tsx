@@ -1,6 +1,9 @@
 import { urls, type Handler } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { ClientMountSuspense } from "../components/ClientMountSuspense.js";
+import {
+  ClientMountSuspense,
+  ClientPathnameProbe,
+} from "../components/ClientMountSuspense.js";
 import { ClientMountSuspenseBounded } from "../components/ClientMountSuspenseBounded.js";
 import { PtSlowContent } from "../components/PtSlowContent.js";
 import { PtSlowLoader } from "../loaders/pt-slow.js";
@@ -42,6 +45,7 @@ const PtLayout: Handler = () => (
     >
       to-bounded
     </Link>
+    <ClientPathnameProbe />
     <Outlet />
     <div style={{ height: "2000px" }} aria-hidden="true" />
     <Link

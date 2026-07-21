@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, use } from "react";
+import { usePathname } from "@rangojs/router/client";
 
 /**
  * Fully-prefetched commit-mode fixtures on EXPERIMENTAL React (mirrors
@@ -43,7 +44,15 @@ function getBoundedPromise(): Promise<string> {
   return boundedPromise;
 }
 
+export function XcsPathnameProbe() {
+  const pathname = usePathname();
+  return <output data-testid="xcs-pathname">{pathname}</output>;
+}
+
 export function XcsBare() {
+  (
+    window as unknown as { __rangoClientSuspenseStarted?: boolean }
+  ).__rangoClientSuspenseStarted = true;
   const value = use(getBarePromise());
   return <div data-testid="xcs-content">{value}</div>;
 }
