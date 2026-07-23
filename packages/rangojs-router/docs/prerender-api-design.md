@@ -607,8 +607,13 @@ survive serialize -> store -> deserialize -> re-serialize -> invoke:
 3. `segment-codec` deserializes with plugin-rsc's
    `preserveServerReferences` option so a cache hit re-emits the opaque
    reference instead of resolving it to a raw function.
-4. Build discovery and the runtime share `defineEncryptionKey`, allowing the
-   runtime to decrypt bound arguments captured while prerendering.
+4. Build discovery and the runtime share `defineEncryptionKey`
+   (`src/vite/encryption-key.ts`), allowing the runtime to decrypt bound
+   arguments captured while prerendering. `RANGO_ENCRYPTION_KEY` (base64-encoded
+   32 bytes, read at build time) pins a stable key across builds; otherwise each
+   build mints a random one. Prerender entries are rewritten every build, so the
+   per-build default is safe here -- the cross-deploy hazard applies to runtime
+   cache stores; see the encryption-key note in `use-cache-api-design.md`.
 
 A pure `Prerender` route has no live handler after build. Its action re-render
 therefore falls back to the stored prerender entry; the action has already run

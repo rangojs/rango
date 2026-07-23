@@ -11,10 +11,11 @@ import {
 // Static() and Prerender() render at BUILD time and store Flight payloads that the
 // worker deserializes at runtime -- a build-time cache hit, exactly like a
 // "use cache" hit. An inline "use server" action embedded in such a handler must
-// therefore resolve from the server-references manifest on that hit: the same
-// path that 500'd with "server reference not found" before the expose-action-id
-// manifest re-assertion. This is the same bug class as use-cache-inline-action,
-// reached through the build-time caching mechanisms instead.
+// therefore survive the stored-Flight round trip on that hit: the same path that
+// 500'd with "server reference not found" before hashServerRefs rewrote the
+// build-discovery ids to production hashes and segment-codec preserved stored
+// references. This is the same bug class as use-cache-inline-action, reached
+// through the build-time caching mechanisms instead.
 //
 // Pinned here, in dev AND production:
 //   - the embedded action is INVOCABLE on a (build-time) cache hit (no 500);

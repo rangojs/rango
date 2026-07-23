@@ -348,6 +348,12 @@ the current time and expect freshness -- those are frozen at cache-write. The
 `cookies()`/`headers()` read guard applies to the cached function body, NOT to an
 inline action's body.
 
+Deploy note: captured values are encrypted with a per-build key by default. If
+cache entries can outlive a deploy (a persistent store such as the Cloudflare
+cache store), set `RANGO_ENCRYPTION_KEY` (base64-encoded 32 bytes) in the build
+environment so actions embedded in entries written by a previous deploy still
+decrypt; without it they fail until the entry expires or revalidates.
+
 ## Vite Transform
 
 The `rango:use-cache` Vite plugin detects the directive and wraps exports with
