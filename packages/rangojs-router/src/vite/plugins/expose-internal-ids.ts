@@ -75,6 +75,11 @@ interface RscScanPluginApi {
 /**
  * Stub export-only loader modules before plugin-rsc reduces scan modules to
  * imports. The regular post transform remains authoritative outside scan builds.
+ *
+ * Handles and location-state definitions are intentionally excluded: handle
+ * collect functions run in the browser, and location-state definitions are
+ * callable browser objects. Their dependencies must remain visible to non-RSC
+ * validation rather than being hidden behind an opaque scan stub.
  */
 export function createLoaderScanStubPlugin(): Plugin {
   let projectRoot = "";

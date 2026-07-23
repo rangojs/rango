@@ -839,6 +839,26 @@ export { InternalLoader as PublicLoader };
     ).toBeUndefined();
   });
 
+  it.each([
+    [
+      "createHandle",
+      `import "server-only";
+import { createHandle } from "@rangojs/router";
+export const Breadcrumbs = createHandle((segments) => segments.flat());
+`,
+    ],
+    [
+      "createLocationState",
+      `import "server-only";
+import { createLocationState } from "@rangojs/router";
+export const FlashMessage = createLocationState({ flash: true });
+`,
+    ],
+  ])("leaves %s modules visible to non-RSC validation", (_name, source) => {
+    const plugin = createLoaderScanPlugin(true);
+    expect(plugin.transform.call(clientCtx(), source, FILE_ID)).toBeUndefined();
+  });
+
   it("runs only during build without joining the post transform group", () => {
     const plugin = createLoaderScanStubPlugin();
     expect(plugin.apply).toBe("build");
