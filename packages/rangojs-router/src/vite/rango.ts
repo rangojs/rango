@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
 import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import {
+  createLoaderScanStubPlugin,
   exposeInternalIds,
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
@@ -558,6 +559,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     },
   });
 
+  plugins.push(createLoaderScanStubPlugin());
   plugins.push(exposeActionId());
   plugins.push(useCacheTransform());
   plugins.push(exposeInternalIds());
