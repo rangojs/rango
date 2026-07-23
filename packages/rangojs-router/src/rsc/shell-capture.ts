@@ -26,7 +26,10 @@ import {
   captureQueueDepths,
   enqueueSerializedCapture,
 } from "./capture-queue.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
+import {
+  SHELL_CAPTURE_MAX_WAIT_MS,
+  SHELL_CAPTURE_TASK_HARD_CAP_MS,
+} from "./shell-capture-constants.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import type { TraceSpan } from "../router/tracing.js";
@@ -185,15 +188,64 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * Module-level in-flight key set: the stampede guard for background captures, and
+ * Bound one capture task at {@link SHELL_CAPTURE_TASK_HARD_CAP_MS}. Rejects on
+ * expiry so the caller's existing catch applies backoff + reporting and its
+ * settle path releases the stampede guard and queue slot; resolves/rejects
+ * transparently otherwise. The timer is unref'd so a pending cap never holds a
+ * Node dev process open.
+ */
+function raceTaskHardCap<T>(task: Promise<T>, key: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `capture task for ${key} exceeded the ${SHELL_CAPTURE_TASK_HARD_CAP_MS}ms hard cap; ` +
+            `a handler is likely wedged on a never-settling await`,
+        ),
+      );
+    }, SHELL_CAPTURE_TASK_HARD_CAP_MS);
+    (timer as { unref?: () => void }).unref?.();
+    task.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * Module-level in-flight key map: the stampede guard for background captures, and
  * its single owner. One capture runs per key per isolate; concurrent MISS/stale
  * requests for the same key coalesce onto the first (the rest see the key present
  * in scheduleShellCapture and skip). Added when a capture is scheduled and cleared
- * in the task's finally once it settles, so a later request can recapture when TTL
- * rolls. Living here (not split across the middleware) keeps the add/clear
- * lifecycle in one layer.
+ * in the task's settle paths via a token-guarded release, so a later request can
+ * recapture when TTL rolls. Living here (not split across the middleware) keeps
+ * the add/clear lifecycle in one layer.
+ *
+ * The value is the owning task's token ({@link CaptureGuardToken}) rather than
+ * a bare set entry: workerd can kill a capture's waitUntil context before its
+ * finally runs (or the task can wedge past every deadline), stranding the key.
+ * scheduleShellCapture treats an entry older than
+ * SHELL_CAPTURE_TASK_HARD_CAP_MS as abandoned and reclaims it; the token guard
+ * keeps a late-settling stale task from releasing its replacement's entry.
  */
-const inFlightCaptures = new Set<string>();
+interface CaptureGuardToken {
+  startedAt: number;
+}
+
+const inFlightCaptures = new Map<string, CaptureGuardToken>();
+
+/** Token-guarded release: only the entry's owning task may clear it. */
+function releaseCaptureGuard(key: string, token: CaptureGuardToken): void {
+  if (inFlightCaptures.get(key) === token) {
+    inFlightCaptures.delete(key);
+  }
+}
 
 /**
  * Refused-capture backoff bounds. The window is EXPONENTIAL in the consecutive
@@ -918,9 +970,17 @@ export function scheduleShellCapture(
   descriptor: ShellCaptureDescriptor,
 ): void {
   const key = descriptor.key;
-  if (inFlightCaptures.has(key)) {
-    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
-    return;
+  const inFlight = inFlightCaptures.get(key);
+  if (inFlight) {
+    if (Date.now() - inFlight.startedAt <= SHELL_CAPTURE_TASK_HARD_CAP_MS) {
+      publishCaptureDebugEvent(descriptor, { key, outcome: "skip-in-flight" });
+      return;
+    }
+    // Older than the task hard cap: the owning task never settled (wedged
+    // render, or workerd killed its context before the release ran). Treat the
+    // key as abandoned and schedule a replacement — the set() below installs a
+    // new token, and the stale task's token-guarded release can no longer
+    // touch it.
   }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
@@ -942,7 +1002,8 @@ export function scheduleShellCapture(
     publishCaptureDebugEvent(descriptor, { key, outcome: "skip-inert-store" });
     return;
   }
-  inFlightCaptures.add(key);
+  const guardToken: CaptureGuardToken = { startedAt: Date.now() };
+  inFlightCaptures.set(key, guardToken);
   const captureTask = async (span: TraceSpan) => {
     try {
       const setupUrl = descriptor.navigationOnly
@@ -962,14 +1023,24 @@ export function scheduleShellCapture(
       ) {
         return;
       }
-      const outcome = await runShellCapture(
-        ctx,
-        request,
-        env,
-        url,
-        reqCtx,
-        resolvedSsrModule,
-        descriptor,
+      // Hard-capped: SHELL_CAPTURE_MAX_WAIT_MS arms only inside
+      // captureShellHTML, AFTER the capture's router.match() — a handler
+      // wedged on a never-settling upstream await has no deadline in force
+      // and would strand the stampede guard and the queue slot (autobarn
+      // pilot). The cap rejects, riding the existing catch: backoff +
+      // reportCacheError + token-guarded release. The abandoned attempt keeps
+      // running until its context dies; nothing awaits it.
+      const outcome = await raceTaskHardCap(
+        runShellCapture(
+          ctx,
+          request,
+          env,
+          url,
+          reqCtx,
+          resolvedSsrModule,
+          descriptor,
+        ),
+        key,
       );
       span.setAttribute("rango.background.outcome", outcome);
       // Update the negative cache off the terminal outcome. A stored shell clears
@@ -998,7 +1069,7 @@ export function scheduleShellCapture(
       });
       reportCacheError(error, "cache-write", "[ShellCache] capture", reqCtx);
     } finally {
-      inFlightCaptures.delete(key);
+      releaseCaptureGuard(key, guardToken);
     }
   };
   // Serialize capture EXECUTION per isolate (capture-queue.ts): concurrent
@@ -1049,7 +1120,7 @@ export function scheduleShellCapture(
         );
       } catch (error) {
         if (error instanceof CaptureQueueFullError) {
-          inFlightCaptures.delete(key);
+          releaseCaptureGuard(key, guardToken);
           span.setAttribute("rango.background.outcome", "skip-capacity");
           publishCaptureDebugEvent(descriptor, {
             key,
@@ -1061,7 +1132,7 @@ export function scheduleShellCapture(
           // Dropped unrun after waiting past the queue budget: no backoff (the
           // route is not doomed, the isolate was busy) — a later request
           // re-probes the key.
-          inFlightCaptures.delete(key);
+          releaseCaptureGuard(key, guardToken);
           span.setAttribute("rango.background.outcome", "skip-queue-timeout");
           span.setAttribute(
             "rango.background.queue_wait_ms",

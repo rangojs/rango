@@ -13,6 +13,7 @@ import {
   REFUSED_CAPTURE_DEV_MAX_MS,
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
+import { SHELL_CAPTURE_TASK_HARD_CAP_MS } from "../shell-capture-constants.js";
 import { RecordingShellStore } from "../../cache/shell-snapshot.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import { createHandleStore } from "../../server/handle-store.js";
@@ -2539,6 +2540,205 @@ describe("refused-capture backoff policy", () => {
     } finally {
       process.env.NODE_ENV = original;
       vi.useRealTimers();
+    }
+  });
+});
+
+// Wedge containment (autobarn pilot outage): a capture whose render never
+// settles must not strand the stampede guard or the capture queue. Two layers,
+// both pinned here: the task hard cap (raceTaskHardCap around runShellCapture)
+// bounds a live-context wedge — SHELL_CAPTURE_MAX_WAIT_MS arms only AFTER the
+// capture's router.match(), so a handler wedged on a never-settling upstream
+// await had no deadline at all; and the guard's staleness reclaim +
+// token-guarded release heal a killed-context stranding where no timer
+// survives to fire.
+describe("capture task hard cap + stampede-guard staleness", () => {
+  function makeWedgedCtx(): HandlerContext<any> {
+    return {
+      version: "v-test",
+      router: { match: vi.fn(() => new Promise<never>(() => {})) },
+      callOnError: vi.fn(),
+      renderToReadableStream: vi.fn(),
+    } as unknown as HandlerContext<any>;
+  }
+
+  function makeScheduleReqCtx(
+    captured: Array<() => Promise<void>>,
+  ): RequestContext {
+    const reqCtx = createRequestContext({
+      env: {},
+      request: new Request("http://localhost/wedge"),
+      url: new URL("http://localhost/wedge"),
+      variables: {},
+    }) as RequestContext;
+    (reqCtx as any)._reportBackgroundError = vi.fn();
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    return reqCtx;
+  }
+
+  function validSsr(): SSRModule {
+    return {
+      renderHTML: vi.fn(),
+      resumeShellHTML: vi.fn(),
+      captureShellHTML: vi.fn(),
+    } as unknown as SSRModule;
+  }
+
+  it("hard cap: a capture wedged in router.match settles at the cap, backs off, and releases the guard", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const key = "/wedge-hard-cap:shell";
+      const captured: Array<() => Promise<void>> = [];
+      const ctx = makeWedgedCtx();
+      const reqCtx = makeScheduleReqCtx(captured);
+      const descriptor = {
+        key,
+        buildVersion: "test-build",
+        store: { putShell: vi.fn() } as any,
+      };
+      const schedule = () =>
+        scheduleShellCapture(
+          ctx,
+          new Request("http://localhost/wedge"),
+          {},
+          new URL("http://localhost/wedge"),
+          reqCtx,
+          validSsr(),
+          descriptor,
+        );
+
+      schedule();
+      expect(captured).toHaveLength(1);
+
+      const task = captured[0]!();
+      // Let the task reach the wedged match, then fire the hard cap.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(SHELL_CAPTURE_TASK_HARD_CAP_MS + 1);
+      await task; // settles via the catch path — the fix under test
+
+      expect(reqCtx._reportBackgroundError).toHaveBeenCalledTimes(1);
+      const [reported, category] = (reqCtx._reportBackgroundError as any).mock
+        .calls[0];
+      expect(String(reported)).toContain("hard cap");
+      expect(category).toBe("cache-write");
+      // The wedge backs the key off: a wedging route is not re-probed on
+      // every request.
+      expect(isCaptureBackedOff(key)).toBe(true);
+
+      // The settle path released the guard: clear the backoff and a new
+      // schedule is admitted rather than skipped as in-flight.
+      clearCaptureBackoff(key);
+      schedule();
+      expect(captured).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("staleness reclaim: a guard entry stranded by a killed context is reclaimed past the cap", async () => {
+    vi.useFakeTimers();
+    try {
+      const key = "/wedge-stale-guard:shell";
+      const events: ShellCaptureDebugEvent[] = [];
+      const captured: Array<() => Promise<void>> = [];
+      const ctx = makeWedgedCtx();
+      const reqCtx = makeScheduleReqCtx(captured);
+      const descriptor = {
+        key,
+        buildVersion: "test-build",
+        store: { putShell: vi.fn() } as any,
+        debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+      };
+      const schedule = () =>
+        scheduleShellCapture(
+          ctx,
+          new Request("http://localhost/wedge"),
+          {},
+          new URL("http://localhost/wedge"),
+          reqCtx,
+          validSsr(),
+          descriptor,
+        );
+
+      // Schedule but never run the task: the guard entry exists and nothing
+      // will ever release it — exactly a capture whose workerd context was
+      // killed before its settle paths (including the cap timer) could run.
+      schedule();
+      expect(captured).toHaveLength(1);
+
+      // Fresh entry: a concurrent schedule coalesces.
+      schedule();
+      expect(captured).toHaveLength(1);
+      expect(events.at(-1)?.outcome).toBe("skip-in-flight");
+
+      // Past the cap the stranded entry is treated as abandoned: reclaimed.
+      vi.setSystemTime(Date.now() + SHELL_CAPTURE_TASK_HARD_CAP_MS + 1_000);
+      schedule();
+      expect(captured).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("token guard: a stale task settling late cannot release its replacement's guard entry", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const key = "/wedge-token-guard:shell";
+      const events: ShellCaptureDebugEvent[] = [];
+      const captured: Array<() => Promise<void>> = [];
+      const ctx = makeWedgedCtx();
+      const reqCtx = makeScheduleReqCtx(captured);
+      const descriptor = {
+        key,
+        buildVersion: "test-build",
+        store: { putShell: vi.fn() } as any,
+        debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+      };
+      const schedule = () =>
+        scheduleShellCapture(
+          ctx,
+          new Request("http://localhost/wedge"),
+          {},
+          new URL("http://localhost/wedge"),
+          reqCtx,
+          validSsr(),
+          descriptor,
+        );
+
+      schedule();
+      expect(captured).toHaveLength(1);
+      const taskA = captured[0]!();
+      await vi.advanceTimersByTimeAsync(0); // reach the wedged match; cap armed
+
+      // Clock (but not the timer queue) passes the cap: entry A reads as
+      // stranded and a replacement is admitted with its own token.
+      const wallStart = Date.now();
+      vi.setSystemTime(wallStart + SHELL_CAPTURE_TASK_HARD_CAP_MS + 1_000);
+      schedule();
+      expect(captured).toHaveLength(2);
+
+      // Now drain the timer queue so task A's overdue cap fires and A settles
+      // LATE. Its release runs with token A while the guard holds token B.
+      await vi.advanceTimersByTimeAsync(SHELL_CAPTURE_TASK_HARD_CAP_MS + 1);
+      await taskA;
+
+      // Draining also advanced the wall clock past B's freshness; rewind so
+      // B's entry reads fresh again — the next schedule then tells apart
+      // "B's entry survived" (skip-in-flight) from "A's late release evicted
+      // it" (admitted).
+      vi.setSystemTime(Date.now() - (SHELL_CAPTURE_TASK_HARD_CAP_MS + 1));
+      clearCaptureBackoff(key); // A's error backed the key off; isolate the guard
+      schedule();
+      expect(captured).toHaveLength(2); // still guarded by the replacement
+      expect(events.at(-1)?.outcome).toBe("skip-in-flight");
+    } finally {
+      vi.useRealTimers();
+      errSpy.mockRestore();
     }
   });
 });

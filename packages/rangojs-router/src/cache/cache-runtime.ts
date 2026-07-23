@@ -205,8 +205,63 @@ interface CacheEnvelope {
  * singleton), and cleared for a key as soon as the leader settles: a rejected
  * leader (function threw, or the result was not serializable) propagates to
  * current waiters, which then retry fresh.
+ *
+ * A leader that NEVER settles must not hang followers (scar tissue, autobarn
+ * pilot outage): a background shell capture's render became leader, awaited a
+ * tarpitting upstream fetch, and workerd killed the capture's waitUntil context
+ * — orphaning the leader promise as permanently pending, its map entry never
+ * cleared. Every later document render calling the same cached function (an
+ * isolate-global key for plain-args calls) awaited it forever before first
+ * byte: isolate-wide TTFB-0 until redeploy. Followers therefore trust an entry
+ * only for {@link IN_FLIGHT_LEADER_MAX_WAIT_MS} from registration; past it
+ * they evict the entry and run fresh — bounded duplicate upstream work instead
+ * of an unbounded hang. Eviction is age-based off `registeredAt`, so it also
+ * heals entries stranded by a killed context (no timer in that context needs
+ * to survive).
  */
-const inFlightExecutions = new Map<string, Promise<CacheEnvelope>>();
+interface InFlightExecution {
+  promise: Promise<CacheEnvelope>;
+  registeredAt: number;
+}
+
+const inFlightExecutions = new Map<string, InFlightExecution>();
+
+/**
+ * How long a follower trusts an in-flight leader before evicting it and
+ * running fresh. High enough that a slow-but-healthy upstream never triggers
+ * duplicate work (a legitimate cached call taking >15s is already pathological);
+ * low enough to bound the blast radius of a wedged leader to seconds, not the
+ * isolate lifetime. Aligned with SHELL_CAPTURE_MAX_WAIT_MS.
+ */
+const IN_FLIGHT_LEADER_MAX_WAIT_MS = 15_000;
+
+/** Distinguishes a leader timeout from a leader rejection in raceLeader. */
+const LEADER_TIMED_OUT = Symbol("leader-timed-out");
+
+/**
+ * Await a leader's envelope for at most `remainingMs`. Resolves with the
+ * envelope, `undefined` on leader rejection (the leader already cleared its
+ * entry — caller falls through to a fresh run), or {@link LEADER_TIMED_OUT}
+ * when the window expires first (caller must evict the entry itself).
+ */
+function raceLeader(
+  promise: Promise<CacheEnvelope>,
+  remainingMs: number,
+): Promise<CacheEnvelope | undefined | typeof LEADER_TIMED_OUT> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(LEADER_TIMED_OUT), remainingMs);
+    promise.then(
+      (envelope) => {
+        clearTimeout(timer);
+        resolve(envelope);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      },
+    );
+  });
+}
 
 // ============================================================================
 // Core: registerCachedFunction
@@ -541,20 +596,34 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // requests. The store write stays exactly once (the leader's).
     const existing = inFlightExecutions.get(cacheKey);
     if (existing) {
-      let envelope: CacheEnvelope | undefined;
-      try {
-        envelope = await existing;
-      } catch {
-        // Leader rejected (function threw or its result was not serializable);
-        // its map entry is already cleared, so fall through to a fresh run.
-        envelope = undefined;
-      }
-      if (envelope) {
+      const remainingMs =
+        IN_FLIGHT_LEADER_MAX_WAIT_MS - (Date.now() - existing.registeredAt);
+      const raced =
+        remainingMs <= 0
+          ? LEADER_TIMED_OUT
+          : await raceLeader(existing.promise, remainingMs);
+      if (raced === LEADER_TIMED_OUT) {
+        // Wedged (or context-orphaned) leader: evict so this call and every
+        // later one run fresh. Guard the delete so a newer leader's entry is
+        // never removed; the stale leader's own clearSelf is identity-guarded
+        // the same way, so it can't evict our replacement if it settles late.
+        if (inFlightExecutions.get(cacheKey) === existing) {
+          inFlightExecutions.delete(cacheKey);
+        }
+        reportCacheError(
+          new Error(
+            `in-flight leader did not settle within ${IN_FLIGHT_LEADER_MAX_WAIT_MS}ms; evicted — executing fresh`,
+          ),
+          "cache-read",
+          `[use cache] "${id}" inflight-timeout`,
+        );
+        // Fall through to a fresh execution below (this call becomes leader).
+      } else if (raced) {
         try {
           return await serveCached({
-            value: envelope.serialized,
-            handles: envelope.handles,
-            tags: envelope.tags,
+            value: raced.serialized,
+            handles: raced.handles,
+            tags: raced.tags,
             shouldRevalidate: false,
           });
         } catch (error) {
@@ -566,6 +635,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           // Fall through to a fresh execution below.
         }
       }
+      // raced === undefined: leader rejected; its map entry is already
+      // cleared, so fall through to a fresh run.
     }
 
     // This call becomes the leader. Register a deferred envelope so concurrent
@@ -582,9 +653,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Followers attach their own catch; guard the map's own reference so a
     // rejected envelope with no waiter is not an unhandled rejection.
     envelopePromise.catch(() => {});
-    inFlightExecutions.set(cacheKey, envelopePromise);
+    inFlightExecutions.set(cacheKey, {
+      promise: envelopePromise,
+      registeredAt: Date.now(),
+    });
     const clearSelf = (): void => {
-      if (inFlightExecutions.get(cacheKey) === envelopePromise) {
+      if (inFlightExecutions.get(cacheKey)?.promise === envelopePromise) {
         inFlightExecutions.delete(cacheKey);
       }
     };
