@@ -191,7 +191,7 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.27",
+    "@vitejs/plugin-rsc": "^0.5.30",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
@@ -224,7 +224,7 @@
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
     "@vercel/functions": "^3.0.0",
-    "@vitejs/plugin-rsc": "^0.5.27",
+    "@vitejs/plugin-rsc": "^0.5.30",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
     "vite": "^8.0.16",

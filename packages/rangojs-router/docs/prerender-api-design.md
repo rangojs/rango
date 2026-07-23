@@ -604,10 +604,9 @@ survive serialize -> store -> deserialize -> re-serialize -> invoke:
 2. Export-only loader modules are replaced with non-RSC scan stubs before
    plugin-rsc performs import-only analysis, keeping their server implementation
    imports out of the SSR graph and the production reference manifest intact.
-3. `segment-codec` deserializes with `serverReferences: "preserve"` so a cache
-   hit re-emits the opaque reference instead of resolving it to a raw function.
-   This remains pinned to the compatible plugin-rsc #1246 preview until the API
-   ships in a release.
+3. `segment-codec` deserializes with plugin-rsc's
+   `preserveServerReferences` option so a cache hit re-emits the opaque
+   reference instead of resolving it to a raw function.
 4. Build discovery and the runtime share `defineEncryptionKey`, allowing the
    runtime to decrypt bound arguments captured while prerendering.
 

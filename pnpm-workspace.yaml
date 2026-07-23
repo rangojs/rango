@@ -11,7 +11,7 @@ packages:
 
 catalog:
   "@vitejs/plugin-react": ^6.0.0
-  "@vitejs/plugin-rsc": ^0.5.27
+  "@vitejs/plugin-rsc": ^0.5.30
   react: ^19.2.6
   react-dom: ^19.2.6
   "@types/react": ^19.2.7
@@ -27,7 +27,6 @@ catalog:
 
 # Moved from package.json#pnpm.overrides (no longer read by pnpm 11)
 overrides:
-  "@vitejs/plugin-rsc": https://pkg.pr.new/@vitejs/plugin-rsc@82d2c5784b9b9c3b1ecead1d450afedc97186962
   # Pin the experimental React fixture to a complete family. The npm dist-tag can
   # move before every sibling package for that build has finished publishing.
   "react-experimental>react": 0.0.0-experimental-247fbb45-20260622
@@ -67,6 +66,8 @@ minimumReleaseAge: 1440
 # cooldown window. The exact override above keeps installs from following a
 # freshly moved dist-tag.
 minimumReleaseAgeExclude:
+  # Reviewed release required for cache-hit server-reference preservation.
+  - "@vitejs/plugin-rsc@0.5.30"
   - react
   - react-dom
   - react-is
