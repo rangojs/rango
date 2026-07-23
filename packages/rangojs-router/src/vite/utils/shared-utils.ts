@@ -249,16 +249,21 @@ export function onwarn(
   defaultHandler(warning);
 }
 
+/**
+ * All of `browser/prefetch/` belongs to the eager "router" chunk — including
+ * the modules reachable only via loader.ts's dynamic import. #766 split those
+ * into a separate lazy chunk to trim the eager runtime (~2.3 KB gzip), but
+ * production's `defaultPrefetch: "viewport"` loads them on almost every page,
+ * so the split became a document -> router -> runtime request waterfall
+ * (measured 502 ms critical-path latency in a deployed worker). Same-chunk
+ * placement resolves the dynamic import without a network fetch
+ * (`Promise.resolve().then(...)` in the emitted chunk), and the merged chunk
+ * gzips smaller than the two chunks did apart. Do not re-split without new
+ * information (AGENTS.md, Bundle hygiene, rejected optimizations).
+ */
 export function getManualChunks(id: string): string | undefined {
   const normalized = Vite.normalizePath(id);
 
-  if (
-    /\/browser\/prefetch\/(?:runtime|fetch|queue|observer|policy|resource-ready)\.[cm]?[jt]sx?(?:[?#].*)?$/.test(
-      normalized,
-    )
-  ) {
-    return undefined;
-  }
   if (
     normalized.includes("node_modules/react/") ||
     normalized.includes("node_modules/react-dom/") ||

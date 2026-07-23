@@ -183,5 +183,6 @@ Guard: `packages/rangojs-router/e2e/build-test-app.setup.ts` fails any productio
 - Theme modules (~3 KB) — FOUC prevention; the class must hit `<html>` before first paint, so any chunk fetch defeats it.
 - `NavigationProvider.tsx` per-feature splitting (~1.9 KB) — feature gates are context-shape needed for types regardless; big API churn for <2 KB.
 - `browser/partial-update.ts` (~2.8 KB) — used on every navigation and action response; no path improves cold-start.
+- `browser/prefetch/` lazy-chunk split (~2.3 KB gzip) — tried in #766; production `defaultPrefetch: "viewport"` loads the prefetch runtime on almost every page, so the split became a document → router → runtime request waterfall (measured 502 ms critical-path latency in a deployed worker) and the merged chunk gzips ~0.6 KB smaller than the pair. Folded back; loader.ts's dynamic import now resolves in-chunk with no fetch.
 
 Baselines: Rango client runtime ~50 KB gzip; React + RSC client ~115 KB gzip (react-dom 96K + react 5K + rsd-webpack-client 12K + scheduler 3K). Further reductions require architectural changes, not surgical edits.
