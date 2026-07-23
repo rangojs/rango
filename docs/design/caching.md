@@ -438,6 +438,22 @@ export const router = createRouter({
 - `MemorySegmentCacheStore` - In-memory Map; named stores survive HMR via `globalThis`
 - `CFCacheStore` - Cloudflare edge store (Cache API L1 + optional KV L2 for cross-colo persistence), full SWR support
 
+`CFCacheStore` bounds each read tier with a latency budget so a degraded colo or
+KV namespace degrades to the next tier instead of stalling the request:
+`edgeLookupTimeoutMs` (default 25ms, L1 `cache.match`), `edgeReadTimeoutMs`
+(default 20ms, L1 body read), `kvReadTimeoutMs` (default 170ms, L2). A timed-out
+lookup logs `[CFCacheStore] ... exceeded <n>ms; treating as miss` and falls
+through; `<= 0` disables a budget. Raise a budget only when HEALTHY reads
+legitimately run slower — measure the p99 first. Full table and fail-open
+semantics: `skills/caching/SKILL.md` (Latency budgets); canonical defaults:
+`src/cache/cf/cf-cache-constants.ts`.
+
+KV keys of any length are safe: composed keys over Cloudflare KV's 512-byte
+limit are normalized at the `toKVKey` chokepoint (preserved 400-byte prefix +
+128-bit SHA-256 digest of the full key) for every family — segments, `"use
+cache"` items, shells, documents, and tag markers — so oversized keys persist
+to L2 instead of silently failing with a KV 414.
+
 **Planned:**
 
 - Redis adapter

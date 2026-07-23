@@ -388,7 +388,7 @@ a request behind it:
 
 | Option                | Default | Bounds                              |
 | --------------------- | ------- | ----------------------------------- |
-| `edgeLookupTimeoutMs` | `10`    | L1 `cache.match` (the lookup)       |
+| `edgeLookupTimeoutMs` | `25`    | L1 `cache.match` (the lookup)       |
 | `edgeReadTimeoutMs`   | `20`    | L1 body read (CF streams it lazily) |
 | `kvReadTimeoutMs`     | `170`   | L2 / KV read                        |
 

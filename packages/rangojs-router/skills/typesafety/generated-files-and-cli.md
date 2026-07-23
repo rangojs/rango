@@ -38,11 +38,11 @@ available globally.
 There are three distinct typing surfaces. They are **not** interchangeable —
 pick the one that matches what you need to type:
 
-| Surface             | Source                                   | Scope  | Gives                                    | Does not give                                                                                    |
-| ------------------- | ---------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)      | global | route names, path params, search schemas | response/MIME payloads                                                                           |
-| `routes`            | per-module `*.gen.ts` (`rango generate`) | local  | local names, params, search              | the global app map                                                                               |
-| `RegisteredRoutes`  | manual `extends typeof router.routeMap`  | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
+| Surface             | Source                                               | Scope  | Gives                                    | Does not give                                                                                    |
+| ------------------- | ---------------------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)                  | global | route names, path params, search schemas | response/MIME payloads                                                                           |
+| `routes`            | per-module `*.gen.ts` (`rango generate`)             | local  | local names, params, search              | the global app map                                                                               |
+| `RegisteredRoutes`  | manual `extends` of a `typeof router.routeMap` alias | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
 
 Key consequence: `href()` and the ambient `Rango.Path` type are typed from
 whichever map is present — they prefer `RegisteredRoutes` when you wire it, otherwise fall back to
@@ -63,11 +63,15 @@ import type { AppBindings, AppVars } from "./env";
 
 export const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
+// The alias is required: an interface heritage clause cannot take a `typeof`
+// type query directly (TS1109).
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVars {}
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```
@@ -257,10 +261,12 @@ export const router = createRouter<ShopEnv>({ document: Document }).routes(
   urlpatterns,
 );
 
+type ShopRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
     interface Env extends ShopEnv {}
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends ShopRoutes {}
   }
 }
 ```
@@ -312,8 +318,9 @@ export default router;
 //    router.named-routes.gen.ts (auto-registers GeneratedRouteMap globally).
 //    No manual RegisteredRoutes declaration is needed for named-route handlers,
 //    ctx.reverse, prerender, href(), or Rango.Path. Add `RegisteredRoutes
-//    extends typeof router.routeMap` when global response payload helpers such
-//    as Rango.PathResponse need the richer router.routeMap metadata.
+//    extends AppRoutes` (an alias of typeof router.routeMap) when global
+//    response payload helpers such as Rango.PathResponse need the richer
+//    router.routeMap metadata.
 
 // 5. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader(async (ctx) => {

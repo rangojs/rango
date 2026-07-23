@@ -289,9 +289,11 @@ has no response payload metadata, so response routes resolve to `never`:
 // router.tsx
 export const router = createRouter({ document: Document }).routes(urlpatterns);
 
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```
@@ -480,7 +482,7 @@ type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
 // = { views: number; visitors: number }
 
 // After mounting -- names get prefixed.
-// Rango.PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
+// Rango.PathResponse needs the RegisteredRoutes augmentation (see above),
 // otherwise it resolves to never.
 type BlogStats = Rango.PathResponse<"/blog/api/stats">;
 // = { views: number; visitors: number }

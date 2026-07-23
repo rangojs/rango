@@ -602,8 +602,8 @@ describe("CFCacheStore", () => {
       });
       const resultPromise = store.get("slow-key");
 
-      // At the default budget (10ms) the custom 50ms budget has not fired.
-      await vi.advanceTimersByTimeAsync(10);
+      // At the default budget (25ms) the custom 50ms budget has not fired.
+      await vi.advanceTimersByTimeAsync(25);
       expect(warnSpy).not.toHaveBeenCalled();
 
       // At 50ms it does, and the warning reports the configured budget.

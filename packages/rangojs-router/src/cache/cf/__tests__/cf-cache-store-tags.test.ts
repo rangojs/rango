@@ -588,21 +588,31 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       });
     });
 
-    it("rejects (without calling KV) when a tag exceeds the 512-byte KV key limit", async () => {
+    it("normalizes a tag exceeding the 512-byte KV key limit and invalidation round-trips", async () => {
+      // Formerly rejected up front; toKVKey now normalizes the marker key
+      // (preserved prefix + digest), and the marker READ derives the key the
+      // same way, so an oversized tag invalidates instead of erroring.
       const store = makeStore();
       const hugeTag = "x".repeat(600);
       const putSpy = vi.spyOn(kv, "put");
 
-      const err = await store.invalidateTags([hugeTag]).catch((e) => e);
-      expect(err).toBeInstanceOf(Error);
-      expect((err as Error & { cause?: Error }).cause?.message).toMatch(
-        /over the 512-byte limit/,
-      );
-      // An over-limit key is rejected up front; KV is never even called for it.
+      await store.set("hk", createTestData([hugeTag]), 300);
+      await ctx.flush();
+      expect(hit(await store.get("hk"))).not.toBeNull();
+
+      vi.advanceTimersByTime(10);
+      await expect(store.invalidateTags([hugeTag])).resolves.not.toThrow();
+
       const markerPuts = putSpy.mock.calls.filter(([key]) =>
-        String(key).includes("__tag__/"),
+        String(key).includes(TAG_MARKER_PREFIX),
       );
-      expect(markerPuts.length).toBe(0);
+      expect(markerPuts.length).toBe(1);
+      const markerKey = String(markerPuts[0]![0]);
+      expect(markerKey.length).toBeLessThanOrEqual(512);
+      expect(markerKey).toMatch(/~[0-9a-f]{32}$/);
+
+      // The entry tagged with the huge tag is actually invalidated.
+      expect(hit(await store.get("hk"))).toBeNull();
       putSpy.mockRestore();
     });
   });
@@ -746,11 +756,10 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(delSpy).not.toHaveBeenCalled();
     });
 
-    it("rejects an oversized segment KV key (>512 bytes) without calling KV, reports a clear onError", async () => {
-      // Symmetry with the tag-marker key guard: a data-segment key over the KV
-      // 512-byte limit (e.g. from large search params) would fail kv.put() and
-      // silently never persist to L2 -> cold-colo miss storm. It must be rejected
-      // up front with a clear, actionable error, not a doomed put inside waitUntil.
+    it("normalizes an oversized segment KV key (>512 bytes) so L2 persistence still works", async () => {
+      // Formerly warn-and-skip (the segment never reached L2 -> cold-colo miss
+      // storm). toKVKey now normalizes the key, so the write lands under a
+      // <=512-byte key and the read path derives the identical key.
       const store = makeStore();
       const hugeKey = "x".repeat(600); // > 512 bytes even before the version prefix
       const putSpy = vi.spyOn(kv, "put");
@@ -761,13 +770,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
       await ctx.flush();
 
-      // The oversized key is rejected before the KV write; kv.put never fires.
-      expect(putSpy).not.toHaveBeenCalled();
-      // ...and it surfaces as a clear cache-write error naming the limit.
-      const writeErr = reported.find((r) => r.category === "cache-write");
-      expect(writeErr).toBeDefined();
-      expect((writeErr!.error as Error).message).toMatch(
-        /over the 512-byte limit/,
+      // The write goes through under a normalized key.
+      expect(putSpy).toHaveBeenCalledTimes(1);
+      const kvKey = String(putSpy.mock.calls[0]![0]);
+      expect(kvKey.length).toBeLessThanOrEqual(512);
+      expect(kvKey.startsWith("v/v1/")).toBe(true);
+      expect(kvKey).toMatch(/~[0-9a-f]{32}$/);
+      // No cache-write error is reported; the entry persists to L2.
+      expect(reported.filter((r) => r.category === "cache-write")).toHaveLength(
+        0,
       );
       putSpy.mockRestore();
     });
