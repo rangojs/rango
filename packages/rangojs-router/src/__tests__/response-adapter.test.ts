@@ -94,12 +94,14 @@ describe("emptyResponse", () => {
 });
 
 describe("teeWithCompletion", () => {
-  it("calls onComplete synchronously when response has no body", () => {
+  it("calls onComplete synchronously with endedCleanly=true when response has no body", () => {
     const onComplete = vi.fn();
     const res = new Response(null);
     const result = teeWithCompletion(res, onComplete);
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // An empty body is a clean, complete stream.
+    expect(onComplete).toHaveBeenCalledWith(true);
     expect(result).toBe(res);
   });
 
@@ -131,6 +133,8 @@ describe("teeWithCompletion", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // Normal EOF drain -> endedCleanly true.
+    expect(onComplete).toHaveBeenCalledWith(true);
   });
 
   it("preserves response status, statusText, and headers", () => {
@@ -153,7 +157,31 @@ describe("teeWithCompletion", () => {
     expect(teed.headers.get("X-Custom")).toBe("value");
   });
 
-  it("calls onComplete when abort signal fires", async () => {
+  it("calls onComplete exactly once when the stream errors mid-read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const onComplete = vi.fn();
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("chunk1"));
+        controller.error(new Error("mid-stream failure"));
+      },
+    });
+    const res = new Response(stream);
+
+    teeWithCompletion(res, onComplete);
+
+    // Wait for the tracking reader's read() to reject and both the finally
+    // block and the .catch handler to run.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The finally block and the rejection's .catch must not both fire onComplete.
+    expect(onComplete).toHaveBeenCalledOnce();
+    // A mid-read error is NOT a clean end.
+    expect(onComplete).toHaveBeenCalledWith(false);
+  });
+
+  it("calls onComplete with endedCleanly=false when abort signal fires", async () => {
     const onComplete = vi.fn();
     const controller = new AbortController();
 
@@ -175,6 +203,71 @@ describe("teeWithCompletion", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(onComplete).toHaveBeenCalledOnce();
+    // An abort cancels the reader (read() -> { done: true }), so the loop breaks
+    // via the finally; signal.aborted re-check reports the end as NOT clean.
+    expect(onComplete).toHaveBeenCalledWith(false);
+  });
+});
+
+// fetch() can hand the client a body paired with a null-body status (101/204/
+// 205/304) -- e.g. a 304 SWR revalidation materialized from cache. The JS
+// Response constructor rejects that pairing, so teeWithCompletion must pass such
+// responses through instead of re-teeing them via `new Response`.
+describe("teeWithCompletion null-body statuses", () => {
+  // A real fetch() Response can pair a null-body status with a body, but the JS
+  // constructor cannot build one, so duck-type the shape teeWithCompletion reads.
+  const fakeResponseWithBody = (status: number): Response => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array([1, 2, 3]));
+        c.close();
+      },
+    });
+    return {
+      body: stream,
+      status,
+      statusText: "",
+      headers: new Headers({ "content-type": "text/x-component" }),
+    } as unknown as Response;
+  };
+
+  for (const status of [101, 204, 205, 304]) {
+    it(`passes a ${status} response through without reconstructing it`, async () => {
+      const onComplete = vi.fn();
+      const res = fakeResponseWithBody(status);
+
+      let result!: Response;
+      expect(() => {
+        result = teeWithCompletion(res, onComplete);
+      }).not.toThrow();
+
+      // Same object back (never re-teed), original status, completion settled.
+      expect(result).toBe(res);
+      expect(result.status).toBe(status);
+      expect(onComplete).toHaveBeenCalledOnce();
+
+      // Body untouched, so the Flight decoder can still read it downstream.
+      const { value } = await result.body!.getReader().read();
+      expect(value).toEqual(new Uint8Array([1, 2, 3]));
+    });
+  }
+
+  it("still tees a normal 200 streaming response into a fresh Response", async () => {
+    const onComplete = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array([9]));
+        c.close();
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+
+    const teed = teeWithCompletion(res, onComplete);
+
+    // The guard must NOT short-circuit 200: a fresh teed Response, not the original.
+    expect(teed).not.toBe(res);
+    const { value } = await teed.body!.getReader().read();
+    expect(value).toEqual(new Uint8Array([9]));
   });
 });
 

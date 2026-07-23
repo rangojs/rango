@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender and Passthrough live fallback
+description: Pre-render route segments at build time with Prerender and Passthrough live fallback. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -10,6 +10,13 @@ Pre-rendering is **caching at build time**. Same serialization format, same
 deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
+
+## Not this skill if…
+
+- You want a cached HTML shell captured at runtime, with holes and loaders
+  staying live per request — see `/ppr`.
+- You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
+  see `/caching`. Prerender is the same cache filled at build time.
 
 ## API: Prerender
 
@@ -119,6 +126,8 @@ interface BuildContext<TParams> {
   use: <T>(handle: Handle<T>) => (data: T) => void; // Push handle data
   url: URL; // Synthetic URL from pattern + params
   pathname: string; // Pathname from synthetic URL
+  searchParams: URLSearchParams; // URLSearchParams from the synthetic URL (always empty for prerender)
+  search: {}; // Typed search params -- always {} for prerender (no real query string)
   set(key: string, value: any): void; // Set context variable (string key)
   set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
   get(key: string): any; // Read context variable (string key)
@@ -129,6 +138,7 @@ interface BuildContext<TParams> {
     search?: Record<string, unknown>,
   ): string; // URL generation
   passthrough(): PrerenderPassthroughResult; // Skip local artifact (Passthrough routes only)
+  dynamic(): void; // No-op in Prerender/Static handlers; use middleware for PPR shell opt-out
   env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
   // NOT available: request, headers, cookies (always throw)
 }
@@ -241,20 +251,62 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                       |
-| `revalidate()` | Not allowed without Passthrough. Allowed with Passthrough.                                                                                                                                                                                                          |
-| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                    |
-| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                |
-| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                        |
-| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                           |
-| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                              |
-| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when()` conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
+| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                            |
+| `revalidate()` | Not allowed without Passthrough. Allowed with Passthrough.                                                                                                                                                                                                               |
+| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                         |
+| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                     |
+| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                             |
+| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, producer B replays global and route middleware during build-shell capture with `ctx.build === true`; `ctx.dynamic()` skips that shell. Runs at request time for loaders.      |
+| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                   |
+| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
 implicitly re-run outer prerender-derived handlers/layouts.
+
+## Prerender + PPR Build Shells
+
+A `Prerender` page may also declare `ppr` on the path option. The build still
+stores the Flight payload first. After that, producer B tries to bake the HTML
+shell for each generated URL so the first document request can be an
+`x-rango-shell: HIT`.
+
+That shell capture is request-shaped enough to run middleware safely:
+
+- global and route middleware run before shell capture;
+- middleware sees `ctx.build === true`;
+- `ctx.waitUntil()` is inert during build;
+- `ctx.dynamic()` skips the baked shell for that URL.
+
+Use `ctx.build` inside middleware to avoid runtime-only side effects during
+build shell capture, or call `ctx.dynamic()` to leave that route to runtime
+PPR. Runtime requests still run the normal middleware chain.
+
+### Freshness of a build shell
+
+A build-baked shell is not on a wall clock the way a pure runtime `ppr` shell is.
+It serves from the first request after a deploy and keeps serving until one of:
+
+- **a redeploy** — the `buildVersion` gate retires every build entry (like a
+  React-version bump); the new build re-bakes;
+- **`updateTag`** on a tag the shell carries — drops it, so the next request
+  MISSes and a runtime capture takes over.
+
+`ppr.ttl` / `swr` are staleness-only here, NOT an expiry: past `ttl` the baked
+entry STILL serves and a runtime recapture is scheduled that upgrades it in place
+(SWR is the upgrade path from build entry → fresher runtime entry). Because the
+`Prerender` handler is evicted from the production bundle, that recapture never
+re-runs the handler — it replays the same build-time segments and only refreshes
+`cache()`-scoped data baked into the shell. **If nothing in the shell is
+`cache()`-backed, `ttl` has nothing to refresh** — reach for `updateTag` (or a
+redeploy) instead of a shorter `ttl`.
+
+`ctx.dynamic()` opts a request off the shell axis ONLY. A `Prerender` route has
+no live handler to fall back to (it was evicted), so a `dynamic()` request still
+serves the build-baked B-segments — fresh loaders in their holes, not a fresh
+handler render. There is no "fully dynamic" render for a prerendered route.
 
 ## Dev Mode
 
@@ -274,17 +326,24 @@ This only applies when `__PRERENDER_DEV_URL` is set by the plugin.
 
 ## Storage Layout
 
-Pre-rendered Flight payloads are stored in the build output:
+Pre-rendered Flight payloads are stored as content-hashed modules behind a lazy
+manifest in the RSC server bundle. They are not public `.rsc` files:
 
 ```
-dist/static/__<hash>/
-  prerender/
-    blog.post/
-      d4e5f6a7.flight    # hash of { slug: "hello-world" }
-      b8c9d0e1.flight    # hash of { slug: "getting-started" }
-    about/
-      _.flight            # static route, no params
+dist/rsc/
+  __prerender-manifest.js
+  assets/
+    __pr-<content-hash>.js
+
+# When a Prerender route also declares ppr:
+  __shell-manifest.js
+  assets/
+    __ps-<content-hash>.js
 ```
+
+The worker/function handles every request and reads these modules as build-time
+cache entries. See `/deployment-caching` for how this differs from a platform
+CDN static or prerender output.
 
 ## Concurrency
 
@@ -343,14 +402,31 @@ export const TocSidebar = Static(() => {
 
 ### Error behavior at build time
 
-| Handler outcome             | Effect                                                |
-| --------------------------- | ----------------------------------------------------- |
-| JSX / `null`                | Normal prerender entry, log OK                        |
-| `return ctx.passthrough()`  | Skip entry, log PASS, continue (Passthrough routes)   |
-| `throw new Skip("reason")`  | Skip entry, log SKIP, continue with remaining entries |
-| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build      |
+When a render throws a non-`Skip` error, it is **surfaced to the build** — never
+baked into a frozen error page served as a 200 (issue #587). What happens next is
+controlled by `prerender.onError` in your `rango()` options:
 
-Both error types propagate to the router's `onError` callback with phase
+```ts
+rango({ prerender: { onError: "warn" } }); // default is "fail"
+```
+
+| Handler outcome             | `onError: "fail"` (default)                  | `onError: "warn"`                |
+| --------------------------- | -------------------------------------------- | -------------------------------- |
+| JSX / `null`                | Normal prerender entry, log OK               | Normal prerender entry, log OK   |
+| `return ctx.passthrough()`  | Skip entry, log PASS (Passthrough routes)    | Skip entry, log PASS             |
+| `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
+| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+
+With `"warn"` the errored entry is logged and left un-baked (never served as a baked
+200 error page). `"warn"` is a build-unblock, not a runtime contract: the route falls
+through to normal resolution — it may render live (its handler is still bundled) or
+404 (once other baked entries trigger prerender handler eviction), so the outcome
+depends on the rest of the build, and a skipped `Static()` handler's evicted code can
+surface as an error. For DEFINED runtime behavior reach for `Passthrough()` (a live
+fallback) or `throw new Skip()` (an intentional skip — works in the render fn, not
+only `getParams()`); otherwise prefer the default `"fail"`.
+
+Both `Skip` and hard errors propagate to the router's `onError` callback with phase
 `"prerender"` or `"static"`.
 
 ### Build logs
@@ -370,9 +446,11 @@ The build produces per-URL timing logs:
 [rango] Static render complete: 2 done, 1 skipped (120ms total)
 ```
 
-A `FAIL` line is logged per-URL when a handler throws a non-Skip error. The
-error is re-thrown immediately, so no summary line is printed — the build
-stops at the first failure.
+A `FAIL` line is logged per-URL when a handler throws a non-Skip error (with the
+default `prerender.onError: "fail"`). The error is re-thrown immediately, so no
+summary line is printed — the build stops at the first failure. Under
+`prerender.onError: "warn"` the same case logs a `WARN` line, skips that URL, and
+the build continues.
 
 ### Dev mode behavior
 
@@ -588,12 +666,12 @@ At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
   (filtered by `namespace?.startsWith("intercept:")`) and sets up slots.
 - **Direct navigation**: looks up `paramHash` (no suffix). Standard prerender path.
 - **Intercept miss (no `/i` entry)**: falls through to the normal pipeline so
-  intercept-resolution middleware runs live. This handles `when()` conditions
+  intercept-resolution middleware runs live. This handles `when` config conditions
   that prevented pre-rendering.
 
-The `when()` callback receives an `InterceptSelectorContext` with `from.pathname`
+The `when` config selector receives an `InterceptSelectorContext` with `from.pathname`
 which is unknown at build time. All intercepts are pre-rendered unconditionally;
-`when()` is evaluated at runtime by the intercept-resolution middleware.
+`when` is evaluated at runtime by the intercept-resolution middleware.
 
 ### Example: Pre-rendered route with intercept
 
@@ -612,10 +690,13 @@ layout(ShopLayout, () => [
 
   // Intercept detail from shop index into a modal.
   // At build time, this is resolved and stored under the /i key.
-  intercept("@modal", ".detail", <ProductModal />, () => [
-    when(({ from }) => from.pathname === "/shop"),
-    loader(ProductLoader),
-  ]),
+  intercept(
+    "@modal",
+    ".detail",
+    <ProductModal />,
+    { when: ({ from }) => from.pathname === "/shop" },
+    () => [loader(ProductLoader)],
+  ),
 ])
 ```
 

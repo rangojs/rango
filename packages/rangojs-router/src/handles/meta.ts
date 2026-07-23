@@ -31,6 +31,7 @@
 import { createHandle, type Handle } from "../handle.js";
 import type {
   MetaDescriptor,
+  MetaDescriptorBase,
   TitleDescriptor,
   UnsetDescriptor,
 } from "../router/types.js";
@@ -158,6 +159,9 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
 
   for (const descriptors of segments) {
     for (const descriptor of descriptors) {
+      // Deferred (Promise) descriptors are resolved BEFORE collectMeta runs
+      // (resolve-by-default), so every descriptor here is synchronous and
+      // participates in key-based dedup + title-templating like any other.
       if (isUnsetDescriptor(descriptor)) {
         const keyToRemove = descriptor.unset;
         if (keyToIndex.has(keyToRemove)) {
@@ -193,8 +197,12 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
           continue;
         }
 
+        // Insert the title literally. String.prototype.replace treats the
+        // replacement string specially ($&, $`, $', $$, $n), so a title like
+        // "Save $5" or one containing "$&" would be mangled. split/join inserts
+        // the raw value with no special-character interpretation.
         const finalTitle = titleTemplate
-          ? titleTemplate.replace("%s", titleValue as string)
+          ? titleTemplate.split("%s").join(titleValue as string)
           : titleValue;
         addOrReplace(
           result,
@@ -218,6 +226,11 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  *
  * Use `ctx.use(Meta)` in route handlers to push meta descriptors.
  * Use `<MetaTags />` component to render them in the document head.
+ *
+ * Deferred (Promise) descriptors are resolved before collectMeta runs
+ * (resolve-by-default), so they participate in deduplication and `%s`
+ * title-templating identically to synchronous descriptors. A descriptor that
+ * resolves to `null`/`undefined` (or rejects) is dropped.
  */
 export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<
   MetaDescriptor,

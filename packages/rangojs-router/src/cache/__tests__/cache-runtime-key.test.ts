@@ -1,0 +1,117 @@
+/**
+ * Regression test for the "use cache" key derivation (C1).
+ *
+ * When a key arg is a typed array / Blob / File (or any value React lazily
+ * chunks), encodeReply returns FormData whose multipart body embeds a per-call
+ * RANDOM boundary. The old replyToCacheKey stringified the whole body via
+ * `new Response(formData).text()`, so two identical arg sets produced DIFFERENT
+ * keys on every call -> perpetual cache miss + unbounded store growth.
+ *
+ * The fix derives the key from the FormData entries (sorted-key order, bytes
+ * hashed) so it is independent of the boundary. These tests feed real FormData
+ * (built with the global FormData/Blob) directly into replyToCacheKey, which is
+ * the exact locus of the bug; the virtual @vitejs/plugin-rsc/rsc module is
+ * mocked only so cache-runtime.ts can be imported.
+ */
+
+import { describe, it, expect, vi } from "vitest";
+
+// @vitejs/plugin-rsc/rsc is a virtual module, not resolvable in vitest. The
+// key-derivation tests do not invoke encodeReply, but the import must resolve.
+vi.mock("@vitejs/plugin-rsc/rsc", () => ({
+  encodeReply: vi.fn(),
+  createClientTemporaryReferenceSet: vi.fn(),
+}));
+
+import { replyToCacheKey } from "../cache-runtime.js";
+
+function makeFormData(): FormData {
+  const fd = new FormData();
+  // Mirror the shape encodeReply emits for a Uint8Array + string arg set.
+  fd.append("0", new Blob([new Uint8Array([1, 2, 3, 4])], { type: "" }));
+  fd.append("1", "hello");
+  return fd;
+}
+
+describe("replyToCacheKey (use cache key derivation)", () => {
+  it("returns a plain string verbatim", async () => {
+    expect(await replyToCacheKey('["a",1]')).toBe('["a",1]');
+  });
+
+  it("produces the SAME key for two identical FormData arg sets", async () => {
+    const a = await replyToCacheKey(makeFormData());
+    const b = await replyToCacheKey(makeFormData());
+    expect(a).toBe(b);
+  });
+
+  it("does NOT embed a multipart boundary in the key", async () => {
+    const key = await replyToCacheKey(makeFormData());
+    expect(key).not.toContain("formdata-undici");
+    expect(key).not.toContain("Content-Disposition");
+  });
+
+  it("produces DIFFERENT keys for different byte payloads", async () => {
+    const fd1 = new FormData();
+    fd1.append("0", new Blob([new Uint8Array([1, 2, 3])], { type: "" }));
+    const fd2 = new FormData();
+    fd2.append("0", new Blob([new Uint8Array([9, 9, 9])], { type: "" }));
+    expect(await replyToCacheKey(fd1)).not.toBe(await replyToCacheKey(fd2));
+  });
+
+  it("produces DIFFERENT keys for different string values", async () => {
+    const fd1 = new FormData();
+    fd1.append("0", "x");
+    const fd2 = new FormData();
+    fd2.append("0", "y");
+    expect(await replyToCacheKey(fd1)).not.toBe(await replyToCacheKey(fd2));
+  });
+
+  it("is stable regardless of FormData entry insertion order", async () => {
+    const fd1 = new FormData();
+    fd1.append("a", "1");
+    fd1.append("b", "2");
+    const fd2 = new FormData();
+    fd2.append("b", "2");
+    fd2.append("a", "1");
+    expect(await replyToCacheKey(fd1)).toBe(await replyToCacheKey(fd2));
+  });
+
+  it("does NOT collide a string equal to a blob token with the blob entry (P2a)", async () => {
+    // A File serializes to `b:<size>:<encType>:<encName>:<hash>`. A user-supplied
+    // STRING whose value is exactly that token, under the same FormData key, must
+    // NOT produce the same key as the actual File — otherwise two different arg
+    // lists share one cache entry. Reconstruct the exact token the blob branch
+    // emits (deterministic name/type so it is predictable), feed it back as a
+    // string, and assert the keys diverge (the `s:` tag is what separates them).
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+
+    // djb2 over the same bytes, matching djb2HexBytes in cache-runtime.ts.
+    let h = 5381;
+    for (const b of bytes) h = ((h << 5) + h + b) >>> 0;
+    const hash = h.toString(16).padStart(8, "0");
+    // size 4, type "" -> encType "", name "f" -> encName "f".
+    const blobToken = `b:4::f:${hash}`;
+
+    const fdBlob = new FormData();
+    fdBlob.append("0", new File([bytes], "f", { type: "" }));
+    const fdString = new FormData();
+    fdString.append("0", blobToken);
+
+    expect(await replyToCacheKey(fdBlob)).not.toBe(
+      await replyToCacheKey(fdString),
+    );
+  });
+
+  it("does NOT collide when name/type carry the field-delimiter colon", async () => {
+    // Token shape is `b:<size>:<type>:<name>:<hash>`. With equal size and bytes,
+    // a File {name:"a:b", type:""} and {name:"b", type:":a"} would join to the
+    // byte-identical token `b:4::a:b:<hash>` unless type/name are encoded — an
+    // embedded colon must not shift the field boundaries.
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const fd1 = new FormData();
+    fd1.append("0", new File([bytes], "a:b", { type: "" }));
+    const fd2 = new FormData();
+    fd2.append("0", new File([bytes], "b", { type: ":a" }));
+    expect(await replyToCacheKey(fd1)).not.toBe(await replyToCacheKey(fd2));
+  });
+});

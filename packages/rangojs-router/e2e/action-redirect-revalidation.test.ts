@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  isPrefetchRequest,
+} from "./helper";
 
 /**
  * Finding #1 guard: a mutate-then-redirect action must mark the history cache
@@ -98,7 +102,9 @@ test.describe("action-redirect-revalidation", () => {
       [];
     page.on("request", (request) => {
       const url = request.url();
-      if (url.includes("_rsc_partial=true")) {
+      // Skip background viewport prefetches (the bare go-to-login/back-link
+      // Links target these same URLs) — this tracker pins NAVIGATION requests.
+      if (url.includes("_rsc_partial=true") && !isPrefetchRequest(request)) {
         const parsed = new URL(url);
         rscRequests.push({
           url,
@@ -193,7 +199,9 @@ test.describe("action-redirect-revalidation (production)", () => {
       [];
     page.on("request", (request) => {
       const url = request.url();
-      if (url.includes("_rsc_partial=true")) {
+      // Skip background viewport prefetches (the bare go-to-login/back-link
+      // Links target these same URLs) — this tracker pins NAVIGATION requests.
+      if (url.includes("_rsc_partial=true") && !isPrefetchRequest(request)) {
         const parsed = new URL(url);
         rscRequests.push({
           url,

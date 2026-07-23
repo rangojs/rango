@@ -2,8 +2,7 @@
  * Build-time Route Trie Construction
  *
  * Builds a serializable trie from the route manifest for O(path_length)
- * route matching at runtime. Each trie leaf embeds the route's ancestry
- * shortCodes for layout pruning.
+ * route matching at runtime.
  */
 
 import {
@@ -15,13 +14,24 @@ import type { FullManifest } from "./generate-manifest.js";
 
 // -- Trie data structures (compact keys for JSON serialization) --
 
+/**
+ * A response-type variant folded into a primary leaf's negotiate list. `pa` is
+ * the variant's own positional param-name array, carried so the runtime can
+ * re-key the matched params under the variant's names when it wins negotiation
+ * (the trie match extracts params under the PRIMARY leaf's pa). Omitted when the
+ * variant has no params; absent/identical pa means no re-key is needed.
+ */
+export interface NegotiateVariant {
+  routeKey: string;
+  responseType: string;
+  pa?: string[];
+}
+
 export interface TrieLeaf {
   /** Route name (e.g., "site.l1_500") */
   n: string;
   /** Static prefix of the entry (e.g., "/site") */
   sp: string;
-  /** Ancestry shortCodes from root to route [M0L0, M0L0L0, M0L0L0R499] */
-  a: string[];
   /** Constraint validation: paramName -> allowed values */
   cv?: Record<string, string[]>;
   /** Ordered param names for this route (positional) */
@@ -35,7 +45,7 @@ export interface TrieLeaf {
   /** Response type for non-RSC routes (json, text, image, any) */
   rt?: string;
   /** Negotiate variants: response-type routes sharing this path */
-  nv?: Array<{ routeKey: string; responseType: string }>;
+  nv?: NegotiateVariant[];
   /** RSC-first: RSC route was defined before response-type variants */
   rf?: true;
 }
@@ -49,15 +59,19 @@ export interface TrieNode {
   p?: { n: string; c: TrieNode };
   /** Suffix-param children keyed by suffix (e.g., ".html" → { n: "productId", c: ... }) */
   xp?: Record<string, { n: string; c: TrieNode }>;
-  /** Wildcard terminal: leaf + paramName */
-  w?: TrieLeaf & { pn: string };
+  /**
+   * Wildcard terminal: leaf + paramName (`pn`). `pn` is "*" for the bare `/*`
+   * form and the param name for a named catch-all (`:name+`/`:name*`). `w1`
+   * marks a one-or-more catch-all (`:name+`): the runtime walker then rejects
+   * the zero-segment/empty-remainder case. Absent `w1` is zero-or-more.
+   */
+  w?: TrieLeaf & { pn: string; w1?: true };
 }
 
 /**
  * Build a route trie from build-time manifest data.
  *
  * @param routeManifest - Map of route name to full URL pattern
- * @param routeAncestry - Map of route name to ancestry shortCodes
  * @param routeToStaticPrefix - Map of route name to its entry's staticPrefix
  * @param routeTrailingSlash - Optional map of route name to trailing slash mode
  * @param prerenderRouteNames - Optional set of prerendered route names (sets leaf.pr)
@@ -66,7 +80,6 @@ export interface TrieNode {
  */
 export function buildRouteTrie(
   routeManifest: Record<string, string>,
-  routeAncestry: Record<string, string[]>,
   routeToStaticPrefix: Record<string, string>,
   routeTrailingSlash?: Record<string, string>,
   prerenderRouteNames?: Set<string>,
@@ -76,7 +89,6 @@ export function buildRouteTrie(
   const root: TrieNode = {};
 
   for (const [routeName, pattern] of Object.entries(routeManifest)) {
-    const ancestry = routeAncestry[routeName] || [];
     const staticPrefix = routeToStaticPrefix[routeName] || "";
     const trailingSlash = routeTrailingSlash?.[routeName];
     const responseType = responseTypeRoutes?.[routeName];
@@ -89,7 +101,6 @@ export function buildRouteTrie(
     insertRoute(root, segments, 0, {
       n: routeName,
       sp: staticPrefix,
-      a: ancestry,
       ...(trailingSlash ? { ts: trailingSlash } : {}),
       ...(prerenderRouteNames?.has(routeName) ? { pr: true } : {}),
       ...(passthroughRouteNames?.has(routeName) ? { pt: true } : {}),
@@ -124,6 +135,9 @@ function sortSuffixParams(node: TrieNode): void {
       sorted[suffix] = node.xp[suffix];
     }
     node.xp = sorted;
+    for (const child of Object.values(node.xp)) {
+      sortSuffixParams(child.c);
+    }
   }
   if (node.s) {
     for (const child of Object.values(node.s)) {
@@ -133,11 +147,6 @@ function sortSuffixParams(node: TrieNode): void {
   if (node.p) {
     sortSuffixParams(node.p.c);
   }
-  if (node.xp) {
-    for (const child of Object.values(node.xp)) {
-      sortSuffixParams(child.c);
-    }
-  }
 }
 
 /**
@@ -145,15 +154,13 @@ function sortSuffixParams(node: TrieNode): void {
  * construction path shared by build/discovery (discover-routers.ts, serialized
  * into the production chunk) and the dev/HMR runtime rebuild
  * (rsc/manifest-init.ts). Keeping one code path is what guarantees the dev
- * runtime trie and the production serialized trie are byte-for-byte identical
- * (modulo `leaf.a` ancestry, which embeds the mount index and is debug-only).
+ * runtime trie and the production serialized trie are byte-for-byte identical.
  *
- * Returns null when the manifest has no route ancestry (no routes), matching
- * the prior guard at both call sites.
+ * Returns null when the manifest has no routes, matching the prior guard at
+ * both call sites.
  */
 export function buildPerRouterTrie(manifest: FullManifest): TrieNode | null {
-  const ancestry = manifest._routeAncestry;
-  if (!ancestry || Object.keys(ancestry).length === 0) {
+  if (Object.keys(manifest.routeManifest).length === 0) {
     return null;
   }
 
@@ -170,7 +177,6 @@ export function buildPerRouterTrie(manifest: FullManifest): TrieNode | null {
 
   return buildRouteTrie(
     manifest.routeManifest,
-    ancestry,
     routeToStaticPrefix,
     manifest.routeTrailingSlash,
     manifest.prerenderRoutes ? new Set(manifest.prerenderRoutes) : undefined,
@@ -218,47 +224,25 @@ function insertRoute(
 }
 
 /**
- * Extract ancestry map from a built trie by visiting all leaf nodes.
- * Returns { routeName: ancestryShortCodes[] } for every route in the trie.
- */
-export function extractAncestryFromTrie(
-  root: TrieNode,
-): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
-
-  function visit(node: TrieNode): void {
-    if (node.r) {
-      result[node.r.n] = node.r.a;
-    }
-    if (node.w) {
-      result[node.w.n] = node.w.a;
-    }
-    if (node.s) {
-      for (const child of Object.values(node.s)) {
-        visit(child);
-      }
-    }
-    if (node.xp) {
-      for (const child of Object.values(node.xp)) {
-        visit(child.c);
-      }
-    }
-    if (node.p) {
-      visit(node.p.c);
-    }
-  }
-
-  visit(root);
-  return result;
-}
-
-/**
  * Merge a new leaf with an existing leaf, handling content negotiation.
  * When an RSC route and response-type routes share the same URL pattern,
  * the RSC route becomes the primary leaf and response-type routes are
  * appended to the nv (negotiate variants) array.
  * Multiple response types on the same path are supported (json + text + xml).
  */
+/**
+ * Build a negotiate-variant entry from a leaf being folded into another leaf's
+ * nv list. Carries the variant's positional param names (`pa`) so the runtime
+ * can re-key matched params under the variant's names; omitted when the variant
+ * has none (the common case where primary and variant share the same names is a
+ * no-op re-key regardless).
+ */
+function toVariant(leaf: TrieLeaf, responseType: string): NegotiateVariant {
+  return leaf.pa
+    ? { routeKey: leaf.n, responseType, pa: leaf.pa }
+    : { routeKey: leaf.n, responseType };
+}
+
 function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
   if (!existing) return leaf;
 
@@ -266,7 +250,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // Both are response-type: preserve old as variant
     const merged = leaf;
     merged.nv = existing.nv || [];
-    merged.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    merged.nv.push(toVariant(existing, existing.rt));
     return merged;
   }
   if (leaf.rt && !existing.rt) {
@@ -276,7 +260,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
       existing.nv = [];
       existing.rf = true;
     }
-    existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
+    existing.nv.push(toVariant(leaf, leaf.rt));
     return existing;
   }
   if (!leaf.rt && existing.rt) {
@@ -284,7 +268,7 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // RSC was defined second (response-type was already the existing leaf)
     if (!leaf.nv) leaf.nv = [];
     if (existing.nv) leaf.nv.push(...existing.nv);
-    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    leaf.nv.push(toVariant(existing, existing.rt));
     // rf intentionally not set — RSC came after response-type variants
     return leaf;
   }
@@ -359,12 +343,35 @@ function insertSegments(
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments. Carry any params bound before
     // the wildcard in pa so they zip correctly against paramValues at match.
-    const wildLeaf: TrieLeaf & { pn: string } = {
+    // `pn` is "*" for the bare `/*` and the param name for a named catch-all;
+    // `w1` marks the one-or-more variant (`:name+`) so the walker rejects the
+    // empty-remainder case.
+    const wildLeaf: TrieLeaf & { pn: string; w1?: true } = {
       ...buildLeaf(leafBase, paramNames),
-      pn: "*",
+      pn: segment.value,
+      ...(segment.oneOrMore ? { w1: true as const } : {}),
     };
-    const existing = node.w ? ({ ...node.w } as TrieLeaf) : undefined;
-    const merged = mergeLeaves(existing, wildLeaf);
-    node.w = merged as TrieLeaf & { pn: string };
+    const existing = node.w;
+    // Merge when there's no existing wildcard, when this is a response-type
+    // content-negotiation variant of the same catch-all (one side carries `rt`),
+    // or when it's the SAME catch-all identity (same param name + arity).
+    // Otherwise two DISTINCT catch-all forms (`/x/*` vs `/x/:p+`) would collide on
+    // the single wildcard slot with no non-lossy merge — so keep the first-declared
+    // (matching the regex matcher's declaration-order tiebreak) rather than let
+    // mergeLeaves' last-wins overwrite silently drop its `pn`/`w1` identity (which
+    // stranded the first route and fell through to a corrupt regex-fallback redirect).
+    const canMerge =
+      existing === undefined ||
+      Boolean(existing.rt) ||
+      Boolean(wildLeaf.rt) ||
+      (existing.pn === wildLeaf.pn &&
+        Boolean(existing.w1) === Boolean(wildLeaf.w1));
+    if (canMerge) {
+      const merged = mergeLeaves(
+        existing ? ({ ...existing } as TrieLeaf) : undefined,
+        wildLeaf,
+      );
+      node.w = merged as TrieLeaf & { pn: string; w1?: true };
+    }
   }
 }

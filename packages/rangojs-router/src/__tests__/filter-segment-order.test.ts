@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { filterSegmentOrder } from "../browser/react/filter-segment-order";
+import {
+  filterSegmentOrder,
+  filterRouteSegmentIds,
+} from "../browser/react/filter-segment-order";
 import { collectHandleData, createHandle } from "../handle";
 
 describe("filterSegmentOrder", () => {
@@ -41,6 +44,40 @@ describe("filterSegmentOrder", () => {
       "R0.@meta",
       "R0.@breadcrumbs",
     ]);
+  });
+});
+
+/**
+ * filterRouteSegmentIds feeds useSegments().segmentIds and is shared by SSR
+ * (ssr/index.tsx) and the client event controller (event-controller.ts). Both
+ * call sites must produce identical output or SSR and post-hydration disagree
+ * and React reports a hydration mismatch.
+ */
+describe("filterRouteSegmentIds", () => {
+  it("keeps route/layout ids unchanged", () => {
+    const matched = ["M0", "M0L0", "M0L0L1"];
+    expect(filterRouteSegmentIds(matched)).toEqual(matched);
+  });
+
+  it("drops parallel slot ids (.@) and loader sub-ids (D digit)", () => {
+    const matched = ["L0", "L0.@panel", "R0", "R0.@meta", "R0L0D0.user"];
+    expect(filterRouteSegmentIds(matched)).toEqual(["L0", "R0"]);
+  });
+
+  it("does NOT reorder (unlike filterSegmentOrder)", () => {
+    // Raw match order with slot before route is preserved minus the slot.
+    const matched = ["R0.@panel", "R0", "L0"];
+    expect(filterRouteSegmentIds(matched)).toEqual(["R0", "L0"]);
+  });
+
+  it("SSR and client derive identical ids from the same matched list", () => {
+    // Both ssr/index.tsx and event-controller.ts call this helper; a single
+    // implementation guarantees agreement. Exercise a representative match.
+    const matched = ["M0", "M0.@modal", "M0L0", "M0L0D2.posts", "M0L0L1"];
+    const ssrSide = filterRouteSegmentIds(matched);
+    const clientSide = filterRouteSegmentIds(matched);
+    expect(ssrSide).toEqual(clientSide);
+    expect(ssrSide).toEqual(["M0", "M0L0", "M0L0L1"]);
   });
 });
 

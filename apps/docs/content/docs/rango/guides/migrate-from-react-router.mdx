@@ -1,0 +1,525 @@
+---
+title: Migrate from React Router
+description: Map React Router and Remix loaders, actions, and route modules to Rango handlers and the urls() DSL.
+type: guide
+---
+
+Coming from React Router, the concept that transfers most directly is the nested route tree with `<Outlet />` — Rango uses the same component, imported from `@rangojs/router/client`. What changes is the rendering model: React Router is client-first with SSR opt-in, Rango is server components by default. That flips how data flows. The route module's `loader` + `useLoaderData()` pair usually collapses into a single server component handler that fetches and renders in one place, route-scoped `action()` exports become function-scoped `"use server"` actions, and `shouldRevalidate` becomes the `revalidate()` DSL.
+
+This guide covers React Router v7 (framework mode and library mode), v6, and Remix v2.
+
+## Identify the mode first
+
+React Router v7 has two modes that require different migration paths:
+
+- **Framework mode** (`@react-router/dev` plugin, file-based routing, route module API with `loader`/`action`/`meta`/`headers`/`shouldRevalidate` exports) — this is the Remix successor. Migration replaces the route module convention with Rango's `urls()` DSL and server component handlers.
+- **Library mode** (`createBrowserRouter` or `<BrowserRouter>`, client-side only) — migration moves from client-side routing to server-rendered RSC with the `urls()` DSL.
+
+React Router v6 and Remix v2 follow the same patterns as v7 library mode and framework mode respectively.
+
+Work route-by-route, bottom-up: leaf routes first, then layouts, then loaders/actions. Verify each route works before moving to the next.
+
+## Replace imports — never shim React Router
+
+Do not create mock `react-router` modules, Vite aliases, or compatibility wrappers (a local `useLoaderData` backed by context, a `Form` that wraps `<form>`, a fake `useFetcher`). Shims freeze React Router semantics into the app, hide unsupported behavior until runtime, and keep the old packages in the dependency graph. Replace every `react-router` / `react-router-dom` / `@remix-run/*` import at its call site:
+
+| React Router import                           | Replace with                                                                      |
+| --------------------------------------------- | --------------------------------------------------------------------------------- |
+| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`) |
+| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                            |
+| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client`                                       |
+| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()`, `useParams()` from `@rangojs/router/client` |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` only for live client data        |
+| `useActionData`                               | `useActionState` (standard React)                                                 |
+| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function                     |
+| `useFetcher`                                  | submits: server actions + `useActionState`/`useOptimistic`; reads: `useLoader()`  |
+| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>`                                              |
+| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                            |
+| `useRouteError`                               | the `error` prop of `errorBoundary()`                                             |
+
+Done means: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns nothing, and the packages are out of `package.json`.
+
+## Step 1: Project setup
+
+```bash
+# Framework mode:
+npm remove react-router @react-router/dev @react-router/node @react-router/serve
+# Library mode:
+npm remove react-router react-router-dom
+
+npm install @rangojs/router
+```
+
+Replace the `@react-router/dev` Vite plugin with `rango()`, and delete `react-router.config.ts` — route configuration moves to the `urls()` DSL:
+
+```ts
+// vite.config.ts
+// Before: import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
+import { rango } from "@rangojs/router/vite";
+
+export default defineConfig({
+  plugins: [rango()],
+});
+```
+
+```tsx
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export default createRouter({
+  document: Document,
+}).routes(urlpatterns);
+```
+
+## Step 2: Route mapping
+
+### Route module exports (framework mode)
+
+Every conventional export of an RR7 route module has a home in Rango — either the handler or the DSL:
+
+| RR7 route module export         | Rango equivalent                                            |
+| ------------------------------- | ----------------------------------------------------------- |
+| `default` (Component)           | handler in `path()`                                         |
+| `loader`                        | fetch in handler, or `createLoader()`                       |
+| `action`                        | `"use server"` function                                     |
+| `meta`                          | `ctx.use(Meta)` in handler                                  |
+| `headers`                       | `ctx.header()` in handler or middleware                     |
+| `shouldRevalidate`              | `revalidate()` DSL                                          |
+| `ErrorBoundary`                 | `errorBoundary()` DSL                                       |
+| `HydrateFallback`               | `loading()` DSL                                             |
+| `handle`                        | `createHandle()` for cross-segment data (breadcrumbs, etc.) |
+| `clientLoader` / `clientAction` | `"use client"` component with React hooks                   |
+
+A full route module before and after:
+
+```tsx
+// RR7 framework mode: app/routes/product.$slug.tsx
+import type { Route } from "./+types/product.$slug";
+
+export async function loader({ params }: Route.LoaderArgs) {
+  const product = await getProduct(params.slug);
+  if (!product) throw new Response("Not Found", { status: 404 });
+  return { product };
+}
+
+export function meta({ data }: Route.MetaArgs) {
+  return [{ title: data.product.name }];
+}
+
+export function headers() {
+  return { "Cache-Control": "max-age=300" };
+}
+
+export function shouldRevalidate({ actionResult }) {
+  return !!actionResult;
+}
+
+export default function ProductPage({ loaderData }: Route.ComponentProps) {
+  return <div>{loaderData.product.name}</div>;
+}
+
+export function ErrorBoundary() {
+  return <div>Product error</div>;
+}
+```
+
+```tsx
+// Rango: urls.tsx + handler
+import { notFound } from "@rangojs/router";
+
+const ProductPage: Handler<"product"> = async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+
+  const meta = ctx.use(Meta);
+  meta({ title: product.name });
+  ctx.header("Cache-Control", "max-age=300");
+
+  return <div>{product.name}</div>;
+};
+
+// In urls.tsx:
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  revalidate(({ actionId }) => !!actionId),
+  errorBoundary(() => <div>Product error</div>),
+  loading(<ProductSkeleton />),
+]);
+```
+
+The route module's scattered exports consolidate into the handler (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+
+### Route paths
+
+Framework-mode file routes:
+
+| RR7 file path                            | Rango                                                         |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| `app/routes/_index.tsx`                  | `path("/", HomePage, { name: "home" })`                       |
+| `app/routes/about.tsx`                   | `path("/about", AboutPage, { name: "about" })`                |
+| `app/routes/blog.$slug.tsx`              | `path("/blog/:slug", BlogPost, { name: "blogPost" })`         |
+| `app/routes/files.$.tsx` (splat)         | `path("/files/:path*", FileBrowser, { name: "files" })`       |
+| `app/routes/dashboard.tsx` (layout)      | `layout(<DashboardLayout />, () => [...])`                    |
+| `app/routes/dashboard._index.tsx`        | `path("/dashboard", DashboardIndex, { name: "dashboard" })`   |
+| `app/routes/dashboard.settings.tsx`      | `path("/dashboard/settings", Settings, { name: "settings" })` |
+| `app/routes/_auth.tsx` (pathless layout) | `layout(<AuthLayout />, () => [...])`                         |
+| `app/routes/_auth.login.tsx`             | `path("/login", LoginPage, { name: "login" })`                |
+
+Library-mode config routes:
+
+| React Router                           | Rango                                                   |
+| -------------------------------------- | ------------------------------------------------------- |
+| `path: "/"`                            | `path("/", HomePage, { name: "home" })`                 |
+| `path: "about"`                        | `path("/about", AboutPage, { name: "about" })`          |
+| `path: "blog/:slug"`                   | `path("/blog/:slug", BlogPost, { name: "blogPost" })`   |
+| `path: "files/*"` (splat)              | `path("/files/:path*", FileBrowser, { name: "files" })` |
+| `path: "docs/:lang?"` (optional param) | `path("/docs/:lang?", Docs, { name: "docs" })`          |
+
+The splat (`$` / `*`) matches the bare parent too (`/files` binds `""`), so it maps to `:path*` (zero-or-more); use `:path+` only when you require at least one trailing segment. React Router reads the splat at `params["*"]`; Rango exposes it as a named string at `ctx.params.path` with the `/` separators preserved — split to recover the array:
+
+```tsx
+path(
+  "/files/:path*",
+  (ctx) => {
+    const parts = ctx.params.path === "" ? [] : ctx.params.path.split("/");
+    return <FileBrowser path={parts} />;
+  },
+  { name: "files" },
+);
+```
+
+### Layouts and nesting
+
+The `<Outlet />` concept is unchanged — only the import path and where the tree is declared:
+
+```tsx
+// Rango: same <Outlet />, from @rangojs/router/client
+import { Outlet } from "@rangojs/router/client";
+
+function DashboardLayout() {
+  return (
+    <div className="dashboard">
+      <Outlet />
+    </div>
+  );
+}
+
+layout(<DashboardLayout />, () => [
+  path("/dashboard", DashboardIndex, { name: "dashboard" }),
+  path("/dashboard/settings", Settings, { name: "settings" }),
+]);
+```
+
+Nested `children` arrays map to nested `layout()` calls; pathless layouts are simply layouts without a URL prefix; an index route (`{ index: true }`) is a `path("/...", ...)` inside the layout. A layout that read `useLoaderData()` becomes a handler-function layout — a server component that gets data from `ctx`:
+
+```tsx
+layout(
+  async (ctx) => {
+    const user = ctx.get("user");
+    return (
+      <Shell user={user}>
+        <Outlet />
+      </Shell>
+    );
+  },
+  () => [path("/dashboard", DashboardIndex, { name: "dashboard" })],
+);
+```
+
+See [Layouts](/docs/rango/guides/layouts).
+
+## Step 3: Data and actions
+
+### Loaders merge into handlers — the default migration
+
+In React Router, loaders and components are separate: the loader fetches, the component reads via `useLoaderData()`. In Rango, server component handlers do both:
+
+```tsx
+// React Router: separate loader + component
+export async function loader({ params }) {
+  const product = await getProduct(params.slug);
+  return { product };
+}
+function ProductPage() {
+  const { product } = useLoaderData();
+  return <div>{product.name}</div>;
+}
+
+// Rango: handler fetches and renders directly
+const ProductPage: Handler<"product"> = async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  return <div>{product.name}</div>;
+};
+```
+
+The handler IS the loader — it fetches data, then returns JSX. No separate data-fetching layer needed.
+
+### When to use createLoader()
+
+Rango's `createLoader()` is a live data layer, not a loader migration target. Use it only when you need capabilities beyond what the handler provides:
+
+- **Client-side reactive data** — `useLoader()` in client components for data that updates without a full page navigation
+- **Shared data across segments** — a loader registered on a layout is available to all child routes via `ctx.use(Loader)` or `useLoader(Loader)`
+- **Independent revalidation** — `revalidate()` on a specific loader after actions
+- **Per-loader caching** — `loader(L, () => [cache({ ttl: 60 })])`
+
+If the React Router loader just fetches data for its page component, merge it into the handler. When a client component does need live data:
+
+```tsx
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import { PriceLoader } from "../loaders";
+
+function ProductPrice() {
+  const { data } = useLoader(PriceLoader);
+  return <span>{data.price}</span>;
+}
+```
+
+`useLoader()` provides live data that stays fresh — it re-fetches on navigation and after actions (controlled by `revalidate()`), unlike `useLoaderData()`, which reads a snapshot. See [Loaders](/docs/rango/features/loaders).
+
+### Actions become "use server" functions
+
+React Router actions are route-scoped (declared per route). Rango actions are function-scoped — `"use server"` on any exported async function:
+
+```tsx
+// React Router:
+export async function action({ request }) {
+  const formData = await request.formData();
+  await updateUser(formData.get("name"));
+  return redirect("/profile");
+}
+
+// Rango:
+("use server");
+import { redirect } from "@rangojs/router";
+
+export async function updateProfile(formData: FormData): Promise<void> {
+  await updateUser(formData.get("name") as string);
+  throw redirect("/profile");
+}
+```
+
+`<Form method="post">` becomes a native `<form action={updateProfile}>`. For `useActionData()`, use the standard React `useActionState` hook:
+
+```tsx
+"use client";
+import { useActionState } from "react";
+import { saveForm } from "../actions"; // "use server" function
+
+function EditForm() {
+  const [state, action, pending] = useActionState(saveForm, null);
+  return (
+    <form action={action}>
+      {state?.errors && <p>{state.errors}</p>}
+      <input name="title" />
+      <button disabled={pending}>Save</button>
+    </form>
+  );
+}
+```
+
+Since Rango uses RSC server actions, all React action patterns work: `useActionState`, `useOptimistic`, `useTransition`, `startTransition`, and plain `<form action={serverAction}>`. No framework-specific hook needed. See [Server actions](/docs/rango/guides/server-actions).
+
+### clientLoader / clientAction
+
+RR7 framework mode's `clientLoader` and `clientAction` run in the browser. Rango has no framework-level client loader/action concept — anything that ran there moves into React hooks (`useState`, `useEffect`, `useActionState`, `useOptimistic`) inside a `"use client"` component. There is no framework wrapper — it's just React.
+
+### shouldRevalidate becomes revalidate()
+
+```tsx
+// RR7:
+export function shouldRevalidate({ actionResult, currentParams, nextParams }) {
+  if (actionResult) return true;
+  return currentParams.slug !== nextParams.slug;
+}
+
+// Rango:
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  revalidate(({ actionId, currentParams, nextParams }) => {
+    if (actionId) return true;
+    return currentParams.slug !== nextParams.slug;
+  }),
+]);
+```
+
+RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments re-run during partial rendering after navigation or actions. The intent is the same — skip unnecessary work — but the mechanism is segment-level rather than loader-level.
+
+## Step 4: Route protection
+
+React Router has no built-in middleware; protection typically lives in loaders. In Rango, move auth guards to `router.use()` — it wraps the entire request, including actions:
+
+```tsx
+// React Router: auth check in loader
+export async function loader({ request }) {
+  const user = await getUser(request);
+  if (!user) throw redirect("/login");
+  return { user };
+}
+
+// Rango: router.use() for request-level auth
+const router = createRouter({})
+  .use(authInit) // all routes — resolves session
+  .use("/dashboard/*", requireAuth) // scoped guard
+  .routes(urlpatterns);
+```
+
+Use DSL `middleware()` for render-level concerns (context shaping, headers). See [Middleware](/docs/rango/features/middleware).
+
+## Step 5: Loading and error states
+
+`defer()` + `<Await>` (or `HydrateFallback`) becomes the `loading()` DSL, which sets up the Suspense boundary for you:
+
+```tsx
+path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
+  loading(<DashboardSkeleton />),
+]);
+```
+
+`errorElement` / `ErrorBoundary` + `useRouteError()` becomes `errorBoundary()` wrapping a group of routes. Server-side error boundaries only receive `error` — there is no `reset`, since a server render cannot be retried; users can navigate away or refresh:
+
+```tsx
+layout(<DashboardLayout />, () => [
+  errorBoundary(({ error }) => (
+    <div>
+      <h2>Something went wrong</h2>
+      <p>{error.message}</p>
+    </div>
+  )),
+  path("/dashboard", DashboardIndex, { name: "dashboard" }),
+]);
+```
+
+The catch-all `{ path: "*", element: <NotFound /> }` route becomes the app-level `notFound` option, with `notFoundBoundary()` for route-level scopes:
+
+```tsx
+// App-level:
+createRouter({
+  notFound: ({ pathname }) => <NotFoundPage pathname={pathname} />,
+});
+
+// Route-level — catches notFound() thrown in handlers/loaders:
+layout(<ShopLayout />, () => [
+  notFoundBoundary(<ProductNotFound />),
+  path("/product/:slug", ProductPage, { name: "product" }),
+]);
+```
+
+## Step 6: Navigation
+
+| React Router                              | Rango                                                                            |
+| ----------------------------------------- | -------------------------------------------------------------------------------- |
+| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                  |
+| `<Link to="/about">`                      | `<Link to="/about">`                                                             |
+| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                      |
+| `navigate("/about")`                      | `useRouter().push("/about")`                                                     |
+| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                  |
+| `navigate(-1)`                            | `useRouter().back()`                                                             |
+| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
+| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
+| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
+| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
+
+`useParams<T>()` keeps the same generic annotation pattern. See [Navigation](/docs/rango/features/navigation).
+
+## Step 7: Metadata, API routes, theme
+
+The `meta` export becomes the `Meta` handle in server handlers, rendered by `<MetaTags />` in the Document's `<head>`:
+
+```tsx
+import { Meta } from "@rangojs/router";
+
+const HomePage: Handler<"home"> = (ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ title: "Home" });
+  meta({ name: "description", content: "Welcome" });
+  return <div>Home page</div>;
+};
+```
+
+Resource routes become typed response routes:
+
+```tsx
+// React Router (framework mode): app/routes/api.users.ts with a loader returning Response.json(...)
+
+// Rango:
+path.json(
+  "/api/users",
+  async () => {
+    return await getUsers();
+  },
+  { name: "apiUsers" },
+);
+```
+
+See [Response routes](/docs/rango/features/response-routes) for `path.json()`, `path.text()`, `path.html()`, and the rest.
+
+For theming, replace a custom theme provider with `theme: true` in `createRouter` (FOUC prevention included) and `useTheme()` from `@rangojs/router/theme` in client components. See [Theme](/docs/rango/guides/theme).
+
+## Cloudflare Workers (RR7-on-Workers apps)
+
+RR7 serves a fully-rendered HTML response; Rango serves a streamed RSC/SSR response. Anything in the request path that buffers the response silently kills that stream — the `loading()` / `<Suspense>` fallback never shows and the page appears "awaited". Four things to fix:
+
+**Never buffer the Rango response in a custom worker entry.** `await response.text()`, `await response.arrayBuffer()`, and `HTMLRewriter` all drain the stream. Pass the body through:
+
+```ts
+// BAD — buffers the whole RSC stream before returning
+const response = await router.fetch(request, { env, ctx });
+const body = await response.text(); // <- drains the stream
+return new Response(rewrite(body), response);
+
+// GOOD — pass the body through as a stream (re-wrap headers only)
+const response = await router.fetch(request, { env, ctx });
+return new Response(response.body, response);
+```
+
+Keep the custom entry itself (host/site resolution, sessions, proxy fallback) — that's real product logic. If a legacy proxy branch legitimately buffers to rewrite HTML, gate it so it never runs on the `router.fetch()` result.
+
+**Use `vite dev` / `vite preview`, not `wrangler dev`.** Both run your worker entry in miniflare with bindings and `.dev.vars`, and both stream. `wrangler dev` gzip-buffers the entire body before sending, so RSC does not stream locally under it — a local-only artifact; the deployed edge does streaming compression. Note that `vite preview` reads `.dev.vars` from the build output, so re-run `vite build` after editing it (`vite dev` loads it live).
+
+**Move build output paths from `build/` to `dist/`.** RR7's `react-router build` wrote to `build/`; Rango's `vite build` writes to `dist/` (`dist/client`, `dist/rsc`, …). Update `wrangler.toml` (`assets` directory becomes `./dist/client/`) and cleanup scripts, or you deploy stale/empty assets.
+
+**Deploy the built worker, not the source entry.** `vite build` emits the deployable config at `dist/<env>/wrangler.json` (`no_bundle: true`). A plain `wrangler deploy` from the repo root uses the root `wrangler.toml` pointing at your source entry — and wrangler's bundler cannot resolve Rango's `virtual:rsc-router/*` modules. Deploy with `wrangler deploy -c dist/<env>/wrangler.json` or the plugin's deploy flow.
+
+## Key conceptual differences
+
+| Concept             | React Router                        | Rango                                  |
+| ------------------- | ----------------------------------- | -------------------------------------- |
+| Rendering           | Client-side by default, SSR opt-in  | Server components by default (RSC)     |
+| Data loading        | `loader()` + `useLoaderData()`      | Direct fetch in server components      |
+| Form actions        | Route-scoped `action()`             | Function-scoped `"use server"`         |
+| Route definition    | File-based or `createBrowserRouter` | `urls()` DSL with `path()`, `layout()` |
+| Middleware          | Not built-in (use loaders)          | `router.use()` + DSL `middleware()`    |
+| Parallel routes     | Not built-in                        | `parallel()` DSL                       |
+| Intercepting routes | Not built-in                        | `intercept()` DSL                      |
+| Caching             | Not built-in                        | `cache()` DSL, `"use cache"`           |
+| Type-safe routes    | Partial (v7 framework mode)         | Full: params, names, href, reverse     |
+
+## Migration checklist
+
+1. Set up Vite config with the `rango()` plugin
+2. Create the Document component with `<MetaTags />` in head
+3. Create `router.tsx` with `createRouter()`
+4. Convert route config / file routes to the `urls()` DSL
+5. Migrate layouts — keep `<Outlet />` (import from `@rangojs/router/client`)
+6. Merge loaders + components into handler functions (fetch + render in one place)
+7. Convert React Router actions to `"use server"` functions
+8. Migrate auth guards from loaders to `router.use()`
+9. Replace `react-router-dom` Link/navigation with `@rangojs/router/client`
+10. Convert error boundaries to the `errorBoundary()` DSL
+11. Update metadata to the `Meta` handle + `<MetaTags />`
+12. Replace a custom theme provider with `theme: true` in `createRouter`
+13. Run `npx rango generate src/` to generate route types
+14. Verify no shims: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns nothing, no mock modules or aliases exist, and the packages are out of `package.json`
+15. On Workers: audit the worker entry for stream buffering, switch local dev to `vite dev` / `vite preview`, move `build/` paths to `dist/`, and deploy from `dist/<env>/wrangler.json`
+
+<Cards>
+  <Card href="/docs/rango/guides/comparison" title="Comparison">
+    How Rango compares with Next.js, TanStack Start, and Waku.
+  </Card>
+  <Card href="/docs/rango/concepts/data-flow" title="Data flow">
+    How data moves from handlers and loaders into components.
+  </Card>
+</Cards>

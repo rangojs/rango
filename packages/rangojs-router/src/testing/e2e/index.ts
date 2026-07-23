@@ -5,12 +5,15 @@ import {
   type FixtureOptions,
 } from "./fixture.js";
 import {
+  blockPrefetch,
+  unblockPrefetch,
   createPageHelpers,
   createStopwatch,
   getHistoryState,
   getNumericContent,
   goBack,
   goForward,
+  isPrefetchRequest,
   isVisibleInViewport,
   measureTime,
   type PageHelpers,
@@ -32,6 +35,7 @@ import { createRangoMatchers, type RangoMatchers } from "./matchers.js";
 
 export {
   assertCacheStatus,
+  assertCacheDecision,
   parseCacheHeader,
   createCacheSink,
   filterCacheDecisions,
@@ -39,6 +43,19 @@ export {
   type ExpectedCacheStatus,
   type CacheStatusTarget,
 } from "../cache-status.js";
+export {
+  assertPprReplayStatus,
+  assertShellStatus,
+  parsePprReplayStatus,
+  parseShellStatus,
+  PPR_REPLAY_STATUS_HEADER,
+  shellCacheKey,
+  SHELL_STATUS_HEADER,
+  type PprReplayBypassReason,
+  type PprReplayStatus,
+  type ShellStatus,
+  type ShellStatusTarget,
+} from "../shell-status.js";
 export {
   testId,
   waitForHydration,
@@ -48,6 +65,9 @@ export {
   getHistoryState,
   waitForElement,
   isVisibleInViewport,
+  isPrefetchRequest,
+  blockPrefetch,
+  unblockPrefetch,
   parseNumber,
   getNumericContent,
   createStopwatch,

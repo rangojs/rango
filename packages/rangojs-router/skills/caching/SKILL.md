@@ -1,7 +1,7 @@
 ---
 name: caching
-description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
-argument-hint: [setup]
+description: Configure route/segment-subtree caching with memory, Cloudflare KV, or Vercel cache stores in @rangojs/router. Use when responses should be cached or revalidated, data is stale or not updating after code changes, or you are wiring up a cache store.
+argument-hint: "[setup]"
 ---
 
 # Caching
@@ -13,6 +13,16 @@ argument-hint: [setup]
 > supports SWR for response and `"use cache"` item entries, but its
 > route-segment entries expire at TTL with no background revalidation — use
 > `CFCacheStore` for real segment SWR. See `/cache-guide`.
+
+## Not this skill if…
+
+- You want to cache ONE function or component's return value — that is
+  `"use cache"`: see `/use-cache`.
+- You want the whole HTTP response frozen at the edge, loader output included —
+  see `/document-cache`.
+- You want the HTML shell cached while loaders stay live per request — see
+  `/ppr`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## cache() is Partial Prerendering (PPR)
 
@@ -81,9 +91,27 @@ cache(
 );
 ```
 
+## When cache() does not pay
+
+A cache hit is not free: it still runs middleware, the store read, and the
+document render AROUND the cached segment. The win is proportional to what
+the cached render itself costs — measured on a deployed Cloudflare worker
+(2026-07), a trivial page inside `cache()` served hits at p50 36 ms while
+misses (render + store) served at 35 ms: indistinguishable. The same
+boundary around an expensive render (slow data, big trees) is where the TTL
+pays for itself.
+
+Rule of thumb: reach for `cache()` when the segment's own render cost is
+meaningfully above your latency floor — expensive render-embedded data work,
+large component trees, third-party calls captured in the render. Do not wrap cheap
+pages "just in case": you add store traffic and invalidation surface for no
+latency win. If the data is what's expensive and it changes per-request,
+prefer a loader with `cache()` on the loader DATA (see "Loader-Level
+Caching") over caching the rendered segment.
+
 ## Tag-Based Invalidation
 
-Tag cached entries, then invalidate them on demand. Tags can be attached three ways:
+Tag cached entries, then invalidate them on demand. Tags can be attached four ways:
 
 ```typescript
 // 1. Static tags in the cache() DSL
@@ -101,7 +129,21 @@ async function getProduct(id: string) {
   cacheTag(`product:${id}`, "products"); // variadic, additive
   return db.getProduct(id);
 }
+
+// 4. Render-callable — a plain server component (no "use cache" in its tree)
+//    records onto the request's document/shell artifact.
+function CampaignBanner() {
+  cacheTag("campaign:spring"); // rides ctx._requestTags → shell/document entry
+  return <aside>Spring sale</aside>;
+}
 ```
+
+Form 4 is how you make a PPR shell or a `/document-cache` page tag-invalidatable
+without wrapping anything in `"use cache"`: the tag rides the request's
+`_requestTags` onto the shell/document entry, and `revalidateTag` then evicts it.
+On a route that is neither PPR nor document-cached the tag records where nothing
+reads it — a silent no-op, so don't expect a bare `cacheTag()` to tag an ordinary
+uncached page.
 
 Invalidate with one of two server-only verbs (both variadic, imported from
 `@rangojs/router`):
@@ -129,7 +171,7 @@ export async function POST() {
 | `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            | immediate; next read is fresh                         |
 | `revalidateTag(...tags)` | background (`void`)         | route handlers / webhooks | background (non-blocking); next read re-renders fresh |
 
-Both built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
+All three built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
 invalidation requires a `kv` namespace — the tag-invalidation markers live in
 that same namespace; there is **no** separate tag-invalidation store to wire.
 If no tag-capable store is configured, `updateTag`/`revalidateTag` warn and no-op.
@@ -143,7 +185,8 @@ converge within `tagCacheTtl` (the **maximum extra cross-colo invalidation
 latency** when no purge is wired). Keep it small (e.g. 30–60), or wire a purge
 (below) and set it large. (Contrast `tagInvalidationTtl`, which must be _large_
 — it bounds how long the KV marker itself lives and must exceed your max entry
-TTL+SWR.)
+TTL+SWR. Left unset there is no expiry: KV markers accumulate unbounded under
+high-cardinality tags, so set it above your largest entry TTL+SWR to bound them.)
 
 To make other colos prompt without a short `tagCacheTtl`, pass `onRevalidateTag`:
 each cached marker carries a namespaced Cloudflare `Cache-Tag`, and the hook is
@@ -153,10 +196,11 @@ Purge-by-tag is available on all plans (since April 2025), subject to per-plan
 rate limits, so the batched single call matters. With a purge wired, `tagCacheTtl`
 becomes a pure read-cost reducer + fallback window.
 
-## Named Profile Shorthand
+## Named Cache Profiles
 
-Use a named cache profile string instead of an options object. The profile must be
-defined in `createRouter({ cacheProfiles })`. Unknown names throw at boot time.
+Define named profiles in `createRouter({ cacheProfiles })` so the same TTL/SWR
+values can be shared across the DSL and `"use cache"` functions without repetition.
+Unknown names throw at boot time.
 
 ```typescript
 // Define profiles in router
@@ -167,19 +211,25 @@ createRouter({
     long: { ttl: 3600, swr: 7200 },
   },
 });
+```
 
-// Use by name in urls
+In the DSL, pass the profile's options directly to `cache()`:
+
+```typescript
 export const urlpatterns = urls(({ path, cache }) => [
-  cache("long", () => [path("/blog", BlogIndex, { name: "blog" })]),
+  cache({ ttl: 3600, swr: 7200 }, () => [
+    path("/blog", BlogIndex, { name: "blog" }),
+  ]),
 
-  // Also works without children (orphan cache boundary)
-  cache("short"),
+  // Orphan cache boundary (covers subsequent siblings)
+  cache({ ttl: 60, swr: 120 }),
   path("/feed", FeedPage, { name: "feed" }),
 ]);
 ```
 
-These profile names are shared with the `"use cache: <name>"` directive. See
-`/use-cache` for function-level caching.
+The DSL `cache()` helper does NOT accept a string profile name — strings are only
+valid in the `"use cache: <name>"` directive inside server functions. See
+`/use-cache` for function-level caching with named profiles.
 
 ## Loader-Level Caching
 
@@ -217,6 +267,45 @@ const router = createRouter({
 });
 ```
 
+### Search param key filtering (`cache.searchParams`)
+
+By default every non-reserved query param keys the cache, so
+`?utm_source=tw` and `?utm_source=ig` occupy separate slots in every tier.
+The global `searchParams` option controls which params participate in default
+cache-key generation:
+
+```typescript
+import { createRouter, TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  cache: {
+    store,
+    // "all" (default) | "none" | { include: string[] } | { exclude: string[] }
+    searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+  },
+});
+```
+
+- **Key-only**: `ctx.searchParams` and the request URL are untouched — handlers
+  and loaders still see the full query string.
+- **Matching**: exact names plus a `*` SUFFIX wildcard (`"utm_*"`). No RegExp.
+- **All tiers**: segment, document, response, PPR shell capture/lookup, the
+  baked-shell manifest gate (a URL whose only params are excluded ones now
+  matches the prerendered shell), and `"use cache"` ctx key normalization.
+- **`cache({ key })` override wins**: a custom key bypasses the filter along
+  with the rest of default key generation.
+- **The footgun**: excluding a param promises the rendered output does not
+  depend on it. If it does, the first variant is cached and served to everyone.
+  That is why the default is `"all"`.
+- `TRACKING_SEARCH_PARAMS` (also exported from `@rangojs/router/cache`) covers
+  `utm_*`, `gclid`, `fbclid`, `msclkid`, `ttclid`, `mc_cid`/`mc_eid`, and the
+  other common click-id params.
+
+Global-only by design — the per-route "this page varies only by `q`" case is
+already expressible with `cache({ key })`.
+
 ## Cache Stores
 
 ### Memory Store
@@ -228,8 +317,14 @@ import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
+  maxEntries: 1000, // per-family FIFO cap (default 1000)
 });
 ```
+
+Each internal family (segments, responses, `"use cache"` items, PPR shells) is
+capped at `maxEntries`; on insert past the cap the oldest entry is evicted FIFO
+and its tag-index entries are cleaned up, so a long-lived process cannot grow
+without bound. TTL expiry stays lazy on top of the cap.
 
 ### Cloudflare Edge Cache Store
 
@@ -393,6 +488,12 @@ not help, because its output was inlined into the cached parent, and `ctx.use()`
 is **not** guarded. `ctx.use()` is a server-side escape hatch for non-rendered
 uses (set a ctx var, make a routing decision); never render its result inside a
 cached handler.
+
+This is the **consumption-lane rule**, and it holds identically for every
+shared artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`):
+handler consumption = baked copy with identity reads permitted; client-side
+`useLoader` = live. Stated once in `/rango` → Invariants; pinned by
+semantic-matrix row PPR3 and the `e2e/cache.test.ts` "baked copy" case.
 
 ```typescript
 // WRONG — throws: cookies() read directly in a cached handler

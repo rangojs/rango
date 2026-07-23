@@ -36,15 +36,38 @@ test.describe("named-routes", () => {
     );
   });
 
-  test("should resolve all dynamically generated routes (10k+)", async () => {
+  test("should resolve all dynamically generated routes (25k+)", async () => {
     const content = await fs.readFile(genFilePath, "utf-8");
 
-    // Count route entries — the stress demo generates 14k+ routes via
-    // Array.from loops that the static parser cannot see. Runtime discovery
-    // resolves all of them.
+    // Count route entries — the stress demo generates its routes via
+    // Array.from loops (original ~14k) plus the scripts/gen-groups.mjs hub
+    // groups (50 x ~240) that the static parser cannot see. Runtime
+    // discovery resolves all of them; 26,363 at the current scale.
     const routeLines = content.match(/^\s+["a-zA-Z_$][^:]*: "[^"]+",$/gm);
     expect(routeLines).not.toBeNull();
-    expect(routeLines!.length).toBeGreaterThanOrEqual(10000);
+    expect(routeLines!.length).toBeGreaterThanOrEqual(25000);
+  });
+
+  test("should contain hub, mega-chain, and overlap-group routes", async () => {
+    const content = await fs.readFile(genFilePath, "utf-8");
+
+    // Sibling async includes via the /g hub (generated groups)
+    expect(content).toContain('"g.g001.benchFirst": "/g/g001/bench/first"');
+    expect(content).toContain('"g.g050.benchLast": "/g/g050/bench/last"');
+    // Catch-alls and suffix params inside a generated group
+    expect(content).toContain('"g.g001.tree": "/g/g001/tree/:rest+"');
+    expect(content).toContain('"g.g001.blob": "/g/g001/blob/:rest*"');
+    expect(content).toContain(
+      '"g.g001.fileMinJs": "/g/g001/files/:file.min.js"',
+    );
+    // 3-level async include chain
+    expect(content).toContain('"mega.l2.l3.p1": "/mega/l2/l3/p1/:id?"');
+    // String-prefix overlap group and same-staticPrefix pair
+    expect(content).toContain('"siteAdmin.p1": "/site-admin/p1"');
+    expect(content).toContain('"dupCat.catPage1": "/dup/:cat/cat-page1"');
+    expect(content).toContain(
+      '"dupBrand.brandPage1": "/dup/:brand/brand-page1"',
+    );
   });
 
   test("should not have double-slash patterns", async () => {

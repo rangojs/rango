@@ -100,7 +100,6 @@ const MOUNT_SITE_ALLOWED_TYPES: Record<string, Set<string>> = {
     "notFoundBoundary",
     "layout",
     "route",
-    "when",
     "transition",
   ]),
   // LoaderUseItem — only revalidate + cache can attach to a loader entry

@@ -9,6 +9,10 @@ import {
   getLocationState,
 } from "../../server/request-context.js";
 import { redirect } from "../redirect.js";
+import {
+  EXTERNAL_REDIRECT_MARKER,
+  isExternalRedirect,
+} from "../../redirect-origin.js";
 import type { LocationStateEntry } from "../../browser/react/location-state-shared.js";
 
 /** Minimal location state entry for testing. */
@@ -52,6 +56,39 @@ describe("redirect()", () => {
   it("accepts an options object with status", () => {
     const res = redirect("/target", { status: 307 });
     expect(res.status).toBe(307);
+  });
+
+  describe("external opt-in", () => {
+    // The opt-in is an out-of-band brand on the Response object (a WeakSet
+    // membership), NOT a wire header -- a header would be forgeable by an
+    // attacker-controlled upstream response. No external wire header is ever set.
+    it("does NOT brand or set any external wire header by default", () => {
+      const relative = redirect("/target");
+      expect(isExternalRedirect(relative)).toBe(false);
+      expect(relative.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+
+      const absolute = redirect("https://accounts.example.com/oauth");
+      expect(isExternalRedirect(absolute)).toBe(false);
+      expect(absolute.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    });
+
+    it("brands the Response when external: true (no wire header)", () => {
+      const res = redirect("https://accounts.example.com/oauth", {
+        external: true,
+      });
+      expect(isExternalRedirect(res)).toBe(true);
+      // The opt-in never rides a wire header.
+      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+    });
+
+    it("does not brand when external is false", () => {
+      const res = redirect("/target", { external: false });
+      expect(isExternalRedirect(res)).toBe(false);
+      expect(res.headers.get(EXTERNAL_REDIRECT_MARKER)).toBeNull();
+    });
   });
 
   describe("state", () => {

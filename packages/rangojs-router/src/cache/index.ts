@@ -4,9 +4,12 @@ export type {
   CacheGetResult,
   CacheItemResult,
   CacheItemOptions,
+  ShellCacheEntry,
   SerializedSegmentData,
   SegmentHandleData,
+  CacheReadError,
 } from "./types.js";
+export { CACHE_READ_ERROR } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 
@@ -22,7 +25,26 @@ export {
   EDGE_LOOKUP_TIMEOUT_MS,
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
+  createCloudflareZonePurge,
+  type CloudflareZonePurgeOptions,
 } from "./cf/index.js";
+
+export {
+  VercelCacheStore,
+  type VercelCacheStoreOptions,
+  type VercelRuntimeCache,
+  type VercelCacheDebug,
+  type VercelCacheReadDebugEvent,
+  type VercelCacheReadOutcome,
+  VERCEL_MAX_ITEM_BYTES,
+  VERCEL_MAX_TAGS_PER_ITEM,
+  VERCEL_MAX_TAG_BYTES,
+} from "./vercel/index.js";
+
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./search-params-filter.js";
 
 export { CacheScope, createCacheScope } from "./cache-scope.js";
 

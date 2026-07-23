@@ -53,6 +53,7 @@ import { defineConfig } from "vitest/config";
 import {
   rangoTestAliases,
   rangoUseClientTransform,
+  rangoInlineDeps,
 } from "@rangojs/router/testing/vitest";
 
 // Production React in this process AND any forked worker (forks inherit env).
@@ -69,6 +70,8 @@ export default defineConfig({
     include: ["**/*.rsc-test.{ts,tsx}"],
     pool: "forks",
     execArgv: ["--conditions=react-server"], // or React throws "react-server condition must be enabled"
+    // Required for an installed consumer on Node >= 23 (rango ships TS source).
+    server: { deps: { inline: rangoInlineDeps } },
   },
 });
 ```
@@ -106,7 +109,7 @@ Scripts:
 
 - Node >= 23 requires `rangoTestConfig()`, not bare `rangoTestAliases()`. `@rangojs/router` is consumed as SOURCE (exports -> `./src/*.ts`), and Node >= 23 refuses to type-strip `.ts` under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). `rangoTestConfig` ships as compiled JS AND adds `server.deps.inline: [/@rangojs[/\\]router/]` so Vite (not Node) transpiles rango source. With bare `rangoTestAliases` you must wire `deps.inline` yourself.
 - Two separate projects. The node/DOM project keeps React on its CLIENT build; the Flight project uses the `react-server` condition in a separate `vitest.rsc.config.ts`. The main project must NOT set `react-server` — it flips React to the no-hooks server build and breaks every `renderRoute` / client test.
-- The rsc project needs BOTH `resolve.conditions: ["react-server"]` AND the bare `@rangojs/router` -> `index.rsc.ts` alias from `rangoTestAliases({ preset })`. `resolve.conditions` alone is not reliably applied to bare-package export resolution; without the alias a handler/component reading `getRequestContext()` / `cookies()` resolves the throwing out-of-react-server stub (symptom: `renderHandler` returns `tree: undefined`).
+- The rsc project needs BOTH `resolve.conditions: ["react-server"]` AND the bare `@rangojs/router` -> `index.rsc.ts` alias from `rangoTestAliases({ preset })`. `resolve.conditions` alone is not reliably applied to bare-package export resolution; without the alias a handler/component reading `getRequestContext()` / `cookies()` resolves the throwing out-of-react-server stub (symptom: `renderHandler` returns `tree: undefined`). `renderToFlightString` / `renderServerTree` now self-diagnose this exact misconfiguration — they reject with an actionable message naming `rangoTestAliases`, rather than surfacing the opaque stub error.
 - `NODE_ENV` must be `"production"` in the rsc project. Dev `NODE_ENV` crashes the bare worker (jsxDEV owner-stack machinery uninitialized) and emits volatile debug rows that defeat stable Flight snapshots.
 - The forked rsc worker (`pool: "forks"`) must force the condition via `execArgv: ["--conditions=react-server"]`, or React throws "the react-server condition must be enabled".
 - The `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` virtuals must be stubbed; the preset does it. A bare router import without stubbing throws.

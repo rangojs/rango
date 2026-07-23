@@ -1,0 +1,117 @@
+---
+title: Debug Manifest
+description: Inspect the generated route manifest when a path matches the wrong handler or the route tree isn't shaped how you expect.
+type: guide
+---
+
+A path resolves to the wrong handler, a layout isn't wrapping its children, or an intercept never fires. The debug manifest shows you the route tree Rango actually built — parent relationships, shortCodes, and per-route flags — so you can verify structure instead of guessing.
+
+## Programmatic access
+
+Call `router.debugManifest()` in development — an `async` method that returns a summarized `{ routes, layouts, totalRoutes, totalLayouts }` shape:
+
+```ts
+import { router } from "./router.js";
+
+// Only in development
+if (process.env.NODE_ENV !== "production") {
+  const manifest = await router.debugManifest();
+  console.log(JSON.stringify(manifest, null, 2));
+}
+```
+
+A typical result:
+
+```jsonc
+{
+  "routes": {
+    "home.index": {
+      "id": "debug.M0.$root.$route.0.home.index",
+      "shortCode": "M0L0R0",
+      "type": "route",
+      "parentShortCode": "M0L0",
+      "pattern": "/",
+      "hasLoader": false,
+      "hasMiddleware": false,
+      "hasErrorBoundary": false,
+      "parallelCount": 0,
+      "interceptCount": 0,
+    },
+  },
+  "layouts": {
+    "debug.M0.$root": {
+      "id": "debug.M0.$root",
+      "shortCode": "M0L0",
+      "type": "layout",
+      "parentShortCode": null,
+    },
+  },
+  "totalRoutes": 45,
+  "totalLayouts": 18,
+}
+```
+
+## Reading shortCodes
+
+A shortCode encodes a node's position in the tree, one prefix per level:
+
+| Prefix | Meaning                                  |
+| ------ | ---------------------------------------- |
+| **M**  | Mount index (multiple `.routes()` calls) |
+| **L**  | Layout                                   |
+| **C**  | Cache boundary                           |
+| **R**  | Route                                    |
+| **P**  | Parallel slot                            |
+
+Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route.
+
+## What to verify
+
+1. **Routes have parents**: `parentShortCode` should NOT be `null` (except the root layout).
+2. **Correct hierarchy**: the shortCode should reflect nesting — `M0L0R0`, not `M0R0`.
+3. **Loaders attached**: `hasLoader: true` on routes with data requirements.
+4. **Intercepts registered**: `interceptCount > 0` for modal/overlay patterns (see [Intercepting Routes](/docs/rango/guides/intercepting-routes)).
+
+## Diffing manifests across a change
+
+To pin down exactly what a refactor changed, capture a manifest before and after and diff them:
+
+```ts
+import {
+  serializeManifest,
+  compareManifests,
+  formatManifestDiff,
+} from "@rangojs/router/__internal";
+
+const oldManifest = await router.debugManifest();
+// ... make changes ...
+const newManifest = await router.debugManifest();
+
+const diff = compareManifests(oldManifest, newManifest);
+console.log(formatManifestDiff(diff));
+```
+
+These come from the `__internal` subpath — debugging utilities, not public API surface.
+
+## Common issues
+
+### Routes have `parentShortCode: null`
+
+Routes should have a layout parent. Check that the `urls()` handler is being wrapped in the root layout.
+
+### Layouts missing from the hierarchy
+
+Verify your `layout()` calls wrap the child routes correctly — see [Layouts](/docs/rango/guides/layouts).
+
+### Wrong mount index
+
+Multiple `.routes()` calls create separate mounts (`M0`, `M1`, …). Use `include()` to share context instead.
+
+<Cards>
+  <Card href="/docs/rango/features/routing" title="Routing">
+    How patterns, layouts, and mounts compose into the tree you're inspecting.
+  </Card>
+  <Card href="/docs/rango/guides/parallel-routes" title="Parallel Routes">
+    Where `parallelCount` and `P` shortCode segments come from.
+  </Card>
+</Cards>

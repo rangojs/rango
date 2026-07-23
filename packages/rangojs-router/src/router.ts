@@ -5,10 +5,14 @@ import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  isValidDevDiscoveryEpoch,
+} from "./dev-discovery-protocol.js";
 import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
   registerRouteMap,
-  getPrecomputedEntries,
   getRouterManifest,
   getRouterPrecomputedEntries,
   ensureRouterManifest,
@@ -63,7 +67,7 @@ import {
 import { loadManifest } from "./router/manifest.js";
 import { createMetricsStore } from "./router/metrics.js";
 import {
-  parsePattern,
+  compileMiddlewarePattern,
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "./router/middleware.js";
@@ -73,6 +77,7 @@ import {
   traverseBack,
 } from "./router/pattern-matching.js";
 import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
+import { resolveTracing } from "./router/tracing.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
@@ -109,6 +114,12 @@ import {
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
 import { resolveStateCookieName } from "./router/state-cookie-name.js";
+import { resolvePrefetchCacheTTL } from "./router/prefetch-cache-ttl.js";
+import { resolveDefaultPrefetch } from "./router/prefetch-default.js";
+import {
+  resolvePrefetchCacheSize,
+  resolvePrefetchConcurrency,
+} from "./router/prefetch-limits.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -148,10 +159,13 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     prefetchCacheTTL: prefetchCacheTTLOption,
+    prefetchCacheSize: prefetchCacheSizeOption,
+    prefetchConcurrency: prefetchConcurrencyOption,
+    defaultPrefetch: defaultPrefetchOption,
     stateCookiePrefix: stateCookiePrefixOption,
     warmup: warmupOption,
-    allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
+    tracing: tracingOption,
     ssr: ssrOption,
     timeout: timeoutShorthand,
     timeouts: timeoutsOption,
@@ -159,6 +173,8 @@ export function createRouter<TEnv = any>(
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
     debugCacheSignal: debugCacheSignalOption = false,
+    debugShellCapture: debugShellCaptureOption,
+    strictMode: strictModeOption = true,
   } = options;
 
   // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
@@ -177,6 +193,10 @@ export function createRouter<TEnv = any>(
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
+
+  // Resolve span tracing (undefined when not configured; every traceSpan() call
+  // is then a direct pass-through with zero behavior change).
+  const resolvedTracing = resolveTracing(tracingOption);
 
   // Resolve cache profiles: merge user config with the guaranteed default
   // profile. This resolved map is threaded onto each request context; the
@@ -215,6 +235,14 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+  const rawDevDiscoveryEpoch = (
+    globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    }
+  ).__RANGO_DEV_DISCOVERY_EPOCH;
+  const devDiscoveryEpoch = isValidDevDiscoveryEpoch(rawDevDiscoveryEpoch)
+    ? rawDevDiscoveryEpoch
+    : undefined;
 
   // Resolve the rango state cookie name once, here, so the two cookie writers
   // (the client document.cookie writer and the server Set-Cookie writer)
@@ -224,20 +252,35 @@ export function createRouter<TEnv = any>(
     routerId,
   );
 
-  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
-  // Clamp to a non-negative integer for valid Cache-Control max-age.
-  const rawTTL =
-    prefetchCacheTTLOption !== undefined ? prefetchCacheTTLOption : 300;
-  const prefetchCacheTTLSeconds =
-    rawTTL === false ? 0 : Math.max(0, Math.floor(rawTTL));
-  const prefetchCacheTTL = prefetchCacheTTLSeconds * 1000;
+  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes). Clamps to a
+  // non-negative integer and guards non-finite (NaN/Infinity) inputs so a
+  // malformed `Cache-Control: max-age=NaN` can never reach the wire.
+  const resolvedPrefetchCacheTTL = resolvePrefetchCacheTTL(
+    prefetchCacheTTLOption,
+  );
+  const prefetchCacheTTL = resolvedPrefetchCacheTTL.ms;
   const prefetchCacheControl: string | false =
-    prefetchCacheTTLSeconds === 0
-      ? false
-      : `private, max-age=${prefetchCacheTTLSeconds}`;
+    resolvedPrefetchCacheTTL.cacheControl;
+
+  // Resolve client-side prefetch limits (in-memory cache size and queue
+  // concurrency). Both are positive-integer counts; sub-1/non-finite inputs
+  // fall back to the defaults. Shipped to the client in payload metadata.
+  const prefetchCacheSize = resolvePrefetchCacheSize(prefetchCacheSizeOption);
+  const prefetchConcurrency = resolvePrefetchConcurrency(
+    prefetchConcurrencyOption,
+  );
+
+  // Resolve the router-wide default Link prefetch strategy ("none" in dev,
+  // "viewport" in production). Links without an explicit prop fall back to it.
+  const defaultPrefetch = resolveDefaultPrefetch(defaultPrefetchOption);
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
+
+  // Resolve StrictMode flag (default: true). Shipped to the client in payload
+  // metadata; the browser entry reads it once to decide whether to wrap the
+  // hydrated tree in React.StrictMode.
+  const strictMode = strictModeOption !== false;
 
   // Resolve theme config (null if theme not enabled)
   const resolvedThemeConfig = themeOption
@@ -341,7 +384,7 @@ export function createRouter<TEnv = any>(
     let regex: RegExp | null = null;
     let paramNames: string[] = [];
     if (fullPattern) {
-      const parsed = parsePattern(fullPattern);
+      const parsed = compileMiddlewarePattern(fullPattern);
       regex = parsed.regex;
       paramNames = parsed.paramNames;
     }
@@ -380,8 +423,7 @@ export function createRouter<TEnv = any>(
     string,
     Record<string, string>
   > | null {
-    const current =
-      getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    const current = getRouterPrecomputedEntries(routerId);
     if (current !== precomputedSource) {
       precomputedSource = current;
       // buildPrecomputedByPrefix drops any staticPrefix owned by more than one
@@ -395,14 +437,17 @@ export function createRouter<TEnv = any>(
 
   // Wrapper to pass debugPerformance to external createMetricsStore.
   // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  // With no active request context there is nowhere to hang the store, so return
+  // undefined: an orphan store would collect metrics no reader can reach (nothing
+  // holds it, and appendMetric(undefined, ...) is already a no-op).
   const getMetricsStore = () => {
     const reqCtx = _getRequestContext();
     const enabled = debugPerformance || !!reqCtx?._debugPerformance;
-    if (!enabled) return undefined;
-    if (!reqCtx) {
-      return createMetricsStore(true);
-    }
-    reqCtx._metricsStore ??= createMetricsStore(true);
+    if (!enabled || !reqCtx) return undefined;
+    // Anchor a mid-request store to the true request entry (reqCtx._handlerStart),
+    // not this call's performance.now(); undefined falls back to now() inside
+    // createMetricsStore (metrics.ts).
+    reqCtx._metricsStore ??= createMetricsStore(true, reqCtx._handlerStart);
     return reqCtx._metricsStore;
   };
 
@@ -412,11 +457,6 @@ export function createRouter<TEnv = any>(
 
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
-
-  // Helper to get handleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return _getRequestContext()?._handleStore;
-  };
 
   // Track a pending handler promise (non-blocking).
   // Attaches a side-effect .catch() to report streaming handler errors to onError
@@ -428,13 +468,14 @@ export function createRouter<TEnv = any>(
       segmentType?: string;
     },
   ): Promise<T> => {
-    const store = getHandleStore();
+    // One ALS read serves both the store lookup and the onError closure.
+    const reqCtx = _getRequestContext();
+    const store = reqCtx?._handleStore;
     const tracked = store ? store.track(promise) : promise;
 
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    const reqCtx = _getRequestContext();
     if (reqCtx && onError) {
       tracked.catch((error) => {
         callOnError(error, "handler", {
@@ -476,8 +517,12 @@ export function createRouter<TEnv = any>(
         ? getRequestId(errorContext.request)
         : undefined
       : undefined;
+    // Derived once here for both the loader.start and loader.end emits (the
+    // loader.error emit uses ctx.loaderName from wrapLoaderWithErrorHandling).
+    const loaderName = telemetrySink
+      ? segmentId.split(".").pop() || "unknown"
+      : "";
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
@@ -531,7 +576,6 @@ export function createRouter<TEnv = any>(
 
     // Emit loader.end after the promise settles (fire-and-forget)
     if (telemetrySink) {
-      const loaderName = segmentId.split(".").pop() || "unknown";
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",
@@ -595,8 +639,15 @@ export function createRouter<TEnv = any>(
     routerId,
   };
 
-  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    _evaluateLazyEntry(entry, lazyEvalDeps);
+  // Must return the Promise from _evaluateLazyEntry: an async include provider
+  // (`() => import("./routes")`) resolves off the startup path, and createFindMatch
+  // awaits this to know when the import + expansion have completed. Dropping it
+  // (typing this `void`) makes the import fire-and-forget, so findMatch spins the
+  // lazy-eval retry loop to its cap and returns null on the first request to any
+  // async include whose prefix isn't already covered by a unique precomputed entry
+  // (nested includes, shared prefixes, regex fallback).
+  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void | Promise<void> {
+    return _evaluateLazyEntry(entry, lazyEvalDeps);
   }
 
   // Create findMatch with single-entry cache, bound to router state
@@ -635,6 +686,7 @@ export function createRouter<TEnv = any>(
 
   // Prerender/static match deps (bind closure state for extracted functions)
   const prerenderDeps = {
+    routerId,
     findMatch,
     buildRouterContext,
     mergedRouteMap,
@@ -666,6 +718,7 @@ export function createRouter<TEnv = any>(
     routeName?: string,
     buildEnv?: TEnv,
     devMode?: boolean,
+    rootScoped?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -674,6 +727,8 @@ export function createRouter<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      routerId,
+      rootScoped,
     );
   }
 
@@ -754,6 +809,7 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          routerId,
           cacheProfiles: resolvedCacheProfiles,
           // basename sets the initial URL prefix so all path() patterns
           // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
@@ -957,6 +1013,9 @@ export function createRouter<TEnv = any>(
     // Expose prefetch cache settings
     prefetchCacheControl,
     prefetchCacheTTL,
+    prefetchCacheSize,
+    prefetchConcurrency,
+    defaultPrefetch,
 
     // Expose the resolved rango state cookie name for the server-side writer
     // (invalidateClientCache) and for shipping to the client in metadata.
@@ -965,11 +1024,24 @@ export function createRouter<TEnv = any>(
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
 
+    // Expose StrictMode flag for the initial-render payload metadata
+    strictMode,
+
     // Expose router-wide performance debugging for request-level metrics setup
     debugPerformance,
 
-    // Expose debug manifest flag for handler
-    allowDebugManifest: allowDebugManifestOption,
+    // Expose the PPR shell-capture debug sink for the render layer
+    // (rsc-rendering resolves it into the capture descriptor)
+    debugShellCapture: debugShellCaptureOption,
+
+    // Expose resolved span tracing for the handler (Cloudflare custom spans)
+    tracing: resolvedTracing,
+
+    // Expose the raw telemetry sink so handler-level emitters (timeout, origin
+    // rejection, late-handle handler.error) can emit outside the match ALS.
+    // Raw (not the resolveSink no-op wrapper) so router.telemetry stays
+    // undefined when unconfigured and call sites gate on truthiness.
+    telemetry: telemetrySink,
 
     // Expose origin check configuration for handler (default: enabled)
     originCheck: originCheckOption ?? true,
@@ -1029,6 +1101,9 @@ export function createRouter<TEnv = any>(
     // Expose basename for runtime manifest generation
     __basename: basename,
 
+    // Pin payload metadata to the worker generation that created this router.
+    __devDiscoveryEpoch: devDiscoveryEpoch,
+
     // Expose router-level boundary defaults for build-time clientChunks
     // discovery (so a "use client" default boundary lands in app-fallback).
     // These are createRouter options, never pushed onto EntryData.
@@ -1047,6 +1122,18 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        if (
+          devDiscoveryEpoch !== undefined &&
+          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
+            String(devDiscoveryEpoch)
+        ) {
+          return new Response(null, {
+            headers: {
+              [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),
+            },
+          });
+        }
+
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);

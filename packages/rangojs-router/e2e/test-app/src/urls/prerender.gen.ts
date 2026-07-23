@@ -3,5 +3,14 @@ export const routes = {
   changelog: "/changelog",
   docs: "/docs",
   "docs.article": "/docs/:slug",
+  "pp.article": "/pp/:slug",
+  "pp.build-dynamic": "/pp-build-dynamic/:slug",
+  "pp.evict": "/pp-evict/:slug",
+  "pp.runtime-dynamic": "/pp-runtime-dynamic/:slug",
+  "prerender-handle": "/prerender-handle",
+  "prerender-reverse": "/prerender-reverse",
+  "static-page": "/static-page",
+  "static-reverse": "/static-reverse",
+  "static-shell": "/static-shell/:tag",
 } as const;
 export type routes = typeof routes;

@@ -12,12 +12,35 @@ import {
 } from "../../server/cookie-store.js";
 import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { Counter } from "./fixtures/Counter.js";
+import { getRequestContext } from "../../server/request-context.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { HandlerContext } from "../../types/handler-context.js";
 
 const Tenant = createVar<{ name: string }>();
 const ProductLoader = createLoader(async () => ({ name: "Wine", price: 9 }));
 
 describe("renderHandler", () => {
+  test("accepts one inferred async handler with React and Response branches", async () => {
+    const MixedPage = async (ctx: HandlerContext<{ slug: string }>) =>
+      ctx.params.slug === "redirect" ? (
+        redirect("/login")
+      ) : (
+        <main>{ctx.params.slug}</main>
+      );
+
+    const rendered = await renderHandler(MixedPage, {
+      params: { slug: "article" },
+    });
+    expect(JSON.stringify(rendered.tree)).toContain("article");
+
+    const redirected = await renderHandler(MixedPage, {
+      params: { slug: "redirect" },
+    });
+    expect(redirected.tree).toBeUndefined();
+    expect(redirected.response.status).toBe(302);
+    expect(redirected.response.headers.get("location")).toBe("/login");
+  });
+
   test("runs a real handler: params + ctx.use(Loader) + ctx.get + renders RSC", async () => {
     async function ProductPage(ctx: HandlerContext<{ slug: string }>) {
       const product = await ctx.use(ProductLoader);
@@ -45,6 +68,66 @@ describe("renderHandler", () => {
     expect(json).toContain("Wine");
     expect(json).toContain("wine"); // the slug param
     expect(json).toContain("9");
+  });
+
+  test("ctx.dynamic() + ctx.headers.set() compose in one handler (#735 markSfraProxy collapse)", async () => {
+    // The consumer collapse from issue #735: a dynamic() route can write its
+    // control-flow header straight from the handler (no middleware relay). Both
+    // effects are observable through the public primitive — result.dynamic AND
+    // the header on result.headers. (The ppr-latch re-permit itself is pinned at
+    // the unit seam + dev/prod e2e; renderHandler runs no funnel latch.)
+    function SfraProxyPage(ctx: HandlerContext) {
+      ctx.dynamic();
+      ctx.headers.set("x-rango-sfra-proxy", "catalog");
+      return <div>proxied</div>;
+    }
+
+    const { dynamic, headers } = await renderHandler(SfraProxyPage);
+    expect(dynamic).toBe(true);
+    expect(headers["x-rango-sfra-proxy"]).toBe("catalog");
+  });
+
+  test("seeded ctx.use(Loader) returns a Promise (production parity)", async () => {
+    // Production ctx.use(Loader) ALWAYS returns a Promise. The seeded harness
+    // path must too, so a handler composing on the result (.then/Promise.race)
+    // behaves the same as in a real render. Before the fix it returned the raw
+    // value, so `.then` was undefined.
+    async function Page(ctx: HandlerContext) {
+      const used = ctx.use(ProductLoader);
+      const isThenable =
+        used instanceof Promise && typeof used.then === "function";
+      const product = await used;
+      // Compose the marker into a single string so it serializes contiguously
+      // (Flight splits `{a}{b}` JSX into a children array, not one string).
+      const marker = `thenable=${isThenable}:name=${product.name}`;
+      return <main>{marker}</main>;
+    }
+    const { tree } = await renderHandler(Page, {
+      loaders: [[ProductLoader, { name: "Wine", price: 9 }]],
+    });
+    expect(JSON.stringify(tree)).toContain("thenable=true:name=Wine");
+  });
+
+  // #582 parity: renderHandler scopes the request-context reverse to the
+  // routeMap option (not only the handler context), so a NESTED server component
+  // reading getRequestContext().reverse() resolves against the same map as the
+  // handler's ctx.reverse -- consistent with renderToFlightString/renderServerTree.
+  test("a nested server component's getRequestContext().reverse scopes to the routeMap option", async () => {
+    async function NestedReverse() {
+      const ctx = getRequestContext();
+      return <a href={ctx.reverse("product", { id: "9" })}>go</a>;
+    }
+    function Page() {
+      return (
+        <main>
+          <NestedReverse />
+        </main>
+      );
+    }
+    const { tree } = await renderHandler(Page, {
+      routeMap: { product: "/scoped/products/:id" },
+    });
+    expect(JSON.stringify(tree)).toContain("/scoped/products/9");
   });
 
   test("captures handle pushes (ctx.use(Meta)) without crashing", async () => {
@@ -390,5 +473,124 @@ describe("renderHandler: ctx.use(Handle).defer()", () => {
     const [slot] = handles.get(Breadcrumbs) ?? [];
     expect(slot).toBeInstanceOf(Promise);
     expect(await slot).toEqual({ label: "Forgotten", href: "/forgotten" });
+  });
+
+  test('forwards cacheStore/cacheProfiles into the request context (so "use cache" does not bypass)', async () => {
+    // Dogfood the new renderHandler { cacheStore, cacheProfiles } options. The
+    // bypass-vs-cached decision in registerCachedFunction keys on
+    // requestCtx._cacheStore, so asserting the options reach it proves a handler
+    // invoking a "use cache" fn would take the cached path instead of the
+    // (warned) uncached bypass. (The bypass/warn behavior itself is pinned in
+    // cache/__tests__/cache-runtime-stale.test.ts, where @vitejs/plugin-rsc/rsc
+    // is mocked; it is not resolvable in a bare worker.)
+    const store = new MemorySegmentCacheStore();
+    function Page() {
+      const ctx = getRequestContext() as unknown as {
+        _cacheStore?: unknown;
+        _cacheProfiles?: Record<string, unknown>;
+      };
+      const hasStore = ctx._cacheStore === store;
+      const hasProfile = Boolean(ctx._cacheProfiles?.fast);
+      return <main>{`store=${hasStore} profile=${hasProfile}`}</main>;
+    }
+    const { tree } = await renderHandler(Page, {
+      cacheStore: store,
+      cacheProfiles: { fast: { ttl: 60 } },
+    });
+    expect(JSON.stringify(tree)).toContain("store=true profile=true");
+  });
+
+  test("inActionRevalidation option marks the request context (foregroundOnAction gate input)", async () => {
+    // The `foregroundOnAction` cache profile foregrounds a stale entry only when
+    // requestCtx._inActionRevalidation is set (production sets it in
+    // revalidateAfterAction). This dogfoods the new renderHandler option and
+    // pins that it reaches that exact field, so a consumer can drive the
+    // foregroundOnAction path from a test. The foreground-vs-SWR decision the
+    // field gates is pinned in cache/__tests__/cache-runtime-stale.test.ts (where
+    // @vitejs/plugin-rsc/rsc is mocked, since cache-runtime is not importable in
+    // this bare react-server worker).
+    function Page() {
+      const ctx = getRequestContext() as unknown as {
+        _inActionRevalidation?: boolean;
+      };
+      return (
+        <main>{`actionRevalidation=${ctx._inActionRevalidation === true}`}</main>
+      );
+    }
+    const on = await renderHandler(Page, { inActionRevalidation: true });
+    expect(JSON.stringify(on.tree)).toContain("actionRevalidation=true");
+    // Default (a plain render / navigation): the flag is unset, so a stale entry
+    // would keep SWR.
+    const off = await renderHandler(Page);
+    expect(JSON.stringify(off.tree)).toContain("actionRevalidation=false");
+  });
+
+  // Dogfood ctx.theme / ctx.setTheme — documented HandlerContext members. The
+  // theme option resolves a ThemeConfig and seeds it into the request context;
+  // ctx.setTheme writes the theme cookie (default storageKey "theme"), captured
+  // in the run's cookie snapshot.
+  test("theme option enables ctx.theme and ctx.setTheme writes the cookie", async () => {
+    let observed: string | undefined;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      ctx.setTheme?.("dark");
+      return <main>ok</main>;
+    }
+    const { cookies, response } = await renderHandler(Page, { theme: true });
+    // Default theme is "system".
+    expect(observed).toBe("system");
+    expect(cookies.theme).toBe("dark");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("theme=dark")),
+    ).toBe(true);
+  });
+
+  test("ctx.theme reflects an incoming theme cookie", async () => {
+    let observed: string | undefined;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      return <main>ok</main>;
+    }
+    await renderHandler(Page, {
+      theme: true,
+      headers: { Cookie: "theme=dark" },
+    });
+    expect(observed).toBe("dark");
+  });
+
+  test("ctx.theme / ctx.setTheme are inert without the theme option", async () => {
+    let observed: string | undefined = "unset";
+    let hadSetter = true;
+    function Page(ctx: HandlerContext) {
+      observed = ctx.theme;
+      hadSetter = typeof ctx.setTheme === "function";
+      ctx.setTheme?.("dark");
+      return <main>ok</main>;
+    }
+    const { cookies } = await renderHandler(Page);
+    expect(observed).toBeUndefined();
+    expect(hadSetter).toBe(false);
+    expect(cookies.theme).toBeUndefined();
+  });
+
+  test("ctx.build reflects opts.build and ctx.dynamic() surfaces on result.dynamic", async () => {
+    // A handler branching on ctx.build (the build-time PPR pass) and opting the
+    // request out of shell capture on a MISS must be unit-testable through the
+    // public primitive; result.dynamic surfaces the opt-out without reading the
+    // @internal ctx._dynamic.
+    let observedBuild: boolean | undefined;
+    function Page(ctx: HandlerContext) {
+      observedBuild = ctx.build;
+      if (ctx.build) ctx.dynamic();
+      return <main>ok</main>;
+    }
+
+    const built = await renderHandler(Page, { build: true });
+    expect(observedBuild).toBe(true);
+    expect(built.dynamic).toBe(true);
+
+    const live = await renderHandler(Page, {});
+    expect(observedBuild).toBe(false);
+    expect(live.dynamic).toBe(false);
   });
 });

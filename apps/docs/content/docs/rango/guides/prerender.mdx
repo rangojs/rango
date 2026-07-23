@@ -1,0 +1,222 @@
+---
+title: Prerender
+description: Render route segments at build time as a cache write — the worker serves stored Flight payloads instead of executing handler code.
+type: guide
+---
+
+You have pages whose content is mostly static — markdown docs, a marketing page, known product pages — and rendering them on every request is wasted work. `Prerender()` renders them once, at build time. This is **caching at build time**: same serialization format, same deserialization path, same segment system as the runtime `cache()` DSL. The worker handles every request — there are no static `.html` or `.rsc` files served from assets. At request time the worker reads the pre-computed Flight payload instead of executing handler code, and the browser cannot tell the difference.
+
+If you want a cached HTML shell with holes staying live, that is [PPR](/docs/rango/guides/ppr). An ordinary `ppr` route captures at runtime; a `Prerender` route that also declares the `ppr` path option produces its HTML shell during the build. For runtime segment caching with TTL/SWR, use the `cache()` DSL — see [Caching](/docs/rango/features/caching). Prerender is the same cache, filled during the build.
+
+## The shortest path
+
+A static route — one argument, the build-time handler:
+
+```tsx
+import { Prerender } from "@rangojs/router";
+
+export const AboutPage = Prerender(async (ctx) => {
+  const content = await fs.readFile("content/about.md", "utf-8");
+  return <Page content={markdownToJsx(content)} />;
+});
+
+// urls.tsx
+path("/about", AboutPage, { name: "about" });
+```
+
+A dynamic route — params first, handler second:
+
+```tsx
+export const BlogPost = Prerender(
+  // 1. Params: which slugs to pre-render
+  async () => {
+    const files = await glob("content/blog/*.md");
+    return files.map((f) => ({ slug: basename(f, ".md") }));
+  },
+  // 2. Handler: runs at build time with BuildContext
+  async (ctx) => {
+    const md = await fs.readFile(`content/${ctx.params.slug}.md`, "utf-8");
+    return <Article content={markdownToJsx(md)} />;
+  },
+);
+
+// urls.tsx
+path("/blog/:slug", BlogPost, { name: "blog.post" });
+```
+
+Two things to know up front. Routes using `Prerender` must have a `name` in path options — it is the storage key for the Flight payloads. And in production builds the handler is **evicted**: the export is replaced with a stub, so the handler code and its imports (`node:fs`, glob, markdown pipeline) never ship in the worker bundle. That eviction is also why build-only APIs are fine here.
+
+## Passthrough: a live fallback for unknown params
+
+Plain `Prerender` serves only the params you enumerated — the handler is gone at runtime, so an unknown param has no fallback. When the param space is open-ended (user profiles, a large catalog), wrap the definition with `Passthrough()` to add a separate live handler:
+
+```tsx
+import { Prerender, Passthrough } from "@rangojs/router";
+
+export const ProductPageDef = Prerender(
+  async () => {
+    const top = await db.query("SELECT id FROM products WHERE featured");
+    return top.map((p) => ({ id: p.id }));
+  },
+  async (ctx) => {
+    const product = await db.query(
+      "SELECT * FROM products WHERE id = ?",
+      ctx.params.id,
+    );
+    return <Product data={product} />;
+  },
+  { concurrency: 4 },
+);
+
+// urls.tsx
+path(
+  "/products/:id",
+  Passthrough(ProductPageDef, async (ctx) => {
+    const product = await ctx.env.DB.query(
+      "SELECT * FROM products WHERE id = ?",
+      ctx.params.id,
+    );
+    return <Product data={product} />;
+  }),
+  { name: "product" },
+);
+```
+
+The build and live handlers are separate functions — no `ctx.build` branching. The build handler is still evicted; only the live handler ships.
+
+|                     | Plain `Prerender`                       | `Passthrough(def, liveHandler)`          |
+| ------------------- | --------------------------------------- | ---------------------------------------- |
+| Known params        | Served from pre-rendered Flight payload | Served from pre-rendered Flight payload  |
+| Unknown params      | Handler evicted, no live fallback       | Live handler runs at request time        |
+| `ctx.passthrough()` | Throws (not on Passthrough route)       | Skips artifact, defers to live handler   |
+| Bundle size         | Build handler code + imports removed    | Build handler evicted, live handler kept |
+| `revalidate()`      | Not allowed (handler gone)              | Allowed (live handler can re-render)     |
+| `loading()`         | Ignored (segments fully resolved)       | Works for live fallback renders          |
+
+Reach for `Passthrough()` when the param space is open-ended, when you want popular params fast but the rest served live, when you need `revalidate()`, or when the live handler needs runtime bindings like `ctx.env.DB`. Stay with plain `Prerender` when all params are known at build time, when you want maximum bundle reduction, or when the route uses build-only APIs not available at runtime.
+
+## What the handler sees: BuildContext
+
+At build time the handler receives `BuildContext`, a subset of the runtime `HandlerContext`: `params`, `build: true`, `dev`, `use` (push handle data), `url`/`pathname`/`searchParams` from a synthetic URL, typed `search` (always `{}` — there is no real query string), `set`/`get` for context variables, `reverse` for URL generation, `passthrough()` (Passthrough routes only), and `env` (available when `buildEnv` is configured in `rango()`, throws otherwise). Not available: `request`, `headers`, `cookies` — they always throw.
+
+Everything inside the path's `use()` callback — child layouts, parallels — is part of the pre-rendered segment and also receives `BuildContext` during the same render pass, so `ctx.set()` with a `createVar<T>()` variable is readable downstream via `ctx.get()`. Loaders are the exception: they always run at request time with full server context.
+
+```tsx
+import { Prerender, createVar } from "@rangojs/router";
+
+interface PaginationData {
+  current: number;
+  total: number;
+}
+export const Pagination = createVar<PaginationData>();
+
+export const ArticleList = Prerender<{ page: string }>(
+  async () => [{ page: "1" }, { page: "2" }],
+  async (ctx) => {
+    ctx.set(Pagination, { current: Number(ctx.params.page), total: 2 });
+    return <Articles />;
+  },
+);
+```
+
+If a parallel slot or child layout uses node APIs, wrap it in `Prerender` too (static form, no getParams) so the Vite plugin can stub it out of the bundle.
+
+## How the DSL items behave
+
+| DSL item       | Behavior with Prerender                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                     |
+| `revalidate()` | Not allowed without Passthrough (build-time warning). Allowed with Passthrough.                                                                   |
+| `cache()`      | Orthogonal — use on parent layouts and loaders.                                                                                                   |
+| `layout()`     | Child layouts inside the path are pre-rendered. Parent layouts are live.                                                                          |
+| `parallel()`   | Parallel slots inside the path are pre-rendered.                                                                                                  |
+| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                         |
+| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                            |
+| `intercept()`  | Pre-rendered too, stored under an `/i` key; the runtime picks the variant via `ctx.isIntercept`. `when` conditions are evaluated at runtime only. |
+
+Two freshness facts that follow: handle values pushed via `ctx.use()` during pre-rendering are baked into the Flight payload and do not update at request time (the [Shell Manifest](/docs/rango/guides/shell-manifest) pattern turns this into a feature). And server actions work normally — they never re-render the pre-rendered segment; loaders stay live and can be revalidated by actions.
+
+### Combining Prerender with PPR
+
+Declare `ppr` on the same route to produce both the build-time Flight segments
+and the complete PPR shell:
+
+```tsx
+path("/blog/:slug", BlogPost, {
+  name: "blog.post",
+  ppr: { ttl: 600, swr: 120 },
+});
+```
+
+The build captures the shell after all environment bundles exist, reusing the
+just-produced Flight payload rather than executing the evicted handler. Global
+and route middleware run in the build capture with `ctx.build === true`;
+`ctx.waitUntil()` is inert, and `ctx.dynamic()` skips the build shell for that
+URL. At runtime middleware still runs before the shell is served. The shell is
+bundled into the worker/function — it is not emitted as a public HTML asset.
+
+## Skipping and per-param fallback
+
+Two levers control individual param sets during the build:
+
+- `throw new Skip("reason")` excludes the entry entirely — logged as `SKIP`, no artifact, no live fallback unless the route is wrapped in `Passthrough()`. Works in `Prerender` and `Static` handlers.
+- `return ctx.passthrough()` (Passthrough routes only) skips the local artifact and always defers that param to the live handler at runtime — logged as `PASS`. It throws on non-Passthrough routes and at runtime (`ctx.build === false`); it is build-time-only control flow.
+
+```tsx
+import { Prerender, Skip } from "@rangojs/router";
+
+export const BlogPost = Prerender(
+  async () => [{ slug: "published" }, { slug: "draft" }],
+  async (ctx) => {
+    if (ctx.params.slug === "draft") {
+      throw new Skip("Draft articles are not pre-rendered");
+    }
+    return <PostPage slug={ctx.params.slug} />;
+  },
+);
+```
+
+`ctx.passthrough()` also enables a remote-storage pattern: push rendered data to a KV store during the build, skip the local artifact, and let the Passthrough live handler read from KV at request time.
+
+A handler that throws a non-`Skip` error is surfaced to the build — never baked into a frozen error page served as a 200. The default `prerender.onError: "fail"` stops the build at the first failure; `rango({ prerender: { onError: "warn" } })` logs a `WARN`, leaves the URL un-baked, and continues. `"warn"` is a build-unblock, not a runtime contract — the un-baked route may render live or 404 depending on the rest of the build. For defined runtime behavior use `Passthrough()` or `throw new Skip()`; otherwise prefer the default.
+
+## Build output
+
+The build logs per-URL timings (`OK`/`PASS`/`SKIP`/`FAIL`) and writes Flight
+payloads as content-hashed modules behind a lazy manifest in the RSC server
+bundle:
+
+```
+dist/rsc/
+  __prerender-manifest.js
+  assets/
+    __pr-<content-hash>.js
+
+# When a Prerender route also declares ppr:
+  __shell-manifest.js
+  assets/
+    __ps-<content-hash>.js
+```
+
+Param sets render sequentially by default; pass `{ concurrency: 4 }` as the `Prerender` options to parallelize (only `Prerender` supports this — `Static` handlers always render sequentially). An empty `getParams` array writes nothing and is not an error.
+
+## Dev mode
+
+There is no production-style build pass in dev, and no handler stubbing:
+
+- **Node.js dev server** — `Prerender` acts as a normal handler; routes render live on every request with `ctx.build === false`. `Skip` behaves like a regular runtime error here.
+- **Non-Node runtimes (Cloudflare workerd, Deno workers)** — handlers depending on Node APIs cannot run in-process, so the Vite plugin resolves those requests through the `/__rsc_prerender` endpoint in a Node.js temp server. There the handler receives `BuildContext` (`ctx.build === true`) and segments resolve identically to production, served on-demand.
+
+<Cards>
+  <Card href="/docs/rango/guides/ppr" title="PPR">
+    HTML shell caching with live holes — captured on demand, or during the build
+    when combined with Prerender.
+  </Card>
+  <Card href="/docs/rango/guides/shell-manifest" title="Shell Manifest">
+    Feed IDs from a pre-rendered shell to live loaders — batched fresh data that
+    cannot desync from the frozen list.
+  </Card>
+  <Card href="/docs/rango/features/caching" title="Caching">
+    The runtime segment cache that Prerender fills at build time.
+  </Card>
+</Cards>

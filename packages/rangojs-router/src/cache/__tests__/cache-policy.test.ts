@@ -43,6 +43,26 @@ describe("resolveTtl", () => {
   it("allows defaults 0", () => {
     expect(resolveTtl(undefined, { ttl: 0 }, 120)).toBe(0);
   });
+
+  it("degrades a non-finite explicit ttl to the fallback", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveTtl(NaN, { ttl: 60 }, 120)).toBe(120);
+    expect(resolveTtl(Infinity, undefined, 120)).toBe(120);
+    warn.mockRestore();
+  });
+
+  it("degrades a negative explicit ttl to the fallback", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveTtl(-5, { ttl: 60 }, 120)).toBe(120);
+    warn.mockRestore();
+  });
+
+  it("degrades a non-finite/negative store-default ttl to the fallback", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveTtl(undefined, { ttl: NaN }, 120)).toBe(120);
+    expect(resolveTtl(undefined, { ttl: -1 }, 120)).toBe(120);
+    warn.mockRestore();
+  });
 });
 
 describe("resolveSwrWindow", () => {
@@ -64,6 +84,14 @@ describe("resolveSwrWindow", () => {
 
   it("allows explicit 0", () => {
     expect(resolveSwrWindow(0, { swr: 60 })).toBe(0);
+  });
+
+  it("degrades a non-finite/negative swr to 0 (no SWR window)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveSwrWindow(NaN, { swr: 60 })).toBe(0);
+    expect(resolveSwrWindow(-10, undefined)).toBe(0);
+    expect(resolveSwrWindow(undefined, { swr: Infinity })).toBe(0);
+    warn.mockRestore();
   });
 });
 

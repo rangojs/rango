@@ -42,7 +42,15 @@ import {
 } from "./internal/seed-vars.js";
 
 export type { StateCookieSeed } from "./internal/seed-vars.js";
-import { assertNoLegacyUrlOption, serializeNodeToFlight } from "./flight.js";
+import {
+  assertNoLegacyUrlOption,
+  serializeNodeToFlight,
+  isServerOnlyStubError,
+} from "./flight.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
+import type { ThemeConfig } from "../theme/types.js";
+import { resolveThemeConfig } from "../theme/constants.js";
 import {
   deserializeFlight,
   makeClientManifest,
@@ -54,7 +62,7 @@ const DEFAULT_URL = "http://localhost/";
 /** A route handler under test: the `(ctx) => RSC | Response` function you pass to `path(...)`. */
 export type TestableHandler<TEnv = any> = (
   ctx: HandlerContext<any, TEnv>,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+) => ReactNode | Response | Promise<ReactNode | Response>;
 
 /** Options for {@link renderHandler}. */
 export interface RenderHandlerOptions<TEnv = any> {
@@ -72,6 +80,12 @@ export interface RenderHandlerOptions<TEnv = any> {
   routeName?: string;
   /** Route name -> pattern map enabling `ctx.reverse()`. */
   routeMap?: Record<string, string>;
+  /**
+   * Seed `ctx.build` (default false) so a handler that branches on the
+   * build-time pass — including calling `ctx.dynamic()` on a MISS — is
+   * unit-testable. Assert a `ctx.dynamic()` call via `result.dynamic`.
+   */
+  build?: boolean;
   /**
    * Seed the data `ctx.use(SomeLoader)` returns — NO real loader runs (same model
    * as `runLoader`'s `loaders`). Matched by loader reference, so a real
@@ -95,6 +109,35 @@ export interface RenderHandlerOptions<TEnv = any> {
    * `result.stateCookieName`.
    */
   stateCookie?: StateCookieSeed;
+  /**
+   * Segment cache store backing a `"use cache"` function the handler invokes
+   * (e.g. `new MemorySegmentCacheStore()`). Without it, `registerCachedFunction`
+   * takes the uncached bypass and the cached path is NOT exercised (the runtime
+   * emits a one-time warning under the test runner). Pair with `cacheProfiles`
+   * so the profile the directive names resolves.
+   */
+  cacheStore?: SegmentCacheStore;
+  /**
+   * Cache profiles in the `createRouter({ cacheProfiles })` shape, required for
+   * `"use cache: profileName"` resolution once a `cacheStore` is wired.
+   */
+  cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Render as if inside a server action's revalidation render (production sets
+   * this in revalidateAfterAction). A stale `"use cache"` entry whose profile
+   * opts into `foregroundOnAction` then re-executes in the FOREGROUND (fresh
+   * result in this render) instead of being served stale + revalidated in the
+   * background. Without it, a stale entry keeps SWR. Pair with `cacheStore` +
+   * `cacheProfiles` to exercise the `foregroundOnAction` opt-in.
+   */
+  inActionRevalidation?: boolean;
+  /**
+   * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
+   * or `{ themes: [...] }`). Without it `ctx.theme`/`ctx.setTheme` are inert,
+   * mirroring an app with no theme configured. Pass one to exercise a handler
+   * that reads `ctx.theme` or writes the theme cookie via `ctx.setTheme(...)`.
+   */
+  theme?: ThemeConfig | true;
 }
 
 /** Result of {@link renderHandler}. */
@@ -126,6 +169,12 @@ export interface RenderHandlerResult {
   locationState: Record<string, unknown>;
   /** What the handler pushed via `ctx.use(Handle)(...)` (e.g. Meta, Breadcrumbs), keyed by handle. */
   handles: Map<Handle<any, any>, unknown[]>;
+  /**
+   * Whether the handler called `ctx.dynamic()` (the PPR shell opt-out). The
+   * public way to assert the opt-out without reading the `@internal`
+   * `ctx._dynamic`.
+   */
+  dynamic: boolean;
 }
 
 /**
@@ -141,14 +190,6 @@ function headersToObject(headers: Headers): Record<string, string> {
     if (name.toLowerCase() !== "set-cookie") out[name] = value;
   });
   return out;
-}
-
-function isServerOnlyStubError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    error.message.includes("is only available from") &&
-    error.message.includes("react-server")
-  );
 }
 
 function toRequest(
@@ -210,9 +251,19 @@ export async function renderHandler<TEnv = any>(
     request,
     url,
     variables: seedVariables({}, opts.vars),
+    build: opts.build,
     stateCookieName,
     version: opts.stateCookie?.version,
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
+    themeConfig:
+      opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
   });
+
+  // Simulate an action revalidation render (production sets this in
+  // revalidateAfterAction) so a `foregroundOnAction` cache profile foregrounds a
+  // stale entry. See the foregroundOnAction option doc.
+  if (opts.inActionRevalidation) reqCtx._inActionRevalidation = true;
 
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
   const handlePushes = new Map<Handle<any, any>, unknown[]>();
@@ -223,7 +274,11 @@ export async function renderHandler<TEnv = any>(
   let didThrow = false;
 
   await runWithRequestContext(reqCtx as RequestContext<TEnv>, async () => {
-    setRequestContextParams(opts.params ?? {}, opts.routeName);
+    // Scope the request-context reverse to opts.routeMap too (not just the
+    // handler context built below), so a nested server component reading
+    // getRequestContext().reverse() resolves against the same map as the
+    // handler's ctx.reverse -- matching renderToFlightString/renderServerTree.
+    setRequestContextParams(opts.params ?? {}, opts.routeName, opts.routeMap);
     const hctx = createHandlerContext<TEnv>(
       opts.params ?? {},
       reqCtx.request,
@@ -248,7 +303,9 @@ export async function renderHandler<TEnv = any>(
           handlePushes.set(handle, pushed);
         });
       }
-      if (loaderSeeds.has(item)) return loaderSeeds.get(item);
+      // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
+      // promise); wrap the seed so a handler composing on the result matches.
+      if (loaderSeeds.has(item)) return Promise.resolve(loaderSeeds.get(item));
       throw new RenderHandlerSetupError(
         `renderHandler: ctx.use(loader) was not seeded. Pass ` +
           `{ loaders: [[YourLoader, data]] } for each loader the handler reads.`,
@@ -309,5 +366,6 @@ export async function renderHandler<TEnv = any>(
     stateCookieName,
     locationState,
     handles: handlePushes,
+    dynamic: (reqCtx as RequestContext<TEnv>)._dynamic === true,
   };
 }

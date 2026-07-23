@@ -1,6 +1,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { PublicRequestContext } from "../server/request-context.js";
+
+type InternalOnlyContextKey =
+  | "_pendingBackgroundTasks"
+  | "_shellCaptureLoaderHandleValues"
+  | "_shellCaptureGuardTripped"
+  | "_tracing";
+
+const publicContextHidesInternalFields: Extract<
+  keyof PublicRequestContext,
+  InternalOnlyContextKey
+> extends never
+  ? true
+  : false = true;
 
 const srcRoot = resolve(import.meta.dirname, "..");
 const hostIndex = resolve(srcRoot, "host", "index.ts");
@@ -9,6 +23,10 @@ const rootIndex = resolve(srcRoot, "index.ts");
 const rscEntry = resolve(srcRoot, "index.rsc.ts");
 
 describe("public export boundaries", () => {
+  it("keeps internal-only fields out of the public request context type", () => {
+    expect(publicContextHidesInternalFields).toBe(true);
+  });
+
   // The server-only cache-tag APIs are real in the react-server entry and must
   // have matching stubs in the default entry, or non-react-server (SSR/client/
   // default) bundles that encounter the import fail at module linking.
@@ -22,6 +40,16 @@ describe("public export boundaries", () => {
         new RegExp(`export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`),
       );
       expect(root).toContain(`export function ${name}(): never`); // default-entry stub
+    }
+  });
+
+  it("default + react-server entries both export TRACKING_SEARCH_PARAMS", () => {
+    const rsc = readFileSync(rscEntry, "utf8");
+    const root = readFileSync(rootIndex, "utf8");
+    for (const source of [rsc, root]) {
+      expect(source).toMatch(
+        /export\s*\{[^}]*\bTRACKING_SEARCH_PARAMS\b[^}]*\}\s*from/,
+      );
     }
   });
 

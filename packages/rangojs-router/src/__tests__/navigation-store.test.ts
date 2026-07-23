@@ -55,26 +55,6 @@ describe("navigation-store", () => {
   // createNavigationStore — initial state
   // --------------------------------------------------------------------------
   describe("initial state", () => {
-    it("initializes with idle navigation state", () => {
-      const store = createTestStore();
-      const state = store.getState();
-
-      expect(state.state).toBe("idle");
-      expect(state.isStreaming).toBe(false);
-      expect(state.pendingUrl).toBeNull();
-      expect(state.inflightActions).toEqual([]);
-    });
-
-    it("uses provided initialLocation", () => {
-      const store = createTestStore({
-        initialLocation: { href: "http://localhost/shop?q=test" },
-      });
-      const state = store.getState();
-
-      expect(state.location.pathname).toBe("/shop");
-      expect(state.location.search).toBe("?q=test");
-    });
-
     it("uses provided initialSegmentIds", () => {
       const store = createTestStore({
         initialSegmentIds: ["L0", "L0R0"],
@@ -94,123 +74,6 @@ describe("navigation-store", () => {
       expect(cached).toBeDefined();
       expect(cached!.segments).toBe(segments);
       expect(cached!.stale).toBe(false);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // State management
-  // --------------------------------------------------------------------------
-  describe("setState / getState", () => {
-    it("merges partial state", () => {
-      const store = createTestStore();
-      store.setState({ state: "loading" });
-
-      expect(store.getState().state).toBe("loading");
-      // Other fields preserved
-      expect(store.getState().isStreaming).toBe(false);
-    });
-
-    it("notifies listeners on state change (debounced)", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listener = vi.fn();
-      store.subscribe(listener);
-
-      store.setState({ state: "loading" });
-      expect(listener).not.toHaveBeenCalled(); // debounced
-
-      vi.advanceTimersByTime(25);
-      expect(listener).toHaveBeenCalledTimes(1);
-
-      vi.useRealTimers();
-    });
-
-    it("batches rapid state changes into single notification", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listener = vi.fn();
-      store.subscribe(listener);
-
-      store.setState({ state: "loading" });
-      store.setState({ isStreaming: true });
-      store.setState({ pendingUrl: "http://localhost/next" });
-
-      vi.advanceTimersByTime(25);
-      expect(listener).toHaveBeenCalledTimes(1);
-
-      vi.useRealTimers();
-    });
-
-    it("unsubscribe removes listener", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listener = vi.fn();
-      const unsub = store.subscribe(listener);
-
-      unsub();
-      store.setState({ state: "loading" });
-      vi.advanceTimersByTime(25);
-
-      expect(listener).not.toHaveBeenCalled();
-      vi.useRealTimers();
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Inflight actions
-  // --------------------------------------------------------------------------
-  describe("inflight actions", () => {
-    it("adds and removes inflight actions", () => {
-      const store = createTestStore();
-
-      store.addInflightAction({
-        id: "a1",
-        actionId: "save",
-        payload: [],
-        startedAt: 0,
-      });
-      expect(store.getState().inflightActions).toHaveLength(1);
-      expect(store.getState().inflightActions[0].id).toBe("a1");
-
-      store.addInflightAction({
-        id: "a2",
-        actionId: "delete",
-        payload: [],
-        startedAt: 0,
-      });
-      expect(store.getState().inflightActions).toHaveLength(2);
-
-      store.removeInflightAction("a1");
-      expect(store.getState().inflightActions).toHaveLength(1);
-      expect(store.getState().inflightActions[0].id).toBe("a2");
-    });
-
-    it("removing non-existent action is a no-op", () => {
-      const store = createTestStore();
-      store.addInflightAction({
-        id: "a1",
-        actionId: "save",
-        payload: [],
-        startedAt: 0,
-      });
-      store.removeInflightAction("nonexistent");
-      expect(store.getState().inflightActions).toHaveLength(1);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Action in progress flag
-  // --------------------------------------------------------------------------
-  describe("action in progress", () => {
-    it("tracks action in progress flag", () => {
-      const store = createTestStore();
-      expect(store.isActionInProgress()).toBe(false);
-
-      store.setActionInProgress(true);
-      expect(store.isActionInProgress()).toBe(true);
-
-      store.setActionInProgress(false);
-      expect(store.isActionInProgress()).toBe(false);
     });
   });
 
@@ -294,17 +157,6 @@ describe("navigation-store", () => {
       expect(store.getCachedSegments("/p4")).toBeDefined();
     });
 
-    it("marks all entries as stale", () => {
-      const store = createTestStore();
-      store.cacheSegmentsForHistory("/p1", []);
-      store.cacheSegmentsForHistory("/p2", []);
-
-      store.markCacheAsStale();
-
-      expect(store.getCachedSegments("/p1")!.stale).toBe(true);
-      expect(store.getCachedSegments("/p2")!.stale).toBe(true);
-    });
-
     it("markHistoryCacheStale marks every entry stale (history-only)", () => {
       const store = createTestStore();
       store.cacheSegmentsForHistory("/p1", []);
@@ -319,7 +171,7 @@ describe("navigation-store", () => {
     it("re-caching a stale entry makes it fresh", () => {
       const store = createTestStore();
       store.cacheSegmentsForHistory("/page", []);
-      store.markCacheAsStale();
+      store.markHistoryCacheStale();
       expect(store.getCachedSegments("/page")!.stale).toBe(true);
 
       // Re-cache with new data
@@ -353,6 +205,104 @@ describe("navigation-store", () => {
       const store = createTestStore();
       // Should not throw
       store.updateCacheHandleData("/missing", { a: { s1: [1] } });
+    });
+
+    it("updateCacheHandleData preserves the stale flag when stale is omitted", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.markHistoryCacheStale();
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+
+      // No stale arg -> current stale flag is preserved.
+      store.updateCacheHandleData("/page", { b: { s2: [2] } });
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ b: { s2: [2] } });
+      expect(cached!.stale).toBe(true);
+    });
+
+    it("updateCacheHandleData can mark a single entry stale (deferred-Meta invalidate)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      expect(store.getCachedSegments("/page")!.stale).toBe(false);
+
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true);
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+    });
+
+    it("updateCacheHandleData can clear a single entry's stale flag (deferred-Meta resolved)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true);
+      expect(store.getCachedSegments("/page")!.stale).toBe(true);
+
+      store.updateCacheHandleData("/page", { a: { s1: [9] } }, false);
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [9] } });
+      expect(cached!.stale).toBe(false);
+    });
+
+    it("fresh commits are not handlesPending", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      expect(store.getCachedSegments("/page")!.handlesPending).toBe(false);
+    });
+
+    it("updateCacheHandleData sets and clears handlesPending (deferred-Meta pending then resolved)", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+
+      // Deferred Meta pending: mark stale + handlesPending.
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true, true);
+      let cached = store.getCachedSegments("/page");
+      expect(cached!.stale).toBe(true);
+      expect(cached!.handlesPending).toBe(true);
+
+      // Deferred Meta resolved: clear both.
+      store.updateCacheHandleData("/page", { a: { s1: [2] } }, false, false);
+      cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [2] } });
+      expect(cached!.stale).toBe(false);
+      expect(cached!.handlesPending).toBe(false);
+    });
+
+    it("updateCacheHandleData preserves handlesPending when the flag is omitted", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/page", [], { a: { s1: [1] } });
+      store.updateCacheHandleData("/page", { a: { s1: [1] } }, true, true);
+      expect(store.getCachedSegments("/page")!.handlesPending).toBe(true);
+
+      // Source re-cache on navigate-away updates only handleData; both flags
+      // must survive so a popstate return still forces the full-render reval.
+      store.updateCacheHandleData("/page", { a: { s1: [3] } });
+      const cached = store.getCachedSegments("/page");
+      expect(cached!.handleData).toEqual({ a: { s1: [3] } });
+      expect(cached!.stale).toBe(true);
+      expect(cached!.handlesPending).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Nav-instance token (per-commit identity; guards URL-only history keys)
+  // --------------------------------------------------------------------------
+  describe("nav-instance token", () => {
+    it("getNavInstance advances on each commit", () => {
+      const store = createTestStore();
+      const before = store.getNavInstance();
+      store.cacheSegmentsForHistory("/a", []);
+      const afterA = store.getNavInstance();
+      store.cacheSegmentsForHistory("/b", []);
+      const afterB = store.getNavInstance();
+      expect(afterA).toBeGreaterThan(before);
+      expect(afterB).toBeGreaterThan(afterA);
+    });
+
+    it("updateCacheHandleData preserves the nav-instance token", () => {
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/a", [], { a: { s1: [1] } });
+      const token = store.getNavInstance();
+
+      store.updateCacheHandleData("/a", { a: { s1: [2] } }, true);
+      expect(store.getNavInstance()).toBe(token);
     });
   });
 
@@ -428,108 +378,6 @@ describe("navigation-store", () => {
 
       expect(cb1).toHaveBeenCalledTimes(1);
       expect(cb2).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // Action state tracking
-  // --------------------------------------------------------------------------
-  describe("action state", () => {
-    it("returns default idle state for unknown actions", () => {
-      const store = createTestStore();
-      const state = store.getActionState("unknown");
-
-      expect(state.state).toBe("idle");
-      expect(state.actionId).toBeNull();
-      expect(state.payload).toBeNull();
-      expect(state.error).toBeNull();
-      expect(state.result).toBeNull();
-    });
-
-    it("sets and merges action state", () => {
-      const store = createTestStore();
-      store.setActionState("myAction", { state: "loading", payload: [1] });
-
-      const state = store.getActionState("myAction");
-      expect(state.state).toBe("loading");
-      expect(state.payload).toEqual([1]);
-      expect(state.actionId).toBe("myAction"); // always set
-    });
-
-    it("merges partial updates with existing state", () => {
-      const store = createTestStore();
-      store.setActionState("myAction", { state: "loading", payload: [1] });
-      store.setActionState("myAction", { state: "streaming", result: "ok" });
-
-      const state = store.getActionState("myAction");
-      expect(state.state).toBe("streaming");
-      expect(state.payload).toEqual([1]); // preserved
-      expect(state.result).toBe("ok"); // merged in
-    });
-
-    it("notifies action listeners on state change (debounced)", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listener = vi.fn();
-      store.subscribeToAction("myAction", listener);
-
-      store.setActionState("myAction", { state: "loading" });
-      expect(listener).not.toHaveBeenCalled(); // debounced
-
-      vi.advanceTimersByTime(25);
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener).toHaveBeenCalledWith(
-        expect.objectContaining({ state: "loading", actionId: "myAction" }),
-      );
-
-      vi.useRealTimers();
-    });
-
-    it("batches rapid action state changes per action ID", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listenerA = vi.fn();
-      const listenerB = vi.fn();
-      store.subscribeToAction("a", listenerA);
-      store.subscribeToAction("b", listenerB);
-
-      store.setActionState("a", { state: "loading" });
-      store.setActionState("b", { state: "loading" });
-      store.setActionState("a", { state: "streaming" });
-
-      vi.advanceTimersByTime(25);
-      // Each keyed debouncer fires independently
-      expect(listenerA).toHaveBeenCalledTimes(1);
-      expect(listenerB).toHaveBeenCalledTimes(1);
-
-      vi.useRealTimers();
-    });
-
-    it("unsubscribe removes action listener", async () => {
-      vi.useFakeTimers();
-      const store = createTestStore();
-      const listener = vi.fn();
-      const unsub = store.subscribeToAction("myAction", listener);
-
-      unsub();
-      store.setActionState("myAction", { state: "loading" });
-      vi.advanceTimersByTime(25);
-
-      expect(listener).not.toHaveBeenCalled();
-      vi.useRealTimers();
-    });
-
-    it("cleans up empty listener sets on unsubscribe", () => {
-      const store = createTestStore();
-      const listener = vi.fn();
-      const unsub = store.subscribeToAction("myAction", listener);
-
-      unsub();
-      // Internal: actionListeners map should have removed the "myAction" key.
-      // We verify indirectly by subscribing again and confirming it works.
-      const listener2 = vi.fn();
-      store.subscribeToAction("myAction", listener2);
-      // Should not throw and should work normally
     });
   });
 });

@@ -41,7 +41,7 @@ import { join } from "node:path";
 // ... your other imports ...
 
 function analyze(): PluginOption[] {
-  if (!process.env.ANALYZE) return [];
+  if (!process.env.RANGO_ANALYZE) return [];
   return (["client", "ssr", "rsc"] as const).map((envName) => {
     const inner = visualizer({
       filename: join("bundle-stats", `${envName}.html`),
@@ -79,7 +79,7 @@ Add `bundle-stats/` to your `.gitignore`.
 ## Step 3: Build with the analyzer enabled
 
 ```bash
-ANALYZE=1 pnpm exec vite build
+RANGO_ANALYZE=1 pnpm exec vite build
 ```
 
 You'll get three HTML reports in `bundle-stats/`:

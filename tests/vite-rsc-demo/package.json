@@ -37,6 +37,6 @@
     "typescript": "^5.9.3",
     "vite": "catalog:",
     "vite-plugin-devtools-json": "^1.0.0",
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.9"
   }
 }

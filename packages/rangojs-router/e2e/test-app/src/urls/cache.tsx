@@ -19,6 +19,7 @@ import {
 import {
   CacheNonCachedLoaderHandler,
   CacheCachedLoaderHandler,
+  CacheHandlerConsumedHandler,
   CacheInterceptIndexHandler,
   CacheInterceptDetailHandler,
   CacheUseLoaderIndexHandler,
@@ -42,7 +43,7 @@ import {
  * Routes: cacheTest.*
  */
 export const cachePatterns = urls(
-  ({ path, layout, intercept, loader, when, cache, notFoundBoundary }) => [
+  ({ path, layout, intercept, loader, cache, notFoundBoundary }) => [
     // Route with NON-cached loader (default behavior)
     path(
       "/cache-test/non-cached-loader",
@@ -58,6 +59,16 @@ export const cachePatterns = urls(
       { name: "cacheTest.cachedLoader" },
       () => [loader(CachedTestLoader, () => [cache({ ttl: 600 })])],
     ),
+
+    // Consumption-lane rule, cache() tier: a route-level cache() scope whose
+    // HANDLER consumes an UNCACHED loader via ctx.use — the value is a BAKED
+    // copy, frozen into the cached segments on every hit. PPR twin:
+    // /shell-cache/slot-use (semantic matrix row PPR3).
+    cache({ ttl: 600 }, () => [
+      path("/cache-test/handler-consumed", CacheHandlerConsumedHandler, {
+        name: "cacheTest.handlerConsumed",
+      }),
+    ]),
 
     // Cache intercept test routes
     layout(CacheInterceptLayout, () => [
@@ -83,10 +94,8 @@ export const cachePatterns = urls(
           const data = await ctx.use(InterceptCacheTestLoader);
           return <CacheTestModal data={data} testId="cache-test-modal" />;
         },
-        () => [
-          when(({ from }) => from.pathname === "/cache-test/intercept"),
-          loader(InterceptCacheTestLoader),
-        ],
+        { when: ({ from }) => from.pathname === "/cache-test/intercept" },
+        () => [loader(InterceptCacheTestLoader)],
       ),
     ]),
 
@@ -113,10 +122,8 @@ export const cachePatterns = urls(
             testId="useloader-modal"
           />
         ),
-        () => [
-          when(({ from }) => from.pathname === "/cache-test/useloader"),
-          loader(InterceptCacheTestLoader),
-        ],
+        { when: ({ from }) => from.pathname === "/cache-test/useloader" },
+        () => [loader(InterceptCacheTestLoader)],
       ),
     ]),
 

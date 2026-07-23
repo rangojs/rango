@@ -5,6 +5,7 @@ import type {
   ShouldRevalidateFn,
 } from "../types";
 import type { SegmentResolutionDeps } from "./types.js";
+import type { ResolveSegmentOptions } from "./segment-resolution.js";
 
 import {
   resolveAllSegments as _resolveAllSegments,
@@ -29,7 +30,7 @@ export interface SegmentWrappers<TEnv = any> {
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
+    options?: ResolveSegmentOptions,
   ) => Promise<ResolvedSegment[]>;
   resolveLoadersOnly: (
     entries: EntryData[],
@@ -93,6 +94,7 @@ export interface SegmentWrappers<TEnv = any> {
     context: HandlerContext<any, TEnv>,
     belongsToRoute?: boolean,
     revalidationContext?: any,
+    options?: { skipMiddleware?: boolean },
   ) => Promise<ResolvedSegment[]>;
   resolveInterceptLoadersOnly: (
     interceptEntry: InterceptEntry,
@@ -123,7 +125,7 @@ export function createSegmentWrappers<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
+    options?: ResolveSegmentOptions,
   ): ReturnType<typeof _resolveAllSegments> {
     return _resolveAllSegments(
       entries,
@@ -244,6 +246,7 @@ export function createSegmentWrappers<TEnv = any>(
     context: HandlerContext<any, TEnv>,
     belongsToRoute: boolean = true,
     revalidationContext?: any,
+    options?: { skipMiddleware?: boolean },
   ): ReturnType<typeof _resolveInterceptEntry> {
     return _resolveInterceptEntry(
       interceptEntry,
@@ -253,6 +256,7 @@ export function createSegmentWrappers<TEnv = any>(
       belongsToRoute,
       segmentDeps,
       revalidationContext,
+      options,
     );
   }
 

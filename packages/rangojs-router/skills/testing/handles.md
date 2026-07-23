@@ -13,7 +13,7 @@ A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps
 | `handle`   | `Handle<TData, TAccumulated>`         | The handle whose registered collect to run.                                                                                                                                                                                                          |
 | `segments` | `ReadonlyArray<ReadonlyArray<TData>>` | Per-segment pushed values, one inner array per route segment, in **parent -> child** order. Empty inner arrays are filtered before the collect runs (matching production `collectHandleData` — a segment that pushed nothing is not passed through). |
 
-**Returns** `TAccumulated` — exactly what the handle's collect produces (a default-flatten array, or a custom accumulator's value). If the handle's module was never imported (collect unregistered), it warns and falls back to `segments.flat()`.
+**Returns** `TAccumulated` — exactly what the handle's collect produces (the default identity collect's per-segment `TData[][]`, or a custom accumulator's value). If the handle's module was never imported (collect unregistered), it falls back to that same identity default and **warns** — a handle with a custom collect that failed to register would otherwise return the wrong shape silently.
 
 ### runLoader option — `handles` — `src/testing/run-loader.ts`
 
@@ -40,7 +40,9 @@ import { describe, it, expect } from "vitest";
 import { collectHandle } from "@rangojs/router/testing";
 import { createHandle } from "@rangojs/router";
 
-const Breadcrumbs = createHandle<{ label: string; href: string }>(); // default flatten
+// Opt into a flat list; the default collect groups per segment (TData[][]).
+type Crumb = { label: string; href: string };
+const Breadcrumbs = createHandle<Crumb, Crumb[]>((segments) => segments.flat());
 
 it("flattens per-segment crumbs in parent->child order", () => {
   const home = { label: "Home", href: "/" };

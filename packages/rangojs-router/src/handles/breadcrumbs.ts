@@ -3,7 +3,8 @@
  *
  * Each layout/route pushes breadcrumb items via `ctx.use(Breadcrumbs)`.
  * Items are collected in parent-to-child order with automatic deduplication
- * by `href` (last item for each href wins).
+ * by `href`: each href keeps its FIRST position but takes the LAST value, so a
+ * child re-pushing a parent href refreshes the label without reordering the trail.
  *
  * @example
  * ```tsx
@@ -38,30 +39,45 @@ export interface BreadcrumbItem {
 
 /**
  * Collect function for Breadcrumbs handle.
- * Flattens segments in parent-to-child order with deduplication by href
- * (last item for each href wins). Deferred slots (`ctx.use(Breadcrumbs).defer()`)
- * arrive as pending Promise entries with no href yet; they are passed through by
- * identity and excluded from the href dedup so concurrent deferred crumbs do not
- * all collapse under a single `undefined` href.
+ * Flattens segments in parent-to-child order with deduplication by href: each
+ * href keeps its FIRST position but takes the LAST value (re-pushing a parent
+ * href refreshes the label in place without reordering the trail). Deferred
+ * crumbs (a pushed Promise or `ctx.use(Breadcrumbs).defer()`) are resolved
+ * BEFORE collect runs (resolve-by-default), so collect only ever sees resolved
+ * items. An item without a string `href` is passed through by identity and
+ * excluded from the href dedup.
  */
 function collectBreadcrumbs(segments: BreadcrumbItem[][]): BreadcrumbItem[] {
   const all = segments.flat();
 
-  const isResolvedItem = (item: unknown): item is BreadcrumbItem =>
+  const hasHref = (item: unknown): item is BreadcrumbItem =>
     item != null &&
     typeof item === "object" &&
-    typeof (item as { then?: unknown }).then !== "function" &&
     typeof (item as { href?: unknown }).href === "string";
 
-  const seen = new Map<string, number>();
-  for (let i = 0; i < all.length; i++) {
-    if (isResolvedItem(all[i])) seen.set(all[i].href, i);
+  // Dedup crumbs by href: keep the FIRST position (preserving parent->child
+  // order) but the LAST value (a child re-pushing a parent's href can refresh
+  // its label). Items without an href pass through by identity at their original
+  // position.
+  const valueByHref = new Map<string, BreadcrumbItem>();
+  for (const item of all) {
+    if (hasHref(item)) valueByHref.set(item.href, item);
   }
 
-  // Deferred items bypass dedup (excluded via !isResolvedItem check).
-  return all.filter(
-    (item, index) => !isResolvedItem(item) || seen.get(item.href) === index,
-  );
+  const result: BreadcrumbItem[] = [];
+  const emitted = new Set<string>();
+  for (const item of all) {
+    if (!hasHref(item)) {
+      result.push(item);
+      continue;
+    }
+    // Emit each href once, at its first occurrence, with the final value.
+    if (!emitted.has(item.href)) {
+      emitted.add(item.href);
+      result.push(valueByHref.get(item.href)!);
+    }
+  }
+  return result;
 }
 
 /**

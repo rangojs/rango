@@ -3,6 +3,16 @@ import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 type HeaderResult = { url: string } | "blocked" | null;
 
 /**
+ * Null-body statuses: the Fetch spec forbids pairing these with a body, so
+ * `new Response(body, { status })` throws ("Response with null body status
+ * cannot have body"). fetch() can still surface one WITH a body straight from
+ * the network layer (never the JS constructor): a 304 stale-while-revalidate
+ * prefetch revalidated to Not Modified (body from cache), or a 204 soft
+ * redirect. teeWithCompletion must not re-run those through `new Response`.
+ */
+const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
+
+/**
  * Extract and validate an RSC response header URL (X-RSC-Reload, X-RSC-Redirect).
  * Returns { url } if valid, "blocked" if present but invalid origin, null if absent.
  */
@@ -74,7 +84,13 @@ export function handleReloadHeader(
  * Returns a new Response with one branch; the other is consumed to detect
  * end-of-stream, calling onComplete when done.
  *
- * If the response has no body, onComplete fires synchronously.
+ * `onComplete` receives `endedCleanly`: true only on a normal EOF drain, false
+ * on a read error or an abort (the signal cancelled the reader). Callers that
+ * gate a "fully complete" fast path (e.g. prefetch's `entry.complete`) must
+ * treat a non-clean end as incomplete — a broken stream is not complete data.
+ *
+ * If the response has no body, onComplete fires synchronously with `true`
+ * (an empty body is a clean, complete stream).
  * If signal is provided, an abort cancels the tracking reader.
  *
  * `silent` suppresses the stream-error log. Prefetch passes it: a speculative,
@@ -84,12 +100,26 @@ export function handleReloadHeader(
  */
 export function teeWithCompletion(
   response: Response,
-  onComplete: () => void,
+  onComplete: (endedCleanly: boolean) => void,
   signal?: AbortSignal,
   silent = false,
 ): Response {
-  if (!response.body) {
-    onComplete();
+  // Once-guard: a mid-stream read error runs both the finally block and the
+  // rejection's .catch, so onComplete must be settled exactly once across all
+  // paths (no-body early return, finally, catch).
+  let settled = false;
+  const settle = (endedCleanly: boolean) => {
+    if (!settled) {
+      settled = true;
+      onComplete(endedCleanly);
+    }
+  };
+
+  // Empty body, or a null-body status fetch() paired with a body: either way the
+  // body can't be re-attached via `new Response` below. Settle and pass the
+  // original response through; its body (when present) stays readable downstream.
+  if (!response.body || NULL_BODY_STATUS.has(response.status)) {
+    settle(true);
     return response;
   }
 
@@ -99,21 +129,31 @@ export function teeWithCompletion(
     const reader = trackingStream.getReader();
     const onAbort = signal ? reader.cancel.bind(reader) : undefined;
     if (onAbort) signal!.addEventListener("abort", onAbort, { once: true });
+    // Only a loop that reaches `done` is a clean EOF. A read error rejects out
+    // of the try and still runs the finally, so the finally must NOT assume
+    // clean — it gates on this flag (false on error) AND on signal.aborted
+    // (an abort cancels the reader so read() resolves { done: true } and the
+    // loop breaks here normally, NOT in the .catch — re-check the signal to
+    // catch that case).
+    let cleanEof = false;
     try {
       while (true) {
         const { done } = await reader.read();
-        if (done) break;
+        if (done) {
+          cleanEof = true;
+          break;
+        }
       }
     } finally {
       if (onAbort) signal!.removeEventListener("abort", onAbort);
       reader.releaseLock();
-      onComplete();
+      settle(cleanEof && !signal?.aborted);
     }
   })().catch((error) => {
     if (!silent && !signal?.aborted) {
       console.error("[Browser] Error reading tracking stream:", error);
     }
-    onComplete();
+    settle(false);
   });
 
   return new Response(rscStream, {

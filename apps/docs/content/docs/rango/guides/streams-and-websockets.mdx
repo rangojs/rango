@@ -1,0 +1,217 @@
+---
+title: Streams & WebSockets
+description: Server-Sent Events via path.stream and WebSocket upgrades via path.any, with middleware interaction and runtime caveats.
+type: guide
+---
+
+You need to push live updates to the browser — a ticker, a chat room, an agent session. Response routes can return long-lived responses: SSE streams via `path.stream()` and WebSocket upgrades via `path.any()`. Both return a `Response` that the router forwards through the middleware chain without reconstruction.
+
+## Choosing a shape
+
+| Shape       | Tag             | Status | Body                            | Runtime                          |
+| ----------- | --------------- | ------ | ------------------------------- | -------------------------------- |
+| Server-Sent | `path.stream()` | 200    | `ReadableStream` (event-stream) | any runtime (Node, workerd, bun) |
+| WebSocket   | `path.any()`    | 101    | `null` + `webSocket` property   | Cloudflare Workers (workerd)     |
+
+SSE is a regular 200 response with `content-type: text/event-stream` and a `ReadableStream` body — it works everywhere and flows through middleware normally. WebSocket upgrades produce a status-101 response with a non-standard `webSocket` property (Cloudflare); the router detects these and forwards them without reconstruction.
+
+## Server-Sent Events
+
+Use `path.stream()` (or `path.any()` if you need full control) to return a `ReadableStream`. Each chunk is an `event-stream` frame:
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path }) => [
+  path.stream(
+    "/events/ticks",
+    (ctx) => {
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          let count = 0;
+          const interval = setInterval(() => {
+            controller.enqueue(
+              encoder.encode(`event: tick\ndata: ${++count}\n\n`),
+            );
+          }, 1000);
+
+          // Honor client disconnect — signal comes from ctx.request.signal
+          ctx.request.signal.addEventListener("abort", () => {
+            clearInterval(interval);
+            controller.close();
+          });
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-store",
+          // Disable proxy buffering on Nginx/Traefik deployments
+          "x-accel-buffering": "no",
+        },
+      });
+    },
+    { name: "ticks" },
+  ),
+]);
+```
+
+On the client, a plain `EventSource` does the rest:
+
+```tsx
+"use client";
+const source = new EventSource("/events/ticks");
+source.addEventListener("tick", (e) => console.log("tick", e.data));
+```
+
+### SSE pitfalls
+
+- **Never wrap SSE routes in `cache()`** — a cached `ReadableStream` is read once and would replay an empty body on the next hit. `path.stream` is already excluded from response-route caching, but don't layer a custom `cache()` middleware on top.
+- **Honor `ctx.request.signal`.** Without wiring abort to your source (timer, DB cursor, upstream fetch), the stream leaks when the client disconnects.
+- **Disable Nginx/CDN buffering** via `x-accel-buffering: no` and ensure no intermediate proxy rebuffers. On Cloudflare Workers this is a non-issue.
+- **Middleware is fine.** Global and route middleware rewrap the SSE `Response` as `new Response(response.body, { status, headers })` to merge stub headers — the `ReadableStream` body is passed by reference, not consumed, so the client sees the stream unchanged. (WebSocket upgrades are the exception; see below.)
+
+## WebSockets (Cloudflare Workers)
+
+WebSocket upgrades on workerd produce a response with `status: 101` and a non-standard `webSocket` property. The router detects this shape and forwards the `Response` without reconstruction — the 101 status and the `webSocket` property are preserved, `Vary` and `Server-Timing` writes are skipped, and stub-header merging (cookies or headers set via `ctx.header()` / `cookies().set()`) is best-effort: the router applies them in place and silently skips any write rejected by a runtime with immutable upgrade headers.
+
+A minimal upgrade handler with a manual `WebSocketPair`:
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path }) => [
+  path.any(
+    "/ws",
+    (ctx) => {
+      const upgrade = ctx.request.headers.get("upgrade");
+      if (upgrade !== "websocket") {
+        return new Response("expected upgrade: websocket", { status: 426 });
+      }
+
+      const { 0: client, 1: server } = new WebSocketPair();
+      server.accept();
+      server.addEventListener("message", (e) => {
+        server.send(`echo: ${e.data}`);
+      });
+
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+      } as ResponseInit);
+    },
+    { name: "ws" },
+  ),
+]);
+```
+
+### Durable Objects
+
+For connections that need a stateful owner, route into a Durable Object and forward its 101 response unchanged:
+
+```tsx
+export const urlpatterns = urls(({ path }) => [
+  path.any(
+    "/rooms/:roomId",
+    async (ctx) => {
+      const id = ctx.env.ROOMS.idFromName(ctx.params.roomId);
+      const stub = ctx.env.ROOMS.get(id);
+      // The DO's fetch handler calls handleWebSocketUpgrade(request)
+      // and returns the 101 Response. We forward it unchanged.
+      return stub.fetch(ctx.request);
+    },
+    { name: "room" },
+  ),
+]);
+```
+
+### The `agents` library
+
+`routeAgentRequest` from `agents` returns a 101 `Response` targeted at a Durable Object. Return it directly from `path.any()`:
+
+```tsx
+import { routeAgentRequest } from "agents";
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path }) => [
+  path.any("/agents/*", async (ctx) => {
+    const response = await routeAgentRequest(ctx.request, ctx.env);
+    if (!response) {
+      return new Response("not found", { status: 404 });
+    }
+    return response;
+  }),
+]);
+```
+
+## Middleware and upgrades
+
+When a middleware matches the upgrade URL, it still runs **before** `next()` — but the Response from `next()` is forwarded as-is rather than re-wrapped. That preserves the 101 status (which would otherwise throw `RangeError: Responses may only be constructed with status codes in the range 200 to 599, inclusive` on standards-compliant runtimes) and the Cloudflare `webSocket` property (which `new Response(body, ...)` would silently drop on workerd).
+
+```tsx
+// This works — logger runs, but the 101 flows through unchanged.
+router.use(async (ctx, next) => {
+  console.log("ws request", ctx.url.pathname);
+  return next();
+});
+```
+
+Middleware can also return a non-101 Response to deny the upgrade outright:
+
+```tsx
+router.use(async (ctx, next) => {
+  if (!isAllowed(ctx.request)) {
+    return new Response("forbidden", { status: 403 });
+  }
+  return next();
+});
+```
+
+**Don't set cookies on an upgrade.** Stub cookie/header writes made before `await next()` land on the upgrade response only best-effort — and a browser completing a WS handshake never reads them regardless. Don't rely on this for auth or state propagation: set cookies via a prior HTTP request (e.g. during login), then read them at upgrade time:
+
+```tsx
+path.any("/ws", (ctx) => {
+  const session = parseCookie(ctx.request.headers.get("cookie"))?.session;
+  if (!verify(session)) return new Response("unauthorized", { status: 401 });
+  // ...upgrade
+});
+```
+
+## Caching
+
+- **SSE** — do not combine with `cache()`; streams can't be replayed.
+- **WebSocket** — `cache()` is inert because only `status === 200` is cacheable.
+
+## Runtime support
+
+| Runtime                                | SSE | WebSocket upgrade (101)                              |
+| -------------------------------------- | --- | ---------------------------------------------------- |
+| Cloudflare Workers (workerd)           | OK  | OK (native `WebSocketPair`, DO, `agents`)            |
+| Node (undici fetch)                    | OK  | N/A — Node's HTTP server must upgrade                |
+| Bun                                    | OK  | Bun's native `upgrade()` — not a Response-based path |
+| Dev (Vite + `@cloudflare/vite-plugin`) | OK  | OK via workerd emulation                             |
+
+In pure Node without workerd, a `status: 101` Response cannot even be constructed — `new Response(null, { status: 101 })` throws. For tests, fabricate upgrade-style responses by overriding `.status` on a real Response instance:
+
+```tsx
+const upgrade = new Response(null, { status: 200 });
+Object.defineProperty(upgrade, "status", { value: 101, configurable: true });
+// optional: attach a webSocket stub
+Object.defineProperty(upgrade, "webSocket", {
+  value: { stub: "ws" },
+  configurable: true,
+  enumerable: true,
+});
+```
+
+<Cards>
+  <Card href="/docs/rango/features/response-routes" title="Response Routes">
+    The parent feature — path.json, path.text, path.stream, path.any.
+  </Card>
+  <Card href="/docs/rango/features/middleware" title="Middleware">
+    How global and route-level middleware compose with handlers.
+  </Card>
+</Cards>

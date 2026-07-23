@@ -1,0 +1,42 @@
+---
+title: Response Routes
+description: Your API lives in the same tree — JSON, text, XML, images, and streams as ordinary route entries, with content negotiation built in.
+type: guide
+---
+
+Response routes are ordinary tree entries — `path.json()`, `path.text()`, `path.xml()`, `path.image()`, `path.stream()` — not a parallel routing system. That buys two things most React frameworks don't have.
+
+## Content negotiation out of the box
+
+The same URL can serve the RSC page to a browser and JSON to an API client, dispatched by `Accept` header in the route trie — no wrapper code, no `/api` mirror of your URL space:
+
+<NegotiationDemo />
+
+```tsx
+path("/products/:id", ProductPage, { name: "product" }),
+path.json("/products/:id", (ctx) => db.getProduct(ctx.params.id), {
+  name: "productJson",
+}),
+```
+
+Handlers return bare values; errors serialize as RFC 9457 `application/problem+json`. External consumers get a clean, standard wire with no client library required.
+
+## Inferred endpoint types
+
+The payload type of every response route is inferred from its handler — no codegen, no schema duplication:
+
+```ts
+type Product = RouteResponse<typeof urlpatterns, "productJson">;
+```
+
+Internal TypeScript code can call your endpoints like functions — typed params, typed payload, typed `ProblemDetails` errors — while the same endpoints stay plain HTTP for everyone else. RPC ergonomics without an RPC protocol.
+
+## Streams and sockets
+
+`path.stream()` serves server-sent events; `path.any()` handles WebSocket upgrades. Both are tree entries like everything else — named, reversible, and guarded by the same middleware chain as your pages.
+
+## Why this beats an /api directory
+
+- **One URL space.** The product page and the product API are two lines apart in the tree, not two directory hierarchies apart in the repo.
+- **One middleware chain.** Auth on `/products/*` covers the page and the JSON endpoint in one place.
+- **One naming scheme.** `ctx.reverse("productJson", { id })` builds API URLs with the same rename safety as page URLs.

@@ -33,6 +33,18 @@ function parityAliasPlugin(): Plugin {
 }
 
 export default defineConfig({
+  // Inline the render-timeout e2e flag at build/transform time. The worker runs
+  // in workerd, whose `process.env` is populated from wrangler vars/bindings —
+  // NOT the host process — so a runtime `process.env.RANGO_E2E_RENDER_TIMEOUT`
+  // read inside src/router.tsx would always be undefined. This define replaces
+  // it with the Node-side value when vite dev/build runs (the e2e webServer sets
+  // it, playwright.config.ts), keeping the render-timeout config out of every
+  // non-e2e build. Empty string on a normal build → the config is gated off.
+  define: {
+    "process.env.RANGO_E2E_RENDER_TIMEOUT": JSON.stringify(
+      process.env.RANGO_E2E_RENDER_TIMEOUT ?? "",
+    ),
+  },
   server: {
     port: 5001,
     // Bind to all interfaces for CI compatibility (fixes IPv6/IPv4 issues in Docker/Linux)

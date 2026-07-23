@@ -9,8 +9,6 @@ import {
   getGlobalRouteMap,
   hasCachedManifest,
   setCachedManifest,
-  getRouteTrie,
-  setRouteTrie,
   setRouterManifest,
   setRouterTrie,
   setRouterPrecomputedEntries,
@@ -32,11 +30,10 @@ export async function buildRouterTrieFromUrlpatterns(
 ): Promise<void> {
   const { generateManifestFull } =
     await import("../build/generate-manifest.js");
-  const generated = generateManifestFull(
-    router.urlpatterns,
-    undefined,
-    router.basename ? { urlPrefix: router.basename } : undefined,
-  );
+  const generated = await generateManifestFull(router.urlpatterns, undefined, {
+    routerId: router.id,
+    ...(router.basename ? { urlPrefix: router.basename } : {}),
+  });
   // Build the trie through the SAME shared helper the production discovery uses
   // (discover-routers.ts), so the dev runtime-rebuilt trie and the prod
   // serialized trie cannot drift. buildPerRouterTrie returns null when there
@@ -45,10 +42,6 @@ export async function buildRouterTrieFromUrlpatterns(
   const trie = buildPerRouterTrie(generated);
   if (trie) {
     setRouterTrie(router.id, trie);
-    // Set global trie only if not already set by another router
-    if (!getRouteTrie()) {
-      setRouteTrie(trie);
-    }
   }
   setRouterManifest(router.id, generated.routeManifest);
 

@@ -30,7 +30,4 @@ export type {
 } from "./types.js";
 
 // Re-export request context utilities for server-side access to env/request/params
-export {
-  getRequestContext,
-  requireRequestContext,
-} from "../server/request-context.js";
+export { getRequestContext } from "../server/request-context.js";

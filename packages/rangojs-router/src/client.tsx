@@ -340,6 +340,11 @@ export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";
 export { useParams } from "./browser/react/use-params.js";
+// CSP nonce for the active request, for userland components that inject their
+// own <script>/<style> into the document head (analytics, GTM, inline init).
+// Returns the nonce during SSR and undefined in the browser; render the tag
+// server-side so the nonce lands in the SSR HTML and hydration stays clean.
+export { useNonce } from "./browser/react/nonce-context.js";
 export type {
   RouterInstance,
   RouterNavigateOptions,
@@ -384,13 +389,16 @@ export {
 
 export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
-// Type a deferred-aware consumer narrows: an accumulated entry may be a Promise
-// (a `ctx.use(Handle).defer()` slot) until it resolves.
-export type { DeferredHandleEntry } from "./defer.js";
 
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
+export { Scripts } from "./handles/Scripts.js";
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 export {

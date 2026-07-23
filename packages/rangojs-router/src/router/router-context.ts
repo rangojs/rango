@@ -19,6 +19,7 @@ import type {
 } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { ResolveSegmentOptions } from "./segment-resolution.js";
 
 /**
  * Revalidation context passed to segment resolution
@@ -54,7 +55,9 @@ export interface InterceptResult {
  * Instead of passing 20+ parameters, middleware calls getRouterContext() to access them.
  */
 export interface RouterContext<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult | null | Promise<RouteMatchResult | null>;
 
   loadManifest: (
     entry: any,
@@ -153,6 +156,7 @@ export interface RouterContext<TEnv = any> {
     handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
     revalidationContext?: RevalidationContext,
+    options?: { skipMiddleware?: boolean },
   ) => Promise<ResolvedSegment[]>;
 
   collectWithMarkers?: <T>(
@@ -195,7 +199,7 @@ export interface RouterContext<TEnv = any> {
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
+    options?: ResolveSegmentOptions,
   ) => Promise<ResolvedSegment[]>;
 
   resolveAllSegmentsGenerator?: (

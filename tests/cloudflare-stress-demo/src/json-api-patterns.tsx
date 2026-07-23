@@ -49,3 +49,5 @@ export const jsonApiPatterns = urls(({ path }) => [
     { name: "item" },
   ),
 ]);
+
+export default jsonApiPatterns;

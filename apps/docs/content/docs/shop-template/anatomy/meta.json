@@ -1,0 +1,16 @@
+{
+  "title": "Features",
+  "pages": [
+    "agent",
+    "authentication",
+    "cart",
+    "pages",
+    "product-card",
+    "navigation",
+    "footer",
+    "aeo-geo",
+    "ppr",
+    "sitemap",
+    "webhooks"
+  ]
+}

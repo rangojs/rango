@@ -33,6 +33,7 @@ import {
   isTraceActive,
 } from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { entryLoadingMasksLoaders } from "./loader-mask.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -40,15 +41,18 @@ import {
   tryStaticSlot,
   resolveLayoutComponent,
   resolveWithErrorBoundary,
+  buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { resolveSink, safeEmit } from "../telemetry.js";
+import { observeEvent, observeHandler } from "../instrument.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  latchCachedHeaderScope,
+  latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
 
 /**
@@ -87,23 +91,14 @@ function emitRevalidationDecision(
   routeKey: string,
   shouldRevalidate: boolean,
 ): void {
-  let routerCtx;
-  try {
-    routerCtx = getRouterContext();
-  } catch {
-    return;
-  }
-  if (routerCtx?.telemetry) {
-    safeEmit(resolveSink(routerCtx.telemetry), {
-      type: "revalidation.decision",
-      timestamp: performance.now(),
-      requestId: routerCtx.requestId,
-      segmentId,
-      pathname,
-      routeKey,
-      shouldRevalidate,
-    });
-  }
+  observeEvent({
+    type: "revalidation.decision",
+    timestamp: performance.now(),
+    segmentId,
+    pathname,
+    routeKey,
+    shouldRevalidate,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +203,19 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     ),
   );
 
+  // Partial (revalidation) render path: a throwing DSL loader must still fire
+  // onError/loader.error. isPartial flags the reporting phase accordingly.
+  const errorContext = { ...buildLoaderErrorContext(ctx), isPartial: true };
+
+  // PPR lane decision, same rule as the fresh funnel (fresh.ts): an entry
+  // without renderable loading() puts its loaders on the BAKE lane. The key
+  // must thread through EVERY resolveLoaderData funnel — omitting it here made
+  // a capture-active context whole-container-mask every loader on this path
+  // (a never-settling promise for a loader that should have executed).
+  // Outside capture the key only activates the _shellLoaderSeed overlay,
+  // which document-only serveShellHit seeds — inert for partial requests.
+  const bakeLane = !entryLoadingMasksLoaders(entry.loading);
+
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
     ({ loaderEntry, loader, segmentId, index }) => ({
@@ -220,11 +228,17 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
         runInsideLoaderScope(() =>
-          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            bakeLane ? segmentId : null,
+          ),
         ),
         entry,
         segmentId,
         ctx.pathname,
+        errorContext,
       ),
       belongsToRoute,
     }),
@@ -252,6 +266,9 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
   const seenIds = new Set<string>();
+
+  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
 
   async function collectEntryLoaders(
     entry: EntryData,
@@ -663,6 +680,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       transition: applyViewTransitionDefault(
         parallelEntry.transition,
         deps.viewTransitionDefault,
+        parallelId,
       ),
       params,
       slot,
@@ -802,12 +820,16 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           ? routeEntry.liveHandler
           : routeEntry.handler;
       if (!routeEntry.loading) {
-        const result = handleHandlerResult(await handler(context));
+        const result = handleHandlerResult(
+          await observeHandler(entry.id, handler, context),
+        );
         doneHandler();
         return result;
       }
       if (!actionContext) {
-        const result = handleHandlerResult(handler(context));
+        const result = handleHandlerResult(
+          observeHandler(entry.id, handler, context),
+        );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
           result.finally(doneHandler).catch(() => {});
@@ -831,7 +853,9 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
       });
-      const actionResult = handleHandlerResult(await handler(context));
+      const actionResult = handleHandlerResult(
+        await observeHandler(entry.id, handler, context),
+      );
       doneHandler();
       return {
         content: Promise.resolve(actionResult),
@@ -858,6 +882,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       entry.transition,
       deps.viewTransitionDefault,
+      entry.shortCode,
     ),
     params,
     belongsToRoute,
@@ -1194,6 +1219,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       orphan.transition,
       deps.viewTransitionDefault,
+      orphan.shortCode,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
@@ -1254,6 +1280,9 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
 
+  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  latchPprHeaderScopeForEntries(entries, routeKey);
+
   const telemetry = getRouterContext()?.telemetry;
 
   for (const entry of entries) {
@@ -1277,6 +1306,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     if (entry.type === "cache") {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
+      latchCachedHeaderScope("cache", routeKey);
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolved = await resolveWithErrorBoundary(

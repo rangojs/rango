@@ -71,8 +71,21 @@ describe("installed consumer imports", () => {
     const result = setupInstalledConsumer({
       "consumer.tsx": `
 import { createLoader, createRouter } from "@rangojs/router";
+import {
+  createOTelTracing,
+  createOTelSink,
+  createConsoleSink,
+} from "@rangojs/router";
+import type {
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
+  TelemetrySink,
+  TelemetryEvent,
+} from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 import { createHostRouter } from "@rangojs/router/host";
 import {
   createTestRequest,
@@ -86,6 +99,7 @@ import { createSSRHandler } from "@rangojs/router/ssr";
 import {
   runLoader,
   runLoaderResult,
+  runTransitionWhen,
   dispatch,
   createTestRequestContext,
   runInRequestContext,
@@ -102,8 +116,23 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 void createLoader;
 void createRouter;
+// Server-only observability exports (createConsoleSink/createOTelSink/
+// createOTelTracing) resolve through the root export map's react-server/types
+// condition (index.rsc.ts) on a real install — guard the whole surface, not
+// just the values, so an export-map regression fails here too.
+void createOTelTracing;
+void createOTelSink;
+void createConsoleSink;
+type _OTelInstallTypes = [
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
+  TelemetrySink,
+  TelemetryEvent,
+];
 void Link;
 void MemorySegmentCacheStore;
+void createCloudflareTracing;
 void createHostRouter;
 void createTestRequest;
 void testPattern;
@@ -114,6 +143,7 @@ void createRSCHandler;
 void createSSRHandler;
 void runLoader;
 void runLoaderResult;
+void runTransitionWhen;
 void rangoTestAliases;
 void rangoTestConfig;
 void createTestRequestContext;

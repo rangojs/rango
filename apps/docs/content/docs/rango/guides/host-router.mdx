@@ -1,0 +1,231 @@
+---
+title: Host Router
+description: Route requests to different apps by domain, subdomain, or path prefix — with middleware, lazy loading, and a dev cookie override.
+type: guide
+---
+
+You're running several apps behind one deployment — a marketing site on the apex domain, an admin app on `admin.*`, an API on `api.*` — and requests need to land in the right one by hostname. `createHostRouter` matches hostname (and optionally path prefix) patterns and dispatches to lazily-loaded sub-apps.
+
+## The shortest path
+
+```ts
+// host-router.ts
+import { createHostRouter } from "@rangojs/router/host";
+
+const router = createHostRouter();
+
+router.host(["."]).lazy(() => import("./apps/main"));
+router.host(["admin.*"]).lazy(() => import("./apps/admin"));
+router.host(["api.*"]).lazy(() => import("./apps/api"));
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.match(request, { env, ctx });
+  },
+};
+```
+
+Patterns are tested in registration order — first match wins.
+
+## Pattern syntax
+
+| Pattern           | Matches                                        |
+| ----------------- | ---------------------------------------------- |
+| `.` or `*`        | Any apex domain (`example.com`)                |
+| `**`              | Any domain (apex + all subdomains)             |
+| `*.`              | Any single-level subdomain (`www.example.com`) |
+| `**.`             | Any multi-level subdomain (`a.b.example.com`)  |
+| `example.com`     | Exact domain                                   |
+| `*.com`           | Any apex `.com` domain                         |
+| `*.example.com`   | Single subdomain of `example.com`              |
+| `**.example.com`  | Any depth subdomain of `example.com`           |
+| `admin.*`         | `admin` subdomain of any apex domain           |
+| `admin.**`        | `admin` subdomain of any domain                |
+| `admin.`          | `admin` subdomain of any apex (no wildcard)    |
+| `example.com/api` | Domain + path prefix (prefix match)            |
+
+For autocompleted, reusable pattern names, wrap them with `defineHosts` (returns a frozen object):
+
+```ts
+import { defineHosts } from "@rangojs/router/host";
+
+const hosts = defineHosts({ admin: "admin.*", app: [".", "www.*"] });
+
+router.host(hosts.admin).lazy(() => import("./apps/admin"));
+router.host(hosts.app).lazy(() => import("./apps/main"));
+```
+
+## .lazy vs .map
+
+| Method  | Argument                       | Use for                                                     |
+| ------- | ------------------------------ | ----------------------------------------------------------- |
+| `.lazy` | `() => import("./sub-app")`    | A lazily-imported handler or nested host router (a sub-app) |
+| `.map`  | `(request, input) => Response` | An inline handler that produces a response directly         |
+
+```ts
+router.host(["admin.*"]).lazy(() => import("./apps/admin"));
+router.host(["health.*"]).map(() => new Response("ok"));
+```
+
+They're separate methods on purpose: build-time discovery invokes only `.lazy()` mounts (to trigger each sub-app's `createRouter()` registration), so inline `.map()` handlers can never crash discovery or pollute its errors. `.map(() => import("./sub-app"))` is a type error — a lazy import resolves to a module, not a `Response`; if the types are bypassed from JS, it throws a clear `HostRouterError` at request time. A lazy loader may declare an ignored parameter (`.lazy((_request?) => import("./x"))`).
+
+A lazy mount can also resolve to another `HostRouter` — build a nested router (e.g. `regional.host(["us.*"]).lazy(...)`), `export default regional`, and mount it with `router.host(["**.regional.example.com"]).lazy(() => import("./apps/regional"))`.
+
+## Deploying: who owns the server entry
+
+The preset decides how the host router is served:
+
+| Preset            | Who owns the entry          | What the host module exports                                                                          |
+| ----------------- | --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `cloudflare`      | You (your `worker.rsc.tsx`) | `export default { fetch(request, env, ctx) { return router.match(request, { env, ctx }); } }`         |
+| `node` / `vercel` | rango (generated RSC entry) | `export default router;` (the `HostRouter` instance), or a named `export const hostRouter` / `router` |
+
+On `node`/`vercel`, rango generates the served entry and calls `hostRouter.match()` for you — export the instance, not a `{ fetch }` object:
+
+```ts
+// src/worker.rsc.tsx  (node / vercel)
+import { createHostRouter } from "@rangojs/router/host";
+
+export const hostRouter = createHostRouter();
+hostRouter.host(["admin.*"]).lazy(() => import("./apps/admin/handler.js"));
+hostRouter.host(["."]).lazy(() => import("./apps/site/handler.js"));
+
+export default hostRouter;
+```
+
+Each sub-app exports a handler the same way on every preset:
+
+```ts
+// src/apps/admin/handler.ts
+import { router } from "./router.js";
+export default (request: Request, input: any) => router.fetch(request, input);
+```
+
+A host app has several `createRouter()` sub-apps, so single-router auto-discovery can't pick one entry. Either let rango auto-detect the lone `createHostRouter()` file, or point at it explicitly in `vite.config.ts`: `rango({ preset: "vercel", hostRouter: "./src/worker.rsc.tsx" })`.
+
+On Vercel this runs as a single function calling `hostRouter.match()` for every request (mirroring the Cloudflare single-worker model); `{ env, ctx }` (`process.env` + `{ waitUntil }`) is threaded unchanged to each matched sub-app's handler and `cache(env, ctx)` factory.
+
+## Handling unmatched hosts
+
+Behavior differs by who owns the entry:
+
+- **node / vercel**: rango's generated entry catches `NoRouteMatchError` and returns **404** by default — no catch-all needed. For a branded 404, redirect, or default app, register a catch-all mount **last**: `host(["**"]).lazy(() => import("./apps/site/handler.js"))`.
+- **cloudflare**: an unmatched host throws `NoRouteMatchError` from `router.match()`. Catch it in your worker fetch — and use the `isNoRouteMatchError()` guard rather than a bare `instanceof`: a workspace with a duplicated `@rangojs/router` copy can throw the error with a different class identity, and `instanceof` would turn your 404 into an opaque 500.
+
+```ts
+import { isNoRouteMatchError } from "@rangojs/router/host";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    try {
+      return await router.match(request, { env, ctx });
+    } catch (err) {
+      if (isNoRouteMatchError(err)) {
+        return new Response("Not Found", { status: 404 });
+      }
+      throw err;
+    }
+  },
+};
+```
+
+Note `router.fallback()` is **not** for unmatched hosts — it handles cookie-override errors only (see below).
+
+## Middleware
+
+Global middleware runs for every matched route; per-route middleware runs only for its host pattern. Signature: `(request: Request, input: RouterRequestInput, next: () => Promise<Response>) => Promise<Response>`. Calling `next()` more than once throws.
+
+```ts
+// Global — runs for all routes
+router.use(async (request, input, next) => {
+  console.log(`[${new Date().toISOString()}] ${request.url}`);
+  return next();
+});
+
+// Per-route
+router
+  .host(["admin.*"])
+  .use(requireAuth)
+  .lazy(() => import("./apps/admin"));
+```
+
+## Dev: cookie-based host override
+
+Test different host routes from a single domain by routing on a cookie value:
+
+```ts
+const router = createHostRouter({
+  hostOverride: {
+    cookieName: "x-dev-host",
+    allowedHosts: ["localhost", "**.dev.example.com"],
+    // Optional custom validation — return the effective hostname
+    validate: (request, cookieValue, input) => cookieValue,
+  },
+});
+```
+
+Resolution: no cookie → actual hostname; cookie present and the host is in `allowedHosts` → cookie value becomes the hostname; cookie present but host not allowed → `HostOverrideNotAllowedError`. Without a custom `validate`, the cookie value is validated as a hostname via `new URL()`.
+
+`router.fallback().map(...)` handles these cookie-override errors (override from a disallowed host, invalid cookie hostname):
+
+```ts
+router
+  .fallback()
+  .map((request) => new Response("Invalid host override", { status: 400 }));
+```
+
+For visibility into matching decisions, `createHostRouter({ debug: true })` logs pattern matching, route registration, and cookie override decisions to the console.
+
+## Testing
+
+```ts
+import {
+  createTestRequest,
+  testPattern,
+  matchesHost,
+} from "@rangojs/router/host/testing";
+
+testPattern("admin.*", "admin.example.com"); // true
+testPattern([".", "www.*"], "example.com"); // true
+// Path-based patterns take a third pathname arg (defaults to "/")
+testPattern("**.workers.dev/admin", "foo.workers.dev", "/admin"); // true
+// Or match against a real Request (hostname + pathname from the URL)
+matchesHost(
+  "**.workers.dev/admin",
+  new Request("https://foo.workers.dev/admin"),
+); // true
+
+// Build requests for integration tests
+const request = createTestRequest({
+  host: "admin.example.com",
+  path: "/dashboard",
+  cookies: { "x-dev-host": "api.example.com" },
+});
+
+// Which route would match, without executing
+router.test("admin.example.com"); // { pattern, handler, kind } | null
+```
+
+See [Testing](/docs/rango/features/testing) for the router-level primitives.
+
+## Error types
+
+All errors extend `HostRouterError`:
+
+| Error                         | When                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| `InvalidPatternError`         | Pattern is empty, non-string, or has spaces                                                       |
+| `HostOverrideNotAllowedError` | Cookie override from disallowed host                                                              |
+| `InvalidHostnameError`        | Cookie value isn't a valid hostname                                                               |
+| `HostValidationError`         | Custom `validate` function threw                                                                  |
+| `NoRouteMatchError`           | No host pattern matched the request                                                               |
+| `InvalidHandlerError`         | Handler is not a function, or a lazy mount resolved to a module without a usable `default` export |
+| `HostRouterError`             | A `.map()` inline handler resolved to a module namespace (misused lazy import — use `.lazy()`)    |
+
+## Cross-app navigation is a full document load
+
+A client-side navigation that crosses an app boundary (a `<Link>` or intercepted `<a>` from the app at `/` into an app mounted at `/shop`) is a **hard document navigation**, not a soft in-tree swap. When the server sees a partial (SPA) request whose router id doesn't match the matched app, it returns `X-RSC-Reload` and the client performs a real document navigation.
+
+Why: a soft swap can't faithfully re-establish the target app's document-level state — stylesheets shared across apps are dropped by React 19's by-`href` resource dedup, and theme, warmup, and prefetch-TTL are captured once at document load. A full document load re-establishes the target app's entire document (CSS, theme, meta) by construction, so you do **not** need to coordinate stylesheet `href`s, `precedence`, or theme config across independently-authored apps — each app owns its own document.
+
+Within-app navigation is unchanged: a normal soft SPA update. Only crossing an app boundary triggers the reload. See [Navigation](/docs/rango/features/navigation).

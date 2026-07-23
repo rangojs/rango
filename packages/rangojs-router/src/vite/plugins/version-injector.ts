@@ -2,12 +2,25 @@ import type { Plugin } from "vite";
 import { resolve } from "node:path";
 import * as Vite from "vite";
 import { resolveRscEntryFromConfig } from "../utils/shared-utils.js";
+import { RSC_ENTRY_BOOTSTRAP_IMPORTS } from "./virtual-entries.js";
 
 /**
- * Plugin that auto-injects VERSION and routes-manifest into custom entry.rsc files.
- * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
- * this transform adds the import and property automatically.
- * Also ensures the routes-manifest virtual module is always imported.
+ * Plugin that auto-injects VERSION, routes-manifest, and loader-manifest into
+ * custom entry.rsc files. If a custom entry.rsc file uses createRSCHandler but
+ * doesn't pass version, this transform adds the import and property
+ * automatically. It also ensures the routes-manifest and loader-manifest
+ * virtual modules are always imported.
+ *
+ * The loader-manifest import is what makes fetchable loaders resolvable on a
+ * custom worker entry. The virtual RSC entry (getVirtualEntryRSC) imports the
+ * loader manifest itself, but a hand-written entry (e.g. a Cloudflare
+ * worker.rsc.tsx) does not — so without this injection, setLoaderImports() is
+ * never bundled, lazyLoaderImports stays null at runtime, and a fetchable
+ * loader that is never imported by the server graph (not registered via
+ * loader(), reachable only through a client component) cannot be found by the
+ * _rsc_loader endpoint in production. Dev still works because it resolves
+ * loaders by parsing their id into a file path; only production relied on the
+ * manifest, hence the production-only failure this fixes.
  * @internal
  */
 export function createVersionInjectorPlugin(
@@ -36,10 +49,11 @@ export function createVersionInjectorPlugin(
         return null;
       }
 
-      const prepend: string[] = [
-        `import "virtual:rsc-router/routes-manifest";`,
-      ];
-
+      // Same startup bootstrap imports the generated virtual RSC entry uses,
+      // from the single shared list so the two paths cannot drift.
+      const prepend: string[] = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
+        (id) => `import "${id}";`,
+      );
       let newCode = code;
       const needsVersion =
         code.includes("createRSCHandler") &&

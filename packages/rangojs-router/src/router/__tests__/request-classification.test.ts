@@ -362,6 +362,64 @@ describe("classifyRequest", () => {
     expect(plan.mode).toBe("full-render");
   });
 
+  // ---- isSSR flag recorded for snapshot reuse (S1) ----
+
+  it("resolves a full document request with isSSR:true and records it", async () => {
+    mockLoadManifest.mockResolvedValue(makeEntry());
+    const { request, url } = makeRequest("http://localhost/page");
+    const deps = makeDeps();
+
+    const plan = await classifyRequest(request, url, deps);
+
+    expect(plan.mode).toBe("full-render");
+    if ("route" in plan) expect(plan.route!.isSSR).toBe(true);
+    // loadManifest's 5th arg (isSSR) is true for a document render.
+    expect(mockLoadManifest.mock.calls[0][4]).toBe(true);
+  });
+
+  it("resolves a partial request with isSSR:false and records it", async () => {
+    mockLoadManifest.mockResolvedValue(makeEntry());
+    const { request, url } = makeRequest(
+      "http://localhost/page?_rsc_partial=1",
+    );
+    const deps = makeDeps();
+
+    const plan = await classifyRequest(request, url, deps);
+
+    expect(plan.mode).toBe("partial-render");
+    if ("route" in plan) expect(plan.route!.isSSR).toBe(false);
+    expect(mockLoadManifest.mock.calls[0][4]).toBe(false);
+  });
+
+  it("resolves action / loader / PE requests with isSSR:false (not full-render)", async () => {
+    const cases: Array<{
+      urlStr: string;
+      init?: RequestInit & { headers?: Record<string, string> };
+    }> = [
+      {
+        urlStr: "http://localhost/page",
+        init: { method: "POST", headers: { "rsc-action": "hash#a" } },
+      },
+      { urlStr: "http://localhost/page?_rsc_loader=x" },
+      {
+        urlStr: "http://localhost/page",
+        init: {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+        },
+      },
+    ];
+
+    for (const c of cases) {
+      vi.clearAllMocks();
+      mockLoadManifest.mockResolvedValue(makeEntry());
+      const { request, url } = makeRequest(c.urlStr, c.init);
+      const plan = await classifyRequest(request, url, makeDeps());
+      if ("route" in plan) expect(plan.route!.isSSR).toBe(false);
+      expect(mockLoadManifest.mock.calls[0][4]).toBe(false);
+    }
+  });
+
   // ---- Route snapshot is always present ----
 
   it("all plans carry route snapshot with params", async () => {

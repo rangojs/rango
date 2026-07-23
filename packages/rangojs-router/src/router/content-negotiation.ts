@@ -7,6 +7,7 @@
  */
 
 import type { EntryData } from "../server/context.js";
+import type { NegotiateVariant } from "../build/route-trie.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import { loadManifest } from "./manifest.js";
@@ -75,27 +76,65 @@ export function parseAcceptTypes(accept: string): AcceptEntry[] {
 
 export const RSC_RESPONSE_TYPE = "__rsc__";
 
+/** RSC wire-format MIME type; explicit-opt-in flight transport. */
+export const RSC_WIRE_MIME = "text/x-component";
+
+/**
+ * The two representations an RSC route serves, in canonical-first order:
+ * text/html (the document) and text/x-component (the flight wire format).
+ * Both register as negotiation candidates in pickNegotiateVariant; without
+ * the wire-format entry, an explicit Accept: text/x-component fell through
+ * to the definition-order fallback — a JSON-first route answered a
+ * wire-format request with JSON. Which representation an RSC win actually
+ * renders is decided by prefersFlightRepresentation below, from the same
+ * Accept header (wired in via isRscRequest, rsc/ssr-setup.ts).
+ */
+const RSC_MIMES: readonly string[] = ["text/html", RSC_WIRE_MIME];
+
+/**
+ * Rank the RSC route's two representations against a parsed Accept list:
+ * true when the flight wire format outranks the HTML document. Wildcard
+ * entries count for the HTML side — they express "anything", and the
+ * canonical representation of anything is the document. Co-located with
+ * RSC_MIMES so the candidate registration and the representation choice
+ * cannot drift.
+ */
+export function prefersFlightRepresentation(
+  acceptEntries: AcceptEntry[],
+): boolean {
+  for (const entry of acceptEntries) {
+    if (entry.q === 0) continue;
+    if (entry.mime === RSC_WIRE_MIME) return true;
+    if (
+      entry.mime === "text/html" ||
+      entry.mime === "text/*" ||
+      entry.mime === "*/*"
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /**
  * Pick the best negotiate variant by walking the client's sorted Accept list.
  * For each accepted MIME type (in q-value/order priority), check if any
  * candidate serves that type. Wildcards match the first candidate.
  * Falls back to the first candidate if nothing matches.
  */
-export function pickNegotiateVariant(
-  acceptEntries: AcceptEntry[],
-  candidates: Array<{ routeKey: string; responseType: string }>,
-): { routeKey: string; responseType: string } {
-  const byCandidateMime = new Map<
-    string,
-    { routeKey: string; responseType: string }
-  >();
+export function pickNegotiateVariant<
+  T extends { routeKey: string; responseType: string },
+>(acceptEntries: AcceptEntry[], candidates: T[]): T {
+  const byCandidateMime = new Map<string, T>();
   for (const c of candidates) {
-    const mime =
+    const mimes =
       c.responseType === RSC_RESPONSE_TYPE
-        ? "text/html"
-        : RESPONSE_TYPE_MIME[c.responseType];
-    if (mime && !byCandidateMime.has(mime)) {
-      byCandidateMime.set(mime, c);
+        ? RSC_MIMES
+        : [RESPONSE_TYPE_MIME[c.responseType]];
+    for (const mime of mimes) {
+      if (mime && !byCandidateMime.has(mime)) {
+        byCandidateMime.set(mime, c);
+      }
     }
   }
 
@@ -113,6 +152,49 @@ export function pickNegotiateVariant(
     if (match) return match;
   }
   return candidates[0]!;
+}
+
+/**
+ * Re-key params from the primary leaf's names to a winning variant's names.
+ *
+ * The trie match builds `params` positionally under the primary leaf's pa, so
+ * `/widgets/:id` matched as the primary yields `{ id }` even when the winning
+ * `/widgets/:file` response variant expects `{ file }`. Both share the same trie
+ * terminal, so they bind the same number of positional named params; we zip the
+ * variant's pa against the named values in insertion order (which is the
+ * primary's pa order). The wildcard key (`*`) is positional-independent and left
+ * untouched.
+ *
+ * Mutates `params` in place. No-op when `variantPa` is absent, when names already
+ * match (the common case), or when the positional count diverges (defensive:
+ * never corrupt params by zipping mismatched lengths).
+ */
+export function rekeyParamsForVariant(
+  params: Record<string, string>,
+  variantPa: string[] | undefined,
+): void {
+  if (!variantPa || variantPa.length === 0) return;
+
+  const namedKeys: string[] = [];
+  for (const key in params) {
+    if (key !== "*") namedKeys.push(key);
+  }
+  if (namedKeys.length !== variantPa.length) return;
+
+  let identical = true;
+  for (let i = 0; i < variantPa.length; i++) {
+    if (namedKeys[i] !== variantPa[i]) {
+      identical = false;
+      break;
+    }
+  }
+  if (identical) return;
+
+  const values = namedKeys.map((k) => params[k]!);
+  for (const key of namedKeys) delete params[key];
+  for (let i = 0; i < variantPa.length; i++) {
+    params[variantPa[i]!] = values[i]!;
+  }
 }
 
 /**
@@ -165,8 +247,10 @@ export async function negotiateRoute(
 
   const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
 
-  const variants = matched.negotiateVariants;
-  let candidates: Array<{ routeKey: string; responseType: string }>;
+  // Variants carry the variant's own pa (positional param names); the synthetic
+  // primary/RSC candidates have none (their params are already keyed correctly).
+  const variants = matched.negotiateVariants as NegotiateVariant[];
+  let candidates: NegotiateVariant[];
   if (responseType) {
     candidates = [...variants, { routeKey: matched.routeKey, responseType }];
   } else {
@@ -194,6 +278,12 @@ export async function negotiateRoute(
       negotiated: true,
     };
   }
+  // The trie extracted params under the PRIMARY leaf's pa, but the winning
+  // variant's handler is keyed by the variant's own param names. Re-key in place
+  // so plan.route.params (and the variant middleware collected just below) see
+  // the variant's names. No-op when the variant has no pa or shares the primary's
+  // names (the common case).
+  rekeyParamsForVariant(matched.params, variant.pa);
   const negotiateEntry = await loadManifest(
     matched.entry,
     variant.routeKey,

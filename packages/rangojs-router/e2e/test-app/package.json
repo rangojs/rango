@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "host:build": "vite build --config .host-fixture/vite.config.ts",
+    "host:dev": "vite --config .host-fixture/vite.config.ts",
+    "host:preview": "vite preview --config .host-fixture/vite.config.ts"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",

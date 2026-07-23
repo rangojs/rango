@@ -8,23 +8,24 @@ vi.mock("../cache/segment-codec.js", () => ({
   deserializeResult: vi.fn(async (encoded: string) => JSON.parse(encoded)),
 }));
 
+function runBackgroundImmediately(p: Promise<unknown> | (() => unknown)): void {
+  if (typeof p === "function") p();
+  else p.catch(() => {});
+}
+
 // Mock request context
 const mockRequestCtx: any = {
   params: {},
-  waitUntil: vi.fn((p: Promise<unknown> | (() => unknown)) => {
-    // Execute immediately in tests
-    if (typeof p === "function") {
-      p();
-    } else {
-      p.catch(() => {});
-    }
-  }),
+  waitUntil: vi.fn(runBackgroundImmediately),
   _cacheStore: undefined,
 };
 
 vi.mock("../server/request-context.js", () => ({
   getRequestContext: vi.fn(() => mockRequestCtx),
   _getRequestContext: vi.fn(() => mockRequestCtx),
+  // The loader-cache read-through re-establishes the request-context ALS around
+  // the background revalidation execute(); the mock just invokes the callback.
+  runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
 }));
 
 // Mock internal debug
@@ -33,6 +34,8 @@ vi.mock("../internal-debug.js", () => ({
 }));
 
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache";
+import { createMetricsStore } from "../router/metrics";
+import { resolveTracing } from "../router/tracing.js";
 import { serializeResult, deserializeResult } from "../cache/segment-codec";
 import {
   getRequestContext,
@@ -84,7 +87,9 @@ function createLoaderEntry(loader: any, cacheOptions?: any): LoaderEntry {
 describe("loader-cache", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequestCtx.waitUntil = vi.fn(runBackgroundImmediately);
     mockRequestCtx._cacheStore = undefined;
+    mockRequestCtx._tracing = undefined;
   });
 
   // ==========================================================================
@@ -110,6 +115,65 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       expect(ctx.use).toHaveBeenCalledWith(loader);
+    });
+  });
+
+  // ==========================================================================
+  // Single metering site: resolveLoaderData must NOT record the loader metric
+  // itself. Metering lives at the execution funnel (useLoader, reached via
+  // ctx.use), so resolveLoaderData adding its own appendMetric would double-count
+  // every render-time DSL loader. This pins the de-dup that the unified
+  // instrumentation relies on. The mock ctx.use here is a plain recorder (no
+  // metering), so a "loader:" entry could only come from resolveLoaderData.
+  // ==========================================================================
+
+  describe("instrumentation (single metering site)", () => {
+    it("records no loader perf metric of its own (delegates metering to ctx.use)", async () => {
+      const store = createMetricsStore(true)!;
+      mockRequestCtx._metricsStore = store;
+      try {
+        const loader = createMockLoader("Meter#default");
+        const entry = createLoaderEntry(loader);
+        const ctx = createMockCtx();
+
+        await resolveLoaderData(entry, ctx, "/test");
+
+        expect(ctx.use).toHaveBeenCalledWith(loader);
+        expect(
+          store.metrics.filter((m) => m.label.startsWith("loader:")),
+        ).toHaveLength(0);
+      } finally {
+        mockRequestCtx._metricsStore = undefined;
+      }
+    });
+
+    it("records no loader perf metric on a cache hit (no execution to meter)", async () => {
+      const store = createMetricsStore(true)!;
+      mockRequestCtx._metricsStore = store;
+      try {
+        // Store returns a cached value -> readThroughItem short-circuits, ctx.use
+        // is never called, and no loader metric is recorded (the loader did not
+        // run). The hit is a cache.decision fact, not a loader phase.
+        const cacheStore = createMockStore({
+          getItem: vi.fn(
+            async (): Promise<CacheItemResult> => ({
+              value: JSON.stringify({ data: "cached" }),
+              shouldRevalidate: false,
+            }),
+          ),
+        });
+        const loader = createMockLoader("Hit#default");
+        const entry = createLoaderEntry(loader, { store: cacheStore });
+        const ctx = createMockCtx();
+
+        await resolveLoaderData(entry, ctx, "/test");
+
+        expect(
+          store.metrics.filter((m) => m.label.startsWith("loader:")),
+        ).toHaveLength(0);
+      } finally {
+        mockRequestCtx._metricsStore = undefined;
+      }
     });
   });
 
@@ -303,6 +367,25 @@ describe("loader-cache", () => {
     it("returns stale data and triggers background revalidation", async () => {
       const staleData = { name: "stale" };
       const freshData = { name: "fresh" };
+      const pendingBackground: Array<() => Promise<void>> = [];
+      const spans: Array<{
+        name: string;
+        attributes: Record<string, unknown>;
+      }> = [];
+      mockRequestCtx.waitUntil = vi.fn((fn: () => Promise<void>) => {
+        pendingBackground.push(fn);
+      });
+      mockRequestCtx._tracing = resolveTracing({
+        runner: (name, fn) => {
+          const record = { name, attributes: {} as Record<string, unknown> };
+          spans.push(record);
+          return fn({
+            setAttribute(key, value) {
+              record.attributes[key] = value;
+            },
+          });
+        },
+      });
       const store = createMockStore({
         getItem: vi.fn(
           async (): Promise<CacheItemResult> => ({
@@ -319,8 +402,18 @@ describe("loader-cache", () => {
 
       // Should return stale data immediately
       expect(result).toEqual(staleData);
-      // Background revalidation should have been scheduled
-      expect(mockRequestCtx.waitUntil).toHaveBeenCalled();
+      expect(loader).not.toHaveBeenCalled();
+      expect(spans).toHaveLength(0);
+
+      expect(pendingBackground).toHaveLength(1);
+      await pendingBackground[0]();
+
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
+      expect(spans[0].attributes["rango.background.kind"]).toBe(
+        "loader-revalidation",
+      );
     });
   });
 
@@ -645,6 +738,55 @@ describe("loader-cache", () => {
       // It should call through to the original
       const result = await ctx.use(loader2);
       expect(result).toEqual({ other: true });
+    });
+
+    it("dedups the cache read-through when the same loaderId resolves twice in one request", async () => {
+      // An orphan layout with parallel slots inherits its parent route's
+      // loaders, so resolveOrphanLayout re-resolves the parent's loaders under
+      // a different shortCode -> resolveLoaderData runs twice for the SAME
+      // loaderId. Without dedup, getItem/setItem (e.g. a KV round-trip) would
+      // run twice for one logical cached loader.
+      const store = createMockStore();
+      const loader = createMockLoader("orphan-inherited", { data: "shared" });
+      const entry = createLoaderEntry(loader, { ttl: 60, store });
+      const ctx = createMockCtx();
+
+      const first = resolveLoaderData(entry, ctx, "/dashboard");
+      const second = resolveLoaderData(entry, ctx, "/dashboard");
+
+      // Second resolution must reuse the first in-flight promise, not issue a
+      // second read-through.
+      expect(second).toBe(first);
+
+      const [a, b] = await Promise.all([first, second]);
+      expect(a).toEqual({ data: "shared" });
+      expect(b).toEqual({ data: "shared" });
+
+      // One getItem and one setItem (and one loader execution) for one loaderId.
+      expect(store.getItem).toHaveBeenCalledTimes(1);
+      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not re-run the user tags() callback on a deduped second resolution", async () => {
+      // The dedup short-circuit must run BEFORE resolveTags(): the orphan-layout
+      // re-resolution path calls resolveLoaderData twice for the same loaderId,
+      // and a tags() callback doing real work must not fire a second time for one
+      // logical cached loader.
+      const store = createMockStore();
+      const loader = createMockLoader("tags-dedup", { data: "x" });
+      const tags = vi.fn(() => ["t1"]);
+      const entry = createLoaderEntry(loader, { ttl: 60, store, tags });
+      const ctx = createMockCtx();
+
+      const first = resolveLoaderData(entry, ctx, "/page");
+      const second = resolveLoaderData(entry, ctx, "/page");
+
+      expect(second).toBe(first);
+      await Promise.all([first, second]);
+
+      // tags() ran exactly once despite two resolutions of the same loaderId.
+      expect(tags).toHaveBeenCalledTimes(1);
     });
 
     it("accumulates multiple cached loaders behind one stable interceptor (no O(N) chain)", async () => {

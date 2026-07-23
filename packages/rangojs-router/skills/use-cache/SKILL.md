@@ -1,6 +1,6 @@
 ---
 name: use-cache
-description: Function-level caching with "use cache" directive for RSC data functions and components
+description: Function-level caching with the "use cache" directive for RSC data functions and components in @rangojs/router. Use when a single function or component should memoize its own output, not a whole route/segment subtree or HTTP response.
 argument-hint: [profile-name]
 ---
 
@@ -9,6 +9,12 @@ argument-hint: [profile-name]
 Function-level caching for async server functions and RSC components. Caches
 return values with TTL + stale-while-revalidate. Complementary to the route-level
 `cache()` DSL and build-time `Static()`/`Prerender()`.
+
+## Not this skill if…
+
+- You want to cache a whole route or a rendered subtree of segments — that is
+  the segment-level `cache()` DSL: see `/caching`.
+- You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## Basic Usage
 
@@ -52,8 +58,9 @@ export async function ProductCard({ id }: { id: string }) {
 
 ## Named Cache Profiles
 
-Define profiles in createRouter. Profile names map to `"use cache: <name>"` and
-`cache('<name>')` in the DSL.
+Define profiles in createRouter. Profile names map to `"use cache: <name>"` in
+the directive. The DSL `cache()` does not accept a string profile name; use an
+options object (`cache({ ttl: 60 })`) or the `"use cache: <name>"` directive.
 
 ```typescript
 createRouter({
@@ -62,12 +69,23 @@ createRouter({
     short: { ttl: 60, swr: 120 },
     long: { ttl: 3600, swr: 7200 },
     products: { ttl: 300, swr: 600, tags: ["products"] },
+    // Opt-in: a stale entry re-executes in the foreground during a server
+    // action's revalidation render (fresh action response), instead of SWR.
+    cms: { ttl: 300, swr: 600, foregroundOnAction: true },
   },
 });
 ```
 
 - `"use cache"` (no name) resolves to `default`.
 - `"use cache: short"` resolves to the `short` profile.
+- `foregroundOnAction: true` (default false): a stale entry serves stale +
+  revalidates in the background on a plain navigation (SWR), but re-executes in
+  the FOREGROUND during a server action's revalidation render so the action
+  response reflects a fresh value (only the store write is deferred). Use it for
+  mutation-related cached data; incidental TTL staleness on an ordinary action
+  stays SWR so the action is not turned into a synchronous cache-refresh barrier.
+  For strong read-your-own-writes after a mutation, prefer `updateTag()` (a hard
+  purge, so the action's own re-render is a fresh foreground miss).
 - Unknown profile names throw at runtime, on the first invocation of the cached
   function (the Vite transform does not validate names at build/boot). The error
   is actionable -- it names the missing profile and shows the `createRouter({
@@ -134,6 +152,13 @@ Extract the value before the cached function and pass it as an argument:
 const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
 ```
+
+The guard does not reach into LOADER bodies consumed inside the cached
+function (`await ctx.use(loader)`): loaders always run fresh, so their reads
+are exempt — but the CONSUMED VALUE is captured into the shared cache entry
+like any other computed data. Same rule across `cache()` and the PPR shell:
+handler/cached-scope consumption = baked copy, client-side `useLoader` = live
+(the consumption-lane rule, `/rango` → Invariants).
 
 ### Side-Effect Guards
 
@@ -369,8 +394,11 @@ export async function getProducts() {
 Writes to the same `SegmentCacheStore` as `cache()` DSL, `Static()`, and `Prerender()`.
 One store, one configuration.
 
-Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or, inside
-a `"use cache"` function, runtime `cacheTag(...tags)`. The built-in
+Cache entries (and `cacheProfiles`) can be tagged via `cache({ tags })` or runtime
+`cacheTag(...tags)`. `cacheTag` has two forms: inside a `"use cache"` function it
+tags that entry; called during a request render outside `"use cache"` it tags the
+request's document/shell artifact (rides `_requestTags`) instead of throwing. The
+built-in
 `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate on demand
 with `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or
 `revalidateTag(...tags)` (background, non-blocking; for route handlers/webhooks).
@@ -381,13 +409,13 @@ that same namespace). The separate `revalidate()` export is the client-update ax
 
 ## Interaction with Other Caching
 
-| Mechanism          | Granularity        | When       | Use case                                        |
-| ------------------ | ------------------ | ---------- | ----------------------------------------------- |
-| `"use cache"`      | Function/component | Runtime    | Cache individual data fetches or components     |
-| `cache()` DSL      | Route segment      | Runtime    | Cache entire route subtrees with children       |
-| `cache('profile')` | Route segment      | Runtime    | Same as cache() with a named profile            |
-| `Static()`         | Route segment      | Build-time | Render once, never re-render                    |
-| `Prerender()`      | Route segment      | Build-time | Pre-render known params, optional live fallback |
+| Mechanism            | Granularity        | When       | Use case                                        |
+| -------------------- | ------------------ | ---------- | ----------------------------------------------- |
+| `"use cache"`        | Function/component | Runtime    | Cache individual data fetches or components     |
+| `cache()` DSL        | Route segment      | Runtime    | Cache entire route subtrees with children       |
+| `cache({ ttl })` DSL | Route segment      | Runtime    | Cache a route subtree with explicit options     |
+| `Static()`           | Route segment      | Build-time | Render once, never re-render                    |
+| `Prerender()`        | Route segment      | Build-time | Pre-render known params, optional live fallback |
 
 ## Dev Mode
 

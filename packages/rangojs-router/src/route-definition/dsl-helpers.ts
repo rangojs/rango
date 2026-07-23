@@ -12,13 +12,16 @@ import {
   getNamePrefix,
   getUrlPrefix,
   requireDslContext,
+  stampStaticDefScope,
   type EntryData,
   type EntryPropDatas,
   type EntryPropSegments,
   type HelperContext,
   type InterceptEntry,
+  type InterceptConfig,
 } from "../server/context";
 import { invariant } from "../errors";
+import { validateUserRouteName } from "../route-name.js";
 import { isCachedFunction } from "../cache/taint.js";
 import { RangoContext } from "../server/context";
 import { isStaticHandler } from "../static-handler.js";
@@ -35,7 +38,6 @@ import type {
   ErrorBoundaryItem,
   NotFoundBoundaryItem,
   LayoutItem,
-  WhenItem,
   CacheItem,
   TransitionItem,
   UseItems,
@@ -262,34 +264,6 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   const name = `$${store.getNextIndex("notFoundBoundary")}`;
   parent.notFoundBoundary.push(fallback);
   return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
-};
-
-/**
- * When helper - defines a condition for intercept activation
- *
- * Only valid inside intercept() use() callback. The when() function
- * is captured by the intercept and stored in its `when` array.
- * During soft navigation, all when() conditions must return true
- * for the intercept to activate.
- */
-const when: RouteHelpers<any, any>["when"] = (fn) => {
-  const { store, ctx } = requireDslContext(
-    "when() must be called inside intercept()",
-  );
-
-  // The when() function needs to be captured by the intercept's tempParent
-  // which should have a `when` array. If not present, we're not inside intercept()
-  const parent = ctx.parent as any;
-  if (!parent || !("when" in parent)) {
-    invariant(
-      false,
-      "when() can only be used inside intercept() use() callback",
-    );
-  }
-
-  const name = `$${store.getNextIndex("when")}`;
-  parent.when.push(fn);
-  return { name, type: "when" } as WhenItem;
 };
 
 /**
@@ -524,6 +498,22 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
   } as MiddlewareItem;
 };
 
+// Slot names become part of segment ids: a parallel/intercept slot is encoded
+// as `${shortCode}.${slotName}`, and loader segments append `D${index}.${loaderId}`.
+// A "." in the slot name collides with that separator -- loaderParentId
+// (segment-system.tsx) strips from the FIRST `D<index>.`, so a name like
+// "@D3.foo" is mis-cut to "@" and the loader's data is silently dropped. Reject
+// the dot at definition time so the failure is loud, not a corrupted tree at
+// runtime. (A bare "D" without a trailing dot -- e.g. "@Detail" -- is fine.)
+function assertValidSlotName(slotName: string): void {
+  invariant(
+    !slotName.includes("."),
+    `Slot name "${slotName}" must not contain ".". The dot is a reserved ` +
+      `segment-id separator; a name like "@D3.foo" corrupts loader segment-id ` +
+      `parsing and silently drops the loader's data. Rename the slot.`,
+  );
+}
+
 const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   const { store, ctx } = requireDslContext(
     "parallel() must be called inside urls()",
@@ -539,6 +529,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   );
 
   const slotNames = Object.keys(slots as Record<string, any>) as `@${string}`[];
+  for (const slotName of slotNames) assertValidSlotName(slotName);
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
@@ -570,6 +561,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
         if (ctx.namePrefix) {
           (slotHandler as any).$$routePrefix = ctx.namePrefix;
         }
+        stampStaticDefScope(slotHandler);
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -683,8 +675,19 @@ const intercept = (
   slotName: `@${string}`,
   routeName: string,
   handler: any,
+  configOrUse?: InterceptConfig | (() => any[]),
   use?: () => any[],
 ) => {
+  // arg4 discrimination: a function is the use() callback (no config); an object
+  // is the config carrying `when`. With config given, the use() callback is
+  // arg5. Keeps the no-config form intercept(slot, route, handler, () => [...])
+  // working unchanged.
+  const config: InterceptConfig | undefined =
+    typeof configOrUse === "function" || configOrUse == null
+      ? undefined
+      : configOrUse;
+  const useFn = typeof configOrUse === "function" ? configOrUse : use;
+
   const { store, ctx } = requireDslContext(
     "intercept() must be called inside urls()",
   );
@@ -697,6 +700,8 @@ const intercept = (
     ctx.parent.type !== "parallel",
     "intercept() cannot be used inside parallel()",
   );
+
+  assertValidSlotName(slotName);
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 
@@ -720,9 +725,17 @@ const intercept = (
     when: [], // Selector conditions for conditional interception
   };
 
+  // Conditional interception: `when` from the config object — a single selector
+  // or an array (ALL must return true to activate). Replaces the former when()
+  // use-item captured inside the callback.
+  if (config?.when) {
+    const selectors = Array.isArray(config.when) ? config.when : [config.when];
+    entry.when.push(...selectors);
+  }
+
   // Merge handler.use defaults with explicit use
   const handlerUseFn = resolveHandlerUse(handler);
-  const mergedUse = mergeHandlerUse(handlerUseFn, use, "intercept");
+  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, "intercept");
 
   // Run merged use callback to collect loaders, revalidate, middleware, etc.
   if (mergedUse) {
@@ -739,7 +752,6 @@ const intercept = (
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
       layout: capturedLayouts, // Capture layout() calls
-      when: entry.when, // Capture when() conditions
       get loading() {
         return entry.loading;
       },
@@ -878,7 +890,11 @@ const transition = (
     "transition() must be called inside urls()",
   );
 
-  const name = `$${store.getNextIndex("transition")}`;
+  // Allocate a single index for this transition() call (used in all paths),
+  // mirroring cache() — the child form uses it for the name, the wrapper form
+  // reuses it for the namespace, so no index is burned.
+  const transitionIndex = store.getNextIndex("transition");
+  const name = `$${transitionIndex}`;
 
   if (!children) {
     // Position 1: child of path() — attach to parent entry
@@ -891,7 +907,7 @@ const transition = (
   }
 
   // Position 2: wrapper — create a transparent layout with transition config
-  const namespace = `${ctx.namespace}.${store.getNextIndex("transition")}`;
+  const namespace = `${ctx.namespace}.${transitionIndex}`;
   const entry = {
     ...emptySegmentBase(),
     id: namespace,
@@ -920,6 +936,12 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const { store, ctx } = requireDslContext(
     "route() must be called inside urls()",
   );
+
+  // Reject names colliding with reserved internal prefixes ($path_, $prefix_),
+  // the same guard path() and include() enforce. Without it such a name
+  // type-checks on an untyped router, then silently vanishes from generated
+  // route-types and public reverse() (isAutoGeneratedRouteName filters it out).
+  validateUserRouteName(name);
 
   const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${name}`;
 
@@ -996,8 +1018,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   } satisfies EntryData;
 
   // Capture namespace prefix on static handler for build-time reverse() resolution
-  if (isStatic && handler.$$id && ctx.namePrefix) {
-    (handler as any).$$routePrefix = ctx.namePrefix;
+  if (isStatic && handler.$$id) {
+    if (ctx.namePrefix) {
+      (handler as any).$$routePrefix = ctx.namePrefix;
+    }
+    stampStaticDefScope(handler);
   }
 
   // Merge handler.use defaults with explicit use
@@ -1084,7 +1109,6 @@ export {
   revalidate,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
   route,

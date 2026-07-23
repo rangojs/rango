@@ -23,6 +23,10 @@
  *     client context (see the `loaders` / `locationState` / `handles` options) —
  *     nothing is executed on the server. This exercises the read path
  *     (useLoader / useLocationState / useHandle from context), not the run path.
+ *   - navigate() commits synchronously, so it does NOT drive the navigation
+ *     lifecycle: useNavigation().state, useLinkStatus().pending, and
+ *     useAction().state stay "idle". Assert pending/loading/submitting transition
+ *     states with renderServerTree / e2e instead (navigate() warns once if used).
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet nesting, useLoader /
@@ -34,7 +38,7 @@
  * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
-import type { ReactNode, ComponentType } from "react";
+import { useEffect, type ReactNode, type ComponentType } from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
 import {
@@ -42,19 +46,30 @@ import {
   generateHistoryKey,
 } from "../browser/navigation-store.js";
 import { createEventController } from "../browser/event-controller.js";
+import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import type { NavigationStore, NavigationBridge } from "../browser/types.js";
 import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
-import { compilePattern } from "../router/pattern-matching.js";
+import {
+  compilePattern,
+  buildParamsFromMatch,
+} from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
 import type { LoaderDefinition } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
+import { isUnderTestRunner } from "../runtime-env.js";
+import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import { resetAdaptiveStrategyForTesting } from "../browser/prefetch/default-strategy.js";
+import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
+import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const TEST_ORIGIN = "http://localhost";
+let activePrefetchRegistrations = 0;
+let pendingPrefetchReset: object | undefined;
 
 /**
  * Seed shape for `options.handle`, matching the handle wire format:
@@ -160,7 +175,10 @@ export interface RenderRouteOptions {
   /**
    * Explicit params. Merged over (and overriding) params extracted from the
    * `request` URL. Use this when the URL alone cannot express the params, or to
-   * avoid relying on URL parsing.
+   * avoid relying on URL parsing. Supplying params also OPTS OUT of the
+   * request/leaf match check: a `request` whose pathname does not resolve the
+   * leaf is normally rejected under the test runner, but passing params here
+   * tells renderRoute the request is intentionally not the param source.
    */
   params?: Record<string, string>;
   /**
@@ -224,6 +242,10 @@ export interface RenderRouteOptions {
    * exactly as `renderSegments` does in production (a segment whose `mountPath`
    * is set is wrapped in a MountContextProvider). Normalized like a path prefix
    * (leading slash forced, trailing stripped, bare "/" -> root). Defaults to "/".
+   * An explicitly-passed `request` must match the leaf `path` directly (paths are
+   * include-RELATIVE; the mount does NOT rewrite the request) — pass the relative
+   * path, not the mount-prefixed one, or renderRoute throws rather than silently
+   * rendering empty params.
    *
    * @example
    * renderRoute([{ path: "/c/wine", Component: ProductPage }], { mount: "/shop" });
@@ -238,6 +260,28 @@ export interface RenderRouteOptions {
    * component.
    */
   theme?: ThemeConfig | true;
+  /**
+   * CSP nonce to seed via NonceContext, so a component calling `useNonce()`
+   * (e.g. an analytics/GTM head-script component) sees this value — mirroring
+   * what the SSR renderer provides per request. Defaults to undefined (the
+   * browser default), matching production client behavior.
+   *
+   * @example
+   * const { getByTestId } = await renderRoute(
+   *   [{ path: "/", Component: NonceProbe }],
+   *   { nonce: "test-nonce" },
+   * );
+   * expect(getByTestId("nonce").textContent).toBe("test-nonce");
+   */
+  nonce?: string;
+  /**
+   * Router default prefetch strategy scoped to this rendered tree. This mirrors
+   * `createRouter({ defaultPrefetch })` for Links and eligible plain anchors
+   * inside `basename`. `data-prefetch="false"`/`"none"` opts out; `"true"`
+   * allows an application route with a common static-resource suffix but does
+   * not override a `"none"` default.
+   */
+  defaultPrefetch?: PrefetchStrategy;
 }
 
 /**
@@ -269,6 +313,41 @@ interface ResolvedMatch {
   pathname: string;
 }
 
+function DelegatedPrefetchRegistration({
+  bridge,
+}: {
+  bridge: NavigationBridge;
+}): null {
+  useEffect(() => {
+    const unregister = bridge.registerDelegatedPrefetch();
+    pendingPrefetchReset = undefined;
+    activePrefetchRegistrations++;
+    return () => {
+      try {
+        unregister();
+      } finally {
+        activePrefetchRegistrations--;
+        if (activePrefetchRegistrations === 0) {
+          const reset = {};
+          pendingPrefetchReset = reset;
+          queueMicrotask(() => {
+            if (
+              pendingPrefetchReset !== reset ||
+              activePrefetchRegistrations !== 0
+            ) {
+              return;
+            }
+            pendingPrefetchReset = undefined;
+            resetPrefetchObserverForTesting();
+            resetAdaptiveStrategyForTesting();
+          });
+        }
+      }
+    };
+  }, [bridge]);
+  return null;
+}
+
 function matchLeaf(
   pattern: string,
   pathname: string,
@@ -276,14 +355,9 @@ function matchLeaf(
   const compiled = compilePattern(pattern);
   const match = compiled.regex.exec(pathname);
   if (!match) return null;
-  const params: Record<string, string> = {};
-  compiled.paramNames.forEach((name, index) => {
-    const value = match[index + 1];
-    if (value !== undefined) {
-      params[name] = decodeURIComponent(value);
-    }
-  });
-  return params;
+  // Reuse the production param builder so the harness matches the real matcher
+  // exactly (named catch-all "" binding, decoding) instead of forking it.
+  return buildParamsFromMatch(match, compiled.paramNames, compiled.catchAll);
 }
 
 function staticPrefix(pattern: string): string {
@@ -404,6 +478,33 @@ export async function renderRoute(
 
   const historyKey = generateHistoryKey(url.href);
   const mount = normalizeBasename(options.mount);
+  const basename = normalizeBasename(options.basename);
+  // Fail loud on a request that cannot resolve the leaf route (a typo, or the
+  // mount-prefixed-vs-relative confusion) instead of silently rendering empty
+  // params (matchLeaf -> null -> {}). renderRoute paths are include-RELATIVE and
+  // resolve() matches the request against the leaf as-is, so the request must be
+  // the relative form — a mount does NOT rewrite it. Only checked when `request`
+  // was passed explicitly (a defaulted request is staticPrefix of the leaf and
+  // always matches). Skipped when explicit `params` are supplied: those are
+  // merged over the URL-extracted params in resolve(), so the request is
+  // intentionally not the param source and an empty matchLeaf is not the trap.
+  // Gated on the test runner so it can never affect production.
+  if (
+    options.request !== undefined &&
+    Object.keys(options.params ?? {}).length === 0 &&
+    isUnderTestRunner() &&
+    matchLeaf(leaf.path, url.pathname) === null
+  ) {
+    throw new Error(
+      `renderRoute: request "${url.pathname}" does not match the leaf route ` +
+        `"${leaf.path}"${mount ? ` (mount "${mount}")` : ""}. renderRoute paths ` +
+        `are include-RELATIVE: pass a request that matches "${leaf.path}" ` +
+        `(e.g. "${staticPrefix(leaf.path)}"). A mount does NOT auto-rewrite the ` +
+        `request — pass the relative path, not the mount-prefixed one. If the ` +
+        `request URL intentionally does not carry the params, pass them ` +
+        `explicitly via the \`params\` option to bypass this check.`,
+    );
+  }
   const initialSegments = buildSegments(
     routes,
     initialMatch.params,
@@ -429,12 +530,32 @@ export async function renderRoute(
 
   const eventController = createEventController({ initialLocation: url });
   eventController.setParams(initialMatch.params);
+  // Resolve-by-default: resolve any deferred (Promise) seeded handle values
+  // before applying, so the seeded handles reach collect/useHandle resolved —
+  // matching what the server/client do in a real app.
+  const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
   eventController.setHandleData(
-    handleSeed,
+    resolvedSeed,
     initialSegments.map((s) => s.id),
   );
 
+  let warnedNavLifecycle = false;
   const navigate = async (target: string): Promise<void> => {
+    // renderRoute commits navigations synchronously (no server fetch, no Flight
+    // stream), so it never drives the navigation lifecycle. The transition state
+    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting a
+    // pending/loading/submitting state here proves nothing. Warn once (per render)
+    // under the test runner so that false-confidence trap is loud, not silent.
+    if (isUnderTestRunner() && !warnedNavLifecycle) {
+      warnedNavLifecycle = true;
+      console.warn(
+        "renderRoute: navigate()/useRouter().push commit synchronously and do " +
+          "NOT drive the navigation lifecycle. useNavigation().state, " +
+          'useLinkStatus().pending, and useAction().state stay "idle" here. ' +
+          "Assert params/pathname/content after navigate(); use renderServerTree " +
+          "or e2e to assert pending/loading/submitting transition states.",
+      );
+    }
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
     const segments = buildSegments(routes, match.params, loaderData, mount);
@@ -449,20 +570,31 @@ export async function renderRoute(
     });
   };
 
+  let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target) => navigate(target),
     refresh: () => navigate(url.pathname + url.search),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},
+    registerDelegatedPrefetch: () =>
+      setupNavigationBridgeDelegatedPrefetch(
+        store,
+        eventController,
+        () => undefined,
+        {
+          defaultPrefetch: options.defaultPrefetch,
+          root: prefetchRoot,
+          basename,
+        },
+      ),
     getVersion: () => undefined,
     updateVersion: () => {},
   };
 
-  const initialMetadata = makeMetadata(
-    url.pathname,
-    initialSegments,
-    initialMatch.params,
-  );
+  const initialMetadata = {
+    ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
+    defaultPrefetch: options.defaultPrefetch,
+  };
   const initialTree = await renderSegments(initialSegments);
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
@@ -471,18 +603,27 @@ export async function renderRoute(
   // suspended inside an act scope, but the act call was not awaited") and the
   // resolved content never reaches the asserted DOM.
   let result!: Awaited<ReturnType<typeof render>>;
+  const container = document.body.appendChild(document.createElement("div"));
+  prefetchRoot = container;
   await act(async () => {
     result = render(
-      <NavigationProvider
-        store={store}
-        eventController={eventController}
-        initialPayload={{ root: initialTree, metadata: initialMetadata }}
-        bridge={bridge}
-        basename={normalizeBasename(options.basename)}
-        themeConfig={
-          options.theme === undefined ? null : resolveThemeConfig(options.theme)
-        }
-      />,
+      <>
+        <NavigationProvider
+          store={store}
+          eventController={eventController}
+          initialPayload={{ root: initialTree, metadata: initialMetadata }}
+          bridge={bridge}
+          basename={basename}
+          themeConfig={
+            options.theme === undefined
+              ? null
+              : resolveThemeConfig(options.theme)
+          }
+          nonce={options.nonce}
+        />
+        <DelegatedPrefetchRegistration bridge={bridge} />
+      </>,
+      { baseElement: document.body, container },
     );
   });
 

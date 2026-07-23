@@ -1,6 +1,6 @@
 ---
 name: router-setup
-description: Create and configure the RSC router with createRouter
+description: Create and configure the RSC router with createRouter. Use when bootstrapping a new Rango app, or configuring top-level router options like base path, cache store, or environment.
 argument-hint: [option]
 ---
 
@@ -60,8 +60,10 @@ urls(
     cache, // Configure caching
     middleware, // Add middleware
     revalidate, // Control revalidation
-    intercept, // Intercept routes for modals
-    when, // Conditional rendering
+    intercept, // Intercept routes for modals (conditional via intercept(..., { when }))
+    errorBoundary, // Add an error boundary
+    notFoundBoundary, // Add a not-found boundary
+    transition, // Configure view transitions
   }) => [
     // Route definitions here
   ],
@@ -117,6 +119,15 @@ interface RangoOptions<TEnv> {
   // Controls in-memory cache duration and Cache-Control max-age for prefetch responses.
   // Set to false to disable prefetch caching.
   prefetchCacheTTL?: number | false;
+
+  // Default prefetch strategy for Links without a `prefetch` prop and for
+  // intercepted plain anchors inside basename. false/none opts out; true allows
+  // an application route whose path has a common static-resource extension.
+  // data-prefetch-scope="false"/"none" on a container is a hard subtree
+  // opt-out for both Links and plain anchors, including explicit opt-ins.
+  // (dev: "none", production: "viewport").
+  // Per-Link props win over the router default, not a disabled container scope.
+  defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";
 
   // CSP nonce provider (for router.fetch)
   nonce?: (
@@ -396,6 +407,18 @@ export const urlpatterns = urls(({ path, include }) => [
 ]);
 ```
 
+`include()` also accepts an async provider to code-split that group into its own
+chunk, imported on the first request reaching the prefix instead of at startup:
+
+```typescript
+// urls/shop.tsx: `export default shopPatterns`
+include("/shop", () => import("./urls/shop"), { name: "shop" }),
+```
+
+Build-time discovery still `await`s the provider, so route types, `href()`, and
+prerender see every route in the split group. Reach for it when a group is a
+large, independently-loadable unit — see `/composability`.
+
 ## Environment Types
 
 ```typescript
@@ -469,14 +492,35 @@ const router = createRouter({
 ```
 
 ```typescript
-// OpenTelemetry for production
-import { createRouter, createOTelSink } from "@rangojs/router";
+// OpenTelemetry for production: phase spans via the tracing slot,
+// discrete-fact spans via the telemetry sink.
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer),
+  telemetry: createOTelSink(tracer),
+});
+```
+
+```typescript
+// On Cloudflare Workers, swap the tracing factory for native custom spans
+// (no @opentelemetry/api dependency); the telemetry slot is unchanged.
+// On Vercel (Node runtime) use createVercelTracing() from @rangojs/router/vercel.
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // { spans: { ssr: false } } to toggle phases
 });
 ```
 

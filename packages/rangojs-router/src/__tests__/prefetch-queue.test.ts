@@ -109,6 +109,55 @@ describe("prefetch queue", () => {
     await flush();
   });
 
+  it("respects a configured concurrency limit above the default", async () => {
+    const { enqueuePrefetch, setPrefetchConcurrency } =
+      await import("../browser/prefetch/queue");
+
+    setPrefetchConcurrency(3);
+
+    const started: string[] = [];
+    const gates = [deferred(), deferred(), deferred(), deferred()];
+    ["a", "b", "c", "d"].forEach((k, i) => {
+      enqueuePrefetch(k, () => {
+        started.push(k);
+        return gates[i].promise;
+      });
+    });
+
+    await flush();
+    // 3 run concurrently now (was 2); the 4th waits for a slot.
+    expect(started).toEqual(["a", "b", "c"]);
+
+    gates[0].resolve();
+    await flush();
+    expect(started).toEqual(["a", "b", "c", "d"]);
+
+    gates.forEach((g) => g.resolve());
+    await flush();
+  });
+
+  it("ignores a sub-1 concurrency and keeps the default of 2", async () => {
+    const { enqueuePrefetch, setPrefetchConcurrency } =
+      await import("../browser/prefetch/queue");
+
+    setPrefetchConcurrency(0); // invalid: default of 2 is kept
+
+    const started: string[] = [];
+    const gates = [deferred(), deferred(), deferred()];
+    ["a", "b", "c"].forEach((k, i) => {
+      enqueuePrefetch(k, () => {
+        started.push(k);
+        return gates[i].promise;
+      });
+    });
+
+    await flush();
+    expect(started).toEqual(["a", "b"]);
+
+    gates.forEach((g) => g.resolve());
+    await flush();
+  });
+
   it("deduplicates queued and executing keys", async () => {
     const { enqueuePrefetch } = await import("../browser/prefetch/queue");
 
@@ -296,20 +345,14 @@ describe("prefetch queue", () => {
     // Two prefetches for the same pathname, different user search params.
     // keepUrl has user params but no internal params. Only the prefetch
     // whose non-internal search params match should be kept.
-    enqueuePrefetch(
-      "v1:abc\0/search?q=apples&_rsc_partial=true&_rsc_segments=A0",
-      (signal) => {
-        signals.set("apples", signal);
-        return a.promise;
-      },
-    );
-    enqueuePrefetch(
-      "v1:abc\0/search?q=oranges&_rsc_partial=true&_rsc_segments=A0",
-      (signal) => {
-        signals.set("oranges", signal);
-        return b.promise;
-      },
-    );
+    enqueuePrefetch("v1:abc\0/search?q=apples&_rsc_partial=true", (signal) => {
+      signals.set("apples", signal);
+      return a.promise;
+    });
+    enqueuePrefetch("v1:abc\0/search?q=oranges&_rsc_partial=true", (signal) => {
+      signals.set("oranges", signal);
+      return b.promise;
+    });
 
     await flush();
     expect(signals.size).toBe(2);

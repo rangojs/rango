@@ -10,6 +10,8 @@
 
 import type { ResolvedSegment } from "../types.js";
 import type { SerializedSegmentData } from "./types.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import { segmentFragment } from "../segment-fragments.js";
 import {
   renderToReadableStream,
   createTemporaryReferenceSet,
@@ -30,16 +32,16 @@ export async function streamToString(
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let result = "";
+  const chunks: string[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    result += decoder.decode(value, { stream: true });
+    chunks.push(decoder.decode(value, { stream: true }));
   }
 
-  result += decoder.decode(); // flush
-  return result;
+  chunks.push(decoder.decode()); // flush
+  return chunks.join("");
 }
 
 /**
@@ -104,7 +106,14 @@ export async function serializeResult(value: unknown): Promise<string | null> {
     const temporaryReferences = createTemporaryReferenceSet();
     const stream = renderToReadableStream(value, { temporaryReferences });
     return await streamToString(stream);
-  } catch {
+  } catch (error) {
+    // Returning null silently turns a non-serializable cache value into a
+    // permanent miss with no trace. Surface it on the internal debug channel so
+    // a failed serialize is diagnosable on wrangler tail, but keep returning
+    // null so the caller falls through to an uncached render rather than throws.
+    if (INTERNAL_RANGO_DEBUG) {
+      console.warn("[segment-codec] serializeResult failed:", error);
+    }
     return null;
   }
 }
@@ -206,6 +215,52 @@ export async function serializeSegments(
           mountPath: segment.mountPath,
         },
       };
+    }),
+  );
+}
+
+/**
+ * Build ResolvedSegments that carry the STORED fragment strings verbatim
+ * instead of decoding them (PPR fast-path payload splice, issue #700; see
+ * segment-fragments.ts). The ReactNode fields (component/layout/loading)
+ * become {@link segmentFragment} envelopes the outer Flight render serializes
+ * as a string copy; the CONSUMER (SSR resume + browser hydration) expands them
+ * through its own deserializer. Loader data fields are NOT enveloped — they
+ * are consumer data of any shape (a marker there could collide) and decode
+ * server-side exactly as deserializeSegments does; on the doc/prerender
+ * records this path serves they are absent in practice (loaders are never
+ * cached with the route record).
+ *
+ * The loading "null" sentinel decodes here (not on the consumer): loading:null
+ * must survive as null, and shipping the raw sentinel would change the
+ * deduplicateLoaderSegments loading-presence check.
+ */
+export async function fragmentSegments(
+  data: SerializedSegmentData[],
+): Promise<ResolvedSegment[]> {
+  return Promise.all(
+    data.map(async (item): Promise<ResolvedSegment> => {
+      const loadingIsNullSentinel = item.encodedLoading === "null";
+      const [loaderData, loaderDataPromise] = await Promise.all([
+        rscDeserialize(item.encodedLoaderData),
+        rscDeserialize(item.encodedLoaderDataPromise),
+      ]);
+      return {
+        ...item.metadata,
+        // Envelopes ride ReactNode-typed fields; the consumer expansion pass
+        // (segment-fragments.ts) replaces them before any render reads them.
+        component: segmentFragment(item.encoded) as unknown,
+        layout: item.encodedLayout
+          ? (segmentFragment(item.encodedLayout) as unknown)
+          : undefined,
+        loading: loadingIsNullSentinel
+          ? null
+          : item.encodedLoading !== undefined
+            ? (segmentFragment(item.encodedLoading) as unknown)
+            : undefined,
+        loaderData,
+        loaderDataPromise,
+      } as ResolvedSegment;
     }),
   );
 }

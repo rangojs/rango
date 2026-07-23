@@ -80,7 +80,7 @@ const PricesLoader = createLoader(async (ctx) => {
 | ------------------------------------------------ | ----------------------------------------------------- |
 | `rendered()` in DSL loader, no streaming         | Resolves after handlers settle                        |
 | `rendered()` in DSL loader, tree has `loading()` | Waits for streaming handlers to settle, then resolves |
-| `rendered()` in handler-invoked loader           | Throws `RenderedBarrierError`                         |
+| `rendered()` in handler-invoked loader           | Throws `Error` ("only available in DSL loaders")      |
 | `rendered()` while a handler awaits this loader  | Throws (deadlock guard)                               |
 | `ctx.use(handle)` before `await ctx.rendered()`  | Throws                                                |
 | `ctx.use(handle)` after `await ctx.rendered()`   | Returns collected handle data                         |
@@ -107,6 +107,22 @@ The render barrier is a deferred promise on the request context:
   Handles are immediately available.
 - **Prerender path**: Resolved after handle data is replayed from build
   artifacts. Same as cache hit.
+- **PPR shell capture (bake lane)**: the capture's derived context gets its
+  OWN barrier, wired to the capture's fresh handle store
+  (`wireRenderBarrier` in `server/request-context.ts`, called from
+  `deriveShellCaptureContext` in `rsc/shell-capture.ts`). This is scar
+  tissue (issue #684, plan 009): the derived context is
+  `Object.create(reqCtx)`, and before the explicit wiring every
+  `_renderBarrier*` read fell through the prototype to the foreground
+  request's barrier — closure-bound to the foreground context and store,
+  already resolved, resolver a no-op. A bake-lane loader's
+  `await ctx.rendered()` resolved instantly and `ctx.use(handle)` returned
+  the FOREGROUND's handle snapshot, so foreground per-request handle data
+  could bake into the shared shell. With its own barrier the capture runs
+  the same lifecycle as a fresh render: barrier resolves at the capture's
+  segment resolution, `_treeHasStreaming` is recomputed for the capture's
+  tree, and the snapshot is built from the capture's store. Pinned by
+  `router/__tests__/shell-capture-barrier-isolation.test.ts`.
 
 ### Loader `use(handle)` After Barrier
 

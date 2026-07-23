@@ -26,10 +26,16 @@ import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { cancelAllPrefetches } from "../prefetch/queue.js";
+import { cancelAllPrefetches } from "../prefetch/loader.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
 import { createAppShellRef, type AppShellRef } from "../app-shell.js";
+import { startConnectionWarmup } from "../connection-warmup.js";
 import { debugLog } from "../logging.js";
+import { cloneHandleData } from "../navigation-store.js";
+import {
+  deferredHandleNames,
+  resolveDeferredHandleValues,
+} from "../../handles/deferred-resolution.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -65,6 +71,19 @@ async function processHandles(
     historyKey,
   } = opts;
 
+  // This nav's instance token, captured before any await — processHandles runs
+  // right after its own commit, so this is that commit's token. generateHistoryKey
+  // is URL-only, so an A->B->A revisit reuses the key; the token lets a late
+  // resolution tell its own visit apart from a newer same-URL visit, so a stale
+  // nav can never clobber a fresher one's live state or cache (P1).
+  const myInstance = store.getNavInstance();
+
+  // True while this nav still owns the live page: same history key AND the most
+  // recent commit is still ours (no newer nav has committed since).
+  const stillLive = (): boolean =>
+    historyKey === store.getHistoryKey() &&
+    myInstance === store.getNavInstance();
+
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
     // Check if user navigated away before each update.
@@ -78,7 +97,91 @@ async function processHandles(
     }
 
     yieldCount++;
-    eventController.setHandleData(handleData, matched, isPartial, resolvedIds);
+
+    // Resolve-by-default: hold the previous resolved value until this yield's
+    // deferred (Promise) handle values settle, then apply the fully-resolved
+    // snapshot. The hold needs NO extra state — we simply do not touch the store
+    // until the values resolve, so useHandle keeps reading (and showing) the
+    // previous data. A yield with no deferred value applies synchronously.
+    const hasDeferred = deferredHandleNames(handleData).size > 0;
+
+    if (!hasDeferred) {
+      eventController.setHandleData(
+        handleData,
+        matched,
+        isPartial,
+        resolvedIds,
+      );
+      // Keep the cache fresh. The token guard stops a stale same-URL nav writing
+      // a newer entry; the owned-write folds probe + write into one scan.
+      store.updateCacheHandleDataIfOwned(
+        historyKey,
+        eventController.getHandleState().data,
+        myInstance,
+        false,
+      );
+      continue;
+    }
+
+    // The PREVIOUS (held) snapshot — captured before the await so the cache and
+    // the navigate-away merge below reflect what useHandle is still showing.
+    const previousSnapshot = cloneHandleData(
+      eventController.getHandleState().data,
+    );
+
+    // The route HAS changed even though the handle data is held, so update
+    // `routeSegmentIds` (what useSegments reads) now. This leaves `data` /
+    // `segmentOrder` (what useHandle collects over) untouched, so useHandle keeps
+    // holding its previous value while useSegments reflects the new route.
+    eventController.setRouteSegmentIds(matched ?? []);
+
+    // Deferred-pending: the new values are not applied yet (the previous value is
+    // held), so the cache entry must NOT be served as fresh on a popstate return.
+    // Mark it STALE + handlesPending (token-guarded), storing the PREVIOUS (held)
+    // snapshot. P1 fix: a deferred value is a SERVER-side promise streamed via
+    // Flight, so a navigate-away ABORTS the stream and the resolve below never
+    // settles. stale makes a popstate return revalidate; handlesPending makes that
+    // revalidation a FULL re-render (no client segment IDs) so the server
+    // re-streams the handles — a diff-only revalidation would omit the unchanged
+    // segments' handles and the deferred value would never land (see the
+    // segmentIds branch in navigation-bridge.ts).
+    store.updateCacheHandleDataIfOwned(
+      historyKey,
+      previousSnapshot,
+      myInstance,
+      true,
+      true,
+    );
+
+    // Resolve every deferred value (allSettled; rejected + nullish dropped, sync
+    // values pass through). Each stream yield is a full cumulative snapshot.
+    const resolved = await resolveDeferredHandleValues(handleData);
+
+    if (!stillLive()) {
+      // Navigated away (or a same-URL nav superseded us) while resolving. We do
+      // NOT write `resolved` into the entry. It is THIS yield's snapshot only (on a
+      // partial nav, just the re-resolved segments' buckets), and a correct write
+      // needs setHandleData's nested per-segment merge + matched/resolvedIds
+      // cleanup: HandleData is handleName -> segmentId -> entries[], so a
+      // handle-name-level spread would drop a shared layout bucket (e.g. a
+      // Breadcrumbs layout crumb under L0 when the route pushed under R0) and would
+      // mark stale previous-route buckets fresh. We cannot run that merge here
+      // without touching the now-different live page. Instead leave the entry as it
+      // was marked before the await — stale + handlesPending — so a popstate return
+      // revalidates with a full re-render and re-streams the handles. A newer nav
+      // owning the entry has already overwritten it; nothing to do either way.
+      continue;
+    }
+
+    // Still live: apply the fully-resolved snapshot and refresh the cache fresh.
+    eventController.setHandleData(resolved, matched, isPartial, resolvedIds);
+    store.updateCacheHandleDataIfOwned(
+      historyKey,
+      eventController.getHandleState().data,
+      myInstance,
+      false,
+      false,
+    );
   }
 
   // Check again before final updates
@@ -96,8 +199,9 @@ async function processHandles(
   // After handles processing completes, update the cache's handleData.
   // This fixes a race condition where commit() caches stale handleData before
   // the async handles processing completes.
-  // Only update if we're still on the same page (historyKey matches).
-  if (historyKey === store.getHistoryKey()) {
+  // Only update if we're still on the same page AND this is still the live nav
+  // (the token guard stops a stale same-URL nav writing a newer nav's state).
+  if (stillLive()) {
     const finalHandleData = eventController.getHandleState().data;
     store.updateCacheHandleData(historyKey, finalHandleData);
   }
@@ -165,6 +269,14 @@ export interface NavigationProviderProps {
    * load (X-RSC-Reload), so the target app establishes its own shell on load.
    */
   appShellRef?: AppShellRef;
+
+  /**
+   * CSP nonce to expose via NonceContext. Production leaves this undefined — the
+   * browser has no nonce (it is a server-side HTML concern), and SSR provides the
+   * nonce through its own NonceContext.Provider. Test harnesses (renderRoute) set
+   * it to seed a nonce so components calling useNonce() can be exercised.
+   */
+  nonce?: string;
 }
 
 /**
@@ -199,6 +311,7 @@ export function NavigationProvider({
   version,
   basename,
   appShellRef,
+  nonce,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -236,6 +349,7 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
+      defaultPrefetch: initialPayload.metadata.defaultPrefetch,
     } as NavigationStoreContextValue;
     Object.defineProperty(value, "basename", {
       configurable: true,
@@ -250,91 +364,13 @@ export function NavigationProvider({
     return value;
   }, []);
 
-  // Connection warmup: keep TLS alive after idle periods.
-  // After 60s of no user interaction, marks connection as "cold".
-  // On next interaction or visibility change, sends a HEAD request to warm TLS
-  // before the user actually clicks a link.
+  // Connection warmup: keep TLS alive after idle periods. After 60s of no
+  // interaction the connection is marked cold; the next pointer/touch
+  // interaction or visibility change warms TLS via a HEAD request before the
+  // user clicks a link. State machine lives in connection-warmup.ts.
   useEffect(() => {
     if (!warmupEnabled) return;
-
-    const IDLE_TIMEOUT = 60_000;
-    const DEBOUNCE_DELAY = 150;
-
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-    let isCold = false;
-    let warmupListenersAttached = false;
-
-    function sendWarmup() {
-      isCold = false;
-      fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
-    }
-
-    function triggerWarmup() {
-      if (!isCold) return;
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        sendWarmup();
-        detachWarmupListeners();
-        resetIdleTimer();
-      }, DEBOUNCE_DELAY);
-    }
-
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible" && isCold) {
-        triggerWarmup();
-      }
-    }
-
-    function attachWarmupListeners() {
-      if (warmupListenersAttached) return;
-      warmupListenersAttached = true;
-      document.addEventListener("visibilitychange", onVisibilityChange);
-      document.addEventListener("mousemove", triggerWarmup, { once: true });
-      document.addEventListener("touchstart", triggerWarmup, { once: true });
-    }
-
-    function detachWarmupListeners() {
-      warmupListenersAttached = false;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      document.removeEventListener("mousemove", triggerWarmup);
-      document.removeEventListener("touchstart", triggerWarmup);
-    }
-
-    function markCold() {
-      isCold = true;
-      attachWarmupListeners();
-    }
-
-    function resetIdleTimer() {
-      clearTimeout(idleTimer);
-      isCold = false;
-      idleTimer = setTimeout(markCold, IDLE_TIMEOUT);
-    }
-
-    // Activity events that reset the idle timer
-    const activityEvents = [
-      "mousemove",
-      "keydown",
-      "touchstart",
-      "scroll",
-    ] as const;
-    const activityOptions: AddEventListenerOptions = { passive: true };
-
-    for (const event of activityEvents) {
-      document.addEventListener(event, resetIdleTimer, activityOptions);
-    }
-
-    resetIdleTimer();
-
-    return () => {
-      clearTimeout(idleTimer);
-      clearTimeout(debounceTimer);
-      detachWarmupListeners();
-      for (const event of activityEvents) {
-        document.removeEventListener(event, resetIdleTimer);
-      }
-    };
+    return startConnectionWarmup();
   }, [warmupEnabled]);
 
   // Cancel non-matching prefetches when navigation starts.
@@ -420,6 +456,13 @@ export function NavigationProvider({
           cached === undefined ? update.metadata.resolvedIds : undefined,
         );
       }
+
+      // tx.commit() and the metadata updates above mutate the controller
+      // synchronously, but its ordinary notifications are task-debounced. Flush
+      // them here so hook setState calls inherit this payload update's lane. In
+      // a transition that suspends, the source tree therefore keeps its source
+      // pathname/params until the destination payload commits with them.
+      eventController.flushRouteState();
     });
 
     return unsubscribe;
@@ -430,7 +473,8 @@ export function NavigationProvider({
     payload.root instanceof Promise ? use(payload.root) : payload.root;
 
   // Wrap content in RootErrorBoundary to catch:
-  // 1. Errors from NetworkErrorThrower (rendered during network failures)
+  // 1. Errors from RenderErrorThrower (network failures and unprocessable
+  //    navigation responses, routed here by the navigation bridge)
   // 2. Client component errors that occur before/outside the segment tree's error boundary
   // 3. Errors during promise resolution or navigation state updates
   // This acts as a safety net - the segment tree has its own RootErrorBoundary that
@@ -454,9 +498,10 @@ export function NavigationProvider({
 
   // Match SSR tree shape: NonceContext.Provider is always present so
   // hydration sees the same component tree. Value is undefined on the
-  // client — CSP nonces are a server-side HTML concern.
+  // client — CSP nonces are a server-side HTML concern — unless a test
+  // harness seeded one via the `nonce` prop.
   content = (
-    <NonceContext.Provider value={undefined}>{content}</NonceContext.Provider>
+    <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
   );
 
   return (

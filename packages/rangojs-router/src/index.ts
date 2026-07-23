@@ -76,13 +76,24 @@ export type {
   RouteParams,
 } from "./search-params.js";
 
+// Universal cache-key filtering config and tracking-param preset.
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./cache/search-params-filter.js";
+
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
 
 // Route definition types (safe to import anywhere)
 export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
-export type { TransitionConfig, ViewTransitionClass } from "./types.js";
+export type {
+  TransitionConfig,
+  TransitionWhenFn,
+  TransitionWhenContext,
+  ViewTransitionClass,
+} from "./types.js";
 
 // Composition types for reusable callback factories
 export type {
@@ -105,6 +116,7 @@ export type {
   TextResponsePathFn,
   RouteResponse,
   ProblemDetails,
+  PartialPrerenderProps,
 } from "./urls.js";
 
 // Middleware context types
@@ -143,7 +155,6 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export {
   DEFAULT_DEFER_TIMEOUT_MS,
   type DeferOptions,
-  type DeferredHandleEntry,
   type HandlePush,
   type HandlePushFn,
 } from "./defer.js";
@@ -279,9 +290,6 @@ export function parallel(): never {
 export function intercept(): never {
   throw serverOnlyStubError("intercept");
 }
-export function when(): never {
-  throw serverOnlyStubError("when");
-}
 export function errorBoundary(): never {
   throw serverOnlyStubError("errorBoundary");
 }
@@ -307,6 +315,11 @@ export type {
 
 // Built-in handles (universal — work on both server and client)
 export { Meta } from "./handles/meta.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
 export { Breadcrumbs } from "./handles/breadcrumbs.js";
 
 // Meta types
@@ -336,15 +349,23 @@ export {
 // Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
 // `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
-// Telemetry types only — the createConsoleSink/createOTelSink values are
-// server-only and live in index.rsc.ts (the `react-server` condition of the
-// bare `@rangojs/router` import). Re-exporting them as values from this
-// (default/client) entry would pull telemetry.ts and telemetry-otel.ts into
-// the client module graph; both tree-shake to zero bytes but still appear in
-// bundle analysis output and slow build-time module resolution. Consumers
-// who need the values in non-RSC contexts can import from
-// `@rangojs/router/server`.
-export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
+// Telemetry types only — the createConsoleSink / createOTelSink /
+// createOTelTracing VALUES are server-only and live in index.rsc.ts (the
+// `react-server` condition of the bare `@rangojs/router` import). Re-exporting
+// them as values from this (default/client) entry would pull telemetry.ts and
+// telemetry-otel.ts into the client module graph; both tree-shake to zero bytes
+// but still appear in bundle analysis output and slow build-time module
+// resolution. The factory values are NOT re-exported from `@rangojs/router/server`
+// either — that subpath is internal, not user-facing (see server.ts header).
+// Non-RSC server code imports these TYPES from the root and obtains the factory
+// VALUES from its own router definition module, which resolves to index.rsc.ts
+// under the `react-server` condition.
+export type {
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelSpan,
+  OTelTracingOptions,
+} from "./router/telemetry-otel.js";
 // The full TelemetryEvent union PLUS its member types, so a consumer writing a
 // TelemetrySink can annotate a per-`type` handler (or construct an event literal
 // in a test) instead of only narrowing the opaque union.
@@ -366,10 +387,22 @@ export type {
   OriginCheckRejectedEvent,
 } from "./router/telemetry.js";
 
+// Span tracing config types a consumer annotates. SpanRunner/TraceSpan are the
+// internal runner contract (consumers go through createOTelTracing /
+// createCloudflareTracing, which return a ready RouterTracingConfig) and are not
+// exported.
+export type {
+  RouterTracingConfig,
+  TracePhase,
+  TracePhaseToggles,
+  TracingToggleOptions,
+} from "./router/tracing.js";
+
 // Timeout types and error class
 export { RouterTimeoutError } from "./router/timeout.js";
 export type {
   RouterTimeouts,
   TimeoutPhase,
   TimeoutContext,
+  RenderTimeoutContext,
 } from "./router/timeout.js";

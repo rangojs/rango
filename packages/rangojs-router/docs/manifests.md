@@ -43,19 +43,23 @@ export const NamedRoutes = {
   },
 } as const;
 
+// Aliased so the augmentation below does not pay a homomorphic mapped-type
+// instantiation per route; `as const` already makes the members readonly.
+type NamedRoutesShape = typeof NamedRoutes;
+
 // Module augmentation for typed Handler<"blog.post"> and ctx.reverse("blog.post")
 declare global {
   namespace Rango {
-    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
+    interface GeneratedRouteMap extends NamedRoutesShape {}
   }
 }
-
-export type NamedRoutes = typeof NamedRoutes;
 ```
 
 The augmentation targets the global `Rango` namespace (not
-`declare module "@rangojs/router"`) and extends `Readonly<typeof NamedRoutes>`,
-so the generated `const` is the single source of truth for both runtime and types.
+`declare module "@rangojs/router"`) and extends `NamedRoutesShape` (an alias of
+`typeof NamedRoutes`), so the generated `const` is the single source of truth
+for both runtime and types. The alias avoids the homomorphic mapped-type cost
+that `Readonly<typeof NamedRoutes>` would incur at the `extends` site.
 
 **Dual purpose:**
 
@@ -102,10 +106,16 @@ The eager module carries only the flat route maps (for `reverse()`); the trie an
 precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<routerId>`
 chunk, populated via `await ensureRouterManifest(routerId)` before any matching.
 Keeping that data in exactly one (lazy) chunk is a hard constraint — see CLAUDE.md
-"Bundle Hygiene" rule #1; do not add `setRouteTrie`/`setPrecomputedEntries` here.
+"Bundle Hygiene" rule #1; do not inline trie/precomputedEntries data here.
+The lazy chunk carries ONLY that derived match data — it does not re-export the
+name->path map (the eager module's `setRouterManifest()` is its sole source, and
+`ensureRouterManifest()` ignores any `manifest` field on the loaded module).
 
 The `import` of the gen file creates a dependency in Vite's module graph.
 When the gen file changes, Vite invalidates the virtual module automatically.
+The lazy per-router module keeps a bare side-effect `import` of the gen file for
+the same reason: without that edge, a Cloudflare dev program reload re-imports
+the cached per-router module and re-installs a stale authoritative trie.
 
 ## HMR Flow (Dev Only)
 
@@ -171,8 +181,20 @@ Each `createRouter()` gets isolated data:
 
 `ctx.reverse()` resolves via `getRouterManifest(routerId) ?? getGlobalRouteMap()`.
 
+Search schemas and root-scope flags are per-router the same way: `path()` registers
+them under the evaluating router's id (threaded through the evaluation store by
+createRouter/generateManifestFull/lazy-include contexts), and lookups pass
+`reqCtx._routerId` so same-named routes in different routers keep their own
+schema. The name-keyed global tier remains as the fallback for contexts with no
+router identity (single-router apps, unit tests).
+
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
-via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
+via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request — in BUILD
+only. `ensureRouterManifest()` marks a loader-supplied trie authoritative (misses are hard
+404s), which is only valid for a trie serialized from complete build-time discovery. Dev
+never registers loaders: the handler rebuilds the trie from live `router.urlpatterns`
+(`buildRouterTrieFromUrlpatterns`, non-authoritative), so a Cloudflare program reload can
+never serve a removed route from a stale-but-authoritative discovery trie.
 
 Router roots must be sibling app roots. Nested router roots are not supported:
 if a router source file lives under another router's directory, Vite runtime
@@ -230,6 +252,34 @@ rango({
 
 Both modes produce the same virtual module output. The `import` from gen file works in both:
 Vite resolves it in dev, Rollup bundles it in build.
+
+### Dev-boot dependency re-optimization race (why we discover entry-first)
+
+Boot discovery in `configureServer` must **import the router entry before it reads
+`RouterRegistry`**, and it must not import `@rangojs/router/server` beforehand. This
+started as a bug: on a cold dev boot that also triggers a Vite dependency
+re-optimization (first boot after a lockfile change, or `vite dev --force`), any module
+imported through the RSC runner _before_ the entry resolves to the **pre-optimize** copy
+of the runner's module graph, while the entry import — which awaits the in-flight
+re-optimization — resolves to the **post-optimize** copy. `createRouter()` then populates
+`RouterRegistry` on the fresh copy, but a server module read from the stale copy sees an
+empty `Map`, so discovery throws a spurious `No routers found in registry after importing
+<entry>` even though the app is configured correctly.
+
+`discoverRouters()` imports the entry first and reads the registry off the same instance,
+so the read and write stay on one copy. The Node dev path therefore arms
+`manifestReadyPromise` **after** `discoverRouters()` (using the server module it returns)
+rather than pre-importing `@rangojs/router/server` to arm it early — the virtual manifest
+module's own `s.discoveryDone` gate already blocks early requests during discovery. Do not
+reintroduce a pre-discovery `runner.import("@rangojs/router/server")`; it re-opens this
+race.
+
+Two backstops make the failure non-fatal even if it ever recurs: the per-request self-heal
+in `handler.ts` builds the trie from the router's live `urlpatterns` when the manifest is
+missing, and `describeDiscoveryFailure()` (discovery-errors.ts) downgrades the terminal
+message to an informational warning when the dep optimizer's `browserHash` changed across
+the attempt (a re-optimization landed mid-flight), reserving the loud, actionable error for
+a genuinely empty registry.
 
 ## Runtime Storage
 

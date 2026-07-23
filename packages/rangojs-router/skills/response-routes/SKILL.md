@@ -1,6 +1,6 @@
 ---
 name: response-routes
-description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses
+description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.
 argument-hint: [json|text|html|xml|md|image|stream]
 ---
 
@@ -115,9 +115,15 @@ path.md(
 );
 ```
 
-Headers set via `ctx.header()` and cookies set via `cookies().set()` are merged into the
-auto-wrapped Response. If the handler returns a `Response` directly, these are ignored
-(use the Response headers instead).
+Headers set via `ctx.header()` and cookies set via `cookies().set()` are merged
+into both auto-wrapped and handler-returned responses. Headers on the returned
+`Response` are preserved; request-context writes are then merged into the final
+response.
+
+A handler may either return or throw a `Response`. Both are response control
+flow: status/body/headers are preserved, request-context headers and cookies
+merge, and router `onError` is not invoked. Throw ordinary errors (including
+`RouterError`) only when you want the configured error serialization path.
 
 ### Environment Access
 
@@ -205,6 +211,26 @@ path.json(
   { name: "export" },
 );
 ```
+
+`path.json()` describes the response representation. It does not parse the
+incoming request body, so signed webhooks can read the original bytes with
+`await ctx.request.text()` from either `path.json()` or `path.any()`.
+
+### External redirects
+
+Rango blocks unbranded cross-origin redirects at the final response boundary.
+For an OAuth, SSO, or payment callback, validate the registered target and
+return an explicitly external redirect:
+
+```typescript
+path.any("/oauth/decision", async (ctx) => {
+  const redirectUri = await readAndValidateRedirectUri(ctx.request);
+  return redirect(redirectUri, { status: 303, external: true });
+});
+```
+
+`external: true` permits off-origin HTTP(S); it does not permit unsafe schemes.
+Never apply it before validating a user-controlled URL.
 
 ## Client-Side Type Safety
 
@@ -316,7 +342,7 @@ the response payload straight from the `urls()` patterns and needs no
 ### ParamsFor with Response Routes
 
 ```typescript
-import type { ParamsFor } from "@rangojs/router/client";
+import type { ParamsFor } from "@rangojs/router";
 
 // Works for both RSC and response routes
 type ProductParams = ParamsFor<"api.productDetail">;
@@ -361,6 +387,17 @@ path.json("/api/users", handler, { name: "users" }, () => [
   cache({ ttl: 60, swr: 300 }),
 ]);
 ```
+
+### `cache()` safety (parity with document cache)
+
+Response-route `cache()` stores whole `Response`s. The serve leaf
+(`serveResponseRouteWithCache`) applies the same safety gates as document cache:
+
+| Gate                   | Behavior                                                                                                                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **GET/HEAD only**      | Non-GET/HEAD methods skip the cache (handler runs uncached).                                                                                                                            |
+| **Per-client signals** | A response with `Set-Cookie` or `x-rango-keep-cache` is returned live but **not** stored (MISS + SWR revalidation also skip put).                                                       |
+| **Default key**        | `response:{type}:{cacheKeyBase(host, path, searchParams)}` — sorted search, reserved `_rsc*` / allowlisted `__*` params excluded. Custom `key()` / store `keyGenerator` still override. |
 
 ## Mountable Module Pattern
 
@@ -418,11 +455,25 @@ export const urlpatterns = urls(({ path, include }) => [
 ]);
 ```
 
+A heavy module like this is a good code-split candidate. Pass an async provider
+and the module — its handlers, response serializers, and any nested
+`include()`s — loads on the first request under the prefix instead of at startup:
+
+```typescript
+// blog/urls.tsx: `export default blogPatterns`
+include("/blog", () => import("./blog/urls"), { name: "blog" }),
+```
+
+Named routes and response types still resolve through the split: `TRoutes` and
+the `_responses` phantom are inferred from the resolved `urls()` value, so
+`Rango.PathResponse<"/blog/api/stats">` and `ctx.reverse` are unchanged. See
+`/composability`.
+
 ### Type safety after mounting
 
 ```typescript
 import type { RouteResponse } from "@rangojs/router";
-import type { ParamsFor } from "@rangojs/router/client";
+import type { ParamsFor } from "@rangojs/router";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
@@ -476,7 +527,7 @@ best-effort basis.
 1. `path.json()` tags the route at the trie level with a MIME type
 2. `coreRequestHandler()` checks the tag before the RSC pipeline
 3. Tagged routes short-circuit: handler runs, Response is returned directly
-4. JSON routes serialize the return value verbatim (bare) on success; a thrown error becomes an RFC 9457 `problem+json` body (`application/problem+json`)
+4. JSON routes serialize the return value verbatim (bare) on success; a returned or thrown `Response` is control flow; any other thrown error becomes an RFC 9457 `problem+json` body (`application/problem+json`)
 5. Client-side navigation to response routes gets `X-RSC-Reload` header, triggering hard navigation
 6. Response types flow through `_responses` phantom type on `UrlPatterns`, propagated by `include()`
 7. When multiple routes share a URL pattern, the trie merges them for content negotiation (see `/mime-routes`)

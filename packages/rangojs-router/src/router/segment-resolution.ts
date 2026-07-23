@@ -2,6 +2,7 @@
 export {
   handleHandlerResult,
   warnOnStreamedResponse,
+  buildLoaderErrorContext,
 } from "./segment-resolution/helpers.js";
 export {
   resolveLoaders,

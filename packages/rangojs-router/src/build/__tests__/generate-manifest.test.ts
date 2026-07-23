@@ -3,13 +3,13 @@ import { generateManifest } from "../generate-manifest";
 import { urls, type UrlPatterns } from "../../urls";
 
 describe("generateManifest", () => {
-  it("should extract routes from simple urlpatterns", () => {
+  it("should extract routes from simple urlpatterns", async () => {
     const urlpatterns = urls(({ path }) => [
       path("/", () => null, { name: "home" }),
       path("/about", () => null, { name: "about" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     expect(manifest.routeManifest).toEqual({
       home: "/",
@@ -18,7 +18,7 @@ describe("generateManifest", () => {
     expect(manifest.prefixTree).toEqual({});
   });
 
-  it("should extract routes from nested includes", () => {
+  it("should extract routes from nested includes", async () => {
     const apiPatterns = urls(({ path }) => [
       path("/users", () => null, { name: "users" }),
       path("/posts", () => null, { name: "posts" }),
@@ -29,7 +29,7 @@ describe("generateManifest", () => {
       include("/api", apiPatterns, { name: "api" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     expect(manifest.routeManifest).toHaveProperty("home", "/");
     expect(manifest.routeManifest).toHaveProperty("api.users", "/api/users");
@@ -38,7 +38,7 @@ describe("generateManifest", () => {
     expect(manifest.prefixTree["/api"].staticPrefix).toBe("/api");
   });
 
-  it("should extract routes from lazy includes", () => {
+  it("should extract routes from lazy includes", async () => {
     const lazyPatterns = urls(({ path }) => [
       path("/items", () => null, { name: "items" }),
     ]);
@@ -49,7 +49,7 @@ describe("generateManifest", () => {
       include("/shop", lazyPatterns, { name: "shop" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     // Lazy includes should still be extracted at build time
     expect(manifest.routeManifest).toHaveProperty("home", "/");
@@ -57,7 +57,7 @@ describe("generateManifest", () => {
     expect(manifest.prefixTree).toHaveProperty("/shop");
   });
 
-  it("should handle nested includes with proper prefixes", () => {
+  it("should handle nested includes with proper prefixes", async () => {
     const productPatterns = urls(({ path }) => [
       path("/:id", () => null, { name: "detail" }),
     ]);
@@ -76,7 +76,7 @@ describe("generateManifest", () => {
       include("/shop", shopPatterns, { name: "shop" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     expect(manifest.routeManifest).toHaveProperty("home", "/");
     expect(manifest.routeManifest).toHaveProperty(
@@ -95,7 +95,7 @@ describe("generateManifest", () => {
     expect(shopNode.children).toHaveProperty("/shop/category");
   });
 
-  it("should extract search schemas for named routes", () => {
+  it("should extract search schemas for named routes", async () => {
     const urlpatterns = urls(({ path }) => [
       path("/search/:category", () => null, {
         name: "search.detail",
@@ -107,7 +107,7 @@ describe("generateManifest", () => {
       }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     expect(manifest.routeSearchSchemas).toEqual({
       "search.detail": { q: "string?", active: "boolean?" },
@@ -115,7 +115,7 @@ describe("generateManifest", () => {
     });
   });
 
-  it("should include the same patterns under multiple prefixes without false cycle detection", () => {
+  it("should include the same patterns under multiple prefixes without false cycle detection", async () => {
     const shared = urls(({ path }) => [
       path("/health", () => null, { name: "health" }),
       path("/:id", () => null, { name: "detail" }),
@@ -127,7 +127,7 @@ describe("generateManifest", () => {
       include("/v2", shared, { name: "v2" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     // Both mounts should be present — the second is NOT a cycle
     expect(manifest.routeManifest).toHaveProperty("home", "/");
@@ -141,7 +141,7 @@ describe("generateManifest", () => {
     expect(manifest.prefixTree).toHaveProperty("/v2");
   });
 
-  it("should detect a real cycle (A includes B includes A)", () => {
+  it("should detect a real cycle (A includes B includes A)", async () => {
     // eslint-disable-next-line prefer-const -- mutual reference
     let cycleB: UrlPatterns<any>;
     const cycleA: UrlPatterns<any> = urls(({ path, include }) => [
@@ -158,13 +158,13 @@ describe("generateManifest", () => {
     ]);
 
     // Should not infinite-loop; the cycle is detected and one branch is skipped
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
     expect(manifest.routeManifest).toHaveProperty("start.a");
     expect(manifest.routeManifest).toHaveProperty("start.b.b");
     // The cyclic back-reference (b -> a -> b ...) should be cut
   });
 
-  it("should extract search schemas from included patterns with prefixes", () => {
+  it("should extract search schemas from included patterns with prefixes", async () => {
     const searchPatterns = urls(({ path }) => [
       path("/", () => null, {
         name: "index",
@@ -180,7 +180,7 @@ describe("generateManifest", () => {
       include("/search", searchPatterns, { name: "search" }),
     ]);
 
-    const manifest = generateManifest(urlpatterns);
+    const manifest = await generateManifest(urlpatterns);
 
     expect(manifest.routeSearchSchemas).toEqual({
       "search.detail": { q: "string?", active: "boolean?" },

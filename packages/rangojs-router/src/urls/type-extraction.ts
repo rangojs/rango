@@ -81,16 +81,26 @@ type ExtractRoutesFromItem<T> =
   // When search schema is non-empty, value becomes { path, search } object
   T extends TypedRouteItem<infer TName, infer TPattern, any, infer TSearch>
     ? TName extends string
-      ? TName extends UnnamedRoute
-        ? {} // Exclude unnamed routes from type map
-        : {} extends TSearch
-          ? { [K in TName]: TPattern }
-          : {
-              [K in TName]: {
-                readonly path: TPattern;
-                readonly search: TSearch;
-              };
-            }
+      ? // Widened-name guard (#642): some name-less call forms — notably the
+        // 3-arg children-fn overload path(pattern, component, () => [...]) —
+        // let TName infer to the bare `string` constraint instead of the
+        // UnnamedRoute sentinel, because the children-fn argument structurally
+        // satisfies the all-optional PathOptions<TName> union member. Mapping
+        // over a bare `string` key would emit `{ [K in string]: TPattern }`, an
+        // index signature that poisons the whole sibling map (Rango.Path
+        // collapses to never). Treat an unresolved name as unnamed.
+        string extends TName
+        ? {}
+        : TName extends UnnamedRoute
+          ? {} // Exclude unnamed routes from type map
+          : {} extends TSearch
+            ? { [K in TName]: TPattern }
+            : {
+                [K in TName]: {
+                  readonly path: TPattern;
+                  readonly search: TSearch;
+                };
+              }
       : {}
     : // TypedIncludeItem: extract prefixed routes (both name and URL prefix)
       T extends TypedIncludeItem<
@@ -128,9 +138,15 @@ type ExtractRoutesFromItems<T extends readonly any[]> = T extends readonly any[]
   ? UnionToIntersection<
       { [K in keyof T]: ExtractRoutesFromItem<T[K]> }[number]
     > extends infer R
-    ? R extends Record<string, any>
-      ? R
-      : {}
+    ? // Blast-radius guard: never let a single malformed item collapse the
+      // whole map. A `never` intersection satisfies `extends Record<string,any>`
+      // (never extends everything), so check it explicitly first and fall back
+      // to `{}` rather than propagating `never`. See #642.
+      [R] extends [never]
+      ? {}
+      : R extends Record<string, any>
+        ? R
+        : {}
     : {}
   : {};
 
@@ -169,9 +185,15 @@ type PrefixKeys<
 type ExtractResponsesFromItem<T> =
   T extends TypedRouteItem<infer TName, any, infer TData>
     ? TName extends string
-      ? TName extends UnnamedRoute
+      ? // Widened-name guard (#642), parallels ExtractRoutesFromItem. A name-less
+        // children-fn path.json(pattern, handler, () => [...]) infers TName as
+        // bare `string`; without this the response map picks up an index
+        // signature { [K in string]: TData } that wipes named siblings.
+        string extends TName
         ? {}
-        : { [K in TName]: TData }
+        : TName extends UnnamedRoute
+          ? {}
+          : { [K in TName]: TData }
       : {}
     : T extends TypedIncludeItem<any, infer TNamePrefix, any, infer TResponses>
       ? TNamePrefix extends LocalOnlyInclude
@@ -206,9 +228,12 @@ type ExtractResponsesFromItems<T extends readonly any[]> =
     ? UnionToIntersection<
         { [K in keyof T]: ExtractResponsesFromItem<T[K]> }[number]
       > extends infer R
-      ? R extends Record<string, unknown>
-        ? R
-        : {}
+      ? // Blast-radius guard (parallels ExtractRoutesFromItems). See #642.
+        [R] extends [never]
+        ? {}
+        : R extends Record<string, unknown>
+          ? R
+          : {}
       : {}
     : {};
 

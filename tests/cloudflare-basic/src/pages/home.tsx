@@ -1,4 +1,4 @@
-import { Meta } from "@rangojs/router";
+import { Meta, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
@@ -23,6 +23,10 @@ const features = [
 ];
 
 export function HomePage(ctx: HandlerContext) {
+  if (ctx.searchParams.has("ssr-setup-redirect")) {
+    return redirect("/about");
+  }
+
   const meta = ctx.use(Meta);
   meta({ title: "Home - RSC Router Cloudflare" });
   meta({
@@ -37,6 +41,16 @@ export function HomePage(ctx: HandlerContext) {
     <main data-testid="home-page">
       <h1 data-testid="home-title">Welcome to RSC Router</h1>
       <p>This is a minimal example running on Cloudflare Workers.</p>
+      <a href="/about?plain-prefetch=1" data-testid="plain-prefetch-link">
+        Plain anchor prefetch fixture
+      </a>
+      <a
+        href="/reports/default-none.csv"
+        data-prefetch="true"
+        data-testid="plain-prefetch-forced-route"
+      >
+        Static-looking plain anchor under manual mode
+      </a>
       <p>It demonstrates:</p>
       <ul style={{ marginTop: "1rem", marginLeft: "1.5rem" }}>
         <li>React Server Components with RSC streaming</li>
@@ -69,6 +83,29 @@ export function HomePage(ctx: HandlerContext) {
             <span style={{ color: "#666" }}>{feature.description}</span>
           </li>
         ))}
+      </ul>
+      {/* #622 follow-up: prefetch-transition regression entry points. */}
+      <ul style={{ marginLeft: "1.5rem" }} data-testid="pt-links">
+        <li>
+          {/* Plain link (no prefetch) for the cold-nav case. */}
+          <Link to="/pt-slow" data-testid="pt-slow-cold-link">
+            /pt-slow (cold)
+          </Link>
+        </li>
+        <li>
+          <Link
+            to="/pt-slow"
+            data-testid="pt-slow-prefetch-link"
+            prefetch="hover"
+          >
+            /pt-slow (prefetch=hover)
+          </Link>
+        </li>
+        <li>
+          <Link to="/pt-layout/from" data-testid="pt-layout-entry-link">
+            /pt-layout/from (client-mount-suspense regression)
+          </Link>
+        </li>
       </ul>
     </main>
   );

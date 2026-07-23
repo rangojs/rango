@@ -29,10 +29,22 @@ function AboutPage(ctx: HandlerContext) {
   );
 }
 
+// Same route NAME as admin's /lookup but a DIFFERENT search schema: pins that
+// search schemas are per-router (a request here must never parse with admin's
+// { page: number } schema, whichever router evaluated last).
+function LookupPage(ctx: HandlerContext) {
+  return (
+    <main data-testid="site-lookup-page">
+      <pre data-testid="site-lookup-search">{JSON.stringify(ctx.search)}</pre>
+    </main>
+  );
+}
+
 export const sitePatterns = urls(({ path, layout, include }) => [
   layout(<SiteLayout />, () => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
+    path("/lookup", LookupPage, { name: "lookup", search: { q: "string" } }),
     include("/api", siteApiPatterns, { name: "api" }),
     // #506: nested lazy-include chain group -> section -> item -> leaf.
     // group.index at /g/:id, group.section.item.leaf at /g/:id/sub/leaf.

@@ -25,24 +25,66 @@ export interface NavigationSnapshot {
 }
 
 export interface ResolveNavigationDeps {
-  findMatch: (pathname: string) => RouteMatchResult | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult | null | Promise<RouteMatchResult | null>;
 }
 
-export function resolveNavigation(
+/**
+ * The raw navigation-context header for a partial request, or null when the
+ * request carries none. Single source of truth shared by resolveNavigation and
+ * the PPR replay gate (matchPartialWithPprReplay): a context-less partial can
+ * never produce a partial match, so the replay path must decide
+ * `no-navigation-context` BEFORE spending shell-store reads — the two
+ * predicates drifting apart would misattribute the bypass again.
+ */
+export function getNavigationContextHeader(request: Request): string | null {
+  return (
+    request.headers.get("X-RSC-Router-Client-Path") ||
+    request.headers.get("Referer")
+  );
+}
+
+/**
+ * Whether withCacheLookup's prerender short-circuit will serve this partial
+ * from the build-time prerender store: a Prerender() match (`matched.pr`)
+ * outside dev HMR — the short-circuit is disabled on X-RSC-HMR so HMR
+ * navigations pick up edited modules. Shared by withCacheLookup and the PPR
+ * replay gate (matchPartialWithPprReplay) for the same drift reason as
+ * getNavigationContextHeader: the gate's `prerender-store` bypass must decide
+ * exactly what the middleware will actually do. (Both callers additionally
+ * exclude actions on their own paths — the gate via its GET-only check.)
+ */
+export function prerenderStoreShortCircuits(
+  pr: true | undefined,
+  request: Request,
+): boolean {
+  return pr === true && !request.headers.get("X-RSC-HMR");
+}
+
+/**
+ * The intercept-source header for a partial request, or null when the request
+ * carries none. Shared by resolveNavigation and the PPR replay gate's
+ * prerender probe: intercept navigations consult the intercept-specific
+ * prerender artifact (`paramHash + "/i"`), so the probe must check the same
+ * variant the middleware will — probing the bare hash for an intercept
+ * request would report `prerender-store` for an artifact that cannot serve.
+ */
+export function getInterceptSourceHeader(request: Request): string | null {
+  return request.headers.get("X-RSC-Router-Intercept-Source");
+}
+
+export async function resolveNavigation(
   request: Request,
   url: URL,
   currentRouteKey: string,
   deps: ResolveNavigationDeps,
-): NavigationSnapshot | null {
+): Promise<NavigationSnapshot | null> {
   const clientSegmentIds =
     url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
   const stale = url.searchParams.get("_rsc_stale") === "true";
-  const previousUrl =
-    request.headers.get("X-RSC-Router-Client-Path") ||
-    request.headers.get("Referer");
-  const interceptSourceUrl = request.headers.get(
-    "X-RSC-Router-Intercept-Source",
-  );
+  const previousUrl = getNavigationContextHeader(request);
+  const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!request.headers.get("X-RSC-HMR");
 
   if (!previousUrl) {
@@ -65,10 +107,10 @@ export function resolveNavigation(
     interceptContextUrl = prevUrl;
   }
 
-  const prevMatch = deps.findMatch(prevUrl.pathname);
+  const prevMatch = await deps.findMatch(prevUrl.pathname);
   const prevParams = prevMatch?.params || {};
   const interceptContextMatch = interceptSourceUrl
-    ? deps.findMatch(interceptContextUrl.pathname)
+    ? await deps.findMatch(interceptContextUrl.pathname)
     : prevMatch;
 
   const isSameRouteNavigation = !!(

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
@@ -8,13 +8,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Warmup is enabled by default. The server returns 204 No Content
  * for HEAD requests with ?_rsc_warmup before any middleware or routing.
  */
-
-test.describe("connection-warmup", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function connectionWarmupTests(f: Fixture) {
   test("HEAD /?_rsc_warmup returns 204", async ({ page }) => {
     const response = await page.request.head(f.url("/?_rsc_warmup"));
 
@@ -57,4 +51,21 @@ test.describe("connection-warmup", () => {
     // Should render the normal index page
     expect(page.url()).toContain("_rsc_warmup");
   });
+}
+
+test.describe("connection-warmup", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  connectionWarmupTests(f);
+});
+
+test.describe("connection-warmup (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  test.setTimeout(120000);
+  connectionWarmupTests(f);
 });

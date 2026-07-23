@@ -10,11 +10,34 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
+import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
 import {
   buildLoaderPromise,
   getMemoizedLoaderPromise,
 } from "./segment-loader-promise.js";
+
+/**
+ * Debug log for the segment tree build, gated on the baked flag. Runs on BOTH
+ * sides now, environment-tagged: `[Browser][segments]` lines up with the
+ * `[Browser][boot]` sequence around hydrateRoot; `[Server][segments]` exposes
+ * the SSR/RSC tree-build stalls (blocking loader awaits during fizz are what
+ * dominate MISS TTFB) that used to be invisible because the logs were
+ * window-gated. Server lines have no request correlation — segment-system is
+ * shared client code and cannot import request-context (node:async_hooks
+ * would enter the browser bundle) — so on a busy server, correlate by
+ * timestamp + segment ids.
+ */
+function segDebugLog(msg: string, details?: Record<string, unknown>): void {
+  if (!INTERNAL_RANGO_DEBUG) return;
+  const env = typeof window === "object" ? "[Browser]" : "[Server]";
+  const prefix = `${env}[segments] ${msg} @ ${Math.round(performance.now())}ms`;
+  if (details) {
+    console.log(prefix, details);
+    return;
+  }
+  console.log(prefix);
+}
 
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
@@ -30,9 +53,15 @@ function isRenderableLoading(loading: ReactNode): boolean {
   return loading !== undefined && loading !== null && loading !== false;
 }
 
-function restoreParallelLoaderMarkers(
+// Exported for unit testing the no-parallel fast path (D6); internal otherwise.
+export function restoreParallelLoaderMarkers(
   segments: ResolvedSegment[],
 ): ResolvedSegment[] {
+  // Parallel-loading markers only exist when a parallel segment is present, so
+  // a list with no parallel slot has nothing to restore. Skip the Map alloc and
+  // full scan in that (common) case — this runs on every render.
+  if (!segments.some((s) => s.type === "parallel")) return segments;
+
   const parallelLoadingByNamespace = new Map<string, ReactNode>();
   let nextSegments: ResolvedSegment[] | null = null;
 
@@ -205,6 +234,17 @@ export async function renderSegments(
     rootLayout: RootLayout,
   } = options || {};
 
+  const segDebug = INTERNAL_RANGO_DEBUG;
+  const segDebugStart = segDebug ? performance.now() : 0;
+  if (segDebug) {
+    segDebugLog("renderSegments start", {
+      segments: segments.map((s) => `${s.id}:${s.type}`),
+      isAction: !!isAction,
+      forceAwait: !!forceAwait,
+      intercepts: interceptSegments?.length ?? 0,
+    });
+  }
+
   const temporalLazyRefs: Promise<any>[] = [];
   const normalizedSegments = restoreParallelLoaderMarkers(segments);
   const normalizedInterceptSegments = interceptSegments
@@ -265,6 +305,7 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
+    const segNodeStart = segDebug ? performance.now() : 0;
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
     // inTransitionScope above). A route (and its route-owned layouts) inside a
@@ -307,17 +348,63 @@ export async function renderSegments(
 
     let resolvedComponent = component;
     if (isAction && component instanceof Promise) {
+      const componentAwaitStart = segDebug ? performance.now() : 0;
       resolvedComponent = await component;
+      if (segDebug) {
+        segDebugLog(`segment ${id}: component awaited (action)`, {
+          ms: Math.round(performance.now() - componentAwaitStart),
+        });
+      }
     }
 
-    let nodeContent: ReactNode = isRenderableLoading(loading)
-      ? createElement(RouteContentWrapper, {
-          key: `suspense-loading-${id}`,
-          content: getMemoizedContentPromise(resolvedComponent),
-          fallback: loading,
-          segmentId: id,
-        })
-      : registerLazyRef(resolvedComponent);
+    let nodeContent: ReactNode = null;
+    if (isRenderableLoading(loading)) {
+      // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
+      // loading() route with the route content ALREADY resolved, so its
+      // RouteContentWrapper Suspender does not suspend for a microtask and flash
+      // the loading() fallback on a NORMAL (non-transition) commit. The router
+      // data is known-ready on these paths, so awaiting the content here is free.
+      // The wrapper tree is unchanged (RouteContentWrapper is still created with
+      // the same key/fallback) — only the `content` prop is a resolved node
+      // instead of a pending promise, which Suspender renders synchronously. This
+      // mirrors the forceAwait loaderData unwrap above; a CLIENT component that
+      // suspends on mount inside the content still reveals a fallback (it is not
+      // pre-resolved).
+      const contentPromise = getMemoizedContentPromise(resolvedComponent);
+      let loadingContent: Promise<ReactNode> | ReactNode = contentPromise;
+      if (forceAwait) {
+        const contentAwaitStart = segDebug ? performance.now() : 0;
+        loadingContent = await contentPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: content awaited (forceAwait)`, {
+            ms: Math.round(performance.now() - contentAwaitStart),
+          });
+        }
+      }
+      nodeContent = createElement(RouteContentWrapper, {
+        key: `suspense-loading-${id}`,
+        content: loadingContent,
+        fallback: loading,
+        segmentId: id,
+      });
+    } else {
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. A segment in the no-loading()
+      // branch whose component decodes as a Promise/lazy gets registered into
+      // temporalLazyRefs and awaited before commit (see below) — which on builds
+      // where the segment component arrives deferred defeats client-nav streaming.
+      if (INTERNAL_RANGO_DEBUG && typeof window === "object") {
+        const c = resolvedComponent as unknown;
+        console.log("[VT-DIAG] renderSegments no-loading-branch segment", {
+          id,
+          type: node.segment.type,
+          componentIsPromise: c instanceof Promise,
+          componentIsLazy:
+            c != null && typeof c === "object" && "_payload" in c,
+          componentTypeof: typeof c,
+        });
+      }
+      nodeContent = registerLazyRef(resolvedComponent);
+    }
 
     // Wrap with <ViewTransition> if transition config exists (React experimental only).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
@@ -363,10 +450,25 @@ export async function renderSegments(
 
     if (loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
+      let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
+      if (forceAwait || isAction) {
+        const awaitStart = segDebug ? performance.now() : 0;
+        boundaryLoaderData = await loaderDataPromise;
+        if (segDebug) {
+          segDebugLog(`segment ${id}: loaders awaited (forceAwait/action)`, {
+            loaderIds,
+            ms: Math.round(performance.now() - awaitStart),
+          });
+        }
+      } else if (segDebug) {
+        segDebugLog(
+          `segment ${id}: streaming loaders via LoaderBoundary (suspense)`,
+          { loaderIds },
+        );
+      }
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
-        loaderDataPromise:
-          forceAwait || isAction ? await loaderDataPromise : loaderDataPromise,
+        loaderDataPromise: boundaryLoaderData,
         loaderIds,
         fallback: loading,
         outletKey: key,
@@ -390,11 +492,30 @@ export async function renderSegments(
       );
 
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
+      // No loading() on this segment, so its loader data cannot stream behind
+      // a Suspense fallback — the tree build BLOCKS here until the data
+      // arrives. On the initial document this await runs before hydrateRoot.
+      const layoutAwaitStart = segDebug ? performance.now() : 0;
       const resolvedData = await buildLoaderPromise(layoutLoaders);
+      if (segDebug) {
+        segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
+          loaderIds: layoutLoaderIds,
+          ms: Math.round(performance.now() - layoutAwaitStart),
+        });
+      }
+      const decodeStart = segDebug ? performance.now() : 0;
       const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
       );
+      if (segDebug) {
+        const decodeMs = Math.round(performance.now() - decodeStart);
+        if (decodeMs > 0) {
+          segDebugLog(`segment ${id}: loader results decoded`, {
+            ms: decodeMs,
+          });
+        }
+      }
 
       if (parallelOwnedLoaders.length > 0) {
         const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
@@ -423,10 +544,27 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          p.loaderDataPromise =
-            (forceAwait || isAction) && aggregated instanceof Promise
-              ? await aggregated
-              : aggregated;
+          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+            const parallelAwaitStart = segDebug ? performance.now() : 0;
+            p.loaderDataPromise = await aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                {
+                  loaderIds: p.loaderIds,
+                  ms: Math.round(performance.now() - parallelAwaitStart),
+                },
+              );
+            }
+          } else {
+            p.loaderDataPromise = aggregated;
+            if (segDebug) {
+              segDebugLog(
+                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                { loaderIds: p.loaderIds },
+              );
+            }
+          }
         }
       }
 
@@ -450,13 +588,40 @@ export async function renderSegments(
         children: content,
       });
     }
+
+    if (segDebug) {
+      segDebugLog(`segment ${id} built`, {
+        type: node.segment.type,
+        ms: Math.round(performance.now() - segNodeStart),
+        loaders: node.loaders.map((l) => l.loaderId).filter(Boolean),
+        hasLoading: loading !== undefined && loading !== null,
+        parallel: node.parallel.map((p) => p.id),
+      });
+    }
   }
 
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
   if (typeof window === "object") {
+    // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. If this await dominates the
+    // navigation time, a deferred/lazy segment component is being fully resolved
+    // before commit, which defeats client-nav streaming. The await itself is
+    // functional (it preloads lazy chunk refs); only the timing log is gated.
+    const vtDebug = INTERNAL_RANGO_DEBUG && temporalLazyRefs.length > 0;
+    const vtDebugStart = vtDebug ? performance.now() : 0;
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments awaiting temporalLazyRefs", {
+        count: temporalLazyRefs.length,
+      });
+    }
     await Promise.allSettled(temporalLazyRefs);
+    if (vtDebug) {
+      console.log("[VT-DIAG] renderSegments temporalLazyRefs settled", {
+        count: temporalLazyRefs.length,
+        ms: Math.round(performance.now() - vtDebugStart),
+      });
+    }
   }
 
   let result: ReactNode = errorBoundaryWrapped;
@@ -464,6 +629,12 @@ export async function renderSegments(
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
+    });
+  }
+
+  if (segDebug) {
+    segDebugLog("renderSegments complete", {
+      ms: Math.round(performance.now() - segDebugStart),
     });
   }
 
@@ -504,7 +675,10 @@ export async function renderSegments(
 // slot name is user-controlled (`@${string}`) and may contain an uppercase "D"
 // (e.g. "@Detail"). Strip from the first `D<index>.` separator so the slot name
 // is preserved; splitting on a bare "D" mis-cut "@Detail" to "@" and silently
-// dropped the loader's data.
+// dropped the loader's data. The first-`D<index>.` strip is only correct because
+// slot names cannot contain "." -- assertValidSlotName (route-definition/
+// dsl-helpers.ts) rejects a "." at definition time, so a name like "@D3.foo"
+// (which WOULD mis-cut here) can never reach this function.
 function loaderParentId(loaderSegmentId: string): string {
   return loaderSegmentId.replace(/D\d+\..*$/, "");
 }

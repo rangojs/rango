@@ -15,6 +15,7 @@
       "@native/*": ["./src/native-paths/*"]
     },
     "types": [
+      "node",
       "@cloudflare/workers-types",
       "vite/client",
       "@rangojs/router/types"

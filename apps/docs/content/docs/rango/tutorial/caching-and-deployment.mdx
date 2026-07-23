@@ -1,0 +1,171 @@
+---
+title: 6. Caching & Deployment
+description: Cache the shop segment on the Cloudflare edge while loaders stay live, bust it by tag from the cart action, add a JSON endpoint, and deploy.
+type: tutorial
+---
+
+Where we are: Brew reads stock and the cart through loaders and writes the cart through a server action — but every request still renders the whole tree from scratch.
+
+The shop pages barely change between requests, so let's cache them. The key idea in Rango: `cache()` caches **everything except loaders**. On a hit, the cached segments — layouts, route components — are served from the store, while loaders re-run fresh on every request and stream into the same response. Cached UI plus live data, in one streamed response.
+
+## Wire a cache store
+
+`cache()` needs a store. On Cloudflare Workers that is `CFCacheStore`, built on the edge Cache API. Because it needs the per-request `ExecutionContext`, the router takes the cache config as a function of `(env, ctx)`:
+
+```tsx
+// src/router.tsx
+import { CFCacheStore } from "@rangojs/router/cache";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
+    store: new CFCacheStore({ ctx: ctx!, defaults: { ttl: 300 } }),
+  }),
+});
+```
+
+The `ctx` here is the `ExecutionContext` your worker already passes via `router.fetch(request, { env, ctx })` — nothing to change in `src/worker.ts`.
+
+## Cache the shop segment
+
+Wrap the shop group in a `cache()` boundary in `src/urls.tsx`:
+
+```tsx
+cache({ ttl: 300 }, () => [
+  layout(<ShopLayout />, () => [
+    loader(CartLoader, () => [
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    ]),
+    path("/shop", ShopPage, { name: "shop" }),
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [
+      loader(StockLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]),
+```
+
+For five minutes, the rendered layout and pages are served from the edge cache. `StockLoader` and `CartLoader` are the dynamic holes: they still run on every request. Reload a product page a few times — the shell is a cache hit, yet the stock number keeps wobbling, because the loader (with its deliberate randomness from part 4) re-resolved each time. And the cart badge shows _your_ count even though the shell is shared.
+
+This is also where the discipline from parts 4 and 5 pays off:
+
+- `CartLoader` reads `cookies()` — allowed, because it is a loader. Reading `cookies()` directly in a handler inside a `cache()` boundary throws, precisely so one user's data cannot be frozen into the shared entry.
+- Both loaders are consumed with `useLoader()` in client components. Awaiting `ctx.use(StockLoader)` in the handler and rendering the result would bake one request's stock into the cached shell served to everyone.
+
+## Tag the product cache, bust it from the action
+
+Cached entries can carry tags, and tags can be invalidated on demand. Give the product segment its own boundary with dynamic tags:
+
+```tsx
+// inside the cache({ ttl: 300 }) boundary, replacing the plain product path()
+cache(
+  { ttl: 300, tags: (ctx) => [`product:${ctx.params.slug}`, "products"] },
+  () => [
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [
+      loader(StockLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ],
+),
+```
+
+Then bust the tag from the mutation that touches the product. Brew has no product-editing flow yet, but the wiring is the point — add it to `addToCart`:
+
+```ts
+// src/actions/cart.ts
+import { cookies, updateTag } from "@rangojs/router";
+
+export async function addToCart(
+  _prev: CartState,
+  formData: FormData,
+): Promise<CartState> {
+  const slug = formData.get("slug") as string;
+  const cart = readCart();
+  cart.push(slug);
+  cookies().set("cart", JSON.stringify(cart), { path: "/" });
+
+  // Evict this product's cached segment. Awaiting gives read-your-own-writes:
+  // the action's re-render and the next navigation see fresh output.
+  await updateTag(`product:${slug}`);
+  return { added: slug };
+}
+```
+
+Two invalidation verbs, both variadic, both imported from `@rangojs/router`:
+
+| API                      | Timing                      | Use in                    |
+| ------------------------ | --------------------------- | ------------------------- |
+| `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            |
+| `revalidateTag(...tags)` | background, non-blocking    | route handlers / webhooks |
+
+One deployment requirement: for `CFCacheStore`, the tag-invalidation markers live in a KV namespace, and distributed (cross-colo) invalidation requires one — without a tag-capable store, `updateTag` warns and no-ops. Bind a KV namespace as `CACHE_KV` in `wrangler.json` and hand it to the store; it doubles as an L2 cache layer that persists entries across colos:
+
+```tsx
+cache: (env, ctx) => ({
+  store: new CFCacheStore({
+    ctx: ctx!,
+    kv: env.CACHE_KV,
+    defaults: { ttl: 300 },
+  }),
+}),
+```
+
+## A JSON endpoint for products
+
+Storefronts grow API consumers. Response routes skip the RSC pipeline entirely and return plain `Response`s — add one alongside the page routes in `src/urls.tsx`, at the top level of the `urls()` array:
+
+```tsx
+import { RouterError } from "@rangojs/router";
+import { PRODUCTS } from "./data";
+
+path.json(
+  "/shop/:slug",
+  (ctx) => {
+    const product = PRODUCTS.find((p) => p.slug === ctx.params.slug);
+    if (!product) {
+      throw new RouterError("NOT_FOUND", `No product: ${ctx.params.slug}`, {
+        status: 404,
+      });
+    }
+    return product;
+  },
+  { name: "productJson" },
+),
+```
+
+The handler returns plain data; the framework serializes it verbatim (no envelope) on success, and a thrown `RouterError` becomes an RFC 9457 `application/problem+json` body — so consumers branch on `res.ok`, not an in-body union. The pattern is the same `/shop/:slug` the RSC route uses: when multiple routes share a URL pattern, the router merges them and negotiates by `Accept` header. Try it against the dev server:
+
+```bash
+# use any slug from src/data.ts
+curl -H "Accept: application/json" "http://localhost:5173/shop/$SLUG"
+```
+
+Response routes accept `middleware()` and `cache()` as children (no loaders or layouts — there is no RSC tree to hang them on). Details in [Response Routes](/docs/rango/features/response-routes).
+
+## Ship it
+
+```bash
+npx vite build
+npx wrangler deploy
+```
+
+On the deployed URL, repeat the experiment from earlier: reload a product page. The shell comes back from the edge cache while the stock figure keeps changing — the browser cannot tell the shell was cached, because it is one streamed response either way. To watch the store's decisions while you validate, pass `debug: true` to `CFCacheStore` and tail the worker with `wrangler tail`; each cache read logs which tier answered and why.
+
+That's Brew: file-based nothing, URL patterns in one place, loaders for reads, actions for writes, and a cache boundary where it pays. From here:
+
+<Cards>
+  <Card href="/docs/rango/features/caching" title="Caching">
+    Tags, SWR, named profiles, store resilience, and when cache() does not pay.
+  </Card>
+  <Card href="/docs/rango/guides/use-cache" title="use cache">
+    Cache a single function or component's return value instead of a route
+    subtree.
+  </Card>
+  <Card href="/docs/rango/features/navigation" title="Navigation">
+    Links, prefetching, and programmatic navigation across the app you just
+    built.
+  </Card>
+</Cards>
+
+Next: [the guides](/docs/rango/guides)

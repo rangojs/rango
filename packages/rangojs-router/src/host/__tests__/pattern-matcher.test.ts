@@ -371,6 +371,46 @@ describe("matchPattern - Path Patterns", () => {
   });
 });
 
+describe("matchPattern - case-insensitive pattern literals", () => {
+  // URL.hostname is ASCII-lowercased, so an uppercase literal in user config
+  // must still match a lowercased request host (RFC 3986 host case-folding).
+  it("matches an uppercase `admin.*` pattern against a lowercase host", () => {
+    expect(
+      matchPattern("Admin.*", "admin.example.com", "/", [
+        "admin",
+        "example",
+        "com",
+      ]),
+    ).toBe(true);
+  });
+
+  it("matches a mixed-case exact pattern against a lowercase host", () => {
+    expect(
+      matchPattern("Example.COM", "example.com", "/", ["example", "com"]),
+    ).toBe(true);
+  });
+
+  it("matches a mixed-case `*.example.com` against a lowercase host", () => {
+    expect(
+      matchPattern("*.Example.com", "api.example.com", "/", [
+        "api",
+        "example",
+        "com",
+      ]),
+    ).toBe(true);
+  });
+
+  it("matches when the host itself is not pre-lowercased", () => {
+    expect(
+      matchPattern("admin.*", "Admin.Example.Com", "/", [
+        "Admin",
+        "Example",
+        "Com",
+      ]),
+    ).toBe(true);
+  });
+});
+
 describe("validatePattern", () => {
   it("should accept valid patterns", () => {
     expect(() => validatePattern("example.com")).not.toThrow();

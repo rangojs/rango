@@ -1,0 +1,582 @@
+---
+title: Shopify Markets
+description: Add multi-locale and multi-currency support with Shopify Markets.
+type: guide
+---
+
+## How to use
+
+```bash
+/vercel-shop:enable-shopify-markets
+```
+
+<div className="pb-6" />
+
+{/* BEGIN SKILL CONTENT: enable-shopify-markets */}
+
+# Enable Shopify Markets (Multi-Locale)
+
+## Description
+
+Interactively set up Shopify Markets with multi-locale routing using use-intl. Supports both sub-path routing (`/en/products/...`) and per-domain routing (`en.store.com/products/...`). This skill is the Markets-aware path; if you only want use-intl routing/messages without Markets, use `enable-i18n` instead.
+
+## When to Use This Skill
+
+- When the user wants to enable Shopify Markets / multi-locale support
+- When the user wants to add internationalization (i18n) with locale-prefixed URLs
+- When invoked via `/vercel-shop:enable-shopify-markets`
+
+## Prerequisites
+
+- The storefront is running in single-locale mode (default state)
+- `use-intl` is installed (it is by default)
+- Shopify Markets are configured in the Shopify admin for the desired locales
+
+---
+
+## Step 1: Gather User Preferences
+
+If the user hasn't already specified their preferences, ask them. Use two rounds of questions.
+
+### Round 1 — Strategy and Locales
+
+Ask the user the following questions (use `AskUserQuestion` if available, otherwise ask directly):
+
+```json
+{
+  "questions": [
+    {
+      "question": "Which routing strategy do you want for multi-locale URLs?",
+      "options": [
+        "Sub-path routing (/en-US/products/..., /de-DE/products/...)",
+        "Per-domain routing (en.store.com/products/..., de.store.com/products/...)"
+      ]
+    },
+    {
+      "question": "Which locales should be enabled? (en-US is always included as the default). You can pick from the pre-configured locales below, or specify any additional locales — translation files will be generated automatically.",
+      "multiSelect": true,
+      "options": [
+        "en-GB (English - United Kingdom, GBP)",
+        "de-DE (German - Germany, EUR)",
+        "fr-FR (French - France, EUR)",
+        "nl-NL (Dutch - Netherlands, EUR)",
+        "es-ES (Spanish - Spain, EUR)",
+        "Add other locales (e.g., ja-JP, pt-BR, zh-CN, it-IT, ko-KR)"
+      ]
+    }
+  ]
+}
+```
+
+If the user selects "Add other locales" or provides custom locales via free-form input, ask a follow-up question to get the exact locale codes they want. Any locale in BCP 47 format (e.g., `ja-JP`, `pt-BR`, `zh-CN`, `it-IT`, `ko-KR`, `ar-SA`) is supported — translation files and currency config will be generated for them.
+
+### Round 2 — Strategy-Specific Options
+
+**If sub-path routing was chosen**, ask:
+
+```json
+{
+  "questions": [
+    {
+      "question": "Should the default locale (en-US) have a URL prefix?",
+      "options": [
+        "No — clean URLs for default locale, prefixes for others (recommended)",
+        "Yes — always show the locale prefix, including for en-US"
+      ]
+    },
+    {
+      "question": "What format should locale URL prefixes use?",
+      "options": [
+        "Full locale codes (/en-US/, /de-DE/, /fr-FR/)",
+        "Short language codes (/en/, /de/, /fr/)"
+      ]
+    }
+  ]
+}
+```
+
+**If per-domain routing was chosen**, ask:
+
+```json
+{
+  "questions": [
+    {
+      "question": "How should domains map to locales? Provide your domain mapping or pick a starting pattern.",
+      "options": [
+        "Use subdomains (e.g., en.mystore.com, de.mystore.com)",
+        "Use country TLDs (e.g., mystore.com, mystore.de, mystore.fr)"
+      ]
+    }
+  ]
+}
+```
+
+The user can provide a custom mapping via the "Other" option. Each domain should map to one default locale.
+
+---
+
+## Step 2: Update Locale Config
+
+**File:** `lib/i18n/index.ts`
+
+This module is the single source of truth for locales. Everything downstream (middleware, links, sitemap, alternates, currency) reads from `enabledLocales` and the `localeCurrency` map — always read it first, never hardcode a list.
+
+### Enable selected locales
+
+Change `enabledLocales` to include the user's chosen locales. `localeSwitchingEnabled` is derived from this array (`enabledLocales.length > 1`), so enabling more than one locale automatically turns on the multi-locale code paths:
+
+```ts
+export const enabledLocales: readonly Locale[] = ["en-US", "de-DE", "fr-FR"]; // user's selection
+```
+
+### Add custom locales (if any)
+
+If the user chose locales not in the existing `locales` array, add them:
+
+```ts
+export const locales = [
+  "en-US",
+  "en-GB",
+  "de-DE",
+  "fr-FR",
+  "nl-NL",
+  "es-ES",
+  "ja-JP", // new custom locale
+] as const;
+```
+
+Also add entries to the `localeCurrency` map:
+
+```ts
+const localeCurrency: Record<Locale, { currency: string; symbol: string }> = {
+  // ... existing entries ...
+  "ja-JP": { currency: "JPY", symbol: "¥" },
+};
+```
+
+Use `Intl.NumberFormat` to look up the correct currency symbol if unsure. The `getLocaleData`, `getEnabledLocaleOptions`, and `getEnabledCurrencies` helpers already derive labels, flags, and currency names from these two structures.
+
+---
+
+## Step 3: Configure the Routing Strategy
+
+There is no `defineRouting` config object. In Rango the locale strategy is encoded in the `localeMiddleware` (which resolves the active locale per request, Step 8) and the route table in `src/urls.tsx` (which declares the URL shapes, Step 5). This step adds the small amount of app-local config those two places read.
+
+### Sub-path routing
+
+The active locale is the first path segment (`/de-DE/products/...`). If the user chose **short prefixes** (`/de/` instead of `/de-DE/`), add a prefix → locale map to `lib/i18n/index.ts` so the middleware and link helper can expand it:
+
+```ts
+// lib/i18n/index.ts
+export const localePrefixes: Record<string, Locale> = {
+  en: "en-US",
+  de: "de-DE",
+  fr: "fr-FR",
+  // one entry per enabled locale
+};
+```
+
+With **full locale codes** the prefix _is_ the locale code, so no map is needed — the middleware validates the segment with `isEnabledLocale()`.
+
+Also note the user's answer about whether the default locale is served unprefixed (recommended) or always prefixed; the middleware in Step 8 branches on that plus `localeSwitchingEnabled`.
+
+### Per-domain routing
+
+There are no path prefixes — the request host selects the locale. Add the domain → locale mapping the middleware will use:
+
+```ts
+// lib/i18n/index.ts
+export const localeDomains: Record<string, Locale> = {
+  "store.com": "en-US",
+  "de.store.com": "de-DE",
+  // one entry per domain from the user's mapping
+};
+```
+
+---
+
+## Step 4: Add a Locale-Aware Link Helper
+
+There is no `createNavigation`. Client navigation already flows through `@/lib/navigation` (`usePathname`, `useSearchParams`, `useRouter`, `redirect`) and the shared `@/components/link`. To make links locale-aware without editing every call site, add a small helper to `lib/i18n/index.ts` and route links through it:
+
+```ts
+// lib/i18n/index.ts
+export function localizeHref(href: string, locale: Locale): string {
+  // Leave external / non-path hrefs and the default locale (unprefixed mode) alone.
+  if (
+    !localeSwitchingEnabled ||
+    !href.startsWith("/") ||
+    locale === defaultLocale
+  ) {
+    return href;
+  }
+  return href === "/" ? `/${locale}` : `/${locale}${href}`;
+}
+```
+
+For per-domain routing, links stay relative and `localizeHref` is a no-op — the host already encodes the locale. Step 9 wires this helper into `@/components/link`.
+
+---
+
+## Step 5: Add Locale-Prefixed Routes
+
+There is no `app/[locale]/` directory — routes are declared explicitly in `src/urls.tsx` as a `path()` table with handler functions in `src/routes/`. For **sub-path routing**, register a `:lang`-prefixed variant of each page route alongside the existing (default-locale) one. The handlers are unchanged: they read the active locale from `getLocale()` (populated by the middleware), not from `ctx.params.lang`.
+
+```tsx
+// src/urls.tsx
+import { enabledLocales } from "@/lib/i18n";
+
+export const urlpatterns = urls(
+  ({ errorBoundary, layout, notFoundBoundary, path }) => [
+    layout(RootLayout, () => [
+      errorBoundary(() => <ErrorBoundaryContent />),
+      notFoundBoundary(() => <NotFoundContent />),
+
+      // Default-locale (unprefixed) routes — keep as-is
+      path("/", HomePage, { name: "home" }),
+      path("/products/:handle", ProductPage, { name: "product" }),
+      // ...the rest of the existing page routes...
+
+      // Locale-prefixed variants (only needed when localeSwitchingEnabled)
+      path("/:lang", HomePage, { name: "homeLocalized" }),
+      path("/:lang/products/:handle", ProductPage, {
+        name: "productLocalized",
+      }),
+      // ...one `/:lang/...` entry per page route, with a distinct `name`...
+    ]),
+    // Machine / API response routes stay locale-agnostic (see Steps 11–13)
+  ],
+);
+```
+
+Route `name`s must be unique, so suffix the localized variants (e.g. `productLocalized`). Because handlers resolve the locale via `getLocale()`, you can generate the `/:lang/...` list by mapping over the base patterns instead of hand-duplicating each one. For **per-domain routing**, skip this step entirely — there is no path prefix, so the existing route table is unchanged.
+
+---
+
+## Step 6: Verify the Root Layout
+
+**File:** `src/routes/root-layout.tsx`
+
+There is no `generateStaticParams` — routes are matched per request and the active locale comes from the middleware, so there is no build-time locale enumeration to declare. The root chrome already reads the resolved locale and messages and passes them to `LocaleProvider`:
+
+```tsx
+const [locale, messages, t] = await Promise.all([
+  getLocale(),
+  getMessages(),
+  getTranslations("accessibility"),
+]);
+// ...
+<LocaleProvider locale={locale} messages={messages}>
+```
+
+No changes are required here once the middleware (Step 8) resolves the real locale. Optionally, make the `<html lang>` attribute in `src/document.tsx` reflect the active locale instead of the static `"en"`; `document.tsx` is a client shell, so this is a follow-up nicety rather than a requirement.
+
+---
+
+## Step 7: Update Locale Resolution
+
+### `lib/params.ts`
+
+Page handlers call `getLocale()` from `@/lib/params`, which currently hardcodes the default. Point it at the request-scoped locale that the middleware establishes (backed by `AsyncLocalStorage` in `lib/i18n/runtime.ts`):
+
+```ts
+// lib/params.ts
+export { getLocale } from "@/lib/i18n/server";
+```
+
+The middleware always resolves to a valid enabled locale (falling back to `defaultLocale`), so every `getLocale()` caller now returns the active locale with no per-page changes.
+
+### `lib/i18n/runtime.ts`
+
+There is no `lib/i18n/request.ts` / `getRequestConfig`. Messages are loaded by the `messageLoaders` map keyed on `Locale`. Add a loader for each enabled locale:
+
+```ts
+// lib/i18n/runtime.ts
+const messageLoaders: Record<Locale, () => Promise<Messages>> = {
+  "en-US": async () => enMessages,
+  "en-GB": async () => enMessages, // reuse English catalog
+  "de-DE": async () =>
+    (await import("./messages/de-DE.json")).default as Messages,
+  "fr-FR": async () =>
+    (await import("./messages/fr-FR.json")).default as Messages,
+};
+```
+
+`loadI18n(locale)` picks the loader and `runWithI18n()` (called by `localeMiddleware`) makes `getLocale()`/`getMessages()`/`getTranslations()` resolve for the rest of the request.
+
+### Scope menu queries for markets
+
+The base template keeps [`lib/shopify/operations/menu.ts`](../../lib/shopify/operations/menu.ts) unscoped (it takes only `{ handle }`) so menus load before Shopify Markets is configured. When enabling markets, extend `getMenu` to accept the active locale (e.g. `getMenu({ handle, locale })`), derive `country` and `language` from that locale, and query `menu` with `@inContext(country: $country, language: $language)`. Without that change, quick links and footer menu stay pinned to the default market. If the `enable-shopify-menus` skill has been run, the megamenu will also need this scoping.
+
+---
+
+## Step 8: Update Middleware
+
+**File:** `src/middleware.ts`
+
+The storefront already chains a `localeMiddleware` onto the router via `.use()` in `src/router.tsx`. In single-locale mode it always loads `defaultLocale`; enabling markets means resolving the locale here from the URL (sub-path) or host (per-domain). There is no `config.matcher` — the branching happens inside the middleware.
+
+```ts
+// src/middleware.ts
+import type { Middleware } from "@rangojs/router";
+import {
+  defaultLocale,
+  isEnabledLocale,
+  localeSwitchingEnabled,
+  type Locale,
+  // localePrefixes, // if short prefixes were configured in Step 3
+  // localeDomains,  // if per-domain routing was configured in Step 3
+} from "@/lib/i18n";
+import { loadI18n, runWithI18n } from "@/lib/i18n/runtime";
+
+function resolveLocale(url: URL): Locale {
+  if (!localeSwitchingEnabled) return defaultLocale;
+
+  // Sub-path routing: the active locale is the first path segment.
+  const first = url.pathname.split("/")[1] ?? "";
+  if (isEnabledLocale(first)) return first;
+  // const mapped = localePrefixes[first]; // short-prefix map, if used
+  // if (mapped) return mapped;
+
+  // Per-domain routing: map the host instead.
+  // return localeDomains[url.host] ?? defaultLocale;
+
+  return defaultLocale;
+}
+
+export const localeMiddleware: Middleware = async (ctx, next) => {
+  const locale = resolveLocale(ctx.url);
+  const i18n = await loadI18n(locale);
+  return runWithI18n(i18n, () => next());
+};
+```
+
+`src/router.tsx` already wires it in — no change needed there:
+
+```ts
+createRouter(/* ... */)
+  .use(localeMiddleware)
+  .use(markdownNegotiationMiddleware)
+  .routes(urlpatterns);
+```
+
+> **Note:** Product variant selection stays on Shopify's standard `?variant=` query parameter. `text/markdown` content negotiation is already handled by `markdownNegotiationMiddleware` (which dispatches to the `/md/*` handlers) — no separate rewrite config is required.
+
+---
+
+## Step 9: Make Links Locale-Aware
+
+Rather than swapping imports across every file, route the shared `@/components/link` through the `localizeHref` helper from Step 4 so it prefixes the active locale automatically:
+
+```tsx
+// components/link.tsx
+"use client";
+import { useLocale } from "@/lib/i18n/client";
+import { localizeHref } from "@/lib/i18n";
+
+// inside LinkImpl, before passing to Rango's <Link to={...}>:
+const locale = useLocale();
+const to = localizeHref(href, locale);
+```
+
+Every component that imports `@/components/link` (nav, footer, product cards, cart overlay, breadcrumbs, pagination, account sidebar, predictive search, etc.) then produces locale-prefixed URLs with no further edits. For programmatic navigation in server code (server actions, `redirect()`), build the path with the active locale yourself:
+
+```ts
+import { redirect } from "@/lib/navigation";
+import { getLocale } from "@/lib/params";
+
+redirect(`/${await getLocale()}/account/login`);
+```
+
+For per-domain routing, `localizeHref` is a no-op, so links stay relative and the host encodes the locale.
+
+---
+
+## Step 10: Wire Locale/Currency Selector into Nav
+
+> **Prerequisite:** This step requires the `enable-shopify-menus` skill to have been run first. If the megamenu has not been added, add the selector to the standard `Nav` instead.
+
+Add a `LocaleCurrencySelector` client component (`components/nav/locale-currency.tsx`) that lists `getEnabledLocaleOptions()` and switches the active locale. Use Rango's client router from `@/lib/navigation` plus the `syncCartLocaleAction` server action (already present in `lib/cart/action.ts`) to keep the cart's buyer identity aligned with the chosen locale:
+
+```tsx
+"use client";
+import { usePathname, useRouter } from "@/lib/navigation";
+import { localizeHref, type Locale } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
+import { syncCartLocaleAction } from "@/lib/cart/action";
+
+const router = useRouter();
+const pathname = usePathname();
+const currentLocale = useLocale();
+
+const handleLocaleChange = (locale: Locale) => {
+  if (locale === currentLocale) return;
+  setOpen(false);
+  startTransition(async () => {
+    const result = await syncCartLocaleAction(locale);
+    if (!result.success) {
+      console.error("Failed to sync cart locale:", result.error);
+    }
+    // Strip any existing prefix from `pathname`, then re-localize for the new locale.
+    router.replace(localizeHref(stripLocalePrefix(pathname), locale));
+  });
+};
+```
+
+`stripLocalePrefix` removes a leading `/:lang` segment when the first segment is an enabled locale, so switching produces `/de-DE/products/foo` → `/fr-FR/products/foo` cleanly. Render the selector inside the megamenu (both desktop and mobile) if present, otherwise in the primary `Nav`.
+
+---
+
+## Step 11: Update SEO with Locale Alternates
+
+There is no `lib/seo.ts` or `generateMetadata`. Page metadata is set inside each handler via the `Meta` handle (`ctx.use(Meta)`), which can also emit `<link>` tags. Add a helper to `lib/i18n/index.ts` that returns `hreflang` alternate descriptors, then push them (plus a canonical) from each indexable page handler:
+
+```ts
+// lib/i18n/index.ts
+import { siteConfig } from "@/lib/config";
+
+export function localeAlternates(pathname: string) {
+  if (!localeSwitchingEnabled) return [];
+  const href = (locale: string) =>
+    `${siteConfig.url}${pathname === "/" ? `/${locale}` : `/${locale}${pathname}`}`;
+
+  const links = enabledLocales.map((locale) => ({
+    tagName: "link" as const,
+    rel: "alternate",
+    hreflang: locale,
+    href: href(locale),
+  }));
+  links.push({
+    tagName: "link" as const,
+    rel: "alternate",
+    hreflang: "x-default",
+    href: href(defaultLocale),
+  });
+  return links;
+}
+```
+
+In a page handler (e.g. `src/routes/product.tsx`, `home.tsx`, `collection.tsx`):
+
+```ts
+const meta = ctx.use(Meta);
+meta({ title: product.seo.title });
+meta({ content: product.seo.description, name: "description" });
+
+// Locale-aware canonical + hreflang alternates
+const locale = await getLocale();
+meta({
+  tagName: "link",
+  rel: "canonical",
+  href: `${siteConfig.url}/${locale}${ctx.url.pathname}`,
+});
+for (const alt of localeAlternates(ctx.url.pathname)) meta(alt);
+```
+
+`rel: "canonical"` is deduplicated by the `Meta` handle; each `rel: "alternate"` descriptor renders as its own `<link>`, so every enabled locale gets an `hreflang` tag.
+
+---
+
+## Step 12: Update Sitemap with Per-Locale URLs
+
+**File:** `src/routes/machine.tsx`
+
+The sitemap is served by response-route handlers registered in `src/urls.tsx` (`path.any("/sitemap.xml", sitemapIndex)` and `path.any("/sitemap/:shard", sitemapShard)`). The shard handler's `renderShard()` emits raw `<url>` XML. For each resource, emit one `<url>` per enabled locale, and inside each `<url>` emit `<xhtml:link rel="alternate" hreflang="..." href="..." />` siblings pointing at the other locale variants. Add `xmlns:xhtml="http://www.w3.org/1999/xhtml"` to the `<urlset>` opening tag (`urlsetWrap`).
+
+```ts
+import { enabledLocales, localeSwitchingEnabled } from "@/lib/i18n";
+
+function localizePath(locale: string, path: string): string {
+  return path === "/" ? `/${locale}` : `/${locale}${path}`;
+}
+
+// Inside renderShard(): if localeSwitchingEnabled, for each item iterate
+// enabledLocales and emit a <url> per locale with <xhtml:link> alternates.
+```
+
+`sitemapIndex` (the `/sitemap.xml` index) doesn't need locale handling — it lists shard URLs which stay locale-agnostic.
+
+---
+
+## Step 13: Add Locale-Prefixed Redirects
+
+There is no `next.config.ts`. Redirects are just handlers registered in the route table. Add redirect routes for common typos (e.g. `/product` → `/products`) that preserve the active locale, using `redirect()` from `@/lib/navigation`:
+
+```tsx
+// src/routes/redirects.tsx
+import { type Handler } from "@rangojs/router";
+import { redirect } from "@/lib/navigation";
+
+export const productTypoRedirect: Handler<"/:lang/product"> = (ctx) =>
+  redirect(`/${ctx.params.lang}/products`);
+```
+
+```tsx
+// src/urls.tsx — inside the RootLayout group
+path("/:lang/product", productTypoRedirect, { name: "productTypoRedirect" }),
+```
+
+Keep the unprefixed variants (`/product` → `/products`) too, for the default locale. `redirect()` throws a real HTTP redirect that the handler pipeline turns into a 3xx response.
+
+---
+
+## Step 14: Generate Translation Files for Custom Locales
+
+The template ships only `lib/i18n/messages/en.json`. For each enabled non-English locale, create a translation file **and** register a loader in `lib/i18n/runtime.ts` (Step 7):
+
+1. Copy `en.json` as the starting point
+2. Translate all string values to the target language
+3. Keep the same JSON structure and key names (namespaces: `accessibility`, `account`, `agent`, `cart`, `category`, `collections`, `common`, `footer`, `home`, `nav`, `product`, `search`, `seo`)
+
+For a new locale like `ja-JP`, create `lib/i18n/messages/ja-JP.json` with translated content, then add its `messageLoaders["ja-JP"]` entry. English variants such as `en-GB` can reuse the `en.json` catalog via a loader that returns `enMessages` (no new file needed).
+
+### CRITICAL: Validate JSON after generating translation files
+
+Translated strings must not contain unescaped ASCII double-quote characters (`"`, U+0022) inside JSON string values. This is easy to hit when a language uses typographic quotation marks that look similar to ASCII `"`:
+
+- **German:** `„` (U+201E) opens, `"` (U+201C) closes — but LLMs sometimes emit a bare ASCII `"` for the closing mark, which terminates the JSON string early.
+- **French:** `«»` (guillemets) are safe — they are not ASCII `"`.
+
+After writing each translation file, **validate it is parseable JSON** (e.g. `node -e "require('./lib/i18n/messages/de-DE.json')"` or equivalent). If validation fails, escape any rogue inner `"` as `\"` or replace typographic quotes with `\"...\"`.
+
+---
+
+## Step 15: Redirect Unprefixed Paths (if always-prefix mode)
+
+Only needed if the user chose "always show locale prefix":
+
+In that mode the middleware (Step 8) should redirect any request whose path lacks a valid locale segment to the resolved locale. Add the redirect inside `localeMiddleware` before establishing the i18n context:
+
+```ts
+import { redirect } from "@/lib/navigation";
+
+export const localeMiddleware: Middleware = async (ctx, next) => {
+  const first = ctx.url.pathname.split("/")[1] ?? "";
+  if (localeSwitchingEnabled && !isEnabledLocale(first)) {
+    // ...skip machine/API routes (/sitemap.xml, /robots.txt, /api/*, /md/*)...
+    redirect(`/${defaultLocale}${ctx.url.pathname}${ctx.url.search}`);
+  }
+  const i18n = await loadI18n(resolveLocale(ctx.url));
+  return runWithI18n(i18n, () => next());
+};
+```
+
+If the default locale is served unprefixed ("as-needed"), skip this step — the default-locale route table entries from Step 5 handle root requests directly.
+
+---
+
+## Verification
+
+After completing all steps, verify the implementation:
+
+1. **Build**: Run `pnpm build` and confirm no TypeScript errors (the build runs `graphql-codegen && vite build`)
+2. **Smoke test**: Run `pnpm dev` and check (at the dev URL printed by Vite):
+   - Default locale URL works (e.g., `/products/technest-smart-speaker-pro-jk0c`)
+   - Locale-prefixed URL works (e.g., `/de-DE/products/technest-smart-speaker-pro-jk0c`)
+   - Product prices render in the correct currency for each locale
+3. **Locale selector**: Confirm the selector appears in the nav/megamenu and switching locales changes the URL + cart currency
+4. **Variants**: Confirm product variant links preserve `?variant=` across locale-prefixed URLs
+5. **SEO**: Check that page `<head>` includes `hreflang` alternates for all enabled locales
+6. **Sitemap**: Visit `/sitemap.xml` and confirm per-locale entries
+
+{/* END SKILL CONTENT: enable-shopify-markets */}

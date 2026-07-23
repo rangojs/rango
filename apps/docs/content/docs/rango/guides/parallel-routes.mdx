@@ -1,0 +1,224 @@
+---
+title: Parallel Routes
+description: Render multiple independently-loading regions — sidebars, panels, metadata slots — as named slots at the same URL.
+type: guide
+---
+
+You need a layout with more than one region that loads and revalidates on its own schedule — a sidebar next to the main panel, a cart preview, a notifications rail. `parallel()` declares named slots that render simultaneously alongside the page; each slot can carry its own loader, skeleton, and revalidation rule.
+
+One boundary first: parallel slots **always** render alongside the page. If you want a modal that appears only on soft navigation and shows the full page on hard navigation, that's [Intercepting Routes](/docs/rango/guides/intercepting-routes), not this guide.
+
+## Declare slots, render them with ParallelOutlet
+
+```tsx
+import { urls } from "@rangojs/router";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+function DashboardLayout() {
+  return (
+    <div className="dashboard">
+      <aside>
+        <ParallelOutlet name="@sidebar" />
+      </aside>
+      <main>
+        <Outlet />
+      </main>
+      <div className="notifications">
+        <ParallelOutlet name="@notifications" />
+      </div>
+    </div>
+  );
+}
+
+export const urlpatterns = urls(({ path, layout, parallel }) => [
+  layout(<DashboardLayout />, () => [
+    parallel({
+      "@sidebar": () => <Sidebar />,
+      "@notifications": () => <NotificationPanel />,
+    }),
+
+    path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+    path("/dashboard/analytics", Analytics, { name: "dashboard.analytics" }),
+  ]),
+]);
+```
+
+Slot handlers receive the same context as route handlers — `ctx.params`, loaders, `ctx.get()`:
+
+```tsx
+parallel({
+  "@sidebar": (ctx) => <Sidebar userId={ctx.params.userId} />,
+  "@related": (ctx) => {
+    const user = ctx.get("user");
+    return user ? <UserSidebar user={user} /> : <GuestSidebar />;
+  },
+});
+```
+
+The parent handler always executes before its parallels (handler-first), so `ctx.set()` values are visible. Visibility follows tree structure: layout-level parallels see layout data but not path handler data (the path is a separate entry); parallels inside a `path()` or its orphan layouts see both.
+
+## Streaming: loading() decides who waits
+
+Parallels with `loading()` are independent streaming units — they don't block the parent layout or sibling routes during SSR:
+
+```tsx
+// Sidebar streams independently — page renders immediately
+parallel({ "@sidebar": () => <Sidebar /> }, () => [
+  loader(SlowSidebarLoader),
+  loading(<SidebarSkeleton />),
+]);
+
+// Cart data blocks layout — must be ready before paint
+parallel(
+  { "@cartBadge": () => <CartBadge /> },
+  () => [loader(CartCountLoader)], // No loading() = awaited
+);
+```
+
+| Configuration       | Behavior                                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| With `loading()`    | Skeleton renders immediately; the loader streams data when ready; the rest of the page doesn't wait |
+| Without `loading()` | The slot's loaders block the parent layout — use for critical above-the-fold data                   |
+| SPA navigation      | Loaders resolve in the background; the existing slot UI stays visible, no skeleton flash            |
+
+## A @meta slot for per-route metadata
+
+Slot handlers can push handle data via `ctx.use(Meta)` or `ctx.use(Breadcrumbs)`. The data attaches to the **parent** layout or route segment (parallels execute after the parent and inherit its segment scope), so it follows the parent's lifecycle. A UI-less `@meta` slot keeps metadata out of the route handler:
+
+```tsx
+// Layout sets defaults via a title template
+layout(
+  (ctx) => {
+    ctx.use(Meta)({ title: { template: "%s | Store", default: "Store" } });
+    return <StoreLayout />;
+  },
+  () => [
+    path("/:slug", ProductPage, { name: "product" }, () => [
+      parallel({
+        "@meta": async (ctx) => {
+          const product = await ctx.use(ProductLoader);
+          const meta = ctx.use(Meta);
+          meta({ title: product.name });
+          meta({ name: "description", content: product.description });
+          return null; // UI-less slot, only sets metadata
+        },
+      }),
+    ]),
+  ],
+);
+```
+
+Child segments push after parents and `collectMeta` deduplicates last-wins, so per-route overrides beat the layout defaults naturally. Multiple parallels on the same parent all accumulate under the parent segment ID. See [Metadata](/docs/rango/features/metadata).
+
+## Self-contained slots via handler.use
+
+The slot handler can carry its own loader, skeleton, and revalidation via `.use` — then every mount site declares just the slot name:
+
+```tsx
+const CartSummary: Handler = async (ctx) => {
+  const cart = await ctx.use(CartLoader);
+  return <CartSummaryView cart={cart} />;
+};
+CartSummary.use = () => [
+  loader(CartLoader),
+  loading(<CartSkeleton />),
+  revalidate(revalidateCartData),
+];
+
+// Same slot in two layouts, no copy-pasted plumbing.
+layout(<DashboardLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+]);
+
+layout(<AccountLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/account", AccountIndex, { name: "account.index" }),
+]);
+```
+
+Slots have the narrowest `handler.use` allow-list: only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition` — no middleware, no layout. See [handler.use](/docs/rango/guides/handler-use).
+
+## Scoping explicit use(): broadcast vs slot-local
+
+The shared `use()` callback in `parallel({...}, () => [...])` runs **once per slot** — every item lands on every slot. That's right for accumulating items (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`). But `loading()` is single-assignment, so broadcasting it overwrites every slot's `handler.use` default. For per-slot precision, pass a **slot descriptor** `{ handler, use }`:
+
+```tsx
+// @cart gets a custom skeleton; @notifs keeps its handler.use default.
+parallel({
+  "@cart": {
+    handler: Cart,
+    use: () => [loading(<CustomCartSkeleton />)],
+  },
+  "@notifs": Notifs,
+});
+
+// Opt one slot out of streaming while siblings still stream the broadcast.
+parallel(
+  {
+    "@cart": { handler: Cart, use: () => [loading(false)] },
+    "@notifs": Notifs,
+  },
+  () => [loading(<BroadcastSkeleton />)],
+);
+```
+
+Per-slot merge order is **handler.use → shared use → slot-local use** — slot-local is the narrowest scope and wins for last-write-wins items.
+
+Typing note: a bare arrow slot handler infers its ctx (`"@cart": (ctx) => ...`), but an arrow inside a descriptor needs an explicit annotation — `handler: (ctx: HandlerContext) => ...` — because the slot union contributes a second callable to the contextual type and TS declines to pick a signature.
+
+## Slot overrides: last definition wins
+
+When multiple `parallel()` calls define the same slot name, the last definition wins and earlier definitions of that slot are removed — other slots from the earlier call are preserved:
+
+```tsx
+layout(DashboardLayout, () => [
+  parallel({
+    "@sidebar": () => <DefaultSidebar />,
+    "@footer": () => <Footer />,
+  }),
+
+  // Override just @sidebar — @footer is preserved
+  parallel({ "@sidebar": () => <CustomSidebar /> }),
+
+  path("/", DashboardIndex, { name: "index" }),
+]);
+```
+
+This is how included routes or mount sites replace a parent's default slots.
+
+## Revalidation
+
+Where the slot sits decides its action default. A parallel under a `path()` (or one of its orphan layouts) belongs to the route entry and revalidates with it on every action — handler-set data stays consistent with no configuration. A parallel under a standalone `layout()` entry is skipped on actions unless a `revalidate()` opts it in:
+
+```tsx
+import * as CartActions from "./actions/cart";
+
+parallel({ "@cart": () => <CartSummary /> }, () => [
+  loader(CartLoader),
+  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+]);
+```
+
+A `revalidate()` callback may return a hard `boolean`, a soft `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` / `undefined`) to defer to the next revalidator — the same contract as `loader()`, `path()`, `layout()`, and `intercept()`. See [Loaders](/docs/rango/features/loaders).
+
+In either position, revalidating only the parallel does not re-run outer handlers or layouts. If the slot reads `ctx.get()` data established above it, put the same named revalidation contract on both the producer and the slot:
+
+```tsx
+export const revalidateCartData = (ctx) =>
+  ctx.isAction(CartActions) || undefined;
+
+layout(CartLayout, () => [
+  revalidate(revalidateCartData), // producer reruns
+  parallel(
+    { "@cart": CartSummary },
+    () => [revalidate(revalidateCartData)], // consumer reruns
+  ),
+]);
+```
+
+## Pitfalls
+
+- **Slot-level `transition()` is not applied at render time.** The item is allowed in the slot allow-list, but only layout/route wraps take effect today. For a modal-only or slot-only morph, use an element-level React `<ViewTransition>` inside the slot's component. Conversely, a layout-level `transition()` fires when the layout's default outlet content changes but **not** when a `<ParallelOutlet />` mounts new content. See [View Transitions](/docs/rango/guides/view-transitions).
+- **Under a shared artifact** (`cache()`, `"use cache"`, a PPR shell), a server-side `await ctx.use(CartLoader)` in the slot is the baked lane — the capture-time value freezes into the artifact. Consume the loader client-side (`useLoader` in a `"use client"` component) to keep the slot live per request. See [use cache](/docs/rango/guides/use-cache) and [PPR](/docs/rango/guides/ppr).
+- **Broadcast `loading()` clobbers slot defaults.** A single `loading()` in the shared `use()` lands on every slot. Scope it with the slot descriptor form.

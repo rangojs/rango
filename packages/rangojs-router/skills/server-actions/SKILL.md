@@ -1,6 +1,6 @@
 ---
 name: server-actions
-description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation
+description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation. Use when handling a form submission on the server, calling a server function from a client component, or needing optimistic UI after a mutation.
 argument-hint: "[action]"
 ---
 
@@ -24,7 +24,8 @@ with no framework wrapper. All standard React hooks (`useActionState`,
 Use loaders and route handlers for reads. Use actions for writes. After an
 action runs, the matched route tree can partially re-render so handlers and
 loaders that opt into revalidation see the new state — see "Revalidation"
-below.
+below. For the read-side APIs (`createLoader`, `useLoader`, `useFetchLoader`),
+see `/loader`.
 
 ## Revalidation Model
 
@@ -492,6 +493,27 @@ Redirects from actions render the **target** route tree's matched segments
 (paths, layouts, parallels, intercepts) and re-resolve its loaders, not the
 source page's — the target is what the user sees next. See `/hooks
 useLocationState` for reading flash state on the target page.
+
+### Same-origin by default (open-redirect protection)
+
+`redirect()` is same-origin by default on every path — JS, no-JS PE, and
+full-page. A cross-origin target (e.g. from unvalidated user input) is blocked
+and the user is sent to the app root instead, so `redirect(userInput)` can never
+become an open redirect. To intentionally redirect off-host (an OAuth provider,
+say), opt in explicitly:
+
+```typescript
+throw redirect("https://accounts.google.com/o/oauth2/v2/auth?...", {
+  external: true,
+});
+```
+
+`{ external: true }` is the audit point: passing user input with it re-opens the
+cross-origin risk and is your responsibility (the Rails `allow_other_host: true`
+model). Omit it and off-host targets stay blocked. `external` only waives the
+**same-origin** rule, not scheme safety: the target must be `http(s)` — a
+`javascript:` or `data:` URL is still neutralized, so a forged or mistaken
+`external` target can never become a scriptable navigation.
 
 ## Error Handling
 

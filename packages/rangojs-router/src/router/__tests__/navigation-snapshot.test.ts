@@ -26,23 +26,23 @@ function makeRequest(
 }
 
 describe("resolveNavigation", () => {
-  it("returns null when no previous URL header", () => {
+  it("returns null when no previous URL header", async () => {
     const { request, url } = makeRequest("http://localhost/page");
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => null,
     });
 
     expect(result).toBeNull();
   });
 
-  it("handles relative previous URL paths (resolved against origin)", () => {
+  it("handles relative previous URL paths (resolved against origin)", async () => {
     // new URL("relative", origin) resolves successfully — not malformed
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/some-path",
     });
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => null,
     });
 
@@ -50,12 +50,12 @@ describe("resolveNavigation", () => {
     expect(result!.prevUrl.pathname).toBe("/some-path");
   });
 
-  it("parses prevUrl from X-RSC-Router-Client-Path", () => {
+  it("parses prevUrl from X-RSC-Router-Client-Path", async () => {
     const { request, url } = makeRequest("http://localhost/new", {
       "X-RSC-Router-Client-Path": "/old",
     });
 
-    const result = resolveNavigation(request, url, "new", {
+    const result = await resolveNavigation(request, url, "new", {
       findMatch: () => null,
     });
 
@@ -63,12 +63,12 @@ describe("resolveNavigation", () => {
     expect(result!.prevUrl.pathname).toBe("/old");
   });
 
-  it("falls back to Referer when X-RSC-Router-Client-Path is missing", () => {
+  it("falls back to Referer when X-RSC-Router-Client-Path is missing", async () => {
     const { request, url } = makeRequest("http://localhost/new", {
       Referer: "http://localhost/referer-page",
     });
 
-    const result = resolveNavigation(request, url, "new", {
+    const result = await resolveNavigation(request, url, "new", {
       findMatch: () => null,
     });
 
@@ -76,13 +76,13 @@ describe("resolveNavigation", () => {
     expect(result!.prevUrl.pathname).toBe("/referer-page");
   });
 
-  it("matches previous route", () => {
+  it("matches previous route", async () => {
     const prevMatch = makeMatch({ routeKey: "old", params: { id: "1" } });
     const { request, url } = makeRequest("http://localhost/new", {
       "X-RSC-Router-Client-Path": "/old/1",
     });
 
-    const result = resolveNavigation(request, url, "new", {
+    const result = await resolveNavigation(request, url, "new", {
       findMatch: (pathname) => (pathname === "/old/1" ? prevMatch : null),
     });
 
@@ -90,26 +90,26 @@ describe("resolveNavigation", () => {
     expect(result!.prevParams).toEqual({ id: "1" });
   });
 
-  it("sets prevParams to empty object when no prevMatch", () => {
+  it("sets prevParams to empty object when no prevMatch", async () => {
     const { request, url } = makeRequest("http://localhost/new", {
       "X-RSC-Router-Client-Path": "/unknown",
     });
 
-    const result = resolveNavigation(request, url, "new", {
+    const result = await resolveNavigation(request, url, "new", {
       findMatch: () => null,
     });
 
     expect(result!.prevParams).toEqual({});
   });
 
-  it("parses intercept source URL", () => {
+  it("parses intercept source URL", async () => {
     const sourceMatch = makeMatch({ routeKey: "source" });
     const { request, url } = makeRequest("http://localhost/target", {
       "X-RSC-Router-Client-Path": "/prev",
       "X-RSC-Router-Intercept-Source": "/source",
     });
 
-    const result = resolveNavigation(request, url, "target", {
+    const result = await resolveNavigation(request, url, "target", {
       findMatch: (pathname) => {
         if (pathname === "/source") return sourceMatch;
         return makeMatch({ routeKey: "prev" });
@@ -121,13 +121,13 @@ describe("resolveNavigation", () => {
     expect(result!.hasInterceptSource).toBe(true);
   });
 
-  it("uses prevUrl as interceptContextUrl when no intercept source", () => {
+  it("uses prevUrl as interceptContextUrl when no intercept source", async () => {
     const prevMatch = makeMatch({ routeKey: "prev" });
     const { request, url } = makeRequest("http://localhost/target", {
       "X-RSC-Router-Client-Path": "/prev",
     });
 
-    const result = resolveNavigation(request, url, "target", {
+    const result = await resolveNavigation(request, url, "target", {
       findMatch: () => prevMatch,
     });
 
@@ -136,7 +136,7 @@ describe("resolveNavigation", () => {
     expect(result!.hasInterceptSource).toBe(false);
   });
 
-  it("resolves relative intercept source URL against origin", () => {
+  it("resolves relative intercept source URL against origin", async () => {
     // new URL("relative", origin) resolves successfully — treated as a path
     const prevMatch = makeMatch({ routeKey: "prev" });
     const { request, url } = makeRequest("http://localhost/target", {
@@ -144,7 +144,7 @@ describe("resolveNavigation", () => {
       "X-RSC-Router-Intercept-Source": "/source-page",
     });
 
-    const result = resolveNavigation(request, url, "target", {
+    const result = await resolveNavigation(request, url, "target", {
       findMatch: (pathname) => {
         if (pathname === "/source-page")
           return makeMatch({ routeKey: "source" });
@@ -157,76 +157,76 @@ describe("resolveNavigation", () => {
     expect(result!.hasInterceptSource).toBe(true);
   });
 
-  it("detects same-route navigation", () => {
+  it("detects same-route navigation", async () => {
     const match = makeMatch({ routeKey: "detail" });
     const { request, url } = makeRequest("http://localhost/detail/2", {
       "X-RSC-Router-Client-Path": "/detail/1",
     });
 
-    const result = resolveNavigation(request, url, "detail", {
+    const result = await resolveNavigation(request, url, "detail", {
       findMatch: () => match,
     });
 
     expect(result!.isSameRouteNavigation).toBe(true);
   });
 
-  it("detects different-route navigation", () => {
+  it("detects different-route navigation", async () => {
     const prevMatch = makeMatch({ routeKey: "list" });
     const { request, url } = makeRequest("http://localhost/detail/1", {
       "X-RSC-Router-Client-Path": "/list",
     });
 
-    const result = resolveNavigation(request, url, "detail", {
+    const result = await resolveNavigation(request, url, "detail", {
       findMatch: () => prevMatch,
     });
 
     expect(result!.isSameRouteNavigation).toBe(false);
   });
 
-  it("isSameRouteNavigation is false when interceptContextMatch is null", () => {
+  it("isSameRouteNavigation is false when interceptContextMatch is null", async () => {
     const { request, url } = makeRequest("http://localhost/detail/1", {
       "X-RSC-Router-Client-Path": "/unknown",
     });
 
-    const result = resolveNavigation(request, url, "detail", {
+    const result = await resolveNavigation(request, url, "detail", {
       findMatch: () => null,
     });
 
     expect(result!.isSameRouteNavigation).toBe(false);
   });
 
-  it("sets effectiveFromUrl to intercept source when present", () => {
+  it("sets effectiveFromUrl to intercept source when present", async () => {
     const { request, url } = makeRequest("http://localhost/target", {
       "X-RSC-Router-Client-Path": "/prev",
       "X-RSC-Router-Intercept-Source": "/source",
     });
 
-    const result = resolveNavigation(request, url, "target", {
+    const result = await resolveNavigation(request, url, "target", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.effectiveFromUrl.pathname).toBe("/source");
   });
 
-  it("sets effectiveFromUrl to prevUrl when no intercept source", () => {
+  it("sets effectiveFromUrl to prevUrl when no intercept source", async () => {
     const { request, url } = makeRequest("http://localhost/target", {
       "X-RSC-Router-Client-Path": "/prev",
     });
 
-    const result = resolveNavigation(request, url, "target", {
+    const result = await resolveNavigation(request, url, "target", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.effectiveFromUrl.pathname).toBe("/prev");
   });
 
-  it("parses clientSegmentIds from query param", () => {
+  it("parses clientSegmentIds from query param", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_segments=L0,R1,L2&_rsc_partial=1",
       { "X-RSC-Router-Client-Path": "/prev" },
     );
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
@@ -234,12 +234,12 @@ describe("resolveNavigation", () => {
     expect(result!.clientSegmentSet).toEqual(new Set(["L0", "R1", "L2"]));
   });
 
-  it("handles empty segments param", () => {
+  it("handles empty segments param", async () => {
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/prev",
     });
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
@@ -247,76 +247,76 @@ describe("resolveNavigation", () => {
     expect(result!.clientSegmentSet.size).toBe(0);
   });
 
-  it("filters out parallel segment IDs (.@)", () => {
+  it("filters out parallel segment IDs (.@)", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_segments=L0,L0R1L0.@sidebar,R1",
       { "X-RSC-Router-Client-Path": "/prev" },
     );
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.filteredSegmentIds).toEqual(["L0", "R1"]);
   });
 
-  it("filters out loader segment IDs (D\\d+.)", () => {
+  it("filters out loader segment IDs (D\\d+.)", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_segments=L0,L0D0.cart,R1,R1D1.user",
       { "X-RSC-Router-Client-Path": "/prev" },
     );
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.filteredSegmentIds).toEqual(["L0", "R1"]);
   });
 
-  it("parses stale flag", () => {
+  it("parses stale flag", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_stale=true",
       { "X-RSC-Router-Client-Path": "/prev" },
     );
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.stale).toBe(true);
   });
 
-  it("stale defaults to false", () => {
+  it("stale defaults to false", async () => {
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/prev",
     });
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.stale).toBe(false);
   });
 
-  it("detects HMR header", () => {
+  it("detects HMR header", async () => {
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/prev",
       "X-RSC-HMR": "1",
     });
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
     expect(result!.isHmr).toBe(true);
   });
 
-  it("isHmr defaults to false", () => {
+  it("isHmr defaults to false", async () => {
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/prev",
     });
 
-    const result = resolveNavigation(request, url, "page", {
+    const result = await resolveNavigation(request, url, "page", {
       findMatch: () => makeMatch(),
     });
 
@@ -325,7 +325,7 @@ describe("resolveNavigation", () => {
 });
 
 describe("createNavigationSnapshot", () => {
-  it("creates snapshot with default values", () => {
+  it("creates snapshot with default values", async () => {
     const snapshot = createNavigationSnapshot();
     expect(snapshot.prevUrl.pathname).toBe("/");
     expect(snapshot.prevParams).toEqual({});
@@ -337,7 +337,7 @@ describe("createNavigationSnapshot", () => {
     expect(snapshot.isHmr).toBe(false);
   });
 
-  it("merges overrides", () => {
+  it("merges overrides", async () => {
     const prevUrl = new URL("http://localhost/old");
     const snapshot = createNavigationSnapshot({
       prevUrl,

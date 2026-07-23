@@ -1,24 +1,37 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { collectHandle } from "../collect-handle.js";
 import { createHandle } from "../../handle.js";
 import { Meta } from "../../handles/meta.js";
 import { Breadcrumbs } from "../../handles/breadcrumbs.js";
 
+// Restore any console.warn spy even if an assertion throws before an inline
+// restore would run, so a failing test can't leak a mocked console into the next.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 // collectHandle runs a handle's REAL registered collect on per-segment values.
 // createHandle() with no injected id still registers its collect (via the runtime
 // fallback id), so a consumer's handle is fully testable in a bare test.
 describe("collectHandle", () => {
-  it("runs the default flatten collect when no custom collect is given", () => {
-    const Breadcrumbs = createHandle<{ label: string }>();
-    const result = collectHandle(Breadcrumbs, [
+  it("passes per-segment data through as-is when no custom collect is given (default identity)", () => {
+    // A no-collect handle still REGISTERS the identity collect (via the runtime
+    // fallback id), so the registered-default path must stay SILENT — the warning
+    // is reserved for the unregistered (module-not-imported) path below. Pin that
+    // so a regression moving the warn outside the `!collectFn` guard is caught.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const Crumbs = createHandle<{ label: string }>();
+    const result = collectHandle(Crumbs, [
       [{ label: "Home" }],
       [{ label: "Blog" }, { label: "Post" }],
     ]);
+    // Default collect is the identity: one array per segment that pushed, NOT a
+    // single flat list. Opt into flat with createHandle((s) => s.flat()).
     expect(result).toEqual([
-      { label: "Home" },
-      { label: "Blog" },
-      { label: "Post" },
+      [{ label: "Home" }],
+      [{ label: "Blog" }, { label: "Post" }],
     ]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("runs a custom 'last wins' collect", () => {
@@ -41,12 +54,14 @@ describe("collectHandle", () => {
   });
 
   it("runs a custom dedupe collect", () => {
-    const Unique = createHandle<{ id: number }>((segments) => {
-      const all = segments.flat();
-      return all.filter(
-        (item, i) => all.findIndex((x) => x.id === item.id) === i,
-      );
-    });
+    const Unique = createHandle<{ id: number }, { id: number }[]>(
+      (segments) => {
+        const all = segments.flat();
+        return all.filter(
+          (item, i) => all.findIndex((x) => x.id === item.id) === i,
+        );
+      },
+    );
     const result = collectHandle(Unique, [
       [{ id: 1 }, { id: 2 }],
       [{ id: 1 }, { id: 3 }],
@@ -66,14 +81,17 @@ describe("collectHandle", () => {
     expect(collectHandle(SegmentCount, [[], [], []])).toBe(0);
   });
 
-  it("warns and flattens for a handle whose module never registered a collect", () => {
+  it("warns and falls back to the identity collect for an unregistered handle", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     // A bare object masquerading as a handle with an unregistered id.
     const fake = { __brand: "handle" as const, $$id: "never-registered#X" };
     const result = collectHandle(fake as never, [[1], [2, 3]]);
-    expect(result).toEqual([1, 2, 3]);
+    // Unregistered -> identity fallback (per-segment, as-is) PLUS a warning: a
+    // handle with a CUSTOM collect that failed to register would otherwise
+    // silently return the wrong shape, and the runtime can't tell it from a
+    // handle that intended the default.
+    expect(result).toEqual([[1], [2, 3]]);
     expect(warn).toHaveBeenCalledOnce();
-    warn.mockRestore();
   });
 });
 
@@ -94,6 +112,18 @@ describe("collectHandle on the built-in Breadcrumbs handle", () => {
       homeV2,
       blog,
     ]);
+  });
+
+  // G4: re-pushing an existing href (e.g. a child refreshing a parent crumb's
+  // label) must NOT reorder the crumb to the end — parent->child order is the
+  // documented contract. The href keeps its FIRST position but the LAST value.
+  it("re-pushing an existing crumb keeps parent->child order (dedup in place)", () => {
+    const homeCurrent = { label: "Home (current)", href: "/" };
+    // Home pushed first, Blog second, then Home re-pushed in a deeper segment.
+    const result = collectHandle(Breadcrumbs, [[home], [blog], [homeCurrent]]);
+    // Home stays in position 0 (with the refreshed label), Blog stays after it.
+    expect(result).toEqual([homeCurrent, blog]);
+    expect(result.map((c) => c.href)).toEqual(["/", "/blog"]);
   });
 
   it("returns an empty array for no segments", () => {
@@ -141,6 +171,35 @@ describe("collectHandle on the built-in Meta handle", () => {
     ).toBe("Acme");
   });
 
+  it("inserts a child title containing $-sequences literally into the template", () => {
+    // String.prototype.replace would interpret $&, $', $`, $$, $n in the
+    // replacement; the template must insert the raw title verbatim.
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Save $5 & more" }],
+      ]),
+    ).toBe("Save $5 & more | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Buy $& now" }],
+      ]),
+    ).toBe("Buy $& now | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "100$$ deal" }],
+      ]),
+    ).toBe("100$$ deal | Acme");
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "a$'b" }],
+      ]),
+    ).toBe("a$'b | Acme");
+  });
+
   it("an absolute title bypasses the template", () => {
     expect(
       titleOf([
@@ -165,6 +224,25 @@ describe("collectHandle on the built-in Meta handle", () => {
       [{ unset: "name:description" }],
     ] as never) as Array<Record<string, unknown>>;
     expect(result.some((d) => d.name === "description")).toBe(false);
+  });
+
+  // Resolve-by-default: deferred (Promise) descriptors are resolved BEFORE
+  // collectMeta runs, so collect only ever sees resolved descriptors — they dedup
+  // and participate in title-templating exactly like any sync descriptor (covered
+  // by the dedup/template specs above). The resolve machinery itself is covered
+  // by handles/__tests__/deferred-resolution.test.ts.
+  describe("resolved descriptors and the non-callable `then` edge", () => {
+    it("treats a non-callable `then` as a SYNC descriptor (not a Promise)", () => {
+      // A descriptor carrying a NON-callable `then` (e.g. a serialized shape)
+      // must NOT be classified as a Promise; the shared isThenable predicate
+      // (callable `then`) keeps it a plain sync descriptor.
+      const result = collectHandle(Meta, [
+        [{ then: 5, title: "Sync via non-callable then" }],
+      ] as never) as Array<Record<string, unknown>>;
+      const titles = result.filter((d) => "title" in d);
+      expect(titles).toHaveLength(1);
+      expect(titles[0]!.title).toBe("Sync via non-callable then");
+    });
   });
 
   describe("JSON-LD (script:ld+json)", () => {

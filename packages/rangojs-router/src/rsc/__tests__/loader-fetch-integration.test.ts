@@ -41,7 +41,7 @@ vi.mock("../../server/loader-registry.js", () => ({
 
 // Mock request-context to provide a minimal context
 vi.mock("../../server/request-context.js", () => ({
-  requireRequestContext: () => ({
+  getRequestContext: () => ({
     env: {},
     request: new Request("http://localhost/"),
     url: new URL("http://localhost/"),

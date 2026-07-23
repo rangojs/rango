@@ -1,328 +1,260 @@
 /**
- * Benchmark locations to test route matching with prefix optimization
+ * Home screen: a comprehension-first map of the stress app.
+ *
+ * The hero is the route table itself — a clickable prefix-tree built from
+ * src/route-structure.ts (data, not JSX: new groups appear on the map by
+ * appending an entry there). Design notes: no webfonts (they would pollute
+ * the perf numbers this app exists to measure), no motion beyond hover,
+ * monospace carries the identity because route paths ARE the subject.
+ * Palette = the validated categorical slots shared with /dashboard.
  */
-const benchmarkLocations = [
-  {
-    category: "Root Routes (no prefix)",
-    routes: [
-      { path: "/bench/first", desc: "First root route" },
-      { path: "/bench/last", desc: "Last root route" },
-    ],
-  },
-  {
-    category: "API Routes (skips /site and /shop)",
-    routes: [
-      { path: "/api/bench/first", desc: "First API route" },
-      { path: "/api/bench/last", desc: "Last API route" },
-    ],
-  },
-  {
-    category: "Site Routes",
-    routes: [
-      { path: "/site/en/bench/first", desc: "First site route" },
-      { path: "/site/en/bench/last", desc: "Last site route" },
-    ],
-  },
-];
+import { Link } from "@rangojs/router/client";
+import { routeGroups, type RouteGroup } from "../route-structure.js";
 
-/**
- * Nested includes demo - /shop with /product and /category sub-includes
- */
-const nestedIncludesDemo = [
-  {
-    category: "Shop Product (skips /shop/category)",
-    routes: [
-      { path: "/shop/product/bench/first", desc: "First product route" },
-      { path: "/shop/product/bench/last", desc: "Last product route" },
-    ],
-  },
-  {
-    category: "Shop Category (skips /shop/product)",
-    routes: [
-      { path: "/shop/category/bench/first", desc: "First category route" },
-      { path: "/shop/category/bench/last", desc: "Last category route" },
-    ],
-  },
-];
+const CSS = `
+body { margin: 0; background: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  body { background: #1a1a19; }
+}
+.stress-home {
+  --surface: #ffffff;
+  --ink: #111110;
+  --ink-2: #52514e;
+  --ink-3: #8a887f;
+  --line: #e4e2dd;
+  --card: #f7f6f3;
+  --accent: #2a78d6;
+  --slot-1: #2a78d6;
+  --slot-2: #1baf7a;
+  --slot-3: #eda100;
+  --slot-4: #008300;
+  --slot-5: #4a3aa7;
+  color: var(--ink);
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  font: 15px/1.55 system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  .stress-home {
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #8a887f;
+    --line: #3a3936;
+    --card: #232322;
+    --accent: #3987e5;
+    --slot-1: #3987e5;
+    --slot-2: #199e70;
+    --slot-3: #c98500;
+    --slot-4: #008300;
+    --slot-5: #9085e9;
+  }
+}
+.stress-home .eyebrow {
+  font: 12px/1 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 0.75rem;
+}
+.stress-home h1 {
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+}
+.stress-home .thesis { color: var(--ink-2); max-width: 46rem; margin: 0 0 1.25rem; }
+.stress-home .cta-row { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 2.5rem; }
+.stress-home .cta {
+  display: inline-block; padding: 0.55rem 1.1rem; border-radius: 6px;
+  background: var(--accent); color: #fff; text-decoration: none; font-weight: 600;
+}
+.stress-home .cta-note { color: var(--ink-3); font-size: 13px; }
+.stress-home h2 { font-size: 1.05rem; margin: 2.5rem 0 0.75rem; }
+.stress-home .tree {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+  padding: 1rem 1.25rem; font: 13px/1.5 ui-monospace, monospace;
+  overflow-x: auto;
+}
+.stress-home .tree-row { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.35rem 0; flex-wrap: wrap; }
+.stress-home .tree-row + .tree-row { border-top: 1px solid var(--line); }
+.stress-home .tree-glyph { color: var(--ink-3); white-space: pre; }
+.stress-home .tree-prefix { font-weight: 600; white-space: nowrap; }
+.stress-home .tree-prefix .dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 6px; vertical-align: 1px;
+}
+.stress-home .badge {
+  font-size: 11px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap;
+}
+.stress-home .count { margin-left: auto; font-weight: 600; white-space: nowrap; }
+.stress-home .tree-sub {
+  flex-basis: 100%; display: flex; gap: 0.5rem; flex-wrap: wrap;
+  padding-left: 2.4rem; font-family: system-ui, sans-serif; font-size: 12.5px;
+}
+.stress-home .tree-sub .what { color: var(--ink-2); margin-right: 0.5rem; }
+.stress-home .tree-sub a {
+  color: var(--accent); text-decoration: none; border: 1px solid var(--line);
+  border-radius: 4px; padding: 0 6px; font-family: ui-monospace, monospace; font-size: 12px;
+}
+.stress-home .tree-sub a:hover { border-color: var(--accent); }
+.stress-home .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.75rem; }
+.stress-home .tile { border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; background: var(--card); }
+.stress-home .tile h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+.stress-home .tile p { margin: 0 0 0.5rem; color: var(--ink-2); font-size: 13.5px; }
+.stress-home .tile .see { font-size: 13px; color: var(--accent); text-decoration: none; }
+.stress-home .nav-pair { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+.stress-home .nav-pair a {
+  border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.8rem;
+  color: var(--ink); text-decoration: none;
+}
+.stress-home .nav-pair a:hover { border-color: var(--accent); }
+.stress-home .nav-pair .tag { font-size: 11px; color: var(--ink-3); display: block; }
+.stress-home .fine { color: var(--ink-3); font-size: 13px; }
+.stress-home .fine code, .stress-home p code { font-family: ui-monospace, monospace; font-size: 0.92em; }
+.stress-home a:focus-visible, .stress-home .cta:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+`;
+
+function TreeRow({ group, last }: { group: RouteGroup; last: boolean }) {
+  const glyph = group.prefix === "/" ? " " : last ? "└──" : "├──";
+  return (
+    <div className="tree-row" data-testid={`tree-${group.id}`}>
+      <span className="tree-glyph">{glyph}</span>
+      <span className="tree-prefix">
+        <span
+          className="dot"
+          style={{ background: `var(--slot-${group.slot})` }}
+        />
+        {group.prefix}
+      </span>
+      <span className="badge">
+        {group.chunk === "async" ? "async chunk" : "eager"}
+      </span>
+      {group.nested?.map((n) => (
+        <span key={n} className="badge">
+          nested: {n}
+        </span>
+      ))}
+      <span className="count">{group.count} routes</span>
+      <span className="tree-sub">
+        <span className="what">{group.stresses}</span>
+        {group.links.map((l) => (
+          <a key={l.path} href={l.path}>
+            {l.label}
+          </a>
+        ))}
+      </span>
+    </div>
+  );
+}
 
 export function HomePage() {
   return (
-    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem" }}>
-      <h1>@rangojs/router Stress Test</h1>
-      <p style={{ color: "#666", marginBottom: "2rem", fontSize: "1.1rem" }}>
-        10,000+ routes demonstrating{" "}
-        <strong>prefix-based short-circuit optimization</strong> for route
-        matching.
+    <div className="stress-home">
+      <style>{CSS}</style>
+
+      <p className="eyebrow">cloudflare-stress-demo · @rangojs/router</p>
+      <h1>26,000 routes, one worker.</h1>
+      <p className="thesis">
+        Matching is O(path segments) through a precomputed trie, so the route
+        count does not slow requests down. What it does cost — cold-start
+        manifest parsing, per-group chunk loads, memory, and the 404 fallback
+        scan — this app makes visible and clickable.
+      </p>
+      <p className="cta-row">
+        <a className="cta" href="/dashboard" data-testid="home-dashboard-cta">
+          Open the benchmark dashboard
+        </a>
+        <span className="cta-note">
+          any route class, N runs, median/p90 + Server-Timing — works against
+          dev and the deployed edge
+        </span>
       </p>
 
-      <h2>What This Tests</h2>
-      <p style={{ color: "#666", marginBottom: "1rem" }}>
-        Routes are grouped by <code>include()</code> prefix into separate
-        entries. When matching, entries are <strong>skipped entirely</strong> if
-        the pathname doesn't start with the entry's static prefix.
+      <h2>The route table</h2>
+      <p className="fine">
+        Every group is an <code>include(prefix, () =&gt; import(…))</code> — its
+        own worker chunk, awaited on the first request to that prefix. Click
+        into any group:
       </p>
-
-      <h2>Route Structure</h2>
-      <ul style={{ marginBottom: "2rem", lineHeight: "1.8" }}>
-        <li>
-          <strong>3 root routes</strong> — <code>/bench/first</code>,{" "}
-          <code>/</code>, <code>/bench/last</code>
-        </li>
-        <li>
-          <strong>5,003 site routes</strong> — under{" "}
-          <code>/site/:locale/*</code> (staticPrefix: "/site")
-        </li>
-        <li>
-          <strong>5,002 API routes</strong> — under <code>/api/*</code>{" "}
-          (staticPrefix: "/api")
-        </li>
-        <li>
-          <strong>~200 shop routes</strong> — nested includes demo:
-          <ul style={{ marginTop: "0.5rem" }}>
-            <li>
-              <code>/shop/product/*</code> — 102 routes (staticPrefix:
-              "/shop/product")
-            </li>
-            <li>
-              <code>/shop/category/*</code> — 102 routes (staticPrefix:
-              "/shop/category")
-            </li>
-          </ul>
-        </li>
-      </ul>
-
-      <div
-        style={{
-          background: "#e8f5e9",
-          padding: "1rem",
-          borderRadius: "8px",
-          marginBottom: "2rem",
-        }}
-      >
-        <strong>Optimization Impact:</strong>
-        <ul style={{ margin: "0.5rem 0 0 1rem", padding: 0 }}>
-          <li>API routes skip ~5,000 site routes + ~200 shop routes</li>
-          <li>
-            Shop product routes skip shop category routes (nested optimization!)
-          </li>
-          <li>404s for non-prefixed paths skip ~10,000 routes</li>
-        </ul>
+      <div className="tree" data-testid="home-tree">
+        {routeGroups.map((g, i) => (
+          <TreeRow key={g.id} group={g} last={i === routeGroups.length - 1} />
+        ))}
       </div>
 
-      <h2>Benchmark Endpoints</h2>
-      <p style={{ color: "#666", marginBottom: "1rem" }}>
-        Each returns JSON with <code>matchStats</code> showing routes
-        checked/skipped:
-      </p>
-
-      {benchmarkLocations.map(({ category, routes }) => (
-        <div key={category} style={{ marginBottom: "1.5rem" }}>
-          <h3
-            style={{ fontSize: "1rem", color: "#555", marginBottom: "0.5rem" }}
-          >
-            {category}
-          </h3>
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            {routes.map(({ path, desc }) => (
-              <a
-                key={path}
-                href={path}
-                style={{
-                  display: "block",
-                  padding: "0.75rem 1rem",
-                  background: "#f5f5f5",
-                  borderRadius: "4px",
-                  textDecoration: "none",
-                  color: "#333",
-                }}
-              >
-                <code style={{ color: "#0070f3" }}>{path}</code>
-                <span
-                  style={{
-                    color: "#666",
-                    marginLeft: "1rem",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  {desc}
-                </span>
-              </a>
-            ))}
-          </div>
+      <h2>Where the route count costs</h2>
+      <div className="tiles">
+        <div className="tile">
+          <h3>Cold start</h3>
+          <p>
+            The first request parses the routes-manifest chunk (~5.7 MB raw at
+            26k routes); the named-routes chunk loads with the worker entry.
+          </p>
+          <a className="see" href="/dashboard">
+            Measure: bench cold phase, or dashboard after a fresh deploy →
+          </a>
         </div>
-      ))}
-
-      <h2>Nested Includes Demo</h2>
-      <p style={{ color: "#666", marginBottom: "1rem" }}>
-        <code>/shop</code> contains nested <code>include("/product", ...)</code>{" "}
-        and <code>include("/category", ...)</code>. Each gets its own{" "}
-        <code>staticPrefix</code>, so they skip each other during matching.
-      </p>
-
-      <div
-        style={{
-          background: "#fff3e0",
-          padding: "1rem",
-          borderRadius: "8px",
-          marginBottom: "1rem",
-          fontSize: "0.9rem",
-        }}
-      >
-        <strong>Key insight:</strong> <code>/shop/product/*</code> has
-        staticPrefix <code>"/shop/product"</code>, while{" "}
-        <code>/shop/category/*</code> has <code>"/shop/category"</code>. They
-        are different, so the optimization works!
+        <div className="tile">
+          <h3>First hit per prefix</h3>
+          <p>
+            Each async group pays one chunk import on its first request — then
+            it is resident for the isolate's lifetime.
+          </p>
+          <a className="see" href="/dashboard">
+            Measure: dashboard, any class, watch run 1 vs the rest →
+          </a>
+        </div>
+        <div className="tile">
+          <h3>404 fallback scan</h3>
+          <p>
+            Unmatched paths miss the trie and fall through to the regex scan —
+            the only remaining route-count-proportional path. Static prefixes
+            let it skip whole groups.
+          </p>
+          <a className="see" href="/dashboard">
+            Measure: dashboard, the 404 classes →
+          </a>
+        </div>
       </div>
 
-      {nestedIncludesDemo.map(({ category, routes }) => (
-        <div key={category} style={{ marginBottom: "1.5rem" }}>
-          <h3
-            style={{ fontSize: "1rem", color: "#555", marginBottom: "0.5rem" }}
-          >
-            {category}
-          </h3>
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            {routes.map(({ path, desc }) => (
-              <a
-                key={path}
-                href={path}
-                style={{
-                  display: "block",
-                  padding: "0.75rem 1rem",
-                  background: "#fff8e1",
-                  borderRadius: "4px",
-                  textDecoration: "none",
-                  color: "#333",
-                }}
-              >
-                <code style={{ color: "#e65100" }}>{path}</code>
-                <span
-                  style={{
-                    color: "#666",
-                    marginLeft: "1rem",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  {desc}
-                </span>
-              </a>
-            ))}
-          </div>
-        </div>
-      ))}
-
-      <h2>How to Benchmark</h2>
-      <ol style={{ lineHeight: "1.8" }}>
-        <li>Open DevTools → Network tab</li>
-        <li>Click benchmark endpoints above</li>
-        <li>
-          Check <code>matchStats</code> in JSON response
-        </li>
-        <li>
-          Compare <code>entriesSkipped</code> and <code>routesChecked</code>
-        </li>
-        <li>
-          Measure TTFB:{" "}
-          <code>
-            curl -w "TTFB: %&#123;time_starttransfer&#125;s\n" -so /dev/null URL
-          </code>
-        </li>
-      </ol>
-
-      <h2>Expected Results</h2>
-      <p style={{ color: "#666", marginBottom: "1rem", fontSize: "0.9rem" }}>
-        Check <code>matchStats.entriesSkipped</code> in JSON response to see
-        optimization in action.
+      <h2>Two ways to navigate</h2>
+      <p className="fine">
+        Same target, different transport — a full document load vs the client
+        router's Flight request (hover the second one to see prefetch fire in
+        the network tab):
       </p>
-      <table
-        style={{ width: "100%", borderCollapse: "collapse", marginTop: "1rem" }}
-      >
-        <thead>
-          <tr style={{ background: "#f5f5f5" }}>
-            <th
-              style={{
-                padding: "0.5rem",
-                textAlign: "left",
-                borderBottom: "2px solid #ddd",
-              }}
-            >
-              Route
-            </th>
-            <th
-              style={{
-                padding: "0.5rem",
-                textAlign: "left",
-                borderBottom: "2px solid #ddd",
-              }}
-            >
-              Skips
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              <code>/bench/first</code>
-            </td>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              Nothing (root)
-            </td>
-          </tr>
-          <tr>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              <code>/api/bench/*</code>
-            </td>
-            <td
-              style={{
-                padding: "0.5rem",
-                borderBottom: "1px solid #eee",
-                color: "#2e7d32",
-                fontWeight: "bold",
-              }}
-            >
-              /site (5k), /shop/* (200+)
-            </td>
-          </tr>
-          <tr>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              <code>/site/en/bench/*</code>
-            </td>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              Nothing (matched before /api, /shop)
-            </td>
-          </tr>
-          <tr style={{ background: "#fff8e1" }}>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              <code>/shop/product/*</code>
-            </td>
-            <td
-              style={{
-                padding: "0.5rem",
-                borderBottom: "1px solid #eee",
-                color: "#e65100",
-                fontWeight: "bold",
-              }}
-            >
-              /site (5k), /api (5k), /shop/category (102)
-            </td>
-          </tr>
-          <tr style={{ background: "#fff8e1" }}>
-            <td style={{ padding: "0.5rem", borderBottom: "1px solid #eee" }}>
-              <code>/shop/category/*</code>
-            </td>
-            <td
-              style={{
-                padding: "0.5rem",
-                borderBottom: "1px solid #eee",
-                color: "#e65100",
-                fontWeight: "bold",
-              }}
-            >
-              /site (5k), /api (5k), /shop/product (102)
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="nav-pair">
+        <a href="/site/en/flat/1" data-testid="home-doc-link">
+          /site/en/flat/1
+          <span className="tag">document load (plain &lt;a&gt;)</span>
+        </a>
+        <Link to="/site/en/flat/1" prefetch="hover" data-testid="home-nav-link">
+          /site/en/flat/1
+          <span className="tag">
+            client navigation (&lt;Link prefetch="hover"&gt;)
+          </span>
+        </Link>
+        <span className="fine">The dashboard's mode toggle measures both.</span>
+      </div>
+
+      <h2>Reading matchStats</h2>
+      <p className="fine">
+        Bench endpoints (<code>/bench/first</code>, <code>/api/bench/last</code>
+        , …) return JSON with <code>matchStats</code>. All zeros is the correct
+        steady-state answer: named routes are trie hits and the regex scanner —
+        the only code that increments those counters — never runs. Non-zero
+        stats appear only on the 404 fallback, and only with the{" "}
+        <code>MATCH_DEBUG=1</code> binding set; the counters are module-global,
+        single-request diagnostics. Full methodology: <code>BENCHMARK.md</code>;
+        agent contract: <code>AGENTS.md</code>. The{" "}
+        <a href="/links">links demo</a> covers <code>reverse()</code>/
+        <code>href()</code> across the full registry.
+      </p>
     </div>
   );
 }

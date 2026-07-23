@@ -14,7 +14,11 @@ export const hashNavigationPatterns = urls(({ path }) => [
         <nav data-testid="hash-nav-links">
           <ul>
             <li>
-              <Link to="#section-a" data-testid="link-hash-a">
+              <Link
+                to="#section-a"
+                prefetch="viewport"
+                data-testid="link-hash-a"
+              >
                 Jump to Section A (Link)
               </Link>
             </li>
@@ -49,6 +53,69 @@ export const hashNavigationPatterns = urls(({ path }) => [
           <h2>Section B</h2>
           <p>Content for section B</p>
         </section>
+
+        <div style={{ height: "2000px" }} aria-hidden="true" />
+        <Link to="/blog/post-5" data-testid="link-default-prefetch-offscreen">
+          Offscreen default-prefetch link
+        </Link>
+        <a href="/blog/post-6" data-testid="anchor-default-prefetch-offscreen">
+          Offscreen default-prefetch plain anchor
+        </a>
+        <a
+          href="/blog/post-7"
+          data-prefetch="false"
+          data-testid="anchor-prefetch-opt-out"
+        >
+          Prefetch opt-out plain anchor
+        </a>
+        <a
+          href="/blog/post-8"
+          data-prefetch="none"
+          data-testid="anchor-prefetch-none"
+        >
+          Strategy-style prefetch opt-out plain anchor
+        </a>
+        <a href="/files/report.pdf" data-testid="anchor-prefetch-resource">
+          Static resource plain anchor
+        </a>
+        <a
+          href="/blog/intro-to-node.js"
+          data-prefetch="true"
+          data-testid="anchor-prefetch-resource-route"
+        >
+          Static-looking application route
+        </a>
+        <a
+          href="/blog/50%off"
+          data-prefetch="true"
+          data-testid="anchor-prefetch-malformed-route"
+        >
+          Malformed-percent application route
+        </a>
+        <section
+          data-prefetch-scope="false"
+          data-testid="prefetch-scope-opt-out"
+        >
+          <Link
+            to="/blog/post-9"
+            prefetch="viewport"
+            data-testid="link-prefetch-scope-opt-out"
+          >
+            Container-scoped Link
+          </Link>
+          <a
+            href="/blog/post-10"
+            data-prefetch="true"
+            data-testid="anchor-prefetch-scope-opt-out"
+          >
+            Container-scoped plain anchor
+          </a>
+        </section>
+        <svg aria-label="SVG link fixture">
+          <a href="/blog/svg-link" data-testid="svg-prefetch-link">
+            <circle cx="5" cy="5" r="5" />
+          </a>
+        </svg>
       </div>
     ),
     { name: "index" },

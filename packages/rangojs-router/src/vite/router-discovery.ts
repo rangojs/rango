@@ -19,7 +19,22 @@ import {
   createScanFilter,
 } from "../build/generate-route-types.js";
 import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
+import {
+  DEV_DISCOVERY_EPOCH_HEADER,
+  DEV_DISCOVERY_PROBE_HEADER,
+  DEV_DISCOVERY_QUERY_EVENT,
+  DEV_DISCOVERY_READY_EVENT,
+} from "../dev-discovery-protocol.js";
+import {
+  DEV_SHELL_PROBE_TIMEOUT_MS,
+  normalizeCaptureTimeout,
+} from "../rsc/shell-serve.js";
+import {
+  injectClientDebugFlag,
+  internalDebugNoCacheMiddleware,
+} from "./inject-client-debug.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
+import { getVirtualEntrySSR, VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
   BUILD_ENV_GLOBAL_KEY,
@@ -44,6 +59,13 @@ import {
   peekSelfGenWrite,
 } from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
+import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
+import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
+import {
+  createDevPrerenderCache,
+  devPrerenderCacheKey,
+  payloadBodiesFromResult,
+} from "./discovery/dev-prerender-cache.js";
 import {
   writeCombinedRouteTypesWithTracking,
   writeRouteTypesFiles,
@@ -118,6 +140,30 @@ function ensureCloudflareProtocolLoaderRegistered(): void {
 // ============================================================================
 
 /**
+ * Outcome of getOrCreateTempServer. `env` is the temp RSC environment on
+ * success, else null with `error` carrying WHY the create/import failed — or
+ * null when createServer resolved cleanly but attached no runner (terminal, but
+ * not an exception). The dev /__rsc_shell endpoint runs `error` through the
+ * SAME reoptimization classifier the import sites use: only a transient Vite
+ * re-optimization is signalled NOT-READY (client re-polls); every terminal
+ * failure fails fast so the read-through MISSes immediately instead of
+ * re-polling a permanently-broken realm for the full readiness deadline
+ * (issue #719 P2).
+ */
+type TempServerResult = { env: any; error: unknown };
+
+/**
+ * Test-only one-shot boot-race injection (issue #719 P3). When
+ * RANGO_E2E_INJECT_SHELL_NOTREADY=1, the dev /__rsc_shell endpoint emits a
+ * single reoptimization-class NOT-READY per pathname before serving, so an e2e
+ * can drive the REAL endpoint + real client re-poll deterministically — a
+ * natural cold race settles too fast on quick machines to guard the regression.
+ * Keyed per pathname so the read-through's re-poll finds it already fired and
+ * gets the HIT. Never engaged without the env flag.
+ */
+const injectedShellNotReadyPaths = new Set<string>();
+
+/**
  * Create a minimal Vite server for router discovery.
  *
  * Both dev-mode prerender and build-mode discovery need a temp RSC server
@@ -130,7 +176,21 @@ function ensureCloudflareProtocolLoaderRegistered(): void {
  */
 async function createTempRscServer(
   state: DiscoveryState,
-  options: { forceBuild?: boolean; cacheDir?: string } = {},
+  options: {
+    forceBuild?: boolean;
+    cacheDir?: string;
+    /**
+     * Serve the REAL rango SSR entry (getVirtualEntrySSR) for
+     * "virtual:entry-ssr" instead of the discovery stub, so the dev
+     * /__rsc_shell endpoint can drive captureShellHTML in this server's SSR
+     * realm. Dev-correct by construction: the entry's bootstrap resolves to
+     * plugin-rsc's stable virtual browser-entry URL, which the MAIN dev
+     * server serves to the browser. Loaded lazily — discovery never imports
+     * the SSR entry, so the temp server stays as light as before until a
+     * shell capture actually runs.
+     */
+    realSsrEntry?: boolean;
+  } = {},
 ) {
   // Install the Node ESM loader hook before any module evaluation so
   // `cloudflare:*` specifiers in externalized/loader-delegated modules
@@ -187,6 +247,26 @@ async function createTempRscServer(
         ? [hashClientRefs(state.projectRoot), hashServerRefs(state.projectRoot)]
         : []),
       createVersionPlugin(),
+      // Before the stub plugin, so "virtual:entry-ssr" resolves to the real
+      // SSR entry when the shell endpoint needs it (see the option doc).
+      ...(options.realSsrEntry
+        ? [
+            {
+              name: "@rangojs/router:temp-real-ssr-entry",
+              enforce: "pre" as const,
+              resolveId(id: string) {
+                return id === "virtual:entry-ssr"
+                  ? "\0rango-temp-real-ssr-entry"
+                  : null;
+              },
+              load(id: string) {
+                return id === "\0rango-temp-real-ssr-entry"
+                  ? getVirtualEntrySSR(state.opts?.headScripts)
+                  : null;
+              },
+            } satisfies import("vite").Plugin,
+          ]
+        : []),
       createVirtualStubPlugin(),
       createCloudflareProtocolStubPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
@@ -291,6 +371,19 @@ async function acquireBuildEnv(
 }
 
 /**
+ * Reset the per-build prerender collection state. A helper (not inline
+ * assignments in buildStart) so TS's property narrowing does not pin
+ * `s.shellCandidates` to `null` across the discovery call that repopulates
+ * it — the finally block re-reads it to decide the temp-server keep-alive.
+ */
+function resetPrerenderCollection(s: DiscoveryState): void {
+  s.prerenderManifestEntries = null;
+  s.staticManifestEntries = null;
+  s.shellCandidates = null;
+  s.prerenderPayloadValues = null;
+}
+
+/**
  * Release build-time env resources and clear state.
  */
 async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
@@ -329,19 +422,13 @@ export function createRouterDiscoveryPlugin(
   return {
     name: "@rangojs/router:discovery",
 
-    config() {
-      const config: any = {
-        define: {
-          __RANGO_DEBUG__: JSON.stringify(!!process.env.INTERNAL_RANGO_DEBUG),
-        },
-      };
-      // Prerender/static handler modules are bundled naturally with the
-      // rest of the RSC entry.  A previous design forced them into dedicated
-      // __prerender-handlers / __static-handlers chunks via manualChunks,
-      // but Rollup hoisted all shared dependencies into those chunks,
-      // inflating them to ~1 MB with active runtime code.  Handler code is
-      // evicted in closeBundle regardless of which chunk it lands in.
-      return config;
+    // Make INTERNAL_RANGO_DEBUG reach the CLIENT debug logs by just setting the
+    // env var. See injectClientDebugFlag: bakes the resolved flag into the
+    // internal-debug module so FE debug no longer depends on Vite delivering the
+    // `__RANGO_DEBUG__` define to the client (which it does only as an injected
+    // global whose presence varies across consumer setups). Runs in dev and build.
+    transform(_code, id) {
+      return injectClientDebugFlag(id);
     },
 
     configResolved(config) {
@@ -410,6 +497,50 @@ export function createRouterDiscoveryPlugin(
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
       s.devServer = server;
 
+      let workerReadyEpoch: number | undefined;
+      const publishDevDiscoveryReady = (epoch: number) => {
+        if (epoch <= (workerReadyEpoch ?? -1)) return;
+        workerReadyEpoch = epoch;
+        (server.environments as any)?.client?.hot?.send({
+          type: "custom",
+          event: DEV_DISCOVERY_READY_EVENT,
+          data: { epoch },
+        });
+        debugDiscovery?.("hmr: workerd ready at epoch %d", epoch);
+      };
+      if (opts?.preset === "cloudflare") {
+        const registeredClientHotChannels = new Set<any>();
+        const registerDevDiscoveryHotChannels = () => {
+          const clientHot = (server.environments as any)?.client?.hot;
+          if (clientHot && !registeredClientHotChannels.has(clientHot)) {
+            registeredClientHotChannels.add(clientHot);
+            clientHot.on(
+              DEV_DISCOVERY_QUERY_EVENT,
+              (_payload: unknown, client: any) => {
+                if (workerReadyEpoch === undefined) return;
+                client.send(DEV_DISCOVERY_READY_EVENT, {
+                  epoch: workerReadyEpoch,
+                });
+              },
+            );
+          }
+          debugDiscovery?.(
+            "hmr: dev discovery browser channel registered (client=%s)",
+            !!clientHot,
+          );
+        };
+
+        registerDevDiscoveryHotChannels();
+        if (server.httpServer && !server.httpServer.listening) {
+          server.httpServer.once("listening", registerDevDiscoveryHotChannels);
+        }
+      }
+
+      // Serve the internal-debug module no-cache: consumers resolve it into
+      // node_modules, where dev's immutable `?v=` caching pinned browsers to a
+      // stale baked INTERNAL_RANGO_DEBUG. See internalDebugNoCacheMiddleware.
+      server.middlewares.use(internalDebugNoCacheMiddleware());
+
       // Discovery promise that the handler can await if requests arrive
       // before discovery completes
       let resolveDiscovery: () => void;
@@ -433,6 +564,7 @@ export function createRouterDiscoveryPlugin(
       const getDevServerOrigin = () =>
         server.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
         `http://localhost:${server.config.server.port || 5173}`;
+      let devServerClosed = false;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
       // Used by both discover() (route type generation) and the prerender
@@ -443,6 +575,7 @@ export function createRouterDiscoveryPlugin(
 
       // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
+        devServerClosed = true;
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
@@ -490,7 +623,7 @@ export function createRouterDiscoveryPlugin(
         }
       }
 
-      async function getOrCreateTempServer(): Promise<any | null> {
+      async function getOrCreateTempServer(): Promise<TempServerResult> {
         // Reuse path: if a temp server is already alive, prefer reusing
         // it over orphaning the existing instance and spinning up a new
         // one. This handles two cases:
@@ -511,7 +644,7 @@ export function createRouterDiscoveryPlugin(
               debugDiscovery?.(
                 "getOrCreateTempServer: cached temp runner reused",
               );
-              return existingEnv;
+              return { env: existingEnv, error: null };
             }
             // Server alive but registry missing — likely after a prior
             // refresh's invalidate + import threw. Try to re-import.
@@ -520,7 +653,7 @@ export function createRouterDiscoveryPlugin(
             );
             try {
               await importEntryAndRegistry(existingEnv);
-              return existingEnv;
+              return { env: existingEnv, error: null };
             } catch (err: any) {
               debugDiscovery?.(
                 "getOrCreateTempServer: reuse import failed (%s) — closing orphan and creating fresh",
@@ -548,27 +681,45 @@ export function createRouterDiscoveryPlugin(
           "getOrCreateTempServer: creating new temp server, entry=%s",
           s.resolvedEntryPath ?? "(unset)",
         );
+        // Surface the create/import cause to the caller (issue #719 P2): a
+        // transient re-optimization is re-pollable, a terminal fault is not. A
+        // clean createServer that yields no runner leaves this null — terminal,
+        // but not an exception.
+        let createError: unknown = null;
         try {
           prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
+            // The dev /__rsc_shell endpoint drives captureShellHTML in this
+            // server's SSR realm; the entry is only imported when a shell
+            // capture runs, so discovery cost is unchanged.
+            realSsrEntry: true,
           });
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
             await importEntryAndRegistry(tempRscEnv);
-            return tempRscEnv;
+            return { env: tempRscEnv, error: null };
           }
           debugDiscovery?.(
             "getOrCreateTempServer: tempRscEnv.runner unavailable",
           );
         } catch (err: any) {
+          createError = err;
           debugDiscovery?.(
             "getOrCreateTempServer: FAILED message=%s",
             err.message,
           );
           console.warn(`[rango] Failed to create temp runner: ${err.message}`);
         }
-        return null;
+        // Reached only on failure (runner unavailable, or create/import threw
+        // AFTER the server was created). Close the just-created server so a
+        // failed discovery does not leak it until the next call or dev shutdown,
+        // and null the refs so the reuse path above starts clean. Mirrors the
+        // close pattern used when an existing server is discarded (above).
+        await prerenderTempServer?.close().catch(() => {});
+        prerenderTempServer = null;
+        prerenderNodeRegistry = null;
+        return { env: null, error: createError };
       }
 
       // Clear the package-level singleton registries that survive a Vite
@@ -621,7 +772,7 @@ export function createRouterDiscoveryPlugin(
       // versions / preset configurations may differ in which graph carries
       // the module-runner cache).
       async function refreshTempRscEnv(): Promise<any | null> {
-        let tempRscEnv = await getOrCreateTempServer();
+        const tempRscEnv = (await getOrCreateTempServer()).env;
         if (!tempRscEnv) return null;
 
         // Module-runner cache is on the per-environment graph in Vite 6+;
@@ -647,7 +798,7 @@ export function createRouterDiscoveryPlugin(
             prerenderTempServer = null;
             prerenderNodeRegistry = null;
           }
-          return await getOrCreateTempServer();
+          return (await getOrCreateTempServer()).env;
         }
 
         debugDiscovery?.(
@@ -669,6 +820,30 @@ export function createRouterDiscoveryPlugin(
         return tempRscEnv;
       }
 
+      // Surface a discovery failure on either dev path (Node RSC runner or the
+      // Cloudflare temp Node server). `hashBefore`/`hashAfter` are the discovering
+      // environment's dep-optimizer browserHash snapshots: a change across the
+      // attempt means a reload-causing re-optimization landed mid-flight, so an
+      // empty registry was the transient race (downgraded to a warning) rather
+      // than a genuine misconfig (loud, actionable error). Shared so both catch
+      // sites frame the same failure identically.
+      const emitDiscoveryFailure = (
+        err: unknown,
+        hashBefore: string | undefined,
+        hashAfter: string | undefined,
+      ): void => {
+        const reoptimizeObserved =
+          hashBefore !== undefined &&
+          hashAfter !== undefined &&
+          hashBefore !== hashAfter;
+        const report = describeDiscoveryFailure(err, { reoptimizeObserved });
+        if (report.level === "warn") {
+          console.warn(report.message);
+        } else {
+          console.error(report.message);
+        }
+      };
+
       const discover = async () => {
         const discoverStart = performance.now();
         const rscEnv = (server.environments as any)?.rsc;
@@ -684,18 +859,26 @@ export function createRouterDiscoveryPlugin(
 
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
+          // The temp server is a separate Vite instance with its own dep
+          // optimizer; snapshot ITS browserHash (hoisted so the catch can tell a
+          // transient re-optimization apart from a genuine empty registry, the
+          // same way the Node path below does).
+          let tempRscEnv: any;
+          let optimizerHashBefore: string | undefined;
           try {
             // Acquire build-time env bindings for dev prerender
             await timed(debugDiscovery, "acquireBuildEnv", () =>
               acquireBuildEnv(s, viteCommand, viteMode),
             );
 
-            const tempRscEnv = await timed(
-              debugDiscovery,
-              "getOrCreateTempServer",
-              () => getOrCreateTempServer(),
-            );
+            tempRscEnv = (
+              await timed(debugDiscovery, "getOrCreateTempServer", () =>
+                getOrCreateTempServer(),
+              )
+            ).env;
             if (tempRscEnv) {
+              optimizerHashBefore =
+                tempRscEnv.depsOptimizer?.metadata?.browserHash;
               await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
                 discoverRouters(s, tempRscEnv),
               );
@@ -704,8 +887,10 @@ export function createRouterDiscoveryPlugin(
               );
             }
           } catch (err: any) {
-            console.warn(
-              `[rango] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`,
+            emitDiscoveryFailure(
+              err,
+              optimizerHashBefore,
+              tempRscEnv?.depsOptimizer?.metadata?.browserHash,
             );
           }
 
@@ -717,6 +902,13 @@ export function createRouterDiscoveryPlugin(
           return;
         }
 
+        // Snapshot the dep-optimizer hash before discovery so the catch can tell
+        // a transient re-optimization race apart from a genuine empty registry.
+        // A reload-causing re-optimization regenerates browserHash; if it changed
+        // across the attempt, an empty read was almost certainly the race below.
+        const optimizerHashBefore: string | undefined =
+          rscEnv.depsOptimizer?.metadata?.browserHash;
+
         try {
           // Acquire build-time env bindings for dev prerender (Node.js path)
           debugDiscovery?.("dev: node path start");
@@ -724,20 +916,30 @@ export function createRouterDiscoveryPlugin(
             acquireBuildEnv(s, viteCommand, viteMode),
           );
 
-          // Set the readiness gate BEFORE discovery so early requests
-          // block until manifest is populated
-          const serverMod = await timed(
-            debugDiscovery,
-            "import @rangojs/router/server",
-            () => rscEnv.runner.import("@rangojs/router/server"),
+          // Discover routers FIRST, then arm the manifest-readiness gate on the
+          // server module discovery actually read the registry from.
+          //
+          // We deliberately do NOT pre-import "@rangojs/router/server" before the
+          // entry to arm the gate early. During a Vite dependency re-optimization
+          // (dev boot after a lockfile change, or `vite dev --force`), a module
+          // imported here before the entry resolves to the pre-optimize copy of
+          // the runner's module graph, while discoverRouters' entry import — which
+          // awaits the in-flight re-optimization — resolves to the post-optimize
+          // copy. createRouter() then populates RouterRegistry on the fresh copy,
+          // but a stale pre-imported "@rangojs/router/server" reads the other
+          // copy's empty Map and discovery throws a spurious "No routers found"
+          // even though the app is configured correctly. discoverRouters imports
+          // the entry first and reads the registry off the same instance, keeping
+          // read and write on one copy. The virtual manifest module's own gate
+          // (s.discoveryDone, armed by beginDiscoveryGate) already blocks early
+          // requests during discovery on the Node path, so arming
+          // manifestReadyPromise after discovery is sufficient here.
+          const serverMod = await timed(debugDiscovery, "discoverRouters", () =>
+            discoverRouters(s, rscEnv),
           );
           if (serverMod?.setManifestReadyPromise) {
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
-
-          await timed(debugDiscovery, "discoverRouters", () =>
-            discoverRouters(s, rscEnv),
-          );
 
           // Store server origin for dev prerender endpoint (virtual module injection)
           s.devServerOrigin = getDevServerOrigin();
@@ -756,8 +958,10 @@ export function createRouterDiscoveryPlugin(
             propagateDiscoveryState(rscEnv),
           );
         } catch (err: any) {
-          console.warn(
-            `[rango] Router discovery failed: ${err.message}\n${err.stack}`,
+          emitDiscoveryFailure(
+            err,
+            optimizerHashBefore,
+            rscEnv.depsOptimizer?.metadata?.browserHash,
           );
         } finally {
           debugDiscovery?.(
@@ -790,6 +994,15 @@ export function createRouterDiscoveryPlugin(
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
 
+      // Memoized /__rsc_prerender render results, keyed by router-instance
+      // identity (#654). The per-request entry re-import below is what makes
+      // identity a valid freshness key: an HMR-invalidated chain re-runs
+      // createRouter() and replaces the registry instance, so cached bodies
+      // for the old instance become unreachable; an untouched chain returns
+      // the same instance and the cached body is byte-identical to a fresh
+      // render. See dev-prerender-cache.ts for the full invariant.
+      const devPrerenderCache = createDevPrerenderCache();
+
       // Push discovery state (manifest, trie, precomputed entries) to the
       // server module so runtime request handling uses the current routes.
       // Shared by initial discovery and HMR-triggered re-discovery.
@@ -805,16 +1018,6 @@ export function createRouterDiscoveryPlugin(
         mainRegistry = serverMod.RouterRegistry ?? null;
         if (s.mergedRouteManifest && serverMod.setCachedManifest) {
           serverMod.setCachedManifest(s.mergedRouteManifest);
-        }
-        if (
-          s.mergedPrecomputedEntries &&
-          s.mergedPrecomputedEntries.length > 0 &&
-          serverMod.setPrecomputedEntries
-        ) {
-          serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
-        }
-        if (s.mergedRouteTrie && serverMod.setRouteTrie) {
-          serverMod.setRouteTrie(s.mergedRouteTrie);
         }
         const perRouterSetters: Array<[Map<string, any>, string]> = [
           [s.perRouterManifestDataMap, "setRouterManifest"],
@@ -880,9 +1083,28 @@ export function createRouterDiscoveryPlugin(
 
         if (!registry) {
           // No main registry: the RSC env has no module runner (Cloudflare dev).
-          // Lazily create a Node.js temp server for prerender evaluation.
-          if (!prerenderNodeRegistry) {
-            await getOrCreateTempServer();
+          // Lazily create a Node.js temp server for prerender evaluation, and
+          // re-import the entry through it on EVERY request — the temp server
+          // has its own file watcher, so a handler-only edit (a file without
+          // urls()/createRouter() that the main watcher's route-file sniff
+          // ignores) invalidates its module graph; the re-import re-evaluates
+          // exactly the dirty subgraph and re-registers fresh router
+          // instances. Before #654 the cached registry was only refreshed on
+          // route-file edits, so handler-only edits served stale prerender
+          // content on this path. Warm-cache re-imports are module-cache hits.
+          const tempRscEnv = (await getOrCreateTempServer()).env;
+          if (tempRscEnv) {
+            try {
+              await importEntryAndRegistry(tempRscEnv);
+            } catch (err: any) {
+              console.warn(
+                `[rango] Dev prerender module refresh failed: ${err.message}`,
+              );
+              res.statusCode = 500;
+              res.end(`Prerender handler error: ${err.message}`);
+              logResult(500, "temp module refresh failed");
+              return;
+            }
           }
           registry = prerenderNodeRegistry;
         }
@@ -898,8 +1120,38 @@ export function createRouterDiscoveryPlugin(
         const wantRouteName = url.searchParams.get("routeName");
         const wantPassthrough = url.searchParams.get("passthrough") === "1";
 
+        // One render warms BOTH variant keys (matchForPrerender computes the
+        // intercept segments unconditionally), so a route's main and modal
+        // variants cost a single render per HMR generation.
+        const variantDims = {
+          passthrough: wantPassthrough,
+          routeName: wantRouteName,
+        };
+        const keyMain = devPrerenderCacheKey(pathname, {
+          intercept: false,
+          ...variantDims,
+        });
+        const keyIntercept = devPrerenderCacheKey(pathname, {
+          intercept: true,
+          ...variantDims,
+        });
+        const requestedKey = wantIntercept ? keyIntercept : keyMain;
+
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
+          // Cache is consulted per router IN LOOP ORDER so multi-router
+          // fall-through semantics are identical to the uncached path: a
+          // router that never produced a payload for this key still runs
+          // its matchForPrerender (cheap trie miss / intentionally-uncached
+          // error retry) before the next router is considered.
+          const cached = devPrerenderCache.get(routerInstance, requestedKey);
+          if (cached !== undefined) {
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-prerender-cache", "HIT");
+            res.end(cached);
+            logResult(200, "cache hit");
+            return;
+          }
           try {
             const result = await routerInstance.matchForPrerender(
               pathname,
@@ -915,31 +1167,314 @@ export function createRouterDiscoveryPlugin(
             // This prevents returning the wrong entry when multiple routers
             // have prerenderable routes sharing the same pathname.
             if (wantRouteName && result.routeName !== wantRouteName) continue;
+            // Pre-encoded MERGED handle string in the intercept body comes
+            // from the producer (handles are Flight-encoded so
+            // Promise/ReactNode values survive the wire).
+            const bodies = payloadBodiesFromResult(result);
+            devPrerenderCache.set(routerInstance, keyMain, bodies.main);
+            devPrerenderCache.set(
+              routerInstance,
+              keyIntercept,
+              bodies.intercept,
+            );
             res.setHeader("content-type", "application/json");
-            let payload: Record<string, unknown>;
-            if (wantIntercept && result.interceptSegments?.length) {
-              payload = {
-                segments: [...result.segments, ...result.interceptSegments],
-                // Pre-encoded MERGED handle string from the producer (handles are
-                // Flight-encoded so Promise/ReactNode values survive the wire).
-                handles: result.interceptHandles ?? "",
-              };
-            } else {
-              payload = { segments: result.segments, handles: result.handles };
-            }
-            res.end(JSON.stringify(payload));
+            res.setHeader("x-rango-prerender-cache", "MISS");
+            res.end(wantIntercept ? bodies.intercept : bodies.main);
             logResult(200, `match ${result.routeName}`);
             return;
           } catch (err: any) {
-            console.warn(
-              `[rango] Dev prerender failed for ${pathname}: ${err.message}`,
-            );
+            // matchForPrerender now re-throws render failures instead of baking
+            // an error page (issue #587). In dev there is no frozen artifact, so
+            // we fall through (404 -> live handler). A `throw new Skip()` is the
+            // expected "skip this URL" signal, not a failure, so it stays quiet.
+            if (err?.name !== "Skip") {
+              console.warn(
+                `[rango] Dev prerender error for ${pathname} (serving live instead): ${err.message}`,
+              );
+            }
           }
         }
 
         res.statusCode = 404;
         res.end("No prerender match");
         logResult(404, "no match");
+      });
+
+      // Dev on-demand PPR shell production (producer B, #699). There is no
+      // build manifest in dev, so the serve path's read-through
+      // (rsc/shell-build-manifest.ts) fetches the shell entry from here on a
+      // Prerender+ppr route's first request — dev serves x-rango-shell: HIT
+      // from request one, mirroring production. Memoized per router HMR
+      // generation AND per caller version (a client-module edit bumps the
+      // version without rotating the router instance; the stale entry would
+      // fail the serve gate forever). The endpoint is policy-free: the caller
+      // (the serve gate, which resolved the route's ppr option) sends
+      // ttl/swr/tags/version. Only prerender-backed routes produce entries —
+      // the /__rsc_prerender pre-flight below both warms the payload memo the
+      // capture's dev store fetch will hit AND refuses non-prerenderable
+      // routes (a live-handler render must never be served as a baked shell).
+      server.middlewares.use("/__rsc_shell", async (req: any, res: any) => {
+        await s.discoveryDone;
+        const url = new URL(req.url ?? "", "http://localhost");
+        const pathname = url.searchParams.get("pathname");
+        const routeName = url.searchParams.get("routeName");
+        const version = url.searchParams.get("version");
+        // ttl is required like the identifiers: the endpoint is policy-free
+        // (the serve gate resolved the route's ppr option and always sends
+        // it), so there is deliberately no default to drift from
+        // resolvePprConfig's.
+        const ttlRaw = url.searchParams.get("ttl");
+        if (!pathname || !routeName || !version || !ttlRaw) {
+          res.statusCode = 400;
+          res.end("Missing pathname/routeName/version/ttl");
+          return;
+        }
+
+        // Boot-race readiness signal (issue #719): the capture realm is stood
+        // up lazily on the first hit (temp server, registry import, and a Vite
+        // dep re-optimization the first shell-capture import can trigger). All
+        // are TRANSIENT — a retry seconds later succeeds. Tagging them 503 +
+        // x-rango-shell-dev: NOT-READY lets the read-through re-poll ONLY these
+        // (a bounded await of readiness) instead of mapping the boot window to
+        // a hard first-request MISS. Genuine negatives (404) stay untagged so a
+        // non-baked route never stalls the foreground.
+        const sendNotReady = (detail: string): void => {
+          res.statusCode = 503;
+          res.setHeader("x-rango-shell-dev", "NOT-READY");
+          res.end(detail);
+        };
+        // A Vite dependency re-optimization surfaces as ERR_OUTDATED_OPTIMIZED_DEP
+        // (import throws once, then re-imports clean) — retryable, unlike a real
+        // module fault (syntax error, missing export), which stays a hard 500.
+        // The message-regex fallback is NOT gratuitous: err.code is stripped when
+        // the error serializes across the module-runner/workerd RPC boundary (the
+        // message survives), so under the Cloudflare preset .code alone misses it.
+        const isReoptimizing = (err: any): boolean =>
+          err?.code === "ERR_OUTDATED_OPTIMIZED_DEP" ||
+          /Outdated Optimize Dep|optimized dependency|new dependencies optimized/i.test(
+            String(err?.message ?? ""),
+          );
+        // Fold the reoptimize-guard pasted at all three import/capture catch
+        // sites: emit NOT-READY + report handled for a transient re-optimization,
+        // else leave the caller to send its own terminal (500 for an entry
+        // import, 404 for a mid-capture failure that keeps runtime capture).
+        const handledAsReoptimizing = (err: any): boolean => {
+          if (!isReoptimizing(err)) return false;
+          sendNotReady(`Shell capture re-optimizing: ${err.message}`);
+          return true;
+        };
+        // Both entry-import sites (main-server rsc env, temp Node server) fail
+        // identically: reoptimize → NOT-READY, else → hard 500.
+        const handleShellImportError = (err: any): void => {
+          if (handledAsReoptimizing(err)) return;
+          res.statusCode = 500;
+          res.end(`Shell capture module refresh failed: ${err.message}`);
+        };
+        // Deterministic boot-race injection for e2e (issue #719 P3): fire ONE
+        // reopt-class NOT-READY per pathname through the REAL classifier so the
+        // read-through's re-poll path is exercised end-to-end (not just the
+        // unit-mocked fetch), then serve normally on the re-poll. Env-gated —
+        // inert in every non-test run.
+        if (
+          process.env.RANGO_E2E_INJECT_SHELL_NOTREADY === "1" &&
+          !injectedShellNotReadyPaths.has(pathname)
+        ) {
+          injectedShellNotReadyPaths.add(pathname);
+          const injected = Object.assign(
+            new Error("Outdated Optimize Dep (injected boot-race)"),
+            { code: "ERR_OUTDATED_OPTIMIZED_DEP" },
+          );
+          if (handledAsReoptimizing(injected)) return;
+        }
+        const ttl = Number(ttlRaw);
+        const swrRaw = url.searchParams.get("swr");
+        const swr = swrRaw === null ? undefined : Number(swrRaw);
+        const tagsRaw = url.searchParams.get("tags");
+        const tags = tagsRaw ? tagsRaw.split(",") : undefined;
+        const maxSnapshotBytesRaw = url.searchParams.get("maxSnapshotBytes");
+        const maxSnapshotBytes =
+          maxSnapshotBytesRaw === null
+            ? undefined
+            : Number(maxSnapshotBytesRaw);
+        // Boundary revalidation via the SHARED normalizer (shell-serve.ts):
+        // the param crossed an HTTP query string, and a garbage value must
+        // fall back to the capture default, never reach setTimeout as NaN
+        // (which Node clamps to ~1ms — an instant abort).
+        const captureTimeout = normalizeCaptureTimeout(
+          Number(url.searchParams.get("captureTimeout")),
+        );
+
+        // Resolve the capture realms: main-server envs (Node preset) or the
+        // shared temp Node server (Cloudflare preset — no main RSC runner).
+        // Entry re-import per request picks up HMR edits, exactly like the
+        // prerender endpoint above.
+        const rscEnvMain = (server.environments as any)?.rsc;
+        let rscRealm: any = null;
+        let ssrRealm: any = null;
+        let ssrEntryId: string;
+        // Why the temp-server path returned no runner, if it did: a transient
+        // re-optimization is re-pollable (NOT-READY), a terminal create/import
+        // fault is not. Carried from getOrCreateTempServer to the readiness
+        // check below so only reopt re-polls (issue #719 P2).
+        let tempServerError: unknown = null;
+        if (rscEnvMain?.runner && s.resolvedEntryPath) {
+          try {
+            await rscEnvMain.runner.import(s.resolvedEntryPath);
+          } catch (err: any) {
+            handleShellImportError(err);
+            return;
+          }
+          rscRealm = rscEnvMain;
+          ssrRealm = (server.environments as any)?.ssr;
+          ssrEntryId =
+            (server.environments as any)?.ssr?.config?.build?.rollupOptions
+              ?.input?.index ?? VIRTUAL_IDS.ssr;
+        } else {
+          const tempResult = await getOrCreateTempServer();
+          if (tempResult.env) {
+            try {
+              await importEntryAndRegistry(tempResult.env);
+            } catch (err: any) {
+              handleShellImportError(err);
+              return;
+            }
+          } else {
+            tempServerError = tempResult.error;
+          }
+          rscRealm = tempResult.env;
+          ssrRealm = (prerenderTempServer?.environments as any)?.ssr;
+          ssrEntryId = "virtual:entry-ssr";
+        }
+        if (!rscRealm?.runner || !ssrRealm?.runner) {
+          // Reoptimization is the ONLY transient class: re-poll it (NOT-READY).
+          // A terminal temp-server create/import fault, or an SSR runner absent
+          // after a clean createServer, fails fast with a plain 503 (no
+          // NOT-READY header) so the read-through MISSes on its first attempt
+          // instead of re-polling a permanently-broken realm for the full
+          // readiness deadline (issue #719 P2).
+          if (tempServerError && handledAsReoptimizing(tempServerError)) return;
+          res.statusCode = 503;
+          res.end("Shell capture runners not available");
+          return;
+        }
+        let registry: Map<string, any> | null = null;
+        let registryError: unknown = null;
+        try {
+          const serverMod = await rscRealm.runner.import(
+            "@rangojs/router/server",
+          );
+          registry = serverMod.RouterRegistry ?? null;
+        } catch (err: any) {
+          registryError = err;
+          registry = null;
+        }
+        if (!registry || registry.size === 0) {
+          // Same rule as the runner check: a re-optimization mid-import is
+          // re-pollable (NOT-READY); a terminal import fault or a genuinely
+          // empty registry (no routers registered) fails fast (issue #719 P2).
+          if (registryError && handledAsReoptimizing(registryError)) return;
+          res.statusCode = 503;
+          res.end("Shell capture registry not available");
+          return;
+        }
+
+        // Memo sweep FIRST: after request one the common case is a memo HIT
+        // (this fetch blocks a foreground document request), and the memoized
+        // body needs neither the pre-flight round-trip nor a capture. Keyed
+        // per router instance (= HMR generation) like the prerender memo.
+        const cacheKey = `shell|${pathname}|r=${routeName}|t=${ttl}|s=${swr ?? ""}|g=${(tags ?? []).join("+")}|c=${captureTimeout ?? ""}|v=${version}`;
+        for (const [, routerInstance] of registry) {
+          if (typeof routerInstance.match !== "function") continue;
+          const cached = devPrerenderCache.get(routerInstance, cacheKey);
+          if (cached !== undefined) {
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-shell-dev", "HIT");
+            res.end(cached);
+            return;
+          }
+        }
+
+        // Pre-flight: the route must be prerender-backed. Warms the payload
+        // memo the capture's dev prerender store will fetch, and closes the
+        // live-handler-bake hole (a non-pr route 404s here).
+        if (s.devServerOrigin) {
+          try {
+            const probe = await fetch(
+              `${s.devServerOrigin}/__rsc_prerender?pathname=${encodeURIComponent(pathname)}&routeName=${encodeURIComponent(routeName)}`,
+              { signal: AbortSignal.timeout(DEV_SHELL_PROBE_TIMEOUT_MS) },
+            );
+            if (!probe.ok) {
+              res.statusCode = 404;
+              res.end("Route is not prerenderable");
+              return;
+            }
+          } catch {
+            res.statusCode = 404;
+            res.end("Prerender pre-flight failed");
+            return;
+          }
+        }
+
+        for (const [, routerInstance] of registry) {
+          if (typeof routerInstance.match !== "function") continue;
+          try {
+            const ssrModule = await ssrRealm.runner.import(ssrEntryId);
+            if (typeof ssrModule?.captureShellHTML !== "function") {
+              res.statusCode = 404;
+              res.end("SSR entry has no captureShellHTML");
+              return;
+            }
+            const captureMod = await rscRealm.runner.import(
+              "@rangojs/router/build/shell-capture",
+            );
+            const result = await captureMod.captureShellForBuild({
+              router: routerInstance,
+              urlPath: pathname,
+              routeName,
+              key: `${pathname}:shell`,
+              ttl,
+              swr,
+              tags,
+              maxSnapshotBytes,
+              captureTimeout,
+              buildEnv: s.resolvedBuildEnv,
+              buildVersion: version,
+              captureShellHTML: ssrModule.captureShellHTML,
+              debug: !!debugDiscovery,
+            });
+            if (result.outcome === "route-mismatch") continue;
+            if (result.outcome !== "stored" || !result.entry) {
+              res.statusCode = 404;
+              res.end(`Shell capture ${result.outcome}`);
+              return;
+            }
+            const body = JSON.stringify({
+              entry: result.entry,
+              ttl,
+              swr,
+              tags: result.tags,
+              routeName,
+            });
+            devPrerenderCache.set(routerInstance, cacheKey, body);
+            res.setHeader("content-type", "application/json");
+            res.setHeader("x-rango-shell-dev", "MISS");
+            res.end(body);
+            return;
+          } catch (err: any) {
+            // A dep re-optimization mid-capture is a boot-race, not a capture
+            // failure: signal NOT-READY so the read-through re-polls instead of
+            // conceding a first-request MISS (issue #719).
+            if (handledAsReoptimizing(err)) return;
+            console.warn(
+              `[rango] Dev shell capture error for ${pathname} (route keeps runtime capture): ${err.message}`,
+            );
+            res.statusCode = 404;
+            res.end(`Shell capture error: ${err.message}`);
+            return;
+          }
+        }
+        res.statusCode = 404;
+        res.end("No router matched");
       });
 
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
@@ -957,6 +1492,22 @@ export function createRouterDiscoveryPlugin(
             writeCombinedRouteTypesWithTracking(s);
           }
         };
+        const routeShapeSignature = () =>
+          JSON.stringify(
+            s.perRouterManifests.map(
+              ({
+                id,
+                routeManifest,
+                routeTrailingSlash,
+                routeSearchSchemas,
+              }) => ({
+                id,
+                routeManifest,
+                routeTrailingSlash,
+                routeSearchSchemas,
+              }),
+            ),
+          );
 
         const maybeHandleGeneratedRouteFileMutation = (
           filePath: string,
@@ -995,6 +1546,7 @@ export function createRouterDiscoveryPlugin(
           // populated manifest there's nothing useful to do, so bail
           // before involving the gate machine at all.
           if (!hasMainRunner && s.perRouterManifests.length === 0) return;
+          let previousRouteShape = routeShapeSignature();
           await gate.runRefreshCycle(async () => {
             const hmrStart = performance.now();
             try {
@@ -1049,7 +1601,19 @@ export function createRouterDiscoveryPlugin(
               // original call already resolved on the failed cycle. A failed
               // cycle throws above and never reaches here, so a broken edit
               // never reloads the worker onto bad source.
-              if (rscEnv && !rscEnv.runner) forceCloudflareWorkerReload(rscEnv);
+              if (rscEnv && !rscEnv.runner) {
+                const nextRouteShape = routeShapeSignature();
+                let expectedEpoch: number | undefined;
+                if (nextRouteShape !== previousRouteShape) {
+                  expectedEpoch = Math.max(
+                    Date.now(),
+                    (s.devDiscoveryEpoch ?? 0) + 1,
+                  );
+                  s.devDiscoveryEpoch = expectedEpoch;
+                }
+                previousRouteShape = nextRouteShape;
+                forceCloudflareWorkerReload(rscEnv, expectedEpoch);
+              }
             } catch (err: any) {
               s.lastDiscoveryError = {
                 message: err?.message ?? String(err),
@@ -1083,7 +1647,8 @@ export function createRouterDiscoveryPlugin(
         // HMR update for them and the entry chain is never evicted.
         //
         // Fix: after discovery completes, (1) invalidate the worker env's
-        // Node-side module graph, then (2) send a full-reload to the worker.
+        // Node-side module graph, (2) send a full-reload to the worker, then
+        // (3) probe until the active router reports the new discovery epoch.
         // Step (2) alone is insufficient: the full-reload handler clears the
         // runner's evaluatedModules and re-imports entrypoints, but each
         // re-import fetches the module back through this Node-side graph, which
@@ -1091,13 +1656,19 @@ export function createRouterDiscoveryPlugin(
         // rebuilds the stale route table and the new route 404s/hits the
         // catch-all. Invalidating the graph forces a fresh transform on
         // re-fetch (the same mechanism refreshTempRscEnv uses for discovery),
-        // so the re-import re-runs createRouter() with the new routes. This is
-        // the programmatic equivalent of the dev-server "r + enter" restart,
-        // scoped to the worker environment instead of tearing down the server.
-        const forceCloudflareWorkerReload = (rscEnv: any) => {
+        // so the re-import re-runs createRouter() with the new routes. The probe
+        // is detached because the refresh callback still holds the discovery
+        // gate; awaiting it here would deadlock the request that proves the new
+        // router is active. Once it succeeds, the client hot channel broadcasts
+        // readiness to open and newly-booted stale documents.
+        const forceCloudflareWorkerReload = (
+          rscEnv: any,
+          expectedEpoch: number | undefined,
+        ) => {
           if (!rscEnv?.hot) return;
-          try {
-            const graph = rscEnv.moduleGraph;
+
+          const graph = rscEnv.moduleGraph;
+          const reloadWorkerd = () => {
             if (graph?.invalidateAll) {
               graph.invalidateAll();
               debugDiscovery?.("hmr: invalidated workerd rsc module graph");
@@ -1106,12 +1677,49 @@ export function createRouterDiscoveryPlugin(
             debugDiscovery?.(
               "hmr: forced workerd rsc env reload (full-reload)",
             );
-          } catch (err: any) {
+          };
+          reloadWorkerd();
+
+          if (expectedEpoch === undefined) return;
+          void (async () => {
+            const deadline = Date.now() + 15_000;
+            do {
+              if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
+                return;
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, 25));
+              if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
+                return;
+              }
+              try {
+                const response = await fetch(getDevServerOrigin() + "/", {
+                  cache: "no-store",
+                  headers: {
+                    [DEV_DISCOVERY_PROBE_HEADER]: String(expectedEpoch),
+                  },
+                  signal: AbortSignal.timeout(1_000),
+                });
+                if (
+                  !devServerClosed &&
+                  expectedEpoch === s.devDiscoveryEpoch &&
+                  response.headers.get(DEV_DISCOVERY_EPOCH_HEADER) ===
+                    String(expectedEpoch)
+                ) {
+                  publishDevDiscoveryReady(expectedEpoch);
+                  return;
+                }
+                // A response without the expected epoch proves an older worker
+                // evaluation won the race after the initial invalidation. Clear
+                // that completed evaluation and retry the reload.
+                reloadWorkerd();
+              } catch {}
+            } while (Date.now() < deadline);
+
             debugDiscovery?.(
-              "hmr: workerd reload failed: %s",
-              err?.message ?? err,
+              "hmr: workerd readiness probe timed out at epoch %d",
+              expectedEpoch,
             );
-          }
+          })();
         };
 
         const scheduleRouteRegeneration = () => {
@@ -1315,8 +1923,7 @@ export function createRouterDiscoveryPlugin(
       const buildStartTime = performance.now();
       debugDiscovery?.("build: start (env=%s)", this.environment?.name ?? "?");
       resetStagedBuildAssets(s.projectRoot);
-      s.prerenderManifestEntries = null;
-      s.staticManifestEntries = null;
+      resetPrerenderCollection(s);
 
       // Acquire build-time env bindings if configured
       await timed(debugDiscovery, "build acquireBuildEnv", () =>
@@ -1387,16 +1994,64 @@ export function createRouterDiscoveryPlugin(
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
-        if (tempServer) {
-          await timed(debugDiscovery, "build tempServer.close", () =>
-            tempServer.close(),
-          );
+        if (tempServer && s.shellCandidates?.length) {
+          // Prerender+ppr candidates exist: keep the temp server (and its
+          // realm — tries installed, registry populated) alive for the
+          // post-build shell capture phase (buildApp post, producer B #699).
+          // The prelude embeds built client asset URLs, so the capture can
+          // only run after the client build; that phase closes the server.
+          // buildEnv release is deferred with it — a bake-lane loader
+          // executing during the capture may read ctx.env.
+          s.shellPhaseTempServer = tempServer;
+        } else {
+          if (tempServer) {
+            await timed(debugDiscovery, "build tempServer.close", () =>
+              tempServer.close(),
+            );
+          }
+          await releaseBuildEnv(s);
         }
-        await releaseBuildEnv(s);
         debugDiscovery?.(
           "build discovery done (%sms)",
           (performance.now() - buildStartTime).toFixed(1),
         );
+      }
+    },
+
+    // Post-build PPR shell capture (producer B, #699): runs after EVERY
+    // environment bundle is written — the shell prelude embeds built client
+    // asset URLs (bootstrap entry), which do not exist at buildStart. The
+    // kept temp server and the buildEnv were deferred AS A PAIR in
+    // buildStart's finally; this finally is the pair's success-path owner
+    // (buildEnd below owns the aborted-build path) — the phase itself is a
+    // pure producer and tears down only the globals it installs.
+    buildApp: {
+      order: "post",
+      async handler(builder) {
+        try {
+          await runShellPrerenderPhase(s, builder as any);
+        } finally {
+          if (s.isBuildMode) {
+            const tempServer = s.shellPhaseTempServer;
+            s.shellPhaseTempServer = null;
+            if (tempServer) await tempServer.close();
+            await releaseBuildEnv(s);
+          }
+        }
+      },
+    },
+
+    // An environment build failure aborts the builder before the buildApp
+    // post hook — never leak the kept temp server (open handles hang the CLI)
+    // or the deferred buildEnv (a live miniflare proxy).
+    async buildEnd(error) {
+      if (!error || !s.shellPhaseTempServer) return;
+      const tempServer = s.shellPhaseTempServer;
+      s.shellPhaseTempServer = null;
+      try {
+        await tempServer.close();
+      } finally {
+        await releaseBuildEnv(s);
       }
     },
 

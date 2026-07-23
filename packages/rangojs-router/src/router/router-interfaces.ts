@@ -6,14 +6,18 @@ import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
+import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
+import type { RouteMatchResult } from "./pattern-matching.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
+import type { ResolvedTracing } from "./tracing.js";
+import type { TelemetrySink } from "./telemetry.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -301,6 +305,28 @@ export interface RangoInternal<
   readonly prefetchCacheTTL: number;
 
   /**
+   * Maximum number of decoded prefetch payloads the client keeps in its
+   * in-memory prefetch cache (FIFO eviction at capacity). Shipped to the
+   * client in payload metadata. Derived from prefetchCacheSize.
+   */
+  readonly prefetchCacheSize: number;
+
+  /**
+   * Maximum number of speculative prefetch requests the client runs
+   * concurrently. Shipped to the client in payload metadata. Derived from
+   * prefetchConcurrency.
+   */
+  readonly prefetchConcurrency: number;
+
+  /**
+   * Router-wide default Link prefetch strategy for Links without an explicit
+   * `prefetch` prop. Shipped to the client in payload metadata. Derived from
+   * the `defaultPrefetch` option (default "none" in development and
+   * "viewport" in production).
+   */
+  readonly defaultPrefetch: import("./prefetch-default.js").PrefetchStrategy;
+
+  /**
    * Resolved rango state cookie name (`{prefix}_{routerId}`), composed once at
    * router init and shipped to the client in payload metadata. The server-side
    * cookie writer reads it from here; the client reads it from metadata.
@@ -315,16 +341,38 @@ export interface RangoInternal<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether the client hydrates inside React.StrictMode. Resolved from
+   * createRouter({ strictMode }) (default true) and shipped to the client in
+   * the initial payload metadata.
+   */
+  readonly strictMode: boolean;
+
+  /**
    * Whether router-wide performance debugging is enabled.
    * Used by the request handler to create metrics before middleware runs.
    */
   readonly debugPerformance?: boolean;
 
   /**
-   * Whether ?__debug_manifest is allowed in production.
-   * Always enabled in development.
+   * PPR shell-capture debug sink (createRouter({ debugShellCapture })), read
+   * by rsc-rendering when it builds the capture descriptor for a ppr route.
    */
-  readonly allowDebugManifest: boolean;
+  readonly debugShellCapture?: ShellCaptureDebug;
+
+  /**
+   * Resolved platform phase-span tracing (Cloudflare custom spans or OTel), or
+   * undefined when off. Threaded onto the request context and read at each
+   * traced phase.
+   */
+  readonly tracing?: ResolvedTracing;
+
+  /**
+   * Raw telemetry sink from RangoOptions, exposed so handler-level emitters
+   * (rsc/handler.ts timeout/origin/late-handle) can emit WITHOUT the
+   * RouterContext ALS, which only match()/matchPartial() enter. See
+   * observeEvent's emitter list in router/instrument.ts.
+   */
+  readonly telemetry?: TelemetrySink;
 
   /**
    * Resolved timeout configuration (merged from shorthand + structured).
@@ -379,6 +427,9 @@ export interface RangoInternal<
   /** @internal basename for runtime manifest generation */
   readonly __basename?: string;
 
+  /** @internal Cloudflare dev worker generation captured at construction. */
+  readonly __devDiscoveryEpoch?: number;
+
   /**
    * @internal Router-level error/notFound fallbacks (`createRouter` options),
    * exposed for the build-time clientChunks discovery so a `"use client"`
@@ -429,6 +480,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
+    rootScoped?: boolean,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
@@ -487,7 +539,14 @@ export interface RangoInternal<
    * Used by classifyRequest() for request classification without
    * entering the full match pipeline.
    */
-  findMatch(pathname: string, metricsStore?: any): any;
+  // Async since a lazy async include (`() => import()`) must resolve before its
+  // routes can match. Typed (not `any`) so a consumer doing
+  // `const m = router.findMatch(p); if (!m) ...; m.entry` gets a compile error
+  // (m is a Promise) instead of the silent always-truthy bug.
+  findMatch(
+    pathname: string,
+    metricsStore?: any,
+  ): Promise<RouteMatchResult<TEnv> | null>;
 
   /**
    * Debug utility to serialize the manifest for inspection

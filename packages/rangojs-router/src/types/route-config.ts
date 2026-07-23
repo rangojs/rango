@@ -10,20 +10,29 @@ export type DocumentProps = {
 type ParseConstraint<T extends string> =
   T extends `${infer First}|${infer Rest}` ? First | ParseConstraint<Rest> : T;
 
+// Named catch-all (`:name*` / `:name+`) is matched BEFORE the `?`/suffix
+// branches. Its modifier is anchored to the END of the token (no trailing
+// `${string}`) so it is a true suffix and never mis-splits a constraint body
+// such as `id(\d+)`. Both are a required `string`: a matched catch-all always
+// binds a value (possibly ""), so the key is always present.
 type ExtractParamInfo<T extends string> =
   T extends `${infer Name}(${infer Constraint})?${string}`
     ? { name: Name; optional: true; type: ParseConstraint<Constraint> }
     : T extends `${infer Name}(${infer Constraint})${string}`
       ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
-      : T extends `${infer Name}?${string}`
-        ? { name: Name; optional: true; type: string }
-        : T extends `${infer Name}.${string}`
+      : T extends `${infer Name}*`
+        ? { name: Name; optional: false; type: string }
+        : T extends `${infer Name}+`
           ? { name: Name; optional: false; type: string }
-          : T extends `${infer Name}-${string}`
-            ? { name: Name; optional: false; type: string }
-            : T extends `${infer Name}~${string}`
+          : T extends `${infer Name}?${string}`
+            ? { name: Name; optional: true; type: string }
+            : T extends `${infer Name}.${string}`
               ? { name: Name; optional: false; type: string }
-              : { name: T; optional: false; type: string };
+              : T extends `${infer Name}-${string}`
+                ? { name: Name; optional: false; type: string }
+                : T extends `${infer Name}~${string}`
+                  ? { name: Name; optional: false; type: string }
+                  : { name: T; optional: false; type: string };
 
 type ParamFromInfo<Info> = Info extends {
   name: infer N extends string;
@@ -51,12 +60,15 @@ type MergeParams<A, B> = Pick<A, keyof A> & Pick<B, keyof B> extends infer O
  * - Optional params: /:locale? -> { locale?: string }
  * - Constrained params: /:locale(en|gb) -> { locale: "en" | "gb" }
  * - Optional + constrained: /:locale(en|gb)? -> { locale?: "en" | "gb" }
+ * - Named catch-all: /:path+ (one-or-more), /:slug* (zero-or-more) -> string
  *
  * @example
  * ExtractParams<"/products/:id"> // { id: string }
  * ExtractParams<"/:locale?/blog/:slug"> // { locale?: string; slug: string }
  * ExtractParams<"/:locale(en|gb)/blog"> // { locale: "en" | "gb" }
  * ExtractParams<"/:locale(en|gb)?/blog/:slug"> // { locale?: "en" | "gb"; slug: string }
+ * ExtractParams<"/docs/:slug*"> // { slug: string }
+ * ExtractParams<"/shop/:path+"> // { path: string }
  */
 export type ExtractParams<
   T extends string,

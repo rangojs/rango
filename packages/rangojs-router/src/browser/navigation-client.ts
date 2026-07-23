@@ -8,11 +8,18 @@ import type {
 import { NetworkError, ServerRedirect, isNetworkError } from "../errors.js";
 import {
   browserDebugLog,
+  debugLog,
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
 import { isActionFenceActive } from "./action-fence.js";
+import {
+  expandPayloadFragments,
+  SEGMENT_FRAGMENT_CAPABILITY_HEADER,
+  SEGMENT_FRAGMENT_RECOVERY_HEADER,
+  SegmentFragmentDecodeError,
+} from "../segment-fragments.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -25,8 +32,11 @@ import {
   buildSourceKey,
   consumeInflightPrefetch,
   consumePrefetch,
+  disableFragmentPassthrough,
+  isFragmentPassthroughEnabled,
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
+import { cancelAllPrefetches } from "./prefetch/loader.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -44,7 +54,10 @@ import {
  * @returns NavigationClient instance
  */
 export function createNavigationClient(
-  deps: Pick<RscBrowserDependencies, "createFromFetch">,
+  deps: Pick<
+    RscBrowserDependencies,
+    "createFromFetch" | "createFromReadableStream"
+  >,
 ): NavigationClient {
   return {
     /**
@@ -100,6 +113,11 @@ export function createNavigationClient(
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
 
+      // If the lazy prefetch runtime has not loaded yet, prevent a deferred
+      // speculative request from starting after this navigation misses the
+      // synchronous cache lookup and begins its own fetch.
+      cancelAllPrefetches(targetUrl);
+
       // Check completed in-memory prefetch cache before making a network
       // request. Try the source-scoped key first (populated when the server
       // tagged the prefetch response as source-sensitive, e.g. intercepts,
@@ -143,12 +161,6 @@ export function createNavigationClient(
           if (inflightEntryPromise) hitKey = wildcardKey;
         }
       }
-      // Track when the stream completes
-      let resolveStreamComplete: () => void;
-      const streamComplete = new Promise<void>((resolve) => {
-        resolveStreamComplete = resolve;
-      });
-
       /**
        * Validate RSC control headers on any response (fresh, cached, or
        * in-flight). Handles version-mismatch reloads and server redirects.
@@ -157,6 +169,7 @@ export function createNavigationClient(
       const validateRscHeaders = (
         response: Response,
         source: string,
+        resolveStreamComplete: () => void,
       ): Response | Promise<Response> => {
         // Version mismatch — server wants a full page reload
         const reloadResult = handleReloadHeader(response, {
@@ -206,23 +219,48 @@ export function createNavigationClient(
         return response;
       };
 
-      /** Start a fresh navigation fetch (no cache / inflight hit). */
-      const doFreshFetch = (): Promise<Response> => {
+      /** Start and decode one fresh navigation fetch. */
+      const freshResult = (
+        fragmentPassthrough = isFragmentPassthroughEnabled(),
+        fragmentRecovery = false,
+      ): {
+        payload: Promise<RscPayload>;
+        streamComplete: Promise<void>;
+      } => {
+        let resolveStreamComplete!: () => void;
+        const streamComplete = new Promise<void>((resolve) => {
+          resolveStreamComplete = resolve;
+        });
+
         if (tx) {
           browserDebugLog(tx, "fetching", {
             path: `${fetchUrl.pathname}${fetchUrl.search}`,
+            fragmentPassthrough,
           });
         }
 
-        return fetch(fetchUrl, {
+        const responsePromise = fetch(fetchUrl, {
           // During an action's flight the state is not rotated, so the old
           // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
           // it so a genuine mid-action navigation fetches fresh instead of being
-          // served the stale prefetched bytes.
-          ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
+          // served the stale prefetched bytes. Fragment recovery also bypasses
+          // HTTP caches so it reaches the server's decode-and-evict path.
+          ...((isActionFenceActive() || fragmentRecovery) && {
+            cache: "no-store" as RequestCache,
+          }),
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
-            "X-Rango-State": getRangoState(),
+            // Reuse the single per-operation read (see rangoState above): the
+            // cache-key lookup and this header must agree on one value, and the
+            // cookie read has side effects (external-rotation notify) we do not
+            // want to fire twice per navigation.
+            "X-Rango-State": rangoState,
+            ...(fragmentPassthrough && {
+              [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+            }),
+            ...(fragmentRecovery && {
+              [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
+            }),
             ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
             ...(interceptSourceUrl && {
               "X-RSC-Router-Intercept-Source": interceptSourceUrl,
@@ -231,7 +269,11 @@ export function createNavigationClient(
           },
           signal,
         }).then((response) => {
-          const validated = validateRscHeaders(response, "fetch");
+          const validated = validateRscHeaders(
+            response,
+            "fetch",
+            resolveStreamComplete,
+          );
           if (validated instanceof Promise) return validated;
 
           return teeWithCompletion(
@@ -243,23 +285,19 @@ export function createNavigationClient(
             signal,
           );
         });
-      };
 
-      // A warm prefetch hit returns its eagerly-decoded payload directly: the
-      // route's chunks were imported during the prefetch, so this click runs
-      // no decode and no network. Only the fresh path runs createFromFetch and
-      // resolves the local streamComplete (via doFreshFetch's teeWithCompletion
-      // and the control-header short-circuits in validateRscHeaders).
-      const freshResult = (): {
-        payload: Promise<RscPayload>;
-        streamComplete: Promise<void>;
-      } => ({
-        payload: deps.createFromFetch<RscPayload>(doFreshFetch()),
-        streamComplete,
-      });
+        return {
+          payload: deps.createFromFetch<RscPayload>(responsePromise),
+          streamComplete,
+        };
+      };
 
       let payloadPromise: Promise<RscPayload>;
       let streamCompletePromise: Promise<void>;
+      // True only for a prefetch-cache hit whose stream had already fully drained
+      // (complete === true). A still-streaming hit and the fresh path stay false,
+      // so only a fully-warmed prefetch commits in a transition (no fallback flash).
+      let fullyPrefetched = false;
 
       if (cachedEntry) {
         if (tx) {
@@ -270,6 +308,9 @@ export function createNavigationClient(
         }
         payloadPromise = cachedEntry.payload;
         streamCompletePromise = cachedEntry.streamComplete;
+        // Only a hit whose stream already fully drained is "fully prefetched";
+        // a still-streaming hit must keep streaming its fallbacks like a cold load.
+        fullyPrefetched = cachedEntry.complete;
       } else if (inflightEntryPromise) {
         if (tx) {
           browserDebugLog(tx, "reusing inflight prefetch", {
@@ -299,6 +340,9 @@ export function createNavigationClient(
         } else {
           payloadPromise = entry.payload;
           streamCompletePromise = entry.streamComplete;
+          // Adopted inflight is normally still streaming (false), but read the
+          // flag in case it completed between publish and adoption.
+          fullyPrefetched = entry.complete;
         }
       } else {
         ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
@@ -306,7 +350,45 @@ export function createNavigationClient(
       }
 
       try {
-        const payload = await payloadPromise;
+        // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Times how long the RSC
+        // payload ROOT takes to resolve: ~full-stream duration means the root
+        // model is not flushed early (server/runtime buffering, e.g. wrangler
+        // dev gzip); fast means the block, if any, is downstream in render.
+        const vtDebugStart = isBrowserDebugEnabled() ? performance.now() : 0;
+        let payload: RscPayload;
+        try {
+          payload = await payloadPromise;
+          // Fragment envelopes (#700): expand replay-HIT envelopes before any
+          // consumer renders — this await is the single point all three payload
+          // sources (fresh fetch, warm prefetch, adopted inflight) flow through.
+          await expandPayloadFragments(payload, deps.createFromReadableStream);
+        } catch (error) {
+          if (
+            !(error instanceof SegmentFragmentDecodeError) ||
+            signal?.aborted
+          ) {
+            throw error;
+          }
+
+          // A fragment-only failure means the outer payload was valid but one
+          // stored segment was not. Retry once without the capability header:
+          // the server then takes CacheScope's decode-and-evict path and renders
+          // fresh. Never recurse; a failed recovery remains an ordinary
+          // unprocessable navigation response.
+          if (tx) browserDebugLog(tx, "fragment decode failed, retrying");
+          disableFragmentPassthrough();
+          const recovery = freshResult(false, true);
+          streamCompletePromise = recovery.streamComplete;
+          fullyPrefetched = false;
+          payload = await recovery.payload;
+          await expandPayloadFragments(payload, deps.createFromReadableStream);
+        }
+        if (isBrowserDebugEnabled()) {
+          debugLog("[VT-DIAG] payloadResolved", {
+            ms: Math.round(performance.now() - vtDebugStart),
+            isPartial: payload.metadata?.isPartial,
+          });
+        }
 
         if (tx) {
           browserDebugLog(tx, "response received", {
@@ -315,7 +397,11 @@ export function createNavigationClient(
             diffCount: payload.metadata?.diff?.length ?? 0,
           });
         }
-        return { payload, streamComplete: streamCompletePromise };
+        return {
+          payload,
+          streamComplete: streamCompletePromise,
+          fullyPrefetched,
+        };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling
         if (isNetworkError(error)) {

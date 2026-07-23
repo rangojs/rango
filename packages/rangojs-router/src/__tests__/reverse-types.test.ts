@@ -90,6 +90,25 @@ describe("ExtractParams", () => {
     type Params = ExtractParams<"/files/:name.txt/meta">;
     expectTypeOf<Params>().toEqualTypeOf<{ name: string }>();
   });
+
+  // Named catch-all (issue #634). The trailing modifier must be stripped from
+  // the key, and the type is a required `string` for BOTH `+` and `*`: at
+  // runtime a matched catch-all always binds a value (possibly ""), so the key
+  // is always present.
+  it("should extract a one-or-more catch-all (:name+) as a required string", () => {
+    type Params = ExtractParams<"/shop/:path+">;
+    expectTypeOf<Params>().toEqualTypeOf<{ path: string }>();
+  });
+
+  it("should extract a zero-or-more catch-all (:name*) as a required string", () => {
+    type Params = ExtractParams<"/docs/:slug*">;
+    expectTypeOf<Params>().toEqualTypeOf<{ slug: string }>();
+  });
+
+  it("should extract a named catch-all after a required param", () => {
+    type Params = ExtractParams<"/blog/:cat/:rest*">;
+    expectTypeOf<Params>().toEqualTypeOf<{ cat: string; rest: string }>();
+  });
 });
 
 describe("ParamsFor", () => {
@@ -425,6 +444,31 @@ describe("Handler type with dot-prefix route name", () => {
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".author", {
       authorSlug: "jane",
     });
+  });
+});
+
+describe("Handler mixed async result", () => {
+  type LocalRoutes = { post: "/:slug" };
+
+  it("accepts an inferred Promise<ReactNode | Response> without weakening params", () => {
+    const handler: Handler<".post", LocalRoutes> = async (ctx) => {
+      const slug: string = ctx.params.slug;
+      // @ts-expect-error The local route declares slug, not id.
+      const id = ctx.params.id;
+      return slug === "redirect"
+        ? new Response(null, { status: 302 })
+        : `post:${slug}:${String(id)}`;
+    };
+
+    expectTypeOf(handler).toMatchTypeOf<Handler<".post", LocalRoutes>>();
+
+    urls(({ path }) => [
+      path("/post/:slug", async (ctx) =>
+        ctx.params.slug === "redirect"
+          ? new Response(null, { status: 302 })
+          : `post:${ctx.params.slug}`,
+      ),
+    ]);
   });
 });
 

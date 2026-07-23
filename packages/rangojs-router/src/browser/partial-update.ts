@@ -20,8 +20,15 @@ import {
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
-import { debugLog } from "./logging.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  debugLog,
+  isBrowserDebugEnabled,
+  IS_BROWSER_DEBUG,
+} from "./logging.js";
+import {
+  validateRedirectOrigin,
+  validateExternalRedirect,
+} from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 
 function toScrollPayload(
@@ -144,9 +151,11 @@ export function createPartialUpdater(
         currentCached.filter(isInterceptSegment).map((s) => s.id),
       );
       segments = currentSegments.filter((id) => !interceptIds.has(id));
-      debugLog(
-        `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
-      );
+      if (IS_BROWSER_DEBUG) {
+        debugLog(
+          `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
+        );
+      }
     } else {
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
@@ -156,12 +165,14 @@ export function createPartialUpdater(
         ? segmentState.currentUrl || tx.currentUrl
         : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
-    debugLog(`\n[Browser] >>> NAVIGATION`);
-    debugLog(`[Browser] From: ${previousUrl}`);
-    debugLog(`[Browser] To: ${url}`);
-    debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
-    if (interceptSourceUrl) {
-      debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+    if (IS_BROWSER_DEBUG) {
+      debugLog(`\n[Browser] >>> NAVIGATION`);
+      debugLog(`[Browser] From: ${previousUrl}`);
+      debugLog(`[Browser] To: ${url}`);
+      debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
+      if (interceptSourceUrl) {
+        debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+      }
     }
 
     const targetCache =
@@ -170,9 +181,11 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
-    debugLog(
-      `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
-    );
+    if (IS_BROWSER_DEBUG) {
+      debugLog(
+        `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
+      );
+    }
 
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
@@ -185,12 +198,17 @@ export function createPartialUpdater(
       routerId: store.getRouterId?.(),
     });
     const streamingToken = tx.startStreaming();
-    const { payload, streamComplete: rawStreamComplete } = fetchResult;
+    const {
+      payload,
+      streamComplete: rawStreamComplete,
+      fullyPrefetched,
+    } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
 
-    const streamComplete = rawStreamComplete.then(() => {
-      streamingToken.end();
-    });
+    // Side effect only: end the streaming token once the stream settles.
+    // The wrapped promise was never read as a value; only the .end() matters.
+    // The .catch keeps an unhandled rejection from leaking if the stream errors.
+    rawStreamComplete.then(() => streamingToken.end()).catch(() => {});
 
     const currentRouterId = store.getRouterId?.();
     if (
@@ -209,6 +227,24 @@ export function createPartialUpdater(
     if (payload.metadata?.redirect) {
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale redirect (aborted)");
+        return;
+      }
+      // Explicit off-host redirect (redirect(url, { external: true })):
+      // hard-navigate, but still scheme-validate (http/https only). external
+      // waives the same-origin check the app opted out of, NOT scheme safety, so
+      // a forged payload carrying a javascript:/data: URL cannot script via
+      // location.assign.
+      if (payload.metadata.redirect.external) {
+        const externalUrl = validateExternalRedirect(
+          payload.metadata.redirect.url,
+          window.location.origin,
+        );
+        if (!externalUrl) {
+          debugLog("[Browser] Ignoring blocked external redirect payload");
+          return;
+        }
+        debugLog("[Browser] External redirect (hard navigation)");
+        window.location.assign(externalUrl);
         return;
       }
       const redirectUrl = validateRedirectOrigin(
@@ -232,8 +268,10 @@ export function createPartialUpdater(
         return;
       }
 
-      debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
-      debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      if (IS_BROWSER_DEBUG) {
+        debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
+        debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
+      }
 
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
@@ -357,6 +395,13 @@ export function createPartialUpdater(
           return;
         }
         if (mode.type === "action") {
+          // An action refetch that lands on missing segments (navigated away /
+          // consolidation / HMR) drops rather than refetch-all: the action flow
+          // is storeOnly / skipLoadingState, so a full refetch here would fight
+          // it. Keep the stale-but-consistent tree; log so the drop is visible.
+          debugLog(
+            `[Browser] Action refetch: ${missingCount} segments missing; dropping (stale-but-consistent tree kept).`,
+          );
           return;
         }
         console.warn(
@@ -373,25 +418,45 @@ export function createPartialUpdater(
 
       const renderOptions = {
         isAction: mode.type === "action",
-        forceAwait: mode.type === "stale-revalidation",
+        // forceAwait unwraps the ROUTER loader promises during render so they
+        // land without a loading()/fallback frame. A fully-prefetched nav has
+        // its router data already resolved (the prefetch stream drained), so
+        // awaiting it here is free; the commit below then runs in a transition
+        // (fullyPrefetched branch) so nothing router-owned can flash.
+        forceAwait: mode.type === "stale-revalidation" || fullyPrefetched,
         interceptSegments:
           reconciled.interceptSegments.length > 0
             ? reconciled.interceptSegments
             : undefined,
       };
-      const newTree = await (signal
-        ? Promise.race([
+      let newTree: Awaited<ReturnType<typeof renderSegments>>;
+      if (signal) {
+        // Race render against abort. Store the abort handler and register it
+        // { once:true } so a non-aborted render (which wins the race) can
+        // remove it in finally — otherwise the listener stays attached and the
+        // rejecting promise never settles. Mirrors teeWithCompletion in
+        // browser/response-adapter.ts.
+        let onAbort: (() => void) | undefined;
+        const abortPromise = new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(new DOMException("Navigation aborted", "AbortError"));
+            return;
+          }
+          onAbort = () =>
+            reject(new DOMException("Navigation aborted", "AbortError"));
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        try {
+          newTree = await Promise.race([
             renderSegments(reconciled.mainSegments, renderOptions),
-            new Promise<never>((_, reject) => {
-              if (signal.aborted) {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              }
-              signal.addEventListener("abort", () => {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              });
-            }),
-          ])
-        : renderSegments(reconciled.mainSegments, renderOptions));
+            abortPromise,
+          ]);
+        } finally {
+          if (onAbort) signal.removeEventListener("abort", onAbort);
+        }
+      } else {
+        newTree = await renderSegments(reconciled.mainSegments, renderOptions);
+      }
 
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
@@ -443,6 +508,21 @@ export function createPartialUpdater(
       debugLog("[partial-update] updating document");
 
       const hasTransition = shouldStartViewTransition(reconciled.segments);
+      // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
+      // segment still carries a transition after the server-side when-gate, and
+      // whether the commit will be held in a startTransition. If `withTransition`
+      // lists an ancestor (layout/root) id rather than the gated leaf, an ungated
+      // ancestor transition is holding the subtree (missing loading() fallback).
+      if (isBrowserDebugEnabled()) {
+        debugLog("[VT-DIAG] commit", {
+          mode: mode.type,
+          hasTransition,
+          withTransition: reconciled.segments
+            .filter((s) => s.transition)
+            .map((s) => s.id),
+          all: reconciled.segments.map((s) => s.id),
+        });
+      }
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
@@ -467,7 +547,31 @@ export function createPartialUpdater(
             scroll: scrollPayload,
           });
         });
+      } else if (fullyPrefetched) {
+        // Fully-prefetched nav: the payload is fully resolved (forceAwait
+        // above), so commit inside a transition to hold the current UI across
+        // the synchronous resolution — no fallback flash. No addTransitionType:
+        // this is the React content-hold, not a view transition. Deliberate
+        // trade-off (#622 introduced, #624 reverted, then reinstated): a client
+        // component that suspends during its FIRST render (use() of a promise
+        // created at mount — see ClientMountSuspense in the e2e test-app) under
+        // an ALREADY-REVEALED boundary holds the old content until it resolves
+        // instead of revealing that boundary's fallback; its render happens
+        // pre-commit inside the transition, so userland effects cannot run
+        // first. Boundaries newly mounted by this nav still reveal their
+        // fallbacks (React shows new boundaries inside transitions).
+        startTransition(() => {
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+            scroll: scrollPayload,
+          });
+        });
       } else {
+        // Cold/partially-prefetched nav: normal commit so fallbacks stream
+        // like a first load and the click has visible feedback. Explicit
+        // transition() routes keep the content-hold via the hasTransition
+        // branch above (the opt-in).
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
@@ -508,6 +612,18 @@ export function createPartialUpdater(
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
+        // Mirror the partial branch's history-key staleness guard (above): the
+        // await above is a real async suspension, so the user may have navigated
+        // away while this background revalidation was draining. Dropping a late
+        // full-update here prevents it from clobbering the freshly committed UI
+        // of the page the user moved to.
+        const historyKeyNow = store.getHistoryKey();
+        if (historyKeyNow !== historyKeyAtStart) {
+          debugLog(
+            `[Browser] Stale revalidation (full update): history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
+          );
+          return;
+        }
         startTransition(() => {
           if (fullHasTransition && addTransitionType) {
             addTransitionType("action");
@@ -519,7 +635,7 @@ export function createPartialUpdater(
           });
         });
       } else if (mode.type === "action") {
-        startTransition(async () => {
+        startTransition(() => {
           if (fullHasTransition && addTransitionType) {
             addTransitionType("action");
           }

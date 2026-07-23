@@ -1,6 +1,6 @@
 ---
 name: debug-manifest
-description: Debug and inspect route manifest structure
+description: Debug and inspect route manifest structure. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.
 argument-hint:
 ---
 
@@ -8,17 +8,9 @@ argument-hint:
 
 Inspect the route manifest to verify parent relationships, shortCodes, and route structure.
 
-## Quick Access
-
-In development, visit:
-
-```
-http://localhost:PORT/__debug_manifest
-```
-
-Returns formatted JSON with all routes and layouts.
-
 ## Programmatic Access
+
+Call `router.debugManifest()` — an `async` method on the router instance:
 
 ```typescript
 import { router } from "./router.js";
@@ -31,6 +23,8 @@ if (process.env.NODE_ENV !== "production") {
 ```
 
 ## Manifest Structure
+
+The programmatic `router.debugManifest()` call returns `{ routes, layouts, totalRoutes, totalLayouts }`:
 
 ```json
 {

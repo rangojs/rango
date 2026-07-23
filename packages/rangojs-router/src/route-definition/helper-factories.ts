@@ -8,7 +8,6 @@ import {
   revalidate,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
   route,
@@ -40,7 +39,6 @@ function buildRouteHelpers<T extends RouteDefinition, TEnv>(): RouteHelpers<
     loading,
     errorBoundary,
     notFoundBoundary,
-    when,
     cache,
     transition,
   } as unknown as RouteHelpers<T, TEnv>;

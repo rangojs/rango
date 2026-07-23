@@ -8,6 +8,7 @@ import {
   generateHistoryKey,
 } from "./navigation-store.js";
 import { createEventController } from "./event-controller.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
@@ -21,16 +22,22 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
+import { expandPayloadFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
 import { registerNavigationStore } from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
-import { setPrefetchDecoder } from "./prefetch/fetch.js";
+import {
+  setPrefetchConcurrency,
+  setPrefetchDecoder,
+} from "./prefetch/loader.js";
+import { setDefaultPrefetchStrategy } from "./prefetch/default-strategy.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
   splitInterceptSegments,
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
+import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -61,8 +68,11 @@ export interface InitBrowserAppOptions {
 
   /**
    * Enable global link interception for SPA navigation.
-   * When enabled, clicks on same-origin anchor elements are intercepted
-   * and handled via client-side navigation instead of full page loads.
+   * When enabled, clicks on eligible same-origin HTML anchor elements are intercepted
+   * and handled via client-side navigation instead of full page loads. Plain
+   * anchors inside the router basename also follow its default prefetch strategy
+   * after hydration. `data-prefetch="false"`/`"none"` opts out; `"true"` allows
+   * an application route with a common static-resource suffix.
    *
    * Links rendered with the Link component handle their own navigation
    * regardless of this setting.
@@ -115,6 +125,10 @@ export interface BrowserAppContext {
   initialTheme?: Theme;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
+  /** Whether the hydrated tree should be wrapped in React.StrictMode */
+  strictMode?: boolean;
+  /** Whether plain-anchor click interception and delegated prefetch are enabled */
+  linkInterceptionEnabled?: boolean;
   /** App version for prefetch version mismatch detection */
   version?: string;
   /**
@@ -152,8 +166,18 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
+  bootLog("initBrowserApp start");
+  bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
+
+  // Shell-HIT documents carry replayed segments as VERBATIM stored fragments
+  // (segment-fragments.ts, issue #700); expand them through the browser
+  // deserializer BEFORE any consumer reads the segments (store seed,
+  // renderSegments, history cache). Non-HIT payloads have no envelopes and pay
+  // one field scan. The SSR resume pass ran the same expansion (ssr-root.tsx),
+  // so the hydrated tree matches the server-rendered one by construction.
+  await expandPayloadFragments(initialPayload, deps.createFromReadableStream);
 
   // Extract themeConfig and initialTheme from payload if not explicitly provided
   // This allows virtual entries to work without importing the router
@@ -165,7 +189,21 @@ export async function initBrowserApp(
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
     []) as ResolvedSegment[];
+  if (IS_BROWSER_DEBUG) {
+    bootLog("initial payload decoded", {
+      version: initialPayload.metadata?.version,
+      routerId: initialPayload.metadata?.routerId,
+      segments: initialSegments.map((s) => s.id),
+      matched: initialPayload.metadata?.matched,
+    });
+  }
   const initialHistoryKey = generateHistoryKey(window.location.href);
+
+  // Resolve the state namespace before the store installs its BroadcastChannel
+  // listener. A streaming handle payload can delay hydration below; leaving the
+  // default name active during that wait would discard this router's messages.
+  const version = initialPayload.metadata?.version;
+  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
 
   // Create navigation store with history-based caching
   const store = createNavigationStore({
@@ -203,11 +241,24 @@ export async function initBrowserApp(
   // This ensures useHandle returns correct data during hydration to avoid mismatch
   // The handles property is an async generator that yields on each push
   if (initialPayload.metadata?.handles) {
+    // This for-await consumes the handle generator to completion BEFORE
+    // hydrateRoot is called — on a streaming/PPR document the generator only
+    // ends when its stream side does, so the per-push logs below are the
+    // primary probe for "the document render is holding hydration".
+    bootLog("handles: consuming payload handle stream (pre-hydration await)");
     const handlesGenerator = initialPayload.metadata.handles;
     let lastHandleData: Record<string, Record<string, unknown[]>> = {};
+    let handlePushes = 0;
     for await (const handleData of handlesGenerator) {
       lastHandleData = handleData;
+      if (IS_BROWSER_DEBUG) {
+        handlePushes += 1;
+        bootLog(`handles: push #${handlePushes}`, {
+          segments: Object.keys(handleData),
+        });
+      }
     }
+    bootLog("handles: stream complete", { pushes: handlePushes });
     // Initialize event controller with initial handle state before hydration.
     eventController.setHandleData(
       lastHandleData,
@@ -217,6 +268,8 @@ export async function initBrowserApp(
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
     store.updateCacheHandleData(initialHistoryKey, lastHandleData);
+  } else {
+    bootLog("handles: none in payload");
   }
 
   // Create composable utilities
@@ -227,7 +280,6 @@ export async function initBrowserApp(
   // It is set once from the initial payload and not swapped within a session:
   // a cross-app navigation is a full document load (X-RSC-Reload), so the
   // target app establishes its own shell on load.
-  const version = initialPayload.metadata?.version;
   const appShellRef = createAppShellRef({
     routerId: initialPayload.metadata?.routerId,
     rootLayout: initialPayload.metadata?.rootLayout,
@@ -235,23 +287,39 @@ export async function initBrowserApp(
     version,
   });
 
-  // Initialize the rango state cookie for cache invalidation. The build version
-  // busts cached prefetches on deploy; the server-resolved cookie name
-  // namespaces the cookie so sibling apps on the same origin don't collide
-  // (falls back to the bare default prefix if metadata lacks the name).
-  initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
   setAppVersion(version);
 
-  // Initialize the in-memory prefetch cache TTL from server config.
-  // A value of 0 disables the cache; undefined falls back to the module default.
+  // Initialize the in-memory prefetch cache (TTL + max size) and the prefetch
+  // queue concurrency from server config. A TTL of 0 disables the cache;
+  // undefined values fall back to the module defaults.
   const prefetchCacheTTL = initialPayload.metadata?.prefetchCacheTTL;
-  if (prefetchCacheTTL !== undefined) {
-    initPrefetchCache(prefetchCacheTTL);
+  const prefetchCacheSize = initialPayload.metadata?.prefetchCacheSize;
+  if (prefetchCacheTTL !== undefined || prefetchCacheSize !== undefined) {
+    initPrefetchCache(prefetchCacheTTL, prefetchCacheSize);
+  }
+  const prefetchConcurrency = initialPayload.metadata?.prefetchConcurrency;
+  if (prefetchConcurrency !== undefined) {
+    setPrefetchConcurrency(prefetchConcurrency);
+  }
+  // Apply the router-wide default Link prefetch strategy. Undefined (older
+  // server payload) keeps the module's environment-aware default, which equals
+  // the server resolver's default by contract — see default-strategy.ts.
+  const defaultPrefetch = initialPayload.metadata?.defaultPrefetch;
+  if (defaultPrefetch !== undefined) {
+    setDefaultPrefetchStrategy(defaultPrefetch);
   }
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's
-  // client chunks (same createFromFetch the navigation client uses).
-  setPrefetchDecoder((response) => deps.createFromFetch<RscPayload>(response));
+  // client chunks (same createFromFetch the navigation client uses). Fragment
+  // envelopes (#700) expand BEFORE the decoded payload enters the prefetch
+  // cache, so cached entries only ever resolve to expanded segments; a
+  // fragment-decode failure rejects the entry's payload and rides the cache's
+  // existing eviction path.
+  setPrefetchDecoder(async (response) => {
+    const payload = await deps.createFromFetch<RscPayload>(response);
+    await expandPayloadFragments(payload, deps.createFromReadableStream);
+    return payload;
+  });
 
   // Create a bound renderSegments that reads rootLayout through the shell ref.
   // The shell is set once at init and not swapped within a session (a cross-app
@@ -280,7 +348,13 @@ export async function initBrowserApp(
     renderSegments,
     onNavigate: (url, options) => {
       if (!navigateFn) {
-        window.location.href = url;
+        // Navigation bridge not wired yet: hard-navigate, but re-validate
+        // same-origin defensively so this init-window fallback cannot become an
+        // open redirect (the normal path validates inside the navigation bridge).
+        const safe = validateRedirectOrigin(url, window.location.origin);
+        if (safe) {
+          window.location.href = safe;
+        }
         return Promise.resolve();
       }
       return navigateFn(url, options);
@@ -296,6 +370,8 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
+    defaultPrefetch,
+    basename: initialPayload.metadata?.basename,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -305,9 +381,17 @@ export async function initBrowserApp(
   if (linkInterception) {
     navigationBridge.registerLinkInterception();
   }
+  bootLog("bridges registered (action + navigation)");
 
   // Build initial tree with rootLayout
+  bootLog("building initial segment tree (renderSegments)");
   const initialTree = renderSegments(initialPayload.metadata!.segments);
+  if (IS_BROWSER_DEBUG && initialTree instanceof Promise) {
+    initialTree.then(
+      () => bootLog("initial segment tree settled"),
+      (err: unknown) => bootLog("initial segment tree rejected", { err }),
+    );
+  }
 
   // Setup HMR with debounce — burst saves (format-on-save, rapid edits)
   // fire many rsc:update events in quick succession. Without debouncing,
@@ -469,13 +553,20 @@ export async function initBrowserApp(
     themeConfig: effectiveThemeConfig,
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
+    strictMode: initialPayload.metadata?.strictMode ?? true,
+    linkInterceptionEnabled: linkInterception,
     version,
     appShellRef,
   };
   browserAppContext = context;
 
+  bootLog("initBrowserApp complete -- handing off to hydrateRoot");
   return context;
 }
+
+// Once-flag so the hydration-commit boot log fires a single time (StrictMode
+// re-runs the root effect; the second flush is not a second hydration).
+let hydrationCommitLogged = false;
 
 /**
  * Get the browser app context. Throws if initBrowserApp hasn't been called.
@@ -537,6 +628,7 @@ export function Rango(_props: RangoProps): React.ReactElement {
     warmupEnabled,
     version,
     appShellRef,
+    linkInterceptionEnabled,
   } = getBrowserAppContext();
 
   // Signal that the React tree has hydrated. useEffect only fires after
@@ -544,7 +636,15 @@ export function Rango(_props: RangoProps): React.ReactElement {
   // that does not depend on React internals like __reactFiber.
   React.useEffect(() => {
     document.documentElement.dataset.hydrated = "";
-  }, []);
+    const cleanupPrefetch = linkInterceptionEnabled
+      ? bridge.registerDelegatedPrefetch()
+      : undefined;
+    if (IS_BROWSER_DEBUG && !hydrationCommitLogged) {
+      hydrationCommitLogged = true;
+      bootLog("hydration commit (root effect flushed)");
+    }
+    return cleanupPrefetch;
+  }, [bridge, linkInterceptionEnabled]);
 
   return (
     <NavigationProvider

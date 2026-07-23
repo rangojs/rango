@@ -53,35 +53,45 @@ export async function getLoaderLazy(
   if (lazyLoaderImports && lazyLoaderImports.size > 0) {
     const lazyImport = lazyLoaderImports.get(id);
     if (lazyImport) {
-      try {
-        await lazyImport();
-
-        const registered = getFetchableLoader(id);
-        if (registered) {
-          loaderRegistry.set(id, registered);
-          return registered;
-        }
-      } catch (error) {
-        console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
-      }
-    }
-  }
-
-  // Dev fallback: parse ID (format: "src/path/to/file.ts#ExportName") and import
-  const hashIndex = id.indexOf("#");
-  if (hashIndex !== -1) {
-    const filePath = id.slice(0, hashIndex);
-
-    try {
-      await import(/* @vite-ignore */ `/${filePath}`);
+      // A failed import is a real server breakage (broken transitive import,
+      // syntax error, throw in module top-level code), not a "loader not
+      // registered" case. Rethrow so the caller can return a 500 and route
+      // the failure through onError, instead of collapsing it to a 404.
+      await lazyImport();
 
       const registered = getFetchableLoader(id);
       if (registered) {
         loaderRegistry.set(id, registered);
         return registered;
       }
-    } catch (error) {
-      console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
+    }
+  }
+
+  // The remaining dev fallback (parse the id as "src/path/file.ts#ExportName"
+  // and import it by path) only makes sense in dev, where ids ARE file paths
+  // and the dev loader manifest is intentionally empty. In production ids are
+  // hashed ("<hash>#ExportName") and every resolvable loader is reached above
+  // via the in-memory registry or the lazy import manifest. The hash is not a
+  // path, so a production fall-through would run import("/<hash>") and throw a
+  // misleading "No such module <hash>" 500 instead of reporting the loader as
+  // unregistered. Return undefined in production so a genuinely unknown loader
+  // is a clean 404 "not found in registry" from handleLoaderFetch.
+  if (process.env.NODE_ENV === "production") {
+    return undefined;
+  }
+
+  const hashIndex = id.indexOf("#");
+  if (hashIndex !== -1) {
+    const filePath = id.slice(0, hashIndex);
+
+    // Same as the lazy branch: a thrown import is a server error, not a
+    // not-found. Let it propagate to the caller for a 500 + onError.
+    await import(/* @vite-ignore */ `/${filePath}`);
+
+    const registered = getFetchableLoader(id);
+    if (registered) {
+      loaderRegistry.set(id, registered);
+      return registered;
     }
   }
 

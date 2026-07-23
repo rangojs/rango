@@ -21,7 +21,11 @@
 // ctx.use(), context-var tokens, the product catalog — is server-only and lives
 // at the top of router.tsx.
 
-import { createLoader, createLocationState } from "@rangojs/router";
+import {
+  createHandle,
+  createLoader,
+  createLocationState,
+} from "@rangojs/router";
 
 // ---------------------------------------------------------------------------
 // In-memory stores. Read by the loaders below, mutated by actions.tsx. One
@@ -77,6 +81,41 @@ export const EchoLoader = createLoader(async () => {
   echoSeq += 1;
   return { echo: echoSeq };
 }, true);
+
+// ---------------------------------------------------------------------------
+// Shell-manifest demo (see skills/shell-manifest). The cached /manifest shell
+// pushes the product ids it rendered into this handle; on a cache hit the
+// handler is skipped but its pushes REPLAY, so the live loader below still
+// knows exactly which prices to fetch. Handle + loader live here because the
+// client reads the loader via useLoader (boundary identity).
+// ---------------------------------------------------------------------------
+
+export const RenderedProducts = createHandle<string, string[]>((segments) =>
+  segments.flat(),
+);
+
+// Live price data — the dynamic holes under the frozen shell. The seq proves
+// the loader runs fresh on every request while the shell stays cached.
+const manifestPrices = new Map<string, number>([
+  ["1", 19],
+  ["2", 29],
+  ["3", 39],
+]);
+let manifestPriceSeq = 0;
+export const ManifestPricesLoader = createLoader(async (ctx) => {
+  // Wait for the shell (fresh render or cache replay), then price the ids the
+  // shell ACTUALLY rendered — never re-derive the list independently, or the
+  // holes can desync from a stale shell.
+  await ctx.rendered();
+  const ids = ctx.use(RenderedProducts);
+  manifestPriceSeq += 1;
+  return {
+    seq: manifestPriceSeq,
+    prices: Object.fromEntries(
+      ids.map((id) => [id, manifestPrices.get(id) ?? 0]),
+    ),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Location-state definitions read via useLocationState (client) and written via

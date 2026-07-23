@@ -33,6 +33,7 @@ import type {
   ExtractParams,
 } from "./types.js";
 import type { Handle } from "./handle.js";
+import type { HandlePush } from "./defer.js";
 import type { ContextVar } from "./context-var.js";
 import type { ReverseFunction } from "./reverse.js";
 import type { DefaultReverseRouteMap } from "./types/global-namespace.js";
@@ -165,8 +166,14 @@ export interface BuildContext<TParams> {
     (key: string, value: any): void;
   };
 
-  /** Push handle data (frozen into pre-rendered output at build time). */
-  use: <T>(handle: Handle<T>) => (data: T) => void;
+  /**
+   * Push handle data (frozen into pre-rendered output at build time). Returns
+   * the full push function, including `.defer()` — a deferred slot resolved by
+   * a deep async component during the prerender render is awaited before the
+   * artifact is baked (resolve-by-default), so the baked output holds the
+   * resolved value.
+   */
+  use: <T>(handle: Handle<T>) => HandlePush<T>;
 
   /** Synthetic URL built from pattern + params (no real request). */
   url: URL;
@@ -222,8 +229,14 @@ export interface StaticBuildContext {
     (key: string, value: any): void;
   };
 
-  /** Push handle data (frozen into pre-rendered output at build time). */
-  use: <T>(handle: Handle<T>) => (data: T) => void;
+  /**
+   * Push handle data (frozen into pre-rendered output at build time). Returns
+   * the full push function, including `.defer()` — a deferred slot resolved by
+   * a deep async component during the prerender render is awaited before the
+   * artifact is baked (resolve-by-default), so the baked output holds the
+   * resolved value.
+   */
+  use: <T>(handle: Handle<T>) => HandlePush<T>;
 
   /** URL generation by route name. */
   reverse: BuildReverseFunction;
@@ -527,7 +540,7 @@ export interface PassthroughHandlerDefinition<
   /** Live handler for runtime fallback on unknown params. */
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+  ) => ReactNode | Response | Promise<ReactNode | Response>;
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
 }
@@ -539,7 +552,7 @@ export function Passthrough<
   prerenderDef: PrerenderHandlerDefinition<TParams>,
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+  ) => ReactNode | Response | Promise<ReactNode | Response>,
 ): PassthroughHandlerDefinition<TParams, TEnv>;
 
 // Implementation
@@ -550,7 +563,7 @@ export function Passthrough<
   prerenderDef: PrerenderHandlerDefinition<TParams>,
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
-  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+  ) => ReactNode | Response | Promise<ReactNode | Response>,
 ): PassthroughHandlerDefinition<TParams, TEnv> {
   if (!isPrerenderHandler(prerenderDef)) {
     throw new Error(

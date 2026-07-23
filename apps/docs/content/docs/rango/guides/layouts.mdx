@@ -1,0 +1,205 @@
+---
+title: Layouts
+description: Wrap child routes in a persistent shell with layout() and Outlet, and control how layout data revalidates.
+type: guide
+---
+
+You need a nav bar, sidebar, or page chrome that stays put while the routes inside it change. `layout()` wraps a group of child routes; the layout persists during navigation within its scope, and child content flows through `<Outlet />`.
+
+## The shortest path
+
+```tsx
+import { urls } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+
+function ShopLayout() {
+  return (
+    <div className="shop">
+      <nav>Shop Navigation</nav>
+      <Outlet /> {/* Child routes render here */}
+    </div>
+  );
+}
+
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(<ShopLayout />, () => [
+    path("/shop", ShopIndex, { name: "shop.index" }),
+    path("/shop/cart", CartPage, { name: "shop.cart" }),
+    path("/shop/product/:slug", ProductPage, { name: "shop.product" }),
+  ]),
+]);
+```
+
+`<Outlet />` comes from `@rangojs/router/client`. Everything the layout renders around it — header, footer, sidebar — stays mounted while `/shop`, `/shop/cart`, and `/shop/product/:slug` swap through it.
+
+## Three ways to pass the layout
+
+```tsx
+// JSX element
+layout(<ShopLayout />, () => [path("/shop", ShopIndex, { name: "shop" })]);
+
+// Component function
+layout(ShopLayout, () => [path("/shop", ShopIndex, { name: "shop" })]);
+
+// Handler with context — runs per request, can use handles
+layout(
+  (ctx) => {
+    const push = ctx.use(Breadcrumbs);
+    push({ label: "Shop", href: "/shop" });
+    return <ShopLayout />;
+  },
+  () => [path("/shop", ShopIndex, { name: "shop" })],
+);
+```
+
+Layouts nest by wrapping order — the first layout wraps outermost:
+
+```tsx
+urls(({ path, layout }) => [
+  layout(<RootLayout />, () => [
+    // Outer
+    layout(<ShopLayout />, () => [
+      // Inner
+      path("/shop", ShopIndex, { name: "shop" }),
+    ]),
+  ]),
+]);
+// Result: RootLayout > ShopLayout > ShopIndex
+```
+
+## Layouts carry their own data and config
+
+The children callback isn't just for routes — it accepts loaders, revalidation rules, and parallel slots that belong to the layout:
+
+```tsx
+layout(<ShopLayout />, () => [
+  loader(CartLoader),
+  loader(UserLoader),
+  revalidate(shopRevalidation),
+
+  path("/shop", ShopIndex, { name: "shop" }),
+  path("/shop/cart", CartPage, { name: "cart" }),
+]);
+```
+
+For multi-region layouts, render named slots with `<ParallelOutlet name="@slot" />` next to the default `<Outlet />` — see [Parallel Routes](/docs/rango/guides/parallel-routes) for slot semantics.
+
+## Passing handler data down: orphan layouts
+
+A layout placed as a _child of_ `path()` (an "orphan" layout) wraps that route's content and can read data the route handler set with `ctx.set()`. The handler always executes before its children, so the data is there when the layout reads it:
+
+```tsx
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+urls(({ path, layout, parallel }) => [
+  path(
+    "/product/:slug",
+    async (ctx) => {
+      const product = await fetchProduct(ctx.params.slug);
+      ctx.set("product", product);
+      return <ProductPage product={product} />;
+    },
+    { name: "product" },
+    () => [
+      layout(
+        (ctx) => {
+          const product = ctx.get("product");
+          return (
+            <div>
+              <Breadcrumb name={product?.name} />
+              <Outlet />
+              <ParallelOutlet name="@related" />
+            </div>
+          );
+        },
+        () => [
+          parallel({
+            "@related": (ctx) => {
+              const product = ctx.get("product");
+              return <RelatedProducts category={product?.category} />;
+            },
+          }),
+        ],
+      ),
+    ],
+  ),
+]);
+```
+
+This is the recommended way to pass handler data downward, and it needs zero revalidation configuration: orphan layouts (and their parallels) belong to the route entry, and on an action the whole entry re-runs together by default — route segment, loaders, and children all revalidate with handler-first ordering preserved. Producer and consumer can't desync unless you narrow one side with a predicate that returns a hard `false` (then put the same contract on both sides — see below).
+
+Data from an **outer** handler or layout entry is the opposite case: outer entries do not revalidate on actions by default. If an orphan layout depends on data established above its own route entry, that outer segment must share a revalidation contract, or the orphan must guard/reload the data itself. See [Data Flow](/docs/rango/concepts/data-flow) for the full safest-first ladder.
+
+## Revalidation on actions
+
+Standalone `layout()` entries are skipped on actions by default — parent-chain segments don't re-run unless a `revalidate()` opts them in. (Orphan layouts inside a `path()` are the opposite: they ride along with the route entry.) Control it explicitly:
+
+```tsx
+import * as CartActions from "./actions/cart";
+
+layout(<CartLayout />, () => [
+  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+  path("/cart", CartPage, { name: "cart" }),
+]);
+```
+
+Partial revalidation does not re-run non-revalidated ancestors just to rebuild their `ctx.set()` state. If child segments read data established by this layout or a handler above them, revalidate the outer segment too.
+
+### Revalidation contracts
+
+When data genuinely must flow from an outer entry, define a named revalidation function and reuse it on both producer and consumer — the shared name is the contract:
+
+```ts
+// revalidation-contracts.ts
+import { addToCart } from "./actions/cart";
+
+export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
+```
+
+```tsx
+layout(<CartLayout />, () => [
+  revalidate(revalidateCartData), // producer
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(revalidateCartData), // consumer
+  ]),
+]);
+```
+
+If a segment depends on multiple upstream domains, compose multiple contracts. You can also package a contract as an importable handoff helper (`export const revalidateAuth = () => [revalidate(revalidateAuthData)]`) and drop it into both children callbacks. Before writing a contract, check whether the producer can move down a rung instead: into the consumer's own entry as an orphan layout, into middleware, or into a loader.
+
+## Reusable layouts with handler.use
+
+A layout handler can carry its own middleware, default parallels, and includes via `.use`, making it a self-contained unit you can mount anywhere:
+
+```tsx
+const AdminLayout: Handler = (ctx) => {
+  const user = ctx.get(CurrentUser);
+  return <Admin user={user} />;
+};
+AdminLayout.use = () => [
+  middleware(requireAdmin),
+  parallel({ "@adminNotifs": AdminNotifsSlot }),
+];
+
+// Mount site declares structure only; defaults travel with the layout.
+layout(AdminLayout, () => [
+  path("/admin", AdminIndex, { name: "admin.index" }),
+]);
+```
+
+Explicit `use()` at the mount site merges with `handler.use` — handler defaults first, explicit items second. The layout mount site accepts the broadest set of item types. See [handler.use](/docs/rango/guides/handler-use) for the merge rules and the per-mount-site table.
+
+## Pitfalls
+
+- **`transition()` wraps outlet content, not chrome.** A layout's `transition()` config wraps the content flowing through `<Outlet />` — not the layout chrome itself, and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [View Transitions](/docs/rango/guides/view-transitions).
+- **Orphan layouts read; handlers write.** Orphan layouts can call `ctx.set()`, but the primary pattern is route handlers and middleware writing context variables and orphan layouts reading them via `ctx.get()`.
+- **A hard `false` from `revalidate()` can desync producer and consumer.** If you narrow one side of a data dependency with a predicate, put the identical contract on both segments.
+
+<Cards>
+  <Card href="/docs/rango/guides/parallel-routes" title="Parallel Routes">
+    Named slots for sidebars and multi-column layouts.
+  </Card>
+  <Card href="/docs/rango/guides/handler-use" title="handler.use">
+    Make layouts and slots self-contained, reusable units.
+  </Card>
+</Cards>

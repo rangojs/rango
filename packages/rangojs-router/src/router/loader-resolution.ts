@@ -5,8 +5,8 @@
  */
 
 import type { ReactNode } from "react";
-import { track } from "../server/context";
 import type { EntryData } from "../server/context";
+import { observePhase, PHASES } from "./instrument.js";
 import { contextGet } from "../context-var.js";
 import type {
   ResolvedSegment,
@@ -109,16 +109,40 @@ export function wrapLoaderWithErrorHandling<T>(
         };
       }
 
-      // Render fallback on server
+      // Render fallback on server. The user ErrorBoundaryHandler may throw
+      // synchronously; if it does we must NOT let that rejection escape — the
+      // wrapped LoaderDataResult promise is contracted to never reject (see
+      // segment-resolution/fresh.ts `await Promise.all(...wrapped)`), and a
+      // rejection here would collapse the whole entry and discard healthy
+      // sibling loader data. On a fallback-render throw, fall back to the
+      // no-boundary result (fallback: null) so the client throws the ORIGINAL
+      // error, and the wrapped promise still resolves to a LoaderDataResult.
       let renderedFallback: ReactNode;
-      if (typeof fallback === "function") {
-        // ErrorBoundaryHandler - call with error info
-        const props: ErrorBoundaryFallbackProps = {
+      try {
+        if (typeof fallback === "function") {
+          // ErrorBoundaryHandler - call with error info
+          const props: ErrorBoundaryFallbackProps = {
+            error: errorInfo,
+          };
+          renderedFallback = fallback(props);
+        } else {
+          renderedFallback = fallback;
+        }
+      } catch (fallbackError) {
+        debugLog("loader", "error boundary fallback render threw", {
+          segmentId,
+          message: errorInfo.message,
+          fallbackError:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+        });
+        return {
+          __loaderResult: true,
+          ok: false,
           error: errorInfo,
+          fallback: null,
         };
-        renderedFallback = fallback(props);
-      } else {
-        renderedFallback = fallback;
       }
 
       debugLog("loader", "loader error wrapped with boundary fallback", {
@@ -382,7 +406,11 @@ function createLoaderExecutor<TEnv>(
       },
     };
 
-    const doneLoader = track(`loader:${loader.$$id}`, 2);
+    // Meter this loader once via observePhase (loader:<id> perf metric +
+    // rango.loader span); loaderFn runs inside the span callback so its KV/D1/
+    // fetch spans nest under it. This is one of the observePhase loader funnels —
+    // see instrument.ts for the single-metering contract.
+    //
     // Run the loader body inside loader scope so request-scoped reads
     // (cookies()/headers() and non-cacheable ctx.get) are exempt from the
     // cache-purity guards: loaders always run fresh, so their reads never leak
@@ -392,14 +420,43 @@ function createLoaderExecutor<TEnv>(
     // throw. rendered() gating uses the captured isDslLoader (above), so this
     // does not grant rendered() to handler-invoked loaders. Uses a body-only
     // scope, so isInsideLoaderScope() / barrier / deadlock gating is unchanged.
-    const promise = Promise.resolve(
-      runInsideLoaderBodyScope(() =>
-        loaderFn(loaderCtx as LoaderContext<any, TEnv>),
-      ),
-    ).finally(() => {
-      pendingLoaders.delete(loader.$$id);
-      doneLoader();
-    });
+    //
+    // `handlerInvoked` (!isDslLoader) rides on the scope for the CONSUMPTION-
+    // LANE RULE: a handler-consumed loader's value is a BAKED copy in every
+    // shared artifact (cache(), "use cache", the PPR shell), so its identity
+    // reads are exempt from the shell-capture guard — same allowance the
+    // cache-purity guards give it. DSL segment loaders keep their lane
+    // machinery (live = masked at capture, bake = guarded). A DSL loader's
+    // nested deps inherit isDslLoader=false only when the CHAIN started in a
+    // handler; a chain started by the segment funnel stays DSL (the loader
+    // scope ALS survives the body's awaits).
+    // Shell fast path eligibility: a HANDLER-invoked loader executing during a
+    // capture is handler-layer dynamism — on a handler-free (replayed) HIT it
+    // would never re-run, freezing its consumption-lane value (#672's "fresh
+    // per serve" slot shape). Mark the capture; the entry declines the fast
+    // path and keeps the full tail. DSL loaders re-run on every HIT and never
+    // set this.
+    if (!isDslLoader) {
+      const captureCtx = _getRequestContext();
+      if (
+        captureCtx?._shellCaptureRun &&
+        captureCtx._shellCaptureHandleLiveness
+      ) {
+        captureCtx._shellCaptureHandleLiveness.handlerInvokedLoader = true;
+      }
+    }
+
+    const promise = observePhase(PHASES.loader(loader.$$id), () =>
+      Promise.resolve(
+        runInsideLoaderBodyScope(
+          () => loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+          loader.$$id,
+          !isDslLoader,
+        ),
+      ).finally(() => {
+        pendingLoaders.delete(loader.$$id);
+      }),
+    );
 
     loaderPromises.set(loader.$$id, promise);
     return promise;
@@ -537,18 +594,21 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
         );
       }
 
-      return (
-        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
-      ) => {
-        if (!store) return;
+      // Wrap with withDefer so ctx.use(Handle).defer(...) works on the build /
+      // prerender path, matching production setupLoaderAccess. Without it a
+      // prerender handler calling .defer() throws "defer is not a function".
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          if (!store) return;
 
-        const valueOrPromise =
-          typeof dataOrFn === "function"
-            ? (dataOrFn as () => Promise<unknown>)()
-            : dataOrFn;
+          const valueOrPromise =
+            typeof dataOrFn === "function"
+              ? (dataOrFn as () => Promise<unknown>)()
+              : dataOrFn;
 
-        store.push(handle.$$id, segmentId, valueOrPromise);
-      };
+          store.push(handle.$$id, segmentId, valueOrPromise);
+        },
+      );
     }
 
     // Loader case: not available during pre-rendering
@@ -576,8 +636,11 @@ export function setupLoaderAccessSilent<TEnv>(
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
-      // Silent mode - return a no-op so handle data is not pushed during caching
-      return (_dataOrFn: unknown) => {};
+      // Silent mode - return a no-op so handle data is not pushed during caching.
+      // Wrap with withDefer so ctx.use(Handle).defer(...) still resolves to a
+      // callable resolver (also a no-op here), matching production's push shape
+      // instead of throwing "defer is not a function".
+      return withDefer((_dataOrFn: unknown) => {});
     }
 
     return useLoader(item as LoaderDefinition<any, any>, null);

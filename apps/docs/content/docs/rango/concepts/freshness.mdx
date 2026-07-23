@@ -1,0 +1,113 @@
+---
+title: Freshness
+description: The two orthogonal freshness axes, how to pick between cache() and "use cache", and how invalidation and the correctness guards work.
+type: concept
+---
+
+Most caching pain in frameworks is one conflation: "is the stored value still good?" and "should this segment re-render for this client?" are different questions, but the APIs answer both with the same word. Rango keeps them as two orthogonal axes:
+
+| Axis                        | Question                                                         | API                                                             |
+| --------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------- |
+| **Stored-value freshness**  | Is a cached value still good?                                    | `"use cache"` (function), `cache()` (segment), loader `cache()` |
+| **Client-update selection** | Should this segment re-run and stream on this navigation/action? | `revalidate()`                                                  |
+
+They compose without touching each other: a segment selected by `revalidate()` still consults its cache (a hit means no recompute), a cache bust does **not** force a client update, and `revalidate()` never reads, writes, or expires a cached value. If you know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. Everything below is axis 1; axis 2 lives in [Loaders](/docs/rango/features/loaders) and [Segments & Rendering](/docs/rango/concepts/segments-and-rendering).
+
+## cache() vs "use cache"
+
+Both share the same backing store and cache profiles, and both accept `tags`. They differ in scope, key, and execution model:
+
+|                      | `cache()` DSL                                        | `"use cache"` directive                           |
+| -------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels)  | Single function return value                      |
+| **Cache key**        | Request type + pathname + params (+ optional custom) | Function identity + serialized non-tainted args   |
+| **Execution on hit** | All-or-nothing: entire handler skipped               | Partial: function body skipped, calling code runs |
+| **Runtime control**  | `condition` to disable, custom `key` function        | None — if the directive is present, it caches     |
+| **Loaders**          | Always fresh — excluded, opt-in per loader           | Can be used inside loaders                        |
+
+The fast choice: caching a whole route or group, needing runtime conditions (skip for authed users, key by locale), or skipping expensive subtree rendering — `cache()`. Caching a data fetch shared across routes, or needing separate entries per function argument — `"use cache"`.
+
+The `cache()` key is `{requestType}:{pathname}:{params}`, where the request type is one of `doc:`, `partial:`, or `intercept:` — the same URL is cached separately for full document loads, client navigations, and intercept navigations. The `"use cache"` key is `use-cache:{functionId}:{serializedArgs}` — a stable function identity (module path + export name) plus the serialized arguments, with tainted `ctx`/`env`/`req` arguments excluded.
+
+The execution model is the distinction that bites. `cache()` is all-or-nothing: on a hit the entire pipeline short-circuits and no handler code runs. `"use cache"` is partial: only the wrapped body is skipped, the calling code still runs — which is exactly why side effects inside a cached body are forbidden (they would silently disappear on a hit). For data that must survive the hit, use `ctx.use(Handle)` — handle data is captured on miss and replayed on hit.
+
+They compose naturally:
+
+```tsx
+// urls.tsx — route-level cache for the rendered segment tree
+cache({ ttl: 60 }, () => [
+  path("/product/:slug", ProductPage, { name: "product" }),
+]);
+
+// data.ts — function-level cache for the database query
+export async function getProductData(slug: string) {
+  "use cache: long";
+  return await db.query("SELECT * FROM products WHERE slug = ?", [slug]);
+}
+```
+
+## TTL and SWR
+
+SWR is a first-class cache behavior where the store supports it: inside the SWR window the cache serves the **stale value instantly** and refreshes it in the background, so users never wait on a recompute for a merely-aging entry.
+
+- `"use cache"` resolves to the `default` profile `{ ttl: 900, swr: 1800 }` — a 30-minute SWR window out of the box. Tune or add profiles via `createRouter({ cacheProfiles: { … } })`; `"use cache: short"` selects the `short` profile.
+- `cache()` and loader caches take an explicit `swr` in seconds: `cache({ ttl: 60, swr: 300 })` means fresh for 60s, stale-served from 60–360s, a miss after 360s.
+- Store support is layer-specific. `CFCacheStore` supports SWR for segment, document/response, and `"use cache"` entries. `MemorySegmentCacheStore` supports it for response and `"use cache"` entries, but its route-segment entries expire at TTL with no background revalidation — don't read the memory store's dev behavior as proof segment SWR is active.
+
+SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build has no stale entry to serve (see version-segmented keys below).
+
+## Tags and invalidation
+
+Tag entries at write time with `cache({ tags: [...] })` or the runtime `cacheTag(...tags)`; the built-in stores index by tag. Invalidate on demand:
+
+- `updateTag(...tags)` — **awaitable, read-your-own-writes**. Await it inside an action when the next render must see the new value.
+- `revalidateTag(...tags)` — **background, non-blocking**.
+
+Both hard-purge; the difference is awaitability, not stale-serving. There is no path-based busting — use tags.
+
+## Nesting: the outer window bounds the inner
+
+A cache's window bounds everything rendered inside it (loaders excepted). On an outer `cache()` fresh hit the subtree is served from stored RSC, so inner `"use cache"` functions are never consulted — no code inside the boundary runs. Inner caches only get a say when the enclosing cache recomputes (a miss or an SWR background refresh).
+
+So `"use cache: short"` (60s) inside `cache({ ttl: 600 })` yields ~600s freshness on hits, not 60s. That is not a bug: `cache({ ttl: 600 })` declares "this subtree may be ~600s stale." **If a value must be fresher than its enclosing segment, put it in a loader** — loaders are the exception, excluded from the segment cache and re-resolved live even on an outer hit. `debugPerformance` prints cache hits per layer, so the actual per-request behavior is observable.
+
+That loader exemption is also the default contract of `cache()`: cached UI plus fresh data. Opting a loader's data into caching is explicit — `loader(ProductLoader, () => [cache({ ttl: 300 })])` — and independent of the route's segment cache.
+
+## Correctness guards
+
+Rango's caches are built so a hit can't serve another user's data or lose a response side effect. Two guard models, both blocking anything that would be wrong on a hit:
+
+- **`cache()` boundary guard** — fires while the handler runs on a miss. `cookies()` and `headers()` throw (request-scoped data would bake into the shared shell); response side effects throw even on a miss (`ctx.header()`, `ctx.setCookie()`, `ctx.setStatus()`, `ctx.onResponse()`) because they'd be skipped on a hit and produce inconsistent responses. `ctx.set()` of a cacheable var is allowed — children are cached too and can read it.
+- **`"use cache"` exec guard** — the same request-scoped APIs throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`.
+
+Loaders are exempt from both — they always run fresh, so read request data there. Headers that must appear on every response belong in middleware, outside any boundary.
+
+Context variables get a third, targeted guard. `createVar({ cache: false })` (or a `ctx.set(var, value, { cache: false })` write — least cacheable wins) taints a value as request-scoped, and a **direct** `ctx.get()` of it inside a `cache()` boundary throws — the guard against serving user A's data to user B. The guarantee is deliberately narrow: a value _derived_ from a tainted var outside the boundary and cached later is not tracked. Don't read this as "you can't cache user data" — the safe pattern is the natural one: **read tainted context at the point of use, in the path that needs it (a loader or live segment) — never extract user data into a plain value and cache that.**
+
+## Version-segmented store keys
+
+`CFCacheStore` prefixes every physical store key with the build version (auto-generated per build, overridable via the store's `version` option). A new deploy reads under a new prefix, so it can never see a previous build's entries — no cross-deploy shape drift, no dead client-chunk references baked into cached RSC.
+
+The tradeoff: loader/data caches use the same store, so every deploy is a **cold data cache**, and SWR can't soften it — no stale entry exists under the new key. Decide deliberately: accept the deploy-time origin warm-up (correctness over hit-rate), or split the policy — let the render cache auto-version while a separate data store gets a stable `version` so its entries survive deploys.
+
+## Coming from Next.js or Remix (false friends)
+
+Same words, different jobs — this table is the most common source of the "`revalidate()` is caching" misread:
+
+| You may know                            | Rango axis       | Watch out                                                                                                                                                                             |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`   | Axis 1 (cache)   | Same word, opposite meaning — Next's is time-based cache expiry. Use `cache({ ttl })` for that behavior; Rango's `revalidate()` is axis 2.                                            |
+| Next.js `revalidateTag` / `updateTag`   | Axis 1 (cache)   | Same idea here: tag via `cache({ tags })` / `cacheTag()`, invalidate with `updateTag()` (awaitable) or `revalidateTag()` (background). No `revalidatePath` — use tags.                |
+| React Router / Remix `shouldRevalidate` | Axis 2           | The correct mental model for Rango's `revalidate()`.                                                                                                                                  |
+| HTTP `Cache-Control` / ISR              | Deployment layer | A CDN caches the complete response and bypasses Rango on hits. The store-backed document middleware is inside the app. See [Document Cache](/docs/rango/guides/document-cache).       |
+| Next.js PPR                             | HTML shell layer | Same React primitive, different transport: Rango serves after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See [PPR](/docs/rango/guides/ppr). |
+| Remix / React Router `loader`           | Live data        | Like Rango loaders, fresh per request — but Rango loaders run in parallel, stream, and can opt into caching on demand.                                                                |
+
+<Cards>
+  <Card href="/docs/rango/features/caching" title="Caching & Revalidation">
+    The feature reference: cache() setup, stores, and revalidate() predicates.
+  </Card>
+  <Card href="/docs/rango/guides/use-cache" title="use cache">
+    The directive in depth: profiles, transforms, and guards.
+  </Card>
+</Cards>

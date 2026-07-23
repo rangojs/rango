@@ -13,6 +13,7 @@ import {
   AsyncNonCacheableReaderLoader,
   CookieWriterLoader,
   CookieReaderLoader,
+  HandlerInvokedCookieWriterLoader,
 } from "./cache-scope-guard-loader.js";
 import { CacheScopeGuardCookieReader } from "../components/CacheScopeGuardCookieReader.js";
 
@@ -352,6 +353,28 @@ export const cacheScopeGuardPatterns = urls(
             },
             { name: "loaderCookieAllowed" },
             () => [loader(CookieWriterLoader)],
+          ),
+        ]),
+
+        // Handler-invoked loader (NOT registered via loader()) calling
+        // cookies().set() inside cache() — BLOCKED (#725). Unlike
+        // /loader-cookie-allowed above, the loader is consumed only via ctx.use
+        // and is never re-run on a HIT (the handler is skipped), so its
+        // Set-Cookie would land only on the MISS and vanish on hits. The guard
+        // throws deterministically on the first render instead.
+        cache({ ttl: 600 }, () => [
+          errorBoundary((props) => (
+            <div data-testid="csg-error-page">
+              <span data-testid="csg-error-message">{props.error.message}</span>
+            </div>
+          )),
+          path(
+            "/handler-loader-cookie-blocked",
+            async (ctx) => {
+              await ctx.use(HandlerInvokedCookieWriterLoader);
+              return <div>Should not render</div>;
+            },
+            { name: "handlerLoaderCookieBlocked" },
           ),
         ]),
 

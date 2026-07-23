@@ -4,6 +4,17 @@ import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
+import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
+import { clientSuspensePatterns } from "./urls/client-suspense.js";
+import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
+import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
+
+declare global {
+  var __loadPrerenderManifestModule:
+    | (() => Promise<{ default: Record<string, string> }>)
+    | undefined;
+}
+
 import { errorsPatterns } from "./urls/errors.js";
 import {
   metaTemplatePatterns,
@@ -14,10 +25,15 @@ import {
   trailingSlashPatterns,
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
+import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
+import { shellCachePatterns } from "./urls/shell-cache.js";
+import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
+import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
+import { shellSecurePatterns } from "./urls/shell-secure.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
@@ -27,6 +43,7 @@ import {
 } from "./urls/include-scoping-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
+import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -34,6 +51,7 @@ import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
+import { searchParamsKeyPatterns } from "./urls/search-params-key.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import {
   optionalIncludePatterns,
@@ -46,9 +64,11 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
+import { catchAllPatterns } from "./urls/catch-all.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
@@ -68,6 +88,8 @@ import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { cacheTagPatterns } from "./urls/cache-tag.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
 import { isActionPatterns } from "./urls/is-action.js";
+import { revalFormDataPatterns } from "./urls/reval-formdata.js";
+import { actionRouteMwPatterns } from "./urls/action-route-mw.js";
 import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
 import { middlewareWrappingPatterns } from "./urls/middleware-wrapping.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
@@ -140,7 +162,6 @@ export const urlpatterns = urls(
     loader,
     loading,
     transition,
-    when,
     middleware,
     parallel,
   }) => [
@@ -225,6 +246,66 @@ export const urlpatterns = urls(
                       data-testid="slow-skip-ssr-link"
                     >
                       /slow-streaming-skip-ssr - Skip SSR loading
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-link"
+                    >
+                      /suspense-stream - Raw &lt;Suspense&gt; (no loading())
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-link"
+                    >
+                      /suspense-stream-meta - Raw &lt;Suspense&gt; + Meta
+                      promise
+                    </Link>
+                  </li>
+                  <li>
+                    <Link to="/plp-meta" data-testid="plp-meta-link">
+                      /plp-meta - use(promise) + deferred Meta
+                    </Link>
+                    <Link to="/plp-meta-tx" data-testid="plp-meta-tx-link">
+                      /plp-meta-tx - transition() + use(promise) + slow Meta
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream"
+                      data-testid="suspense-stream-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/slow-streaming"
+                      data-testid="slow-streaming-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /slow-streaming (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/suspense-stream-meta"
+                      data-testid="suspense-stream-meta-prefetch-link"
+                      prefetch="hover"
+                    >
+                      /suspense-stream-meta (prefetch=hover)
+                    </Link>
+                  </li>
+                  <li>
+                    <Link
+                      to="/cs-layout/from"
+                      data-testid="cs-layout-entry-link"
+                    >
+                      /cs-layout/from (client-mount-suspense regression)
                     </Link>
                   </li>
                   <li>
@@ -663,11 +744,8 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        () => [
-          when(({ from }) => shouldInterceptProduct(from.pathname)),
-          loader(ProductDetailLoader),
-          loader(CartQuantityLoader),
-        ],
+        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
       // Slow product intercept - with loading state
@@ -725,6 +803,10 @@ export const urlpatterns = urls(
 
       // === INCLUDED PATTERNS (no intercepts needed) ===
 
+      // Orphan fetchable loader: loader reachable only via a client import,
+      // never registered with loader(). Exercises the build-time pre-scan path.
+      include("/", orphanFetchablePatterns, { name: "" }),
+
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
 
@@ -735,6 +817,16 @@ export const urlpatterns = urls(
 
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
       include("/", slowPatternsWithoutDetail, { name: "" }),
+
+      // Raw <Suspense> (no loading() DSL) streaming route
+      include("/", suspenseStreamPatterns, { name: "" }),
+      include("/", conditionalTransitionPatterns, { name: "" }),
+
+      // #622 follow-up (HIGH): shared layout + client-mount-suspense children
+      include("/", clientSuspensePatterns, { name: "" }),
+
+      // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)
+      include("/", deferredHandleNavPatterns, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
       include("/", errorsPatterns, { name: "" }),
@@ -756,6 +848,9 @@ export const urlpatterns = urls(
       // Hook test patterns - already have their prefixes in paths
       include("/", hooksPatterns, { name: "" }),
 
+      // Hook render-stability fixture (render/commit tracking)
+      include("/", renderStabilityPatterns, { name: "" }),
+
       // Shared-refetch regression scenario
       include("/", sharedRefetchPatterns, { name: "" }),
 
@@ -770,11 +865,34 @@ export const urlpatterns = urls(
       // Cache test patterns (includes intercepts with layouts)
       include("/", cachePatterns, { name: "" }),
 
+      // PPR shell caching (docs/design/ppr-shell-resume.md). Opt-in per route
+      // via the `ppr` path option — serving is integral to the router (no
+      // middleware); the loader behind loading() is the live hole that resumes
+      // into the frozen prelude on a HIT.
+      include("/", shellCachePatterns, { name: "" }),
+      // ppr header-write guard fixtures (issue #713) — isolated routes; the
+      // guard routes error deterministically and are only fetched by their
+      // own tests (ppr-header-guard.test.ts).
+      include("/ppr-header-guard", pprHeaderGuardPatterns, {
+        name: "pprHeaderGuard",
+      }),
+
+      // PPR action-correctness fixtures — /shell-cache-action.
+      include("/", shellCacheActionPatterns, { name: "" }),
+
+      // PPR guarding + scope-fidelity fixtures — /shell-secure (global auth
+      // middleware, mounted in router.tsx) and /shell-secure-dsl (route DSL
+      // middleware rejection); the commit point is after ALL middleware.
+      include("/", shellSecurePatterns, { name: "" }),
+
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),
 
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
+
+      // Named catch-all (:slug* / :path+) probes (issue #634)
+      include("/catch-all", catchAllPatterns, { name: "catchall" }),
 
       // Include scoping reverse behavior probes
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
@@ -822,6 +940,9 @@ export const urlpatterns = urls(
       include("/response-cache", responseCachePatterns, {
         name: "responseCache",
       }),
+
+      // Global cache.searchParams key-filter test patterns
+      include("/spk", searchParamsKeyPatterns, { name: "spk" }),
 
       // Handler-first execution order + cache scope tests
       include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
@@ -938,6 +1059,16 @@ export const urlpatterns = urls(
         name: "isAction",
       }),
 
+      // shouldRevalidate({ formData }) JS/PE parity in a revalidate predicate
+      include("/reval-formdata", revalFormDataPatterns, {
+        name: "revalFormData",
+      }),
+
+      // Action error-boundary render runs under route middleware (C3)
+      include("/action-route-mw", actionRouteMwPatterns, {
+        name: "actionRouteMw",
+      }),
+
       // useParams survival across action → revalidation boundary
       include("/params-after-action", paramsAfterActionPatterns, {
         name: "paramsAfterAction",
@@ -954,6 +1085,11 @@ export const urlpatterns = urls(
       // Auth boundary test (route mw vs global mw, actions, response routes)
       include("/auth-boundary", authBoundaryPatterns, {
         name: "authBoundary",
+      }),
+
+      // Open-redirect guard fixtures (same-origin / blocked / external).
+      include("/redirect-guard", redirectGuardPatterns, {
+        name: "redirectGuard",
       }),
 
       // Content ownership / negotiation edge cases
@@ -1101,12 +1237,20 @@ export const urlpatterns = urls(
       path.json(
         "/__test/loader-ids",
         async () => {
-          const { FetchableTestLoader, ProductsLoader, ProtectedLoader } =
-            await import("./loaders.js");
+          const {
+            FetchableTestLoader,
+            ProductsLoader,
+            ProtectedLoader,
+            ThrownRedirectLoader,
+            NamedErrorLoader,
+          } = await import("./loaders.js");
           return {
             fetchable: (FetchableTestLoader as any).$$id,
             nonFetchable: (ProductsLoader as any).$$id,
             withMiddleware: (ProtectedLoader as any).$$id,
+            // D4/D5 fetchable fixtures (thrown-redirect + named-error loaders).
+            thrownRedirect: (ThrownRedirectLoader as any).$$id,
+            namedError: (NamedErrorLoader as any).$$id,
           };
         },
         { name: "testLoaderIds" },

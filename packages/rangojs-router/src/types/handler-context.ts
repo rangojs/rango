@@ -155,7 +155,7 @@ export type Handler<
       : ExtractSearchFromEntry<DefaultHandlerRouteMap, T>,
     TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>) & {
+) => ReactNode | Response | Promise<ReactNode | Response>) & {
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
 };
@@ -202,7 +202,18 @@ export type HandlerContext<
    * Build-time collection and dev on-demand prerender use `true`.
    * Live request rendering, including passthrough fallback, uses `false`.
    */
-  build: boolean;
+  readonly build: boolean;
+  /**
+   * Opt this request out of PPR shell serving/capture.
+   * Middleware can call this before a shell HIT commits. Handlers run after
+   * that commit point, so they only prevent scheduling a new capture on MISS.
+   *
+   * Scope: this gates the PPR SHELL axis only. It does NOT disable prerender
+   * B-segment (Prerender/Static) serving — a Prerender() route's build-baked
+   * segments still replay at runtime — and it is inert in the prerender-collect
+   * and static-render contexts, which have no live shell decision to influence.
+   */
+  dynamic(): void;
   /**
    * True when running in Vite dev mode, false during production build or
    * live request rendering. Use this to branch on runtime mode without
@@ -504,7 +515,7 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * @param args.context - App context (db, user, etc.)
  * @param args.actionResult - Result from action (future support)
  * @param args.formData - Form data from action (future support)
- * @param args.formMethod - HTTP method from action (future support)
+ * @param args.method - HTTP method: "GET" for navigation, "POST" for server actions
  *
  * @returns Hard decision (boolean), soft suggestion (object), or defer
  *   (`void` / `null` / `undefined`) to keep the running suggestion as-is.

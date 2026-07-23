@@ -57,11 +57,20 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   // The first cold request on CI can exceed the 2s timeout due to module
   // compilation. We warm each route until we get a response (not necessarily
   // 200 — slow-render and slow-response intentionally timeout with 504).
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
+    // Hooks default to the 60s project timeout (playwright.config.ts:50), NOT
+    // the describe-level 90s/120s test.setTimeout. This warm loop can block far
+    // longer: 3 routes (slow-render, slow-response, slow-html-setup) each hold
+    // the connection ~10s until the render timeout fires, plus cold Vite
+    // compile, and each of the 6 routes carries a 30s retry deadline (6 x 30s =
+    // 180s worst case). Raise the hook budget to that upper bound so a loaded CI
+    // runner doesn't time the hook out and fail every test in the describe.
+    testInfo.setTimeout(180_000);
     const routesToWarm = [
       "/",
       "/timeout/fast-render",
       "/timeout/slow-action",
+      "/timeout/slow-html-setup",
       "/timeout/slow-render",
       "/timeout/slow-response",
     ];
@@ -84,15 +93,6 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     await expect(page.locator('[data-testid="index-page"]')).toBeVisible();
   });
 
-  test("slow render returns 504 with timeout phase header", async ({
-    request,
-  }) => {
-    const response = await request.get(f.url("/timeout/slow-render"));
-    expect(response.status()).toBe(504);
-    expect(response.headers()["x-rango-timeout-phase"]).toBe("render-start");
-    expect(await response.text()).toBe("Request timed out");
-  });
-
   test("fast render succeeds with 200", async ({ request }) => {
     const response = await request.get(f.url("/timeout/fast-render"));
     expect(response.status()).toBe(200);
@@ -111,14 +111,19 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(body.ok).toBe(true);
   });
 
-  test("onError records timeout with metadata", async ({ page }) => {
+  test("slow render returns 504 and records the active routine", async ({
+    page,
+  }) => {
     // Clear any previous error (last-error reads and resets)
     await page.request.get(f.url("/__test/last-error"));
 
     // Trigger a slow render (will timeout at 10s).
     // On CI under load, server processing delays can push the actual
     // timeout beyond 10s, so allow 30s for polling.
-    await page.request.get(f.url("/timeout/slow-render"));
+    const response = await page.request.get(f.url("/timeout/slow-render"));
+    expect(response.status()).toBe(504);
+    expect(response.headers()["x-rango-timeout-phase"]).toBe("render-start");
+    expect(await response.text()).toBe("Request timed out");
 
     const error = await waitForOnError(
       page,
@@ -132,6 +137,40 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(error.metadata).toBeDefined();
     expect(error.metadata!.timeout).toBe(true);
     expect(error.metadata!.phase).toBe("render-start");
+    expect(error.metadata!.routine).toMatchObject({
+      name: "document",
+      path: ["prepare:full", "match"],
+    });
+    expect(
+      (error.metadata!.routine as { durationMs: number }).durationMs,
+    ).toBeGreaterThan(0);
+  });
+
+  test("HTML setup timeout reports the foreground render stage", async ({
+    page,
+  }) => {
+    await page.request.get(f.url("/__test/last-error"));
+
+    const response = await page.request.get(f.url("/timeout/slow-html-setup"));
+    expect(response.status()).toBe(504);
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "handler",
+      30000,
+    );
+    expect(error.metadata?.render).toMatchObject({
+      mode: "full",
+      phase: "html",
+      state: "running",
+      completed: 1,
+      total: 3,
+    });
+    expect(error.metadata?.routine).toMatchObject({
+      name: "document",
+      path: ["render", "html"],
+    });
   });
 
   test("slow action triggers onError with action phase", async ({ page }) => {
@@ -183,6 +222,7 @@ test.describe("timeout", () => {
     root: "./e2e/e2e-timeout",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   timeoutTests(f);
@@ -192,6 +232,7 @@ test.describe("timeout (production)", () => {
   const f = useFixture({
     root: "./e2e/e2e-timeout",
     mode: "build",
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test.setTimeout(120000);

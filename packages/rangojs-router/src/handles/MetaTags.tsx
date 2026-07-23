@@ -3,11 +3,16 @@
 /**
  * Component to render collected meta descriptors in the document head.
  *
- * Supports both sync and async meta descriptors. Async descriptors
- * (Promise<MetaDescriptorBase>) are resolved using React's use() hook.
+ * Deferred (Promise) meta descriptors are resolved before MetaTags renders
+ * (server-side on the full render, client-side before apply on navigation), so
+ * it only ever receives resolved descriptors and never suspends.
  *
  * When theme is enabled in the router config, MetaTags also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
+ * This makes MetaTags the sole FOUC-script injector for apps that render it;
+ * the standalone `<ThemeScript />` is only needed when MetaTags is not used.
+ * Rendering both is safe (the inline script guards listener registration) but
+ * redundant.
  *
  * @example
  * ```tsx
@@ -24,13 +29,13 @@
  * ```
  */
 
-import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.js";
 import { Meta } from "./meta.js";
-import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
+import type { MetaDescriptorBase } from "../router/types.js";
 import { useThemeContext } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
 import { useNonce } from "../browser/react/nonce-context.js";
+import { escapeJsonForScript } from "../escape-script.js";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -90,14 +95,7 @@ function hasTagName(
   );
 }
 
-/**
- * Check if a value is a Promise.
- */
-function isPromise(value: unknown): value is Promise<unknown> {
-  return value !== null && typeof value === "object" && "then" in value;
-}
-
-function renderMetaDescriptor(
+export function renderMetaDescriptor(
   descriptor: MetaDescriptorBase,
   index: number,
 ): React.ReactNode {
@@ -140,7 +138,9 @@ function renderMetaDescriptor(
   }
 
   if (hasScriptLdJson(descriptor)) {
-    const json = JSON.stringify(descriptor["script:ld+json"]);
+    const json = escapeJsonForScript(
+      JSON.stringify(descriptor["script:ld+json"]),
+    );
     return (
       <script
         key={`ld-json-${index}`}
@@ -178,17 +178,6 @@ function renderMetaDescriptor(
   );
 }
 
-function AsyncMetaTag({
-  promise,
-  index,
-}: {
-  promise: Promise<MetaDescriptorBase>;
-  index: number;
-}): React.ReactNode {
-  const resolved = use(promise);
-  return renderMetaDescriptor(resolved, index);
-}
-
 /**
  * Renders all collected meta descriptors from route handlers.
  *
@@ -198,11 +187,16 @@ function AsyncMetaTag({
  * When theme is enabled in router config, also renders the theme initialization
  * script to prevent FOUC (flash of unstyled content).
  *
- * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved using
- * React's use() hook. RSC streaming handles the Promise resolution.
+ * Deferred (Promise) meta descriptors are resolved BEFORE MetaTags renders —
+ * server-side on the full/SSR render, client-side before apply on navigation
+ * (resolve-by-default) — so MetaTags only ever receives resolved descriptors and
+ * never suspends.
  */
 export function MetaTags(): React.ReactNode {
-  const descriptors = useHandle(Meta) as MetaDescriptor[];
+  // Deferred descriptors are resolved BEFORE collect runs (resolve-by-default),
+  // and collectMeta strips unset markers, so the collected output is always
+  // resolved base descriptors (never a Promise).
+  const descriptors = useHandle(Meta) as MetaDescriptorBase[];
   const themeConfig = useThemeContext()?.config ?? null;
   const nonce = useNonce();
 
@@ -215,18 +209,9 @@ export function MetaTags(): React.ReactNode {
           dangerouslySetInnerHTML={{ __html: generateThemeScript(themeConfig) }}
         />
       )}
-      {descriptors.map((descriptor, index) => {
-        if (isPromise(descriptor)) {
-          return (
-            <AsyncMetaTag
-              key={`async-${index}`}
-              promise={descriptor}
-              index={index}
-            />
-          );
-        }
-        return renderMetaDescriptor(descriptor, index);
-      })}
+      {descriptors.map((descriptor, index) =>
+        renderMetaDescriptor(descriptor, index),
+      )}
     </>
   );
 }

@@ -74,6 +74,7 @@ export function getPackageAliases(): Record<string, string> {
 
 export function getVendorAliases(): Record<string, string> {
   const specs = [
+    "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
   ];

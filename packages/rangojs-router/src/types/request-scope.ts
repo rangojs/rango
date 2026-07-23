@@ -25,9 +25,14 @@ export interface ExecutionContext {
  * of inventing its own fallback policy.
  */
 export function fireAndForgetWaitUntil(fn: () => Promise<void>): void {
-  fn().catch((err) =>
-    console.error("[waitUntil] Background task failed:", err),
-  );
+  // Defer fn() invocation to a microtask so a SYNCHRONOUS throw in a non-async
+  // callback (e.g. `() => { somethingThatThrows(); return p; }`) becomes a
+  // rejected promise we catch here, not an exception that escapes into the
+  // request flow. waitUntil is fire-and-forget: a background-task failure must
+  // never break the response.
+  Promise.resolve()
+    .then(fn)
+    .catch((err) => console.error("[waitUntil] Background task failed:", err));
 }
 
 /**

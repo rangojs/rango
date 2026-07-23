@@ -36,6 +36,15 @@ export interface ReadThroughItemConfig<T> {
   key: string;
   /** Execute the underlying function/loader on miss or revalidation */
   execute: () => Promise<T>;
+  /**
+   * Optional wrapper applied to the WHOLE background stale-revalidation task
+   * (execute + serialize + setItem) — not the foreground miss, where the
+   * caller's context is already established. Used to re-establish the
+   * request-context ALS, which a detached waitUntil task loses on workerd,
+   * and to open the rango.background span so the write is covered too.
+   * Defaults to running the task directly.
+   */
+  wrapBackground?: (run: () => Promise<void>) => Promise<void>;
   /** Serialize result for storage. Return null to skip caching. */
   serialize: (data: T) => Promise<string | null>;
   /** Deserialize cached value back to the original type */
@@ -77,6 +86,7 @@ export async function readThroughItem<T>(
     onMiss,
     onCached,
     host,
+    wrapBackground,
   } = config;
 
   // Cache lookup. An infra read failure (getItem) is reported by the store
@@ -102,15 +112,25 @@ export async function readThroughItem<T>(
 
       // Stale hit — return stale data, revalidate in background
       onStale?.(cached);
+      // The whole task — execute AND serialize/setItem — goes through
+      // wrapBackground so the ALS re-establishment and the rango.background
+      // span cover the write too (a slow or failing store write is part of
+      // the revalidation, not an untraced tail). The foreground miss below
+      // stays unwrapped: its context is already established.
+      const revalidateTask = async () => {
+        const fresh = await execute();
+        const serialized = await serialize(fresh);
+        if (serialized !== null) {
+          await setItem(key, serialized, storeOptions);
+        }
+      };
       runBackground(
         host,
         async () => {
           try {
-            const fresh = await execute();
-            const serialized = await serialize(fresh);
-            if (serialized !== null) {
-              await setItem(key, serialized, storeOptions);
-            }
+            await (wrapBackground
+              ? wrapBackground(revalidateTask)
+              : revalidateTask());
           } catch (error) {
             reportCacheError(
               error,

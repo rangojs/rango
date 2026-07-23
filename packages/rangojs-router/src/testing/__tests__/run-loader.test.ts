@@ -133,6 +133,47 @@ describe("runLoader", () => {
     expect(result).toBe(7);
   });
 
+  it("seeded ctx.use(Loader) returns a Promise (production parity, not the raw value)", async () => {
+    // Production ctx.use(Loader) ALWAYS returns a Promise. A consumer composing
+    // on the result (.then / Promise.race) must work the same for a seeded loader
+    // as for the real-fn delegate path. Before the fix the seeded branch returned
+    // the raw value, so `.then` was not a function.
+    const Dep = {
+      __brand: "loader",
+      $$id: "x#DepThenable",
+    } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(
+      async (ctx) => {
+        const used = ctx.use(Dep);
+        // The seeded result must be thenable, exactly like production.
+        return used instanceof Promise && typeof used.then === "function"
+          ? await used.then((d) => d.count * 2)
+          : -1;
+      },
+      { loaders: [[Dep, { count: 5 }]] },
+    );
+    expect(result).toBe(10);
+  });
+
+  it("ctx.use(Loader) via the opts.use resolver also returns a Promise", async () => {
+    const Dep = {
+      __brand: "loader",
+      $$id: "x#DepUseThenable",
+    } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(
+      async (ctx) => {
+        const used = ctx.use(Dep);
+        return used instanceof Promise ? await used.then((d) => d.count) : -1;
+      },
+      { use: () => ({ count: 8 }) as any },
+    );
+    expect(result).toBe(8);
+  });
+
   it("delegates ctx.use to the real request-context use() (runs the dep fn)", async () => {
     // A loader definition that carries its own fn runs via the real ctx.use().
     const Dep = {
@@ -172,7 +213,7 @@ describe("runLoader", () => {
 
   describe("rendered barrier + handle reads (rendered + handles options)", () => {
     it("mocks ctx.rendered() and seeds ctx.use(handle) by reference", async () => {
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
@@ -202,7 +243,7 @@ describe("runLoader", () => {
     });
 
     it("still throws on ctx.rendered() when the option is not set", async () => {
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       await expect(
         runLoader(
           async (ctx) => {
@@ -218,7 +259,7 @@ describe("runLoader", () => {
       // Post-barrier, production resolves an unseeded handle via collectHandleData
       // -> collect([]); for the default collect that is []. The testing tier must
       // not throw or leak the handle into the loader resolver.
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
@@ -246,7 +287,7 @@ describe("runLoader", () => {
     it("never feeds an unseeded handle into the opts.use loader resolver", async () => {
       // opts.use is a loaders-only resolver; a handle must resolve via the
       // collect path, not silently land in opts.use as if it were a loader.
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       let useResolverSaw: unknown;
       const data = await runLoader(
         async (ctx) => {
@@ -271,7 +312,7 @@ describe("runLoader", () => {
       // must fail in the test too — not silently return the seeded data — or
       // the bug (a loader that throws on the first real request) ships green.
       // This test fails on the pre-fix code (which returned the seed regardless).
-      const Products = createHandle<string>();
+      const Products = createHandle<string, string[]>((s) => s.flat());
       await expect(
         runLoader(async (ctx) => ({ products: ctx.use(Products) }), {
           rendered: true,

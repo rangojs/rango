@@ -1,4 +1,5 @@
 import type { ResolvedSegment } from "./types.js";
+import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
 
 /**
  * Cache of aggregate Promise.all results keyed on the first loader's
@@ -7,8 +8,9 @@ import type { ResolvedSegment } from "./types.js";
  * source array (typically a single entry, since distinct loader groups rarely
  * share a first source). Object first-refs live in a WeakMap (auto-GC);
  * primitive first-refs (strings/numbers/booleans/null) live in a Map so
- * loaders that resolve to primitive data are memoized too — bounded in
- * practice by the application's loader set.
+ * loaders that resolve to primitive data are memoized too. The per-key array
+ * is capped (MAX_ENTRIES_PER_KEY, oldest evicted) so a long session under a
+ * stable first-ref does not grow it without bound.
  *
  * Keying externally means reconciliation's fresh segment objects no longer
  * drop memoization — the cache survives as long as the underlying loader
@@ -31,6 +33,16 @@ interface LoaderCacheEntry {
   // (Promise<any[]> | any[]) to mirror its siblings.
   promise: Promise<any[]>;
 }
+
+// Cap the per-key entries array. A stable first-ref (e.g. a layout loader whose
+// loaderData object survives reconciliation across navigations) keeps its
+// WeakMap/Map key alive, while a per-route loader whose ref changes each
+// navigation appends a brand-new sources array under that same live key on
+// every navigation. Nothing was ever removed, so the array grew linearly with
+// navigation count, pinning each stale Promise + sources array from GC — a
+// steady client-side leak over a long session. Only the current render's combo
+// needs to stay warm; evict the oldest beyond the cap.
+const MAX_ENTRIES_PER_KEY = 8;
 
 const objectLoaderCache = IS_BROWSER
   ? new WeakMap<object, LoaderCacheEntry[]>()
@@ -71,6 +83,23 @@ function hasSameReferences(a: any[], b: any[]): boolean {
 export function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
   if (loaders.length === 0) {
     return Promise.resolve([]);
+  }
+  // Debug tap (browser only): log when each PENDING loader promise settles —
+  // i.e. when its data actually lands from the flight stream — independent of
+  // when the tree build awaits it. `.then(cb, cb)` observes on a branch, so
+  // rejections still propagate to the real consumers untouched.
+  if (INTERNAL_RANGO_DEBUG && IS_BROWSER) {
+    const tapStart = performance.now();
+    for (const loader of loaders) {
+      if (loader.loaderData instanceof Promise) {
+        const settle = (outcome: string) => () =>
+          console.log(
+            `[Browser][segments] loader ${loader.loaderId} ${outcome} @ ${Math.round(performance.now())}ms`,
+            { msSinceRequested: Math.round(performance.now() - tapStart) },
+          );
+        loader.loaderData.then(settle("settled"), settle("rejected"));
+      }
+    }
   }
   return Promise.all(
     loaders.map((loader) =>
@@ -124,6 +153,10 @@ export function getMemoizedLoaderPromise(
   const promise = buildLoaderPromise(loaders);
   const newEntry: LoaderCacheEntry = { sources, promise };
   if (entries) {
+    // Bound the array: drop the oldest entry before appending when at the cap.
+    if (entries.length >= MAX_ENTRIES_PER_KEY) {
+      entries.shift();
+    }
     entries.push(newEntry);
   } else if (isObjectLike(first)) {
     objectLoaderCache.set(first, [newEntry]);

@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { createHandleStore } from "../server/handle-store.js";
+import { resolveSegmentHandleValues } from "../handles/deferred-resolution.js";
 import { getRequestContext } from "../server/request-context.js";
 import {
   runWithRequestContext,
@@ -17,8 +18,10 @@ import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
+import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
+import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -31,7 +34,12 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface PrerenderMatchDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  /** Owning router id; scopes bake-time root-scope/search-schema lookups the
+   *  same way reqCtx._routerId does at runtime (issue #762). */
+  routerId?: string;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: (
@@ -40,7 +48,7 @@ export interface PrerenderMatchDeps<TEnv = any> {
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
+    options?: ResolveSegmentOptions,
   ) => Promise<ResolvedSegment[]>;
 }
 
@@ -70,9 +78,16 @@ export async function matchForPrerender<TEnv = any>(
    *  the sinks store it as-is (no longer merge raw records). */
   interceptHandles?: string;
   passthrough?: true;
+  /**
+   * The matched route entry's `ppr` path option, surfaced so the build
+   * collection can flag Prerender+ppr routes as build-time shell candidates
+   * (issue #699 producer B). Runtime-only today; the build otherwise never
+   * sees the option (it lives on EntryData, not the trie).
+   */
+  ppr?: boolean | PartialPrerenderProps;
 } | null> {
   // 1. Find the matching route entry
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (!matched) return null;
 
   // Use params from trie match if available, fall back to provided params
@@ -194,6 +209,11 @@ export async function matchForPrerender<TEnv = any>(
       pathname,
       searchParams: new URLSearchParams(),
       _variables: variables,
+      build: true,
+      // Inert here: the prerender-collect / static-render pass has no live
+      // PPR-shell decision to gate; dynamic() reaches the shell axis only on a
+      // live request or a shell capture.
+      dynamic: () => {},
       get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
       set: ((keyOrVar: any, value: any) => {
         contextSet(variables, keyOrVar, value);
@@ -227,8 +247,13 @@ export async function matchForPrerender<TEnv = any>(
         deps.mergedRouteMap,
         matched.routeKey,
         matchedParams,
-        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
+        matched.routeKey
+          ? isRouteRootScoped(matched.routeKey, deps.routerId)
+          : undefined,
       ),
+      // Scope the bake context's own lookups (createPrerenderContext reads it
+      // through the request ALS) per router as well.
+      _routerId: deps.routerId,
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
@@ -257,7 +282,9 @@ export async function matchForPrerender<TEnv = any>(
         matchedParams,
         buildCtx,
         loaderPromises,
-        { skipLoaders: true },
+        // throwOnError: a render failure (or `throw new Skip()`) must reach the
+        // build/dev caller, not be baked into a frozen error page (issue #587).
+        { skipLoaders: true, throwOnError: true },
       );
 
       // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
@@ -290,13 +317,27 @@ export async function matchForPrerender<TEnv = any>(
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
         if (Object.keys(segHandles).length > 0) {
-          handlesRecord[seg.id] = segHandles;
+          // Resolve deferred values before encoding so the baked artifact holds
+          // resolved data (prerender = build-time cache).
+          handlesRecord[seg.id] = await resolveSegmentHandleValues(segHandles);
         }
       }
       const handles = await encodeHandles(handlesRecord);
 
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
+
+      // Surface the matched route entry's ppr option for the build collection
+      // (leaf-first: the deepest type:"route" entry in the ancestor chain is
+      // the matched page route; ancestors are layouts/includes).
+      let routePpr: boolean | PartialPrerenderProps | undefined;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i]!;
+        if (e.type === "route") {
+          routePpr = e.ppr;
+          break;
+        }
+      }
 
       // 14. Resolve intercept segments for this route (if any ancestor defines
       //     an intercept targeting this route). At build time we skip when()
@@ -391,7 +432,8 @@ export async function matchForPrerender<TEnv = any>(
           for (const seg of interceptResolvedSegments) {
             const segHandles = handleStore.getDataForSegment(seg.id);
             if (Object.keys(segHandles).length > 0) {
-              interceptHandlesRecord[seg.id] = segHandles;
+              interceptHandlesRecord[seg.id] =
+                await resolveSegmentHandleValues(segHandles);
             }
           }
           // The intercept artifact serves main + intercept segments together, so
@@ -411,6 +453,7 @@ export async function matchForPrerender<TEnv = any>(
         params: matchedParams,
         interceptSegments,
         interceptHandles,
+        ppr: routePpr,
       };
     });
   });
@@ -429,6 +472,8 @@ export async function renderStaticSegment<TEnv = any>(
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
+  routerId?: string,
+  rootScoped?: boolean,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -446,6 +491,8 @@ export async function renderStaticSegment<TEnv = any>(
     pathname: "/",
     searchParams: syntheticUrl.searchParams,
     _variables: {},
+    build: true,
+    dynamic: () => {},
     get: () => undefined as any,
     set: () => {},
     params: {},
@@ -477,8 +524,15 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       {},
-      routeName ? isRouteRootScoped(routeName) : undefined,
+      // Def-stamped value first: the collector passes the mount-time
+      // root-scope captured on the Static definition (stampStaticDefScope),
+      // which needs no registry lookup and survives name-prefix arguments.
+      rootScoped ??
+        (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
     ),
+    // Scope the bake context's own lookups (createStaticContext reads it
+    // through the request ALS) per router as well.
+    _routerId: routerId,
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {
@@ -530,7 +584,7 @@ export async function renderStaticSegment<TEnv = any>(
     const segHandles = handleStore.getDataForSegment(handlerId);
     const handles =
       Object.keys(segHandles).length > 0
-        ? await encodeHandleValue(segHandles)
+        ? await encodeHandleValue(await resolveSegmentHandleValues(segHandles))
         : "";
 
     return { encoded: serialized.encoded, handles };

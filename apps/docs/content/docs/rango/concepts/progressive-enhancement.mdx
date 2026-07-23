@@ -1,0 +1,84 @@
+---
+title: Progressive Enhancement
+description: JS and no-JS are the same contract — one action pipeline, two transports, matching middleware effects, cookies, and rendered state.
+type: concept
+---
+
+A form that posts before JavaScript loads — or with JavaScript disabled — is not a degraded fallback in Rango. It runs the same pipeline as the JS-enabled action, produces the same middleware effects, sets the same cookies, and lands the user on the same rendered state. The only differences are which render happens afterward and what goes over the wire. This page explains why that equivalence holds by construction, and why any divergence from it is treated as a router bug.
+
+## One pipeline, two transports
+
+Put the two request shapes side by side:
+
+```
+JS action request:
+  global middleware → action executes → route middleware → revalidation render
+  (response: Flight stream, partial update)
+
+No-JS form POST (progressive enhancement):
+  global middleware → action executes → route middleware → full page re-render
+  (response: full HTML document)
+```
+
+Everything up to and including the action is **identical**. Global middleware wraps the whole request in both cases — your auth guard, logging, and rate limiting run the same way whether the POST came from a hydrated `<form>` with a JS action or a plain browser form submission. Then the action executes, in both cases before any route middleware.
+
+After the action, the transports part ways:
+
+- The **JS path** runs a partial revalidation render and streams the result as a Flight payload — only the segments selected by the revalidation rules recompute (see [Execution Model](/docs/rango/concepts/execution-model) for the defaults).
+- The **PE path** runs a full page re-render and returns a complete HTML document response, not a Flight stream.
+
+Both of those renders are wrapped by route middleware. That's the contract: **route middleware wraps rendering regardless of transport.**
+
+## Why route middleware observes action-set state in both transports
+
+This is the part that looks like a coincidence but isn't. In both diagrams, the action executes **before** route middleware runs. So by the time route middleware executes — wrapping the revalidation render on the JS path, or the full re-render on the PE path — the action's effects have already happened. Route middleware observes action-set cookies, context variables, and headers the same way in both transports, because in both transports it runs at the same point in the pipeline.
+
+There is no PE-specific middleware mode and no separate no-JS code path to keep in sync. The equivalence is structural: same ordering, same scopes, different final render.
+
+The flip side of that ordering is worth restating from the [Execution Model](/docs/rango/concepts/execution-model): route middleware runs _after_ the action, so it cannot guard the action — in either transport. Action protection belongs in global middleware (`router.use("/admin/*", requireAuth)`) or inside the action body. See [Middleware](/docs/rango/features/middleware).
+
+## What "the same contract" covers
+
+For equivalent action intents, the JS and PE paths are required to match on:
+
+- **render visibility of route middleware effects** — a context variable or header set by route middleware is visible to the rendered tree the same way in a Flight revalidation and in an HTML re-render;
+- **cookie and header propagation in responses** — a cookie the action sets arrives at the browser on both transports;
+- **segment data expectations for the recomputed scopes** — the segments that re-render see the same post-action data, whether they were selected by partial revalidation or re-rendered as part of the full page.
+
+Concretely: submit the same form with JS on and with JS off, and you should not be able to tell the difference by inspecting cookies, middleware-derived state, or the content of the page you end up on. The PE user waits for a full document instead of a partial update — that's the whole visible delta.
+
+## A concrete walk-through
+
+Take a login form whose action verifies credentials and sets a session cookie. Trace it through both transports:
+
+1. **Global middleware** runs — say, a rate limiter on the login endpoint. Same code, both transports.
+2. **The action executes** — verifies the credentials and sets the session cookie. It sees request-scoped context from global middleware; it does not see route middleware, because route middleware hasn't run yet.
+3. **Route middleware** runs, wrapping the render that follows. Reading cookies set by actions is exactly what route middleware is positioned for — here it reads the fresh session cookie and does `ctx.set()` with the current user for the tree below.
+4. **The render happens** — a partial revalidation streamed as Flight on the JS path, a full HTML document on the PE path. Either way, the rendered tree sees the user that route middleware just set.
+
+At no step did the transport change what state exists — only step 4 differs, and only in scope and wire format. That's the contract in miniature: if the JS user lands on a logged-in page with a session cookie, the no-JS user must too.
+
+## Divergence is a bug
+
+When the two paths disagree on any of the above, that is classified as a contract bug in the router — not app-level behavior to work around — unless the divergence is explicitly documented. The contract isn't aspirational: it's pinned by rows in the router's semantic matrix e2e suite, which asserts, in dev and production builds alike, that:
+
+- a PE action returns a full HTML document response rather than a Flight stream;
+- route middleware wraps post-action revalidation renders on the JS path;
+- route middleware wraps PE full re-renders the same way.
+
+Any intentional change to these semantics has to update the matrix rows and the execution-model contract together, so the suite going green is the definition of "JS and no-JS still agree."
+
+## What this buys you
+
+You write the request-shaped logic once. Auth guards, session handling, cookie propagation, and post-action state all live in one pipeline, and the no-JS form POST exercises the same code the JS action does. Practically, that means forms are functional before hydration and without JavaScript at all — and you can verify the harder-to-observe transport (no-JS) knowing the middleware effects and rendered state carry over to the JS path, because the router treats any gap between them as its bug to fix, not yours.
+
+<Cards>
+  <Card href="/docs/rango/concepts/execution-model" title="Execution Model">
+    The full request lifecycle these two orderings come from, and the
+    revalidation defaults behind the JS path's partial update.
+  </Card>
+  <Card href="/docs/rango/guides/server-actions" title="Server Actions">
+    Writing the actions themselves — validation, useActionState, and action-side
+    auth checks.
+  </Card>
+</Cards>

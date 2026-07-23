@@ -134,4 +134,42 @@ describe("getMemoizedLoaderPromise", () => {
 
     expect(second).toBe(first);
   });
+
+  it("bounds the per-key entries array so a long session does not leak", () => {
+    // A stable layout-level loader (its loaderData ref preserved across
+    // navigations) keeps the WeakMap key alive, while a per-route loader whose
+    // ref changes each navigation produces a brand-new sources array every time.
+    // Without eviction the per-key array grows linearly with navigation count,
+    // each stale entry pinning a Promise + sources array from GC. The cap drops
+    // the oldest entries, so a much earlier navigation's combo is no longer
+    // memoized (returns a fresh promise) while recent ones still hit.
+    const stableFirst = { layout: "data" }; // same object ref every nav
+    const tails = Array.from({ length: 50 }, (_, i) =>
+      Promise.resolve({ route: i }),
+    );
+
+    const promiseFor = (tail: Promise<unknown>) =>
+      getMemoizedLoaderPromise([
+        loaderSeg("D0.layout", stableFirst),
+        loaderSeg("D0.route", tail),
+      ]);
+
+    // First navigation's combo.
+    const firstNavPromise = promiseFor(tails[0]!);
+
+    // Many subsequent navigations under the SAME stable first ref.
+    for (let i = 1; i < tails.length; i++) {
+      promiseFor(tails[i]!);
+    }
+
+    // The earliest combo must have been evicted (bounded array): re-requesting
+    // it rebuilds a fresh promise rather than returning the original.
+    const firstNavAgain = promiseFor(tails[0]!);
+    expect(firstNavAgain).not.toBe(firstNavPromise);
+
+    // A recent combo still hits (the cap keeps the most-recent entries warm).
+    const recentPromise = promiseFor(tails[tails.length - 1]!);
+    const recentAgain = promiseFor(tails[tails.length - 1]!);
+    expect(recentAgain).toBe(recentPromise);
+  });
 });

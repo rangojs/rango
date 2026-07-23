@@ -58,8 +58,10 @@ type Precomputed = Array<{
   routes: Record<string, string>;
 }>;
 
-function flattenFor(patterns: ReturnType<typeof urls>): Precomputed {
-  const manifest = generateManifestFull(patterns, 0);
+async function flattenFor(
+  patterns: ReturnType<typeof urls>,
+): Promise<Precomputed> {
+  const manifest = await generateManifestFull(patterns, 0);
   const result: Precomputed = [];
   flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, result);
   return result;
@@ -69,7 +71,7 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
   // Precondition: a real urls() config with two sibling param-prefixed includes
   // genuinely produces two leaf entries that share a staticPrefix. If this stops
   // being true the collision can no longer arise — but the guard below is cheap.
-  it("a real two-sibling-include config flattens to duplicate-staticPrefix leaf entries", () => {
+  it("a real two-sibling-include config flattens to duplicate-staticPrefix leaf entries", async () => {
     const catLeaf = urls(({ path }) => [
       path("/page", () => null, { name: "page" }),
     ]);
@@ -81,14 +83,14 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
       include("/shop/:brand", brandLeaf, { name: "brand" }),
     ]);
 
-    const entries = flattenFor(root);
+    const entries = await flattenFor(root);
     const shop = entries.filter((e) => e.staticPrefix === "/shop");
     expect(shop).toHaveLength(2);
     expect(shop[0]!.routes).toHaveProperty("cat.page");
     expect(shop[1]!.routes).toHaveProperty("brand.list");
   });
 
-  it("naive last-wins collapse loses routes; buildPrecomputedByPrefix omits the shared prefix", () => {
+  it("naive last-wins collapse loses routes; buildPrecomputedByPrefix omits the shared prefix", async () => {
     const entries: Precomputed = [
       { staticPrefix: "/shop", routes: { "cat.page": "/shop/:cat/page" } },
       { staticPrefix: "/shop", routes: { "brand.list": "/shop/:brand/list" } },
@@ -155,7 +157,7 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
       };
     }
 
-    it("OLD last-wins collapse mis-assigns the sibling include's routes (documents the bug)", () => {
+    it("OLD last-wins collapse mis-assigns the sibling include's routes (documents the bug)", async () => {
       const catEntry = makeCatEntry();
       // Only catEntry is live (brand's nested entry not yet spliced) ->
       // prefixIsShared sees count 1 and does NOT skip. The naive collapsed map
@@ -172,7 +174,7 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
       expect(catEntry.routes).not.toHaveProperty("cat.page");
     });
 
-    it("FIX: buildPrecomputedByPrefix omits the shared prefix, so the handler runs and registers cat's own routes", () => {
+    it("FIX: buildPrecomputedByPrefix omits the shared prefix, so the handler runs and registers cat's own routes", async () => {
       const catEntry = makeCatEntry();
       const deps = makeDeps([catEntry], () =>
         buildPrecomputedByPrefix(precomputedSource),
@@ -255,7 +257,6 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
         routerId,
         buildRouteTrie(
           { "cat.page": "/shop/:cat/page", "brand.list": "/shop/:brand/list" },
-          { "cat.page": ["A"], "brand.list": ["A"] },
           { "cat.page": "/shop", "brand.list": "/shop" },
         ),
       );
@@ -292,7 +293,7 @@ describe("precomputed prefix collision (shared staticPrefix across leaf includes
         evaluateLazyEntry: (e) => evaluateLazyEntry(e, depsFor(routesEntries)),
         routerId,
       });
-      const match = fm("/shop/nike/list");
+      const match = await fm("/shop/nike/list");
       const selected =
         match?.entry === cat
           ? "cat"

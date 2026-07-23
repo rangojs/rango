@@ -4,6 +4,7 @@ export const routes = {
   apiDemo: "/api-demo",
   blog: "/blog",
   blogPost: "/blog/:slug",
+  cacheLab: "/cache-lab",
   counter: "/counter",
   documentCache: "/document-cache",
   fast: "/slow/fast",
@@ -42,6 +43,7 @@ export const routes = {
   testNegotiateWildJson: "/test/negotiate-wild/*",
   testNegotiateXml: "/test/negotiate-xml",
   testNegotiateXmlApi: "/test/negotiate-xml",
+  testSpkCached: "/test/spk-cached",
   theme: "/theme",
 } as const;
 export type routes = typeof routes;

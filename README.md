@@ -1,6 +1,57 @@
-# RSC Router
+# Rango
 
-A code-first, type-safe React Server Components router for serverless deployments.
+React RSC Route Wrangler
+
+A code-first, type-safe React Server Components router
+
+## Stability
+
+> **Experimental:** This package is published as `0.0.0-experimental.*` and is under active development. APIs may change between releases. Install with the `@experimental` tag:
+>
+> ```bash
+> npm install @rangojs/router@experimental
+> ```
+
+## Why Rango?
+
+Rango keeps simple applications simple: define a route tree, render server
+components, and navigate by type-safe route names. As requirements grow, the
+same tree can express data freshness, caching, partial rendering, and complex UI
+composition without moving those decisions into a separate framework model.
+That makes it useful to one developer out of the box while preserving a coherent,
+machine-readable architecture as the application and its AI-assisted development
+workflow grow more complex.
+
+- **Readable, code-first routing** - `urls()`, `path()`, and `include()` keep URL
+  structure, module boundaries, and shared concerns visible in one declared tree
+  instead of making them implicit in filesystem conventions.
+- **Type-safe named routes** - Generated route names, params, search schemas, and
+  `reverse()` calls stay checked when paths move or modules are composed.
+- **RSC with progressive-enhancement parity** - Server Components, Server
+  Actions, and forms share tested behavior across client navigation and no-JS
+  requests.
+- **Live data beneath cached UI** - Loaders stay fresh by default, even when the
+  surrounding segment is cached or prerendered, and resolve in parallel while
+  the UI streams.
+- **Precise client updates** - `revalidate()` controls which segments and loaders
+  re-render after an action, independently from cache invalidation.
+- **Composable rendering** - Named slots, parallel routes, and intercepts model
+  dashboards, sidebars, modals, and alternate soft-navigation compositions in
+  the route graph.
+- **Controlled navigation** - Request-aware prefetching, in-flight adoption,
+  Rango State with userland invalidation, partial rendering, and integrated
+  deployment-skew recovery make navigation behavior explicit and stable.
+- **Request and cache safety built in** - Default origin checks protect Server
+  Actions, loader fetches, and no-JS form submissions, while tainted request
+  context protects cache boundaries from request-specific data and effects.
+- **CSP-ready rendering** - Per-request nonce generation and propagation cover
+  SSR, RSC payload scripts, typed middleware access, and document-rendered script
+  handles while leaving policy decisions with the application.
+- **Integrated diagnostics** - `debugPerformance` exposes a request waterfall
+  and `Server-Timing` headers without additional instrumentation.
+
+See [Rango compared to Next.js, TanStack Start, and Waku](packages/rangojs-router/docs/comparison.md)
+for the detailed design and capability comparison.
 
 ## Features
 
@@ -24,19 +75,44 @@ A code-first, type-safe React Server Components router for serverless deployment
 .
 ├── packages/
 │   └── rangojs-router/    # Main RSC router package
-├── examples/
-│   └── vite-rsc-demo/     # Demo app
+├── tests/                 # Demo + e2e apps (vite-rsc-demo, cloudflare-basic, ...)
+├── examples/              # Cloudflare example apps (cloudflare-basic-nonce, cloudflare-multi-router)
+├── apps/
+│   └── docs/              # Documentation site
+├── tools/                 # Repo tooling and bundle scripts
 └── docs/                  # Design documents
 ```
 
 ## Getting Started
 
+### Create an app
+
+Start from a complete Rango template with [`create-rango`](https://github.com/rangojs/templates):
+
+```bash
+pnpm create rango my-app
+```
+
+Choose a deployment target non-interactively:
+
+```bash
+pnpm create rango my-app --template basic       # Node
+pnpm create rango my-app --template cloudflare  # Cloudflare Workers
+pnpm create rango my-app --template vercel      # Vercel
+pnpm create rango my-app --template basic --js  # Node, JavaScript
+```
+
+Each template is a complete streaming RSC app with routes, Server Actions, and
+production build/deployment configuration already wired. Use
+`npm create rango@latest my-app` if you prefer npm. The scaffolder currently
+requires Node.js 24 or newer.
+
 ### Prerequisites
 
-- Node.js 22+
-- pnpm 10+
+- Node.js `^20.19.0 || >=22.12.0` for this repository (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
+- pnpm 11+ (`packageManager` is `pnpm@11.9.0`)
 
-### Installation
+### Repository development
 
 ```bash
 pnpm install
@@ -120,12 +196,12 @@ This produces structured output for server-side and client-side router operation
 - `pnpm dev` - Start development mode
 - `pnpm build` - Build all packages
 - `pnpm preview` - Preview production builds
-- `pnpm type-check` - Run TypeScript type checking
+- `pnpm typecheck` - Run TypeScript type checking
 
 ## Built With
 
 - [React 19](https://react.dev/) - React Server Components
-- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-rsc)
+- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
 - [TypeScript](https://www.typescriptlang.org/)
 
 ## License

@@ -8,10 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p bench --noEmit",
     "test:e2e": "playwright test",
     "bench": "npx tsx bench/run.ts",
-    "bench:prod": "npx tsx bench/run.ts --mode=production",
+    "bench:dev": "npx tsx bench/run.ts --mode=dev",
     "bench:compare": "npx tsx bench/compare.ts"
   },
   "dependencies": {
@@ -20,10 +20,11 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.38.0",
-    "@cloudflare/workers-types": "^4.20260523.1",
+    "@cloudflare/vite-plugin": "^1.44.0",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "@playwright/test": "^1.57.0",
     "@types/autocannon": "^7.12.7",
+    "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
@@ -31,6 +32,6 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "wrangler": "^4.94.0"
+    "wrangler": "^4.110.0"
   }
 }

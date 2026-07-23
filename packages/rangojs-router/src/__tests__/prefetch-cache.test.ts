@@ -1,16 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { abortAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(() => ({
+const {
+  abortAllPrefetchesMock,
+  invalidateRangoStateMock,
+  notifyPrefetchCacheInvalidatedMock,
+} = vi.hoisted(() => ({
   abortAllPrefetchesMock: vi.fn(),
   invalidateRangoStateMock: vi.fn(),
+  notifyPrefetchCacheInvalidatedMock: vi.fn(),
 }));
 
-vi.mock("../browser/prefetch/queue", () => ({
+vi.mock("../browser/prefetch/loader", () => ({
   abortAllPrefetches: abortAllPrefetchesMock,
 }));
 
 vi.mock("../browser/rango-state", () => ({
   invalidateRangoState: invalidateRangoStateMock,
+}));
+
+vi.mock("../browser/prefetch/invalidation", () => ({
+  notifyPrefetchCacheInvalidated: notifyPrefetchCacheInvalidatedMock,
 }));
 
 import {
@@ -22,6 +31,7 @@ import {
   consumePrefetch,
   currentGeneration,
   hasPrefetch,
+  initPrefetchCache,
   markPrefetchInflight,
   setInflightPromise,
   storePrefetch,
@@ -38,6 +48,7 @@ function makeEntry(scope: "source" | "wildcard" = "wildcard"): DecodedPrefetch {
     payload: Promise.resolve({} as RscPayload),
     streamComplete: Promise.resolve(),
     scope,
+    complete: false,
   };
 }
 
@@ -46,21 +57,28 @@ describe("prefetch cache", () => {
     clearPrefetchCache();
     abortAllPrefetchesMock.mockClear();
     invalidateRangoStateMock.mockClear();
+    notifyPrefetchCacheInvalidatedMock.mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("buildPrefetchKey concatenates prefix and target (wildcard shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
-    expect(buildPrefetchKey("v1:123", target)).toBe("v1:123\0/products?page=1");
+  it("buildPrefetchKey omits source-tree segment ids from the wildcard shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_partial=true&_rsc_segments=L0%2CR1&_rsc_v=v1",
+    );
+    expect(buildPrefetchKey("v1:123", target)).toBe(
+      "v1:123\0/products?page=1&_rsc_partial=true&_rsc_v=v1",
+    );
   });
 
-  it("buildSourceKey embeds rango state and source href (source-scoped shape)", () => {
-    const target = new URL("http://localhost/products?page=1");
+  it("buildSourceKey keeps source-tree segment ids in the source-scoped shape", () => {
+    const target = new URL(
+      "http://localhost/products?page=1&_rsc_segments=L0%2CR1",
+    );
     expect(buildSourceKey("v1:123", "http://localhost/home", target)).toBe(
-      "v1:123\0http://localhost/home\0/products?page=1",
+      "v1:123\0http://localhost/home\0/products?page=1&_rsc_segments=L0%2CR1",
     );
   });
 
@@ -134,21 +152,31 @@ describe("prefetch cache", () => {
     expect(hasPrefetch("http://localhost/\0/b")).toBe(false);
     expect(abortAllPrefetchesMock).toHaveBeenCalledTimes(1);
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledTimes(1);
   });
 
-  it("evicts oldest entry when at max capacity", () => {
+  it("can clear a receiving tab without rotating shared rango state", () => {
+    clearPrefetchCache(false);
+
+    expect(abortAllPrefetchesMock).toHaveBeenCalledOnce();
+    expect(invalidateRangoStateMock).not.toHaveBeenCalled();
+    expect(notifyPrefetchCacheInvalidatedMock).toHaveBeenCalledOnce();
+  });
+
+  it("evicts oldest entry at the default max capacity (100)", () => {
     const gen = currentGeneration();
 
-    // Fill cache to capacity (50)
-    for (let i = 0; i < 50; i++) {
+    // Fill cache to the DEFAULT capacity (100) — no initPrefetchCache call, so
+    // this also pins the module default (configurable size is covered below).
+    for (let i = 0; i < 100; i++) {
       storePrefetch(`key-${i}`, makeEntry(), gen);
     }
 
     // Adding one more should evict the oldest (key-0)
-    storePrefetch("key-50", makeEntry(), gen);
+    storePrefetch("key-100", makeEntry(), gen);
 
     expect(hasPrefetch("key-0")).toBe(false);
-    expect(hasPrefetch("key-50")).toBe(true);
+    expect(hasPrefetch("key-100")).toBe(true);
     expect(hasPrefetch("key-1")).toBe(true);
   });
 
@@ -208,6 +236,124 @@ describe("prefetch cache", () => {
       clearPrefetchCache();
 
       expect(consumeInflightPrefetch(key)).toBe(null);
+    });
+  });
+
+  describe("configurable max size (FIFO eviction)", () => {
+    afterEach(() => {
+      // clearPrefetchCache (beforeEach) clears stored entries but NOT config,
+      // so restore the module default size for any later test in this file.
+      initPrefetchCache(300_000, 100);
+    });
+
+    it("evicts the oldest entry once the configured size is reached", () => {
+      // Drive eviction at a small, explicit capacity rather than the default 100.
+      initPrefetchCache(300_000, 3);
+      const gen = currentGeneration();
+      const keys = ["k1", "k2", "k3", "k4"].map((k) => `s\0/${k}`);
+      for (const key of keys) storePrefetch(key, makeEntry(), gen);
+
+      // Capacity 3: storing the 4th evicts the oldest (k1); newest 3 remain.
+      expect(hasPrefetch(keys[0])).toBe(false);
+      expect(hasPrefetch(keys[1])).toBe(true);
+      expect(hasPrefetch(keys[2])).toBe(true);
+      expect(hasPrefetch(keys[3])).toBe(true);
+    });
+
+    it("ignores a sub-1 size and keeps the previous capacity", () => {
+      initPrefetchCache(300_000, 3);
+      initPrefetchCache(300_000, 0); // ignored: size stays 3, not 0
+      const gen = currentGeneration();
+      const keys = ["a", "b", "c", "d"].map((k) => `s\0/${k}`);
+      for (const key of keys) storePrefetch(key, makeEntry(), gen);
+
+      // Capacity stayed 3 (the 0 was ignored): a evicted, newest 3 remain.
+      // b and c surviving is the discriminator — a buggy size 0 evicts-then-sets
+      // on every store, leaving only d.
+      expect(hasPrefetch(keys[0])).toBe(false);
+      expect(hasPrefetch(keys[1])).toBe(true);
+      expect(hasPrefetch(keys[2])).toBe(true);
+      expect(hasPrefetch(keys[3])).toBe(true);
+    });
+  });
+
+  describe("respawnable entries", () => {
+    it("re-arms the slot in place when the entry carries respawn", () => {
+      const key = "s\0/products";
+      const gen = currentGeneration();
+      const replacement = makeEntry();
+      const original = makeEntry();
+      original.respawn = () => replacement;
+      storePrefetch(key, original, gen);
+
+      expect(consumePrefetch(key)).toBe(original);
+      // Slot re-armed with the respawned entry instead of deleted.
+      expect(hasPrefetch(key)).toBe(true);
+      expect(consumePrefetch(key)).toBe(replacement);
+      // The replacement had no respawn of its own: back to one-shot.
+      expect(hasPrefetch(key)).toBe(false);
+    });
+
+    it("expires a re-armed slot by the ORIGINAL fetch age, not the last adoption", () => {
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const key = "s\0/products";
+        const gen = currentGeneration();
+        const entry = makeEntry();
+        entry.respawn = () => {
+          const next = makeEntry();
+          next.respawn = entry.respawn;
+          return next;
+        };
+        storePrefetch(key, entry, gen);
+
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBe(entry); // re-arms at t=600
+
+        // TTL bounds data age: expired at t=1200 even though the slot was
+        // refreshed at t=600 — respawn must not extend staleness.
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBeNull();
+        expect(hasPrefetch(key)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+    });
+
+    it("releases buffered bytes via dispose on eviction paths", () => {
+      const gen = currentGeneration();
+
+      const clearDispose = vi.fn();
+      const cleared = makeEntry();
+      cleared.dispose = clearDispose;
+      storePrefetch("s\0/cleared", cleared, gen);
+      clearPrefetchCache();
+      expect(clearDispose).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const expiredDispose = vi.fn();
+        const expired = makeEntry();
+        expired.dispose = expiredDispose;
+        storePrefetch("s\0/expired", expired, currentGeneration());
+        vi.advanceTimersByTime(2_000);
+        expect(hasPrefetch("s\0/expired")).toBe(false);
+        expect(expiredDispose).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+
+      // Consumption is NOT an eviction: the adopter owns the entry.
+      const consumedDispose = vi.fn();
+      const consumed = makeEntry();
+      consumed.dispose = consumedDispose;
+      storePrefetch("s\0/consumed", consumed, currentGeneration());
+      expect(consumePrefetch("s\0/consumed")).toBe(consumed);
+      expect(consumedDispose).not.toHaveBeenCalled();
     });
   });
 });

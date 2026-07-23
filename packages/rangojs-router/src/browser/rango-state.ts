@@ -52,6 +52,11 @@ export function setRangoStateObserver(
   externalRotationObserver = observer;
 }
 
+/** Return the resolved cookie name used to namespace cross-tab messages. */
+export function getRangoStateCookieName(): string {
+  return cookieName;
+}
+
 function notifyExternalRotation(value: string): void {
   externalRotationObserver?.(value);
 }
@@ -177,6 +182,22 @@ export function invalidateRangoState(): void {
   mirror = mintValue();
   cookieBacked = false;
   writeCookie(cookieName, mirror);
+}
+
+/** Adopt the state carried by a same-origin cache-invalidation broadcast. */
+export function adoptRangoState(value: string): boolean {
+  const incoming = decodeStateValue(value);
+  if (!incoming || incoming.version !== currentVersion) return false;
+  const current = mirror ? decodeStateValue(mirror) : null;
+  if (
+    current?.version === incoming.version &&
+    current.timestamp >= incoming.timestamp
+  ) {
+    return false;
+  }
+  mirror = value;
+  cookieBacked = false;
+  return true;
 }
 
 function cleanupLegacyStorage(): void {

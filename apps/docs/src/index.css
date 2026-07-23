@@ -1,0 +1,65 @@
+@import "tailwindcss";
+@import "./styles/geist-theme.css";
+@import "./styles/home.css";
+@plugin "@tailwindcss/typography";
+
+:root {
+  /* UI text = Open Sans; code = Geist Mono. */
+  --font-ui-sans: "Open Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono:
+    "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+}
+
+@theme inline {
+  --font-sans: var(--font-ui-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Global base text size. Everything rem-based (Tailwind text-* utilities,
+   prose typography, spacing set in rem) scales from this one knob. */
+@layer base {
+  html {
+    font-size: 15px;
+  }
+}
+
+/* rehype-autolink-headings ("wrap") wraps heading text in an anchor; keep those
+   headings looking plain instead of underlined prose links. */
+.prose :where(h1, h2, h3, h4, h5, h6) a {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+}
+
+/* Shiki emits dual light/dark themes but defaults to the light palette (a white
+   code block). Switch to the dark palette under the theme's `.dark` class. */
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+  text-decoration: var(--shiki-dark-text-decoration) !important;
+}
+
+/* Inline code as a subtle chip. Tailwind Typography otherwise renders it plain
+   and wraps it in literal backticks. Fenced code (pre/shiki) is excluded. */
+.prose :not(pre) > code {
+  border: 1px solid var(--ds-gray-alpha-400);
+  border-radius: 0.3rem;
+  background-color: var(--ds-gray-alpha-200);
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: "";
+}
+
+/* Body paragraph line-height: 26px (Tailwind Typography defaults to 1.75 = 28px
+   at the 16px prose base). */
+.prose p {
+  line-height: 26px;
+}

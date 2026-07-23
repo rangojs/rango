@@ -1,12 +1,19 @@
 ---
 name: intercept
-description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router
+description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router. Use when opening a route as a modal/overlay on top of the current page while keeping the URL shareable, or asking "how do I show this page in a modal".
 argument-hint: [@slot-name] [route-to-intercept]
 ---
 
 # Intercept Routes
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
+
+## Not this skill if…
+
+- You want a slot that ALWAYS renders alongside the page (sidebar, multi-column
+  layout) — that is a permanent `parallel()` slot: see `/parallel`.
+- You want the same component regardless of soft vs hard navigation —
+  intercepts only swap on soft navigation; see `/parallel`.
 
 ## Basic Intercept
 
@@ -23,7 +30,7 @@ function ShopLayout() {
   );
 }
 
-export const urlpatterns = urls(({ path, layout, intercept, loader }) => [
+export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) => [
   layout(<ShopLayout />, () => [
     // Intercept product detail - shows modal during soft navigation
     intercept(
@@ -142,18 +149,41 @@ layout(ProductLayout, () => [
 ]);
 ```
 
-## Conditional Intercept with when()
+## Conditional Intercept with the `when` config
 
-Only intercept based on navigation context:
+Only intercept based on navigation context. `when` is the 4th argument
+(an `InterceptConfig` object); the other use-items go in the 5th-argument
+callback.
 
 ```typescript
 intercept(
   "@modal",
   "product",
   <ProductModal />,
+  // Only intercept when coming from a different section
+  { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
   () => [
-    // Only intercept when coming from a different section
-    when(({ from }) => !from.pathname.startsWith("/shop/product/")),
+    loader(ProductLoader),
+  ]
+)
+```
+
+`when` is a match-time selector receiving `{ from, to, params, segments, ... }`.
+Pass an array of predicates for AND logic (all must return true). Omit `when`
+entirely and the intercept always activates.
+
+```typescript
+intercept(
+  "@modal",
+  "product",
+  <ProductModal />,
+  {
+    when: [
+      ({ from }) => from.pathname.startsWith("/shop"),
+      ({ params }) => params.slug !== "featured",
+    ],
+  },
+  () => [
     loader(ProductLoader),
   ]
 )
@@ -242,10 +272,13 @@ layout(ShopLayout, () => [
   ]),
 
   // This intercept is also pre-rendered at build time
-  intercept("@modal", ".detail", <ProductModal />, () => [
-    when(({ from }) => from.pathname.startsWith("/shop")),
-    loader(ProductLoader),
-  ]),
+  intercept(
+    "@modal",
+    ".detail",
+    <ProductModal />,
+    { when: ({ from }) => from.pathname.startsWith("/shop") },
+    () => [loader(ProductLoader)],
+  ),
 ])
 ```
 
@@ -253,8 +286,8 @@ Build-time behavior:
 
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
-- `when()` conditions are skipped at build time (all intercepts pre-rendered unconditionally)
-- `when()` is still evaluated at runtime by the intercept-resolution middleware
+- `when` config conditions are skipped at build time (all intercepts pre-rendered unconditionally)
+- `when` is still evaluated at runtime by the intercept-resolution middleware
 
 Runtime behavior:
 
@@ -305,7 +338,6 @@ export const shopPatterns = urls(({
   intercept,
   loader,
   loading,
-  when,
 }) => [
   layout(<ShopLayout />, () => [
     parallel({
@@ -317,8 +349,8 @@ export const shopPatterns = urls(({
       "@modal",
       "product",  // Route name (without prefix)
       <ProductModalContent />,
+      { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
       () => [
-        when(({ from }) => !from.pathname.startsWith("/shop/product/")),
         layout(<ModalWrapper />),
         loading(<ProductModalSkeleton />),
         loader(ProductLoader, () => [cache()]),
@@ -338,7 +370,7 @@ export const shopPatterns = urls(({
 
 ## Handler-attached `.use`
 
-Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route`/`when` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome.
+Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`.)
 
 ```typescript
 const QuickViewModal: Handler = async (ctx) => {

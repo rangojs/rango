@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   resolveThemeConfig,
+  warnInvalidTheme,
   THEME_DEFAULTS,
   THEME_COOKIE,
 } from "../constants.js";
@@ -67,6 +68,40 @@ describe("Theme Configuration", () => {
         dark: "dark-mode",
       });
     });
+
+    // G1: with system detection disabled, "system" is not a resolvable theme,
+    // so resolveThemeConfig must NOT keep defaultTheme:"system" (which would
+    // apply a bogus class="system" / colorScheme="system" on <html>).
+    it("coerces defaultTheme away from 'system' when enableSystem is false", () => {
+      const resolved = resolveThemeConfig({ enableSystem: false });
+      expect(resolved.enableSystem).toBe(false);
+      expect(resolved.defaultTheme).not.toBe("system");
+      expect(resolved.themes).toContain(resolved.defaultTheme);
+      expect(resolved.defaultTheme).toBe(resolved.themes[0]);
+    });
+
+    it("downgrades an explicit defaultTheme:'system' to themes[0] when enableSystem is false", () => {
+      const resolved = resolveThemeConfig({
+        enableSystem: false,
+        defaultTheme: "system",
+        themes: ["sepia", "midnight"],
+      });
+      expect(resolved.defaultTheme).toBe("sepia");
+    });
+
+    it("keeps defaultTheme:'system' when enableSystem is true (default)", () => {
+      const resolved = resolveThemeConfig({});
+      expect(resolved.enableSystem).toBe(true);
+      expect(resolved.defaultTheme).toBe("system");
+    });
+
+    it("keeps an explicit concrete defaultTheme even when enableSystem is false", () => {
+      const resolved = resolveThemeConfig({
+        enableSystem: false,
+        defaultTheme: "dark",
+      });
+      expect(resolved.defaultTheme).toBe("dark");
+    });
   });
 
   describe("THEME_COOKIE", () => {
@@ -74,6 +109,39 @@ describe("Theme Configuration", () => {
       expect(THEME_COOKIE.maxAge).toBe(60 * 60 * 24 * 365);
       expect(THEME_COOKIE.path).toBe("/");
       expect(THEME_COOKIE.sameSite).toBe("lax");
+    });
+  });
+
+  // The valid-values list in the warning must mirror isValidTheme: advertising
+  // "system" when enableSystem is false would name a value the guard rejects.
+  describe("warnInvalidTheme valid-values list", () => {
+    it("omits 'system' when enableSystem is false", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warnInvalidTheme("bogus", {
+          themes: ["light", "dark"],
+          enableSystem: false,
+        });
+        const msg = spy.mock.calls[0]?.[0] as string;
+        expect(msg).toContain("Valid values: light, dark");
+        expect(msg).not.toContain("system");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("includes 'system' when enableSystem is true", () => {
+      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        warnInvalidTheme("bogus", {
+          themes: ["light", "dark"],
+          enableSystem: true,
+        });
+        const msg = spy.mock.calls[0]?.[0] as string;
+        expect(msg).toContain("Valid values: system, light, dark");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });
@@ -136,6 +204,121 @@ describe("theme cookie decode resilience", () => {
   });
 });
 
+// P3: the inline FOUC boot script reads a stored value and applies it before
+// paint. A stored "system" with enableSystem=false (an old cookie/localStorage,
+// or a value pushed cross-tab) must fall back to defaultTheme — otherwise the
+// boot script writes a bogus class="system" / colorScheme="system" on <html>,
+// the same value resolveThemeConfig coerces away for the default.
+describe("theme boot script validity (enableSystem:false)", () => {
+  function bootWithStored(stored: string): {
+    classes: string[];
+    colorScheme: string | undefined;
+  } {
+    const config: ResolvedThemeConfig = {
+      defaultTheme: "light",
+      themes: ["light", "dark"],
+      attribute: "class",
+      storageKey: "theme",
+      enableSystem: false,
+      enableColorScheme: true,
+      value: { light: "light", dark: "dark" },
+    };
+    const script = generateThemeScript(config);
+
+    const classes: string[] = [];
+    const style: { colorScheme?: string } = {};
+    const mockEl = {
+      setAttribute: () => {},
+      classList: {
+        remove: (c: string) => {
+          const i = classes.indexOf(c);
+          if (i !== -1) classes.splice(i, 1);
+        },
+        add: (c: string) => {
+          classes.push(c);
+        },
+      },
+      style,
+    };
+
+    const fn = new Function("document", "window", "localStorage", script);
+    fn(
+      { cookie: `theme=${stored}`, documentElement: mockEl },
+      { matchMedia: undefined },
+      { getItem: () => null },
+    );
+    return { classes, colorScheme: style.colorScheme };
+  }
+
+  it("coerces a stored 'system' to defaultTheme when enableSystem is false", () => {
+    const { classes, colorScheme } = bootWithStored("system");
+    // Must apply the default ("light"), never the bogus "system".
+    expect(classes).toContain("light");
+    expect(classes).not.toContain("system");
+    expect(colorScheme).not.toBe("system");
+  });
+
+  it("applies a valid stored concrete theme as-is", () => {
+    const { classes } = bootWithStored("dark");
+    expect(classes).toContain("dark");
+  });
+});
+
+// G5: MetaTags auto-injects this FOUC script and ThemeScript is a public
+// component for the same job. A consumer rendering both runs the IIFE twice.
+// The script must guard the matchMedia('change') listener so a second run does
+// not register a second, never-removed listener (a leak).
+describe("theme script matchMedia listener idempotency", () => {
+  function runScriptTwice(storageKey: string): number {
+    const config: ResolvedThemeConfig = {
+      defaultTheme: "system",
+      themes: ["light", "dark"],
+      attribute: "class",
+      storageKey,
+      enableSystem: true,
+      enableColorScheme: true,
+      value: { light: "light", dark: "dark" },
+    };
+    const script = generateThemeScript(config);
+
+    let listeners = 0;
+    const mql = {
+      matches: false,
+      addEventListener: () => {
+        listeners++;
+      },
+    };
+    // A single shared window so the guard flag persists across both runs,
+    // mirroring two <script> tags executing in one document.
+    const win: Record<string, unknown> = { matchMedia: () => mql };
+    const doc = {
+      cookie: "",
+      documentElement: {
+        classList: { remove: () => {}, add: () => {} },
+        setAttribute: () => {},
+        style: {},
+      },
+    };
+    const ls = { getItem: () => null };
+
+    const fn = new Function("document", "window", "localStorage", script);
+    fn(doc, win, ls);
+    fn(doc, win, ls);
+    return listeners;
+  }
+
+  it("registers the matchMedia change listener only ONCE across two injections", () => {
+    expect(runScriptTwice("theme")).toBe(1);
+  });
+
+  it("isolates the guard flag per storageKey", () => {
+    // Two independent theme configs (different storageKey) must each register
+    // their own listener; the guard must not cross-suppress them.
+    expect(runScriptTwice("theme-a")).toBe(1);
+    expect(runScriptTwice("theme-b")).toBe(1);
+  });
+});
+
 describe("Theme Script", () => {
   describe("generateThemeScript", () => {
     it("should generate a minified script", () => {
@@ -177,6 +360,27 @@ describe("Theme Script", () => {
       const script = generateThemeScript(config);
 
       expect(script.includes('"data-theme"')).toBe(true);
+    });
+
+    it("escapes </script> in config values so they cannot close the inline script tag", () => {
+      const config: ResolvedThemeConfig = {
+        defaultTheme: "light",
+        // A storageKey carrying a script-close sequence must not break out of the
+        // <script> the FOUC init is injected into via dangerouslySetInnerHTML.
+        storageKey: "theme</script>",
+        themes: ["light", "dark"],
+        attribute: "class",
+        enableSystem: true,
+        enableColorScheme: true,
+        value: { light: "light", dark: "dark" },
+      };
+
+      const script = generateThemeScript(config);
+
+      // The raw close sequence must not appear (it is <-escaped); the value
+      // is still present in escaped form so the script keeps working.
+      expect(script.includes("</script>")).toBe(false);
+      expect(script.includes("\\u003c/script\\u003e")).toBe(true);
     });
   });
 });

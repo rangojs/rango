@@ -4,12 +4,17 @@ export const NamedRoutes = {
   "timeout.fastRender": "/timeout/fast-render",
   "timeout.fastResponse": "/timeout/fast-response",
   "timeout.slowAction": "/timeout/slow-action",
+  "timeout.slowHtmlSetup": "/timeout/slow-html-setup",
   "timeout.slowRender": "/timeout/slow-render",
   "timeout.slowResponse": "/timeout/slow-response",
 } as const;
 
+// Aliased so the augmentation below does not pay a homomorphic mapped-type
+// instantiation per route; `as const` already makes the members readonly.
+type NamedRoutesShape = typeof NamedRoutes;
+
 declare global {
   namespace Rango {
-    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
+    interface GeneratedRouteMap extends NamedRoutesShape {}
   }
 }

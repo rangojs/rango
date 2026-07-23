@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  parsePattern,
+  compileMiddlewarePattern as parsePattern,
   extractParams,
   matchMiddleware,
   executeMiddleware,
@@ -19,7 +19,62 @@ import {
   serializeCookieValue as serializeCookie,
 } from "../server/request-context.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
+import { resolveTracing } from "./tracing.js";
+import {
+  createOTelTracing,
+  type OTelActiveSpanTracer,
+  type OTelSpan,
+} from "./telemetry-otel.js";
 import type { MetricsStore } from "../server/context.js";
+
+function recordingTracing() {
+  const spans: string[] = [];
+  return {
+    spans,
+    tracing: resolveTracing({
+      runner: (name, fn) => {
+        spans.push(name);
+        return fn({ setAttribute() {} });
+      },
+    }),
+  };
+}
+
+/**
+ * A tracing config built on the real OTel adapter (createOTelTracing), whose
+ * runner routes through runThenSettle and thus applies the SAME error-marking
+ * logic production uses: a settle-error sets ERROR status on the span. Records
+ * each span's name + status so a test can assert whether a phase was marked
+ * ERROR. Distinct from recordingTracing (name-only, never settles status).
+ */
+function statusRecordingTracing() {
+  const spans: Array<{
+    name: string;
+    status?: { code: number; message?: string };
+  }> = [];
+  const tracer: OTelActiveSpanTracer = {
+    startActiveSpan<T>(name: string, fn: (span: OTelSpan) => T): T {
+      const record: {
+        name: string;
+        status?: { code: number; message?: string };
+      } = { name };
+      spans.push(record);
+      const handle: OTelSpan = {
+        setAttribute() {
+          return handle;
+        },
+        setStatus(status) {
+          record.status = status;
+          return handle;
+        },
+        recordException() {},
+        end() {},
+      };
+      return fn(handle);
+    },
+  };
+  return { spans, tracing: resolveTracing(createOTelTracing(tracer)) };
+}
 
 function createMetrics(): MetricsStore {
   return { enabled: true, requestStart: performance.now(), metrics: [] };
@@ -37,12 +92,34 @@ function runWithMetrics<T>(metrics: MetricsStore, fn: () => T): T {
 }
 
 describe("middleware", () => {
-  describe("parsePattern", () => {
+  describe("compileMiddlewarePattern", () => {
     it("should match all routes with *", () => {
       const { regex } = parsePattern("*");
       expect(regex.test("/")).toBe(true);
       expect(regex.test("/foo")).toBe(true);
       expect(regex.test("/foo/bar/baz")).toBe(true);
+    });
+
+    // Review F4: a named catch-all in a middleware pattern must expose the param
+    // and respect one-or-more, not collapse to the bare-`*` optional subtree.
+    it("compiles a one-or-more catch-all :name+ with a captured name", () => {
+      const { regex, paramNames } = parsePattern("/docs/:rest+");
+      expect(paramNames).toEqual(["rest"]);
+      // one-or-more: must NOT match the bare prefix
+      expect(regex.test("/docs")).toBe(false);
+      expect(regex.test("/docs/a/b")).toBe(true);
+      expect(extractParams("/docs/a/b", regex, paramNames)).toEqual({
+        rest: "a/b",
+      });
+    });
+
+    it("compiles a zero-or-more catch-all :name* with a captured name", () => {
+      const { regex, paramNames } = parsePattern("/tenant/:path*");
+      expect(paramNames).toEqual(["path"]);
+      expect(regex.test("/tenant")).toBe(true);
+      expect(extractParams("/tenant/a/b", regex, paramNames)).toEqual({
+        path: "a/b",
+      });
     });
 
     it("should match exact path", () => {
@@ -60,6 +137,38 @@ describe("middleware", () => {
       expect(regex.test("/admin/users")).toBe(true);
       expect(regex.test("/admin/users/123")).toBe(true);
       expect(regex.test("/administrator")).toBe(false);
+    });
+
+    it("should treat a wildcard pattern without a leading slash like a /-prefixed one", () => {
+      // The route segment parser only matches /-prefixed segments. A middleware
+      // pattern without a leading slash must still scope to its subtree (parity
+      // with the pre-unification parser, which split on "/" and ignored the
+      // leading slash) — NOT explode to every path.
+      const { regex } = parsePattern("admin/*");
+      expect(regex.test("/admin")).toBe(true);
+      expect(regex.test("/admin/users")).toBe(true);
+      // Must NOT match unrelated paths (the scope-explosion regression).
+      expect(regex.test("/other")).toBe(false);
+      expect(regex.test("/")).toBe(false);
+    });
+
+    it("should match a static pattern without a leading slash", () => {
+      // "admin" must scope to /admin, not collapse to /^/?$/ (only "/").
+      const { regex } = parsePattern("admin");
+      expect(regex.test("/admin")).toBe(true);
+      expect(regex.test("/admin/")).toBe(true);
+      expect(regex.test("/")).toBe(false);
+      expect(regex.test("/other")).toBe(false);
+    });
+
+    it("should match the zero-intermediate case for a mid-path wildcard", () => {
+      // A non-trailing `*` is optional (zero-or-more intermediate segments),
+      // mirroring the pre-unification parser: `/a/<star>/b` matches `/a/b` too.
+      const { regex } = parsePattern("/a/*/b");
+      expect(regex.test("/a/b")).toBe(true);
+      expect(regex.test("/a/x/b")).toBe(true);
+      expect(regex.test("/a/x/y/b")).toBe(true);
+      expect(regex.test("/a")).toBe(false);
     });
 
     it("should extract params from pattern", () => {
@@ -83,6 +192,59 @@ describe("middleware", () => {
       expect(paramNames).toEqual(["version"]);
       expect(regex.test("/api/v1/users")).toBe(true);
       expect(regex.test("/api/v2/users/123")).toBe(true);
+    });
+
+    it("should enforce a constrained param scope", () => {
+      // Pre-unification, the param was literally named "locale(en|gb)" and the
+      // constraint was never enforced. Now the alternation is baked in.
+      const { regex, paramNames } = parsePattern("/:locale(en|gb)/*");
+      expect(paramNames).toEqual(["locale"]);
+      expect(regex.test("/en/dashboard")).toBe(true);
+      expect(regex.test("/gb/dashboard")).toBe(true);
+      expect(regex.test("/de/dashboard")).toBe(false);
+      expect(regex.test("/en")).toBe(true);
+      // Constrained param extracts cleanly (no parenthesized name).
+      const params = extractParams("/en/dashboard", regex, paramNames);
+      expect(params).toEqual({ locale: "en" });
+    });
+
+    it("should enforce a constrained param without wildcard", () => {
+      const { regex, paramNames } = parsePattern("/:locale(en|gb)");
+      expect(paramNames).toEqual(["locale"]);
+      expect(regex.test("/en")).toBe(true);
+      expect(regex.test("/en/")).toBe(true);
+      expect(regex.test("/de")).toBe(false);
+      expect(regex.test("/en/extra")).toBe(false);
+    });
+
+    it("should treat a constraint value with regex metachars literally", () => {
+      const { regex } = parsePattern("/:env(prod.v1|dev.v1)/*");
+      expect(regex.test("/prod.v1/x")).toBe(true);
+      expect(regex.test("/dev.v1/x")).toBe(true);
+      // The "." is escaped, so it does not act as a wildcard char.
+      expect(regex.test("/prodXv1/x")).toBe(false);
+    });
+
+    it("should support an optional param scope", () => {
+      const { regex, paramNames } = parsePattern("/:locale?/blog");
+      expect(paramNames).toEqual(["locale"]);
+      expect(regex.test("/blog")).toBe(true);
+      expect(regex.test("/en/blog")).toBe(true);
+      expect(regex.test("/en/gb/blog")).toBe(false);
+    });
+
+    it("should support an optional + constrained param scope", () => {
+      const { regex } = parsePattern("/:locale(en|gb)?/blog");
+      expect(regex.test("/blog")).toBe(true);
+      expect(regex.test("/en/blog")).toBe(true);
+      expect(regex.test("/de/blog")).toBe(false);
+    });
+
+    it("should support a suffix param scope", () => {
+      const { regex, paramNames } = parsePattern("/files/:name.html");
+      expect(paramNames).toEqual(["name"]);
+      expect(regex.test("/files/report.html")).toBe(true);
+      expect(regex.test("/files/report")).toBe(false);
     });
   });
 
@@ -1144,6 +1306,81 @@ describe("middleware", () => {
         ).resolves.toBe(upgrade);
       });
     });
+
+    // A thrown Response is documented short-circuit control flow (auth gates,
+    // redirects), not an error. The rango.middleware span must therefore settle
+    // as success, never STATUS_ERROR — otherwise every auth redirect inflates
+    // trace error rates. The catch that absorbs the thrown Response lives INSIDE
+    // observePhase so the tracing runner never sees the throw.
+    it("does not mark the rango.middleware span as ERROR when middleware throws a Response (short-circuit)", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/protected");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+
+      const guard: MiddlewareFn<unknown> = async () => {
+        throw new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
+      };
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(guard)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      // The chain still resolves to the 302 (control flow preserved).
+      expect(result.status).toBe(302);
+      expect(result.headers.get("Location")).toBe("/login");
+
+      // And the span is NOT marked ERROR (code 2).
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toBeUndefined();
+    });
+
+    it("still marks the rango.middleware span as ERROR when middleware throws a real Error", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/boom");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+
+      const exploder: MiddlewareFn<unknown> = async () => {
+        throw new Error("kaboom");
+      };
+
+      await expect(
+        runWithRequestContext(reqCtx, () =>
+          executeMiddleware(
+            [createMockEntry(exploder)],
+            request,
+            {},
+            {},
+            async () => new Response("OK"),
+          ),
+        ),
+      ).rejects.toThrow("kaboom");
+
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toEqual({ code: 2, message: "kaboom" });
+    });
   });
 
   describe("collectRouteMiddleware", () => {
@@ -1335,6 +1572,70 @@ describe("middleware", () => {
       expect(result).toBeInstanceOf(Response);
       expect(result!.status).toBe(403);
       expect(await result!.text()).toBe("Blocked");
+    });
+
+    it("opens a rango.middleware span per intercept middleware when tracing is on", async () => {
+      // Intercept middleware previously ran un-instrumented (no span). It now
+      // emits rango.middleware (span-only, metric:false) like the main chain, so
+      // an intercept's middleware shows up in the trace waterfall under the
+      // render phase it runs inside.
+      const { spans, tracing } = recordingTracing();
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+      const stubResponse = reqCtx.res;
+
+      const middleware: MiddlewareFn<unknown> = async (_ctx, next) => {
+        await next();
+      };
+
+      await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
+      );
+
+      expect(spans).toContain("rango.middleware");
+    });
+
+    it("does not mark the intercept rango.middleware span as ERROR when it throws a Response", async () => {
+      const { spans, tracing } = statusRecordingTracing();
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      reqCtx._tracing = tracing;
+      const stubResponse = reqCtx.res;
+
+      const guard: MiddlewareFn<unknown> = async () => {
+        throw new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
+      };
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware([guard], request, {}, {}, {}, stubResponse),
+      );
+
+      expect(result).toBeInstanceOf(Response);
+      expect(result!.status).toBe(302);
+      const mwSpan = spans.find((s) => s.name === "rango.middleware");
+      expect(mwSpan).toBeDefined();
+      expect(mwSpan!.status).toBeUndefined();
     });
 
     it("should apply cookies to short-circuit Response", async () => {

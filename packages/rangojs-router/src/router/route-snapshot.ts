@@ -48,6 +48,15 @@ export interface RouteSnapshot<TEnv = any> {
   isPassthrough: boolean;
   /** Response type for non-RSC routes (e.g. "application/json") */
   responseType?: string;
+  /**
+   * The isSSR flag the manifest was resolved with. Recorded so consumers can
+   * decide whether the snapshot is reusable: a snapshot resolved with isSSR
+   * differs (loading({ ssr: false }) entries) and is cached under a different
+   * manifest partition, so the full (document) path only reuses an isSSR:true
+   * snapshot and the partial path only reuses a non-isSSR one. Undefined on
+   * inline snapshots (redirect / not-found) that are never reused.
+   */
+  isSSR?: boolean;
 }
 
 export type ResolveRouteResult<TEnv = any> =
@@ -56,7 +65,9 @@ export type ResolveRouteResult<TEnv = any> =
   | null;
 
 export interface ResolveRouteDeps<TEnv = any> {
-  findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
+  findMatch: (
+    pathname: string,
+  ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   metricsStore?: MetricsStore;
   isSSR?: boolean;
   /**
@@ -105,7 +116,7 @@ export async function resolveRoute<TEnv = any>(
 
   const routeMatchStart =
     metricsStore && !skipRouteMatchMetric ? performance.now() : 0;
-  const matched = deps.findMatch(pathname);
+  const matched = await deps.findMatch(pathname);
   if (metricsStore && !skipRouteMatchMetric) {
     metricsStore.metrics.push({
       label: "route-matching",
@@ -175,6 +186,7 @@ export async function resolveRoute<TEnv = any>(
       cacheScope,
       isPassthrough,
       responseType,
+      isSSR,
     },
   };
 }

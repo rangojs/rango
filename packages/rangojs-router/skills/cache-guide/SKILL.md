@@ -1,6 +1,6 @@
 ---
 name: cache-guide
-description: When to use cache() DSL vs "use cache" directive — key differences and decision guide
+description: When to use cache() DSL vs "use cache" directive — key differences and decision guide. Use when unsure which caching mechanism fits a given problem, comparing route/segment caching, function-level caching, and document-level caching, or asking "which cache API should I use".
 argument-hint:
 ---
 
@@ -20,7 +20,9 @@ caching:
 1. **Stored-value freshness** — _is a cached value still good?_
    → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
    Entries expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
-   `cacheTag(...tags)`). Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
+   `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during a
+   request render outside `"use cache"` it tags the document/shell artifact).
+   Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
    index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
    read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking).
    Both hard-purge; the difference is awaitability, not stale-serving.
@@ -129,8 +131,10 @@ recompute for a merely-aging entry.
   layer.
 - **Client forward/back** is SWR after a mutation — see "Correctness &
   invalidation" → Client cache.
-- **Edge / document layer** uses the HTTP `stale-while-revalidate` directive; see
-  `/document-cache`.
+- **Store-backed document layer** uses the HTTP `stale-while-revalidate`
+  directive as policy for `createDocumentCacheMiddleware`; see
+  `/document-cache`. A platform CDN may independently consume the same header
+  and bypass the function on hits; see `/deployment-caching`.
 
 SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
 has no stale entry to serve (see version-segmented store keys above).
@@ -424,7 +428,7 @@ subsequent siblings. Everything below the cache boundary is cached as one unit:
 
 ```typescript
 path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
-  cache("long"),
+  cache({ ttl: 300 }),
   layout(DashboardSidebar, () => [
     parallel("@stats", StatsPanel),
     parallel("@activity", ActivityFeed),
@@ -444,7 +448,7 @@ boundary are not cached and always re-render:
 layout(RootLayout, () => [
   // RootLayout is NOT cached — runs every request
   path("/products/:slug", ProductPage, { name: "product" }, () => [
-    cache("long"),
+    cache({ ttl: 300 }),
     layout(ProductSidebar),
     parallel("@reviews", ReviewsPanel),
     parallel("@related", RelatedProducts),
@@ -483,4 +487,6 @@ overrides — see `/loader` for the full reference.
 
 - `/caching` — cache() DSL setup, stores, nested boundaries
 - `/use-cache` — "use cache" directive details, profiles, transforms, guards
-- `/document-cache` — Edge caching with Cache-Control headers (different layer)
+- `/document-cache` — store-backed complete-response middleware
+- `/deployment-caching` — in-function versus external CDN cache boundaries
+- `/ppr` — PPR shell caching: cached HTML shell + live loader holes (different layer)

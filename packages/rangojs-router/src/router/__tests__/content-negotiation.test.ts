@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseAcceptTypes,
   pickNegotiateVariant,
+  rekeyParamsForVariant,
   RSC_RESPONSE_TYPE,
 } from "../content-negotiation";
 
@@ -137,6 +138,21 @@ describe("pickNegotiateVariant", () => {
     expect(result).toBe(rscCandidate);
   });
 
+  it("selects RSC for explicit text/x-component regardless of definition order", () => {
+    // The RSC candidate registers under the wire-format MIME too; without it,
+    // an explicit flight request fell through to the definition-order
+    // fallback and a JSON-first route answered with JSON.
+    const accept = parseAcceptTypes("text/x-component");
+    const result = pickNegotiateVariant(accept, [jsonCandidate, rscCandidate]);
+    expect(result).toBe(rscCandidate);
+  });
+
+  it("wire-format entry does not shadow an exact match for another variant", () => {
+    const accept = parseAcceptTypes("application/json");
+    const result = pickNegotiateVariant(accept, [rscCandidate, jsonCandidate]);
+    expect(result).toBe(jsonCandidate);
+  });
+
   it("prefers higher q-value when multiple types match", () => {
     const accept = parseAcceptTypes("application/json;q=0.5, text/html;q=0.9");
     const result = pickNegotiateVariant(accept, [jsonCandidate, htmlCandidate]);
@@ -147,5 +163,62 @@ describe("pickNegotiateVariant", () => {
     const accept = parseAcceptTypes("");
     const result = pickNegotiateVariant(accept, [jsonCandidate]);
     expect(result).toBe(jsonCandidate);
+  });
+
+  it("preserves the variant's pa on the picked candidate", () => {
+    type Candidate = { routeKey: string; responseType: string; pa?: string[] };
+    const jsonWithPa: Candidate = {
+      routeKey: "widgets.json",
+      responseType: "json",
+      pa: ["file"],
+    };
+    const candidates: Candidate[] = [
+      { routeKey: "widgets.view", responseType: RSC_RESPONSE_TYPE },
+      jsonWithPa,
+    ];
+    const accept = parseAcceptTypes("application/json");
+    const result = pickNegotiateVariant(accept, candidates);
+    expect(result).toBe(jsonWithPa);
+    expect(result.pa).toEqual(["file"]);
+  });
+});
+
+describe("rekeyParamsForVariant", () => {
+  it("re-keys params under the variant's param names", () => {
+    // Trie extracted under the primary's pa (:id); the winning json variant
+    // binds the same position under :file. Re-keying renames id -> file.
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["file"]);
+    expect(params).toEqual({ file: "42" });
+  });
+
+  it("re-keys multiple positional params in order", () => {
+    const params: Record<string, string> = { a: "1", b: "2" };
+    rekeyParamsForVariant(params, ["x", "y"]);
+    expect(params).toEqual({ x: "1", y: "2" });
+  });
+
+  it("leaves the wildcard key untouched while re-keying named params", () => {
+    const params: Record<string, string> = { id: "42", "*": "a/b" };
+    rekeyParamsForVariant(params, ["file"]);
+    expect(params).toEqual({ file: "42", "*": "a/b" });
+  });
+
+  it("is a no-op when names already match (common case)", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["id"]);
+    expect(params).toEqual({ id: "42" });
+  });
+
+  it("is a no-op when the variant has no pa", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, undefined);
+    expect(params).toEqual({ id: "42" });
+  });
+
+  it("does not corrupt params when positional counts diverge", () => {
+    const params: Record<string, string> = { id: "42" };
+    rekeyParamsForVariant(params, ["a", "b"]);
+    expect(params).toEqual({ id: "42" });
   });
 });

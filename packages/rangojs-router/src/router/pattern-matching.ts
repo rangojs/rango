@@ -7,66 +7,15 @@
 import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
 import { debugLog, isRouterDebugEnabled } from "./logging.js";
+import { escapeRegExp } from "../regex-escape.js";
 import { safeDecodeURIComponent } from "./url-params.js";
+import { parsePattern, type ParsedSegment } from "./parse-pattern.js";
 
-/**
- * Parsed segment info
- */
-export interface ParsedSegment {
-  type: "static" | "param" | "wildcard";
-  value: string; // static text, param name, or "*"
-  optional: boolean;
-  constraint?: string[]; // enum values like ["en", "gb"]
-  suffix?: string; // literal text after param in same segment (e.g., ".html")
-}
-
-/**
- * Parse a route pattern into segments
- *
- * Supports:
- * - Static: /blog, /about
- * - Params: /:slug, /:id
- * - Optional: /:locale?, /:page?
- * - Constrained: /:locale(en|gb), /:type(post|page)
- * - Optional + Constrained: /:locale(en|gb)?
- * - Wildcard: /*
- */
-export function parsePattern(pattern: string): ParsedSegment[] {
-  const segments: ParsedSegment[] = [];
-  const segmentRegex =
-    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?([^/]*)|(\*)|([^/]+))/g;
-
-  let match;
-  while ((match = segmentRegex.exec(pattern)) !== null) {
-    const [
-      ,
-      ,
-      paramName,
-      ,
-      constraint,
-      optional,
-      suffix,
-      wildcard,
-      staticText,
-    ] = match;
-
-    if (wildcard) {
-      segments.push({ type: "wildcard", value: "*", optional: false });
-    } else if (paramName) {
-      segments.push({
-        type: "param",
-        value: paramName,
-        optional: optional === "?",
-        constraint: constraint ? constraint.split("|") : undefined,
-        suffix: suffix || undefined,
-      });
-    } else if (staticText) {
-      segments.push({ type: "static", value: staticText, optional: false });
-    }
-  }
-
-  return segments;
-}
+// `parsePattern`/`ParsedSegment` live in the dependency-free `parse-pattern.ts`
+// so the client reverse helper can import them without dragging this module's
+// server-only deps into the browser bundle. Re-exported here for existing
+// importers (build/route-trie, middleware, tests).
+export { parsePattern, type ParsedSegment };
 
 /**
  * Compiled pattern result containing regex, param metadata, and trailing slash info.
@@ -82,6 +31,14 @@ export interface CompiledPattern {
    * path's behavior (trie-matching.ts:validateAndBuild).
    */
   constraints?: Record<string, string[]>;
+  /**
+   * The pattern's catch-all param, if any (`*` for bare `/*`, the name for a
+   * named `:name+`/`:name*`). A zero-or-more catch-all (`oneOrMore: false`)
+   * whose optional group is absent binds "" rather than being omitted — so
+   * `/docs` matches `/docs/:slug*` with `slug === ""`. `oneOrMore` keeps the
+   * same polarity as `ParsedSegment.oneOrMore` and the trie's `w1`.
+   */
+  catchAll?: { name: string; oneOrMore: boolean };
 }
 
 // Module-level cache for compiled patterns. Route patterns are a finite set
@@ -142,16 +99,35 @@ export function compilePattern(pattern: string): CompiledPattern {
   const segments = parsePattern(normalizedPattern);
   const paramNames: string[] = [];
   let constraints: Record<string, string[]> | undefined;
+  let catchAll: { name: string; oneOrMore: boolean } | undefined;
 
   let regexPattern = "";
 
   for (const segment of segments) {
     if (segment.type === "wildcard") {
-      paramNames.push("*");
-      regexPattern += "/(.*)";
+      // Wildcards capture the remainder under `segment.value` ("*" for the bare
+      // form, the param name for a named catch-all).
+      paramNames.push(segment.value);
+      catchAll = { name: segment.value, oneOrMore: Boolean(segment.oneOrMore) };
+      if (segment.oneOrMore) {
+        // `:name+` — one-or-more, rejects the zero-segment (bare-prefix) case.
+        regexPattern += "/(.+)";
+      } else {
+        // Zero-or-more catch-all: named `:name*` OR the bare `/*` (both parse to
+        // `oneOrMore: false`). The whole `/segment` is optional so the bare
+        // prefix matches directly, aligning the regex fallback with the trie
+        // (which already matches the bare prefix binding "" — trie-matching.ts);
+        // buildParamsFromMatch binds "" when the optional group is absent.
+        //
+        // The bare `/*` previously used a required `/(.*)`, so `/files/*` failed
+        // to match `/files` and fell through to trailing-slash normalization,
+        // emitting a corrupt `/file` redirect instead of a match (issue #636,
+        // parity row C1). It is the same alignment #635 made for named `:name*`.
+        regexPattern += "(?:/(.*))?";
+      }
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
-      const suffixPattern = segment.suffix ? escapeRegex(segment.suffix) : "";
+      const suffixPattern = segment.suffix ? escapeRegExp(segment.suffix) : "";
       // Constrained params capture anything here; the allowed values are
       // checked post-decode in findMatch so URL-encoded constraint values
       // (e.g. `:lang(en GB)` via `/en%20GB`) still match.
@@ -169,7 +145,7 @@ export function compilePattern(pattern: string): CompiledPattern {
       }
     } else {
       // Static segment
-      regexPattern += `/${escapeRegex(segment.value)}`;
+      regexPattern += `/${escapeRegExp(segment.value)}`;
     }
   }
 
@@ -201,6 +177,7 @@ export function compilePattern(pattern: string): CompiledPattern {
     paramNames,
     hasTrailingSlash,
     ...(constraints ? { constraints } : {}),
+    ...(catchAll ? { catchAll } : {}),
   };
 }
 
@@ -230,28 +207,34 @@ function satisfiesConstraints(
 }
 
 /**
- * Escape special regex characters in a string
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
  * Build the named-params record from a regex match. Optional segments that
  * didn't capture leave the corresponding group `undefined`; we skip those
  * keys so `ctx.params.<name>` reads as `undefined` rather than `""`. This
  * keeps the runtime aligned with the `ExtractParams` type and matches the
  * trie matcher's contract (see `trie-matching.ts:validateAndBuild`).
+ *
+ * A zero-or-more catch-all (`compiled.catchAll`, `oneOrMore: false`) whose
+ * optional group didn't capture binds "" instead of being omitted, so `/docs`
+ * matches `/docs/:slug*` with `slug === ""`. Exported so the `renderRoute`
+ * testing harness (`matchLeaf`) shares this exact logic instead of forking it.
  */
-function buildParamsFromMatch(
+export function buildParamsFromMatch(
   match: RegExpExecArray,
   paramNames: string[],
+  catchAll?: { name: string; oneOrMore: boolean },
 ): Record<string, string> {
   const params: Record<string, string> = {};
   paramNames.forEach((name, index) => {
     const captured = match[index + 1];
     if (captured !== undefined) {
+      // A catch-all remainder decodes identically whether split-per-segment or
+      // whole-string (a literal `/` never lives inside a `%XX` escape), so a
+      // single decode is correct and cheapest.
       params[name] = safeDecodeURIComponent(captured);
+    } else if (catchAll && name === catchAll.name && !catchAll.oneOrMore) {
+      // A zero-or-more catch-all (`:name*` or the bare `/*`) whose optional
+      // group was absent binds "" rather than being omitted.
+      params[name] = "";
     }
   });
   return params;
@@ -273,32 +256,34 @@ function buildParamsFromMatch(
 export function extractStaticPrefix(pattern: string): string {
   if (!pattern || pattern === "/") return "";
 
-  const paramIndex = pattern.indexOf(":");
-  const wildcardIndex = pattern.indexOf("*");
+  // Walk segments and stop at the first that is a real param (`:name`) or a
+  // wildcard (`*`). A literal `:` or `*` not at a segment boundary (e.g. the
+  // `a:b` in `/a:b/c/:id`, or `tel:+1`) is a STATIC segment and must NOT
+  // terminate the prefix — `pattern.indexOf(":")` misread it as a param marker,
+  // returning "" and dropping the findMatch fast-skip optimization for that
+  // entry on every request. Classification mirrors parsePattern: a leading `:`
+  // marks a param, a leading `*` marks a wildcard.
+  const hasLeadingSlash = pattern.startsWith("/");
+  const body = hasLeadingSlash ? pattern.slice(1) : pattern;
+  const segments = body.split("/");
 
-  let cutIndex = -1;
-  if (paramIndex !== -1 && wildcardIndex !== -1) {
-    cutIndex = Math.min(paramIndex, wildcardIndex);
-  } else if (paramIndex !== -1) {
-    cutIndex = paramIndex;
-  } else if (wildcardIndex !== -1) {
-    cutIndex = wildcardIndex;
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (segment.startsWith(":") || segment.startsWith("*")) {
+      break;
+    }
+    staticSegments.push(segment);
   }
 
-  if (cutIndex === -1) {
-    return pattern;
-  }
+  // No leading static segment (first segment is a param/wildcard) -> no prefix.
+  if (staticSegments.length === 0) return "";
+  // Every segment was static (no param/wildcard) -> the whole pattern is the
+  // prefix. Preserve a trailing slash only when it existed in the input; a
+  // split of "/a/b" yields ["a","b"] (no empty tail) so a re-join is exact.
+  if (staticSegments.length === segments.length) return pattern;
 
-  if (cutIndex === 0) {
-    return "";
-  }
-
-  const lastSlash = pattern.lastIndexOf("/", cutIndex - 1);
-  if (lastSlash === -1 || lastSlash === 0) {
-    return "";
-  }
-
-  return pattern.slice(0, lastSlash);
+  const prefix = staticSegments.join("/");
+  return hasLeadingSlash ? "/" + prefix : prefix;
 }
 
 /**
@@ -458,7 +443,7 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const { regex, paramNames, hasTrailingSlash, constraints } =
+      const { regex, paramNames, hasTrailingSlash, constraints, catchAll } =
         getCompiledPattern(fullPattern);
 
       const trailingSlashMode: TrailingSlashMode | undefined =
@@ -473,7 +458,7 @@ export function findMatch<TEnv>(
 
       const match = regex.exec(pathname);
       if (match) {
-        const params = buildParamsFromMatch(match, paramNames);
+        const params = buildParamsFromMatch(match, paramNames, catchAll);
 
         if (!satisfiesConstraints(params, constraints)) {
           continue;
@@ -522,7 +507,7 @@ export function findMatch<TEnv>(
 
       const altMatch = regex.exec(alternatePathname);
       if (altMatch) {
-        const params = buildParamsFromMatch(altMatch, paramNames);
+        const params = buildParamsFromMatch(altMatch, paramNames, catchAll);
 
         if (!satisfiesConstraints(params, constraints)) {
           continue;

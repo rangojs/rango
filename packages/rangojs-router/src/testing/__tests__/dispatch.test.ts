@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { Mock } from "vitest";
 
 // createRouter's match path transitively imports @vitejs/plugin-rsc/rsc, whose
 // top-level body imports Vite virtual modules that do not resolve in plain
@@ -15,12 +16,15 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => ({
 
 import { dispatch } from "../dispatch.js";
 import { createRouter } from "../../router.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { urls } from "../../urls/urls-function.js";
 import { cookies } from "../../server/cookie-store.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { RouterError } from "../../errors.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
+import type { SegmentCacheStore } from "../../cache/types.js";
+import type { OnErrorCallback } from "../../types/error-types.js";
 
 function Home() {
   return null;
@@ -245,6 +249,75 @@ describe("dispatch", () => {
     expect(res.headers.get("X-Tag")).toBe("yes");
   });
 
+  // A1 makes `router.use("/:locale(en|gb)/*", mw)` a real consumer feature:
+  // constrained / optional / suffix middleware scopes. Exercise it end-to-end
+  // through dispatch (the public testing primitive that runs the full global
+  // middleware scope-matching path), not just the white-box compiler, so a
+  // consumer can pin "my scoped middleware runs only for these locales".
+  describe("constrained middleware scope (router.use)", () => {
+    function localeScopedRouter(onRun: (locale: string) => void) {
+      const localeMw: MiddlewareFn = async (ctx, next) => {
+        onRun(ctx.params.locale as string);
+        ctx.header("X-Locale-Mw", "ran");
+        return next();
+      };
+      return createRouter<{}>({})
+        .use("/:locale(en|gb)/*", localeMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/en/x", () => ({ ok: "en" }), { name: "en.x" }),
+            path.json("/gb/x", () => ({ ok: "gb" }), { name: "gb.x" }),
+            path.json("/de/x", () => ({ ok: "de" }), { name: "de.x" }),
+          ]),
+        ) as Parameters<typeof dispatch>[0];
+    }
+
+    it("runs the middleware for an in-constraint locale (/en) and exposes the param", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/en/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      // The constrained param is named "locale" (not "locale(en|gb)") and is
+      // extracted from the matched path.
+      expect(ran).toEqual(["en"]);
+    });
+
+    it("runs the middleware for the other in-constraint locale (/gb)", async () => {
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/gb/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBe("ran");
+      expect(ran).toEqual(["gb"]);
+    });
+
+    it("does NOT run the middleware for an out-of-constraint locale (/de)", async () => {
+      // The whole point of the constraint: /de is a real route but is outside
+      // the (en|gb) scope, so the middleware must not run. If constraints were
+      // not enforced (the pre-A1 bug, or a scope-explosion regression) the
+      // middleware would run here and this test would fail.
+      const ran: string[] = [];
+      const res = await dispatch(
+        localeScopedRouter((l) => ran.push(l)),
+        {
+          request: "/de/x",
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-Locale-Mw")).toBeNull();
+      expect(ran).toEqual([]);
+    });
+  });
+
   it("wires the router's cache store into the request context", async () => {
     // Without the store, registerCachedFunction bypasses BEFORE the request-scope
     // (NOCACHE) check, so the brand would be inert. dispatch must surface the
@@ -269,6 +342,550 @@ describe("dispatch", () => {
 
     const res = await dispatch(router, { request: "/api/probe" });
     expect((await res.json()).hasStore).toBe(true);
+  });
+
+  // I2: dispatch wires the production response-route cache path (resolved from
+  // the matched entry tree), so a cached path.json/path.text route hits/writes
+  // through dispatch the way it does in production — not a fresh run every call.
+  describe("cached response routes (cache() boundary)", () => {
+    // The cache WRITE is scheduled via ctx.waitUntil (a microtask without an
+    // executionContext); flush the queue so the second dispatch can observe it.
+    const flushWrites = () => new Promise((r) => setTimeout(r, 0));
+
+    it("serves a cached path.json route from the store (same body on a HIT)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached", () => ({ ts: Date.now() + Math.random() }), {
+              name: "cached.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body; a fresh re-run would carry
+      // a new ts. (Before the fix dispatch never touched the store -> different.)
+      expect(second).toEqual(first);
+    });
+
+    it("writes an entry into the store for a cached response route", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached2", () => ({ ok: true }), {
+              name: "cached2.json",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, { request: "/cached2" });
+      await flushWrites();
+
+      // Default key: response:{type}: + cacheKeyBase(host, path, searchParams).
+      const cached = await store.getResponse("response:json:localhost/cached2");
+      expect(cached).not.toBeNull();
+      expect(cached?.response.status).toBe(200);
+    });
+
+    it("does not cache a non-GET/HEAD method (POST miss, no store write)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-post",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.post" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, {
+          request: new Request("http://localhost/cached-post", {
+            method: "POST",
+          }),
+        })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, {
+          request: new Request("http://localhost/cached-post", {
+            method: "POST",
+          }),
+        })
+      ).json();
+
+      expect(second).not.toEqual(first);
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("does not store a response carrying Set-Cookie (live body still returned)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-cookie",
+              () => {
+                cookies().set("session", "tok", { path: "/" });
+                return { ok: true };
+              },
+              { name: "cached.cookie" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, { request: "/cached-cookie" });
+      await flushWrites();
+      expect(await res.json()).toEqual({ ok: true });
+      expect(
+        res.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
+      ).toBe(true);
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("does not serve a persisted entry that carries Set-Cookie", async () => {
+      // Memory store strips Set-Cookie on write; a custom store can still
+      // return poison. Serve-side must refuse the hit and re-run the handler.
+      let n = 0;
+      const store: SegmentCacheStore = {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        getResponse: async () => ({
+          response: new Response(JSON.stringify({ n: 99 }), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Set-Cookie": "session=leaked; Path=/",
+            },
+          }),
+          shouldRevalidate: false,
+        }),
+        putResponse: async () => {},
+      };
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached-poison", () => ({ n: ++n }), {
+              name: "cached.poison",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const res = await dispatch(router, { request: "/cached-poison" });
+      expect(await res.json()).toEqual({ n: 1 });
+      expect(res.headers.get("Set-Cookie")).toBeNull();
+    });
+
+    it("does not write the cache from a HEAD request", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json("/cached-head", () => ({ ok: true }), {
+              name: "cached.head",
+            }),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      await dispatch(router, {
+        request: new Request("http://localhost/cached-head", {
+          method: "HEAD",
+        }),
+      });
+      await flushWrites();
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("shares a cache key across reordered query params", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-qs",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.qs" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-qs?b=2&a=1" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-qs?a=1&b=2" })
+      ).json();
+      expect(second).toEqual(first);
+    });
+
+    it("excludes reserved _rsc* params from the default cache key", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600 }, () => [
+            path.json(
+              "/cached-rscparam",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.rscparam" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-rscparam?_rsc=1" })
+      ).json();
+      await flushWrites();
+      // Same path without the reserved param must HIT the same slot.
+      const second = await (
+        await dispatch(router, { request: "/cached-rscparam" })
+      ).json();
+      expect(second).toEqual(first);
+      const cached = await store.getResponse(
+        "response:json:localhost/cached-rscparam",
+      );
+      expect(cached).not.toBeNull();
+    });
+
+    it("re-runs an UNcached response route every call (different body)", async () => {
+      // Non-vacuity: without a cache() boundary the handler re-executes, so the
+      // body changes — proving the equality above is caused by caching.
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path }) => [
+          path.json("/uncached", () => ({ ts: Date.now() + Math.random() }), {
+            name: "uncached.json",
+          }),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/uncached" })
+      ).json();
+      expect(second).not.toEqual(first);
+    });
+
+    // P1 (security): when a CONFIGURED route-level cache({ key }) THROWS, the
+    // response cache must DEGRADE TO A MISS — run the route uncached and write
+    // NOTHING — never fall back to the broad default key. If the key encodes
+    // tenant/user/auth state, caching personalized output under the broad key
+    // would serve it cross-user (cache poisoning).
+    it("degrades to an uncached miss when cache({ key }) throws (no store write)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(
+            {
+              ttl: 600,
+              key: () => {
+                throw new Error("key fn boom");
+              },
+            },
+            () => [
+              path.json(
+                "/cached-keythrows",
+                () => ({ ts: Date.now() + Math.random() }),
+                { name: "cached.keythrows" },
+              ),
+            ],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keythrows" })
+      ).json();
+
+      // Served uncached: handler re-ran, so the body differs (no HIT under any key).
+      expect(second).not.toEqual(first);
+      // And nothing was written under ANY key (no broad-key poisoning).
+      expect(putSpy).not.toHaveBeenCalled();
+      putSpy.mockRestore();
+    });
+
+    it("still caches when cache({ key }) succeeds (HIT, store written)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache({ ttl: 600, key: (ctx) => `tenant-a${ctx.pathname}` }, () => [
+            path.json(
+              "/cached-keyok",
+              () => ({ ts: Date.now() + Math.random() }),
+              { name: "cached.keyok" },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-keyok" })
+      ).json();
+
+      // A HIT returns the byte-identical cached body, and the entry was written
+      // under the custom key (response:tenant-a/cached-keyok).
+      expect(second).toEqual(first);
+      expect(putSpy).toHaveBeenCalled();
+      expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
+      putSpy.mockRestore();
+    });
+  });
+
+  // The 6 request-time CACHE error sites surface through the SAME consumer hook
+  // a real app passes to createRouter({ onError }). dispatch wires the request
+  // context's _reportBackgroundError -> router.onError exactly like the production
+  // RSC handler, so each cache-read / cache-write / stale-revalidation failure on
+  // a cached response route fires onError (phase "cache" + metadata.category)
+  // while the request still degrades-to-miss / serves stale. These are the
+  // CONSUMER-side proof that createRouter({ onError }) observes cache degradation,
+  // not an internal _reportBackgroundError stub.
+  describe("cache error reporting through createRouter({ onError })", () => {
+    // The miss-write and SWR-revalidation reports run in a ctx.waitUntil
+    // microtask (no executionContext under dispatch); flush so they are observed.
+    const flushBackground = () => new Promise((r) => setTimeout(r, 0));
+
+    // A minimal SegmentCacheStore the response-cache serve leaf engages with: it
+    // requires BOTH getResponse and putResponse to be present (else the path is
+    // skipped). Per-test, ONE method is overridden to throw so a single error
+    // site is exercised in isolation. Methods unused by the serve path are no-ops.
+    function makeStore(
+      overrides: Partial<{
+        getResponse: SegmentCacheStore["getResponse"];
+        putResponse: SegmentCacheStore["putResponse"];
+        keyGenerator: SegmentCacheStore["keyGenerator"];
+      }> = {},
+    ): SegmentCacheStore {
+      return {
+        get: async () => null,
+        set: async () => {},
+        delete: async () => false,
+        getResponse: async () => null,
+        putResponse: async () => {},
+        ...overrides,
+      };
+    }
+
+    // Build a router whose ONLY route is a cached response route, with an
+    // onError spy and the supplied store. The route cache config is spread in so
+    // a test can inject a throwing key()/tags().
+    function buildCacheRouter(
+      onError: Mock<OnErrorCallback>,
+      store: SegmentCacheStore,
+      cacheConfig: Record<string, unknown> = { ttl: 600 },
+    ) {
+      return createRouter<{}>({ onError, cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          cache(cacheConfig as any, () => [
+            path.json(
+              "/cached-err",
+              () => ({ ts: Date.now() + Math.random() }),
+              {
+                name: "cached.err",
+              },
+            ),
+          ]),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+    }
+
+    function lastPhaseAndCategory(onError: Mock<OnErrorCallback>) {
+      const ctx = onError.mock.calls.at(-1)?.[0] as
+        | { phase?: string; metadata?: { category?: string } }
+        | undefined;
+      return { phase: ctx?.phase, category: ctx?.metadata?.category };
+    }
+
+    it("route cache({ key }) throw -> onError phase cache, category cache-read (degrades to miss)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = buildCacheRouter(onError, store, {
+        ttl: 600,
+        key: () => {
+          throw new Error("key boom");
+        },
+      });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Degrade preserved: the handler still ran and returned its JSON body.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+      // No store write under the broad default key (no cache poisoning).
+      expect(putSpy).not.toHaveBeenCalled();
+    });
+
+    it("store keyGenerator throw -> onError phase cache, category cache-read (degrades to miss)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        keyGenerator: () => {
+          throw new Error("keygen boom");
+        },
+      });
+      const putSpy = vi.spyOn(store, "putResponse");
+      // No route-level key(): keyGenerator is the active key resolver.
+      const router = buildCacheRouter(onError, store, { ttl: 600 });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      expect(res.status).toBe(200);
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+      expect(putSpy).not.toHaveBeenCalled();
+    });
+
+    it("store getResponse throw -> onError phase cache, category cache-read (serves fresh)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        getResponse: async () => {
+          throw new Error("getResponse boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Lookup failed -> fall through to a fresh handler run, still 200.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-read",
+      });
+    });
+
+    it("cache MISS + store putResponse throw -> onError phase cache, category cache-write (serves fresh)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore({
+        getResponse: async () => null, // miss
+        putResponse: async () => {
+          throw new Error("putResponse boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Miss path returns the fresh handler response; the write failure is
+      // background and must not affect the served response.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      // The write (and its failure report) runs in ctx.waitUntil.
+      await flushBackground();
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-write",
+      });
+    });
+
+    it("SWR stale hit + store putResponse throw -> onError phase cache, category stale-revalidation (serves stale)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const staleBody = JSON.stringify({ ts: "STALE" });
+      const store = makeStore({
+        // A stale HIT: return a cacheable (200) response flagged for revalidation.
+        getResponse: async () => ({
+          response: new Response(staleBody, {
+            status: 200,
+            headers: { "content-type": "application/json;charset=utf-8" },
+          }),
+          shouldRevalidate: true,
+        }),
+        // Background revalidation re-runs the handler then writes; the write throws.
+        putResponse: async () => {
+          throw new Error("revalidate write boom");
+        },
+      });
+      const router = buildCacheRouter(onError, store);
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // The STALE cached body is served immediately (SWR), unaffected by the
+      // failing background revalidation.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBe("STALE");
+
+      // Background revalidation + its failure report run in ctx.waitUntil.
+      await flushBackground();
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "stale-revalidation",
+      });
+    });
+
+    it("route cache({ tags }) throw -> onError phase cache, category cache-write (caches without tags)", async () => {
+      const onError = vi.fn<OnErrorCallback>();
+      const store = makeStore();
+      const putSpy = vi.spyOn(store, "putResponse");
+      const router = buildCacheRouter(onError, store, {
+        ttl: 600,
+        tags: () => {
+          throw new Error("tags boom");
+        },
+      });
+
+      const res = await dispatch(router, { request: "/cached-err" });
+      // Degrade preserved: a throwing tags() caches without tags, never fails.
+      expect(res.status).toBe(200);
+      expect((await res.json()).ts).toBeTypeOf("number");
+
+      expect(onError).toHaveBeenCalled();
+      expect(lastPhaseAndCategory(onError)).toEqual({
+        phase: "cache",
+        category: "cache-write",
+      });
+      // The miss-write still proceeds (without tags), so the store WAS written.
+      await flushBackground();
+      expect(putSpy).toHaveBeenCalled();
+    });
   });
 
   it("throws a clear error for an RSC (component) route", async () => {
@@ -298,6 +915,270 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/data" });
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/login");
+  });
+
+  // The server-side open-redirect guard (rsc/redirect-guard.ts) is applied at
+  // dispatch's final return, mirroring production's single handler chokepoint,
+  // so a consumer can unit-test the same-origin contract for browser-followed
+  // (document-native) redirects through the public primitive.
+  describe("open-redirect guard (document-native)", () => {
+    function routerWithMw(mw: MiddlewareFn) {
+      return createRouter<{}>({})
+        .use("/api/*", mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+    }
+
+    it("blocks a cross-origin middleware redirect, rewriting Location to root", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("https://evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("blocks a protocol-relative cross-origin redirect", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mw: MiddlewareFn = () => redirect("//evil.com/phish");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows a cross-origin redirect opted in with { external: true } and strips the marker", async () => {
+      const mw: MiddlewareFn = () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      // Internal opt-in marker never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    it("passes a same-origin middleware redirect through unchanged", async () => {
+      const mw: MiddlewareFn = () => redirect("/login");
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/login");
+    });
+
+    it("blocks a cross-origin redirect returned from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json("/go", () => redirect("https://evil.com/phish"), {
+            name: "go",
+          }),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe("/");
+      spy.mockRestore();
+    });
+
+    it("allows an external redirect returned from a response-route handler (brand survives rewrap)", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/go",
+            () =>
+              redirect("https://accounts.example.com/oauth", {
+                external: true,
+              }),
+            { name: "go" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    it("treats a handler-thrown external redirect like a returned Response", async () => {
+      const onError = vi.fn();
+      const router = createRouter<{}>({ onError }).routes(
+        urls(({ path }) => [
+          path.json(
+            "/go",
+            (ctx) => {
+              ctx.header("X-Control-Flow", "thrown");
+              cookies().set("flow", "thrown", { path: "/" });
+              throw redirect("https://accounts.example.com/oauth", {
+                external: true,
+              });
+            },
+            { name: "go" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "http://localhost/go" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("X-Control-Flow")).toBe("thrown");
+      expect(res.headers.getSetCookie()).toContain("flow=thrown; Path=/");
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    // Finding #1 regression (forgeable opt-in): the external opt-in is an
+    // out-of-band brand on the Response object, NOT the wire header. A
+    // proxy-style response route that returns an attacker-controlled upstream
+    // response carrying a forged `x-rango-redirect-external` header must NOT be
+    // able to bypass the same-origin guard -- the app never called
+    // redirect(..., { external: true }), so the off-host target is neutralized.
+    it("does NOT honor a forged external marker header from a response-route handler", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/proxy",
+            () =>
+              // Simulates returning a proxied upstream 302 whose headers an
+              // attacker controls. The forged marker is the ONLY external signal
+              // (no redirect(..., { external: true }) brand).
+              new Response(null, {
+                status: 302,
+                headers: {
+                  Location: "https://evil.example/phish",
+                  "x-rango-redirect-external": "1",
+                },
+              }),
+            { name: "proxy" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/proxy" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("/");
+      // The forged header never reaches the browser.
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      spy.mockRestore();
+    });
+
+    // Brand-drop regression: an onResponse callback that returns a NEW Response
+    // drops the object-identity brand. finalizeResponse must re-mark it so a
+    // legit redirect(url, { external: true }) is still allowed off-host (not
+    // silently neutralized to root) when the app also uses ctx.onResponse().
+    it("preserves { external: true } when an onResponse callback rebuilds the Response", async () => {
+      const mw: MiddlewareFn = () => {
+        const ctx = getRequestContext();
+        // Rebuild the Response (e.g. to add a header). The new object loses the
+        // brand unless drainOnResponseCallbacks re-applies it.
+        ctx.onResponse(
+          (res) =>
+            new Response(res.body, {
+              status: res.status,
+              headers: new Headers(res.headers),
+            }),
+        );
+        return redirect("https://accounts.example.com/oauth", {
+          external: true,
+        });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak regression (defense-in-depth): the reserved marker must never
+    // reach the browser, even on a non-3xx response the 3xx-only guard does not
+    // touch. mergeResponse strips it from the base response on the middleware path.
+    it("strips a forged external marker header from a non-3xx middleware response", async () => {
+      const mw: MiddlewareFn = () =>
+        new Response("ok", {
+          status: 200,
+          headers: {
+            "x-rango-redirect-external": "1",
+            "content-type": "text/plain",
+          },
+        });
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Header-leak via the STUB (ctx.header), not the base response. Stripping the
+    // base in mergeResponse is not enough -- the stub-merge primitives re-add it.
+    // mergeStubHeaders must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a non-3xx middleware short-circuit", async () => {
+      const mw: MiddlewareFn = (ctx) => {
+        ctx.header("x-rango-redirect-external", "1");
+        return new Response("ok", { status: 200 });
+      };
+      const res = await dispatch(routerWithMw(mw), {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
+
+    // Same leak via a response route's ctx.header() on a 200: the serialized
+    // result flows through createResponseWithMergedHeaders -> applyStubHeaders,
+    // which must refuse to copy the reserved marker.
+    it("strips a reserved marker set via ctx.header() on a response-route 200", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/h",
+            () => {
+              getRequestContext().header("x-rango-redirect-external", "1");
+              return { ok: true };
+            },
+            { name: "h" },
+          ),
+        ]),
+      ) as any;
+      const res = await dispatch(router, { request: "http://localhost/h" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+      expect(await res.json()).toEqual({ ok: true });
+    });
+
+    // Same leak via the request-context stub merged through the middleware chain
+    // (mergeReqCtxStub) on a 200 downstream response.
+    it("strips a reserved marker set on the request-context stub through the middleware chain", async () => {
+      const mw: MiddlewareFn = (_ctx, next) => {
+        getRequestContext().header("x-rango-redirect-external", "1");
+        return next();
+      };
+      const router = createRouter<{}>({})
+        .use(mw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+      const res = await dispatch(router, {
+        request: "http://localhost/api/data",
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-rango-redirect-external")).toBeNull();
+    });
   });
 
   it("lets global middleware pass through to the response route", async () => {
@@ -507,6 +1388,36 @@ describe("dispatch", () => {
       expect(body.status).toBe(500);
       // `type` is omitted this phase (RFC 9457 absent type === "about:blank").
       expect(body.type).toBeUndefined();
+    });
+
+    // Parity regression (#572 / #582): a json route that returns a nested
+    // unresolved Promise (forgotten await) must reject EXACTLY like production.
+    // Pre-fix, dispatch did a bare JSON.stringify and shipped `{"data":{}}` green
+    // while production throws RESPONSE_NOT_SERIALIZABLE and 500s. The shared
+    // stringifyJsonRouteResult guard makes dispatch fail where production fails.
+    it("rejects a json route returning a nested Promise (forgotten await) as a problem+json 500, like production", async () => {
+      const router = createRouter<{}>({}).routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/forgot-await",
+            // The cast mimics an `as`-cast or untyped (JS) handler slipping a
+            // Promise past the compile-time nested-Promise rejection.
+            (() => ({ data: Promise.resolve("late") })) as any,
+            { name: "api.forgotAwait" },
+          ),
+        ]),
+      ) as any;
+
+      const res = await dispatch(router, { request: "/api/forgot-await" });
+      expect(res.status).toBe(500);
+      expect(res.headers.get("content-type")).toBe(
+        "application/problem+json;charset=utf-8",
+      );
+      const body = await res.json();
+      expect(body.code).toBe("RESPONSE_NOT_SERIALIZABLE");
+      expect(body.status).toBe(500);
+      // The silent forgotten-await body must NEVER ship.
+      expect(body).not.toHaveProperty("data");
     });
 
     it("sanitizes a thrown generic Error on a json route to a problem+json 500 in production", async () => {
@@ -823,7 +1734,8 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_partial=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      // Soft redirect URL is origin-resolved server-side (dispatch default origin).
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
       // The raw 3xx Location is replaced by the Flight-safe header.
       expect(res.headers.get("Location")).toBeNull();
     });
@@ -847,7 +1759,31 @@ describe("dispatch", () => {
         request: "/api/data?_rsc_action=1",
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("X-RSC-Redirect")).toBe("/login");
+      expect(res.headers.get("X-RSC-Redirect")).toBe("http://localhost/login");
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it("preserves redirect({ external: true }) on a partial request as absolute X-RSC-Redirect", async () => {
+      // interceptRedirectForPartial passes external as the third callback arg;
+      // dispatch must forward it into createSimpleRedirectResponse or the
+      // off-host target is neutralized to "/".
+      const redirectMw: MiddlewareFn = async () =>
+        redirect("https://accounts.example.com/oauth", { external: true });
+      const router = createRouter<{}>({})
+        .use(redirectMw)
+        .routes(
+          urls(({ path }) => [
+            path.json("/api/data", () => ({ ok: true }), { name: "api.data" }),
+          ]),
+        ) as any;
+
+      const res = await dispatch(router, {
+        request: "/api/data?_rsc_partial=1",
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("X-RSC-Redirect")).toBe(
+        "https://accounts.example.com/oauth",
+      );
       expect(res.headers.get("Location")).toBeNull();
     });
 

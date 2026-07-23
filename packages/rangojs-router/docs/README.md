@@ -2,12 +2,30 @@
 
 This package has a small core and a larger advanced model.
 
-If you are new to Rango, start with named routes, `urls()`, `path()`,
+If you are new to Rango, start with
+[named routes](../../../docs/named-routes.md), `urls()`, `path()`,
 `layout()`, `include()`, and `reverse()`. Everything else builds on top of
 that route tree.
 
+If you are evaluating Rango against other frameworks, start with the comparison.
+
+## Positioning
+
+- [Comparison](./comparison.md) - Rango versus Next.js, TanStack Start, and Waku:
+  the unified caching/prerender model, progressive-enhancement parity, the runtime
+  mechanics (partial rendering, named slots/intercepts, `revalidate()`, prefetch
+  gating, Rango State and userland invalidation, loaders and tagged loading),
+  deployment-skew recovery, CSP nonce propagation, default CSRF origin checks,
+  tainted request-context cache safety, why the loader is a genuinely new primitive,
+  and an account of where the established frameworks still lead
+
 ## Core Topics
 
+- [Why Rango](./why-rango.md) - the load-bearing ideas, each shown in code:
+  the explicit route tree, named routes, content-negotiated and type-inferred
+  response routes, the two freshness axes, live-by-default loaders, metadata
+  through handles, the shell manifest pattern, instant navigation with safe
+  invalidation, and semantics as a tested contract
 - [`README.md`](../README.md) - package overview and quick start
 - [Route definition rules](./route-definition-rules.md) - what the route DSL
   allows and rejects
@@ -24,6 +42,18 @@ that route tree.
 - [Matching & lazy-discovery](./internal/matching-and-lazy-discovery.md) -
   architecture & accepted tradeoffs: dev/prod matching parity, the trie-vs-regex
   contract, the matching invariants, and the measured lazy include() cost tradeoffs
+- [Semantic change checklist](./internal/semantic-change-checklist.md) - the
+  pre-merge checklist for PRs that touch routing, rendering, middleware,
+  actions, revalidation, intercepts, prerender, or request-context propagation
+- [Security checklist](./internal/security-checklist.md) - the checklist for
+  changes that add or alter execution paths, transport behavior, or
+  request/response ownership
+- [Rendered barrier](./internal/rendered-barrier.md) - the experimental
+  `await ctx.rendered()` loader barrier: lets a loader wait for the handler
+  tree to settle so it can read accumulated handle data
+- [Runtime guardrails design](./internal/runtime-guardrails-design.md) -
+  dev-mode misuse warnings (warn, never silently fix): which guardrails
+  shipped, which were removed, and why
 
 ## Caching And Prerender
 
@@ -31,6 +61,16 @@ that route tree.
   runtime cache lookup model
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
+- [Segment caching design](../../../docs/design/caching.md) - the canonical
+  runtime segment-cache design; read before changing caching
+- [Cache tags flow](../../../docs/design/cache-tags-flow.md) - tag
+  invalidation end to end: `updateTag()`/`revalidateTag()`, tag markers, and
+  the read-latency budgets
+- [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
+  `VercelCacheStore` and the `vercel` preset design
+- [Deployment caching skill](../skills/deployment-caching/SKILL.md) - choose
+  between in-function segment/prerender/PPR caches, Rango's store-backed
+  response middleware, and an external HTTP CDN cache
 
 ## Build Integrations
 
@@ -51,7 +91,9 @@ that route tree.
   `@rangojs/router/testing/dom` (`renderRoute`),
   `@rangojs/router/testing/e2e` (`createRangoE2E` -> `parityDescribe`,
   `expectParity`), `@rangojs/router/testing/flight`
-  (`renderToFlightString`, real Flight under the react-server condition), and
+  (`renderServerTree` — the default for asserting a Flight render, typed boundary
+  props — and `renderToFlightString`, the escape hatch for pinning the raw wire
+  payload; real Flight under the react-server condition), and
   `@rangojs/router/testing/flight-matchers` (`flightMatchers`). See also the
   [`/testing` skill](../skills/testing/SKILL.md).
 
@@ -64,17 +106,47 @@ that route tree.
 
 ## Design Notes
 
+- [Render stage driver](./design/render-stage-driver.md) - the migration from
+  post-work async-generator checkpoints to a synchronous typed effect plan and
+  one async foreground driver, including streaming, diagnostics, observability,
+  performance gates, and the boundaries that remain concurrent
 - [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
   stream vs allReady mode per request
+- [Late-span retention on Cloudflare](./design/late-span-retention.md) - open
+  investigation: whether phase spans that settle after `router.fetch()` returns
+  (mid-stream loaders, SWR background revalidation) survive in the exported
+  Cloudflare trace; deployed reproduction protocol and the cancellation policy
+- [PPR shell caching and resume](./design/ppr-shell-resume.md) - the opt-in
+  second render axis: caches the rendered HTML shell (React `prerender` prelude
+  bytes + `postponed` state) and, on a hit, serves the shell bytes immediately
+  and resumes fizz for just the live holes. Covers the `ppr` path option
+  (`PartialPrerenderProps`), the integrated serve path (commit after all
+  middleware), the hole doctrine (structural/physics/shell + the handles
+  contract), the `createShellCaptureHandler`/`createShellResumeHandler` SSR
+  factories, the `getShell`/`putShell` store family, and the loader-masking /
+  capture / resume contracts
+- [Vercel CDN-stitched PPR research](./design/vercel-chain-ppr.md) - rejected
+  adapter direction. Records the generic Build Output `chain` parser support,
+  undocumented Next/Vercel fallback framing, and the decisive incompatibility:
+  a CDN-first shell commits before Rango's global and route middleware. The
+  shipped Vercel preset keeps runtime and build-produced PPR shells inside its
+  streaming Node Function
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 - [`ctx.isAction()` API design](./design/is-action-api-design.md) - typed,
   rename-safe action matching for `revalidate()` (implemented)
 - [Handles completion detection](./design/handles-completion.md) - research &
   options for detecting RSC render completion to finalize handle collection; why
   every in-band completion signal is circular, and the cache bugs the audit found
+- [Resolved-by-default handles](./design/handles-resolved-by-default.md) - a
+  deferred (Promise) handle value is resolved before any consumer sees it
+  (server-side on full render, client-side await-then-apply on navigation), so
+  `collect`/`useHandle` only ever see resolved values
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
   moving the rango state from localStorage to a session cookie and collapsing
   cache invalidation to `invalidateClientCache()` / `keepClientCache()`
+- [Shallow navigation](./design/shallow-navigation.md) - client-only URL
+  updates that skip server RSC revalidation, via `revalidate: false` on
+  `<Link>` / `navigate()` (implemented)
 
 ## Internal Reference
 
@@ -95,12 +167,16 @@ They are useful when changing router semantics, tests, or implementation
 details, but they are not the first stop for learning the public API.
 Completed, superseded, and point-in-time plan/handoff docs are moved to
 [`internal/archive`](./internal/archive) — kept for history, not maintained.
+[`internal/reviews`](./internal/reviews) holds point-in-time review
+snapshots — also kept for history, not maintained.
 
 - [Prerender passthrough action plan](./internal/archive/prerender-passthrough-action-plan.md) (archived)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
-- [Why include() is synchronous](./internal/why-includes-is-sync.md) -
-  design rationale for the `UrlPatterns`-only `include()` signature and
-  the trie/reverse-map/type-gen/prerender invariants it protects
+- [include() and async route loading](./internal/async-includes.md) -
+  the eager vs. async `() => import()` include forms, how discovery awaits
+  providers to keep the trie/reverse-map/type-gen/prerender invariants complete
+  while the module import defers, and the runtime contract (sometimes-async
+  `evaluateLazyEntry`, the three handler-run sites, concurrent dedupe)
 - [Why SSR/RSC streaming uses Web Streams everywhere](./internal/why-web-streams-everywhere.md) -
   why both render layers use `renderToReadableStream` on Node (not
   `renderToPipeableStream`), the conversion-tax and plugin-locked-Flight

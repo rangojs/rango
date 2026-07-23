@@ -22,12 +22,15 @@ lives.
 - **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
 - **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
 - **Per-section stores** - `cache({ store })` for dedicated stores per route section
+- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) and `VercelCacheStore` (Vercel Runtime Cache via `getCache`) from `@rangojs/router/cache`
+- **Cache invalidation API** - `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. Built-in stores index by tag and invalidate via store-level `invalidateTags()`. Consumers call `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)` (background). Both hard-purge.
+- **Proactive caching** - Background re-resolve of null-component segments via `waitUntil` (`src/router/match-middleware/cache-store.ts`) so partial navigations get complete cache entries
+- **Search param filtering** - global `cache.searchParams` (`"all" | "none" | { include } | { exclude }`, `*` suffix wildcards, `TRACKING_SEARCH_PARAMS` constant) controls which query params key the cache across every tier (see "Search param filtering" under Cache Key Structure)
 
 ### 🚧 Remaining
 
-- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) is shipped from `@rangojs/router/cache`. Redis and other adapters are still future work.
-- **Cache invalidation API** - ✅ Shipped. `cache()` / cache profiles accept `tags`, and `cacheTag(...tags)` tags entries at runtime inside `"use cache"`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate via the store-level `invalidateTags()` primitive (it receives the whole tag batch in one call). Consumers call `updateTag(...tags)` (awaitable, read-your-own-writes; for server actions) or `revalidateTag(...tags)` (background, non-blocking; for webhooks/route handlers). Both hard-purge — the only difference is awaitability; neither serves stale content. The CF store keeps its tag-invalidation markers in its own KV namespace (no separate store). A manual whole-store purge API is still future work.
-- **Proactive caching** - Render null-component segments in background for complete cache entries
+- **Redis (and other adapters)** - no first-party Redis `SegmentCacheStore` yet
+- **Manual whole-store purge API** - store-level wipe-all is still future work (`clear()` is optional / test-only on most backends)
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
 ### Performance (Dev)
@@ -312,7 +315,8 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
-- **Search params**: User-facing params are included (sorted, URL-encoded). Internal `_rsc*` and `__*` params are excluded.
+- **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`, `__prerender_collect`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
+- **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
 - **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
 
 ```typescript
@@ -324,6 +328,66 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 ```
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
+
+### Search param filtering (`cache.searchParams`) — shipped
+
+By default every non-reserved query param produces a distinct cache slot. That
+hurts twice: `/products?utm_source=tw` and `/products?utm_source=ig` occupy
+separate entries in every tier (fragmentation), and a `?fbclid=…` URL skips the
+prerendered shell entirely (the build-shell manifest only matches URLs whose
+filtered search string is empty) — ad-click traffic is exactly the traffic you
+prerendered for.
+
+One global option on the `createRouter` cache config controls which params key
+the cache:
+
+```typescript
+import { createRouter, TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+
+type CacheSearchParams =
+  | "all" // default — every non-reserved param keys the cache
+  | "none" // query params never key the cache
+  | { include: string[] } // allowlist: only these key the cache
+  | { exclude: string[] }; // denylist: all except these
+
+createRouter({
+  document: Document,
+  cache: {
+    store: cacheStore,
+    searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+  },
+});
+```
+
+`TRACKING_SEARCH_PARAMS` (exported from `@rangojs/router` and
+`@rangojs/router/cache`) covers `utm_*`, `gclid`, `fbclid`, `msclkid`,
+`ttclid`, `mc_eid`, … so the common case is one line without changing the
+default for anyone.
+
+Semantics:
+
+| Aspect                 | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope of effect        | Cache key only. `ctx.searchParams` and the request URL are untouched — handlers and loaders still see the full query string.                                                                                                                                                                                                                                                                                                                                                                                    |
+| Matching               | Exact names plus `*` suffix wildcard (`utm_*`). No RegExp: keeps the config serializable and deterministic.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `include` + `exclude`  | Unrepresentable — the union type forces exactly one mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Router-internal params | The reserved exclusion (`_rsc*` prefix + the `__` allowlist) applies BEFORE this filter; `include: ["__no_cache"]` cannot re-key on them.                                                                                                                                                                                                                                                                                                                                                                       |
+| Ordering               | Filtering happens inside `sortedSearchString` before the existing codepoint sort — surviving params stay order-insensitive exactly as before.                                                                                                                                                                                                                                                                                                                                                                   |
+| `key:` override        | Unchanged — a custom `key` on `cache()` still bypasses all default key generation, including this filter.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Tiers covered          | Segment (`cache-scope.ts`), document (`document-cache.ts`), response (`response-cache-serve.ts`), PPR shell capture/lookup (`shell-serve.ts` `buildShellKey`), build-shell manifest matching (`shell-build-manifest.ts`), `"use cache"` ctx normalization (`cache-runtime.ts`), testing `shellCacheKey`/`dispatch`. One compiled filter (`src/cache/search-params-filter.ts`) rides the request context (`_searchParamsFilter`) and threads through `cacheKeyBase`/`sortedSearchString`, so tiers cannot drift. |
+| Byte-stability         | A URL containing no filtered params produces the same key as before, so existing persisted entries stay valid; only previously-fragmented variants collapse.                                                                                                                                                                                                                                                                                                                                                    |
+| Shell manifest         | A URL whose only params are excluded ones matches the prerendered shell — filtering happens before the emptiness check.                                                                                                                                                                                                                                                                                                                                                                                         |
+
+The footgun to document loudly: excluding a param is a promise that rendered
+output does not depend on it. If it does, the first variant gets cached and
+served to everyone (the classic CDN cache-key mistake). That is why the default
+stays `"all"` — correct by default, opt into collapsing.
+
+Deliberately global-only, no per-`cache()` override. The per-route "search page
+varies only by `q`/`page`/`sort`" case is already reachable through the
+existing `key:` override, and a static global config means the filter compiles
+once per request from a plain data shape — no `defaults`-style inheritance and
+no per-request ambiguity for the build-shell manifest gate.
 
 ## Storage Backend
 
@@ -801,6 +865,8 @@ To invalidate on demand, call one of (both variadic, server-only, exported from 
 - `revalidateTag(...tags): void` - **background (non-blocking)**. Runs invalidation in the background (`waitUntil`); use it in route handlers / webhooks. NOT stale-while-revalidate: like `updateTag` it hard-purges, so the next read after the invalidation lands is a fresh miss. The only difference from `updateTag` is awaitability.
 
 Both fan out across the app-level store (`ctx._cacheStore`) and any explicit `cache({ store })` stores the handler resolved, calling the store-level `invalidateTags()` primitive (passing the whole tag batch in one call). The CF store records tag-invalidation markers in its own KV namespace and compares each entry's `taggedAt` against them on read - there is no separate tag-invalidation store. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
+
+The CF store also has an opt-in **purge mode** (`tagPurge: { zoneId, apiToken }`, or a custom purge function — `createCloudflareZonePurge` is the underlying client): tagged L1 entries carry namespaced `Cache-Tag` headers, `invalidateTags()` awaits one batched Cloudflare purge-by-tag call, and ordinary L1 data hits skip the per-read marker lookup. KV reads and PPR shell reads retain the marker check; runtime shell L1 entries are purgeable, but an older capture can finish after its invalidation purge, so the generation marker still prevents resurrection. Semantics, credentials setup, trade-offs, and the environments/previews zone-scoping guide: [cache-tags-flow.md](./cache-tags-flow.md) "Purge mode".
 
 ---
 

@@ -191,6 +191,57 @@ function defineTaggedTests(f: Fixture) {
     expect(inv.status()).toBe(200);
     await expect.poll(docTs, { timeout: 15000 }).not.toBe(cachedTs);
   });
+
+  // Document-level tag invalidation via the SEGMENT-DSL cache({ tags }) path
+  // (#582): /dsl-tagged-document is document-cached AND wrapped in a route-level
+  // cache({ tags: ["dsl-doc-page"] }) — a combination no prior e2e covered (the
+  // /tagged-document tests use a runtime cacheTag, a different tag path). This is
+  // an end-to-end (dev+prod) guard that the route-level DSL tag reaches the
+  // document tag union, so updateTag invalidates the whole-page entry.
+  //
+  // NOTE: this is a GREEN contract guard, not a red-before-green pin of the
+  // first-write RACE the fix closes. The race (deferred cacheRoute recording vs
+  // the document body-drain snapshot) is timing-dependent and does not reproduce
+  // deterministically here; the deterministic pin of the fix is the unit test
+  // CacheScope.recordTags in cache-scope.test.ts (records the tags synchronously).
+  test("document cache: a route-level cache({ tags }) full page is invalidated by updateTag", async ({
+    request,
+  }) => {
+    const fetchDoc = (request2: APIRequestContext) =>
+      request2.get(f.url("/dsl-tagged-document"), {
+        headers: { Accept: "text/html" },
+      });
+    const docTs = async (): Promise<number> => {
+      const res = await fetchDoc(request);
+      expect(res.status()).toBe(200);
+      const m = /data-doc-ts="(\d+)"/.exec(await res.text());
+      if (!m) throw new Error("no data-doc-ts in /dsl-tagged-document HTML");
+      return Number(m[1]);
+    };
+    const docStatus = async (): Promise<string | undefined> =>
+      (await fetchDoc(request)).headers()["x-document-cache-status"];
+
+    // Prime until the background document write lands -> served as a HIT.
+    await expect.poll(docStatus, { timeout: 15000 }).toBe("HIT");
+    const cachedTs = await docTs();
+    expect(await docTs()).toBe(cachedTs);
+
+    // The route-level cache({ tags }) tag must be in the document entry's tag
+    // union, so updateTag("dsl-doc-page") invalidates the whole-page entry.
+    const inv = await request.get(f.url("/test/invalidate-tag/dsl-doc-page"));
+    expect(inv.status()).toBe(200);
+
+    await expect.poll(docTs, { timeout: 15000 }).not.toBe(cachedTs);
+
+    // The re-rendered page must RE-CACHE and RE-TAG (not evict once). Poll to a
+    // fresh HIT, then invalidate the same tag again and assert it refreshes —
+    // proving the route-level tag is carried forward on every write.
+    await expect.poll(docStatus, { timeout: 15000 }).toBe("HIT");
+    const recachedTs = await docTs();
+    const inv2 = await request.get(f.url("/test/invalidate-tag/dsl-doc-page"));
+    expect(inv2.status()).toBe(200);
+    await expect.poll(docTs, { timeout: 15000 }).not.toBe(recachedTs);
+  });
 }
 
 test.describe("CF cache-tag invalidation (dev)", () => {

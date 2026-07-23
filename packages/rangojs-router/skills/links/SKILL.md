@@ -1,6 +1,6 @@
 ---
 name: links
-description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse
+description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse. Use when generating a link to a route by name instead of hardcoding a path, or a link breaks after routes move or get mounted elsewhere.
 argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 ---
 
@@ -37,6 +37,18 @@ export const shopPatterns = urls(({ path, layout }) => [
 
 - **`.name`** — local route, resolved within the current `include()` scope
 - **`name`** — global route, from the named-routes definition
+
+The include site decides which global names exist:
+
+| Include site                                       | App-wide names                                     |
+| -------------------------------------------------- | -------------------------------------------------- |
+| `include("/shop", shopPatterns)`                   | none from the child; use `.name` inside the module |
+| `include("/shop", shopPatterns, { name: "shop" })` | `shop.index`, `shop.product`, ...                  |
+| `include("/shop", shopPatterns, { name: "" })`     | `index`, `product`, ... at the parent scope        |
+
+Flatten only when those names are intentionally unique across the whole parent
+map. Private includes are useful for reusable modules and still support
+mount-aware dot-local reversal.
 
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)
@@ -410,6 +422,30 @@ Don't edit the file by hand — re-run codegen when patterns change.
   },
 }
 ```
+
+## Prefetch boundaries
+
+`Link` follows its `prefetch` prop or the router's `defaultPrefetch`; eligible
+plain anchors follow the router default. When a whole DOM section must never
+speculate, mark its container instead of repeating per-link opt-outs:
+
+```tsx
+<section data-prefetch-scope="none">
+  <Link to="/activity" prefetch="viewport">
+    Activity
+  </Link>
+  <a href="/export">Export</a>
+</section>
+```
+
+The scope is a hard opt-out for every descendant Link and plain anchor; `"false"`
+and `"none"` are equivalent. An explicit `prefetch` prop or
+`data-prefetch="true"` cannot override it, and navigation still works normally.
+Use `data-prefetch="false"` or `"none"` directly on a plain anchor when only that
+anchor is unsafe. Dynamic scope changes re-evaluate only descendant anchors and
+mounted viewport/render Links. Links share one document-level scope observer,
+not one observer per Link or container. Adding a scope cannot recall work already
+queued or in flight; removing it re-arms both Link types.
 
 ## When to use what
 

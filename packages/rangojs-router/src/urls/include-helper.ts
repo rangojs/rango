@@ -9,6 +9,7 @@ import {
   validateUserRouteName,
 } from "../route-name.js";
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
+import type { IncludeProvider } from "./include-provider.js";
 import type { IncludeFn } from "./path-helper-types.js";
 
 function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
@@ -60,7 +61,11 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
     prefix: string,
-    patterns: UrlPatterns<TEnv>,
+    // A `urls()` value (eager) OR an async provider thunk
+    // (`() => import("./routes")`) whose evaluation is deferred to the first
+    // request matching `prefix`. The provider is stored unevaluated and
+    // resolved by the runtime lazy-include expansion / build-time discovery.
+    patterns: UrlPatterns<TEnv> | IncludeProvider<TEnv>,
     options?: IncludeOptions,
   ): IncludeItem => {
     const { ctx } = requireDslContext("include() must be called inside urls()");
@@ -81,10 +86,9 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         ? capturedUrlPrefix + prefix.slice(1)
         : capturedUrlPrefix + prefix
       : prefix;
-    const internalScope = !hasExplicitName
-      ? allocateInternalIncludeScopeId(ctx.counters)
-      : undefined;
-    const nextSegment = hasExplicitName ? explicitName : internalScope;
+    const nextSegment = hasExplicitName
+      ? explicitName
+      : allocateInternalIncludeScopeId(ctx.counters);
     const fullNamePrefix =
       nextSegment !== undefined && nextSegment !== ""
         ? capturedNamePrefix
@@ -117,9 +121,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     if (capturedParent?.shortCode) {
       const includeCounterKey = `${capturedParent.shortCode}${parentScope}_include`;
       ctx.counters[includeCounterKey] ??= 0;
-      const includeIdx = ctx.counters[includeCounterKey];
-      ctx.counters[includeCounterKey] = includeIdx + 1;
-      includeScope = `${parentScope}I${includeIdx}`;
+      includeScope = `${parentScope}I${ctx.counters[includeCounterKey]++}`;
     }
 
     // Snapshot parent's counters AFTER allocating the include scope so lazy
@@ -153,6 +155,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         counters: capturedCounters,
         cacheProfiles: ctx.cacheProfiles,
         rootScoped: capturedRootScoped,
+        routerId: ctx.routerId,
         includeScope,
       },
     } as IncludeItem;

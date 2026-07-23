@@ -10,8 +10,9 @@ import {
   prefetchQueued,
   setPrefetchDecoder,
 } from "../browser/prefetch/fetch";
-import { clearPrefetchCache } from "../browser/prefetch/cache";
+import { clearPrefetchCache, consumePrefetch } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+import { abortAllPrefetches } from "../browser/prefetch/queue";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 // Prefetch eagerly decodes the fetched response (createFromFetch) to warm the
@@ -95,6 +96,7 @@ describe("prefetch fetch reduced-data behavior", () => {
 
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -172,6 +174,7 @@ describe("prefetch fetch reduced-data behavior", () => {
       "http://localhost:4173/current",
     );
     expect(headers["X-Rango-Prefetch"]).toBe("1");
+    expect(headers["X-Rango-Fragment-Passthrough"]).toBe("1");
   });
 
   it("stores the decoded entry in the in-memory cache on success", async () => {
@@ -209,15 +212,21 @@ describe("prefetch fetch reduced-data behavior", () => {
     // client chunks before any click.
     await vi.waitFor(() => expect(decodeMock).toHaveBeenCalledTimes(1));
 
-    const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const { consumePrefetch, hasPrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
     const entry = consumePrefetch(wildcardKey);
     expect(entry).not.toBeNull();
 
-    // Navigation reuses the already-decoded payload — no second decode.
+    // Navigation reuses the already-decoded payload: the adopted entry's
+    // payload IS the eager decode's result, not a click-time re-decode.
     expect(await entry!.payload).toEqual({});
-    expect(decodeMock).toHaveBeenCalledTimes(1);
+    expect(entry!.payload).toBe(decodeMock.mock.results[0]!.value);
+
+    // The extra decode is the background re-arm of the slot (respawn from the
+    // buffered bytes), not on the click path — and it keeps the slot warm.
+    expect(decodeMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
   });
 
   it("does not warm (or decode) a response carrying a control header", async () => {
@@ -242,9 +251,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(decodeMock).not.toHaveBeenCalled();
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     expect(
-      consumePrefetch(
-        "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
-      ),
+      consumePrefetch("v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1"),
     ).toBeNull();
   });
 
@@ -275,6 +282,7 @@ describe("prefetch fetch reduced-data behavior", () => {
 describe("prefetch wildcard cache (default source-agnostic)", () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -333,8 +341,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/blog?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).not.toBeNull();
   });
 
@@ -359,8 +366,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     const sourceKey =
       "v1:abc\0http://localhost:4173/gallery\0/photo/42?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/photo/42?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/photo/42?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).toBeNull();
     expect(consumePrefetch(sourceKey)).not.toBeNull();
   });
@@ -431,6 +437,7 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
 describe('prefetchKey=":source" opt-out', () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -473,8 +480,7 @@ describe('prefetchKey=":source" opt-out', () => {
     const { consumePrefetch } = await import("../browser/prefetch/cache");
     const sourceKey =
       "v1:abc\0http://localhost:4173/home\0/dashboard?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/dashboard?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/dashboard?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).toBeNull();
     expect(consumePrefetch(sourceKey)).not.toBeNull();
   });
@@ -546,8 +552,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Consume via the source alias. This must NOT strand the wildcard
     // sibling's inflight flag after .finally() runs.
@@ -555,37 +560,32 @@ describe('prefetchKey=":source" opt-out', () => {
     expect(adopted).not.toBeNull();
 
     // Resolve the fetch so .finally runs clearPrefetchInflight. The response
-    // has no `x-rsc-prefetch-scope` header, so it would store under wildcardKey
-    // — but because the in-flight promise was adopted, storePrefetch must NOT
-    // publish the now-owned (single-use) entry to the cache. A leftover here is
-    // exactly the bug that drops a route's handles on a later navigation served
-    // the drained entry.
+    // has no `x-rsc-prefetch-scope` header, so it stores under wildcardKey.
+    // Because the in-flight promise was adopted, storePrefetch must NOT
+    // publish the now-owned (single-use) entry — serving the drained object
+    // later is exactly the bug that drops a route's handles. The clean EOF
+    // instead REFILLS the slot with a respawned sibling: a fresh decode of
+    // the buffered bytes, never the exhausted object.
     resolveFetch!(
       new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
     );
-    await adopted;
+    const adoptedEntry = await adopted;
     await new Promise((r) => setTimeout(r, 0));
-    expect(consumePrefetch(wildcardKey)).toBeNull();
 
-    // No cache entry was published and no inflight flag is stuck — neither key
-    // reports prefetched after an adopted+resolved fetch.
+    const refilled = consumePrefetch(wildcardKey);
+    expect(refilled).not.toBeNull();
+    expect(refilled).not.toBe(adoptedEntry);
+    expect(refilled!.complete).toBe(true);
+
+    // The source alias flag is not stuck after the adopted fetch resolved,
+    // and consuming the refilled entry re-armed the wildcard slot in place.
     expect(hasPrefetch(sourceKeyA)).toBe(false);
-    expect(hasPrefetch(wildcardKey)).toBe(false);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
 
-    // And a fresh prefetch for the same (source, target) pair must
-    // actually go to the network rather than being silently deduped.
-    let secondResolve: (r: Response) => void;
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise<Response>((resolve) => {
-          secondResolve = resolve;
-        }),
-    );
+    // A fresh prefetch for the same (source, target) pair dedups against the
+    // warm slot instead of going to the network again.
     prefetchDirect("/target", ["A0"], "v1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    secondResolve!(
-      new Response("payload-2", { status: 200, headers: { "X-Test": "1" } }),
-    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("consuming one inflight alias atomically clears its sibling (no double-adopt)", async () => {
@@ -608,8 +608,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Same-source nav adopts via sourceKeyA first.
     const adopted = consumeInflightPrefetch(sourceKeyA);
@@ -643,8 +642,7 @@ describe('prefetchKey=":source" opt-out', () => {
     const { hasPrefetch } = await import("../browser/prefetch/cache");
     const sourceKeyA =
       "v1:abc\0http://localhost:4173/a\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
 
     // Both aliases should be discoverable before anyone consumes.
     expect(hasPrefetch(sourceKeyA)).toBe(true);
@@ -677,8 +675,7 @@ describe('prefetchKey=":source" opt-out', () => {
       await import("../browser/prefetch/cache");
     const sourceKeyB =
       "v1:abc\0http://localhost:4173/b\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const wildcardKey =
-      "v1:abc\0/target?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/target?_rsc_partial=true&_rsc_v=v1";
     expect(consumeInflightPrefetch(sourceKeyB)).toBeNull();
     expect(consumeInflightPrefetch(wildcardKey)).toBeNull();
 
@@ -702,6 +699,7 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     __resetActionFence();
     vi.unstubAllGlobals();
@@ -739,6 +737,247 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 });
 
 /**
+ * F4: a hover/direct prefetch fetches with no caller AbortSignal. If the server
+ * stalls and the fetch never settles, the inflight key was stranded forever:
+ * `hasPrefetch(key)` stayed true, so every future prefetch of that URL was
+ * silently deduped out (no warming) until a full cache clear. An internal
+ * timeout now aborts the stalled fetch so it settles, the `.finally()` clears
+ * the inflight flag, and the URL can be prefetched again.
+ */
+describe("hover prefetch stalled-fetch timeout (F4)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("aborts a never-settling direct prefetch so the key can be prefetched again", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // A fetch that resolves only when its AbortSignal fires (i.e. a stalled
+    // server). Without the internal timeout, this never settles and strands
+    // the inflight key.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Inflight while the fetch is pending.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A re-prefetch while still inflight is correctly deduped (no new fetch).
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the internal timeout: the stalled fetch is aborted and
+    // settles, running the `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    // The inflight key is released — no longer stranded.
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch of the same URL now actually hits the network again
+    // instead of being silently deduped against the dead inflight entry.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts a published entry whose body stalls AFTER headers, so it can be re-prefetched", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Headers arrive (the fetch resolves and the entry publishes), but the body
+    // NEVER produces or closes — a server that flushes headers then stalls
+    // mid-stream. A never-resolving `pull()` makes the tracking tee read hang, so
+    // streamComplete never resolves. Before the fix, the timeout was cleared
+    // once headers arrived, so the published entry was dedupe-d against forever
+    // and navigation awaited a payload that never settled. The stall timeout
+    // must now also bound the body and evict the entry.
+    // Fresh stalling stream per call (a teed body cannot be reused).
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              return new Promise<void>(() => {}); // never resolves -> read() hangs
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Let the fetch resolve and the `.then` publish the entry.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Headers arrived -> entry published even though the body is stalled.
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // A re-prefetch dedupes against the published (stuck) entry — the bug.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance past the stall timeout: the body never finished, so the fetch's
+    // stream is aborted and the published-but-never-settling entry is evicted.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // A fresh prefetch now refetches instead of dedupe-ing against the stuck
+    // entry / awaiting a payload that never settles.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stalled entry's eviction does NOT drop a fresh entry republished under the same key", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // Call 1 stalls (its stall timer stays armed); call 2 (after the stalled
+    // entry is consumed) republishes under the SAME key with a body that
+    // completes. When call 1's timer fires, evicting by generation alone would
+    // delete call 2's valid entry — identity-guarded eviction must spare it.
+    let call = 0;
+    const fetchMock = vi.fn(() => {
+      call += 1;
+      const body =
+        call === 1
+          ? new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise<void>(() => {}); // stall: never produces/closes
+              },
+            })
+          : "payload"; // completes immediately
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { "X-Test": "1" } }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+    // A publishes (stalled); its stall timer is armed for 30s.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // Navigation consumes A (removes it) while A's timer is still armed.
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+
+    // B republishes under the same key; its body completes so its own timer
+    // clears, leaving only A's stale timer armed.
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+
+    // A's stall timer fires: identity guard means it does NOT delete B.
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+  });
+
+  it("aborts a never-settling QUEUED prefetch (caller signal) so its key clears", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    // The queue passes its own AbortController signal. Without combining that
+    // with the internal timeout, a stalled queued prefetch never settles and
+    // strands the inflight key — the bug this layered-timeout fixes.
+    const fetchMock = vi.fn((_url: string | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init?.signal;
+        if (sig) {
+          sig.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    // Drive the queue's idle/image waits so the item actually executes.
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    // The queued fetch received a real caller signal (not undefined).
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBeInstanceOf(AbortSignal);
+
+    // Advance past the internal timeout: the combined signal fires, the stalled
+    // fetch aborts and settles, running `.finally()` cleanup.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    expect(hasPrefetch(wildcardKey)).toBe(false);
+  });
+
+  it("clears the timeout when the fetch settles normally (no late abort)", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    // Drain the fetch + decode microtasks.
+    await vi.advanceTimersByTimeAsync(0);
+
+    const { hasPrefetch, consumePrefetch } =
+      await import("../browser/prefetch/cache");
+    const wildcardKey = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+    // Entry is cached (timer was cleared on settle, fetch was never aborted).
+    expect(hasPrefetch(wildcardKey)).toBe(true);
+    expect(consumePrefetch(wildcardKey)).not.toBeNull();
+  });
+});
+
+/**
  * Regression: same-page cache poisoning.
  *
  * After navigating to a prefetched target, a render/viewport prefetch would
@@ -753,6 +992,7 @@ describe("prefetch fetch options (credentials + action fence)", () => {
 describe("same-page cache poisoning regression", () => {
   afterEach(() => {
     clearPrefetchCache();
+    abortAllPrefetches();
     resetPrefetchPolicy();
     vi.unstubAllGlobals();
     restoreGlobalProperty("window", originalWindowDescriptor);
@@ -783,8 +1023,7 @@ describe("same-page cache poisoning regression", () => {
     });
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
     const consumed = consumePrefetch(wildcardKey);
     expect(consumed).not.toBeNull();
 
@@ -798,11 +1037,15 @@ describe("same-page cache poisoning regression", () => {
     expect(key).toBe("");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    // The slot re-armed from the ORIGINAL prefetch's buffered bytes — no
+    // network happened after consumption (fetchMock still 1), so whatever is
+    // here cannot be a same-page poisoned diff; it is the replayed original.
     const recheck = consumePrefetch(wildcardKey);
-    expect(recheck).toBeNull();
+    expect(recheck).not.toBeNull();
+    expect(recheck!.complete).toBe(true);
   });
 
-  it("after consuming a prefetch, cross-page re-prefetch IS allowed", async () => {
+  it("after consuming a prefetch, cross-page re-prefetch dedups against the re-armed slot", async () => {
     setupBrowser();
 
     const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
@@ -820,13 +1063,14 @@ describe("same-page cache poisoning regression", () => {
     prefetchDirect("/page/1", ["A0"], "v1");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
+    // Let the eager decode + clean EOF settle so respawn is armed before
+    // consuming (microtask chains flush exhaustively before the macrotask).
+    await vi.waitFor(() => expect(decodeMock).toHaveBeenCalled());
+    await decodeMock.mock.results[0]!.value;
+    await new Promise((r) => setTimeout(r, 0));
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
-    const wildcardKey =
-      "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const wildcardKey = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
     consumePrefetch(wildcardKey);
 
     window.location.href = "http://localhost:4173/page/2";
@@ -834,7 +1078,9 @@ describe("same-page cache poisoning regression", () => {
 
     prefetchDirect("/page/1", ["A0"], "v1");
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Consumption re-armed the slot from buffered bytes, so the cross-page
+    // re-prefetch dedups instead of refetching: one network request total.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("full pagination flow: forward through /1→/2→/3 then back to /1 uses correct entry", async () => {
@@ -854,9 +1100,9 @@ describe("same-page cache poisoning regression", () => {
 
     const { consumePrefetch } = await import("../browser/prefetch/cache");
 
-    const key1 = "v1:abc\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const key2 = "v1:abc\0/page/2?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
-    const key3 = "v1:abc\0/page/3?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const key1 = "v1:abc\0/page/1?_rsc_partial=true&_rsc_v=v1";
+    const key2 = "v1:abc\0/page/2?_rsc_partial=true&_rsc_v=v1";
+    const key3 = "v1:abc\0/page/3?_rsc_partial=true&_rsc_v=v1";
 
     window.location.href = "http://localhost:4173/page/list";
     (window.location as any).pathname = "/page/list";
@@ -893,10 +1139,197 @@ describe("same-page cache poisoning regression", () => {
     prefetchDirect("/page/3", ["A0"], "v1");
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
-    const staleEntry = consumePrefetch(key1);
-    expect(staleEntry).toBeNull();
+    // The earlier consume re-armed key1 from its buffered bytes: going back
+    // to /1 reuses the replayed original entry, and the hover re-prefetch
+    // dedups — still only the three original network requests.
+    const rearmed = consumePrefetch(key1);
+    expect(rearmed).not.toBeNull();
+    expect(rearmed).not.toBe(res1);
 
     prefetchDirect("/page/1", ["A0"], "v1");
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * #622 follow-up (MEDIUM): `entry.complete` must mean "decoded + clean EOF",
+ * never just "stream settled". teeWithCompletion resolves streamComplete on a
+ * normal EOF AND on abort/read-error, so the flag must be gated on the
+ * completion callback reporting `endedCleanly === true` AND a successful decode.
+ * A broken or undecodable stream that is marked complete would let navigation
+ * treat it as fully-prefetched and commit a corrupt fast path with no fallback.
+ */
+describe("prefetch entry.complete clean-EOF gating (#622 follow-up)", () => {
+  beforeEach(() => {
+    setupBrowser();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  const WILDCARD_KEY = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+  // Drain queued microtasks so the Promise.allSettled([payload, streamComplete])
+  // callback that sets entry.complete has run.
+  async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  it("marks complete=true on a clean EOF with a successful decode", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const entry = consumePrefetch(WILDCARD_KEY);
+    expect(entry).not.toBeNull();
+    await entry!.streamComplete;
+    await flushMicrotasks();
+
+    expect(entry!.complete).toBe(true);
+  });
+
+  it("evicts the entry when the stream errors mid-flight (not just complete=false)", async () => {
+    // A body whose pull() throws errors the tracking stream's read(). The error
+    // rejects out of teeWithCompletion's read loop into its .catch, which settles
+    // streamComplete with endedCleanly = false. This is the stream-error path that
+    // is NOT driven by the stall timeout (no abort, no 31s wait), so it isolates
+    // the Promise.allSettled eviction from the timeout's own eviction. A broken
+    // (errored) prefetch must be evicted, not left in the cache — navigation reads
+    // `payload` regardless of `complete`, so a lingering errored entry would be
+    // consumed once instead of refetching.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              throw new Error("stream read error");
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decode resolves immediately (the decoder mock is synchronous): even with a
+    // "successful" decode, an errored stream must NOT linger in the cache.
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The entry IS published once headers arrive — assert that first so the
+    // eviction assertion below is not vacuously true. hasPrefetch is
+    // non-destructive (unlike consumePrefetch, which deletes on read), so it
+    // safely observes the published-then-evicted transition.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // The eviction runs in the Promise.allSettled([payload, streamComplete])
+    // callback, which only fires after the stream-error settles streamComplete
+    // through teeWithCompletion's async reader. Poll until the entry is gone.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false));
+    // And a single consume confirms the cache map no longer holds it.
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+  });
+
+  it("evicts the entry when the eager decode fails (drained but undecodable)", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response("garbage", { status: 200, headers: { "X-Test": "1" } }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decoder rejects: the stream drains cleanly (EOF) but the payload is
+    // undecodable, so the entry is broken and must be evicted, not cached.
+    decodeMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("decode failed")),
+    );
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The entry IS published once headers arrive — assert that first so the
+    // eviction assertion below is not vacuously true. hasPrefetch is
+    // non-destructive, so it safely observes the published-then-evicted
+    // transition (consumePrefetch deletes on read and would mask the bug).
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // The entry is evicted: navigation reads `payload` regardless of `complete`,
+    // so a rejected payload left in the cache would be consumed once instead of
+    // refetching. The eviction runs in the Promise.allSettled([payload,
+    // streamComplete]) callback after the rejected decode settles. Poll until the
+    // entry is gone.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false));
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+  });
+
+  it("evicts on the early decode rejection even while the stream is still hung (does not wait for the stall timeout)", async () => {
+    // The decode rejects EARLY while the response body / tracking stream HANGS:
+    // a ReadableStream whose pull() never enqueues or closes, so it never reaches
+    // EOF and never aborts. streamComplete therefore never settles on its own.
+    // Eviction must fire off the earliest failure signal (the rejected decode),
+    // NOT wait for Promise.allSettled([payload, streamComplete]) — which would
+    // hang until the 30s stall-timeout backstop fires. We assert eviction well
+    // before that timeout, proving the early payload.catch handler did the work.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull() {
+              return new Promise<void>(() => {}); // never enqueues/closes -> read() hangs, no EOF, no abort
+            },
+          }),
+          { status: 200, headers: { "X-Test": "1" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    // Decoder rejects early, before the (hung) stream reaches EOF.
+    decodeMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("decode failed early")),
+    );
+
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    const { hasPrefetch } = await import("../browser/prefetch/cache");
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // Entry IS published once headers arrive — assert first so the eviction
+    // assertion is not vacuously true.
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(true));
+    // Eviction must happen on the early payload.catch, NOT the stall timeout:
+    // poll with a timeout WELL BELOW the 30s stall timer. If eviction only
+    // happened in the allSettled/stall backstop, this would time out (the
+    // stream never settles streamComplete on its own).
+    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false), {
+      timeout: 2_000,
+    });
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
   });
 });

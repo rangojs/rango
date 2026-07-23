@@ -1,9 +1,9 @@
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import {
-  requireRequestContext,
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
+import { markExternalRedirect } from "../redirect-origin.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit
@@ -39,6 +39,11 @@ import {
  *   status: 303,
  *   state: [Flash({ text: "Session expired" })],
  * });
+ *
+ * // Off-host redirect (opt out of the same-origin guard). Without
+ * // `external: true`, a cross-origin target is blocked and replaced with the
+ * // app root, matching the client's open-redirect protection.
+ * return redirect('https://accounts.example.com/oauth', { external: true });
  * ```
  */
 export function redirect(url: string, status?: number): Response;
@@ -47,13 +52,18 @@ export function redirect(
   options: {
     status?: number;
     state?: LocationStateEntry | LocationStateEntry[];
+    external?: boolean;
   },
 ): Response;
 export function redirect(
   url: string,
   statusOrOptions?:
     | number
-    | { status?: number; state?: LocationStateEntry | LocationStateEntry[] },
+    | {
+        status?: number;
+        state?: LocationStateEntry | LocationStateEntry[];
+        external?: boolean;
+      },
 ): Response {
   const status =
     typeof statusOrOptions === "number"
@@ -61,9 +71,11 @@ export function redirect(
       : (statusOrOptions?.status ?? 302);
   const state =
     typeof statusOrOptions === "object" ? statusOrOptions?.state : undefined;
+  const external =
+    typeof statusOrOptions === "object" ? statusOrOptions?.external : undefined;
 
   if (state) {
-    const ctx = requireRequestContext();
+    const ctx = getRequestContext();
     ctx.setLocationState(state);
 
     if (process.env.NODE_ENV !== "production") {
@@ -101,11 +113,22 @@ export function redirect(
     resolvedUrl = url === "/" ? bn : bn + url;
   }
 
-  return new Response(null, {
-    status,
-    headers: {
-      Location: resolvedUrl,
-      "X-RSC-Redirect": "soft",
-    },
-  });
+  const headers: Record<string, string> = {
+    Location: resolvedUrl,
+    "X-RSC-Redirect": "soft",
+  };
+
+  const response = new Response(null, { status, headers });
+
+  // Mark an explicit off-host redirect with an out-of-band brand so the
+  // same-origin guard (rsc/redirect-guard.ts) lets it through. The brand is a
+  // WeakSet membership on this Response object -- NOT a wire header -- so the
+  // opt-in cannot be forged by an attacker-controlled upstream response a
+  // proxy-style response route might copy. The internal redirect-rebuild paths
+  // transfer the brand; the guard reads and clears it (see markExternalRedirect).
+  if (external) {
+    markExternalRedirect(response);
+  }
+
+  return response;
 }

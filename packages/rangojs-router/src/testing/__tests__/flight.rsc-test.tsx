@@ -35,10 +35,37 @@ async function ParamEcho(): Promise<React.ReactElement> {
   return <span>id={ctx.params.id}</span>;
 }
 
+// A Server Component that reverses a route name, proving ctx.reverse resolves
+// against the SCOPED routeMap option rather than the global route map.
+async function ReverseEcho(): Promise<React.ReactElement> {
+  const ctx = getRequestContext();
+  return <span>url={ctx.reverse("product", { id: "5" })}</span>;
+}
+
+// A Server Component that reads the active theme, proving the Flight primitive
+// populates themeConfig on the request context (like renderHandler does).
+async function ThemeEcho(): Promise<React.ReactElement> {
+  const ctx = getRequestContext();
+  // Compose into a single string so it serializes contiguously (Flight splits
+  // `theme={x}` JSX into a children array, not one string).
+  return <span>{`theme=${String(ctx.theme)}`}</span>;
+}
+
 // A Server Component that throws during render.
 async function Boom(): Promise<React.ReactElement> {
   await Promise.resolve();
   throw new Error("KABOOM from server component");
+}
+
+// Simulates the missing-rsc-alias trap: when `rangoTestAliases` is not wired,
+// a server component reading getRequestContext()/cookies()/headers() resolves
+// the out-of-react-server stub (index.ts), which throws this exact message.
+async function StubReader(): Promise<React.ReactElement> {
+  await Promise.resolve();
+  throw new Error(
+    'cookies() is only available from "@rangojs/router" in a react-server/RSC ' +
+      'environment. For client hooks and components, import from "@rangojs/router/client".',
+  );
 }
 
 describe("renderToFlightString (Flight RSC)", () => {
@@ -72,6 +99,42 @@ describe("renderToFlightString (Flight RSC)", () => {
     expect(flight).toMatchFlight("42");
   });
 
+  // #572 / #582 item: ctx.reverse() must resolve against the SCOPED routeMap
+  // option, not the global route map (which is order-dependent on whatever
+  // router registered last). With no router registered in this bare RSC test,
+  // the global map has no "product", so only the scoped option can resolve it.
+  it("scopes ctx.reverse() to the provided routeMap option", async () => {
+    const flight = await renderToFlightString(<ReverseEcho />, {
+      routeMap: { product: "/scoped/products/:id" },
+    });
+    expect(flight).toMatchFlight("url=");
+    expect(flight).toMatchFlight("/scoped/products/5");
+  });
+
+  // I4: renderToFlightString must thread themeConfig into the request context
+  // (like renderHandler), so a server component reading ctx.theme is testable.
+  // The theme is resolved from the request cookie -> deterministic.
+  it("populates ctx.theme when the theme option is passed", async () => {
+    const flight = await renderToFlightString(<ThemeEcho />, {
+      request: new Request("http://localhost/", {
+        headers: { Cookie: "theme=dark" },
+      }),
+      theme: true,
+    });
+    expect(flight).toMatchFlight("theme=dark");
+  });
+
+  // Non-vacuity: without the theme option, ctx.theme is undefined (an app with
+  // no theme configured), so the assertion above genuinely depends on the fix.
+  it("leaves ctx.theme undefined when the theme option is omitted", async () => {
+    const flight = await renderToFlightString(<ThemeEcho />, {
+      request: new Request("http://localhost/", {
+        headers: { Cookie: "theme=dark" },
+      }),
+    });
+    expect(flight).toMatchFlight("theme=undefined");
+  });
+
   it("normalizeFlight scrubs the dev reference row and file paths", () => {
     const dev =
       ":N1780553241432.4255\n" +
@@ -97,6 +160,26 @@ describe("renderToFlightString (Flight RSC)", () => {
     // does not hang (the bug took the full default 5s timeout).
     await expect(renderToFlightString(<Boom />)).rejects.toThrow(
       "KABOOM from server component",
+    );
+  }, 2000);
+
+  it("reclassifies the missing-rsc-alias stub error with actionable guidance", async () => {
+    // Without rangoTestAliases, a context-reading server component hits the
+    // out-of-react-server stub and the raw message is opaque. The Flight path
+    // now self-diagnoses, naming rangoTestAliases like renderHandler does.
+    await expect(renderToFlightString(<StubReader />)).rejects.toThrow(
+      /rangoTestAliases/,
+    );
+  });
+
+  it("does NOT reclassify a genuine server-component error", async () => {
+    // Non-vacuity for the predicate: a normal render error keeps its message and
+    // is never rewritten with the rsc-alias guidance.
+    await expect(renderToFlightString(<Boom />)).rejects.toThrow(
+      /KABOOM from server component/,
+    );
+    await expect(renderToFlightString(<Boom />)).rejects.not.toThrow(
+      /rangoTestAliases/,
     );
   }, 2000);
 

@@ -5,11 +5,25 @@ import {
   type Page,
 } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError, testId, waitForHydration } from "./helper";
+import {
+  expectNoPageError,
+  expectNoReload,
+  isPrefetchRequest,
+  testId,
+  waitForHydration,
+} from "./helper";
+import {
+  assertPprReplayStatus,
+  assertShellStatus,
+} from "@rangojs/router/testing/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
-type ExecutionAxis = "full-render" | "action-followup";
+type ExecutionAxis =
+  | "full-render"
+  | "partial-render"
+  | "action-followup"
+  | "shell-capture";
 type ScopeAxis =
   | "in-scope-child"
   | "sibling-orphan"
@@ -339,9 +353,42 @@ const matrixRows: SemanticMatrixRow[] = [
     execution: "full-render",
     scope: "n/a",
     url: "/",
-    assert: async ({ page }) => {
+    assert: async ({ build, page }) => {
       // Home page (from.pathname="/") does not match the prerender-intercept
       // when condition: from.pathname.startsWith("/prerender-intercept")
+      const prefetchResponsePromise =
+        build === "prod"
+          ? page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return (
+                url.pathname === "/prerender-intercept/alpha" &&
+                url.searchParams.has("_rsc_partial") &&
+                isPrefetchRequest(response.request())
+              );
+            })
+          : null;
+      const clickResponsePromise =
+        build === "dev"
+          ? page.waitForResponse((response) => {
+              const url = new URL(response.url());
+              return (
+                url.pathname === "/prerender-intercept/alpha" &&
+                url.searchParams.has("_rsc_partial") &&
+                !isPrefetchRequest(response.request())
+              );
+            })
+          : null;
+      const clickPartials: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (
+          url.pathname === "/prerender-intercept/alpha" &&
+          url.searchParams.has("_rsc_partial") &&
+          !isPrefetchRequest(request)
+        ) {
+          clickPartials.push(request.url());
+        }
+      });
       await page.evaluate(() => {
         const a = document.createElement("a");
         a.href = "/prerender-intercept/alpha";
@@ -349,12 +396,26 @@ const matrixRows: SemanticMatrixRow[] = [
         a.setAttribute("data-testid", "temp-nav-link");
         document.body.appendChild(a);
       });
-      await testId(page, "temp-nav-link").click();
+      const link = testId(page, "temp-nav-link");
+      await using _ = await expectNoReload(page);
+      if (prefetchResponsePromise) {
+        await link.scrollIntoViewIfNeeded();
+        const prefetchResponse = await prefetchResponsePromise;
+        expect(prefetchResponse.ok()).toBe(true);
+        expect(await prefetchResponse.finished()).toBeNull();
+      }
+      await link.click();
+      if (clickResponsePromise) {
+        const clickResponse = await clickResponsePromise;
+        expect(clickResponse.ok()).toBe(true);
+        expect(await clickResponse.finished()).toBeNull();
+      }
       await page.waitForURL("**/prerender-intercept/alpha");
       await waitForHydration(page);
       // when() returned false: full page renders, no modal
       await expect(testId(page, "pri-detail")).toBeVisible();
       await expect(testId(page, "pri-modal")).not.toBeVisible();
+      if (build === "prod") expect(clickPartials).toHaveLength(0);
     },
   },
   {
@@ -430,6 +491,26 @@ const matrixRows: SemanticMatrixRow[] = [
         baseUrl("/response-cache/uncached-json"),
       );
       expect(body2.ts).toBeGreaterThan(body1.ts);
+    },
+  },
+  {
+    id: "RR1",
+    contract:
+      "a handler-thrown Response merges effects and follows normal response caching",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/response-cache/cached-json?throw-response=1",
+    assert: async ({ baseUrl, request }) => {
+      const url = baseUrl("/response-cache/cached-json?throw-response=1");
+      const first = await request.get(url);
+      expect(first.status()).toBe(200);
+      expect(first.headers()["x-thrown-response"]).toBe("merged");
+      const body1 = await first.json();
+      expect(body1.source).toBe("thrown-response");
+
+      const body2 = await (await request.get(url)).json();
+      expect(body2.ts).toBe(body1.ts);
     },
   },
   {
@@ -538,6 +619,325 @@ const matrixRows: SemanticMatrixRow[] = [
       await waitForHydration(page);
       const ts2 = await readTestIdText(page, "prerender-ctx-timestamp");
       expect(ts2).not.toBe(ts1);
+    },
+  },
+  // PPR commit point + capture execution model: the shell serve path commits
+  // AFTER the whole middleware chain (global router.use() AND route DSL
+  // middleware()), so a middleware rejection wins before a single shell byte —
+  // even on a warmed route. And the background capture renders under a derived
+  // context that INHERITS the request's post-middleware state instead of
+  // re-running the chain: the middleware-run counter advances exactly once per
+  // HTTP request, captures included, while the captured shell still carries the
+  // middleware-derived ctx value (scope fidelity). Holes are render-defined
+  // (loading() boundaries and pending promises under Suspense), not config.
+  {
+    id: "PPR1",
+    contract:
+      "shell serve commits after ALL middleware (401 => zero shell bytes) and capture never re-runs the chain (counter exact, mw ctx value photographed)",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ request, baseUrl }) => {
+      const authed = {
+        headers: { Accept: "text/html", "x-shell-auth": "yes" },
+      };
+      const unauthed = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-secure?probe=matrix-guarded");
+      const readRuns = async () =>
+        Number(await (await request.get(baseUrl("/shell-secure-runs"))).text());
+
+      // Warm to HIT with authorized requests.
+      await expect(async () => {
+        const r = await request.get(url, authed);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      // Unauthorized on the WARMED route: middleware 401, zero shell bytes.
+      const denied = await request.get(url, unauthed);
+      expect(denied.status()).toBe(401);
+      const deniedBody = await denied.text();
+      expect(deniedBody).toBe("unauthorized");
+      expect(denied.headers()["x-rango-shell"]).toBeUndefined();
+
+      // Scope fidelity: the captured prelude carries the middleware ctx value.
+      const hit = await request.get(url, authed);
+      const html = await hit.text();
+      expect(html.slice(0, html.indexOf("</html>"))).toContain(
+        "MW-SCOPE-VALUE",
+      );
+
+      // Capture never re-runs middleware: exactly one run per request.
+      const before = await readRuns();
+      for (let i = 0; i < 3; i++) {
+        const r = await request.get(url, authed);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }
+      await new Promise((r) => setTimeout(r, 300));
+      // 3 authed requests above; the unauthorized/denied ones are separate GETs
+      // counted at their own time, so only the delta window matters here.
+      expect((await readRuns()) - before).toBe(3);
+    },
+  },
+  // Serve-time guarding: every serve — MISS and HIT — runs the FULL chain (route
+  // middleware + handlers + fresh loaders) via executeRender; only the shell HTML
+  // is cached. So a HIT body carries BOTH the frozen shell AND freshly-rendered live
+  // loader content — proving the chain executed at serve time, not just replayed a
+  // cached document. (Composition is marker-gated, so a short-circuit — 401/redirect
+  // — never composes a shell; the shell-cache middleware unit tests pin that half.)
+  {
+    id: "PPR2",
+    contract:
+      "serve-time guarding: a HIT still runs the full chain — the shell is frozen but the loader hole is fresh",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ request, baseUrl }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache?probe=matrix-guard");
+      await expect(async () => {
+        const r = await request.get(url, html);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+      const res = await request.get(url, html);
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const body = await res.text();
+      // Frozen shell (from ring-3 replay) AND fresh live loader output (chain ran).
+      expect(body).toContain("Shell Cache Demo");
+      expect(body).toContain("Live price:");
+    },
+  },
+  // The CONSUMPTION-LANE RULE (issue #672 / #674): server-side handler
+  // consumption via `await ctx.use(loader)` is the BAKED lane in every shared
+  // artifact — cache(), "use cache", and the PPR shell. During capture the
+  // loader EXECUTES with identity reads (cookies()/headers()) permitted
+  // (mirroring the cache() purity allowance), so the capture is never refused;
+  // the value freezes as a capture-time copy wherever it renders as
+  // unshielded shell material. DSL segment lanes are unchanged — a loader
+  // ALSO registered live-lane (loader()+loading()) still masks at capture and
+  // keeps its boundary a live hole. Client-side useLoader is the live lane.
+  {
+    id: "PPR3",
+    contract:
+      "consumption-lane rule: handler ctx.use of a cookie-reading loader executes at capture (no refusal); unshielded value bakes frozen; a registered live-lane slot stays a live hole",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "layout-parallel",
+    assert: async ({ request, baseUrl }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache/slot-use?probe=matrix-lane");
+
+      // No refusal: the route reaches HIT despite the handlers' cookies()
+      // reads (pre-rule these tripped the identity guard -> MISS forever).
+      await expect(async () => {
+        const r = await request.get(url, html);
+        expect(r.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      const first = await (await request.get(url, html)).text();
+      const prelude = first.slice(0, first.indexOf("</html>"));
+      // BAKED: layout-handler-consumed unregistered loader (capture ran
+      // cookie-less -> "anon") froze into the shared prelude.
+      const chip = prelude.match(/srv-chip-(\d+)-anon/);
+      expect(chip).not.toBeNull();
+      // Segment lane unchanged: the same-consumption slot whose loader is
+      // registered live-lane still postpones (fallback frozen, hole live).
+      expect(prelude).toContain("srv badge pending...");
+      expect(prelude).not.toMatch(/srv-badge-\d/);
+
+      // Frozen across HITs AND visitors — the rule's documented footgun.
+      const second = await (
+        await request.get(url, {
+          headers: { ...html.headers, Cookie: "srv_visitor=user-a" },
+        })
+      ).text();
+      const secondPrelude = second.slice(0, second.indexOf("</html>"));
+      expect(secondPrelude).toContain(`srv-chip-${chip![1]}-anon`);
+      expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
+    },
+  },
+  {
+    id: "PPR4",
+    contract:
+      "conditional transition predicates rerun on every PPR shell HIT while route handlers replay",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "in-scope-child",
+    assert: async ({ request, baseUrl }) => {
+      const htmlHeaders = { headers: { Accept: "text/html" } };
+      const url = baseUrl("/shell-cache/exec-matrix?probe=matrix-transition");
+      await expect(async () => {
+        const response = await request.get(url, htmlHeaders);
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+      }).toPass({ timeout: 10000 });
+
+      const readCounters = async () => {
+        const response = await request.get(url, htmlHeaders);
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+        const body = await response.text();
+        const match = body.match(
+          /data-testid="shell-exec-counters"[^>]*>(\{[^<]+\})</,
+        );
+        expect(match).toBeTruthy();
+        return JSON.parse(match![1].replace(/&quot;/g, '"')) as {
+          transitionWhen: number;
+          path: number;
+          layout: number;
+          parallel: number;
+        };
+      };
+
+      const first = await readCounters();
+      const second = await readCounters();
+      expect(second.transitionWhen).toBe(first.transitionWhen + 1);
+      expect(second.path).toBe(first.path);
+      expect(second.layout).toBe(first.layout);
+      expect(second.parallel).toBe(first.parallel);
+    },
+  },
+  {
+    id: "PPR5",
+    contract:
+      "a cold partial request schedules an eligibility-checked navigation snapshot for later prefetch replay",
+    transport: "request",
+    execution: "partial-render",
+    scope: "in-scope-child",
+    assert: async ({ build, page, request, baseUrl }) => {
+      const probe = `matrix-cold-partial-${build}-${crypto.randomUUID()}`;
+      const targetPath = `/shell-cache/slot-hole?probe=${probe}`;
+      await openJsPage(page, baseUrl("/"));
+
+      const firstResponsePromise = page.waitForResponse((response) => {
+        const responseUrl = new URL(response.url());
+        return (
+          responseUrl.pathname === "/shell-cache/slot-hole" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial")
+        );
+      });
+      const clickPartials: string[] = [];
+      page.on("request", (request) => {
+        const responseUrl = new URL(request.url());
+        if (
+          responseUrl.pathname === "/shell-cache/slot-hole" &&
+          responseUrl.searchParams.get("probe") === probe &&
+          responseUrl.searchParams.has("_rsc_partial") &&
+          !isPrefetchRequest(request)
+        ) {
+          clickPartials.push(request.url());
+        }
+      });
+      await page.evaluate((href) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.dataset.testid = "matrix-cold-partial-link";
+        link.textContent = "Cold partial";
+        document.body.append(link);
+      }, baseUrl(targetPath));
+      const link = testId(page, "matrix-cold-partial-link");
+      await using _ = await expectNoReload(page);
+      let firstResponse;
+      if (build === "prod") {
+        await link.scrollIntoViewIfNeeded();
+        firstResponse = await firstResponsePromise;
+        expect(isPrefetchRequest(firstResponse.request())).toBe(true);
+        expect(firstResponse.ok()).toBe(true);
+        expect(await firstResponse.finished()).toBeNull();
+        await link.click();
+      } else {
+        await link.click();
+        firstResponse = await firstResponsePromise;
+        expect(isPrefetchRequest(firstResponse.request())).toBe(false);
+      }
+      await page.waitForURL((url) => url.href === baseUrl(targetPath));
+      await expect(testId(page, "shell-slot-home")).toBeVisible();
+      if (build === "prod") expect(clickPartials).toHaveLength(0);
+      assertPprReplayStatus(
+        { headers: new Headers(firstResponse.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      const partialUrl = firstResponse.url();
+      await expect(async () => {
+        const replay = await request.get(partialUrl, {
+          headers: {
+            "X-RSC-Router-Client-Path": baseUrl("/"),
+            "X-Rango-Prefetch": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 10000 });
+
+      const document = await request.get(baseUrl(targetPath), {
+        headers: { Accept: "text/html" },
+      });
+      assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
+    },
+  },
+  // Explicit-tier-first replay composition (the storefront shape: ppr routes
+  // under an ancestor cache() scope). The consumer's tier is ALWAYS consulted
+  // first and serves under its own key/ttl/swr semantics — reported as
+  // `explicit-cache-hit`, never a false replay HIT. Only a true miss of that
+  // tier lets the shell snapshot's canonical doc segment record supply the
+  // match (replay HIT). Opt-outs stay absolute: cache(false)/condition()
+  // false bypass as `cache-disabled` before any shell read (pinned in
+  // rsc-rendering-shell-ppr + cache-lookup-shell-replay-fallback units).
+  {
+    id: "PPR6",
+    contract:
+      "explicit-tier-first replay: a route-derived cache() hit reports explicit-cache-hit under its own semantics; only its miss lets the seeded doc record replay (HIT)",
+    transport: "request",
+    execution: "partial-render",
+    scope: "in-scope-child",
+    assert: async ({ request, baseUrl }) => {
+      const htmlHeaders = { headers: { Accept: "text/html" } };
+      const partialHeaders = {
+        headers: { "X-RSC-Router-Client-Path": baseUrl("/") },
+      };
+      const warmShell = async (url: string) => {
+        await expect(async () => {
+          const r = await request.get(url, htmlHeaders);
+          expect(r.headers()["x-rango-shell"]).toBe("HIT");
+        }).toPass({ timeout: 10000 });
+      };
+
+      // 1. Explicit tier warmed by a fresh partial render (shell cold:
+      //    bounded no-entry bypass; the render writes the ring-3 entry under
+      //    the consumer's ttl).
+      const probe = `matrix-scoped-${crypto.randomUUID()}`;
+      const url = baseUrl(`/shell-cache/scoped?probe=${probe}`);
+      const partialUrl = `${url}&_rsc_partial=true&_rsc_segments=`;
+      const cold = await request.get(partialUrl, partialHeaders);
+      assertPprReplayStatus(
+        { headers: new Headers(cold.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+
+      // 2. Shell captured; within the explicit ttl the consumer's tier stays
+      //    authoritative — never reported as a replay HIT.
+      await warmShell(url);
+      const warm = await request.get(partialUrl, partialHeaders);
+      assertPprReplayStatus(
+        { headers: new Headers(warm.headers()) },
+        { outcome: "BYPASS", reason: "explicit-cache-hit" },
+      );
+
+      // 3. A fresh probe (explicit partial tier cold, shell captured) is
+      //    supplied by the seeded doc record — the replay HIT that used to be
+      //    structurally impossible under an ancestor cache() scope.
+      const probe2 = `matrix-scoped-cold-${crypto.randomUUID()}`;
+      const url2 = baseUrl(`/shell-cache/scoped?probe=${probe2}`);
+      await warmShell(url2);
+      const replay = await request.get(
+        `${url2}&_rsc_partial=true&_rsc_segments=`,
+        partialHeaders,
+      );
+      assertPprReplayStatus(
+        { headers: new Headers(replay.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
     },
   },
 ];

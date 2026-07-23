@@ -16,8 +16,23 @@
 
 import { wait, waitForIdle, waitForViewportImages } from "./resource-ready.js";
 
-const MAX_CONCURRENT = 2;
+// Max prefetches executing at once. Mirrors DEFAULT_PREFETCH_CONCURRENCY
+// (router/prefetch-limits.ts); kept as a local literal so the client bundle
+// doesn't pull in router-layer code. Overridden at startup by
+// setPrefetchConcurrency from server metadata.
+let maxConcurrent = 2;
 const IMAGE_WAIT_TIMEOUT = 2000;
+
+/**
+ * Set the max number of concurrently-executing speculative prefetches.
+ * Called once at app startup with the value from server metadata. A value
+ * below 1 (or non-finite) is ignored, keeping the default.
+ */
+export function setPrefetchConcurrency(n: number): void {
+  if (Number.isFinite(n) && n >= 1) {
+    maxConcurrent = Math.floor(n);
+  }
+}
 
 let active = 0;
 const queue: Array<{
@@ -42,7 +57,7 @@ function startExecution(
     abortControllers.delete(key);
     // Only decrement if this key wasn't already cleared by cancelAllPrefetches.
     // Without this guard, cancelled tasks' .finally() would underflow active
-    // below zero, breaking the MAX_CONCURRENT guarantee.
+    // below zero, breaking the maxConcurrent guarantee.
     if (executing.delete(key)) {
       active--;
     }
@@ -63,7 +78,7 @@ function startExecution(
  */
 function scheduleDrain(): void {
   if (drainScheduled) return;
-  if (active >= MAX_CONCURRENT || queue.length === 0) return;
+  if (active >= maxConcurrent || queue.length === 0) return;
   drainScheduled = true;
   const gen = drainGeneration;
   waitForIdle()
@@ -83,7 +98,7 @@ function scheduleDrain(): void {
 }
 
 function drain(): void {
-  while (active < MAX_CONCURRENT && queue.length > 0) {
+  while (active < maxConcurrent && queue.length > 0) {
     const item = queue.shift()!;
     queued.delete(item.key);
     startExecution(item.key, item.execute);

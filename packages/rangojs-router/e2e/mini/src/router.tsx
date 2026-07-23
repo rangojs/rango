@@ -6,7 +6,9 @@
 // global and route-level middleware, route params, typed search schemas, segment
 // cache() and a function-level "use cache", error + not-found boundaries,
 // redirect(), parallel slots, an intercept() modal, loading() boundaries,
-// transition() (content-hold same-route navigation), and Meta / Breadcrumbs.
+// transition() (content-hold same-route navigation), Meta / Breadcrumbs, and
+// a shell-manifest route (replayed handle read by a live loader via
+// ctx.rendered() — see skills/shell-manifest).
 //
 // File organization mirrors the RSC boundary:
 //   - Server-only config (context-var tokens) plus the route tree live here.
@@ -18,8 +20,10 @@
 // See README.md in this folder.
 
 import {
+  cookies,
   createRouter,
   createVar,
+  getRequestContext,
   Meta,
   Breadcrumbs,
   redirect,
@@ -29,7 +33,13 @@ import {
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 
-import { ClockLoader, CounterLoader } from "./shared.js";
+import {
+  ClockLoader,
+  CounterLoader,
+  FlashMessage,
+  ManifestPricesLoader,
+  RenderedProducts,
+} from "./shared.js";
 import { increment, incrementWithResult } from "./actions.js";
 import { productsPatterns } from "./urls/products.js";
 // Route-colocated client components (each in its own directory) used to
@@ -58,6 +68,7 @@ import {
   LinkStatusDemo,
   StaticHref,
   GlobalReverse,
+  ManifestPrice,
 } from "./client.js";
 
 // ---------------------------------------------------------------------------
@@ -103,6 +114,19 @@ async function getCachedStamp(): Promise<{ seq: number }> {
 // actually re-rendered (a cache miss), so a stable value across reloads proves
 // a cache hit.
 let segmentRenderSeq = 0;
+
+// Shell-manifest demo state (see the /manifest route + skills/shell-manifest).
+// The catalog is server-only; the render counter proves the shell froze while
+// the prices (ManifestPricesLoader) stayed live.
+interface ManifestProduct {
+  id: string;
+  name: string;
+}
+const MANIFEST_CATALOG: ManifestProduct[] = [
+  { id: "1", name: "Widget" },
+  { id: "2", name: "Gadget" },
+];
+let manifestRenderSeq = 0;
 
 // ---------------------------------------------------------------------------
 // Middleware.
@@ -181,6 +205,10 @@ function FallbackWrap({
 // ---------------------------------------------------------------------------
 
 export const router = createRouter({
+  // Manual prefetch mode: keeps this suite's request assertions free of
+  // automatic production viewport prefetch traffic (the environment default
+  // is dogfooded by the router's e2e test-app).
+  defaultPrefetch: "none",
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 60, swr: 120 },
@@ -205,6 +233,7 @@ export const router = createRouter({
       layout,
       include,
       loader,
+      loading,
       cache,
       revalidate,
       middleware,
@@ -404,6 +433,50 @@ export const router = createRouter({
             ),
           ]),
 
+          // Shell manifest (skills/shell-manifest): the cached shell pushes
+          // the ids it rendered into RenderedProducts; on a hit the handler is
+          // skipped but its pushes replay, and the live loader reads the
+          // replayed ids after ctx.rendered() to price exactly those. A stable
+          // manifest-shell-seq across reloads = frozen shell; an advancing
+          // loader seq (data-seq on each price) = live holes.
+          // The `ppr` path option opts /manifest into PPR shell capture —
+          // serving is integral to the router (no middleware); the shell store
+          // is the app-level cacheStore. The route carries loading() so the
+          // masked loader postpones at that boundary during capture; the
+          // handler's RenderedProducts pushes replay from the segment cache
+          // (cache() below), and the live ManifestPricesLoader fills the hole
+          // on serve.
+          cache({ ttl: 60, swr: 120 }, () => [
+            path(
+              "/manifest",
+              (ctx) => {
+                ctx.use(Meta)({ title: "Shell manifest" });
+                manifestRenderSeq += 1;
+                const track = ctx.use(RenderedProducts);
+                for (const p of MANIFEST_CATALOG) track(p.id);
+                return (
+                  <div data-testid="manifest-page">
+                    <p data-testid="manifest-shell-seq">{manifestRenderSeq}</p>
+                    <ul>
+                      {MANIFEST_CATALOG.map((p) => (
+                        <li key={p.id} data-testid={`manifest-row-${p.id}`}>
+                          {p.name}: <ManifestPrice id={p.id} />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              },
+              { name: "manifest", ppr: { ttl: 60, swr: 120 } },
+              () => [
+                loader(ManifestPricesLoader),
+                loading(
+                  <p data-testid="manifest-loading">Loading manifest...</p>,
+                ),
+              ],
+            ),
+          ]),
+
           // Location state.
           path(
             "/state",
@@ -419,6 +492,81 @@ export const router = createRouter({
               );
             },
             { name: "state" },
+          ),
+
+          // Auth: INLINE server actions (function-level "use server") defined
+          // right in the handler and colocated with their <form>s. Because we
+          // stay on /login, there is no redirect: each action mutates the session
+          // cookie and sets the flash with getRequestContext().setLocationState(),
+          // then returns void. The framework re-renders /login after the action —
+          // cookies().get() now reflects the change (signed-in vs. the form) — and
+          // attaches the set location state to the action payload, so FlashBanner
+          // shows it via useLocationState. A form action gets no `ctx` and an
+          // inline "use server" closure can't close over it (not serializable), so
+          // getRequestContext() (server-only, ALS-resolved) is how we reach
+          // setLocationState. The bodies close over nothing, so they serialize
+          // cleanly.
+          path(
+            "/login",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Login" });
+              const session = cookies().get("session")?.value;
+
+              async function loginAction(formData: FormData): Promise<void> {
+                "use server";
+                const name = String(formData.get("name") ?? "").trim();
+                if (!name) {
+                  getRequestContext().setLocationState(
+                    FlashMessage({ text: "Name is required." }),
+                  );
+                  return;
+                }
+                cookies().set("session", name, {
+                  httpOnly: true,
+                  path: "/",
+                  sameSite: "lax",
+                });
+                getRequestContext().setLocationState(
+                  FlashMessage({ text: `Welcome back, ${name}!` }),
+                );
+              }
+
+              async function logoutAction(): Promise<void> {
+                "use server";
+                cookies().delete("session", { path: "/" });
+                getRequestContext().setLocationState(
+                  FlashMessage({ text: "Signed out." }),
+                );
+              }
+
+              return (
+                <div data-testid="login-page">
+                  <FlashBanner />
+                  {session ? (
+                    <form action={logoutAction} data-testid="logout-form">
+                      <span data-testid="signed-in">
+                        Signed in as {session}
+                      </span>{" "}
+                      <button type="submit" data-testid="logout">
+                        Log out
+                      </button>
+                    </form>
+                  ) : (
+                    <form action={loginAction} data-testid="login-form">
+                      <input
+                        name="name"
+                        data-testid="login-name"
+                        placeholder="Your name"
+                      />
+                      <button type="submit" data-testid="login-submit">
+                        Log in
+                      </button>
+                    </form>
+                  )}
+                </div>
+              );
+            },
+            { name: "login" },
           ),
 
           // Navigation hooks.

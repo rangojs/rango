@@ -39,6 +39,24 @@ hit.
   (It stays quiet when the trie matched fine but a lazy entry simply hadn't been spliced
   in yet — that's the normal lazy flow, not a gap.)
 
+**Authoritative misses (#664): in production, a trie miss IS the 404.** When the trie
+was deserialized from the build manifest, `ensureRouterManifest` marks the router
+authoritative (`markRouterTrieAuthoritative`, `src/route-map-builder.ts`), and
+`createFindMatch` returns `null` on a trie miss without running the Phase-2 scan at all
+— no regex work proportional to route count, and no lazy-include evaluation for
+bot-probe traffic (a 404 under `/site` used to import the `/site` chunk just to prove
+nothing matched). This is safe because the build trie comes from complete discovery and
+trailing-slash handling is trie-native: a slash-mismatched request is a trie HIT
+carrying `redirectTo`, never a miss. Two deliberate boundaries: (1) trie hits that
+still need lazy splicing (2+-level nested includes) keep using the Phase-2 retry loop —
+the gate only fires when the trie found nothing; (2) dev never marks authoritative —
+the trie-gap warning above depends on the fallback running on misses, and dev churn
+(HMR, dev-time routes) makes a stale-trie 404 unacceptable there. `clearAllRouterData`
+resets the mark. Measured motivation: at 26k routes on deployed CF, a 404 under a big
+prefix cost ~10-12 ms extra CPU per request vs floor (stress-demo
+BENCHMARK-2026-07-04-edge-26k.md). Pinned by the `authoritative trie miss` describe in
+`src/router/__tests__/find-match.test.ts`.
+
 **Why there's one trie builder, not two.** Production and dev get their tries from
 completely different places — production deserializes a JSON blob baked at build time,
 dev rebuilds from live `urlpatterns` on each request. That's two code paths that have to
@@ -68,14 +86,6 @@ are all in _where_ the data comes from, not _what_ it resolves to.
 | `routesEntries` (regex fallback) | `Rango.routes()` walk at init                              | `Rango.routes()` walk at init                            |
 | Regex fallback reachability      | reachable only in the HMR window before the trie rebuilds  | effectively unreachable (trie always present)            |
 
-There's one caveat worth knowing about so it doesn't spook you later:
-in a multi-router setup, the serialized trie carries per-leaf ancestry (`leaf.a`) computed
-from a build-time global `mountIndex`, which doesn't line up with the runtime
-per-router-local index for the second router onward. It looks scary but it isn't — that
-field only feeds the `__debug_manifest` endpoint. The real layout pruning happens by
-segment-ID prefix at render time and is self-consistent within each mode. (It's on the
-optional-cleanup list below.)
-
 ## Invariants & design decisions
 
 These are the load-bearing rules — the kind where "I'll just tweak this one line" quietly
@@ -104,6 +114,26 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   too — `/users/:id/*` matches `/users/5` as `{ id:"5", "*":"" }` (a zero-or-more splat,
   the way React Router does it). A real static or param route at that spot still wins.
   Pinned by `trie-matching.test.ts`.
+- **Named catch-alls reuse the wildcard slot, keyed by name, with a one-or-more variant.**
+  `:name*` and `:name+` both parse to the same `node.w` terminal as bare `/*`, but carry
+  the param name in `pn` (so `/docs/:slug*` binds `ctx.params.slug`, not `"*"`) instead of
+  the hard-coded `"*"`. `:name+` (one-or-more, Next `[...name]` / RR splat) additionally
+  sets the `w1` flag, which gates off ALL THREE empty-remainder match sites in `walkTrie`
+  (the root branch, the base case, and the in-path branch — the last one matters for a
+  malformed `/docs//` whose trailing empty segment would otherwise satisfy `+`). So
+  `/docs/:slug+` rejects the bare `/docs` while `:slug*` still binds `""` there. The regex
+  fallback matches: `/(.+)` for `+`; for any zero-or-more catch-all — a NAMED `:name*` OR
+  the bare `/*` — it emits `(?:/(.*))?` so the bare prefix matches directly, binding `""`
+  and aligning with the trie. (Bare `/*` used to keep a required `/(.*)`, so its regex
+  fallback failed to match the bare prefix and fell through to trailing-slash
+  normalization, emitting a corrupt `/file` redirect — the old C1 divergence, fixed in
+  #636.) A `+`/`*` is a catch-all modifier only as a bare trailing token: any other
+  combination (`:v+build`, `:name*.min`, `:name(a|b)+`, a non-terminal catch-all) folds back
+  to the pre-feature literal-suffix parse rather than erroring. When two DISTINCT wildcard
+  forms collide on the single `node.w` slot (`/x/*` and `/x/:p+`), the first-declared wins
+  (regex declaration-order tiebreak) instead of last-wins clobbering its `pn`/`w1`. Pinned by
+  `trie-matching.test.ts`, `pattern-matching.test.ts`, and the catch-all rows in
+  `trie-regex-parity.test.ts`.
 - **Nested-include prefixes get their slashes collapsed via `joinPrefix` (C5).** Write
   `include("/parent/", …)` around a nested `include("/child", …)` and the naive join
   gives you `/parent//child` — a staticPrefix the trie's `sp` can never match, so the
@@ -144,6 +174,16 @@ A fair first reaction to lazy-by-default is "hang on, are we re-running route ha
 every request?" Good question — we asked it too, and measured. The short answer:
 **lazy-by-default is the right call, and the win is at boot, not per-request.**
 
+One thing this section predates: an include can now be **async** —
+`include("/x", () => import("./routes"))`. That form defers more than handler
+execution; the route module itself isn't evaluated until the first request
+reaches the prefix (it's a separate chunk), which is the cold-start and
+entry-bundle win. Everything below still holds — build-time discovery `await`s
+the provider, so the trie, `reverse()`, generated types, and prerender see every
+route in the split group. If you're touching async include specifically, read
+[async-includes.md](./async-includes.md) first; it owns that contract and the
+scars behind it.
+
 What the measurements actually showed: defining `urls()` doesn't run the handler;
 `include()` captures its patterns by reference without running them; `Rango.routes()`
 runs only the top-level handler once and leaves empty placeholders for the rest; an
@@ -180,7 +220,7 @@ is the list:
 
 - `trie-matching.test.ts` — trie precedence, plus the C1 bare / param-prefixed wildcard.
 - `pattern-matching.test.ts` — the regex matcher and `joinPrefix` (C5).
-- `trie-regex-parity.test.ts` — where the trie and regex agree (and the M3/M4/C1 spots
+- `trie-regex-parity.test.ts` — where the trie and regex agree (and the M3/M4 spots
   where they don't, with the trie winning).
 - `dev-prod-trie-parity.test.ts` — the dev rebuilt trie really does equal the prod
   serialized one.
@@ -201,9 +241,6 @@ is the list:
 None of these keep anyone up at night — they don't affect matching correctness or
 dev/prod parity — but they're real, so here they are:
 
-- **Stop serializing `leaf.a` (M2 / R9).** That build-time ancestry rides along in every
-  production per-router chunk and only feeds the debug endpoint; it could be recomputed on
-  demand. Best done alongside giving the runtime `mountIndex` a stable per-router key.
 - **Tidy the find-match cache mutation (M5 / R11).** `match-api` mutates the shared cached
   `matched.pt`. It's idempotent today so nothing's wrong, but reading
   `snapshot.isPassthrough` instead would be cleaner. (The part that _did_ matter — the

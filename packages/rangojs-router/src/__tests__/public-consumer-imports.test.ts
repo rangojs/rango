@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -46,6 +52,7 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router": [publicTypeEntry(".")],
             "@rangojs/router/client": [publicTypeEntry("./client")],
             "@rangojs/router/cache": [publicTypeEntry("./cache")],
+            "@rangojs/router/cloudflare": [publicTypeEntry("./cloudflare")],
             "@rangojs/router/host": [publicTypeEntry("./host")],
             "@rangojs/router/host/testing": [publicTypeEntry("./host/testing")],
             "@rangojs/router/theme": [publicTypeEntry("./theme")],
@@ -94,17 +101,48 @@ afterEach(() => {
 });
 
 describe("public consumer imports", () => {
+  it("publishes declaration files instead of raw TypeScript as type entries", () => {
+    for (const [subpath, entry] of Object.entries(packageJson.exports)) {
+      expect(entry.types, subpath).toMatch(/\.d\.ts$/);
+      expect(
+        existsSync(resolve(packageRoot, entry.types!)),
+        `${subpath} -> ${entry.types}`,
+      ).toBe(true);
+    }
+  });
+
   it("typechecks the canonical public import paths", () => {
     const result = runConsumerTypecheck({
       "root-consumer.ts": `
 import { createLoader, createRouter, redirect, urls } from "@rangojs/router";
-import type { ActionRef } from "@rangojs/router";
+import {
+  createConsoleSink,
+  createOTelSink,
+  createOTelTracing,
+} from "@rangojs/router";
+import type {
+  ActionRef,
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelTracingOptions,
+} from "@rangojs/router";
 
 void createLoader;
 void createRouter;
 void redirect;
 void urls;
+void createConsoleSink;
 type _ActionRef = ActionRef;
+
+// Pin the server-only observability export surface the docs/JSDoc promise:
+// the tracing slot (createOTelTracing) and the event sink (createOTelSink)
+// imported from the bare root entry, with their public types.
+type _OTelOpts = OTelTracingOptions;
+declare const tracer: OTelTracer & OTelActiveSpanTracer;
+const tracing = createOTelTracing(tracer);
+const sink = createOTelSink(tracer);
+void tracing;
+void sink;
 `,
       "client-consumer.tsx": `
 import { Link, Outlet, href, useLoader, useRouter } from "@rangojs/router/client";
@@ -130,6 +168,22 @@ import {
 void CFCacheStore;
 void MemorySegmentCacheStore;
 void createCacheScope;
+`,
+      "cloudflare-consumer.ts": `
+import {
+  createCloudflareTracing,
+  type CloudflareTracingOptions,
+} from "@rangojs/router/cloudflare";
+import type {
+  RouterTracingConfig,
+  TracePhaseToggles,
+} from "@rangojs/router";
+
+const opts: CloudflareTracingOptions = { spans: { ssr: false } };
+const config: RouterTracingConfig = createCloudflareTracing(opts);
+const phases: TracePhaseToggles = { loader: true };
+void config;
+void phases;
 `,
       "host-consumer.ts": `
 import { NoRouteMatchError, createHostRouter } from "@rangojs/router/host";
@@ -159,13 +213,11 @@ void options;
 import {
   createRSCHandler,
   getRequestContext,
-  requireRequestContext,
   type CreateRSCHandlerOptions,
 } from "@rangojs/router/rsc";
 
 void createRSCHandler;
 void getRequestContext;
-void requireRequestContext;
 type _Options = CreateRSCHandlerOptions;
 `,
       "ssr-consumer.ts": `
@@ -184,10 +236,13 @@ import {
   runMiddleware,
   runLoader,
   runLoaderResult,
+  runTransitionWhen,
   dispatch,
   assertCacheStatus,
+  assertCacheDecision,
   assertGeneratedRoutesMatch,
   createCacheSink,
+  filterCacheDecisions,
   collectHandle,
   createTestRequestContext,
   runInRequestContext,
@@ -195,6 +250,8 @@ import {
 } from "@rangojs/router/testing";
 import type {
   RunLoaderResult,
+  RunTransitionWhenOptions,
+  RunTransitionWhenResult,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -211,6 +268,8 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 // nameable at a consumer call site, not just structurally reachable.
 type _TelemetryTypesReachable = [
   RunLoaderResult<unknown>,
+  RunTransitionWhenOptions,
+  RunTransitionWhenResult,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -222,6 +281,7 @@ type _TelemetryTypesReachable = [
 void runMiddleware;
 void runLoader;
 void runLoaderResult;
+void runTransitionWhen;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;
@@ -231,8 +291,10 @@ void runInRequestContext;
 void runWithRequestContext;
 void renderRoute;
 void assertCacheStatus;
+void assertCacheDecision;
 void assertGeneratedRoutesMatch;
 void createCacheSink;
+void filterCacheDecisions;
 void collectHandle;
 void createRangoE2E;
 void renderToFlightString;

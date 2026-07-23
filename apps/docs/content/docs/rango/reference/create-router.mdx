@@ -1,0 +1,290 @@
+---
+title: createRouter
+description: The full RangoOptions surface, request handling, chaining, and the notFound() fallback chain.
+type: reference
+---
+
+## RangoOptions
+
+```typescript
+interface RangoOptions<TEnv> {
+  // URL patterns from urls() function
+  urls: UrlPatterns;
+
+  // Document component wrapping entire app
+  document?: ComponentType<{ children: ReactNode }>;
+
+  // URL prefix for sub-path deployments (e.g. "/admin")
+  // All routes, reverse(), href(), Link, redirect(), and router.use()
+  // patterns are automatically prefixed. Route names stay unprefixed.
+  basename?: string;
+
+  // Enable per-request performance timeline (console waterfall + Server-Timing header)
+  debugPerformance?: boolean;
+
+  // Default error boundary
+  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler;
+
+  // Default not-found boundary for notFound() thrown in handlers/loaders
+  defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
+
+  // Component for 404 (no route match, or notFound() without a boundary)
+  notFound?: ReactNode | ((props: { pathname: string }) => ReactNode);
+
+  // Error logging callback
+  onError?: OnErrorCallback<TEnv>;
+
+  // Global cache configuration
+  cache?: CacheConfig<TEnv>;
+
+  // Theme configuration
+  theme?: ThemeConfig | true;
+
+  // SSR options (streaming policy)
+  ssr?: SSROptions<TEnv>;
+
+  // Telemetry sink for structured lifecycle events
+  telemetry?: TelemetrySink;
+
+  // Connection warmup (default: true)
+  warmup?: boolean;
+
+  // Prefetch cache TTL in seconds (default: 300)
+  // Controls in-memory cache duration and Cache-Control max-age for prefetch responses.
+  // Set to false to disable prefetch caching.
+  prefetchCacheTTL?: number | false;
+
+  // Default prefetch strategy for Links without a `prefetch` prop
+  // (dev: "none", production: "viewport"). Per-Link props win.
+  defaultPrefetch?: "hover" | "viewport" | "render" | "adaptive" | "none";
+
+  // CSP nonce provider (for router.fetch)
+  nonce?: (
+    request: Request,
+    env: TEnv,
+  ) => string | true | Promise<string | true>;
+
+  // RSC version string (for router.fetch)
+  version?: string;
+}
+```
+
+`urls` is the only required field. `TEnv` is the environment/bindings type — pass it as `createRouter<AppBindings>({...})`; see [Type Safety](/docs/rango/concepts/typesafety) for registering it globally as `Rango.Env`.
+
+## document
+
+Component wrapping the entire app — the HTML shell rendered around every route:
+
+```typescript
+// src/document.tsx
+import type { ReactNode } from "react";
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head><title>My App</title></head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+## basename
+
+Set when the app is served under a sub-path (`/admin`, `/v2`):
+
+```typescript
+const router = createRouter({
+  basename: "/admin",
+  document: Document,
+}).routes(({ path, include }) => [
+  path("/", Dashboard, { name: "home" }), // matches /admin
+  include("/api", apiPatterns, { name: "api" }), // matches /admin/api/*
+]);
+
+router.reverse("home"); // "/admin"
+```
+
+Router-owned APIs are basename-aware: `reverse()` returns prefixed paths, `<Link to="/users">` renders `<a href="/admin/users">`, `redirect()` and `router.use(pattern, mw)` prefix too, and `useRouter().push()` navigates under the prefix. Route names stay unprefixed (`"home"`, not `"admin.home"`).
+
+`href()` is the exception — a raw path helper, it does **not** auto-prefix with `basename`. Use `reverse()` or `<Link>` for basename-aware URLs.
+
+## cache
+
+Global cache configuration. For per-request config (e.g. Cloudflare Workers needing `ExecutionContext`), pass a function receiving `(env, ctx)` separately:
+
+```typescript
+import { CFCacheStore } from "@rangojs/router/cache";
+
+export const router = createRouter<AppBindings>({
+  cache: (_env, ctx) => ({
+    store: new CFCacheStore({ ctx: ctx!, defaults: { ttl: 60 } }),
+  }),
+});
+```
+
+## theme
+
+`theme?: ThemeConfig | true` enables the light/dark theme system with FOUC prevention. See [Theme](/docs/rango/guides/theme) for the full setup, options, and the document wiring it requires.
+
+## ssr.resolveStreaming
+
+Controls whether HTML SSR responses stream progressively or wait for all content, per request:
+
+```typescript
+const router = createRouter({
+  ssr: {
+    resolveStreaming: ({ request }) => {
+      const ua = request.headers.get("user-agent") ?? "";
+      // Bots that can't process streamed HTML get a fully resolved page
+      if (/Googlebot|bingbot/i.test(ua)) return "allReady";
+      return "stream";
+    },
+  },
+});
+```
+
+`SSRStreamMode` is `"stream" | "allReady"`: `"stream"` (default) flushes HTML as React renders, Suspense fallbacks first — fastest TTFB for real users. `"allReady"` awaits `stream.allReady` before flushing so the full page arrives in one shot — for bots that can't execute JS or process chunked HTML.
+
+The resolver receives `{ request, env, url }`, may be sync or async, and only runs on HTML SSR paths — RSC partials, `__rsc` requests, and response routes are unaffected. Default is `"stream"` when unconfigured.
+
+## telemetry / tracing
+
+The router emits structured lifecycle events through a pluggable telemetry sink — zero overhead when not configured. Events emitted: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`.
+
+```typescript
+// Console sink for development
+import { createRouter, createConsoleSink } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createConsoleSink(),
+});
+```
+
+`createRouter` also accepts a `tracing` factory alongside `telemetry`: `tracing` emits phase spans for the request lifecycle, `telemetry` emits discrete-fact events — separate slots, same instrumentation site.
+
+```typescript
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
+import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
+const router = createRouter({
+  tracing: createOTelTracing(tracer),
+  telemetry: createOTelSink(tracer),
+});
+```
+
+On Cloudflare Workers, swap in `createCloudflareTracing()` from `@rangojs/router/cloudflare` for native custom spans (no `@opentelemetry/api` dependency; `{ spans: { ssr: false } }` toggles phases). On Vercel (Node runtime), use `createVercelTracing()` from `@rangojs/router/vercel`. A custom sink is a plain object with an `emit(event)` method.
+
+## warmup
+
+Enabled by default. Keeps TCP+TLS connections alive so navigations after idle periods skip handshake costs. After 60s idle, the connection is marked cold; when the user returns (tab visible, first mouse/touch), a `HEAD ?_rsc_warmup` request — relative to the current page path, so subpath deployments work — re-establishes it before the next navigation. The server responds `204 No Content` before any middleware or routing runs.
+
+```typescript
+const router = createRouter({ warmup: false }); // disable
+```
+
+## prefetchCacheTTL
+
+`number | false`, default `300` (seconds). Controls the in-memory prefetch cache duration and the `Cache-Control` `max-age` on prefetch responses. `false` disables prefetch caching entirely.
+
+## defaultPrefetch
+
+`"hover" | "viewport" | "render" | "adaptive" | "none"`. The default is `"none"` in development and `"viewport"` in production, matching Next.js production-only automatic prefetch. It applies to Links without an explicit strategy and intercepted plain anchors inside the router's `basename`, unless they set `data-prefetch="false"` or `data-prefetch="none"`. Same-page hash anchors stay native and do not arm prefetch. Basename scope compares canonical encoded path segments, so Unicode and percent-encoded basename spellings both work while an encoded slash (`%2F`) never creates a router-owned segment boundary. Plain anchors whose path ends in a common static-resource extension (`.pdf`, images, archives, scripts, styles, fonts, media, or structured-data files) are excluded unless `data-prefetch="true"` identifies a real application route. The `"true"` value skips resource classification entirely, including when a literal `%` makes the path undecodable; it does not override `defaultPrefetch: "none"`. Outside a disabled container scope, a per-Link `prefetch` prop always wins in both directions. An explicit router default overrides the environment in either mode:
+
+```typescript
+const router = createRouter({ defaultPrefetch: "none" }); // manual mode everywhere
+```
+
+```tsx
+<Link to="/pricing" />                      {/* follows the router default */}
+<Link to="/heavy-report" prefetch="none" /> {/* opts out of an aggressive default */}
+<Link to="/checkout" prefetch="hover" />    {/* opts in under manual mode */}
+<a href="/docs">Docs</a>                     {/* follows the router default */}
+<a href="/logout" data-prefetch="none">Log out</a> {/* false is also accepted */}
+<a href="/reports/2026.csv" data-prefetch="true">Report page</a> {/* routed suffix */}
+
+<section data-prefetch-scope="none">
+  <Link to="/activity" prefetch="viewport">Activity</Link> {/* still not prefetched */}
+  <a href="/export">Export</a>                 {/* still not prefetched */}
+</section>
+```
+
+With the production default, every visible Link and eligible plain anchor triggers an RSC render on the server (loaders included). The basename and static-resource checks prevent common cross-app and asset requests, but a root-mounted router cannot infer that an extensionless URL belongs to another app or that an endpoint has side effects. Mark individual plain anchors such as `/logout` with `data-prefetch="false"` or `data-prefetch="none"` when speculation is unsafe. To disable speculative work for a whole DOM subtree, set `data-prefetch-scope="false"` or `data-prefetch-scope="none"` on its container. This is a hard boundary for both `<Link>` and plain anchors: descendant `prefetch` props, `data-prefetch="true"`, and custom delegated eligibility callbacks cannot override it, while clicks still use their normal SPA or native navigation path. The runtime checks the nearest scope while arming each link. Scope changes re-evaluate only descendant plain anchors and mounted viewport/render Links, not the whole document; Links share one document-level scope observer rather than creating one per Link or container. Adding a scope stops future triggers and pending observer/idle work but cannot recall work already queued or in flight. Removing it immediately re-arms both Link components and plain anchors. Routes served from cache absorb prefetch cheaply; per-user dynamic routes pay full price per viewport entry — pick `"hover"`, `"adaptive"` (hover on pointer devices, viewport on touch), or `"none"` when that cost matters. To turn the prefetch subsystem off entirely (including per-Link opt-ins), use `prefetchCacheTTL: false`.
+
+Speculative requests carry the `X-Rango-Prefetch: 1` header, so middleware and loaders with side effects (cookies, counters, audit logs) can detect and skip them.
+
+## nonce
+
+CSP nonce provider consumed by `router.fetch`: `(request, env) => string | true | Promise<string | true>`. Return `true` to auto-generate a nonce per request, e.g. `nonce: () => true`, or return your own string.
+
+## notFound / defaultErrorBoundary / defaultNotFoundBoundary
+
+Two distinct 404 scenarios. **No route matches the URL** — the router renders `notFound` automatically. **A handler/loader calls `notFound()`** — the route matched, but the data doesn't exist:
+
+```typescript
+import { notFound } from "@rangojs/router";
+
+path("/product/:slug", async (ctx) => {
+  const product = await db.getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+  return <ProductPage product={product} />;
+});
+```
+
+### Fallback chain for notFound()
+
+1. `notFoundBoundary()` — nearest boundary in the route tree (route-level)
+2. `defaultNotFoundBoundary` — from `createRouter()` config (app-level)
+3. `notFound` — from `createRouter()` config (same component used for no-route-match)
+4. Default `<h1>Not Found</h1>` — built-in fallback
+
+All cases set HTTP 404. `notFoundBoundary()` wraps routes for route-specific not-found UI and receives `{ notFound: NotFoundInfo }`, where `NotFoundInfo` contains `message`, `segmentId`, `segmentType`, and `pathname`. `defaultErrorBoundary` and `notFound` set app-level fallbacks directly on `createRouter()`:
+
+```typescript
+urls(({ path, layout }) => [
+  layout(ShopLayout, () => [
+    notFoundBoundary(({ notFound: info }) => <p>{info.message}</p>),
+    path("/product/:slug", ProductPage),
+  ]),
+]);
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  defaultErrorBoundary: ({ error, reset }) => <button onClick={reset}>Try again</button>,
+  notFound: ({ pathname }) => <p>Page not found: {pathname}</p>,
+});
+```
+
+## router.fetch, .routes(), and .use()
+
+`createRouter()` returns a builder. `.routes()` attaches the URL pattern tree — an imported `UrlPatterns` value or the `urls()` DSL callback inline — and the result exposes `fetch`, the request handler:
+
+```typescript
+const router = createRouter({ document: Document }).routes(urlpatterns);
+
+export default { fetch: router.fetch }; // minimal
+```
+
+On Cloudflare Workers, pass bindings and `ExecutionContext` through explicitly instead:
+
+```typescript
+export const router = createRouter<AppBindings>({ document: Document }).routes(
+  urlpatterns,
+);
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.fetch(request, { env, ctx });
+  },
+};
+```
+
+`router.use(pattern, middleware)` attaches request-level middleware matched against a path pattern (basename-aware — see [basename](#basename) above).

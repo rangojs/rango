@@ -79,6 +79,7 @@ export function appendMetric(
   start: number,
   duration: number,
   depth?: number,
+  desc?: string,
 ): void {
   if (!metricsStore) return;
   metricsStore.metrics.push({
@@ -86,6 +87,7 @@ export function appendMetric(
     duration,
     startTime: start - metricsStore.requestStart,
     depth,
+    desc,
   });
 }
 
@@ -104,6 +106,7 @@ interface DisplayRow {
   startTime: number;
   duration: number;
   depth: number | undefined;
+  desc: string | undefined;
   spans: Span[];
 }
 
@@ -137,6 +140,7 @@ function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
           startTime: m.startTime,
           duration: m.duration + post.duration,
           depth: m.depth,
+          desc: m.desc,
           spans: [
             { startTime: m.startTime, duration: m.duration },
             { startTime: post.startTime, duration: post.duration },
@@ -151,6 +155,7 @@ function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
         startTime: m.startTime,
         duration: m.duration,
         depth: m.depth,
+        desc: m.desc,
         spans: [{ startTime: m.startTime, duration: m.duration }],
       });
       continue;
@@ -169,6 +174,7 @@ function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
         startTime: m.startTime,
         duration: m.duration,
         depth: m.depth,
+        desc: m.desc,
         spans: [{ startTime: m.startTime, duration: m.duration }],
       });
       continue;
@@ -180,6 +186,7 @@ function buildDisplayRows(sorted: PerformanceMetric[]): DisplayRow[] {
       startTime: m.startTime,
       duration: m.duration,
       depth: m.depth,
+      desc: m.desc,
       spans: [{ startTime: m.startTime, duration: m.duration }],
     });
   }
@@ -199,7 +206,9 @@ export function logMetrics(
 
   const labels = displayRows.map(
     (r) =>
-      `${" ".repeat(BASE_INDENT + (r.depth ?? 0) * DEPTH_INDENT)}${r.label}`,
+      `${" ".repeat(BASE_INDENT + (r.depth ?? 0) * DEPTH_INDENT)}${r.label}${
+        r.desc ? ` (${r.desc})` : ""
+      }`,
   );
   const startValues = displayRows.map((r) => formatMs(r.startTime));
   const durationValues = displayRows.map((r) => formatMs(r.duration));
@@ -247,7 +256,13 @@ export function generateServerTiming(metricsStore: MetricsStore): string {
         .replace(/[^a-zA-Z0-9-]/g, "")
         .toLowerCase();
       const name = m.depth ? `d${m.depth}-${base}` : base;
-      return `${name};dur=${m.duration.toFixed(2)}`;
+      // desc is a quoted-string: backslash-escape the two delimiters; our
+      // producers emit plain printable text, so nothing else needs stripping.
+      const desc =
+        m.desc !== undefined
+          ? `;desc="${m.desc.replace(/[\\"]/g, "\\$&")}"`
+          : "";
+      return `${name};dur=${m.duration.toFixed(2)}${desc}`;
     })
     .join(", ");
 }

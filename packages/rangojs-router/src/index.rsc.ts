@@ -65,6 +65,12 @@ export type {
   ErrorPhase,
   OnErrorContext,
   OnErrorCallback,
+  // View transition types (also exported from the default entry; route
+  // definitions resolve to this react-server entry, so they must be here too)
+  TransitionConfig,
+  TransitionWhenFn,
+  TransitionWhenContext,
+  ViewTransitionClass,
 } from "./types.js";
 
 // Router options type (server-only, so import directly)
@@ -82,6 +88,12 @@ export type {
   OriginCheckPhase,
 } from "./rsc/origin-guard.js";
 
+// PPR shell-capture debug sink types (RangoOptions.debugShellCapture)
+export type {
+  ShellCaptureDebug,
+  ShellCaptureDebugEvent,
+} from "./rsc/shell-capture.js";
+
 // Server-side createLoader and redirect
 export {
   createLoader,
@@ -97,7 +109,6 @@ export {
   loading,
   parallel,
   intercept,
-  when,
   errorBoundary,
   notFoundBoundary,
   transition,
@@ -117,7 +128,6 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export {
   DEFAULT_DEFER_TIMEOUT_MS,
   type DeferOptions,
-  type DeferredHandleEntry,
   type HandlePush,
   type HandlePushFn,
 } from "./defer.js";
@@ -153,6 +163,7 @@ export {
   urls,
   type PathHelpers,
   type PathOptions,
+  type PartialPrerenderProps,
   type UrlPatterns,
   type IncludeOptions,
   type IncludeItem,
@@ -178,9 +189,18 @@ export {
 
 // RSC handler types (server-side)
 export type { HandlerCacheConfig } from "./rsc/types.js";
+export {
+  TRACKING_SEARCH_PARAMS,
+  type CacheSearchParams,
+} from "./cache/search-params-filter.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
+export {
+  Script,
+  type ScriptConfig,
+  type ScriptAttributes,
+} from "./handles/script.js";
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Request context (for accessing request data in server actions/components).
@@ -258,10 +278,17 @@ export {
 // Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
 // `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
-// Telemetry sink
+// Telemetry sink (event-shaped facts)
 export { createConsoleSink } from "./router/telemetry.js";
 export { createOTelSink } from "./router/telemetry-otel.js";
-export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
+// OTel phase-span adapter for the `tracing` slot (the canonical span layer).
+export { createOTelTracing } from "./router/telemetry-otel.js";
+export type {
+  OTelTracer,
+  OTelActiveSpanTracer,
+  OTelSpan,
+  OTelTracingOptions,
+} from "./router/telemetry-otel.js";
 // The full TelemetryEvent union PLUS its member types, so a consumer writing a
 // TelemetrySink can annotate a per-`type` handler (or construct an event literal
 // in a test) instead of only narrowing the opaque union.
@@ -283,10 +310,22 @@ export type {
   OriginCheckRejectedEvent,
 } from "./router/telemetry.js";
 
+// Span tracing config types a consumer annotates. SpanRunner/TraceSpan are the
+// internal runner contract (consumers go through createOTelTracing /
+// createCloudflareTracing, which return a ready RouterTracingConfig) and are not
+// exported.
+export type {
+  RouterTracingConfig,
+  TracePhase,
+  TracePhaseToggles,
+  TracingToggleOptions,
+} from "./router/tracing.js";
+
 // Timeout types and error class
 export { RouterTimeoutError } from "./router/timeout.js";
 export type {
   RouterTimeouts,
   TimeoutPhase,
   TimeoutContext,
+  RenderTimeoutContext,
 } from "./router/timeout.js";

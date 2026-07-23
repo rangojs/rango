@@ -105,6 +105,10 @@ import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
+import {
+  runWithRequestContext,
+  type RequestContext,
+} from "../../server/request-context.js";
 
 /**
  * Creates background revalidation middleware
@@ -183,27 +187,46 @@ export function withBackgroundRevalidation<TEnv>(
         const freshLoaderPromises = new Map<string, Promise<any>>();
         setupLoaderAccess(freshHandlerContext, freshLoaderPromises);
 
-        const freshSegments = await ctx.Store.run(() =>
-          resolveAllSegments(
-            ctx.entries,
-            ctx.routeKey,
-            ctx.matched.params,
-            freshHandlerContext,
-            freshLoaderPromises,
-            { skipLoaders: true },
-          ),
+        // Re-establish the request-context ALS around the re-render. ctx.Store
+        // is a different ALS (DSL build context); on workerd a waitUntil task
+        // runs detached from the request's I/O context, so a handler/component
+        // that reads the ambient getRequestContext() during this background
+        // re-render would otherwise throw "called outside of a request context".
+        const freshSegments = await runWithRequestContext(
+          requestCtx as RequestContext<TEnv>,
+          () =>
+            ctx.Store.run(() =>
+              resolveAllSegments(
+                ctx.entries,
+                ctx.routeKey,
+                ctx.matched.params,
+                freshHandlerContext,
+                freshLoaderPromises,
+                { skipLoaders: true },
+              ),
+            ),
         );
 
         let freshInterceptSegments: ResolvedSegment[] = [];
         if (ctx.interceptResult) {
-          freshInterceptSegments = await ctx.Store.run(() =>
-            resolveInterceptEntry(
-              ctx.interceptResult!.intercept,
-              ctx.interceptResult!.entry,
-              ctx.matched.params,
-              freshHandlerContext,
-              true,
-            ),
+          freshInterceptSegments = await runWithRequestContext(
+            requestCtx as RequestContext<TEnv>,
+            () =>
+              ctx.Store.run(() =>
+                resolveInterceptEntry(
+                  ctx.interceptResult!.intercept,
+                  ctx.interceptResult!.entry,
+                  ctx.matched.params,
+                  freshHandlerContext,
+                  true,
+                  undefined,
+                  // Skip intercept middleware: this is a post-response background
+                  // re-render to refresh a stale cached route. The foreground
+                  // already ran the middleware; re-running it would double its
+                  // side effects and a short-circuit Response would abort the write.
+                  { skipMiddleware: true },
+                ),
+              ),
           );
         }
 

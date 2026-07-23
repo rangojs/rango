@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 // (non-Vite) loader: the unit barrel `@rangojs/router/testing` re-exports
 // `dispatch`/`runMiddleware`, which reach the router manifest's Vite-only
 // `@rangojs/router:version` virtual module and cannot resolve here.
-import { createRangoE2E } from "@rangojs/router/testing/e2e";
+import { blockPrefetch, createRangoE2E } from "@rangojs/router/testing/e2e";
 
 /**
  * Worked example of the consumer e2e harness (`@rangojs/router/testing/e2e`),
@@ -11,7 +11,7 @@ import { createRangoE2E } from "@rangojs/router/testing/e2e";
  *
  * Rather than spawn its own server via `useFixture`/`parityDescribe` (which
  * would build/serve a fresh instance), this committed example reuses the shared
- * dev (:5188) and preview (:5189) servers from playwright.config.ts. The config
+ * dev (base :5188) and preview (base :5189) webServer from playwright.config.ts. The config
  * buckets by the `(production)` describe-title grep, so the two describes below
  * run the same assertions against their project's baseURL via RELATIVE
  * `page.goto`. `useFixture`/`parityDescribe` are demonstrated in the docs;
@@ -30,8 +30,8 @@ const { testId, waitForHydration, expectParity, rangoMatchers } =
 expect.extend(rangoMatchers as unknown as Parameters<typeof expect.extend>[0]);
 
 // The same specs run in both buckets. Relative navigation resolves against the
-// active project's baseURL, so the dev describe hits :5188 and the production
-// describe hits :5189 with no per-test server wiring.
+// active project's baseURL, so the dev describe hits the dev server and the production
+// describe hits the preview server with no per-test server wiring.
 function harnessSpecs(): void {
   test("loads home, waits for hydration, asserts a testid and pathname", async ({
     page,
@@ -60,6 +60,14 @@ function harnessSpecs(): void {
   test("expectParity: /blog navigation matches across JS and no-JS", async ({
     page,
   }) => {
+    // expectParity guards its own window against speculative prefetch, but
+    // a production home load can spray viewport prefetches BEFORE the
+    // parity call — a prefetched route's Set-Cookie (e.g. cart-id) would land
+    // in the JS jar only and fail the cookie comparison. Consumers comparing
+    // cookie jars should do the same (or list volatile cookies in
+    // `ignoreCookies`).
+    await blockPrefetch(page);
+
     await page.goto("/");
     await waitForHydration(page);
 
@@ -95,12 +103,12 @@ function harnessSpecs(): void {
   });
 }
 
-// Dev bucket: title WITHOUT "(production)" -> runs against the :5188 dev server.
+// Dev bucket: title WITHOUT "(production)" -> runs against the dev server.
 test.describe("consumer-testing-harness", () => {
   harnessSpecs();
 });
 
-// Production bucket: title WITH "(production)" -> runs against the :5189 preview
+// Production bucket: title WITH "(production)" -> runs against the preview
 // server. Same specs, so dev/prod parity of the harness itself is pinned.
 test.describe("consumer-testing-harness (production)", () => {
   harnessSpecs();

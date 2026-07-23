@@ -1,5 +1,5 @@
 import { NetworkError, isNetworkError } from "../errors.js";
-import { NetworkErrorThrower } from "../network-error-thrower.js";
+import { RenderErrorThrower } from "../render-error-thrower.js";
 import type { UpdateSubscriber } from "./types.js";
 import { createElement, startTransition } from "react";
 
@@ -24,18 +24,18 @@ export function toNetworkError(
 }
 
 /**
- * Emit a NetworkError to the UI via the onUpdate subscriber.
- * Wraps in startTransition and renders a NetworkErrorThrower component
- * that throws during render to trigger the nearest error boundary.
+ * Render an error into the segment tree via the onUpdate subscriber so the
+ * nearest error boundary catches it. Wrapped in startTransition; RenderErrorThrower
+ * throws during render (async rejections do not reach boundaries on their own).
  */
-export function emitNetworkError(
+function emitErrorToBoundary(
   onUpdate: UpdateSubscriber,
-  error: NetworkError,
+  error: unknown,
   pathname: string,
 ): void {
   startTransition(() => {
     onUpdate({
-      root: createElement(NetworkErrorThrower, { error }),
+      root: createElement(RenderErrorThrower, { error }),
       metadata: {
         pathname,
         segments: [],
@@ -43,6 +43,33 @@ export function emitNetworkError(
       },
     });
   });
+}
+
+/**
+ * Emit a NetworkError to the nearest error boundary (offline, failed fetch).
+ */
+export function emitNetworkError(
+  onUpdate: UpdateSubscriber,
+  error: NetworkError,
+  pathname: string,
+): void {
+  emitErrorToBoundary(onUpdate, error, pathname);
+}
+
+/**
+ * Emit a navigation processing error to the nearest error boundary. Used when a
+ * navigation response cannot be processed (an undecodable Flight body, or any
+ * unanticipated failure while building the response) -- for both fresh and
+ * prefetched responses, since both funnel through the navigation catch. Without
+ * this, such a failure becomes an uncaught rejection that silently aborts the
+ * navigation instead of surfacing the route's error boundary.
+ */
+export function emitNavigationError(
+  onUpdate: UpdateSubscriber,
+  error: unknown,
+  pathname: string,
+): void {
+  emitErrorToBoundary(onUpdate, error, pathname);
 }
 
 /**

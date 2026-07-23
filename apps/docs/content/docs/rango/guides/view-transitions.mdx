@@ -1,0 +1,191 @@
+---
+title: View Transitions
+description: Animate navigations across layouts, routes, and parallel slots with transition() in the route DSL.
+type: guide
+---
+
+You want navigations to animate instead of flashing loading skeletons. `transition()` opts a route — or a whole group of routes — into transition-driven navigation, and you choose how far to take it.
+
+## The two layers
+
+`transition()` does two independent things:
+
+1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the precondition for any view-transition animation. Works on **all** React versions.
+2. **`<ViewTransition>` (the animation).** On experimental React, Rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades or morphs. This is the only part that needs experimental React; on stable React it's a no-op while the `startTransition` driving still applies.
+
+A view transition cannot exist outside a `startTransition` — React never activates `<ViewTransition>` otherwise. So once you reach for `transition()`, the only real choice is:
+
+| What you want                          | Config                                              | Effect                                                                                                 |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                     |
+| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                      |
+| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (experimental React; on stable it degrades to the `startTransition`-only row) |
+
+`createRouter({ viewTransition: "auto" | false })` sets the app-wide default for the third row; a per-segment `viewTransition` wins.
+
+## A cross-fade between pages
+
+The shortest path — a fade between pages that share a layout:
+
+```tsx
+import { urls } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+
+function ShopShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="shop">
+      <NavBar />
+      <main>
+        <Outlet /> {/* fade applies HERE */}
+      </main>
+      <Footer />
+    </div>
+  );
+}
+
+export const urlpatterns = urls(({ layout, path, transition }) => [
+  layout(<ShopShell />, () => [
+    transition({ default: "page-fade" }),
+    path("/", ShopIndex, { name: "index" }),
+    path("/about", AboutPage, { name: "about" }),
+    path("/contact", ContactPage, { name: "contact" }),
+  ]),
+]);
+```
+
+```css
+::view-transition-old(root) {
+  animation: fade-out 200ms ease both;
+}
+::view-transition-new(root) {
+  animation: fade-in 200ms ease both;
+}
+```
+
+Navigating between `/`, `/about`, and `/contact` morphs the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not morph, because the wrap sits inside the shell, not around it.
+
+## Where the wrap lands
+
+| Segment type                      | Wrap location                                                                                                                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `layout()`                        | Around the layout's **default outlet content** (what `<Outlet />` renders), recursively pushed past nested layouts. Parallel slots (`<ParallelOutlet />`) are siblings, not subtree members.              |
+| `path()` / `route()`              | Around the **route's component itself** (the leaf content).                                                                                                                                               |
+| `parallel()` / `intercept()` slot | Accepted by the DSL, but slot-level rendering does not currently apply a `<ViewTransition>` wrapper. For modal-specific morphs, use an element-level React `<ViewTransition>` inside the modal component. |
+
+The layout case is the important one: a layout transition does **not** wrap the layout chrome (header, sidebar, modal slot); it only morphs whatever flows through that layout's `<Outlet />`.
+
+## Direction-aware transitions
+
+Each phase prop accepts an object keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward popstate as `"navigation-back"`:
+
+```tsx
+layout(<ShopShell />, () => [
+  transition({
+    default: {
+      navigation: "slide-left",
+      "navigation-back": "slide-right",
+    },
+  }),
+  path("/", ShopIndex, { name: "index" }),
+  path("/about", AboutPage, { name: "about" }),
+]);
+```
+
+`"action"` is only tagged on partial-update action/refetch paths today; ordinary `useAction` / `useActionState` revalidations are not tagged. Don't rely on an `action`-keyed class firing on every form action.
+
+## Grouping without a layout component
+
+`transition(config, () => [...])` creates a transparent layout that applies the config to its children:
+
+```tsx
+urls(({ path, transition }) => [
+  transition({ default: "fade" }, () => [
+    path("/", HomePage, { name: "home" }),
+    path("/about", AboutPage, { name: "about" }),
+  ]),
+  // Outside the wrapper — no transition applied.
+  path("/admin", AdminPage, { name: "admin" }),
+]);
+```
+
+For a one-off morph that should not propagate to siblings, attach it to the route itself — routes are leaves, so the wrap lands on the component:
+
+```tsx
+urls(({ path, transition }) => [
+  path("/checkout", CheckoutPage, { name: "checkout" }, () => [
+    transition({ default: "fade-in" }),
+  ]),
+]);
+```
+
+## Intercept modals don't fire the layout transition
+
+Combine a layout transition with an [intercepting route](/docs/rango/guides/intercepting-routes) and the modal stays out of the animation — because `<ParallelOutlet />` is a sibling of the wrap, not inside it:
+
+| Action                                   | What fires                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Navigate between pages within the layout | Layout transition fires; `<Outlet />` content cross-fades                                                          |
+| Click a link intercepted into `@modal`   | Modal opens via soft navigation; **no** view transition fires on the underlying page                               |
+| Submit a form action inside the modal    | Revalidation commits without firing the layout VT; modal subtree identity is preserved (`useActionState` survives) |
+| Close the modal via `router.back()`      | Underlying page is restored; **no** view transition fires                                                          |
+| Direct URL load of the intercepted route | Full page renders with no modal; the layout transition applies on subsequent in-layout navs                        |
+
+This holds at any depth: if the layout that owns `@modal` is itself nested inside another transitioned layout, the outer transition is pushed past the inner layout into its default outlet content, so the modal slot ends up outside both.
+
+One placement rule follows: **put `<ParallelOutlet />` in layouts, not routes.** A route-level `transition()` wraps the route component itself, so a slot rendered inside that component stays inside the route's VT subtree and modal opens _will_ trigger it. The narrowing only applies at layout boundaries.
+
+## Placing your own `<ViewTransition>`
+
+Prefer animating specific elements yourself? Set `viewTransition: false` — the router contributes no boundary of its own, but still drives the commit through `startTransition` (so React runs `document.startViewTransition` and your own `<ViewTransition>` elements animate) and still holds same-route content:
+
+```tsx
+urls(({ path, transition }) => [
+  path("/product/:id", ProductPage, { name: "product" }, () => [
+    transition({ viewTransition: false }),
+  ]),
+]);
+
+// ProductPage renders the boundary itself, exactly where it's wanted:
+function ProductPage() {
+  return (
+    <ViewTransition name="hero">
+      <img src={cover} />
+    </ViewTransition>
+  );
+}
+```
+
+Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`; re-enable one route with `transition({ viewTransition: "auto" })`. A bare `transition({})` inherits the router default; an explicit per-route value always wins. The flag only toggles the boundary — `startTransition` driving and content-hold are on whenever `transition()` is present.
+
+## Conditional transitions with `when`
+
+`transition({ when })` gates the hold per request. The predicate runs server-side, **after** the route handler and outside any cache scope; return `false` to drop the transition for that request (the navigation streams its `loading()` fallback instead of holding). Its context mirrors the `revalidate()` predicate args — navigation source (`currentUrl`, `currentParams`, `fromRouteName`), target (`nextUrl`, `nextParams`, `toRouteName`), action metadata (`actionId`, `actionUrl`, `actionResult`, `formData`), `method` — plus `get`/`env` for post-handler reads:
+
+```ts
+// Hold only when the handler marked this request (handler sets, gate reads):
+transition({ when: (ctx) => ctx.get(KeepScroll) === true });
+
+// Hold only when arriving from a specific route:
+transition({ when: ({ fromRouteName }) => fromRouteName === "products.list" });
+```
+
+A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold. Two caveats:
+
+- **Same-route content-holds need the transition present on the first render.** Source fields are `undefined` on the initial full load; a gate that returns `false` there drops the transition before the route mounts, and every later same-route param nav remounts (skeleton flash) regardless of what the gate decides then. Write source gates to hold when there is no source — `({ currentParams }) => currentParams?.tab !== "raw"` rather than `=== "details"`.
+- **Prefetch and cache freeze the gate.** A prefetched navigation decides at prefetch time, and a `cache()`/prerender hit replays the stored transition without re-running the predicate. If your gate must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
+
+## Recommendations
+
+- **Don't stack `transition()` on every layout level.** Nested configs both wrap the deepest outlet content, so two VTs fire on every inner nav. Pick the level where the morph belongs and apply it once.
+- **Need a modal-only morph?** Per-slot `transition()` is a no-op at render time today — use an element-level React `<ViewTransition>` inside the modal component (or a CSS animation).
+- **Action revalidation inside a modal is safe.** Modal subtree identity is preserved across the round-trip, so `useActionState`, focus, and scroll all survive.
+- Element-level `<ViewTransition>` (imported directly from React, morphing named elements across pages) composes with Rango's segment-level wraps as usual; Rango doesn't intercept those.
+
+<Cards>
+  <Card href="/docs/rango/guides/layouts" title="Layouts">
+    Where layout-level transitions attach and why chrome stays put.
+  </Card>
+  <Card href="/docs/rango/guides/parallel-routes" title="Parallel Routes">
+    Slots, outlets, and why they sit outside the transition subtree.
+  </Card>
+</Cards>

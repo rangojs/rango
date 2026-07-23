@@ -24,10 +24,36 @@ import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
+  buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
-import { runInsideLoaderScope } from "../server/context.js";
+import {
+  RangoContext,
+  latchPprHeaderScopeForEntries,
+  runInsideLoaderScope,
+} from "../server/context.js";
+
+/**
+ * Header-guard latch for the intercept funnels (issue #713). ppr and
+ * intercepts do not compose on the shell path — shells are captured/served
+ * only for document requests and withInterceptResolution skips intercepts on
+ * full matches — so this is defense in depth: a partial nav CAN render an
+ * intercept over a ppr-declared target route, in its own store scope where
+ * the main funnel's latch does not apply. Latch by declaration, off the
+ * target route's manifest entry (same leaf input as the segment funnels).
+ * Called AFTER intercept middleware runs — middleware stays the live lane.
+ */
+function latchPprHeaderScopeForInterceptTarget(
+  interceptEntry: InterceptEntry,
+): void {
+  const targetEntry = RangoContext.getStore()?.manifest.get(
+    interceptEntry.routeName,
+  );
+  if (targetEntry) {
+    latchPprHeaderScopeForEntries([targetEntry], interceptEntry.routeName);
+  }
+}
 
 /**
  * Check if an intercept's when conditions are satisfied.
@@ -112,10 +138,25 @@ export async function resolveInterceptEntry<TEnv>(
     };
     stale?: boolean;
   },
+  options?: {
+    /**
+     * Skip the intercept's middleware execution. Set ONLY by the post-response
+     * background re-render paths (proactive caching, stale background
+     * revalidation), whose sole purpose is to re-render the segment tree to
+     * populate the cache. The foreground request already ran the intercept
+     * middleware before the response was sent — it validated auth, set cookies,
+     * and wrote context vars into the request context's shared `_variables`,
+     * which the background render reuses. Re-running middleware here would fire
+     * its side effects a SECOND time, and a middleware that short-circuits with
+     * a Response would `throw` and silently abort the cache write. Never set on
+     * the foreground path.
+     */
+    skipMiddleware?: boolean;
+  },
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
 
-  if (interceptEntry.middleware.length > 0) {
+  if (!options?.skipMiddleware && interceptEntry.middleware.length > 0) {
     const requestCtx = getRequestContext();
     if (!requestCtx?.res) {
       throw new Error(
@@ -133,6 +174,8 @@ export async function resolveInterceptEntry<TEnv>(
     );
     if (middlewareResponse) throw middlewareResponse;
   }
+
+  latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
@@ -205,6 +248,9 @@ export async function resolveInterceptEntry<TEnv>(
         parentEntry,
         segmentId,
         context.pathname,
+        // Report a throwing intercept loader to onError + loader.error telemetry,
+        // matching the fresh/revalidation paths.
+        buildLoaderErrorContext(context),
       ),
     );
   }
@@ -309,6 +355,8 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     return null;
   }
 
+  latchPprHeaderScopeForInterceptTarget(interceptEntry);
+
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
 
@@ -378,6 +426,11 @@ export async function resolveInterceptLoadersOnly<TEnv>(
         parentEntry,
         segmentId,
         context.pathname,
+        // Report a throwing intercept loader to onError + loader.error telemetry,
+        // matching the fresh/revalidation paths. resolveInterceptLoadersOnly is
+        // only called on the cache-hit partial-update path (handleCacheHitIntercept),
+        // so flag isPartial:true exactly like revalidation.ts's partial path.
+        { ...buildLoaderErrorContext(context), isPartial: true },
       ),
     );
   }

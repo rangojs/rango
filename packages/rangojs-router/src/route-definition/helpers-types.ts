@@ -29,12 +29,11 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
-  WhenItem,
   CacheItem,
   TransitionItem,
   UseItems,
 } from "../route-types.js";
-import type { InterceptWhenFn } from "../server/context";
+import type { StaticHandlerRef } from "../static-handler.js";
 
 // Re-export route item types for backward compatibility
 export type {
@@ -52,12 +51,12 @@ export type {
   RouteUseItem,
   ParallelUseItem,
   InterceptUseItem,
-  WhenItem,
   CacheItem,
 } from "../route-types.js";
 
 // Re-export intercept selector types for use in handlers
 export type {
+  InterceptConfig,
   InterceptSelectorContext,
   InterceptSegmentsState,
   InterceptWhenFn,
@@ -142,8 +141,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   },
    * })
    * ```
-   * @param slots - Object with slot names (prefixed with @) mapped to handlers
-   *                or `{ handler, use? }` slot descriptors.
+   * @param slots - Object with slot names (prefixed with @) mapped to handlers,
+   *                Static() definitions, or `{ handler, use? }` descriptors.
    * @param use - Optional callback for loaders, loading, revalidate, etc.
    *              Items here apply to every slot in the call (broadcast).
    *              For per-slot single-assignment items, use the slot descriptor's
@@ -151,18 +150,20 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *              so they take precedence on `loading()` and other last-write-wins
    *              fields.
    */
-  parallel: <
-    TSlots extends Record<
+  // Not generic over the slots record: an inferred type parameter makes the
+  // object literal an inference site, which suppresses contextual typing of
+  // arrow slot handlers (`(ctx) => ...` was implicit any).
+  parallel: (
+    slots: Record<
       `@${string}`,
       | Handler<any, any, TEnv>
       | ReactNode
+      | StaticHandlerRef
       | {
-          handler: Handler<any, any, TEnv> | ReactNode;
+          handler: Handler<any, any, TEnv> | ReactNode | StaticHandlerRef;
           use?: () => UseItems<ParallelUseItem>;
         }
     >,
-  >(
-    slots: TSlots,
     use?: () => UseItems<ParallelUseItem>,
   ) => ParallelItem;
   /**
@@ -183,10 +184,26 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   loader(CardModalLoader),
    *   revalidate(() => false),
    * ])
+   *
+   * // Conditional activation via the config object's `when` selector
+   * intercept("@modal", "card", <CardModal />, {
+   *   when: ({ from }) => from.pathname.startsWith("/board"),
+   * })
+   *
+   * // Config + other use-items: config is arg 4, use is arg 5
+   * intercept(
+   *   "@modal",
+   *   "card",
+   *   <CardModal />,
+   *   { when: ({ from }) => from.pathname.startsWith("/board") },
+   *   () => [loader(CardDetailLoader)],
+   * )
    * ```
    * @param slotName - Named slot (prefixed with @) where intercept renders
    * @param routeName - Route name to intercept
    * @param handler - Component or handler for intercepted render
+   * @param config - Optional InterceptConfig (e.g. `{ when }`), or the use
+   *   callback directly when there is no config
    * @param use - Optional callback for loaders, middleware, revalidate, etc.
    */
   intercept: {
@@ -195,6 +212,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: `.${K}`,
       handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
+      config?:
+        | import("../server/context.js").InterceptConfig<TEnv>
+        | (() => UseItems<InterceptUseItem>),
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
@@ -202,6 +222,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: K,
       handler: ReactNode | Handler<K, Rango.GeneratedRouteMap, TEnv>,
+      config?:
+        | import("../server/context.js").InterceptConfig<TEnv>
+        | (() => UseItems<InterceptUseItem>),
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
   };
@@ -348,40 +371,6 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     fallback: ReactNode | NotFoundBoundaryHandler,
   ) => NotFoundBoundaryItem;
   /**
-   * Define a condition for when an intercept should activate
-   *
-   * Only valid inside intercept() use() callback. When multiple when() calls
-   * are present, ALL must return true for the intercept to activate.
-   * If no when() is defined, the intercept always activates on soft navigation.
-   *
-   * Context properties:
-   * - `from` - Source URL (where user is navigating from)
-   * - `to` - Destination URL (where user is navigating to)
-   * - `params` - Matched route params
-   * - `segments` - Client's current segments with `path` and `ids`
-   *
-   * ```typescript
-   * // Only intercept when coming from the board page
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ from }) => from.pathname.startsWith("/board")),
-   *   loader(CardDetailLoader),
-   * ])
-   *
-   * // Use segments to check current route context
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ segments }) => segments.path[0] === "kanban"),
-   * ])
-   *
-   * // Multiple conditions (AND logic)
-   * intercept("@modal", "card", <CardModal />, () => [
-   *   when(({ from }) => from.pathname.startsWith("/board")),
-   *   when(({ segments }) => segments.ids.includes("kanban-layout")),
-   * ])
-   * ```
-   * @param fn - Selector function receiving navigation context, returns boolean
-   */
-  when: (fn: InterceptWhenFn) => WhenItem;
-  /**
    * Define cache configuration for segments
    *
    * Creates a cache boundary that applies to all children unless overridden.
@@ -472,6 +461,13 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * transition({}) is startTransition + ViewTransition under the default and
    * startTransition only when the router sets viewTransition: false.
    *
+   * Conditional hold: pass `when: (ctx) => boolean` to gate the transition per
+   * request. It normally runs server-side after the route handler. On a `ppr`
+   * route it is automatically hoisted before route handlers and reevaluated on
+   * every replay, so it may read URL/params/action/env and middleware-set context
+   * but not handler-set context. Returning false drops this transition for the
+   * request. This is distinct from intercept()'s match-time `when` selector.
+   *
    * ```typescript
    * // Attach to a single route
    * path("/about", AboutPage, { name: "about" }, () => [
@@ -488,10 +484,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * path("/product/:id", ProductPage, { name: "product" }, () => [
    *   transition({ viewTransition: false }),
    * ])
+   *
+   * // Hold only when the handler decided to (post-handler predicate):
+   * path("/product/:id", ProductPage, { name: "product" }, () => [
+   *   transition({ when: (ctx) => ctx.get(KeepScroll) === true }),
+   * ])
    * ```
    * @param config - ViewTransition configuration (enter, exit, update, share,
-   *   default, name) plus `viewTransition: "auto" | false` to toggle the router
-   *   boundary (createRouter({ viewTransition }) sets the app-wide default)
+   *   default, name), `viewTransition: "auto" | false` to toggle the router
+   *   boundary (createRouter({ viewTransition }) sets the app-wide default), and
+   *   `when: (ctx) => boolean` to gate the transition per request
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

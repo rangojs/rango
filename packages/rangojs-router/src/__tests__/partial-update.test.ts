@@ -96,7 +96,10 @@ function createMockStore(opts?: {
   };
 }
 
-function createMockClient(payload: any, opts?: { hangStream?: boolean }) {
+function createMockClient(
+  payload: any,
+  opts?: { hangStream?: boolean; fullyPrefetched?: boolean },
+) {
   let resolveStream: () => void;
   // By default, streamComplete resolves immediately.
   // The async function's return Promise adopts streamComplete (JS promise flattening),
@@ -112,6 +115,11 @@ function createMockClient(payload: any, opts?: { hangStream?: boolean }) {
       fetchPartial: vi.fn(async () => ({
         payload,
         streamComplete,
+        // fetchPartial returns fullyPrefetched only for a warm prefetch hit
+        // whose stream already drained; default off (cold / fresh fetch).
+        ...(opts?.fullyPrefetched !== undefined && {
+          fullyPrefetched: opts.fullyPrefetched,
+        }),
       })),
     },
     resolveStream: () => resolveStream!(),
@@ -570,6 +578,90 @@ describe("partial-update", () => {
       expect(renderSegments).not.toHaveBeenCalled();
       expect(consoleError).toHaveBeenCalled();
     });
+
+    it("hard-navigates an external:true redirect payload via location.assign", async () => {
+      const assign = vi.fn();
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", assign },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: {
+            url: "https://accounts.example.com/oauth",
+            external: true,
+          },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      // External opt-in: a hard navigation, NOT a ServerRedirect throw, and no
+      // same-origin validation block.
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(assign).toHaveBeenCalledWith("https://accounts.example.com/oauth");
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
+
+    // Finding #2 regression: external:true waives the same-origin check, NOT
+    // scheme safety. A javascript: target (forged payload, or a mistaken
+    // redirect(..., { external: true })) must NEVER reach location.assign.
+    it("does NOT location.assign an external:true payload with a javascript: scheme", async () => {
+      const assign = vi.fn();
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost", assign },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: {
+            url: "javascript:alert(document.cookie)",
+            external: true,
+          },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      // Blocked: no scriptable navigation, no render, console.error logged.
+      expect(assign).not.toHaveBeenCalled();
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
+    });
   });
 
   describe("router id integrity guard", () => {
@@ -967,6 +1059,81 @@ describe("partial-update", () => {
       expect(renderSegments).not.toHaveBeenCalled();
       expect(onUpdate).not.toHaveBeenCalled();
     });
+
+    /**
+     * F2: the full-update fallback (isPartial=false) stale-revalidation path
+     * must apply the same history-key staleness guard the partial branch has.
+     * A background stale-revalidation that finishes after the user navigated
+     * away (history key changed) must NOT clobber the freshly committed UI.
+     * The guard runs after `await rawStreamComplete` — a real async suspension
+     * during which a new navigation can land.
+     */
+    it("skips full-update UI commit for stale revalidation when history key changed", async () => {
+      const store = createMockStore({ historyKey: "/page1" });
+      // Key matches when captured at start, then changes (user navigated away)
+      // by the time the post-stream guard re-reads it.
+      let callCount = 0;
+      store.getHistoryKey.mockImplementation(() => {
+        callCount++;
+        return callCount <= 1 ? "/page1" : "/page2";
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: false,
+          segments: [seg("R0")],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "full-tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await updater("http://localhost/page1", [], false, undefined, tx, {
+        type: "stale-revalidation",
+      });
+
+      // Renders, but onUpdate must NOT fire because the history key changed.
+      expect(renderSegments).toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+    });
+
+    it("applies full-update stale revalidation when history key is unchanged", async () => {
+      const store = createMockStore({ historyKey: "/page1" });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: false,
+          segments: [seg("R0")],
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "full-tree"),
+      });
+
+      await updater("http://localhost/page1", [], false, undefined, tx, {
+        type: "stale-revalidation",
+      });
+
+      // Key unchanged: the update is applied.
+      expect(onUpdate).toHaveBeenCalled();
+    });
   });
 
   describe("HMR resilience", () => {
@@ -1128,6 +1295,193 @@ describe("partial-update", () => {
         expect.any(Array),
         expect.objectContaining({ forceAwait: true }),
       );
+    });
+  });
+
+  /**
+   * Fully-prefetched commit branch.
+   *
+   * A fully-prefetched navigation must render with `forceAwait` (so the
+   * already-resolved ROUTER loader data lands with no fallback frame) AND commit
+   * inside a bare startTransition (no addTransitionType) so the current UI is
+   * held across the synchronous resolution — no fallback flash anywhere.
+   * Deliberate trade-off (#622 introduced this, #624 reverted it for client
+   * mount-suspense, then reinstated): a client component that suspends during
+   * its first render under an already-revealed boundary holds the old content
+   * until it resolves — it renders pre-commit inside the transition, so its
+   * effects cannot run first.
+   *
+   * A cold/partial nav (fullyPrefetched=false) must NOT forceAwait and commits
+   * normally, so its fallbacks stream like a cold load. An explicit transition()
+   * route still commits via the hasTransition branch (addTransitionType
+   * "navigation").
+   */
+  describe("fully-prefetched commit branch (#622 follow-up)", () => {
+    it("renders with forceAwait when fullyPrefetched=true", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient(
+        {
+          metadata: {
+            isPartial: true,
+            segments: [seg("R0", { component: "updated" })],
+            matched: ["R0"],
+            diff: ["R0"],
+          },
+        },
+        { fullyPrefetched: true },
+      );
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx, {
+        type: "navigate",
+      });
+
+      expect(renderSegments).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ forceAwait: true }),
+      );
+    });
+
+    it("commits inside a bare startTransition when fullyPrefetched=true", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        const store = createMockStore({ cachedSegments: [seg("R0")] });
+        const { client } = createMockClient(
+          {
+            metadata: {
+              isPartial: true,
+              segments: [seg("R0", { component: "updated" })],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          { fullyPrefetched: true },
+        );
+
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "tree"),
+        });
+
+        await updater("http://localhost/", ["R0"], false, undefined, tx, {
+          type: "navigate",
+        });
+
+        // Transition commit: onUpdate ran exactly once, wrapped in
+        // startTransition (the spy captures the callback before running it).
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("does NOT forceAwait a cold nav (fullyPrefetched=false) so its fallbacks stream", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient(
+        {
+          metadata: {
+            isPartial: true,
+            segments: [seg("R0", { component: "updated" })],
+            matched: ["R0"],
+            diff: ["R0"],
+          },
+        },
+        { fullyPrefetched: false },
+      );
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx, {
+        type: "navigate",
+      });
+
+      const opts = (renderSegments.mock.calls as any[][])[0][1];
+      expect(opts.forceAwait).toBeFalsy();
+    });
+
+    it("an explicit transition() route still holds content (startTransition + addTransitionType)", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        // A transition-tagged segment drives shouldStartViewTransition=true, so
+        // the hasTransition branch wins regardless of fullyPrefetched: a
+        // transition() route is the documented content-hold opt-in.
+        const store = createMockStore({
+          cachedSegments: [seg("R0", { transition: true } as any)],
+        });
+        const { client } = createMockClient(
+          {
+            metadata: {
+              isPartial: true,
+              segments: [
+                seg("R0", { component: "updated", transition: true } as any),
+              ],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          { fullyPrefetched: true },
+        );
+
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "tree"),
+        });
+
+        await updater("http://localhost/", ["R0"], false, undefined, tx, {
+          type: "navigate",
+        });
+
+        // Held in a transition (content-hold opt-in), unlike the plain
+        // fully-prefetched normal commit above.
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
@@ -1644,6 +1998,183 @@ describe("partial-update", () => {
       // startStreaming is called after fetchPartial, so on error it's never reached.
       // This avoids setting phase = "streaming" before any data arrives.
       expect(tx.startStreaming).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * F4: the render-vs-abort Promise.race must not leak its abort listener. The
+   * abort Promise registers an "abort" listener; if render wins, the listener
+   * has to be removed (the rejecting Promise never settles otherwise). Mirrors
+   * teeWithCompletion in browser/response-adapter.ts.
+   */
+  describe("abort listener lifecycle (F4)", () => {
+    function spySignal(): {
+      signal: AbortSignal;
+      addCalls: () => number;
+      removeCalls: () => number;
+    } {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      let added = 0;
+      let removed = 0;
+      const realAdd = signal.addEventListener.bind(signal);
+      const realRemove = signal.removeEventListener.bind(signal);
+      signal.addEventListener = ((type: string, ...rest: any[]) => {
+        if (type === "abort") added++;
+        return (realAdd as any)(type, ...rest);
+      }) as any;
+      signal.removeEventListener = ((type: string, ...rest: any[]) => {
+        if (type === "abort") removed++;
+        return (realRemove as any)(type, ...rest);
+      }) as any;
+      return {
+        signal,
+        addCalls: () => added,
+        removeCalls: () => removed,
+      };
+    }
+
+    it("removes the abort listener after a non-aborted partial render", async () => {
+      const cached = seg("L0", { type: "layout", component: "cached" });
+      const newRoute = seg("L0R0", { component: "new" });
+      const store = createMockStore({ cachedSegments: [cached] });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [newRoute],
+          matched: ["L0", "L0R0"],
+          diff: ["L0R0"],
+        },
+      });
+
+      const tx = createMockTx();
+      const spy = spySignal();
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await updater(
+        "http://localhost/page",
+        ["L0", "L0R0"],
+        false,
+        spy.signal,
+        tx,
+      );
+
+      // The race registered exactly one abort listener and removed it after
+      // render won — no dangling listener.
+      expect(spy.addCalls()).toBe(1);
+      expect(spy.removeCalls()).toBe(1);
+    });
+  });
+
+  /**
+   * F3: the action full-update transition must use a synchronous callback like
+   * every sibling branch. An async callback returns a Promise React ignores —
+   * a latent trap.
+   */
+  describe("action full-update transition is synchronous (F3)", () => {
+    it("passes a non-async callback to startTransition on the action full path", async () => {
+      const captured: Array<(...args: any[]) => any> = [];
+      // Re-mock startTransition for this test to capture (still runs sync).
+      const React = await import("react");
+      const spy = vi.spyOn(React, "startTransition").mockImplementation(((
+        fn: () => void,
+      ) => {
+        captured.push(fn);
+        fn();
+      }) as any);
+
+      try {
+        const serverSegments = [seg("L0", { type: "layout" }), seg("L0R0")];
+        const store = createMockStore();
+        const { client } = createMockClient({
+          metadata: { isPartial: false, segments: serverSegments },
+        });
+        const onUpdate = vi.fn();
+        const tx = createMockTx();
+
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate,
+          renderSegments: vi.fn(async () => "full-tree"),
+        });
+
+        // mode.type === "action" drives the full-update action branch.
+        await updater("http://localhost/new", [], false, undefined, tx, {
+          type: "action",
+        });
+
+        expect(onUpdate).toHaveBeenCalledOnce();
+        expect(captured.length).toBeGreaterThan(0);
+        for (const fn of captured) {
+          expect(fn.constructor.name).not.toBe("AsyncFunction");
+          // A sync transition callback returns undefined, never a thenable.
+          expect((fn as any)()).toBeUndefined();
+        }
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  /**
+   * F5: the stream-completion side effect now has a .catch, so a rejecting
+   * stream does not surface as an unhandled rejection and does not break the
+   * update.
+   */
+  describe("stream completion rejection is swallowed (F5)", () => {
+    it("completes the partial update even if streamComplete rejects", async () => {
+      const cached = seg("R0", { component: "cached" });
+      const store = createMockStore({ cachedSegments: [cached] });
+
+      // streamComplete rejects; the .catch must absorb it.
+      const rejecting = Promise.reject(new Error("stream boom"));
+      // Pre-attach a no-op catch on our own reference so the test's reference
+      // doesn't itself trip the unhandled-rejection detector; the production
+      // .catch is what guards the copy partial-update holds.
+      rejecting.catch(() => {});
+
+      const tx = createMockTx();
+      const endSpy = vi.fn();
+      tx.startStreaming = vi.fn(() => ({ end: endSpy }));
+
+      const client = {
+        fetchPartial: vi.fn(async () => ({
+          payload: {
+            metadata: {
+              isPartial: true,
+              segments: [seg("R0", { component: "new" })],
+              matched: ["R0"],
+              diff: ["R0"],
+            },
+          },
+          streamComplete: rejecting,
+        })),
+      };
+
+      const onUpdate = vi.fn();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(onUpdate).toHaveBeenCalledOnce();
     });
   });
 });

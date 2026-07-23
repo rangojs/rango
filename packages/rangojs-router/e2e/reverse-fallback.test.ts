@@ -1,12 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 
-test.describe("reverse-module-level", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function reverseModuleLevelTests(f: Fixture) {
   test("module-level reverse() resolves via injected NamedRoutes map", async ({
     request,
   }) => {
@@ -24,4 +19,21 @@ test.describe("reverse-module-level", () => {
     expect(results["search.index"]).toBe("/search");
     expect(results["middlewareTest.index"]).toBe("/middleware-test");
   });
+}
+
+test.describe("reverse-module-level", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  reverseModuleLevelTests(f);
+});
+
+test.describe("reverse-module-level (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  test.setTimeout(120000);
+  reverseModuleLevelTests(f);
 });

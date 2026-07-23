@@ -1,12 +1,23 @@
-import { encodePathSegment } from "./url-params.js";
+import { encodePathSegment, encodePathRemainder } from "./url-params.js";
+import { parsePattern } from "./parse-pattern.js";
 
 /**
  * Substitute `:param` placeholders in a route pattern with values from
- * `params`. Two-pass: optional params (`:name?`) first so absent values
- * collapse cleanly, then required params (throws on missing). Constraint
- * syntax (`:name(en|gb)`) is stripped from the result. Trailing-slash
- * patterns like `/blog/` are preserved unless an optional segment was
- * actually omitted.
+ * `params`, producing a URL. Built by walking the SAME parsed segments the
+ * matcher uses (`parsePattern`) and emitting one piece per segment — so a
+ * substituted value is never re-scanned as if it were another placeholder (a
+ * catch-all value like `sha:abc/x` used to make the "required" pass read `:abc`
+ * and throw). Constraint syntax (`:name(en|gb)`) is stripped; trailing-slash
+ * patterns like `/blog/` are preserved unless an optional segment was omitted.
+ *
+ * Semantics per segment:
+ * - static             -> emitted verbatim.
+ * - `:name`            -> required; `undefined` throws, `""` yields an empty segment.
+ * - `:name?`           -> optional; `undefined`/`""` omitted.
+ * - `:name*` / `:name+`-> catch-all; the value is multi-segment, so each segment
+ *                         is encoded and the `/` separators are preserved. `+`
+ *                         (one-or-more) throws when absent; `*` (and bare `*`)
+ *                         omit when absent.
  *
  * Shared by `ctx.reverse()` (server), `createReverse()` (typed runtime
  * helper), and `useReverse()` (client hook). The behavior must stay
@@ -17,40 +28,48 @@ export function substitutePatternParams(
   params: Record<string, string | undefined>,
   routeName: string,
 ): string {
-  let result = pattern;
-  let hadOmittedOptional = false;
+  const hasTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
+  const normalized = hasTrailingSlash ? pattern.slice(0, -1) : pattern;
+  const segments = parsePattern(normalized);
 
-  result = result.replace(
-    /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
-    (_match, key) => {
-      const value = params[key as string];
-      // The matcher omits absent optional params (so `value` is `undefined`
-      // here), but caller-supplied params or `getParams()` shapes may still
-      // pass `""` explicitly. Treat both as the absent form.
+  const parts: string[] = [];
+  for (const seg of segments) {
+    if (seg.type === "static") {
+      parts.push("/" + seg.value);
+    } else if (seg.type === "wildcard") {
+      const value = params[seg.value];
       if (value === undefined || value === "") {
-        hadOmittedOptional = true;
-        return "";
+        // `:name+` requires at least one segment; bare `*` / `:name*` collapse.
+        if (seg.oneOrMore) {
+          throw new Error(
+            `Missing param "${seg.value}" for route "${routeName}"`,
+          );
+        }
+      } else {
+        parts.push("/" + encodePathRemainder(value));
       }
-      return encodePathSegment(value);
-    },
-  );
-
-  result = result.replace(
-    /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(?!\?)/g,
-    (_match, key) => {
-      const value = params[key as string];
-      if (value === undefined) {
-        throw new Error(`Missing param "${key}" for route "${routeName}"`);
+    } else {
+      // Plain param. Constraint (`seg.constraint`) is intentionally not re-emitted.
+      const value = params[seg.value];
+      const suffix = seg.suffix ?? "";
+      if (seg.optional) {
+        // The matcher omits absent optionals (`undefined`); callers/getParams()
+        // may pass `""` explicitly — treat both as absent.
+        if (value !== undefined && value !== "") {
+          parts.push("/" + encodePathSegment(value) + suffix);
+        }
+      } else {
+        if (value === undefined) {
+          throw new Error(
+            `Missing param "${seg.value}" for route "${routeName}"`,
+          );
+        }
+        parts.push("/" + encodePathSegment(value) + suffix);
       }
-      return encodePathSegment(value);
-    },
-  );
-
-  if (hadOmittedOptional) {
-    const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
-    result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
-    if (hadTrailingSlash && !result.endsWith("/")) result += "/";
+    }
   }
 
+  let result = parts.join("") || "/";
+  if (hasTrailingSlash && !result.endsWith("/")) result += "/";
   return result;
 }

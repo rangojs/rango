@@ -43,6 +43,10 @@ import {
 } from "../server/request-context.js";
 import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
 import { normalizeFlight } from "./flight-normalize.js";
+import { resolveThemeConfig } from "../theme/constants.js";
+import type { ThemeConfig } from "../theme/types.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 import type { RscPayload } from "../rsc/types.js";
 import type { ResolvedSegment } from "../types.js";
 
@@ -71,6 +75,14 @@ export interface RenderToFlightStringOptions {
   /** Matched route name (drives `ctx.routeName` and scoped reverse). */
   routeName?: string;
   /**
+   * Route name -> pattern map enabling a SCOPED `ctx.reverse()` (like
+   * `renderHandler`). Without it, a server component that reverses resolves
+   * against the GLOBAL route map and is order-dependent on whatever router
+   * registered last. Pass the router-under-test's map to make reversing
+   * deterministic.
+   */
+  routeMap?: Record<string, string>;
+  /**
    * Context variables visible to the rendered tree via `ctx.get(...)` — as a
    * prior middleware would have set them. Seeds the SAME way the handler-test
    * primitives (`runInRequestContext`/`runLoader`) do, so a server component
@@ -78,9 +90,64 @@ export interface RenderToFlightStringOptions {
    * Object form (`{ user }`) or `[key, value]` tuples (`[[userVar, u]]`).
    */
   vars?: VarsInit;
+  /**
+   * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
+   * or `{ themes: [...] }`). Without it `getRequestContext().theme` is `undefined`
+   * and `ctx.setTheme` is inert — pass one to render a server component that
+   * reads `ctx.theme`. Threaded into the SAME createRequestContext renderHandler
+   * uses, so the two Flight primitives expose theme identically.
+   */
+  theme?: ThemeConfig | true;
+  /**
+   * Cache store backing a `"use cache"` function the rendered server tree
+   * invokes. Without it, `registerCachedFunction` takes the uncached bypass and
+   * the cached path is NOT exercised. Pair with `cacheProfiles` so a
+   * `"use cache: profileName"` directive resolves its profile.
+   */
+  cacheStore?: SegmentCacheStore;
+  /** Cache profiles in the `createRouter({ cacheProfiles })` shape. */
+  cacheProfiles?: Record<string, CacheProfile>;
 }
 
 const DEFAULT_URL = "http://localhost/";
+
+/**
+ * True when `error` is the out-of-react-server stub thrown by index.ts's
+ * server-only exports (getRequestContext/cookies/headers/...) — i.e. the bare
+ * `@rangojs/router` specifier resolved to index.ts, not index.rsc.ts, because
+ * the rsc Vitest project is missing the `rangoTestAliases` alias. Matches both
+ * substrings of `serverOnlyStubError` (index.ts) so a normal app error cannot
+ * over-match. Shared with render-handler.ts so the two Flight primitives report
+ * the same misconfiguration identically.
+ */
+export function isServerOnlyStubError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("is only available from") &&
+    error.message.includes("react-server")
+  );
+}
+
+/**
+ * Rethrow a server tree render error. When it is the missing-rsc-alias stub
+ * (above), rethrow an actionable message naming `rangoTestAliases` instead of
+ * the opaque stub text; otherwise rethrow the original unchanged. Classify the
+ * ORIGINAL error before constructing the wrapper so the wrapper's `Original: ...`
+ * echo (which re-embeds the matched substrings) never re-triggers the predicate.
+ */
+function rethrowFlightRenderError(error: unknown): never {
+  if (isServerOnlyStubError(error)) {
+    throw new Error(
+      `The server component called a server-only API ` +
+        `(getRequestContext/cookies/headers/...) but "@rangojs/router" resolved to ` +
+        `the out-of-react-server stub. Add rangoTestAliases({ preset }) to your ` +
+        `vitest.rsc.config.ts \`resolve.alias\` so the bare specifier maps to ` +
+        `index.rsc.ts (the real react-server implementations). ` +
+        `Original: ${(error as Error).message}`,
+    );
+  }
+  throw error;
+}
 
 export function assertNoLegacyUrlOption(opts: object, fnName: string): void {
   if ("url" in opts) {
@@ -145,10 +212,14 @@ export async function serializeToFlightString(
     request,
     url,
     variables: seedVariables({}, opts.vars),
+    themeConfig:
+      opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   });
 
   return runWithRequestContext(ctx, () => {
-    setRequestContextParams(opts.params ?? {}, opts.routeName);
+    setRequestContextParams(opts.params ?? {}, opts.routeName, opts.routeMap);
     return serializeNodeToFlight(element, clientManifest, url.pathname);
   });
 }
@@ -170,7 +241,7 @@ export async function serializeNodeToFlight(
     },
   });
   const text = await new Response(stream).text();
-  if (didError) throw renderError;
+  if (didError) rethrowFlightRenderError(renderError);
   return text;
 }
 

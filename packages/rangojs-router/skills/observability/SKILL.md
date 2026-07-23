@@ -1,6 +1,6 @@
 ---
 name: observability
-description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing
+description: Debug Rango request performance with debugPerformance, Server-Timing, structured telemetry, and tracing. Use when a request feels slow and you need to see where time is spent, or wiring up tracing/telemetry for production requests.
 argument-hint:
 ---
 
@@ -58,6 +58,14 @@ Read the timeline as intervals:
 - Cache, route matching, middleware pre/post, RSC serialization, and SSR phases
   appear as separate spans, so the slow phase is visible without guessing.
 
+**Deployed Cloudflare caveat**: on production Workers, timers are frozen
+during request execution (Spectre mitigation), so `Server-Timing` durations
+read as ~0 on the deployed edge — they only advance across genuine awaited
+I/O. The waterfall is a LOCAL diagnostic (dev, `vite preview`,
+`wrangler dev`); for deployed workers, measure from the client
+(`PerformanceResourceTiming`, TTFB) and use structured telemetry below for
+server-side events.
+
 ## Structured telemetry
 
 Use telemetry when you want durable production events rather than a one-request
@@ -73,18 +81,103 @@ const router = createRouter({
 });
 ```
 
-For OpenTelemetry:
+For OpenTelemetry — phase spans come from the `tracing` slot
+(`createOTelTracing`), discrete-fact spans from the `telemetry` sink
+(`createOTelSink`):
 
 ```typescript
-import { createRouter, createOTelSink } from "@rangojs/router";
+import {
+  createRouter,
+  createOTelTracing,
+  createOTelSink,
+} from "@rangojs/router";
 import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("my-app");
 
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
-  telemetry: createOTelSink(trace.getTracer("my-app")),
+  tracing: createOTelTracing(tracer), // request/loader/render/… phase spans
+  telemetry: createOTelSink(tracer), // handler errors, cache decisions, …
 });
 ```
+
+On **Cloudflare Workers**, use `createCloudflareTracing` for the `tracing` slot
+instead — it emits the same phases as native Cloudflare custom spans (in the
+Workers trace waterfall, next to the automatic KV/D1/fetch spans), with no
+`@opentelemetry/api` dependency:
+
+```typescript
+import { createRouter } from "@rangojs/router";
+import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing: createCloudflareTracing(), // all phases on by default
+  // tracing: createCloudflareTracing({ spans: { ssr: false } }), // toggle phases
+});
+```
+
+On **Vercel Functions** (Node runtime), use `createVercelTracing` — a thin
+wrapper over `createOTelTracing` that reads the global OTel tracer
+`@vercel/otel`'s `registerOTel()` installs, so you do not call `trace.getTracer`
+yourself. Custom spans are Node-only (unsupported on the Edge runtime):
+
+```typescript
+// instrumentation.ts — install the provider, then export the tracing config.
+// Importing this module is what runs registerOTel() — a Rango/Vite app does not
+// auto-load instrumentation.ts like Next.js, so a standalone registerOTel() that
+// nothing imports is a silent no-op.
+import { registerOTel } from "@vercel/otel";
+import { createVercelTracing } from "@rangojs/router/vercel";
+registerOTel({ serviceName: "my-app" });
+export const tracing = createVercelTracing(); // { enabled, spans, tracerName, tracer }
+
+// router.tsx — importing `tracing` runs instrumentation.ts
+import { createRouter } from "@rangojs/router";
+import { tracing } from "./instrumentation.js";
+
+const router = createRouter({ document: Document, urls: urlpatterns, tracing });
+```
+
+These factories return a `RouterTracingConfig` for the same `tracing` slot;
+`telemetry` stays independent (events only, no phase spans). Phase spans:
+`rango.request`, `rango.middleware`, `rango.action`, `rango.loader`,
+`rango.handler`, `rango.render`, `rango.ssr`, `rango.response`,
+`rango.background`. All share the `PHASES` registry and `observePhase`
+execution boundary with `debugPerformance`; phases with `metric: false` either
+use finer-grained perf rows or, for `response` and `background`, remain
+span-only. Off-platform (no Cloudflare tracing destination / no OTel SDK) every
+span call is a transparent pass-through, so the request behaves as if tracing
+were off.
+
+`rango.response` is the explicit handoff marker: at most one per traced
+request, a direct child of `rango.request`, wrapping only response finalization
+(redirect interception/guarding, `Server-Timing` mutation, final response
+selection) and ending immediately before the handler returns the response to
+the host. It is handoff-bound, never drain-bound — it never reads or awaits
+`response.body`. Attributes: `http.response.status_code`,
+`rango.response.mode` (classified request mode, or `middleware-short-circuit`),
+`rango.response.body_kind` (`stream`/`empty`/`websocket`). For request modes
+that render nothing (fetchable `_rsc_loader`, response routes, middleware
+short-circuits) it shows the trace is complete rather than truncated — those
+requests legitimately have no `rango.render`/`rango.ssr`/`rango.handler` spans.
+On deployed Workers it may read 0 ms (frozen non-I/O timers); its position and
+attributes are the value. Disable per-response billing overhead at volume with
+`spans: { response: false }`.
+
+`rango.background` wraps detached waitUntil work — PPR shell captures and SWR
+background revalidations — that runs after the foreground spans ended. Without
+it, a capture or revalidation shows up as an unexplained wave of orphan
+KV/fetch spans minutes into a trace. `rango.background.kind` names the lane
+(`shell-capture` / `document-revalidation` / `loader-revalidation` /
+`use-cache-revalidation`); the shell-capture lane also carries
+`rango.shell_key`, `rango.background.outcome`, and
+`rango.background.queue_wait_ms` (a capture parked behind the per-isolate
+capture queue reads as span duration, not dead air). Toggle with
+`spans: { background: false }`.
 
 Custom sinks implement `emit(event)`:
 
@@ -103,7 +196,8 @@ const router = createRouter({
 ```
 
 Events include `request.start/end/error`, `loader.start/end/error`,
-`handler.error`, `cache.decision`, and `revalidation.decision`.
+`handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`,
+and `request.origin-rejected`.
 
 ## Debugging revalidation and stale data
 

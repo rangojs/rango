@@ -13,80 +13,89 @@ remembering. It also carries the hazards earlier drafts of this design walked
 straight into — they're called out inline as scar tissue so you don't
 rediscover them in production.
 
-Status: design, pre-implementation (decided 2026-06-11; revised 2026-06-12:
-single-API collapse, `useClientCache` removal, cross-tab no-regression
-invariant, action-side `keepClientCache()` with the fence-and-defer bridge
-change). Review pass 2026-06-12 folded in: the fence must also bypass the
-Vary-keyed HTTP cache and own an ephemeral popstate-stale signal; a refcount
-compose rule for mixed keep/invalidate; explicit server-seat idempotency and
-inert-outside-request behavior; the Finding #3 store inventory completed
-(`MemorySegmentCacheStore` + CF KV/L2) with the Cloudflare-platform claim
-demoted to an assumption; the cross-tab race narrative corrected for the
-existing post-commit broadcast; plus citation and docs-sync fixes. The open
-mechanism questions are tagged **[resolve before implementing]** inline.
+Status: **shipped** (PR #560). Cookie storage lives in
+`src/browser/rango-state.ts` (+ `src/browser/cookie-name.ts`); the public pair
+is `invalidateClientCache()` / `keepClientCache()` (server seat:
+`src/server/cookie-store.ts`; client seat: `src/browser/invalidate-client-cache.ts`).
+Sections below keep the design narrative and scar-tissue hazards that still
+apply; treat pre-implementation "today" language as historical where it
+contradicts the as-built model.
 
-## How rango state works today
+## As built (cookie model)
 
-The state is a per-client value of the form `{buildVersion}:{timestamp}`,
-stored in localStorage under `rango-state:{routerId}` (legacy fallback:
-`rango-state`) and managed by `src/browser/rango-state.ts`. The client sends it
-as the `X-Rango-State` request header on every prefetch and navigation fetch
-(`src/browser/prefetch/fetch.ts:155`, `src/browser/navigation-client.ts:212`),
-and the server answers with `Vary: accept, X-Rango-State,
-X-RSC-Router-Client-Path` (`src/rsc/rsc-rendering.ts:187`). The browser's HTTP
+The state is a per-client value of the form `{buildVersion}:{timestamp}`, stored
+in a **session cookie** named by the server-resolved name
+(`{prefix}_{routerId}`, default prefix `rango-state`) and managed by
+`src/browser/rango-state.ts`. An in-memory mirror is a write-through fallback
+only when `document.cookie` is unreadable; when the jar is readable, the
+per-request cookie read wins (that read is the cross-tab sync channel). Boot
+calls `cleanupLegacyStorage()` and drops any leftover `rango-state` /
+`rango-state:*` **localStorage** keys from the pre-cookie era (superseded;
+see History below).
+
+The client still sends the value as the `X-Rango-State` request header on every
+prefetch and navigation fetch, and the server answers with
+`Vary: accept, X-Rango-State, X-RSC-Router-Client-Path`. The browser's HTTP
 cache therefore keys responses by (URL, state value): rotate the value and
 every previously cached response misses cleanly.
 
 Three caches are in play — the state value keys the first two; the third is
-invalidated through a different door. You need all three in your head before
-the design makes sense, because the headline draft of this design only handled
-the first two and shipped a stale-back-button bug as a result:
+invalidated through a different door. The headline draft of this design only
+handled the first two and shipped a stale-back-button bug as a result (scar
+tissue that still applies):
 
 - the **in-memory prefetch map** (`src/browser/prefetch/cache.ts`), whose
   wildcard and source-scoped keys both embed the state value —
   `rangoState\0/target` and `rangoState\0sourceHref\0/target`;
 - the **browser's private HTTP cache**, via the `Vary` mechanism above.
   Prefetch responses carry `Cache-Control: private,
-max-age={prefetchCacheTTL}` (default 300 seconds, resolved in
-  `src/router.ts:215-222`). Only prefetch responses: the header is gated on
-  the `X-Rango-Prefetch` request header plus partial plus non-intercept
-  (`rsc-rendering.ts:205-206`) — an ordinary navigation partial carries no
+max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
+  the header is gated on the `X-Rango-Prefetch` request header plus partial
+  plus non-intercept — an ordinary navigation partial carries no
   `Cache-Control` at all;
 - the **history segment cache** (`historyCache` in
-  `src/browser/navigation-store.ts:240`), which holds back/forward payloads.
+  `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to
   it. It is invalidated only by going through the navigation store
-  (`clearCacheInternal` / `markCacheAsStaleInternal`,
-  `navigation-store.ts:332-345`). Forget this and your "data changed" signal
-  leaves a stale page one Back button away.
+  (`clearCacheInternal` / `markCacheAsStaleInternal`). Forget this and your
+  "data changed" signal leaves a stale page one Back button away.
 
-Rotation has more triggers than you'd guess, and an earlier version of this doc
-claimed "exactly two." For the record, every live path that reaches
-`invalidateRangoState()` today:
+Live paths that rotate / clear:
 
-| Trigger                     | Path                                                                                                                                                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, called from `rsc-router.tsx:234`)                                                                                         |
-| Server action               | `server-action-bridge.ts` → `store.markCacheAsStaleAndBroadcast()` → `markCacheAsStaleInternal` → `clearPrefetchCache()`                                                                                  |
-| `useClientCache().clear()`  | the public hook (`client.tsx:362-365`) → `store.clearHistoryCache()` → `clearCacheAndBroadcast()` → `clearCacheInternal` → `clearPrefetchCache()`. **This design removes the hook** — see the API section |
-| Cross-tab broadcast receipt | a sibling tab's `BroadcastChannel` "invalidate" message → `markCacheAsStaleInternal` (`navigation-store.ts:405`), gated on shared segment IDs                                                             |
-| Dev HMR                     | a version change → `navigationBridge.updateVersion()` (`navigation-bridge.ts:669`) → `store.clearHistoryCache()`                                                                                          |
+| Trigger                     | Path                                                                                                                                                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                         |
+| Server action               | `server-action-bridge.ts` → deferred invalidate unless the action called `keepClientCache()`                                                                   |
+| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                            |
+| Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → adopt its state, mark history stale, clear prefetches without re-rotating; gated on shared segment IDs |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer                                      |
+| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                            |
 
-Note that `clearPrefetchCache()` (`prefetch/cache.ts:354-363`) is the function
-that clears the in-memory map, discards in-flight prefetches, and calls
-`invalidateRangoState()`. The navigation-store functions wrap it and add the
-history-cache handling and the cross-tab broadcast on top.
+Note that `clearPrefetchCache()` is the function that clears the in-memory map,
+discards in-flight prefetches, and normally calls `invalidateRangoState()`. A
+cross-tab receiver passes `false` after it successfully adopts the sender's
+newer state because rotating again would obsolete the sender's newly re-warmed
+prefetches. If it rejects a same-router value as malformed, foreign-version, or
+non-newer, it rotates locally instead so the real invalidation still gets a new
+HTTP-cache key. The navigation-store functions wrap this and add the
+history-cache handling and cross-tab broadcast on top.
 
-One property to internalize before you read further: the timestamp makes every
-client's value effectively unique, so `Vary: X-Rango-State` only ever helps
-each client's _private_ browser cache. A shared cache (CDN) would either refuse
-these responses outright — most CDNs treat a `Vary` on a custom request header
-as uncacheable, and these responses are `Cache-Control: private` anyway — or,
-if it ignored `Vary`, serve one client's variant to everyone. There is no
-cross-client-hit story here, and that's fine: it's what the mechanism is for.
-The load-bearing protection against a shared cache mishandling this is
-`Cache-Control: private` plus the never-a-shared-cache-key guardrail below, not
-`Vary` semantics.
+One property to internalize: the timestamp makes every client's value
+effectively unique, so `Vary: X-Rango-State` only ever helps each client's
+_private_ browser cache. A shared cache (CDN) would either refuse these
+responses outright — most CDNs treat a `Vary` on a custom request header as
+uncacheable, and these responses are `Cache-Control: private` anyway — or, if
+it ignored `Vary`, serve one client's variant to everyone. There is no
+cross-client-hit story here. The load-bearing protection against a shared cache
+mishandling this is `Cache-Control: private` plus the never-a-shared-cache-key
+guardrail below, not `Vary` semantics.
+
+### History / superseded
+
+Pre-cookie storage was **localStorage** under `rango-state:{routerId}` (legacy
+fallback `rango-state`). That model is gone; only the one-shot cleanup at
+`initRangoState` remains. The public `useClientCache()` hook was removed in
+favor of `invalidateClientCache()` / `keepClientCache()`.
 
 ## The gaps this design closes
 
@@ -667,13 +676,20 @@ may degrade.** Today two channels exist, and they do different jobs:
   `rango-state.ts:49`) mirrors the state _value_ into sibling tabs, so their
   next fetch uses the rotated key. It never touches their history caches;
 - the **`BroadcastChannel`** in `navigation-store.ts` pushes _invalidation_:
-  after an action, sibling tabs sharing a segment mark their history caches
-  stale (`navigation-store.ts:405`), with optional auto-refresh. It is gated
+  after an action, sibling tabs sharing a segment adopt the sender's rotated
+  state, mark their history caches stale, and clear prefetches without rotating
+  again, with optional auto-refresh. Messages carry the resolved state-cookie
+  name so a same-origin router cannot adopt another router's state. It is gated
   on shared segment IDs — a tab on an unrelated route ignores the message and
   keeps its caches.
 
 Under this design the `storage` event is deleted (no localStorage), and two
-mechanisms take its place. The `BroadcastChannel` machinery is untouched.
+mechanisms take its place. The `BroadcastChannel` also carries the sender's
+state and state-cookie name. Receivers reject malformed, foreign-version, and
+non-newer values before updating their in-memory mirror; a rejected same-router
+message rotates the receiver locally so a real later mutation can never retain
+an already-used HTTP-cache key. This matters when the cookie jar is blocked and
+the mirror is authoritative.
 
 **Per-request jar read.** The cookie jar is shared across tabs, so reading
 `document.cookie` at each fetch _is_ the value sync — same effective timing as
@@ -728,12 +744,12 @@ channel inventory above leaves open:
 
 The resulting matrix — every row at least as strong as today:
 
-| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | the redundant pre-commit broadcast is gone — invalidation fires once, at response time (post-commit); B's value syncs via jar read at its next fetch; B's history _additionally_ marked stale by jar divergence even without shared segments (see the fence-and-defer notes under `keepClientCache()`) |
-| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | same row as an action — mark-stale + broadcast + jar divergence                                                                                                                                                                                                                                        |
-| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                  |
-| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                   |
+| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | the redundant pre-commit broadcast is gone — invalidation fires once, at response time (post-commit); a shared-segment B adopts A's namespaced state and clears without re-rotating, while an unrelated B syncs via jar read at its next fetch and marks history stale through jar divergence (see the fence-and-defer notes under `keepClientCache()`) |
+| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | same row as an action — mark-stale + broadcast + jar divergence                                                                                                                                                                                                                                                                                         |
+| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                                                                   |
+| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                    |
 
 Two boundaries to keep the claims precise: the observer is pull-based (it
 fires at a tab's next jar read — a navigation/prefetch fetch or a popstate
@@ -860,10 +876,10 @@ Relatedly: the per-request `document.cookie` read is required for correctness,
 not a convenience. A future "optimization" that caches the read across requests
 would reintroduce exactly the staleness this design removes.
 
-| Condition         | Same tab / session                | Across reloads                              | Cross-tab                                                                                                                                                              |
-| ----------------- | --------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cookies available | full speed                        | warm (cookie kept on matching-version boot) | value via per-request jar read; invalidation via jar divergence + `BroadcastChannel`                                                                                   |
-| Cookies blocked   | **full speed** (in-memory mirror) | cold mint; ≤ `max-age`-old hits lost        | jar-based sync lost; **`BroadcastChannel` invalidation still works** (it's cookie-independent), so action-driven cross-tab invalidation of shared segments still fires |
+| Condition         | Same tab / session                | Across reloads                              | Cross-tab                                                                                                                    |
+| ----------------- | --------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Cookies available | full speed                        | warm (cookie kept on matching-version boot) | value via per-request jar read; invalidation via jar divergence + `BroadcastChannel`                                         |
+| Cookies blocked   | **full speed** (in-memory mirror) | cold mint; ≤ `max-age`-old hits lost        | jar-based sync is replaced by namespaced `BroadcastChannel` state adoption for action-driven invalidation of shared segments |
 
 What makes the first column unconditional: with cookies blocked the in-memory
 mirror is the source of truth within a page session; the `X-Rango-State` header
@@ -978,9 +994,10 @@ later is cheap.
   block `:514-552` must fire when `fenceActive()` even if `entry[2]` is false),
   so a popstate during an active fence is served stale-while-revalidate with no
   persisted flag. Without this the fence reintroduces the stale-Back-button bug.
-- Untouched: the `Vary` header, the prefetch key shapes, the
-  `navigation-store.ts` `BroadcastChannel` machinery (the cross-tab
-  no-regression invariant).
+- Untouched: the `Vary` header and the prefetch key shapes. The
+  `navigation-store.ts` `BroadcastChannel` keeps the cross-tab no-regression
+  invariant while adding namespaced state adoption and no-rotate receiving
+  clears so post-invalidation re-warming remains valid in every tab.
 
 ## Test contracts to pin
 

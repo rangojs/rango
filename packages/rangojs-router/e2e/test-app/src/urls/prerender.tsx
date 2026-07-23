@@ -1,10 +1,15 @@
 import {
   urls,
   Prerender,
+  Passthrough,
   Static,
+  createLoader,
   getRequestContext,
   Breadcrumbs,
+  type Middleware,
 } from "@rangojs/router";
+import { Suspense } from "react";
+import { ParallelOutlet } from "@rangojs/router/client";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
@@ -12,6 +17,8 @@ import {
   CachedInlineActionForm,
   type CachedInlineActionState,
 } from "../components/CachedInlineActionForm.js";
+import { PrerenderPprSeq } from "../components/PrerenderPprSeq.js";
+import { PrerenderPprActionForm } from "../components/InlineBoundActionForm.js";
 import { buildInlineActionState } from "../inline-action-helpers.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
@@ -127,21 +134,35 @@ export const PrerenderHandle = Prerender(async (ctx) => {
       <span data-testid="prerender-handle-content">async-crumb-content</span>,
     ),
   });
+  // Top-level DEFERRED crumb: reserve the slot via .defer() in the handler, then
+  // resolve it from a deep async component during the prerender render. resolve-
+  // by-default awaits it (resolveSegmentHandleValues) before baking, so the
+  // artifact holds the RESOLVED crumb, not a Promise.
+  const resolveDeferredCrumb = breadcrumb.defer({ timeoutMs: 5000 });
+  async function DeepCrumbResolver() {
+    await Promise.resolve();
+    resolveDeferredCrumb({
+      label: "Prerender Deferred Crumb",
+      href: "/prerender-handle/deferred",
+    });
+    return null;
+  }
+
   // The app's global breadcrumb component (rendered by the root layout) displays
   // the pushed crumbs, including the Promise<ReactNode> content via use().
   return (
     <div data-testid="prerender-handle-page">
       <h1 data-testid="prerender-handle-title">Prerender Handle</h1>
+      <Suspense>
+        <DeepCrumbResolver />
+      </Suspense>
     </div>
   );
 });
 
-// Static handler embedding an inline "use server" action. The action closes over
-// a BUILD-TIME token (frozen when the page is pre-rendered) and is handed to a
-// client component. At runtime the worker serves the stored Flight (a build-time
-// cache hit) WITHOUT re-running this handler, so the embedded action must resolve
-// from the server-references manifest -- the same path that 500'd for "use cache"
-// before the expose-action-id manifest re-assertion.
+// Static handler embedding an inline action with build-time captured scope.
+// Runtime serves the stored Flight without re-running this handler, so action
+// invocation must resolve through the production server-reference manifest.
 export const StaticInlineActionPage = Static(() => {
   const token = `stok-${Date.now().toString(36)}-${Math.floor(
     Math.random() * 1e6,
@@ -163,11 +184,8 @@ export const StaticInlineActionPage = Static(() => {
   );
 });
 
-// Prerendered, parameterized handler embedding an inline "use server" action --
-// the canonical article-list + like-button case. Each param is pre-rendered at
-// build time with its id captured (frozen) into the action's bound args; the
-// action body runs live on click (fresh async value + live session cookie).
-// Exercises the same manifest-resolution path on a prerender (build-time cache) hit.
+// Parameterized prerender fixture for a cached list-style action: each built
+// page freezes its id into the action while the action body remains live.
 export const PrerenderInlineActionPage = Prerender(
   async () => [{ id: "a1" }, { id: "a2" }],
   async (ctx) => {
@@ -190,33 +208,269 @@ export const PrerenderInlineActionPage = Prerender(
   },
 );
 
-export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
-  path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
-  path("/docs", DocsPage, { name: "docs" }),
-  path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
-    loader(PrerenderTestLoader),
-    notFoundBoundary(({ notFound: info }) => (
-      <div data-testid="docs-not-found">
-        <h1 data-testid="docs-not-found-title">Doc Not Found</h1>
-        <p data-testid="docs-not-found-message">{info.message}</p>
+// Prerender + ppr composition (docs/design/shell-fast-path.md): the SAME route
+// carries a build-time prerendered handler (trie pr:true) AND the ppr shell
+// option. Capture and serve both go through the prerender-store hit in
+// withCacheLookup: the build-time segments — the article content AND the
+// slot handler element — bake into the frozen prelude; the SLOT-owned loader
+// (loader()+loading() on the @ppseq parallel: the slot-hole playbook) is
+// masked at capture and re-runs fresh per HIT (seq advances). A route-level
+// loading() would instead make the WHOLE route subtree the hole — the live
+// data must ride a slot for the prerendered content to be shell material.
+// The Prerender handler never executes at serve (production evicts it to a
+// stub; the store hit replays segments in dev too).
+let prerenderPprSeq = 0;
+
+export const PrerenderPprSeqLoader = createLoader(
+  async (): Promise<{ seq: number }> => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    prerenderPprSeq += 1;
+    return { seq: prerenderPprSeq };
+  },
+);
+
+function PrerenderPprSeqSlot() {
+  return <PrerenderPprSeq loader={PrerenderPprSeqLoader} />;
+}
+
+export const PrerenderPprArticle = Prerender(
+  // "warm" is the e2e warm-up slug: the suite's beforeAll polls its bare path
+  // to HIT so the producer-B machinery (dev: the /__rsc_shell on-demand
+  // capture graph) is hot before the strict first-request assertions run on
+  // the virgin alpha/beta bare paths.
+  async () => [{ slug: "alpha" }, { slug: "beta" }, { slug: "warm" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-article">
+        <h1 data-testid="pp-article-title">{`PP ${ctx.params.slug}`}</h1>
+        <p data-testid="pp-article-content">
+          {`Prerendered shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
       </div>
-    )),
-  ]),
-  path("/changelog", ChangelogPage, { name: "changelog" }),
-  // Static handler on a non-dynamic route
-  path("/static-page", StaticPage, { name: "static-page" }),
-  // Static handler on a dynamic route -- same content for any :tag value
-  path("/static-shell/:tag", StaticShell, { name: "static-shell" }),
-  // Prerender + Static handlers with reverse() -- tests URL generation at build time
-  path("/prerender-reverse", PrerenderWithReverse, {
-    name: "prerender-reverse",
-  }),
-  path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
-  // Static + Prerender handlers embedding inline "use server" actions.
-  path("/static-inline-action", StaticInlineActionPage, {
-    name: "static-inline-action",
-  }),
-  path("/prerender-inline-action/:id", PrerenderInlineActionPage, {
-    name: "prerender-inline-action",
-  }),
-]);
+    );
+  },
+);
+
+const prerenderPprBuildDynamicMiddleware: Middleware = async (ctx, next) => {
+  if (ctx.build) {
+    ctx.waitUntil(async () => {
+      throw new Error("build waitUntil should not run during shell capture");
+    });
+    ctx.dynamic();
+  }
+  return next();
+};
+
+export const PrerenderPprBuildDynamicArticle = Prerender(
+  async () => [{ slug: "delta" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-build-dynamic-article">
+        <p data-testid="pp-build-dynamic-article-content">
+          {`Build-dynamic shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
+      </div>
+    );
+  },
+);
+
+const prerenderPprRuntimeDynamicMiddleware: Middleware = async (ctx, next) => {
+  ctx.dynamic();
+  return next();
+};
+
+export const PrerenderPprRuntimeDynamicArticle = Prerender(
+  async () => [{ slug: "omega" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-runtime-dynamic-article">
+        <p data-testid="pp-runtime-dynamic-article-content">
+          {`Runtime-dynamic shell content for ${ctx.params.slug}`}
+        </p>
+      </div>
+    );
+  },
+);
+
+/**
+ * Dedicated fixture for the build-shell EVICTION e2e (#699): its own route +
+ * tag so updateTag("pp-evict-shell") cannot blast the sibling /pp/:slug
+ * entries a concurrently-running test is asserting on (dev runs
+ * fullyParallel). Same slot-hole shape as /pp/:slug.
+ */
+export const PrerenderPprEvictArticle = Prerender(
+  async () => [{ slug: "gamma" }],
+  async (ctx) => {
+    return (
+      <div data-testid="pp-evict-article">
+        <p data-testid="pp-evict-article-content">
+          {`Evictable shell content for ${ctx.params.slug}`}
+        </p>
+        <ParallelOutlet name="@ppseq" />
+      </div>
+    );
+  },
+);
+
+/**
+ * Passthrough + Prerender + ppr fixture for the replay gate's existence
+ * probe: only "baked" bakes at build time; every other slug misses the
+ * prerender store and renders LIVE through the Passthrough handler. The trie
+ * still marks the route pr:true, so the gate must probe the store instead of
+ * trusting the flag — live params keep navigation replay (their captures
+ * record the doc segment record), baked params keep the prerender-store
+ * bypass.
+ */
+let ppPassthroughExec = 0;
+
+export const PrerenderPprPassthroughDef = Prerender<{ slug: string }>(
+  async () => [{ slug: "baked" }],
+  async (ctx) => (
+    <div data-testid="ppp-article">
+      <p data-testid="ppp-source">baked</p>
+      <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+      <PrerenderPprActionForm />
+    </div>
+  ),
+);
+
+export const PrerenderPprPassthroughArticle = Passthrough(
+  PrerenderPprPassthroughDef,
+  async (ctx) => {
+    ppPassthroughExec += 1;
+    return (
+      <div data-testid="ppp-article">
+        <p data-testid="ppp-source">live</p>
+        <p data-testid="ppp-content">{`PPP content for ${ctx.params.slug}`}</p>
+        <p data-testid="ppp-exec">{`ppp-exec-${ppPassthroughExec}`}</p>
+        <PrerenderPprActionForm />
+      </div>
+    );
+  },
+);
+
+export const prerenderPatterns = urls(
+  ({
+    path,
+    loader,
+    loading,
+    parallel,
+    middleware,
+    notFoundBoundary,
+    revalidate,
+  }) => [
+    path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
+    path("/docs", DocsPage, { name: "docs" }),
+    // Prerender + ppr on ONE route: build-time segments become the frozen
+    // prelude; the slot-owned loader is the badge-sized streaming hole.
+    path(
+      "/pp/:slug",
+      PrerenderPprArticle,
+      { name: "pp.article", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        parallel({
+          "@ppseq": {
+            handler: PrerenderPprSeqSlot,
+            use: () => [
+              loader(PrerenderPprSeqLoader),
+              loading(
+                <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+              ),
+            ],
+          },
+        }),
+      ],
+    ),
+    // Passthrough + Prerender + ppr (replay gate existence probe): only
+    // "baked" bakes; other slugs render live and must keep navigation replay.
+    path(
+      "/ppp/:slug",
+      PrerenderPprPassthroughArticle,
+      {
+        name: "pp.passthrough",
+        ppr: { ttl: 300, swr: 120 },
+      },
+      // Retaining the prerendered client boundary is part of this streaming
+      // contract. Default Passthrough revalidation replaces it with the live
+      // handler and therefore discards its local useActionState result.
+      () => [revalidate(({ actionId }) => (actionId ? false : undefined))],
+    ),
+    // Build-shell eviction fixture (#699): tagged so updateTag can reject the
+    // baked entry via the store's tag markers (manifest entries are immutable
+    // — eviction is a marker comparison, not a deletion).
+    path(
+      "/pp-evict/:slug",
+      PrerenderPprEvictArticle,
+      {
+        name: "pp.evict",
+        ppr: { ttl: 300, swr: 120, tags: ["pp-evict-shell"] },
+      },
+      () => [
+        parallel({
+          "@ppseq": {
+            handler: PrerenderPprSeqSlot,
+            use: () => [
+              loader(PrerenderPprSeqLoader),
+              loading(
+                <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+              ),
+            ],
+          },
+        }),
+      ],
+    ),
+    middleware(prerenderPprBuildDynamicMiddleware, () => [
+      path(
+        "/pp-build-dynamic/:slug",
+        PrerenderPprBuildDynamicArticle,
+        { name: "pp.build-dynamic", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          parallel({
+            "@ppseq": {
+              handler: PrerenderPprSeqSlot,
+              use: () => [
+                loader(PrerenderPprSeqLoader),
+                loading(
+                  <span data-testid="pp-seq-fallback">Loading pp seq...</span>,
+                ),
+              ],
+            },
+          }),
+        ],
+      ),
+    ]),
+    middleware(prerenderPprRuntimeDynamicMiddleware, () => [
+      path("/pp-runtime-dynamic/:slug", PrerenderPprRuntimeDynamicArticle, {
+        name: "pp.runtime-dynamic",
+        ppr: { ttl: 300, swr: 120 },
+      }),
+    ]),
+    path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
+      loader(PrerenderTestLoader),
+      notFoundBoundary(({ notFound: info }) => (
+        <div data-testid="docs-not-found">
+          <h1 data-testid="docs-not-found-title">Doc Not Found</h1>
+          <p data-testid="docs-not-found-message">{info.message}</p>
+        </div>
+      )),
+    ]),
+    path("/changelog", ChangelogPage, { name: "changelog" }),
+    // Static handler on a non-dynamic route
+    path("/static-page", StaticPage, { name: "static-page" }),
+    // Static handler on a dynamic route -- same content for any :tag value
+    path("/static-shell/:tag", StaticShell, { name: "static-shell" }),
+    // Prerender + Static handlers with reverse() -- tests URL generation at build time
+    path("/prerender-reverse", PrerenderWithReverse, {
+      name: "prerender-reverse",
+    }),
+    path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
+    path("/static-inline-action", StaticInlineActionPage, {
+      name: "static-inline-action",
+    }),
+    path("/prerender-inline-action/:id", PrerenderInlineActionPage, {
+      name: "prerender-inline-action",
+    }),
+  ],
+);

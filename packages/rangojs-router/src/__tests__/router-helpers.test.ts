@@ -6,7 +6,7 @@ import {
   isLazyEvaluationNeeded,
 } from "../router/pattern-matching.js";
 import {
-  parsePattern as parseMiddlewarePattern,
+  compileMiddlewarePattern as parseMiddlewarePattern,
   extractParams,
 } from "../router/middleware.js";
 import {
@@ -432,6 +432,52 @@ describe("serializeCookie", () => {
     expect(result).not.toContain("HttpOnly");
     expect(result).not.toContain("Domain");
   });
+
+  it("rejects domain with forbidden characters", () => {
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com;evil" }),
+    ).toThrow("invalid cookie domain");
+    expect(() =>
+      serializeCookie("a", "b", { domain: "example.com\nhost" }),
+    ).toThrow("invalid cookie domain");
+  });
+
+  it("rejects path with forbidden characters or missing leading slash", () => {
+    expect(() => serializeCookie("a", "b", { path: "/;evil" })).toThrow(
+      "invalid cookie path",
+    );
+    expect(() => serializeCookie("a", "b", { path: "relative" })).toThrow(
+      "invalid cookie path",
+    );
+  });
+
+  it("rejects sameSite outside the allowed set", () => {
+    expect(() =>
+      serializeCookie("a", "b", { sameSite: "invalid" as any }),
+    ).toThrow("invalid cookie sameSite");
+  });
+
+  it("rejects non-finite maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: NaN })).toThrow(
+      "invalid cookie maxAge",
+    );
+    expect(() => serializeCookie("a", "b", { maxAge: Infinity })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
+
+  it("rejects fractional maxAge", () => {
+    expect(() => serializeCookie("a", "b", { maxAge: 1.5 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
+
+  it("rejects maxAge that would serialize in exponential notation", () => {
+    // Number.isInteger(1e21) is true; Max-Age=1e+21 is invalid wire syntax.
+    expect(() => serializeCookie("a", "b", { maxAge: 1e21 })).toThrow(
+      "invalid cookie maxAge",
+    );
+  });
 });
 
 // ========================================================================
@@ -461,6 +507,42 @@ describe("createReverse", () => {
     expect(
       reverse("product.detail" as any, { category: "shoes", id: "42" }),
     ).toBe("/product/shoes/42");
+  });
+
+  // Named catch-all reverse (issue #634): unlike a normal `:slug` (which encodes
+  // "/" to %2F, see below), a catch-all value is multi-segment — the separators
+  // are preserved and only each segment is percent-encoded.
+  it("catch-all :name* preserves separators across a multi-segment value", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, { slug: "a/b/c" })).toBe("/docs/a/b/c");
+  });
+
+  it("catch-all :name+ preserves separators and strips the modifier", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(r("files" as any, { path: "a/b" })).toBe("/files/a/b");
+  });
+
+  it("catch-all :name* with an absent value collapses to the prefix", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, {} as any)).toBe("/docs");
+  });
+
+  it("catch-all :name+ with an absent value throws (one-or-more)", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(() => r("files" as any, {} as any)).toThrow(/Missing param/);
+  });
+
+  it("catch-all encodes each segment but not the separators", () => {
+    const r = createReverse({ docs: "/docs/:slug*" });
+    expect(r("docs" as any, { slug: "a b/c?d" })).toBe("/docs/a%20b/c%3Fd");
+  });
+
+  // Review F2: a substituted value must never be re-scanned as if it contained
+  // more `:name` placeholders. A catch-all value with a colon segment used to
+  // make a later pass read `:abc` and throw "Missing param".
+  it("does not re-scan a catch-all value containing a colon", () => {
+    const r = createReverse({ files: "/files/:path+" });
+    expect(r("files" as any, { path: "sha:abc/x" })).toBe("/files/sha:abc/x");
   });
 
   it("encodes characters that are unsafe in a path segment", () => {

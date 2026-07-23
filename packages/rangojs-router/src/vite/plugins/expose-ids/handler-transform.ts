@@ -3,35 +3,24 @@ import { makeStubId } from "../expose-id-utils.js";
 import type { HandlerTransformConfig, CreateExportBinding } from "./types.js";
 import { isExportOnlyFile } from "./export-analysis.js";
 
-function analyzeCreateHandleArgs(
-  code: string,
-  startPos: number,
-  endPos: number,
-): { hasArgs: boolean } {
-  const content = code.slice(startPos, endPos).trim();
-  return { hasArgs: content.length > 0 };
-}
-
 export function transformHandles(
   bindings: CreateExportBinding[],
   s: MagicString,
-  code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
   let hasChanges = false;
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
-    const args = analyzeCreateHandleArgs(
-      code,
-      binding.callOpenParenPos + 1,
-      binding.callCloseParenPos,
-    );
 
     const handleId = makeStubId(filePath, exportName, isBuild);
 
+    // Branch on the AST-derived argCount, not a string-trim of the raw arg
+    // slice. A comment-only arg list (`createHandle(/* meta */)`) trims to
+    // non-empty but is zero real arguments; injecting `, "id"` would emit
+    // `createHandle(/* meta */, "id")` — an elided first arg / syntax error.
     let paramInjection: string;
-    if (!args.hasArgs) {
+    if (binding.argCount === 0) {
       paramInjection = `undefined, "${handleId}"`;
     } else {
       paramInjection = `, "${handleId}"`;

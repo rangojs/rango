@@ -36,7 +36,6 @@ export const blogPatterns = urls(
     loader,
     loading,
     intercept,
-    when,
   }) => [
     layout(
       (ctx) => {
@@ -58,12 +57,17 @@ export const blogPatterns = urls(
         ),
 
         // Intercept author page -- modal from index/list, direct from post pages
-        intercept("@modal", ".author", <AuthorModalContent />, () => [
-          when(shouldInterceptBlogAuthor),
-          layout(<AuthorModalWrapper />),
-          loading(<AuthorModalContentSkeleton />),
-          loader(BlogAuthorLoader),
-        ]),
+        intercept(
+          "@modal",
+          ".author",
+          <AuthorModalContent />,
+          { when: shouldInterceptBlogAuthor },
+          () => [
+            layout(<AuthorModalWrapper />),
+            loading(<AuthorModalContentSkeleton />),
+            loader(BlogAuthorLoader),
+          ],
+        ),
 
         cache({ ttl: 600000000 }, () => [
           path("/", BlogIndexPage, { name: "index" }),

@@ -1,6 +1,6 @@
 ---
 name: middleware
-description: Define middleware for authentication, logging, and request processing in @rangojs/router
+description: Define middleware for authentication, logging, and request processing in @rangojs/router. Use when gating routes behind auth checks, logging requests, or running shared logic before a handler runs.
 argument-hint: [middleware-name]
 ---
 
@@ -60,8 +60,12 @@ data itself.
 ### Revalidation Contracts with Middleware-Backed Trees
 
 Middleware can establish request-level context (`ctx.set`) for segments that
-execute in the current render pass. It does not change partial revalidation
-boundaries between handler/layout/parallel segments.
+execute in the current render pass. Because route middleware wraps **every**
+render pass — normal renders, post-action revalidation, PE re-renders — its
+variables are never stale: middleware is the safest `ctx.set` rung on the
+data-passing ladder (`/rango` → "Passing data down the tree"). But it does
+not change partial revalidation boundaries between handler/layout/parallel
+segments.
 
 For shared segment data, use named revalidation contracts on both the producer
 and consumer segments, even when middleware is present in the chain.
@@ -193,6 +197,7 @@ export const myMiddleware: Middleware = async (ctx, next) => {
   ctx.request; // Request object
   ctx.url; // Parsed URL
   ctx.params; // Route parameters
+  ctx.build; // in middleware: true only during Prerender + ppr build-shell capture (plain Prerender does not run middleware)
 
   // Access platform bindings (plain bindings from createRouter<TEnv>())
   ctx.env.DB; // D1Database
@@ -200,6 +205,9 @@ export const myMiddleware: Middleware = async (ctx, next) => {
 
   // Set variables for downstream handlers (typed via Rango.Vars)
   ctx.set("user", { id: "123", name: "John" });
+
+  // Opt the current request out of PPR shell lookup/capture.
+  ctx.dynamic();
 
   // Continue to next middleware/handler
   await next();
@@ -241,6 +249,35 @@ const Dashboard: Handler<"dashboard"> = (ctx) => {
 This works alongside `ctx.get("key")` / `ctx.set("key", value)` (global typing
 via Rango.Vars augmentation). Use `createVar` for route-local or feature-scoped
 data; use Rango.Vars for app-wide middleware state.
+
+## Build-Time PPR Middleware
+
+Normal `Prerender` Flight payload collection does not run middleware: there is
+no request to wrap. The exception is `Prerender` + `ppr` build-shell capture.
+After the Flight payload exists, the shell producer replays global and route
+middleware for each generated URL before it captures HTML.
+
+In that build-shell pass:
+
+- `ctx.build === true`;
+- `ctx.waitUntil()` is inert;
+- `ctx.dynamic()` skips the baked shell for that URL;
+- context variables set by middleware are visible to the shell render.
+
+Use this to keep side effects predictable:
+
+```typescript
+export const commerceMiddleware: Middleware = async (ctx, next) => {
+  if (ctx.build) {
+    ctx.dynamic(); // leave this shell to runtime PPR
+    return next();
+  }
+
+  const session = await commerce.auth(ctx.request);
+  ctx.set("session", session);
+  return next();
+};
+```
 
 ## Redirect with State in Middleware
 

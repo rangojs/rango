@@ -1,14 +1,8 @@
 "use client";
 
-import {
-  useHandle,
-  Breadcrumbs,
-  type BreadcrumbItem,
-  type DeferredHandleEntry,
-} from "@rangojs/router/client";
-import { Fragment, Suspense, use } from "react";
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
+import { Fragment, Suspense } from "react";
 import { AsyncContent } from "./AsyncContent.js";
-import { isThenable } from "./thenable.js";
 
 /**
  * User-land breadcrumb component using the built-in Breadcrumbs handle.
@@ -47,45 +41,32 @@ export function TrailBreadcrumbs() {
 }
 
 /**
- * Deferred-aware renderer: unwraps Promise-wrapped breadcrumb items (from `.defer()`)
- * using React's `use()` hook inside Suspense. Separate from TrailBreadcrumbs
- * so existing tests are unaffected.
+ * Resolve-by-default renderer used by the deferred-handle-nav e2e. A deferred
+ * breadcrumb (a pushed Promise or `ctx.use(Breadcrumbs).defer()`) reaches the
+ * consumer RESOLVED — never a Promise. On a soft navigation the store HOLDS the
+ * previous breadcrumbs (the whole handle, since it has a deferred entry) until
+ * every deferred value resolves, then swaps in the resolved set; there is no
+ * per-crumb pending marker. This component exposes the crumb labels + count so
+ * the e2e can observe the held-previous-then-resolved transition.
  */
-export function DeferredTrailBreadcrumbs() {
-  const breadcrumbs = useHandle(Breadcrumbs) as Array<
-    DeferredHandleEntry<BreadcrumbItem>
-  >;
-
-  if (!breadcrumbs.length) return null;
+export function ResolvedTrailBreadcrumbs() {
+  const breadcrumbs = useHandle(Breadcrumbs);
 
   return (
-    <nav aria-label="DeferredTrail">
+    <nav aria-label="ResolvedTrail" data-testid="resolved-trail-nav">
+      <span data-testid="resolved-crumb-count">{breadcrumbs.length}</span>
       <ol>
         {breadcrumbs.map((crumb, index) => (
-          <li key={index}>
-            <Suspense>
-              <DeferredCrumb crumb={crumb} />
-            </Suspense>
+          <li key={index} data-testid={`resolved-crumb-${index}`}>
+            <span data-testid="resolved-crumb-label">{crumb.label}</span>
+            {crumb.content != null && (
+              <Suspense>
+                <AsyncContent content={crumb.content} />
+              </Suspense>
+            )}
           </li>
         ))}
       </ol>
     </nav>
-  );
-}
-
-function DeferredCrumb({
-  crumb,
-}: {
-  crumb: DeferredHandleEntry<BreadcrumbItem>;
-}) {
-  const item = isThenable<BreadcrumbItem | null | undefined>(crumb)
-    ? use(crumb)
-    : crumb;
-  if (!item) return null; // deferred slot timed out with else: null / undefined
-  return (
-    <>
-      <span>{item.label}</span>
-      {item.content != null && <AsyncContent content={item.content} />}
-    </>
   );
 }

@@ -49,7 +49,7 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
 });
 
 // Import AFTER mocks are registered so vitest applies them.
-const { serializeSegments, deserializeSegments } =
+const { serializeSegments, deserializeSegments, serializeResult } =
   await import("../segment-codec.js");
 const { CacheScope } = await import("../cache-scope.js");
 const { createRequestContext, runWithRequestContext } =
@@ -358,5 +358,230 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
 
     expect(result).not.toBeNull();
     expect(ctx._requestTags.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A throwing consumer cache({ key }) must degrade lookupRoute to a cache MISS
+// (return null -> render uncached) rather than crash the foreground render.
+// ---------------------------------------------------------------------------
+
+describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
+  function makeCtx(store: SegmentCacheStore) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+      cacheStore: store,
+    });
+  }
+
+  it("returns null (not throw) when the consumer key() throws", async () => {
+    const get = vi.fn();
+    const store = { get } as unknown as SegmentCacheStore;
+    const config: PartialCacheOptions = {
+      ttl: 60,
+      store,
+      // A buggy/throwing key function (e.g. reads ctx state that is absent).
+      key: () => {
+        throw new Error("key boom");
+      },
+    };
+    const scope = new CacheScope(config);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      scope.lookupRoute("/products", {}),
+    );
+
+    // Degrades to a miss; the store is never consulted (key never resolved).
+    expect(result).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("returns null when an async key() rejects", async () => {
+    const store = { get: vi.fn() } as unknown as SegmentCacheStore;
+    const config: PartialCacheOptions = {
+      ttl: 60,
+      store,
+      key: async () => {
+        throw new Error("async key boom");
+      },
+    };
+    const scope = new CacheScope(config);
+    const ctx = makeCtx(store);
+
+    const result = await runWithRequestContext(ctx, () =>
+      scope.lookupRoute("/products", {}),
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// serializeResult swallows a serialization failure and returns null (so the
+// caller falls through to an uncached render) rather than throwing. The fix
+// added a debug-gated log on the swallowed error; the contract under test is
+// the return value and the no-throw guarantee.
+// ---------------------------------------------------------------------------
+
+describe("serializeResult - non-serializable input returns null, does not throw", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null for a value the serializer rejects", async () => {
+    // The mock renderToReadableStream JSON.stringifies synchronously, so a
+    // circular reference throws inside serializeResult's try.
+    const circular: any = {};
+    circular.self = circular;
+
+    await expect(serializeResult(circular)).resolves.toBeNull();
+  });
+
+  it("returns null for a BigInt the serializer cannot encode", async () => {
+    await expect(serializeResult(10n)).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ttl/swr getters validate the resolved value and DEGRADE on garbage. An
+// unvalidated NaN/Infinity ttl flows into expiry math (every `now > NaN` is
+// false) so the entry never evicts; a negative ttl makes every read a miss.
+// Unlike profile-registry.ts (fail fast at config time) the render path falls
+// back to DEFAULT_ROUTE_TTL / undefined rather than throwing.
+// ---------------------------------------------------------------------------
+
+describe("CacheScope.ttl / swr - validation and degradation", () => {
+  const DEFAULT_ROUTE_TTL = 60;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([NaN, Infinity, -Infinity, -5])(
+    "falls back to DEFAULT_ROUTE_TTL for config.ttl = %s",
+    (bad) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const scope = new CacheScope({ ttl: bad });
+      expect(scope.ttl).toBe(DEFAULT_ROUTE_TTL);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid ttl"));
+    },
+  );
+
+  it.each([0, 1, 60, 3600])("passes through a valid config.ttl = %s", (ok) => {
+    const scope = new CacheScope({ ttl: ok });
+    expect(scope.ttl).toBe(ok);
+  });
+
+  it.each([NaN, Infinity, -1])(
+    "returns undefined for config.swr = %s",
+    (bad) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const scope = new CacheScope({ ttl: 60, swr: bad });
+      expect(scope.swr).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid swr"));
+    },
+  );
+
+  it.each([0, 5, 300])("passes through a valid config.swr = %s", (ok) => {
+    const scope = new CacheScope({ ttl: 60, swr: ok });
+    expect(scope.swr).toBe(ok);
+  });
+
+  it("validates an invalid store defaults.ttl when config.ttl is absent", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = {
+      get: vi.fn(),
+      set: vi.fn(),
+      defaults: { ttl: NaN },
+    } as unknown as SegmentCacheStore;
+    const scope = new CacheScope({ store });
+    expect(scope.ttl).toBe(DEFAULT_ROUTE_TTL);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid ttl"));
+  });
+
+  it("returns undefined for an invalid store defaults.swr", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = {
+      get: vi.fn(),
+      set: vi.fn(),
+      defaults: { ttl: 60, swr: -10 },
+    } as unknown as SegmentCacheStore;
+    const scope = new CacheScope({ store });
+    expect(scope.swr).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid swr"));
+  });
+});
+
+describe("CacheScope.recordTags - first-write tags land in the request tag union synchronously", () => {
+  // The miss/first-write counterpart of the hit-path test above. On a hit the
+  // tags come back in the cached entry and lookupRoute records them; on a first
+  // write there is no entry yet, so cache-store records the route's config tags
+  // synchronously (this method) BEFORE the document cache snapshots _requestTags.
+  // cacheRoute() also records them, but it runs inside requestCtx.waitUntil(),
+  // racing that snapshot — recordTags() is what closes the window.
+  function makeCtx() {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com/products"),
+      url: new URL("https://example.com/products"),
+      variables: {},
+    });
+  }
+
+  it("records static cache({ tags }) into _requestTags with no cache write", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({ ttl: 60, tags: ["products"] });
+
+    expect(ctx._requestTags.size).toBe(0);
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    // Tags are in the union synchronously — no cacheRoute()/waitUntil needed — so
+    // the document cache's tag snapshot catches them on the very first request.
+    expect([...ctx._requestTags]).toEqual(["products"]);
+  });
+
+  it("resolves dynamic tags against the request context", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({
+      ttl: 60,
+      tags: (c) => [`path:${new URL(c.request.url).pathname}`],
+    });
+
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    expect([...ctx._requestTags]).toEqual(["path:/products"]);
+  });
+
+  it("records nothing when the scope's write condition returns false", () => {
+    const ctx = makeCtx();
+    const scope = new CacheScope({
+      ttl: 60,
+      tags: ["products"],
+      condition: () => false,
+    });
+
+    runWithRequestContext(ctx, () => scope.recordTags(ctx));
+
+    // Matches cacheRoute's gate: a disallowed write records no tags, so the
+    // document is not tagged for content the segment cache will not store.
+    expect(ctx._requestTags.size).toBe(0);
+  });
+
+  it("records nothing for a disabled scope or untagged config", () => {
+    const disabled = makeCtx();
+    runWithRequestContext(disabled, () =>
+      new CacheScope(false).recordTags(disabled),
+    );
+    expect(disabled._requestTags.size).toBe(0);
+
+    const untagged = makeCtx();
+    runWithRequestContext(untagged, () =>
+      new CacheScope({ ttl: 60 }).recordTags(untagged),
+    );
+    expect(untagged._requestTags.size).toBe(0);
   });
 });

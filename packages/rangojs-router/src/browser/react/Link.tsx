@@ -7,13 +7,19 @@ import React, {
   useEffect,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
-import { isHashOnlyNavigation } from "../link-interceptor.js";
+import {
+  isHashOnlyNavigation,
+  isPrefetchScopeDisabled,
+  subscribeToPrefetchScopeChange,
+} from "../link-interceptor.js";
+import { subscribeToLocationChange } from "../event-controller.js";
 import {
   isLocationStateEntry,
   type LocationStateEntry,
@@ -32,30 +38,27 @@ export type LinkState =
   | LocationStateEntry[]
   | StateOrGetter<Record<string, unknown>>;
 
-import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
-import { getAppVersion } from "../app-version.js";
 import {
-  observeForPrefetch,
-  unobserveForPrefetch,
-} from "../prefetch/observer.js";
+  prefetchDirect,
+  prefetchQueued,
+  schedulePrefetchWhenRouterIdle,
+} from "../prefetch/loader.js";
+import { observeForPrefetch } from "../prefetch/observer.js";
+import {
+  getDefaultPrefetchStrategy,
+  resolveAdaptiveStrategy,
+  subscribeToAdaptiveStrategyChange,
+} from "../prefetch/default-strategy.js";
+import { getAppVersion } from "../app-version.js";
+import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
-const isTouchDevice =
-  typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
+// The PrefetchStrategy union is defined in router/prefetch-default.ts (both
+// the server-side option resolver and this client seat consume it); re-export
+// so the public `PrefetchStrategy` import path via client.tsx is unchanged.
+export type { PrefetchStrategy } from "../../router/prefetch-default.js";
+export { resolveAdaptiveStrategy } from "../prefetch/default-strategy.js";
 
-/**
- * Prefetch strategy for the Link component
- * - "hover": Prefetch on mouse enter (direct, no queue)
- * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
- * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
- * - "adaptive": Hover on pointer devices, viewport on touch devices
- * - "none": No prefetching (default)
- */
-export type PrefetchStrategy =
-  | "hover"
-  | "viewport"
-  | "render"
-  | "adaptive"
-  | "none";
+const IGNORE_STRATEGY_CHANGES = (_listener: () => void) => () => {};
 
 /**
  * Link component props
@@ -91,8 +94,14 @@ export interface LinkProps extends Omit<
    */
   revalidate?: boolean;
   /**
-   * Prefetch strategy for the link destination
-   * @default "none"
+   * Prefetch strategy for the link destination. When omitted, falls back to
+   * the router-wide default (`createRouter({ defaultPrefetch })`: `"none"` in
+   * development, `"viewport"` in production). An explicit value always wins
+   * over the router default, including `"none"` to opt a single Link out. An
+   * ancestor with `data-prefetch-scope="false"` or `"none"` remains a hard
+   * subtree opt-out.
+   *
+   * @default the router's environment-aware `defaultPrefetch`
    */
   prefetch?: PrefetchStrategy;
   /**
@@ -206,7 +215,7 @@ export const Link: ForwardRefExoticComponent<
     scroll = true,
     reloadDocument = false,
     revalidate,
-    prefetch = "none",
+    prefetch,
     prefetchKey,
     state,
     children,
@@ -228,9 +237,19 @@ export const Link: ForwardRefExoticComponent<
     return to === "/" ? bn : bn + to;
   }, [to, isExternal, ctx?.basename]);
 
-  // Resolve adaptive: viewport on touch devices, hover on pointer devices
-  const resolvedStrategy =
-    prefetch === "adaptive" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+  // No explicit `prefetch` prop: fall back to the router-wide default
+  // (server-resolved, applied at browser init — before hydration, so this
+  // render-time read never races the metadata). Adaptive reads the current
+  // input capability rather than a module-load snapshot.
+  const configuredStrategy =
+    prefetch ?? ctx?.defaultPrefetch ?? getDefaultPrefetchStrategy();
+  const resolvedStrategy = useSyncExternalStore(
+    configuredStrategy === "adaptive"
+      ? subscribeToAdaptiveStrategyChange
+      : IGNORE_STRATEGY_CHANGES,
+    () => resolveAdaptiveStrategy(configuredStrategy),
+    () => (configuredStrategy === "adaptive" ? "hover" : configuredStrategy),
+  );
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);
@@ -329,10 +348,13 @@ export const Link: ForwardRefExoticComponent<
   );
 
   const handleMouseEnter = useCallback(() => {
+    const element = internalRef.current;
     if (
       (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
       !isExternal &&
-      ctx?.store
+      ctx?.store &&
+      (!element ||
+        (!isHashOnlyNavigation(element) && !isPrefetchScopeDisabled(element)))
     ) {
       // For "hover", this is the primary prefetch trigger.
       // For "viewport", this upgrades/prioritizes a potentially queued
@@ -357,57 +379,77 @@ export const Link: ForwardRefExoticComponent<
     const isRender = resolvedStrategy === "render";
     if (!isViewport && !isRender) return;
 
-    let cancelled = false;
-    let unsubIdle: (() => void) | undefined;
-    let observedElement: Element | null = null;
-
-    const triggerPrefetch = () => {
-      if (cancelled) return;
-      const segmentState = ctx.store.getSegmentState();
-      prefetchQueued(
-        resolvedTo,
-        segmentState.currentSegmentIds,
-        getAppVersion(),
-        ctx.store.getRouterId?.(),
-        prefetchKey,
-      );
-    };
-
-    // Schedule prefetch only when the app is idle (no navigation/streaming).
-    // This avoids competing with hydration and active navigation fetches.
-    const scheduleWhenIdle = (callback: () => void) => {
-      const state = ctx.eventController.getState();
-      if (state.state === "idle" && !state.isStreaming) {
-        callback();
-        return;
-      }
-      const unsub = ctx.eventController.subscribe(() => {
-        const s = ctx.eventController.getState();
-        if (s.state === "idle" && !s.isStreaming) {
-          unsub();
-          callback();
-        }
-      });
-      unsubIdle = unsub;
-    };
-
-    if (isRender) {
-      scheduleWhenIdle(triggerPrefetch);
-    } else if (isViewport) {
+    const armPrefetch = (): (() => void) => {
       const element = internalRef.current;
-      if (!element) return;
-      observedElement = element;
-      observeForPrefetch(element, () => {
-        scheduleWhenIdle(triggerPrefetch);
-      });
-    }
+      if (
+        element &&
+        (isHashOnlyNavigation(element) || isPrefetchScopeDisabled(element))
+      ) {
+        return () => {};
+      }
+
+      let cancelled = false;
+      let unsubIdle: (() => void) | undefined;
+      let stopObserving: (() => void) | undefined;
+
+      const triggerPrefetch = () => {
+        if (cancelled) return;
+        const currentElement = internalRef.current;
+        if (currentElement && isPrefetchScopeDisabled(currentElement)) return;
+        const segmentState = ctx.store.getSegmentState();
+        prefetchQueued(
+          resolvedTo,
+          segmentState.currentSegmentIds,
+          getAppVersion(),
+          ctx.store.getRouterId?.(),
+          prefetchKey,
+        );
+      };
+
+      if (isRender) {
+        unsubIdle = schedulePrefetchWhenRouterIdle(
+          ctx.eventController,
+          triggerPrefetch,
+        );
+      } else {
+        const viewportElement = internalRef.current;
+        if (viewportElement) {
+          stopObserving = observeForPrefetch(viewportElement, () => {
+            unsubIdle = schedulePrefetchWhenRouterIdle(
+              ctx.eventController,
+              triggerPrefetch,
+            );
+          });
+        }
+      }
+
+      return () => {
+        cancelled = true;
+        unsubIdle?.();
+        stopObserving?.();
+      };
+    };
+
+    let disarmPrefetch = armPrefetch();
+    const element = internalRef.current;
+    const unsubscribeScope = element
+      ? subscribeToPrefetchScopeChange(element, () => {
+          disarmPrefetch();
+          disarmPrefetch = armPrefetch();
+        })
+      : undefined;
+    const unsubscribeLocation = subscribeToLocationChange(
+      ctx.eventController,
+      () => {
+        disarmPrefetch();
+        disarmPrefetch = armPrefetch();
+      },
+    );
 
     return () => {
-      cancelled = true;
-      unsubIdle?.();
-      if (isViewport && observedElement) {
-        unobserveForPrefetch(observedElement);
-      }
+      unsubscribeScope?.();
+      unsubscribeLocation();
+      disarmPrefetch();
     };
   }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 

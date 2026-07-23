@@ -42,6 +42,7 @@ export {
   InvalidHostnameError,
   HostValidationError,
   NoRouteMatchError,
+  isNoRouteMatchError,
   InvalidHandlerError,
 } from "./errors.js";
 

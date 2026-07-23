@@ -1,5 +1,32 @@
-import { createLoader, cookies } from "@rangojs/router";
+import { createLoader, cookies, redirect } from "@rangojs/router";
 import { getCartQuantitySync } from "./cart-store.js";
+
+// ============================================================================
+// Fetchable-loader thrown-Response + error-name fixtures (D4, D5)
+// ============================================================================
+
+// D4: a fetchable loader (no middleware) that throws a redirect Response. The
+// _rsc_loader endpoint's catch must honor `error instanceof Response` and emit
+// the real 302 + Location, not coerce it into a generic 500.
+export const ThrownRedirectLoader = createLoader(async () => {
+  throw redirect("/redirected-loader-target");
+}, true);
+
+// D5: a fetchable loader that throws an error whose class name is a recognizable
+// sentinel. In production the endpoint must NOT leak `err.name` into the error
+// payload (the client only reads `message`); dev still carries the name. The
+// sentinel string lets the e2e assert presence (dev) / absence (prod) in the
+// served RSC body.
+class RangoLeakSentinelError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RangoLeakSentinelError";
+  }
+}
+
+export const NamedErrorLoader = createLoader(async () => {
+  throw new RangoLeakSentinelError("named-error-loader: thrown by design");
+}, true);
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {
@@ -433,6 +460,27 @@ export const CachedTestLoader = createLoader(async () => {
   };
 });
 
+// Counter for the handler-consumed cache() route loader
+let handlerConsumedLoaderCount = 0;
+
+/**
+ * Consumption-lane rule, cache() tier: an UNCACHED loader consumed by a
+ * HANDLER (`await ctx.use(...)`) inside a route-level cache() scope. The
+ * handler-consumed value is a BAKED copy — it freezes into the cached route
+ * segments and is served as-is on every cache hit (client-side useLoader is
+ * the live lane). count/loadedAt advance per execution so the e2e can pin
+ * "frozen across hits" (see e2e/cache.test.ts and the PPR twin, semantic
+ * matrix row PPR3).
+ */
+export const HandlerConsumedTestLoader = createLoader(async () => {
+  handlerConsumedLoaderCount++;
+  return {
+    count: handlerConsumedLoaderCount,
+    message: "Handler-consumed loader data",
+    loadedAt: new Date().toISOString(),
+  };
+});
+
 // Counter for intercept cache test loader
 let interceptCacheLoaderCount = 0;
 
@@ -583,6 +631,31 @@ export const CookieTestLoader = createLoader(async () => {
   return {
     session: testSession || null,
     cookieCount: allCookies.length,
+  };
+});
+
+/**
+ * Loader for the progressive-enhancement header-preservation fixture. It reads
+ * the request headers off the LOADER's own request (ctx.request) — NOT the
+ * ambient cookies() store, which always reflects the original POST request
+ * context and so would mask the bug. During a no-JS submit the PE re-render is
+ * a synthetic GET; the fix copies the POST's request headers onto it, so the
+ * loader's ctx.request still carries the `pe-probe` cookie and any custom
+ * header. Without the fix, ctx.request had only `accept: text/html` and these
+ * read empty.
+ *
+ * The browser sends `Cookie` automatically on the native POST, so `cookieProbe`
+ * is the no-JS-controllable signal. `customHeader` is additionally observable
+ * on the JS action path (where fetch sends custom headers), proving full
+ * header preservation, not just cookies.
+ */
+export const PeHeaderProbeLoader = createLoader(async (ctx) => {
+  const cookieHeader = ctx.request.headers.get("cookie") ?? "";
+  const match = /(?:^|;\s*)pe-probe=([^;]*)/.exec(cookieHeader);
+  return {
+    cookieProbe: match ? decodeURIComponent(match[1]!) : null,
+    customHeader: ctx.request.headers.get("x-pe-probe"),
+    submitted: cookies().get("pe-header-submitted")?.value === "yes",
   };
 });
 
@@ -750,6 +823,20 @@ export const IsActionAnyLoader = createLoader(async () => {
   "use server";
   isActionAnyRuns += 1;
   return { runs: isActionAnyRuns };
+});
+
+// shouldRevalidate({ formData }) e2e probe (C2). A module-level run counter so
+// the test can tell whether the loader re-ran. Gated by
+// revalidate(({ formData }) => formData?.get("reload") === "yes"): the loader
+// re-runs ONLY when the action's FormData reaches the predicate with the clean
+// `reload` key. If formData is undefined (the bug) or carries Flight-encoded
+// keys, the predicate is false and the counter does not change — for BOTH the JS
+// and no-JS (PE) transports.
+let revalFormDataRuns = 0;
+export const RevalFormDataLoader = createLoader(async () => {
+  "use server";
+  revalFormDataRuns += 1;
+  return { runs: revalFormDataRuns };
 });
 
 // ============================================================================

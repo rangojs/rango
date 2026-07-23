@@ -26,8 +26,8 @@
   },
   "devDependencies": {
     "@babel/core": "catalog:",
-    "@cloudflare/vite-plugin": "^1.38.0",
-    "@cloudflare/workers-types": "^4.20260523.1",
+    "@cloudflare/vite-plugin": "^1.44.0",
+    "@cloudflare/workers-types": "^5.20260708.1",
     "@playwright/test": "^1.49.1",
     "@rolldown/plugin-babel": "catalog:",
     "@shared/e2e": "workspace:*",
@@ -42,7 +42,7 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "vitest": "^4.0.0",
-    "wrangler": "^4.94.0"
+    "vitest": "^4.1.9",
+    "wrangler": "^4.110.0"
   }
 }

@@ -41,8 +41,16 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
+    /** Cloudflare dev worker generation used for stale-document convergence. */
+    devDiscoveryEpoch?: number;
     /** TTL in milliseconds for the client-side in-memory prefetch cache */
     prefetchCacheTTL?: number;
+    /** Max entries in the client-side in-memory prefetch cache (FIFO eviction) */
+    prefetchCacheSize?: number;
+    /** Max concurrent speculative prefetch requests on the client */
+    prefetchConcurrency?: number;
+    /** Router-wide default prefetch strategy for Links without a `prefetch` prop */
+    defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
     /** Server-resolved rango state cookie name; the client reads it verbatim. */
     stateCookieName?: string;
     /** Theme configuration for FOUC prevention */
@@ -53,8 +61,19 @@ export interface RscPayload {
     basename?: string;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
-    /** Server-side redirect with optional state (for partial requests) */
-    redirect?: { url: string };
+    /**
+     * Whether the client should hydrate inside React.StrictMode. Carried on
+     * the initial full-render payload only; the browser entry reads it once at
+     * hydration. Absent on partial (navigation) payloads. Defaults to true on
+     * the client when omitted.
+     */
+    strictMode?: boolean;
+    /**
+     * Server-side redirect with optional state (for partial requests).
+     * `external: true` (from redirect(url, { external: true })) tells the client
+     * to hard-navigate to an off-host target instead of validating same-origin.
+     */
+    redirect?: { url: string; external?: boolean };
     /** Server-set location state to include in history.pushState */
     locationState?: Record<string, unknown>;
   };
@@ -149,6 +168,32 @@ export interface SSRModule {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * PPR shell CAPTURE strategy (Axis 2). Prerenders the loader-masked shell over
+   * the Flight stream, aborts once quiescent, and returns the prelude bytes plus
+   * the postponed resume state — or null when the prelude degraded and must not
+   * be stored. Present only when the SSR virtual entry wires
+   * createShellCaptureHandler; the render layer feature-detects it. See
+   * docs/design/ppr-shell-resume.md.
+   */
+  captureShellHTML?: (
+    rscStream: ReadableStream<Uint8Array>,
+    options: { quiesce: Promise<void>; maxWaitMs?: number },
+  ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
+
+  /**
+   * PPR shell RESUME strategy (Axis 2). Produces the per-request live portion of
+   * the document: resumes fizz over a fresh SsrRoot to emit only the postponed
+   * holes (or, for the DATA variant with postponed === null, just the fresh Flight
+   * payload scripts). The caller prepends the stored prelude bytes to form the
+   * composite response. Present only when the SSR virtual entry wires
+   * createShellResumeHandler; the render layer feature-detects it.
+   */
+  resumeShellHTML?: (
+    rscStream: ReadableStream<Uint8Array>,
+    options: { postponed: string | null; nonce?: string },
+  ) => Promise<ReadableStream<Uint8Array>>;
 }
 
 /**
@@ -165,6 +210,23 @@ export interface HandlerCacheConfig {
   store: import("../cache/types.js").SegmentCacheStore;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
+  /**
+   * Which query params key the cache (default: `"all"`). Affects cache keys
+   * ONLY -- handlers and loaders still see the full query string. Global by
+   * design: the per-route case is already reachable through `cache({ key })`.
+   *
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example
+   * ```typescript
+   * cache: {
+   *   store: cacheStore,
+   *   searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+   * }
+   * ```
+   */
+  searchParams?: import("../cache/search-params-filter.js").CacheSearchParams;
 }
 
 /**

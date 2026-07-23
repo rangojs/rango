@@ -10,6 +10,7 @@ import type { CacheDefaults, SegmentCacheStore } from "./types.js";
 import { _getRequestContext } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import { normalizeTags } from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 
 /**
  * Default TTL for route-level cache() DSL and loader cache.
@@ -24,30 +25,61 @@ export const DEFAULT_ROUTE_TTL = 60;
 export const DEFAULT_FUNCTION_TTL = 900;
 
 /**
+ * A finite, non-negative seconds value? A NaN/Infinity ttl/swr (from a bad
+ * cache() option or store defaults) flows into computeExpiration ->
+ * staleAt/expiresAt = NaN, where every `now > NaN` is false so the entry never
+ * evicts and is served fresh forever; a negative value makes every read a miss.
+ * Shared with cache-scope.ts (the segment getters) so every cache path validates
+ * the same way. profile-registry.ts uses the same predicate but fails fast at
+ * config time; the resolvers here degrade because they run on the live path.
+ */
+export function isFiniteNonNegativeSeconds(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
+
+function warnInvalidSeconds(label: string, value: number): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(`[cache] Invalid ${label} ${value}; falling back to default`);
+  }
+}
+
+/**
  * Resolve effective TTL from the 3-tier cascade:
- * explicit → store defaults → fallback.
+ * explicit → store defaults → fallback. A non-finite/negative resolved value
+ * degrades to the fallback (loader cache and "use cache" setItem both resolve
+ * ttl here, so this is where those paths are guarded; the segment cache is
+ * guarded in cache-scope.ts).
  */
 export function resolveTtl(
   explicit: number | undefined,
   defaults: CacheDefaults | undefined,
   fallback: number,
 ): number {
-  if (explicit !== undefined) return explicit;
-  if (defaults?.ttl !== undefined) return defaults.ttl;
+  let value: number;
+  if (explicit !== undefined) value = explicit;
+  else if (defaults?.ttl !== undefined) value = defaults.ttl;
+  else return fallback;
+  if (isFiniteNonNegativeSeconds(value)) return value;
+  warnInvalidSeconds("ttl", value);
   return fallback;
 }
 
 /**
  * Resolve effective SWR window from the 2-tier cascade:
  * explicit → store defaults.
- * Returns 0 when unset (no SWR window).
+ * Returns 0 when unset (no SWR window) or when the resolved value is
+ * non-finite/negative (degrade rather than feed bad math into expiry).
  */
 export function resolveSwrWindow(
   explicit: number | undefined,
   defaults: CacheDefaults | undefined,
 ): number {
-  if (explicit !== undefined) return explicit;
-  if (defaults?.swr !== undefined) return defaults.swr;
+  let value: number;
+  if (explicit !== undefined) value = explicit;
+  else if (defaults?.swr !== undefined) value = defaults.swr;
+  else return 0;
+  if (isFiniteNonNegativeSeconds(value)) return value;
+  warnInvalidSeconds("swr", value);
   return 0;
 }
 
@@ -105,9 +137,11 @@ export function resolveTagsOption<TEnv>(
     try {
       return normalizeTagList(tags(ctx));
     } catch (error) {
-      console.error(
-        `[${label}] Tags function failed, caching without tags:`,
+      reportCacheError(
         error,
+        "cache-write",
+        `[${label}] Tags function failed, caching without tags`,
+        ctx,
       );
       return undefined;
     }

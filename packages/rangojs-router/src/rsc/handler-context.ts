@@ -15,6 +15,7 @@ import type { SSRStreamMode } from "../router/router-options.js";
 export interface HandlerContext<TEnv = unknown> {
   router: RangoInternal<TEnv, any>;
   version: string;
+  devDiscoveryEpoch?: number;
   renderToReadableStream: RSCDependencies["renderToReadableStream"];
   decodeReply: RSCDependencies["decodeReply"];
   createTemporaryReferenceSet: RSCDependencies["createTemporaryReferenceSet"];
@@ -31,6 +32,7 @@ export interface HandlerContext<TEnv = unknown> {
   createRedirectFlightResponse: (
     redirectUrl: string,
     locationState?: Record<string, unknown>,
+    external?: boolean,
   ) => Response;
 
   /**

@@ -39,12 +39,26 @@ import { requireMembership } from "../app/middleware";
 import { authorizeAction } from "../app/actions";
 
 // A D1Database double satisfying drizzle-orm/d1's driver contract.
-const fakeD1 = makeFakeD1({
-  // .raw() serves positional rows in schema-column order, driver-encoded.
-  raw: () => [[1, "acme", "2026-01-01T00:00:00.000Z"]],
-  // .run() returns { success, meta }, no rows.
-  run: () => ({ success: true, meta: { changes: 1 } }),
-});
+// rango ships no double for D1 — build your own to match the driver.
+const fakeD1 = {
+  prepare: () => ({
+    // .raw() serves positional rows in schema-column order, driver-encoded.
+    raw: async () => [[1, "acme", "2026-01-01T00:00:00.000Z"]],
+    // .run() returns { success, meta }, no rows.
+    run: async () => ({ success: true, meta: { changes: 1 } }),
+    all: async () => ({ results: [], success: true, meta: {} }),
+    first: async () => null,
+    bind: (..._args: unknown[]) => ({
+      raw: async () => [[1, "acme", "2026-01-01T00:00:00.000Z"]],
+      run: async () => ({ success: true, meta: { changes: 1 } }),
+      all: async () => ({ results: [], success: true, meta: {} }),
+      first: async () => null,
+    }),
+  }),
+  batch: async (stmts: unknown[]) =>
+    stmts.map(() => ({ results: [], success: true, meta: {} })),
+  exec: async (_sql: string) => ({ count: 0, duration: 0 }),
+};
 
 describe("bindings seam", () => {
   it("loader reads through env.DB", async () => {

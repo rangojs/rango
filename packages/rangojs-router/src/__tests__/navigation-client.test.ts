@@ -8,6 +8,9 @@ const {
   consumeInflightPrefetchMock,
   buildPrefetchKeyMock,
   buildSourceKeyMock,
+  cancelAllPrefetchesMock,
+  disableFragmentPassthroughMock,
+  isFragmentPassthroughEnabledMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
   consumePrefetchMock: vi.fn((_key?: string): DecodedPrefetch | null => null),
@@ -22,6 +25,9 @@ const {
     (rangoState: string, sourceHref: string, target: URL) =>
       rangoState + "\0" + sourceHref + "\0" + target.pathname + target.search,
   ),
+  cancelAllPrefetchesMock: vi.fn(),
+  disableFragmentPassthroughMock: vi.fn(),
+  isFragmentPassthroughEnabledMock: vi.fn(() => true),
 }));
 
 /**
@@ -32,11 +38,13 @@ const {
 function makeEntry(
   payload: unknown,
   scope: "source" | "wildcard" = "wildcard",
+  complete = false,
 ): DecodedPrefetch {
   return {
     payload: Promise.resolve(payload) as Promise<any>,
     streamComplete: Promise.resolve(),
     scope,
+    complete,
   };
 }
 
@@ -49,6 +57,12 @@ vi.mock("../browser/prefetch/cache", () => ({
   consumeInflightPrefetch: consumeInflightPrefetchMock,
   buildPrefetchKey: buildPrefetchKeyMock,
   buildSourceKey: buildSourceKeyMock,
+  disableFragmentPassthrough: disableFragmentPassthroughMock,
+  isFragmentPassthroughEnabled: isFragmentPassthroughEnabledMock,
+}));
+
+vi.mock("../browser/prefetch/loader", () => ({
+  cancelAllPrefetches: cancelAllPrefetchesMock,
 }));
 
 import { createNavigationClient } from "../browser/navigation-client";
@@ -69,10 +83,16 @@ describe("navigation-client", () => {
     vi.unstubAllGlobals();
     consumePrefetchMock.mockReset().mockReturnValue(null);
     consumeInflightPrefetchMock.mockReset().mockReturnValue(null);
+    cancelAllPrefetchesMock.mockReset();
+    disableFragmentPassthroughMock.mockReset();
+    isFragmentPassthroughEnabledMock.mockReset().mockReturnValue(true);
   });
 
   it("builds partial fetch URL and headers", async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const createFromFetch = vi.fn(
@@ -109,8 +129,271 @@ describe("navigation-client", () => {
     expect((init.headers as Record<string, string>)["X-Rango-State"]).toBe(
       "v1:abc",
     );
+    expect(
+      (init.headers as Record<string, string>)["X-Rango-Fragment-Passthrough"],
+    ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+  });
+
+  it("keeps fragment passthrough disabled after this document observed corruption", async () => {
+    isFragmentPassthroughEnabledMock.mockReturnValue(false);
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const client = createNavigationClient({
+      createFromFetch: vi.fn().mockResolvedValue({ metadata: {} }),
+      createFromReadableStream: vi.fn(),
+    } as any);
+
+    await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    const init = fetchMock.mock.calls[0]![1]!;
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Rango-Fragment-Passthrough"]).toBeUndefined();
+    expect(headers["X-Rango-Fragment-Recovery"]).toBeUndefined();
+    expect(init.cache).toBeUndefined();
+  });
+
+  it("expands fragment envelopes in the payload before returning it (#700 partial passthrough)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+
+    const decoded = { $$typeof: Symbol.for("react.element") };
+    const segment = {
+      id: "R0",
+      component: { __rangoFragment: 1, f: "ENCODED-FLIGHT" },
+    };
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return {
+          metadata: { segments: [segment], isPartial: true },
+        };
+      },
+    );
+    const createFromReadableStream = vi.fn(
+      async (stream: ReadableStream<Uint8Array>) => {
+        const text = await new Response(stream).text();
+        expect(text).toBe("ENCODED-FLIGHT");
+        return decoded;
+      },
+    );
+
+    const client = createNavigationClient({
+      createFromFetch,
+      createFromReadableStream,
+    } as any);
+    const result = await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    // The envelope was expanded IN the returned payload — consumers
+    // (renderSegments) only ever see real nodes.
+    expect(createFromReadableStream).toHaveBeenCalledTimes(1);
+    expect(result.payload.metadata!.segments![0]!.component).toBe(decoded);
+  });
+
+  it("never invokes the fragment decoder for an envelope-free payload", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return {
+          metadata: {
+            segments: [{ id: "R0", component: null }],
+            isPartial: true,
+          },
+        };
+      },
+    );
+    const createFromReadableStream = vi.fn();
+
+    const client = createNavigationClient({
+      createFromFetch,
+      createFromReadableStream,
+    } as any);
+    await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    expect(createFromReadableStream).not.toHaveBeenCalled();
+  });
+
+  it("retries once without fragment passthrough when a fragment decode fails", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response("payload", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const recovered = { $$typeof: Symbol.for("react.element"), type: "main" };
+    const createFromFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        metadata: {
+          segments: [
+            {
+              id: "R0",
+              component: { __rangoFragment: 1, f: "CORRUPT-FLIGHT" },
+            },
+          ],
+          isPartial: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        metadata: {
+          segments: [{ id: "R0", component: recovered }],
+          isPartial: true,
+        },
+      });
+    const createFromReadableStream = vi
+      .fn()
+      .mockRejectedValue(new Error("truncated fragment"));
+
+    const client = createNavigationClient({
+      createFromFetch,
+      createFromReadableStream,
+    } as any);
+    const result = await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstInit = fetchMock.mock.calls[0]![1]!;
+    const retryInit = fetchMock.mock.calls[1]![1]!;
+    expect(
+      (firstInit.headers as Record<string, string>)[
+        "X-Rango-Fragment-Passthrough"
+      ],
+    ).toBe("1");
+    expect(
+      (retryInit.headers as Record<string, string>)[
+        "X-Rango-Fragment-Passthrough"
+      ],
+    ).toBeUndefined();
+    expect(
+      (retryInit.headers as Record<string, string>)[
+        "X-Rango-Fragment-Recovery"
+      ],
+    ).toBe("1");
+    expect(retryInit.cache).toBe("no-store");
+    expect(disableFragmentPassthroughMock).toHaveBeenCalledTimes(1);
+    expect(createFromReadableStream).toHaveBeenCalledTimes(1);
+    expect(result.payload.metadata!.segments![0]!.component).toBe(recovered);
+    expect(result.fullyPrefetched).toBe(false);
+  });
+
+  it.each(["warm", "inflight"] as const)(
+    "recovers a corrupt %s prefetch through an unfragmented fresh request",
+    async (source) => {
+      const corruptPayload = {
+        metadata: {
+          segments: [
+            {
+              id: "R0",
+              component: { __rangoFragment: 1, f: "CORRUPT-FLIGHT" },
+            },
+          ],
+          isPartial: true,
+        },
+      };
+      const entry = makeEntry(corruptPayload, "wildcard", source === "warm");
+      if (source === "warm") consumePrefetchMock.mockReturnValue(entry);
+      else consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(entry));
+
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+          new Response("recovered", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const recovered = {
+        $$typeof: Symbol.for("react.element"),
+        type: "main",
+      };
+      const createFromFetch = vi.fn().mockResolvedValue({
+        metadata: {
+          segments: [{ id: "R0", component: recovered }],
+          isPartial: true,
+        },
+      });
+      const createFromReadableStream = vi
+        .fn()
+        .mockRejectedValue(new Error("truncated fragment"));
+
+      const client = createNavigationClient({
+        createFromFetch,
+        createFromReadableStream,
+      } as any);
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const retryInit = fetchMock.mock.calls[0]![1]!;
+      expect(
+        (retryInit.headers as Record<string, string>)[
+          "X-Rango-Fragment-Passthrough"
+        ],
+      ).toBeUndefined();
+      expect(
+        (retryInit.headers as Record<string, string>)[
+          "X-Rango-Fragment-Recovery"
+        ],
+      ).toBe("1");
+      expect(result.payload.metadata!.segments![0]!.component).toBe(recovered);
+      expect(result.fullyPrefetched).toBe(false);
+    },
+  );
+
+  it("reads rango state once per fetch, threading it into the header (B6)", async () => {
+    getRangoStateMock.mockClear();
+    const fetchMock = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return { metadata: { matched: [], diff: [], isPartial: true } };
+      },
+    );
+
+    const client = createNavigationClient({ createFromFetch } as any);
+    // Cache-miss fresh fetch (no staleRevalidation): the cache-key lookup and
+    // the fetch header must share ONE rango-state read. Previously two.
+    await client.fetchPartial({
+      targetUrl: "/products",
+      previousUrl: "/current",
+      segmentIds: ["root"],
+    });
+
+    expect(getRangoStateMock).toHaveBeenCalledTimes(1);
+    const init = (fetchMock.mock.calls[0]![1] ?? {}) as RequestInit;
+    expect((init.headers as Record<string, string>)["X-Rango-State"]).toBe(
+      "v1:abc",
+    );
   });
 
   it("reloads to the navigation target when the response router id does not match", async () => {
@@ -257,6 +540,30 @@ describe("navigation-client", () => {
   });
 
   describe("prefetch cache integration", () => {
+    it("cancels a pending lazy prefetch before checking the cache", async () => {
+      const fetchMock = vi.fn(
+        async () => new Response("fresh", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: {} };
+        },
+      } as any);
+
+      await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(cancelAllPrefetchesMock).toHaveBeenCalledWith("/products");
+      expect(cancelAllPrefetchesMock.mock.invocationCallOrder[0]).toBeLessThan(
+        consumePrefetchMock.mock.invocationCallOrder[0]!,
+      );
+    });
+
     it("uses the completed cache entry without fetching or re-decoding", async () => {
       consumePrefetchMock.mockReturnValue(
         makeEntry({ metadata: { matched: [], diff: [] } }),
@@ -280,6 +587,48 @@ describe("navigation-client", () => {
       expect(createFromFetch).not.toHaveBeenCalled();
       expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // #622 follow-up: fullyPrefetched is the prefetch entry's `complete` flag,
+    // which after the MEDIUM fix is true ONLY on a clean EOF + successful decode.
+    // It plumbs straight through fetchPartial into the partial-update commit
+    // branch, so navigation only takes the no-flash fast path on a healthy entry.
+    it("propagates fullyPrefetched=true when the cache entry is complete", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }, "wildcard", true),
+      );
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(result.fullyPrefetched).toBe(true);
+    });
+
+    it("propagates fullyPrefetched=false when the cache entry is not complete (aborted/errored/streaming)", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }, "wildcard", false),
+      );
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(result.fullyPrefetched).toBe(false);
     });
 
     it("reuses an in-flight prefetch entry without fetching or re-decoding", async () => {

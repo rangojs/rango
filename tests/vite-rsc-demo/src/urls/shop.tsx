@@ -98,7 +98,6 @@ export const shopPatterns = urls(
     middleware,
     revalidate,
     intercept,
-    when,
   }) => [
     cache(),
 
@@ -153,8 +152,8 @@ export const shopPatterns = urls(
           "@modal",
           ".products.detail.view",
           <ProductModalContent />,
+          { when: shouldInterceptProductModal },
           () => [
-            when(shouldInterceptProductModal),
             layout(<ModalWrapper />),
             loading(<ProductModalContentSkeleton />),
             loader(ProductLoader, () => [cache()]),

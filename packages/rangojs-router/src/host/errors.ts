@@ -64,6 +64,21 @@ export class NoRouteMatchError extends HostRouterError {
   }
 }
 
+/**
+ * True when `err` is a NoRouteMatchError — including one thrown by a
+ * DUPLICATED @rangojs/router copy in the module graph (a workspace pinning a
+ * second version), whose class identity differs so a bare `instanceof` misses
+ * it and an unmatched-host 404 becomes an opaque 500. Use this in worker
+ * catch blocks instead of `instanceof`; it also matches by the stable `name`
+ * the constructor stamps.
+ */
+export function isNoRouteMatchError(err: unknown): err is NoRouteMatchError {
+  return (
+    err instanceof NoRouteMatchError ||
+    (err instanceof Error && err.name === "NoRouteMatchError")
+  );
+}
+
 export class InvalidHandlerError extends HostRouterError {
   constructor(handler: unknown, options?: ErrorOptions) {
     super(`Invalid handler type: ${typeof handler}`, options);

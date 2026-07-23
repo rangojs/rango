@@ -8,14 +8,21 @@ const debug = createRangoDebugger(NS.transform);
  * The react-server-dom vendor files are shipped as CJS which doesn't work in browsers.
  */
 export function createCjsToEsmPlugin(): Plugin {
+  // Picked from Vite's resolved mode, not process.env.NODE_ENV, so the dev vs
+  // production vendor variant tracks the build mode the user actually ran.
+  let isProduction = false;
+
   return {
     name: "@rangojs/router:cjs-to-esm",
     enforce: "pre",
+    configResolved(config) {
+      isProduction = config.isProduction;
+    },
     transform(code, id) {
       const cleanId = id.split("?")[0].replaceAll("\\", "/");
 
       if (cleanId.includes("vendor/react-server-dom/client.browser.js")) {
-        const isProd = process.env.NODE_ENV === "production";
+        const isProd = isProduction;
         const cjsFile = isProd
           ? "./cjs/react-server-dom-webpack-client.browser.production.js"
           : "./cjs/react-server-dom-webpack-client.browser.development.js";

@@ -22,16 +22,19 @@ import {
   markPrefetchInflight,
   setInflightPromiseWithAliases,
   storePrefetch,
+  removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  isFragmentPassthroughEnabled,
   type DecodedPrefetch,
 } from "./cache.js";
 import { getRangoState } from "../rango-state.js";
 import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
-import { debugLog } from "../logging.js";
+import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
+import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import type { RscPayload } from "../types.js";
 
 /**
@@ -45,6 +48,19 @@ type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 let decoder: PrefetchDecoder | null = null;
 
 /**
+ * Hard ceiling for ANY prefetch fetch (hover/direct AND queue-driven). A server
+ * that stalls leaves the fetch pending forever — its `.finally()` never runs,
+ * `clearPrefetchInflight` never fires, and `hasPrefetch(key)` stays true,
+ * permanently deduping every future prefetch of that URL. The hover path passes
+ * no signal; the queue passes its own AbortController signal that only aborts on
+ * navigation, never on a stall — so the timeout is layered on BOTH (combined
+ * with any caller signal via AbortSignal.any) and aborts the stalled fetch so it
+ * settles (rejects) and the inflight key is always released. Generous so a
+ * slow-but-live response is never cut short.
+ */
+const PREFETCH_FETCH_TIMEOUT_MS = 30_000;
+
+/**
  * Wire the RSC decoder used to eagerly decode prefetched responses. Called
  * once from initBrowserApp with the same createFromFetch the navigation client
  * uses. Until set, prefetch warming is inert (prefetches are skipped) — the
@@ -52,6 +68,49 @@ let decoder: PrefetchDecoder | null = null;
  */
 export function setPrefetchDecoder(fn: PrefetchDecoder): void {
   decoder = fn;
+}
+
+/**
+ * Build the respawn closure for a cleanly-completed prefetch entry. Each call
+ * tees the reserve byte branch: one side feeds a fresh decode — a fresh handle
+ * stream and fresh serialized-stream instances, which no cloning of the
+ * revived payload graph could produce — and the other becomes the next
+ * reserve, so the replacement entry can respawn again. `streamComplete`
+ * resolves immediately and `complete` starts true: the buffered bytes are a
+ * finished stream by construction. The chunk imports the decode triggers are
+ * already in the module cache from the original eager decode, so a respawn
+ * costs ~ms with no network.
+ */
+function makeRespawn(
+  storageKey: string,
+  reserve: ReadableStream<Uint8Array>,
+  scope: "source" | "wildcard",
+): () => DecodedPrefetch {
+  return () => {
+    const [body, nextReserve] = reserve.tee();
+    // decoder is non-null here: respawn is only armed after a successful
+    // eager decode, which requires the decoder to have been set.
+    const payload = decoder!(Promise.resolve(new Response(body)));
+    payload.catch(() => {});
+    const entry: DecodedPrefetch = {
+      payload,
+      streamComplete: Promise.resolve(),
+      scope,
+      complete: true,
+      dispose: () => {
+        // Rejects (caught) instead of throwing if the branch is already
+        // locked by a later respawn — cache eviction never races adoption on
+        // the same entry object, so this is belt-and-braces.
+        nextReserve.cancel().catch(() => {});
+      },
+    };
+    entry.respawn = makeRespawn(storageKey, nextReserve, scope);
+    // Parity with the original path: a rejected decode must not stay
+    // consumable. Clean bytes should never fail to decode, but if they do,
+    // evict (identity-guarded) so navigation refetches instead.
+    payload.catch(() => removePrefetch(storageKey, entry));
+    return entry;
+  };
 }
 
 /**
@@ -140,6 +199,8 @@ function executePrefetchFetch(
   sourceKey: string,
   fetchUrl: string,
   forceSourceScope: boolean,
+  /** Rango state captured once by the caller (keys + header share one read). */
+  rangoState: string,
   expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
@@ -149,6 +210,47 @@ function executePrefetchFetch(
     : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
+  // Always layer a stall timeout. It covers BOTH "no response ever arrives"
+  // (strands the inflight key) AND "the body stalls after headers" (leaves a
+  // published entry whose payload/streamComplete never settle, that future
+  // prefetches dedupe against and navigation awaits forever). Applies to the
+  // hover/direct path (no caller signal) and the queue-driven path (whose caller
+  // signal only aborts on navigation, never on a stall). On fire it aborts the
+  // fetch/stream and evicts the published entry if one exists; it is NOT cleared
+  // when headers arrive (see below) — it is cleared when the stream completes, or
+  // in `.finally()` for paths that publish no streaming entry.
+  let publishedKey: string | undefined;
+  let publishedEntry: DecodedPrefetch | undefined;
+  const timeoutController = new AbortController();
+  const timeoutId: ReturnType<typeof setTimeout> = setTimeout(() => {
+    timeoutController.abort();
+    // Body stalled after headers: evict the published-but-never-settling entry
+    // so future prefetches/navigation refetch. Identity-guarded (pass the exact
+    // entry) so a fresh entry republished under the same key — after this one was
+    // consumed — is NOT dropped. The abort cancels the tee (its finally resolves
+    // streamComplete) and rejects the eager decode.
+    if (publishedKey !== undefined && publishedEntry !== undefined) {
+      removePrefetch(publishedKey, publishedEntry);
+    }
+  }, PREFETCH_FETCH_TIMEOUT_MS);
+  let effectiveSignal: AbortSignal;
+  if (!signal) {
+    effectiveSignal = timeoutController.signal;
+  } else if (typeof AbortSignal.any === "function") {
+    // Combine the caller's signal (navigation-abort) with the timeout so either
+    // can settle the fetch.
+    effectiveSignal = AbortSignal.any([signal, timeoutController.signal]);
+  } else {
+    // Legacy runtime without AbortSignal.any: forward the caller's abort onto the
+    // timeout controller so a single signal carries both reasons.
+    effectiveSignal = timeoutController.signal;
+    if (signal.aborted) timeoutController.abort();
+    else
+      signal.addEventListener("abort", () => timeoutController.abort(), {
+        once: true,
+      });
+  }
+
   const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
     // During an action's flight the state is not rotated, so the old
@@ -157,11 +259,14 @@ function executePrefetchFetch(
     // fence's HTTP-cache-bypass requirement applies to prefetch as well as
     // navigation fetches).
     ...(isActionFenceActive() && { cache: "no-store" as RequestCache }),
-    signal,
+    signal: effectiveSignal,
     headers: {
-      "X-Rango-State": getRangoState(),
+      "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
       "X-Rango-Prefetch": "1",
+      ...(isFragmentPassthroughEnabled() && {
+        [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
+      }),
     },
   })
     .then((response) => {
@@ -189,33 +294,111 @@ function executePrefetchFetch(
       const storageKey = scope === "source" ? sourceKey : wildcardKey;
 
       // Track stream completion off a tee so navigation's scroll/revalidation
-      // gating matches the fresh-fetch path; decode the other branch.
+      // gating matches the fresh-fetch path; decode the other branch. The
+      // completion callback reports whether the stream ended on a clean EOF
+      // (true) or was aborted/errored (false) — only a clean end can mark the
+      // entry complete (see below).
       let resolveStreamComplete!: () => void;
+      let endedCleanly = false;
       const streamComplete = new Promise<void>((resolve) => {
         resolveStreamComplete = resolve;
       });
       const tracked = teeWithCompletion(
         response,
-        () => resolveStreamComplete(),
-        signal,
+        (clean) => {
+          endedCleanly = clean;
+          resolveStreamComplete();
+        },
+        effectiveSignal,
         // Speculative prefetch: a never-consumed/aborted stream error is benign.
         true,
       );
 
+      // Split the decode branch: one side feeds the eager decoder (unchanged —
+      // client chunks still import at prefetch time), the other stays unread as
+      // a reserve of the raw Flight bytes. A decoded payload is single-render
+      // (its handle stream drains during commit), so adoption would otherwise
+      // spend the entry; the reserve lets a cleanly-completed entry respawn a
+      // fresh decode per adoption instead (see makeRespawn).
+      let decodeSource: Response = tracked;
+      let reserve: ReadableStream<Uint8Array> | undefined;
+      if (tracked.body) {
+        const [decodeBody, reserveBody] = tracked.body.tee();
+        decodeSource = new Response(decodeBody, { headers: tracked.headers });
+        reserve = reserveBody;
+      }
+
       // Eager decode: parsing the Flight stream imports the route's client
       // chunks now, not on click.
-      const payload = decoder(Promise.resolve(tracked));
+      const payload = decoder(Promise.resolve(decodeSource));
       // Mark handled so an unconsumed prefetch decode error stays quiet; the
       // error is still surfaced to navigation if it consumes the entry.
       payload.catch(() => {});
 
-      const entry: DecodedPrefetch = { payload, streamComplete, scope };
+      const entry: DecodedPrefetch = {
+        payload,
+        streamComplete,
+        scope,
+        complete: false,
+        ...(reserve && {
+          dispose: () => {
+            reserve.cancel().catch(() => {});
+          },
+        }),
+      };
       storePrefetch(storageKey, entry, gen);
+      // The stall timeout now owns the body stream: arm eviction (publishedKey)
+      // and clear the timer once the stream completes. The tee's finally resolves
+      // streamComplete on normal completion AND on abort, so a healthy body pays
+      // no lingering timer while a stalled one is evicted when the timer fires.
+      publishedKey = storageKey;
+      publishedEntry = entry;
+      // Evict a broken prefetch IMMEDIATELY on the earliest failure signal — do not
+      // wait for both branches to settle. A decode that rejects while the tracking
+      // stream is still draining (or hung) would otherwise leave the rejected payload
+      // consumable (navigation reads entry.payload regardless of `complete`) until EOF
+      // or the stall timeout. removePrefetch is identity-guarded, so a fresh entry
+      // republished under the same key is never dropped, and a double call is a no-op.
+      payload.catch(() => removePrefetch(storageKey, entry));
+      streamComplete.then(() => {
+        if (!endedCleanly) removePrefetch(storageKey, entry);
+      });
+      // Mark complete ONLY on a fully-healthy prefetch (decode resolved AND
+      // clean EOF) — and only then arm respawn: a truncated or failed stream's
+      // reserve would replay broken bytes, so it stays one-shot (and its
+      // buffered reserve is released via the removePrefetch dispose above).
+      Promise.allSettled([payload, streamComplete]).then(([decode]) => {
+        if (decode.status === "fulfilled" && endedCleanly) {
+          entry.complete = true;
+          if (reserve) {
+            entry.respawn = makeRespawn(storageKey, reserve, scope);
+            // Refill after an early adoption. A click that lands before this
+            // point adopts the entry with respawn unarmed and leaves the slot
+            // empty — via either path: pre-headers inflight adoption makes
+            // storePrefetch skip publication (adoptedKeys), and a mid-stream
+            // cache adoption deletes the incomplete entry. Now that the bytes
+            // proved themselves complete, publish a respawned sibling so the
+            // revisit is warm. Guards: hasPrefetch skips when the slot is
+            // live again (our own un-adopted entry, a fresh entry, or a new
+            // in-flight prefetch), and storePrefetch's generation check drops
+            // the sibling if the cache was invalidated since the fetch began.
+            if (!hasPrefetch(storageKey)) {
+              storePrefetch(storageKey, entry.respawn(), gen);
+            }
+          }
+        }
+        clearTimeout(timeoutId);
+      });
       return entry;
     })
     .catch(() => null)
     .finally(() => {
       clearPrefetchInflight(inflightKeys[0]!);
+      // Clear the stall timer here ONLY for paths that published no streaming
+      // entry (null return / fetch error / abort): the operation is fully done.
+      // When an entry WAS published, the timer stays armed to bound the body
+      // stream and is cleared on streamComplete (above) or on fire (eviction).
+      if (publishedKey === undefined) clearTimeout(timeoutId);
     });
 
   setInflightPromiseWithAliases(inflightKeys, promise);
@@ -276,26 +459,31 @@ export function prefetchDirect(
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
-    debugLog("[prefetch] direct dedup (key already exists)", {
+    if (IS_BROWSER_DEBUG) {
+      debugLog("[prefetch] direct dedup (key already exists)", {
+        url,
+        wildcardKey,
+        sourceKey,
+        forceSourceScope,
+      });
+    }
+    return;
+  }
+  if (IS_BROWSER_DEBUG) {
+    debugLog("[prefetch] direct fetch", {
       url,
       wildcardKey,
       sourceKey,
+      source: sourceHref,
       forceSourceScope,
     });
-    return;
   }
-  debugLog("[prefetch] direct fetch", {
-    url,
-    wildcardKey,
-    sourceKey,
-    source: sourceHref,
-    forceSourceScope,
-  });
   executePrefetchFetch(
     wildcardKey,
     sourceKey,
     targetUrl.toString(),
     forceSourceScope,
+    rangoState,
     routerId,
   );
 }
@@ -326,12 +514,14 @@ export function prefetchQueued(
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
-    debugLog("[prefetch] queued dedup (key already exists)", {
-      url,
-      wildcardKey,
-      sourceKey,
-      forceSourceScope,
-    });
+    if (IS_BROWSER_DEBUG) {
+      debugLog("[prefetch] queued dedup (key already exists)", {
+        url,
+        wildcardKey,
+        sourceKey,
+        forceSourceScope,
+      });
+    }
     return queueKey;
   }
   const fetchUrlStr = targetUrl.toString();
@@ -349,6 +539,7 @@ export function prefetchQueued(
       sourceKey,
       fetchUrlStr,
       forceSourceScope,
+      rangoState,
       routerId,
       signal,
     ).then(() => {});

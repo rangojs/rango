@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  testId,
+  blockPrefetch,
+} from "./helper";
 
 /**
  * Auth boundary tests.
@@ -27,6 +32,12 @@ test.describe("auth-boundary (dev)", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    // The auth-boundary index (where the reject redirects to) renders bare
+    // Links to BOTH protected routes; a production viewport prefetch of the
+    // global-protected one runs its middleware, whose Set-Cookie would
+    // overwrite the `rejected-by` cookie this test asserts on.
+    await blockPrefetch(page);
 
     await page.goto(f.url("/auth-boundary/route-protected"));
     await waitForHydration(page);
@@ -111,6 +122,11 @@ test.describe("auth-boundary (dev)", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    // Mirror image of the route-mw test above: a prefetch of route-protected
+    // from the landing page would set `rejected-by=route-mw` and clobber the
+    // global-mw value asserted below.
+    await blockPrefetch(page);
 
     await page.goto(f.url("/auth-boundary/global-protected"));
     await waitForHydration(page);
@@ -275,6 +291,12 @@ test.describe("auth-boundary (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
+    // The auth-boundary index (where the reject redirects to) renders bare
+    // Links to BOTH protected routes; a production viewport prefetch of the
+    // global-protected one runs its middleware, whose Set-Cookie would
+    // overwrite the `rejected-by` cookie this test asserts on.
+    await blockPrefetch(page);
+
     await page.goto(f.url("/auth-boundary/route-protected"));
     await waitForHydration(page);
 
@@ -325,6 +347,11 @@ test.describe("auth-boundary (production)", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    // Mirror image of the route-mw test above: a prefetch of route-protected
+    // from the landing page would set `rejected-by=route-mw` and clobber the
+    // global-mw value asserted below.
+    await blockPrefetch(page);
 
     await page.goto(f.url("/auth-boundary/global-protected"));
     await waitForHydration(page);

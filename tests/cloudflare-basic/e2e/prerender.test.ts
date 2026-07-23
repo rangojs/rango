@@ -43,6 +43,25 @@ test.describe("prerender (production)", () => {
     );
   });
 
+  test("serves prerendered pages with no dev-cache header; the dev endpoint does not exist", async ({
+    request,
+  }) => {
+    // Production counterpart to the dev-mode cache test (#654): the
+    // x-rango-prerender-cache header is a dev-endpoint concern and must not
+    // leak into production responses, and /__rsc_prerender is dev-only.
+    const page = await request.get(f.url("/articles/composable-patterns"));
+    expect(page.status()).toBe(200);
+    expect(page.headers()["x-rango-prerender-cache"]).toBeUndefined();
+
+    const endpoint = await request.get(
+      f.url("/__rsc_prerender?pathname=/releases"),
+    );
+    expect(endpoint.headers()["x-rango-prerender-cache"]).toBeUndefined();
+    expect(endpoint.headers()["content-type"] ?? "").not.toContain(
+      "application/json",
+    );
+  });
+
   test("should navigate to articles via client-side navigation", async ({
     page,
   }) => {

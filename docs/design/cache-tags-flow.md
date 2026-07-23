@@ -34,6 +34,13 @@ The three verbs a consumer touches:
 | `updateTag(...tags)`     | server actions                  | **read-your-own-writes** — awaitable, immediate                    |
 | `revalidateTag(...tags)` | route handlers / webhooks       | background (non-blocking) — hard-purge, next read re-renders fresh |
 
+`cacheTag(...tags)` has a second, render-callable form: called during a request
+render **outside** any `"use cache"` function, it records onto the request's
+`_requestTags` instead of throwing. PPR shell capture and the document cache union
+that set onto their entry, so a plain server component can tag the shell/full-page
+artifact it renders into — `revalidateTag` then evicts it. On a route that is
+neither PPR nor document-cached the tag records where nothing reads it (a no-op).
+
 ---
 
 ## ① WRITE — caching a tagged entry
@@ -72,6 +79,9 @@ flowchart TD
     the per-colo Cache API within that window;
   - **KV** — the global source of truth (memory store has no KV step; it deletes
     eagerly, so its reads do no tag work at all).
+- In **purge mode** (`tagPurge` configured) an ordinary L1 data hit consults
+  only the per-request memo — eviction is the purge's job; see "Purge mode"
+  below. KV reads and PPR shell reads always run the full cascade.
 
 ---
 
@@ -98,6 +108,9 @@ flowchart TD
 - The colo that runs the invalidation is correct **immediately** (KV marker +
   write-through). Other colos either converge within `tagCacheTtl`, or — if a
   purge is wired — are evicted promptly by the batched purge.
+- With `tagPurge` configured (purge mode), the CF store additionally awaits one
+  batched purge-by-tag call that evicts the tagged **entries** themselves, and
+  L1 hits stop checking markers — see "Purge mode" below.
 
 ---
 
@@ -119,6 +132,7 @@ Memory and Cloudflare invalidate _oppositely_, both within their one store:
 | `tagCacheTtl`        | `0` (off)        | edge-cache the markers for N s to cut KV reads; max extra cross-colo invalidation latency when no purge is wired |
 | `tagInvalidationTtl` | none (no expiry) | how long a KV marker lives; must **exceed** max entry TTL+SWR                                                    |
 | `onRevalidateTag`    | —                | batched purge hook; receives the namespaced `Cache-Tag`s to purge so cached lookups are evicted in every colo    |
+| `tagPurge`           | —                | **purge mode**: L1 eviction delegated to purge-by-tag; L1 hits skip the per-read marker lookup (section below)   |
 
 `tagCacheTtl` (small, a staleness ceiling) and `tagInvalidationTtl` (large, must
 outlive data) size oppositely — see their JSDoc.
@@ -139,6 +153,91 @@ comma-delimited `Cache-Tag` header. `onRevalidateTag` is handed the
 
 > The purge API call cannot be exercised in miniflare; it is unit-tested with a
 > mock purge client and needs deployed-worker verification.
+
+## Purge mode (`tagPurge`) — skip the per-read marker lookup on L1 hits
+
+Everything above buys read-time consistency by paying a marker lookup on every
+tagged hit. Purge-by-tag is available on **all Cloudflare plans** (since April
+2025 — it used to be Enterprise-only, which is why the marker system is the
+default), so there is now a second way to run the L1 tier: evict invalidated
+entries instead of checking on every read.
+
+Configure `tagPurge` and the store flips the L1 contract:
+
+- Every tagged data entry is written with namespaced entry `Cache-Tag` tiers
+  (these are written **unconditionally**, so existing entries are already
+  purgeable when you turn the mode on):
+
+  ```
+  rg:{ns}           # everything this store cached (deploy / nuclear reset)
+  rg:{ns}:e         # all data entries
+  rg:{ns}:e:{tag}   # entries carrying {tag} — the invalidation purge target
+  ```
+
+  Tokens are bounded against Cloudflare's limits: an over-long tag collapses
+  to a deterministic hash token (`rg:{ns}:e:h:{fnv1a64}` — write-time and
+  purge-time always agree; a hash collision over-purges, never serves stale),
+  and a tag set whose joined header would exceed the 16 KB aggregate limit
+  gets NO Cache-Tag header (warned once per namespace) rather than a failed
+  L1 write. In KV-less purge mode that entry is NOT cached at all — with no
+  tokens and no marker fallback it would be un-invalidatable, so it renders
+  fresh instead.
+
+- `invalidateTags()` **awaits** one batched purge call (entry tags, plus the
+  `rg:{ns}:lk:{tag}` lookup tags when `tagCacheTtl > 0`). Wire it with
+  credentials — `tagPurge: { zoneId, apiToken }` — and the store runs its
+  built-in zone purge client (chunked, rejects on API errors or an
+  unconfirmed 2xx; credentials are validated at construction). A function
+  `(cacheTags) => Promise<void>` is the escape hatch for proxies, custom
+  transports, and test stubs. A purge failure makes `updateTag()` reject,
+  exactly like a failed KV marker write: with the read check gone, the purge
+  IS the invalidation, so a dropped one must not report success.
+
+  Credentials: `zoneId` is on the zone's dashboard overview; create an API
+  token with the `Zone → Cache Purge → Purge` permission scoped to that zone
+  and store both as Worker secrets (`wrangler secret put`). Per-environment:
+  a preview on a separate zone needs its own pair, or leave `tagPurge` unset
+  there to run plain marker mode (no credentials needed).
+
+- **L1 hits stop reading markers.** A surviving entry is trusted — an
+  invalidated one would have been purged. Only the per-request memo is checked
+  (synchronously, no KV read), so a request that ran `updateTag()` still masks
+  its own not-yet-purged entries (read-your-own-writes). The trust is
+  conditional on the entry actually carrying the store's entry Cache-Tags: an
+  entry a purge cannot reach (written pre-upgrade, or its header omitted for
+  the 16 KB overflow above) keeps the full marker check instead of serving
+  stale until TTL.
+- **KV L2 and PPR shell reads keep the marker check.** Purge cannot reach KV or
+  a baked build-manifest shell. A runtime shell L1 entry does carry purgeable
+  Cache-Tags, but its generation starts before its eventual write: an old
+  capture can finish after the invalidation purge, so a surviving shell still
+  checks the marker to reject that resurrection. Keep `kv` configured for the
+  shell family; without it, purge mode still supports ordinary L1-only data
+  caching, but PPR shells remain inert.
+
+What you trade: marker mode gives read-time KV consistency; purge mode's
+cross-request invalidation latency is the purge propagation (Cloudflare quotes
+sub-second Instant Purge), and account-level purge rate limits apply (Free plan:
+5 calls/min). In exchange, tagged L1 hits drop the serial marker read (the
+`markerMs` column below) and the `tagCacheTtl` machinery becomes unnecessary.
+
+### Environments and previews (zone scoping)
+
+Purge-by-tag clears **your zone**. Where your deployments live decides what an
+invalidation reaches:
+
+| Environment                                 | L1 (Cache API)             | Tag invalidation                                        |
+| ------------------------------------------- | -------------------------- | ------------------------------------------------------- |
+| Production on your zone                     | active                     | purge evicts it                                         |
+| Preview on the **same** zone (any hostname) | active                     | purge is zone-wide → evicted too                        |
+| `workers.dev` / `pages.dev` previews        | **inert** (CF disables it) | nothing to purge; KV tier still invalidates via markers |
+| Preview on a **separate** zone              | active                     | needs its own `zoneId`/token, or falls back to TTL      |
+
+Practical guidance: give previews their own KV namespace (markers and data stay
+per-environment; the `v/{version}/` key prefix already partitions deploys), and
+either scope `tagPurge` credentials per environment or leave `tagPurge` unset on
+preview environments — they then run plain marker mode, which needs no
+credentials.
 
 ## Tag-marker read latency, and why there is no in-isolate marker cache
 

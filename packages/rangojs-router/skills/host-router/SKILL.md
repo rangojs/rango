@@ -1,6 +1,6 @@
 ---
 name: host-router
-description: Multi-app host routing with domain/subdomain patterns
+description: Multi-app host routing with domain/subdomain patterns. Use when running multiple apps behind one domain or across subdomains, or routing requests to different apps based on hostname.
 argument-hint:
 ---
 
@@ -32,6 +32,48 @@ export default {
   },
 };
 ```
+
+## Deploying: Cloudflare vs node/vercel
+
+How a host router is _served_ depends on the preset, because the preset decides who owns the server entry.
+
+| Preset            | Who owns the entry          | What the host module exports                                                                                |
+| ----------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `cloudflare`      | You (your `worker.rsc.tsx`) | `export default { fetch(request, env, ctx) { return router.match(request, { env, ctx }); } }`               |
+| `node` / `vercel` | rango (generated RSC entry) | `export default router;` (the `HostRouter` instance itself), or a named `export const hostRouter`/`router`. |
+
+On `node`/`vercel`, rango generates the served RSC entry, so it needs the `HostRouter` **instance** to call `hostRouter.match()` for you. Export the instance, not a `{ fetch }` object:
+
+```typescript
+// src/worker.rsc.tsx  (node / vercel)
+import { createHostRouter } from "@rangojs/router/host";
+
+export const hostRouter = createHostRouter();
+hostRouter.host(["admin.*"]).lazy(() => import("./apps/admin/handler.js"));
+hostRouter.host(["."]).lazy(() => import("./apps/site/handler.js"));
+
+// Export the instance — the generated entry serves it via hostRouter.match().
+export default hostRouter;
+```
+
+Each sub-app exports a handler exactly as on Cloudflare (no change):
+
+```typescript
+// src/apps/admin/handler.ts
+import { router } from "./router.js";
+export default (request: Request, input: any) => router.fetch(request, input);
+```
+
+Selecting the host entry — a host app has several `createRouter()` sub-apps, so single-router auto-discovery can't pick one. Either let rango auto-detect the lone `createHostRouter()` file, or point at it explicitly:
+
+```typescript
+// vite.config.ts
+rango({ preset: "vercel", hostRouter: "./src/worker.rsc.tsx" });
+```
+
+On Vercel this is a single function running `hostRouter.match()` for every request (mirrors the Cloudflare single-worker model); `{ env, ctx }` (`process.env` + `{ waitUntil }`) is threaded unchanged to each matched sub-app's handler and `cache(env, ctx)` factory. See the `vercel` skill.
+
+Unmatched hosts on node/vercel: because rango owns the generated entry (you have no worker `try/catch`), it catches `NoRouteMatchError` and returns **404** by default — so you do **not** need a catch-all host route. If you want different behavior (a branded 404, a redirect, a default app), register a catch-all mount as the **last** route, e.g. `host(["**"]).lazy(() => import("./apps/site/handler.js"))` — it matches any host, so the built-in 404 only fires when nothing matched at all. (Note `fallback()` is for cookie-override errors, not general unmatched hosts.)
 
 ## Inline handlers (`.map`) vs lazy mounts (`.lazy`)
 
@@ -66,7 +108,7 @@ Why two methods instead of one overloaded `.map()`:
 | `.` or `*`        | Any apex domain (`example.com`)                |
 | `**`              | Any domain (apex + all subdomains)             |
 | `*.`              | Any single-level subdomain (`www.example.com`) |
-| `**. `            | Any multi-level subdomain (`a.b.example.com`)  |
+| `**.`             | Any multi-level subdomain (`a.b.example.com`)  |
 | `example.com`     | Exact domain                                   |
 | `*.com`           | Any apex `.com` domain                         |
 | `*.example.com`   | Single subdomain of `example.com`              |
@@ -134,17 +176,17 @@ router.fallback().map((request) => {
 });
 ```
 
-For unmatched hosts without `hostOverride`, catch `NoRouteMatchError` in your worker fetch:
+For unmatched hosts without `hostOverride`, catch `NoRouteMatchError` in your worker fetch. Use the `isNoRouteMatchError()` guard rather than a bare `instanceof`: a workspace with a duplicated `@rangojs/router` copy can throw the error with a different class identity, and `instanceof` would then turn the 404 into an opaque 500.
 
 ```typescript
-import { NoRouteMatchError } from "@rangojs/router/host";
+import { isNoRouteMatchError } from "@rangojs/router/host";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     try {
       return await router.match(request, { env, ctx });
     } catch (err) {
-      if (err instanceof NoRouteMatchError) {
+      if (isNoRouteMatchError(err)) {
         return new Response("Not Found", { status: 404 });
       }
       throw err;

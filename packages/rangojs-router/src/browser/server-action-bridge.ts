@@ -12,7 +12,7 @@ import {
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
 import { startTransition } from "react";
-import type { EventController } from "./event-controller.js";
+import type { EventController, ActionHandle } from "./event-controller.js";
 import {
   toNetworkError,
   emitNetworkError,
@@ -23,7 +23,10 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  validateRedirectOrigin,
+  validateExternalRedirect,
+} from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
@@ -56,6 +59,27 @@ export interface ServerActionBridgeConfigWithController extends ServerActionBrid
 }
 
 /**
+ * Merge an action's location-state payload into history.state, restricted to
+ * the keys this action is entitled to write. claimLocationState enforces
+ * last-initiated-wins for same-key concurrent writes (a later-initiated sibling
+ * keeps its value even if this action's response settles afterward); distinct
+ * keys from every concurrent action survive. Arbitration is scoped to the
+ * action's cohort (captured at startAction), so a newer action on another entry
+ * cannot suppress this one. No-op when nothing was set or all keys were already
+ * claimed by a later-initiated sibling in the cohort.
+ */
+function applyActionLocationState(
+  handle: ActionHandle,
+  locationState: Record<string, unknown> | undefined,
+): void {
+  if (!locationState) return;
+  const winning = handle.claimLocationState(locationState);
+  if (Object.keys(winning).length > 0) {
+    mergeLocationState(winning);
+  }
+}
+
+/**
  * Create a server action bridge for handling RSC server actions
  *
  * The bridge registers a callback with the RSC runtime that handles:
@@ -83,6 +107,9 @@ export function createServerActionBridge(
 
   // SPA-navigate when onNavigate is set, else hard-reload. state is omitted (not
   // passed as undefined) to match the header path's prior call shape.
+  // Callers pass an already same-origin-validated url; the hard-reload fallback
+  // re-validates defensively so this leaf cannot become an open redirect if a
+  // future caller forgets (the SPA path validates inside the navigation bridge).
   async function dispatchRedirect(url: string, state?: unknown): Promise<void> {
     if (onNavigate) {
       await onNavigate(url, {
@@ -91,7 +118,10 @@ export function createServerActionBridge(
         _skipCache: true,
       });
     } else {
-      window.location.href = url;
+      const safe = validateRedirectOrigin(url, window.location.origin);
+      if (safe) {
+        window.location.href = safe;
+      }
     }
   }
 
@@ -156,8 +186,11 @@ export function createServerActionBridge(
     const locationKey = window.history.state?.key;
     log("action start", { id, argsCount: args.length });
 
-    // Start action in event controller - handles lifecycle tracking
-    const handle = eventController.startAction(id, args);
+    // Start action in event controller - handles lifecycle tracking. The
+    // current history key is the action's cohort: location-state arbitration is
+    // scoped to it so a later action on a different entry cannot suppress this
+    // one (and vice versa).
+    const handle = eventController.startAction(id, args, locationKey);
     // Whether the action's response carried the keepClientCache() directive.
     // Set when the response arrives; gates the deferred invalidation below.
     let keepCache = false;
@@ -417,6 +450,27 @@ export function createServerActionBridge(
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
       if (metadata?.redirect && !handle.signal.aborted) {
+        // Explicit off-host redirect (redirect(url, { external: true })):
+        // hard-navigate, but still scheme-validate (http/https only). external
+        // waives the same-origin check, NOT scheme safety, so a forged payload
+        // carrying a javascript:/data: URL cannot script via location.assign.
+        if (metadata.redirect.external) {
+          const externalUrl = validateExternalRedirect(
+            metadata.redirect.url,
+            window.location.origin,
+          );
+          if (!externalUrl) {
+            log("blocked external action redirect payload", {
+              url: metadata.redirect.url,
+            });
+            handle.complete(returnValue?.data);
+            return returnValue?.data;
+          }
+          log("external action redirect", { url: externalUrl });
+          handle.complete(returnValue?.data);
+          window.location.assign(externalUrl);
+          return returnValue?.data;
+        }
         const redirectUrl = validateRedirectOrigin(
           metadata.redirect.url,
           window.location.origin,
@@ -504,18 +558,15 @@ export function createServerActionBridge(
           return undefined;
         }
 
-        // Update UI with error boundary
-        startTransition(() => {
-          onUpdate({ root: errorTree, metadata: metadata! });
-        });
-
         // Update segment tracking to exclude error segment IDs
         const errorSegmentIds = new Set(diff);
         const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
           (id) => !errorSegmentIds.has(id),
         );
 
-        // Update store state
+        // Cache (and bump the nav instance) BEFORE the UI update so a deferred
+        // handle pushed by the error-boundary render still applies — see the
+        // "normal" case below for why caching after onUpdate dropped it.
         store.setSegmentIds(segmentIdsAfterError);
         const currentHandleData = eventController.getHandleState().data;
         store.cacheSegmentsForHistory(
@@ -523,6 +574,11 @@ export function createServerActionBridge(
           errorResult.segments,
           currentHandleData,
         );
+
+        // Update UI with error boundary
+        startTransition(() => {
+          onUpdate({ root: errorTree, metadata: metadata! });
+        });
 
         // Throw the error so the action promise rejects
         if (returnValue && !returnValue.ok) {
@@ -597,6 +653,20 @@ export function createServerActionBridge(
         currentInterceptSource: store.getInterceptSourceUrl(),
       });
 
+      // Apply server-set location state exhaustively here, as a successful-
+      // response effect — the terminal switch below decides rendering/refetch,
+      // not whether this metadata survives (every refetch path is storeOnly and
+      // never writes history.state). Gated on NOT navigated-away: the classifier
+      // treats either a pathname OR history-key change as diversion, so this
+      // both honors the "diverted state is dropped" contract AND prevents a
+      // cross-entry write (mergeLocationState writes the CURRENT entry, which a
+      // navigated-away action no longer owns). Done before the switch (and
+      // before the normal branch's async renderSegments) so a slow render racing
+      // a navigation cannot drop it.
+      if (scenario.type !== "navigated-away") {
+        applyActionLocationState(handle, metadata?.locationState);
+      }
+
       switch (scenario.type) {
         case "navigated-away": {
           log("user navigated away during action", {
@@ -649,7 +719,8 @@ export function createServerActionBridge(
           log("consolidation fetch needed", {
             segmentIds: scenario.segmentIds,
           });
-          // Calculate segments to send (exclude the ones we want fresh)
+          // Location state already applied above (pre-switch). Calculate
+          // segments to send (exclude the ones we want fresh).
           const currentSegmentIds = store.getSegmentState().currentSegmentIds;
           const segmentsToSend = currentSegmentIds.filter(
             (sid) => !scenario.segmentIds.includes(sid),
@@ -673,6 +744,8 @@ export function createServerActionBridge(
           // Only update store if history key hasn't changed (user didn't navigate away)
           const currentKeyNow = store.getHistoryKey();
           if (currentKeyNow === currentKey) {
+            // Location state already applied above (pre-switch); this action's
+            // UI render is skipped because a later sibling consolidates.
             store.setSegmentIds(matched);
             const currentHandleData = eventController.getHandleState().data;
             store.cacheSegmentsForHistory(
@@ -708,17 +781,17 @@ export function createServerActionBridge(
             break;
           }
 
-          startTransition(() => {
-            onUpdate({ root: newTree, metadata: metadata! });
-          });
-
-          // Apply server-set location state to history.state (non-redirect flow)
-          const actionLocationState = metadata?.locationState;
-          if (actionLocationState) {
-            mergeLocationState(actionLocationState);
-          }
-
-          // Update store state
+          // Cache (and bump the nav instance) BEFORE the UI update, matching the
+          // navigation commit order (navigation-transaction.ts:157). processHandles
+          // is spawned by onUpdate and captures the current nav instance up front;
+          // a deferred handle value resolves asynchronously and is only applied
+          // while stillLive() (its captured instance still owns the page). Caching
+          // AFTER onUpdate bumped the instance out from under that in-flight
+          // resolve, so stillLive() turned false and the resolved handle snapshot
+          // was dropped on the action-revalidation path (sync siblings sharing the
+          // yield are held atomically, so they were dropped too).
+          //
+          // Location state already applied above (pre-switch). Update store.
           store.setSegmentIds(matched);
           const currentHandleData = eventController.getHandleState().data;
           store.cacheSegmentsForHistory(
@@ -726,6 +799,10 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
+
+          startTransition(() => {
+            onUpdate({ root: newTree, metadata: metadata! });
+          });
           // Invalidation deferred to finalizeAction() (runs after this caches
           // the fresh segments), suppressed when the action called
           // keepClientCache().

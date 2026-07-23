@@ -9,15 +9,11 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
-export function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+import { escapeRegExp } from "../../regex-escape.js";
+import { encodePathRemainder } from "../../router/url-params.js";
 
 export function encodePathParam(value: unknown): string {
-  return String(value)
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  return encodePathRemainder(String(value), encodeURIComponent);
 }
 
 export function substituteRouteParams(
@@ -30,6 +26,21 @@ export function substituteRouteParams(
 
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
+    // Named catch-all `:key+` / `:key*` (issue #634). Like the runtime reverse,
+    // the value is multi-segment: encode each segment and keep the `/` separators
+    // (a whole-value encode would turn `a/b` into `a%2Fb`), and consume the
+    // trailing modifier so it does not leak into the URL. `*` (zero-or-more)
+    // absent collapses via the trailing cleanup below.
+    const catchAllRe = new RegExp(`:${escaped}[+*]`);
+    if (catchAllRe.test(result)) {
+      if (value === "") {
+        result = result.replace(catchAllRe, "");
+        hadOmittedOptional = true;
+      } else {
+        result = result.replace(catchAllRe, encodePathRemainder(value, encode));
+      }
+      continue;
+    }
     if (value === "") {
       result = result.replace(
         new RegExp(`:${escaped}(\\([^)]*\\))?(?!\\?)`),
@@ -70,13 +81,28 @@ export async function runWithConcurrency<T>(
     return;
   }
   let nextIndex = 0;
+  // On first failure (the default prerender.onError: "fail" re-throws), stop
+  // scheduling new work so the remaining workers don't keep running full RSC
+  // renders before the build aborts. The first error is surfaced after all
+  // in-flight workers settle, preserving the throw-to-fail-build behavior.
+  let firstError: unknown;
+  let failed = false;
   async function worker() {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && !failed) {
       const idx = nextIndex++;
-      await fn(items[idx]);
+      try {
+        await fn(items[idx]);
+      } catch (err) {
+        if (!failed) {
+          failed = true;
+          firstError = err;
+        }
+        return;
+      }
     }
   }
   await Promise.all(Array.from({ length: limit }, () => worker()));
+  if (failed) throw firstError;
 }
 
 export function groupByConcurrency<T extends { concurrency: number }>(
@@ -137,6 +163,42 @@ export function notifyOnError(
   }
 }
 
+/**
+ * Resolve a thrown build-time render error into the prerender build's policy and
+ * log a per-entry line. A `Skip` (or any render error under `prerender.onError:
+ * "warn"`) logs and returns so the caller skips the entry; a render error under
+ * the default "fail" logs FAIL, notifies `onError`, and re-throws to fail the
+ * build. Shared by `expandPrerenderRoutes` (prerender) and `renderStaticHandlers`
+ * (static) so the Skip/warn/fail policy lives in one place. `label` is the padded
+ * URL / handler name for the log line; `elapsed` is the per-entry duration string.
+ */
+export function resolvePrerenderError(
+  registry: Map<string, any>,
+  error: any,
+  onError: "fail" | "warn",
+  label: string,
+  elapsed: string,
+  phase: "prerender" | "static",
+  routeKey?: string,
+  pathname?: string,
+): void {
+  const isSkip = error?.name === "Skip";
+  if (isSkip || onError === "warn") {
+    if (isSkip) {
+      console.log(`[rango]   SKIP ${label} (${elapsed}ms) - ${error.message}`);
+    } else {
+      console.warn(
+        `[rango]   WARN ${label} (${elapsed}ms) - render error, not pre-rendered (prerender.onError: "warn"): ${error.message}`,
+      );
+    }
+    notifyOnError(registry, error, phase, routeKey, pathname, true);
+    return;
+  }
+  console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${error.message}`);
+  notifyOnError(registry, error, phase, routeKey, pathname);
+  throw error;
+}
+
 function getStagedAssetDir(projectRoot: string): string {
   return resolve(projectRoot, "node_modules/.rangojs-router-build/rsc-assets");
 }
@@ -145,26 +207,45 @@ export function resetStagedBuildAssets(projectRoot: string): void {
   rmSync(getStagedAssetDir(projectRoot), { recursive: true, force: true });
 }
 
-export function stageBuildAssetModule(
-  projectRoot: string,
-  prefix: "__pr" | "__st",
+/**
+ * Write one content-hashed `export default <value>;` asset module into `dir`
+ * (created if needed) and return its file name. Identical payloads dedupe to
+ * one file (the hash is the content). Shared by the staged prerender/static
+ * flow (stageBuildAssetModule below) and the shell prerender phase, which
+ * writes directly into the final RSC assets dir — it runs after buildApp,
+ * past the staging/copy window.
+ */
+export function writeBuildAssetModule(
+  dir: string,
+  prefix: "__pr" | "__st" | "__ps",
   exportValue: string,
 ): string {
-  const stagedDir = getStagedAssetDir(projectRoot);
-  mkdirSync(stagedDir, { recursive: true });
+  mkdirSync(dir, { recursive: true });
 
   const contentHash = createHash("sha256")
     .update(exportValue)
     .digest("hex")
     .slice(0, 8);
   const fileName = `${prefix}-${contentHash}.js`;
-  const filePath = resolve(stagedDir, fileName);
+  const filePath = resolve(dir, fileName);
 
   if (!existsSync(filePath)) {
     writeFileSync(filePath, `export default ${exportValue};\n`);
   }
 
   return fileName;
+}
+
+export function stageBuildAssetModule(
+  projectRoot: string,
+  prefix: "__pr" | "__st",
+  exportValue: string,
+): string {
+  return writeBuildAssetModule(
+    getStagedAssetDir(projectRoot),
+    prefix,
+    exportValue,
+  );
 }
 
 export function copyStagedBuildAssets(

@@ -1,0 +1,79 @@
+---
+title: Caching & Revalidation
+description: Two axes of freshness, never conflated — stored-value freshness versus client-update selection.
+type: guide
+---
+
+Most framework caching pain is one conflation: "is the stored value fresh?" and "should this segment re-render for this client update?" are different questions, and mainstream APIs answer both with one word. Next.js `revalidate = 60` is cache expiry; Remix `shouldRevalidate` is re-render selection; both are called revalidation.
+
+Rango keeps them orthogonal:
+
+| Axis                    | Question                                 | API                                        |
+| ----------------------- | ---------------------------------------- | ------------------------------------------ |
+| Stored-value freshness  | Is this cached value still good?         | `cache({ ttl, swr, tags })`, `"use cache"` |
+| Client-update selection | Should this segment re-render right now? | `revalidate((ctx) => ...)`                 |
+
+They compose: a segment can be cached for ten minutes _and_ re-render instantly after the one action that affects it. You never express one policy by abusing the other.
+
+## Axis 1: cache()
+
+`cache()` wraps a subtree in the tree; on a hit the stored shell streams instantly while any loaders inside re-run fresh:
+
+<CacheHitDemo />
+
+```tsx
+cache({ ttl: 600 }, () => [
+  path("/products", ProductsPage, { name: "products" }, () => [
+    loader(StockLoader), // never cached: re-runs on every hit
+  ]),
+]);
+```
+
+Function-level caching uses the `"use cache"` directive, and a loader's data caches with an explicit opt-in (`loader(Fn, () => [cache({ ttl })])`).
+
+The guards are correctness-first: `cookies()` and `headers()` throw inside cache scopes rather than silently baking one visitor's data into a shared shell.
+
+## Tags and invalidation
+
+Everything cacheable shares one identity scheme and one store. Entries expire by TTL/SWR and are tagged via `cache({ tags })` or runtime `cacheTag(...tags)`. Invalidate by tag:
+
+- `updateTag(...tags)` — awaitable, read-your-own-writes. Use inside an action when the next render must see the new value.
+- `revalidateTag(...tags)` — background, non-blocking.
+
+There is no path-based busting; use tags.
+
+## Axis 2: revalidate()
+
+`revalidate()` decides which segments re-render after a server action. The predicate receives the action's full context — match _which_ action by reference with `ctx.isAction()` (rename-safe), branch on _what it returned_ with `ctx.actionResult`:
+
+```tsx
+import * as CartActions from "./actions/cart";
+
+loader(CartLoader, () => [
+  // re-run on cart actions; defer to the default otherwise
+  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+]),
+```
+
+```tsx
+// re-render only when checkout actually succeeded; defer otherwise
+revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
+```
+
+Two idioms, picked by what an _unrelated_ action should do: `ctx.isAction(X) || undefined` **defers** ("mine, else let the default decide"); bare `ctx.isAction(X)` **suppresses** ("mine only"). Prefer the defer form.
+
+## Coming from another framework
+
+Same words, different jobs — this is the most common source of misreads:
+
+| You may know                            | Maps to          | Watch out                                                                                                    |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Next.js `export const revalidate = N`   | **Axis 1**       | Same word, opposite meaning. Use `cache({ ttl })` for the Next behavior.                                     |
+| Next.js `revalidateTag` / `updateTag`   | **Axis 1**       | Same idea here: tag via `cache({ tags })` / `cacheTag()`, bust via `updateTag()`.                            |
+| React Router / Remix `shouldRevalidate` | **Axis 2**       | This is the correct mental model for Rango's `revalidate()`.                                                 |
+| HTTP `Cache-Control` / ISR              | Deployment layer | Complete-response deployment layer. A CDN hit bypasses Rango; the store-backed document middleware does not. |
+| Remix / React Router `loader`           | live data        | Like Rango loaders — but Rango loaders run in parallel, stream, and can opt into cache.                      |
+
+## Nested caches
+
+The outer cache window bounds the inner: an inner shorter TTL only applies when the enclosing cache recomputes. If a value must be fresher than its surroundings, put it in a loader — that is what the live lane is for.

@@ -4,6 +4,7 @@ import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
+  HandlerConsumedTestLoader,
   InterceptCacheTestLoader,
   ReactNodeTestLoader,
   NullTestLoader,
@@ -40,6 +41,27 @@ export const CacheCachedLoaderHandler: Handler<
         ← Back to Home
       </Link>
       <h1 data-testid="page-title">Cached Loader Test</h1>
+      <p data-testid="loader-count">Loader count: {data.count}</p>
+      <p data-testid="loader-message">{data.message}</p>
+      <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
+    </div>
+  );
+};
+
+// Consumption-lane rule, cache() tier (semantic matrix row PPR3 is the PPR
+// twin): the handler consumes an UNCACHED loader via ctx.use inside a
+// route-level cache() scope — the value is a BAKED copy, frozen into the
+// cached segments and served as-is on every hit.
+export const CacheHandlerConsumedHandler: Handler<
+  "cacheTest.handlerConsumed"
+> = async (ctx) => {
+  const data = await ctx.use(HandlerConsumedTestLoader);
+  return (
+    <div data-testid="handler-consumed-page">
+      <Link to="/" data-testid="back-link">
+        ← Back to Home
+      </Link>
+      <h1 data-testid="page-title">Handler-Consumed Loader Test</h1>
       <p data-testid="loader-count">Loader count: {data.count}</p>
       <p data-testid="loader-message">{data.message}</p>
       <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>

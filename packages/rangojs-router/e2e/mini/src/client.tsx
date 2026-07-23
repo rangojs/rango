@@ -39,6 +39,7 @@ import {
   CartLoader,
   EchoLoader,
   FlashMessage,
+  ManifestPricesLoader,
   Origin,
 } from "./shared.js";
 import {
@@ -95,6 +96,10 @@ export function AppNav() {
       {" | "}
       <Link to="/secret" data-testid="nav-secret">
         Secret
+      </Link>
+      {" | "}
+      <Link to="/login" data-testid="nav-login">
+        Login
       </Link>
     </nav>
   );
@@ -434,6 +439,18 @@ export function LinkStatusDemo() {
     <Link to="/products" data-testid="link-status-link">
       <LinkStatusLabel />
     </Link>
+  );
+}
+
+// Shell-manifest demo: the live price for one product the frozen shell
+// rendered. data-seq exposes the loader run count so tests can prove prices
+// stay live while manifest-shell-seq stays frozen (cache hit).
+export function ManifestPrice({ id }: { id: string }) {
+  const { data } = useLoader(ManifestPricesLoader);
+  return (
+    <span data-testid={`manifest-price-${id}`} data-seq={data.seq}>
+      ${data.prices[id]}
+    </span>
   );
 }
 

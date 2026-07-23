@@ -1,10 +1,8 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, afterEach } from "vitest";
-import { Suspense, use } from "react";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
-import type { DeferredHandleEntry } from "../../defer.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useReverse } from "../../browser/react/use-reverse.js";
 import { useHref } from "../../browser/react/use-href.js";
@@ -13,8 +11,10 @@ import { usePathname } from "../../browser/react/use-pathname.js";
 import { useLoader } from "../../use-loader.js";
 import { useHandle } from "../../browser/react/use-handle.js";
 import { useMount } from "../../browser/react/use-mount.js";
-import { createHandle } from "../../handle.js";
+import { createHandle, type Handle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
+import { useNonce } from "../../browser/react/nonce-context.js";
+import { getDefaultPrefetchStrategy } from "../../browser/prefetch/default-strategy.js";
 import { renderRoute } from "../render-route.js";
 
 afterEach(() => {
@@ -31,6 +31,22 @@ describe("renderRoute option migration guard", () => {
         initialUrl: "/",
       } as any),
     ).rejects.toThrow(/`initialUrl` option was renamed to `request`/);
+  });
+});
+
+describe("renderRoute defaultPrefetch isolation", () => {
+  it("does not mutate the module-wide browser default", async () => {
+    function View() {
+      return <a href="/target">Target</a>;
+    }
+    const before = getDefaultPrefetchStrategy();
+
+    await renderRoute([{ path: "/", Component: View }], {
+      request: "/",
+      defaultPrefetch: before === "viewport" ? "none" : "viewport",
+    });
+
+    expect(getDefaultPrefetchStrategy()).toBe(before);
   });
 });
 
@@ -81,40 +97,69 @@ describe("renderRoute handles seeding runs the real collect", () => {
   });
 });
 
-// The client-read half of ctx.use(Handle).defer(): a deferred slot arrives in the
-// accumulated handle data as a Promise (a DeferredHandleEntry) that a
-// deferred-aware component use()s inside Suspense. renderRoute settles that
-// Suspense within act (see the awaited-act render), so a deferred handle renders
-// and is assertable from the resolved DOM exactly like a sync one — no e2e
-// needed. (The server-push half is covered by renderHandler's .defer() tests.)
-function isThenable(v: unknown): v is Promise<unknown> {
-  return v != null && typeof (v as { then?: unknown }).then === "function";
-}
+// Runtime read path (collectHandleData via useHandle): when a handle's module
+// was never imported, createHandle() never ran, so getCollectFn() returns
+// undefined. The runtime falls back to the identity (per-segment data as-is) AND
+// warns (folded out of production) — the warning is the only signal that a
+// CUSTOM-collect handle silently got the wrong shape. The testing-tier twin
+// (collectHandle) is pinned in collect-handle.test.ts; this pins the RUNTIME path
+// a consumer actually hits, through the public renderRoute/useHandle primitives.
+describe("renderRoute: runtime collectHandleData unregistered fallback", () => {
+  it("falls back to the identity shape and warns when the handle's collect is unregistered", async () => {
+    // A handle whose collect was never registered (its module was not imported).
+    // NOT created via createHandle(), so getCollectFn($$id) returns undefined.
+    const unregistered = {
+      __brand: "handle" as const,
+      $$id: "never-imported#Runtime",
+    } as unknown as Handle<string, string[][]>;
 
-function DeferredCrumb({ c }: { c: DeferredHandleEntry<BreadcrumbItem> }) {
-  const item = isThenable(c) ? (use(c) as BreadcrumbItem) : c;
-  return <span data-testid="crumb">{item.label}</span>;
-}
+    function View() {
+      const value = useHandle(unregistered);
+      return <span data-testid="out">{JSON.stringify(value)}</span>;
+    }
 
-function DeferredCrumbs() {
-  const crumbs = useHandle(Breadcrumbs) as Array<
-    DeferredHandleEntry<BreadcrumbItem>
-  >;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { getByTestId } = await renderRoute(
+        [{ path: "/", Component: View }],
+        { request: "/", handles: [[unregistered, ["a", "b"]]] },
+      );
+      // Identity fallback: per-segment data as-is (one array for the segment that
+      // pushed), NOT a flat ["a","b"].
+      expect(getByTestId("out").textContent).toBe(JSON.stringify([["a", "b"]]));
+      // The runtime warning fired (handle.ts), naming the missing-collect cause.
+      expect(
+        warn.mock.calls.some((c) =>
+          String(c[0]).includes("has no registered collect"),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// Resolve-by-default: a deferred (Promise) seeded handle value is RESOLVED by
+// renderRoute before collect runs, so the consumer reads useHandle and gets the
+// resolved value directly — no use()/Suspense at the call site. (The server-push
+// half is covered by renderHandler's .defer() tests.)
+function CrumbsView() {
+  const crumbs = useHandle(Breadcrumbs) as BreadcrumbItem[];
   return (
     <div>
       {crumbs.map((c, i) => (
-        <Suspense key={i} fallback={<span data-testid="crumb-pending" />}>
-          <DeferredCrumb c={c} />
-        </Suspense>
+        <span key={i} data-testid="crumb">
+          {c.label}
+        </span>
       ))}
     </div>
   );
 }
 
-describe("renderRoute deferred handle entries (.defer())", () => {
-  it("renders a deferred (Promise) entry once it resolves, alongside sync ones", async () => {
+describe("renderRoute resolves deferred (Promise) seeded handle values", () => {
+  it("renders a deferred entry's RESOLVED value alongside sync ones", async () => {
     const { getAllByTestId } = await renderRoute(
-      [{ path: "/", Component: DeferredCrumbs }],
+      [{ path: "/", Component: CrumbsView }],
       {
         request: "/",
         handles: [
@@ -134,11 +179,9 @@ describe("renderRoute deferred handle entries (.defer())", () => {
     ]);
   });
 
-  it("renders multiple concurrent deferred entries without collapsing them (collectBreadcrumbs href dedup)", async () => {
-    // Before the deferred-aware collect, both pending Promises hashed to href
-    // `undefined` and the dedup kept only the last. Both must render.
+  it("dedups resolved crumbs by href without collapsing distinct ones", async () => {
     const { getAllByTestId } = await renderRoute(
-      [{ path: "/", Component: DeferredCrumbs }],
+      [{ path: "/", Component: CrumbsView }],
       {
         request: "/",
         handles: [
@@ -467,7 +510,9 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
   // globally on the event controller (unlike loaders, which are segment-scoped
   // via OutletContext), so any component in the chain reads the seeded values.
   it("a LAYOUT reading useHandle sees the seeded values", async () => {
-    const Crumbs = createHandle<{ label: string }>();
+    const Crumbs = createHandle<{ label: string }, { label: string }[]>(
+      (segments) => segments.flat(),
+    );
     function Layout() {
       const crumbs = useHandle(Crumbs);
       return (
@@ -494,5 +539,241 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
     );
     expect(getByTestId("crumbs").textContent).toBe("Home>P");
     expect(getByTestId("leaf").textContent).toBe("leaf");
+  });
+});
+
+describe("renderRoute navigation lifecycle is frozen at idle", () => {
+  // navigate() commits synchronously (no server fetch / Flight stream), so the
+  // transition state useNavigation/useLinkStatus/useAction read never leaves
+  // "idle". A test that asserts a non-idle state would silently pass; the helper
+  // warns once so that false-confidence trap is loud.
+  it("stays idle across navigate() and warns once, naming the affected hooks", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      function Page() {
+        const nav = useNavigation();
+        return <span data-testid="state">{nav.state}</span>;
+      }
+      const { getByTestId, router } = await renderRoute(
+        [{ path: "/a", Component: Page }],
+        { request: "/a" },
+      );
+
+      expect(getByTestId("state").textContent).toBe("idle");
+      await router.navigate("/a");
+      // Contract: the transition state is frozen at idle even after navigate().
+      expect(getByTestId("state").textContent).toBe("idle");
+      await router.navigate("/a");
+
+      const navWarns = warn.mock.calls.filter((c) =>
+        String(c[0]).includes("navigate()"),
+      );
+      expect(navWarns).toHaveLength(1);
+      expect(String(navWarns[0][0])).toMatch(/useNavigation\(\)\.state/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("renderRoute request/leaf validation", () => {
+  function Probe() {
+    const { slug } = useParams<{ slug?: string }>();
+    return <span data-testid="slug">{slug ?? "none"}</span>;
+  }
+
+  it("rejects a request that does not match the leaf route", async () => {
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        request: "/typo/wine",
+      }),
+    ).rejects.toThrow(/does not match the leaf route/);
+  });
+
+  it("rejects a mount-PREFIXED request (paths are include-relative)", async () => {
+    // The classic mistake: assuming the mount auto-prefixes the request. It does
+    // not — resolve() matches the request against the leaf as-is, so a prefixed
+    // request would silently yield empty params. Reject it with guidance.
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        mount: "/en",
+        request: "/en/c/wine",
+      }),
+    ).rejects.toThrow(/A mount does NOT auto-rewrite the request/);
+  });
+
+  it("accepts the relative request under a dynamic mount and extracts params", async () => {
+    function LocaleProbe() {
+      const { slug } = useParams<{ slug?: string }>();
+      return (
+        <div>
+          <span data-testid="slug">{slug ?? "none"}</span>
+          <span data-testid="mount">{useMount()}</span>
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/:slug", Component: LocaleProbe }],
+      { mount: "/en", request: "/c/wine" },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+    expect(getByTestId("mount").textContent).toBe("/en");
+  });
+
+  it("accepts a non-matching request when explicit params are supplied", async () => {
+    // The params docstring blesses passing `params` "to avoid relying on URL
+    // parsing". Such a test legitimately wants `request` for search/path context
+    // while seeding params by hand, so the leaf-match guard must NOT fire — the
+    // explicit params, not the URL, are the param source.
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/:slug", Component: Probe }],
+      { request: "/some/other/path?ref=email", params: { slug: "wine" } },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+  });
+
+  it("still rejects a non-matching request when params is empty", async () => {
+    // An empty params object provides no param source, so the trap (silent empty
+    // params) still applies and the guard fires.
+    await expect(
+      renderRoute([{ path: "/c/:slug", Component: Probe }], {
+        request: "/typo/wine",
+        params: {},
+      }),
+    ).rejects.toThrow(/does not match the leaf route/);
+  });
+
+  it("accepts an optional :locale? leaf that the request omits", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/:locale?/c/:slug", Component: Probe }],
+      { request: "/c/wine" },
+    );
+    expect(getByTestId("slug").textContent).toBe("wine");
+  });
+
+  it("is inert when no request is passed (defaults from the leaf static prefix)", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/wine", Component: Probe }],
+      { mount: "/shop" },
+    );
+    expect(getByTestId("slug").textContent).toBe("none");
+  });
+
+  it("is silent off the test runner (production gate)", async () => {
+    vi.stubEnv("VITEST", "");
+    try {
+      const { getByTestId } = await renderRoute(
+        [{ path: "/c/:slug", Component: Probe }],
+        { request: "/typo/wine" },
+      );
+      // A typo that WOULD throw under the runner renders empty params instead.
+      expect(getByTestId("slug").textContent).toBe("none");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("renderRoute nonce (useNonce contract)", () => {
+  // A userland head-script component (analytics/GTM) reads the CSP nonce via
+  // useNonce(). This pins that contract through the public testing primitive:
+  // the `nonce` option seeds NonceContext (mirroring what SSR provides per
+  // request), and the default is undefined (the production browser value).
+  function NonceProbe() {
+    return <span data-testid="nonce">{useNonce() ?? "(none)"}</span>;
+  }
+
+  it("seeds useNonce() with the nonce option", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: NonceProbe }],
+      { request: "/", nonce: "test-nonce-123" },
+    );
+    expect(getByTestId("nonce").textContent).toBe("test-nonce-123");
+  });
+
+  it("returns undefined when no nonce is seeded (browser default)", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/", Component: NonceProbe }],
+      { request: "/" },
+    );
+    expect(getByTestId("nonce").textContent).toBe("(none)");
+  });
+});
+
+// Userland coverage for named catch-all params (issue #634), exercised through
+// the public `renderRoute` primitive exactly as a consumer would: define a
+// `:slug*` / `:path+` route, render a real request, and read the joined
+// remainder from `useParams()`.
+describe("renderRoute catch-all params (named #634, bare `*` #636)", () => {
+  it(":slug* exposes the joined multi-segment remainder under the param name", async () => {
+    function Docs() {
+      const { slug } = useParams<{ slug: string }>();
+      return <span data-testid="slug">{slug}</span>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/docs/:slug*", Component: Docs }],
+      { request: "/docs/getting-started/install" },
+    );
+    expect(getByTestId("slug").textContent).toBe("getting-started/install");
+
+    // The catch-all re-binds across navigation to a different depth.
+    await router.navigate("/docs/api/reference");
+    expect(getByTestId("slug").textContent).toBe("api/reference");
+  });
+
+  it(":path+ (one-or-more) exposes the remainder under the param name", async () => {
+    function Files() {
+      const { path } = useParams<{ path: string }>();
+      return <span data-testid="path">{path}</span>;
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/files/:path+", Component: Files }],
+      { request: "/files/a/b/c" },
+    );
+    expect(getByTestId("path").textContent).toBe("a/b/c");
+  });
+
+  // Review F8: the documented zero-segment `:slug*` case is now reachable
+  // through the primitive — matchLeaf matches the bare prefix and binds "".
+  it(":slug* matches the bare prefix binding '' (initial request and navigate)", async () => {
+    function Docs() {
+      const { slug } = useParams<{ slug: string }>();
+      return <span data-testid="slug">{slug === "" ? "(empty)" : slug}</span>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/docs/:slug*", Component: Docs }],
+      { request: "/docs" },
+    );
+    expect(getByTestId("slug").textContent).toBe("(empty)");
+
+    await router.navigate("/docs/a/b");
+    expect(getByTestId("slug").textContent).toBe("a/b");
+
+    await router.navigate("/docs");
+    expect(getByTestId("slug").textContent).toBe("(empty)");
+  });
+
+  // #636: the bare `*` wildcard is the unnamed zero-or-more catch-all — same
+  // semantics as `:slug*`, but the remainder binds `params["*"]`. This pins the
+  // fix through the primitive: matchLeaf (compilePattern + buildParamsFromMatch)
+  // now matches the bare prefix binding "", where it previously did not.
+  it("bare * matches the bare prefix binding '' (initial request and navigate)", async () => {
+    function Files() {
+      const splat = useParams<{ "*": string }>()["*"];
+      return (
+        <span data-testid="splat">{splat === "" ? "(empty)" : splat}</span>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/files/*", Component: Files }],
+      { request: "/files" },
+    );
+    expect(getByTestId("splat").textContent).toBe("(empty)");
+
+    await router.navigate("/files/a/b");
+    expect(getByTestId("splat").textContent).toBe("a/b");
+
+    await router.navigate("/files");
+    expect(getByTestId("splat").textContent).toBe("(empty)");
   });
 });

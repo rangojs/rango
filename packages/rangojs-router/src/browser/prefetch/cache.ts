@@ -10,12 +10,12 @@
  * scopes are in play:
  * - Wildcard (default): built by `buildPrefetchKey(rangoState, target)` —
  *   shape `rangoState\0/target?...`. Shared across all source pages and
- *   invalidated automatically when Rango state bumps (deploy or
- *   server-action invalidation).
+ *   source segment trees; `_rsc_segments` is omitted from this key. Invalidated
+ *   automatically when Rango state bumps (deploy or server-action invalidation).
  * - Source-scoped: built by `buildSourceKey(rangoState, sourceHref, target)`
  *   — shape `rangoState\0sourceHref\0/target?...`. Embeds the Rango state
- *   (so rotation invalidates source-scoped entries too) plus the source
- *   href (so each originating page gets its own slot). Populated when the
+ *   (so rotation invalidates source-scoped entries too), the source href, and
+ *   the exact source segment tree. Populated when the
  *   server tags a response with `X-RSC-Prefetch-Scope: source` (intercept
  *   modals etc.), OR when a Link opts in with `prefetchKey=":source"` — in
  *   both cases so source-sensitive responses cannot bleed into navigations
@@ -39,7 +39,8 @@
  * effectively per-document. Unit tests reset them via clearPrefetchCache().
  */
 
-import { abortAllPrefetches } from "./queue.js";
+import { abortAllPrefetches } from "./loader.js";
+import { notifyPrefetchCacheInvalidated } from "./invalidation.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
 
@@ -65,17 +66,60 @@ export interface DecodedPrefetch {
    * when it adopted an inflight entry through the wildcard key.
    */
   scope: "source" | "wildcard";
+  /**
+   * Synchronously-readable flag, flipped to true when `streamComplete` resolves
+   * (the entire RSC stream has drained). Navigation reads this at click time to
+   * tell a FULLY warmed prefetch (payload commits without suspending → safe to
+   * commit in a startTransition, no fallback flash) from a partially-warmed one
+   * (still streaming → stream its fallbacks like a cold load). Starts false.
+   *
+   * On a respawned entry (see `respawn`) this starts true: the buffered bytes
+   * are a complete stream by construction.
+   */
+  complete: boolean;
+  /**
+   * Re-create this entry from its buffered raw Flight bytes. Attached (by
+   * `executePrefetchFetch`) only after the stream ended cleanly AND the eager
+   * decode succeeded — a truncated or failed prefetch must stay one-shot.
+   *
+   * Why bytes and not the decoded payload: the revived payload is a live graph
+   * with one-shot stream edges (the handle stream is an async generator drained
+   * during commit; userland payloads may embed serialized ReadableStreams).
+   * Re-decoding from the wire bytes manufactures fresh instances of every
+   * stream, which no amount of cloning the revived graph can do. Each call tees
+   * the reserve branch, so the replacement entry carries its own `respawn` —
+   * one prefetch serves unlimited adoptions within TTL/state validity.
+   */
+  respawn?: () => DecodedPrefetch;
+  /**
+   * Release the buffered reserve bytes. Called when the entry is evicted
+   * without being consumed (expiry, FIFO, sweep, cache clear) so the tee
+   * buffer is dropped promptly instead of waiting for GC.
+   */
+  dispose?: () => void;
 }
 
 let cacheTTL = 300_000;
+let fragmentPassthroughEnabled = true;
+
+// Max stored entries before FIFO eviction. Mirrors DEFAULT_PREFETCH_CACHE_SIZE
+// (router/prefetch-limits.ts); kept as a local literal so the client bundle
+// doesn't pull in router-layer code, matching the cacheTTL default above.
+// Overridden at startup by initPrefetchCache from server metadata.
+let maxPrefetchCacheSize = 100;
 
 /**
- * Initialize the prefetch cache with the configured TTL.
- * Called once at app startup with the value from server metadata.
- * A TTL of 0 disables the in-memory cache and all prefetching.
+ * Initialize the prefetch cache with the configured TTL and max size.
+ * Called once at app startup with the values from server metadata. Each
+ * argument is applied only when provided, so a caller can set just the TTL.
+ * A TTL of 0 disables the in-memory cache and all prefetching. A size below 1
+ * is ignored (the default is kept) — disabling prefetch is the TTL's job.
  */
-export function initPrefetchCache(ttlMs: number): void {
-  cacheTTL = ttlMs;
+export function initPrefetchCache(ttlMs?: number, maxSize?: number): void {
+  if (ttlMs !== undefined) cacheTTL = ttlMs;
+  if (maxSize !== undefined && Number.isFinite(maxSize) && maxSize >= 1) {
+    maxPrefetchCacheSize = Math.floor(maxSize);
+  }
 }
 
 /**
@@ -85,7 +129,6 @@ export function initPrefetchCache(ttlMs: number): void {
 export function isPrefetchCacheDisabled(): boolean {
   return cacheTTL <= 0;
 }
-const MAX_PREFETCH_CACHE_SIZE = 50;
 
 interface PrefetchCacheEntry {
   entry: DecodedPrefetch;
@@ -94,6 +137,16 @@ interface PrefetchCacheEntry {
 
 const cache = new Map<string, PrefetchCacheEntry>();
 const inflight = new Set<string>();
+
+// Watermark: the smallest entry timestamp currently in `cache`, i.e. a lower
+// bound on when the oldest entry expires (timestamp + cacheTTL). storePrefetch's
+// eager expiry sweep is skipped while `now - earliestTimestamp <= cacheTTL` — the
+// oldest entry cannot be expired yet, so nothing would be evicted. Deletions
+// (consume/has/remove) may leave it stale-LOW, which only forces a harmless extra
+// sweep that recomputes it exactly; it is never stale-high, so a skipped sweep
+// can never retain an expired entry. consume/has still TTL-check lazily, so a
+// skipped sweep never serves a stale entry. Infinity when the cache is empty.
+let earliestTimestamp = Infinity;
 
 const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
 
@@ -111,7 +164,9 @@ let generation = 0;
  * - Wildcard (source-agnostic): prefix is the Rango state value from
  *   `getRangoState()`. Shared across all source pages. Invalidated
  *   automatically when Rango state bumps (deploy or server-action).
- *   Key shape: `rangoState\0/target?...`.
+ *   `_rsc_segments` is omitted so sibling payloads prefetched from one page
+ *   remain reusable after another prefetched navigation commits. Key shape:
+ *   `rangoState\0/target?...`.
  * - Source-scoped: use `buildSourceKey()`. Key shape:
  *   `rangoState\0sourceHref\0/target?...` — embeds the Rango state so
  *   rotation invalidates source-scoped entries alongside wildcard ones,
@@ -120,12 +175,15 @@ let generation = 0;
  *   `X-RSC-Prefetch-Scope: source` (intercept modals, etc.) or when a
  *   Link opts in via `prefetchKey=":source"`.
  *
- * The `_rsc_segments` query param that travels in the target URL means
- * clients with different mounted segment trees naturally get different
- * keys — so segment-level diffs remain consistent across both scopes.
+ * Source-scoped keys retain `_rsc_segments` because their exact source tree is
+ * part of the opt-in contract. Wildcard responses are source-agnostic by
+ * contract; callers use source scope when a custom revalidation decision makes
+ * the response depend on the current URL or segment tree.
  */
 export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
-  return prefix + "\0" + targetUrl.pathname + targetUrl.search;
+  const normalizedTarget = new URL(targetUrl);
+  normalizedTarget.searchParams.delete("_rsc_segments");
+  return prefix + "\0" + normalizedTarget.pathname + normalizedTarget.search;
 }
 
 /**
@@ -141,7 +199,14 @@ export function buildSourceKey(
   sourceHref: string,
   targetUrl: URL,
 ): string {
-  return buildPrefetchKey(rangoState + "\0" + sourceHref, targetUrl);
+  return (
+    rangoState +
+    "\0" +
+    sourceHref +
+    "\0" +
+    targetUrl.pathname +
+    targetUrl.search
+  );
 }
 
 /**
@@ -166,6 +231,7 @@ export function hasPrefetch(key: string): boolean {
   const entry = cache.get(key);
   if (!entry) return false;
   if (Date.now() - entry.timestamp > cacheTTL) {
+    entry.entry.dispose?.();
     cache.delete(key);
     return false;
   }
@@ -174,22 +240,34 @@ export function hasPrefetch(key: string): boolean {
 
 /**
  * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
- * expired. One-time consumption: the entry is deleted after retrieval.
- * Returns null when caching is disabled (TTL <= 0).
+ * expired. Returns null when caching is disabled (TTL <= 0).
+ *
+ * A decoded payload is single-render (its handle stream is drained during the
+ * commit), so the returned entry is never served twice. When the entry carries
+ * `respawn` (clean-EOF prefetch with buffered bytes), the slot is re-armed in
+ * place with a fresh decode of those bytes — the ORIGINAL timestamp is kept so
+ * TTL bounds the age of the data, not of the latest adoption. Without
+ * `respawn` the entry is deleted (legacy one-shot behavior).
  *
  * Does NOT check in-flight prefetches — use consumeInflightPrefetch()
  * for that (returns a Promise instead of a resolved entry).
  */
 export function consumePrefetch(key: string): DecodedPrefetch | null {
   if (cacheTTL <= 0) return null;
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > cacheTTL) {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > cacheTTL) {
+    cached.entry.dispose?.();
     cache.delete(key);
     return null;
   }
-  cache.delete(key);
-  return entry.entry;
+  const entry = cached.entry;
+  if (entry.respawn) {
+    cached.entry = entry.respawn();
+  } else {
+    cache.delete(key);
+  }
+  return entry;
 }
 
 /**
@@ -251,21 +329,56 @@ export function storePrefetch(
     return;
   }
 
-  // Evict expired entries
+  // Evict expired entries — but only when the watermark says the oldest entry
+  // could have expired, so a burst of stores no longer walks the whole map each
+  // time. The sweep recomputes the exact watermark from the survivors.
   const now = Date.now();
-  for (const [k, cached] of cache) {
-    if (now - cached.timestamp > cacheTTL) {
-      cache.delete(k);
+  if (now - earliestTimestamp > cacheTTL) {
+    let min = Infinity;
+    for (const [k, cached] of cache) {
+      if (now - cached.timestamp > cacheTTL) {
+        cached.entry.dispose?.();
+        cache.delete(k);
+      } else if (cached.timestamp < min) {
+        min = cached.timestamp;
+      }
     }
+    earliestTimestamp = min;
   }
 
   // FIFO eviction if at capacity
-  if (cache.size >= MAX_PREFETCH_CACHE_SIZE) {
+  if (cache.size >= maxPrefetchCacheSize) {
     const oldest = cache.keys().next().value;
-    if (oldest) cache.delete(oldest);
+    if (oldest) {
+      cache.get(oldest)?.entry.dispose?.();
+      cache.delete(oldest);
+    }
   }
 
   cache.set(key, { entry, timestamp: now });
+  // The new entry is the newest, so it only moves the watermark when the cache
+  // was empty (Infinity); otherwise the older watermark stands.
+  if (now < earliestTimestamp) earliestTimestamp = now;
+}
+
+/**
+ * Remove a single stored prefetch entry. Used to evict an entry whose body
+ * stream stalled after headers arrived (its payload / streamComplete never
+ * settle), so future prefetches and navigation refetch instead of dedupe-ing
+ * against — and awaiting — a stuck entry.
+ *
+ * Identity-guarded: only evicts when the entry CURRENTLY stored under `key` is
+ * the exact `entry` we published. A generation check alone is insufficient —
+ * after this entry is consumed (consumePrefetch) and a fresh prefetch
+ * republishes under the SAME key in the SAME generation, a gen-only guard would
+ * delete that valid newer entry. Reference identity drops only our own stalled
+ * entry.
+ */
+export function removePrefetch(key: string, entry: DecodedPrefetch): void {
+  if (cache.get(key)?.entry === entry) {
+    entry.dispose?.();
+    cache.delete(key);
+  }
 }
 
 /**
@@ -312,13 +425,33 @@ export function clearPrefetchInflight(key: string): void {
   });
 }
 
-export function clearPrefetchCache(): void {
+/** Whether this document may request stored segment fragment envelopes. */
+export function isFragmentPassthroughEnabled(): boolean {
+  return fragmentPassthroughEnabled;
+}
+
+/**
+ * Disable fragment passthrough for the rest of this document after one stored
+ * fragment fails to decode. The recovery replaces shared cache entries, while
+ * this guard prevents the current tab's HTTP cache from serving its already-
+ * cached corrupt variant again.
+ */
+export function disableFragmentPassthrough(): void {
+  if (!fragmentPassthroughEnabled) return;
+  fragmentPassthroughEnabled = false;
+  clearPrefetchCache(false);
+}
+
+export function clearPrefetchCache(rotateRangoState = true): void {
   generation++;
   inflight.clear();
   inflightPromises.clear();
   inflightAliases.clear();
   adoptedKeys.clear();
+  for (const cached of cache.values()) cached.entry.dispose?.();
   cache.clear();
+  earliestTimestamp = Infinity;
   abortAllPrefetches();
-  invalidateRangoState();
+  if (rotateRangoState) invalidateRangoState();
+  notifyPrefetchCacheInvalidated();
 }

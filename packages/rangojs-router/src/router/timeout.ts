@@ -11,11 +11,49 @@ export interface RouterTimeouts {
   actionMs?: number;
   /** Timeout for initial render/response production (ms). */
   renderStartMs?: number;
-  /** Timeout for idle streaming after render starts (ms). Reserved for PR 2. */
+  /**
+   * Timeout for idle streaming after the response is handed off (ms): when no
+   * chunk flows to the client for this long, the body stream is errored with a
+   * RouterTimeoutError ("stream-idle") and the source render is canceled —
+   * bounding hangs from never-settling promises embedded in the payload.
+   * END-TO-END semantics: a stalled slow client counts as idle the same as a
+   * wedged producer, so pick generous budgets (seconds). Opt-in (unset =
+   * unbounded, and the `timeout` shorthand deliberately does not apply);
+   * onTimeout does NOT fire — no replacement Response can be served
+   * mid-stream — the trip reports via onError + the request.timeout event.
+   * Enforcement: rsc/stream-idle.ts, wired at the handler's response tail.
+   */
   streamIdleMs?: number;
 }
 
 export type TimeoutPhase = "action" | "render-start" | "stream-idle";
+
+/**
+ * Canonical render-pipeline unions, defined here (the dependency-free timeout
+ * leaf) and shared by `import type` so the render driver
+ * (rsc/render-pipeline.ts RscRenderMode/RscRenderPhase), the foreground cursor
+ * (server/request-context.ts RenderForegroundCursor), and RenderTimeoutContext
+ * below cannot drift out of sync.
+ */
+export type RenderMode =
+  | "unknown"
+  | "full"
+  | "partial"
+  | "action-revalidation"
+  | "progressive-enhancement"
+  | "progressive-enhancement-error";
+
+/** Terminal response-construction stage of the render driver. */
+export type RenderPhase = "flight" | "html" | "response";
+
+export interface RenderTimeoutContext {
+  mode: RenderMode;
+  phase: RenderPhase;
+  state: "paused" | "running";
+  completed: number;
+  total: number;
+  phaseDurationMs?: number;
+}
 
 export interface TimeoutContext<TEnv = any> {
   phase: TimeoutPhase;
@@ -25,6 +63,8 @@ export interface TimeoutContext<TEnv = any> {
   routeKey?: string;
   actionId?: string;
   durationMs: number;
+  /** Foreground render operation active when a render-start timeout fired. */
+  render?: RenderTimeoutContext;
 }
 
 export type OnTimeoutCallback<TEnv = any> = (
@@ -74,6 +114,17 @@ type TimeoutResult<T> =
   | { timedOut: true; durationMs: number };
 
 /**
+ * A timeout phase is active only when its budget is a positive number.
+ * `undefined`/`null` (unset) and `<= 0` (explicit opt-out, e.g.
+ * `timeouts: { renderStartMs: 0 }`) both mean pass-through. withTimeout and the
+ * render-diagnostics gate (rsc/handler.ts) share this so a disabled budget can
+ * never leave one of them still doing bookkeeping the other can never read.
+ */
+export function isTimeoutEnabled(timeoutMs: number | undefined): boolean {
+  return timeoutMs != null && timeoutMs > 0;
+}
+
+/**
  * Race an operation against a deadline.
  *
  * Returns a discriminated union so callers handle the timeout case
@@ -87,7 +138,7 @@ export async function withTimeout<T>(
   timeoutMs: number | undefined,
   phase: TimeoutPhase,
 ): Promise<TimeoutResult<T>> {
-  if (timeoutMs == null || timeoutMs <= 0) {
+  if (!isTimeoutEnabled(timeoutMs)) {
     return { result: await operation, timedOut: false };
   }
 

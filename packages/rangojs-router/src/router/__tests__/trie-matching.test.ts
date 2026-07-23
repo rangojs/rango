@@ -6,11 +6,9 @@ function buildTestTrie(
   routes: Record<string, string>,
   trailingSlash?: Record<string, string>,
 ) {
-  const ancestry: Record<string, string[]> = {};
   const staticPrefix: Record<string, string> = {};
 
   for (const [routeKey, pattern] of Object.entries(routes)) {
-    ancestry[routeKey] = [`A:${routeKey}`];
     const dynamicIdx = pattern.search(/[:*]/);
     if (dynamicIdx === -1) {
       staticPrefix[routeKey] = pattern === "/" ? "" : pattern;
@@ -23,7 +21,7 @@ function buildTestTrie(
       : prefix;
   }
 
-  return buildRouteTrie(routes, ancestry, staticPrefix, trailingSlash);
+  return buildRouteTrie(routes, staticPrefix, trailingSlash);
 }
 
 describe("tryTrieMatch", () => {
@@ -63,6 +61,47 @@ describe("tryTrieMatch", () => {
     const result = tryTrieMatch(trie, "/files/docs/guides/intro");
     expect(result?.routeKey).toBe("files.any");
     expect(result?.params).toEqual({ "*": "docs/guides/intro" });
+  });
+
+  // joinRemainingSegments builds the wildcard remainder via slice().join("/").
+  it("joins the wildcard remainder from the matched index onward", () => {
+    const trie = buildTestTrie({ "a.any": "/a/*" });
+    const result = tryTrieMatch(trie, "/a/b/c");
+    expect(result?.routeKey).toBe("a.any");
+    expect(result?.params).toEqual({ "*": "b/c" });
+  });
+
+  // FIX 10: an RSC route and a response-type route sharing a trie terminal can
+  // bind the same positional segment under DIFFERENT param names. The folded
+  // negotiate variant must carry its OWN param names (pa) so the runtime can
+  // re-key the matched params when that variant wins negotiation.
+  it("carries the variant's own param names (pa) on negotiate variants", () => {
+    const routes = {
+      "widgets.view": "/widgets/:id",
+      "widgets.json": "/widgets/:file",
+    };
+    const staticPrefix = {
+      "widgets.view": "/widgets",
+      "widgets.json": "/widgets",
+    };
+    const trie = buildRouteTrie(
+      routes,
+      staticPrefix,
+      undefined,
+      undefined,
+      undefined,
+      { "widgets.json": "json" },
+    );
+
+    const result = tryTrieMatch(trie, "/widgets/42");
+    // Primary leaf is the RSC route; params are extracted under its pa (:id).
+    expect(result?.routeKey).toBe("widgets.view");
+    expect(result?.params).toEqual({ id: "42" });
+    // The folded json variant carries its own param names so the runtime can
+    // re-key id -> file when it wins negotiation.
+    expect(result?.negotiateVariants).toEqual([
+      { routeKey: "widgets.json", responseType: "json", pa: ["file"] },
+    ]);
   });
 
   // Regression (C1): a wildcard whose parent node is reached with no remaining
@@ -486,5 +525,92 @@ describe("tryTrieMatch suffix-param longest-wins ordering", () => {
     });
 
     expect(Object.keys(trie.s!["n"]!.xp!)).toEqual([".long", ".aa", ".bb"]);
+  });
+});
+
+// Named catch-all params (issue #634): `:name+` (one-or-more) and `:name*`
+// (zero-or-more) walk the trie's wildcard slot but key the remainder under the
+// param name instead of "*". `+` rejects the zero-segment case; `*` binds "".
+describe("tryTrieMatch named catch-all (:name+ / :name*)", () => {
+  it(":name+ captures one-or-more segments under the name", () => {
+    const trie = buildTestTrie({ "docs.any": "/docs/:rest+" });
+    expect(tryTrieMatch(trie, "/docs/a/b/c")?.params).toEqual({
+      rest: "a/b/c",
+    });
+    expect(tryTrieMatch(trie, "/docs/a")?.params).toEqual({ rest: "a" });
+  });
+
+  it(":name+ does NOT match the zero-segment (bare prefix) case", () => {
+    const trie = buildTestTrie({ "docs.any": "/docs/:rest+" });
+    expect(tryTrieMatch(trie, "/docs")).toBeNull();
+  });
+
+  it(":name* binds the empty string on the zero-segment case", () => {
+    const trie = buildTestTrie({ "docs.any": "/docs/:rest*" });
+    expect(tryTrieMatch(trie, "/docs")?.params).toEqual({ rest: "" });
+    expect(tryTrieMatch(trie, "/docs/a/b")?.params).toEqual({ rest: "a/b" });
+  });
+
+  it("keys the remainder under the name, never under '*'", () => {
+    const trie = buildTestTrie({ "files.any": "/files/:path+" });
+    const params = tryTrieMatch(trie, "/files/a/b")?.params;
+    expect(params).toEqual({ path: "a/b" });
+    expect(params).not.toHaveProperty("*");
+  });
+
+  it("carries params bound before the catch-all", () => {
+    const trie = buildTestTrie({ "users.any": "/users/:id/:rest+" });
+    expect(tryTrieMatch(trie, "/users/5/a/b")?.params).toEqual({
+      id: "5",
+      rest: "a/b",
+    });
+  });
+
+  it("static route still beats a sibling named catch-all", () => {
+    const trie = buildTestTrie({
+      "docs.index": "/docs/index",
+      "docs.any": "/docs/:rest+",
+    });
+    expect(tryTrieMatch(trie, "/docs/index")?.routeKey).toBe("docs.index");
+    expect(tryTrieMatch(trie, "/docs/a/b")?.routeKey).toBe("docs.any");
+  });
+
+  it("bare /* still binds under '*' (regression guard)", () => {
+    const trie = buildTestTrie({ "catch.all": "/files/*" });
+    expect(tryTrieMatch(trie, "/files")?.params).toEqual({ "*": "" });
+    expect(tryTrieMatch(trie, "/files/a/b")?.params).toEqual({ "*": "a/b" });
+  });
+});
+
+// Review regression: distinct wildcard forms + one-or-more empty-segment guard.
+describe("tryTrieMatch named catch-all (review F1 / F7)", () => {
+  it("F1: two distinct wildcard forms keep the first-declared (no clobber)", () => {
+    // `/files/*` (declared first) and `/files/:path+` collide on the single
+    // wildcard slot; the first wins (matching the regex declaration-order
+    // tiebreak) instead of last-wins silently dropping its identity.
+    const trie = buildTestTrie({
+      "files.bare": "/files/*",
+      "files.plus": "/files/:path+",
+    });
+    // Bare prefix still matches the zero-or-more `/files/*` with "*" === "".
+    expect(tryTrieMatch(trie, "/files")?.routeKey).toBe("files.bare");
+    expect(tryTrieMatch(trie, "/files")?.params).toEqual({ "*": "" });
+    // Deeper path also resolves to the first-declared wildcard.
+    expect(tryTrieMatch(trie, "/files/a/b")?.routeKey).toBe("files.bare");
+  });
+
+  it("F7: :name+ rejects an empty trailing segment (double slash)", () => {
+    const trie = buildTestTrie({ "docs.any": "/docs/:rest+" });
+    // `/docs//` has an empty trailing segment — one-or-more must not bind "".
+    expect(tryTrieMatch(trie, "/docs//")).toBeNull();
+    // A real single segment still matches.
+    expect(tryTrieMatch(trie, "/docs/a")?.params).toEqual({ rest: "a" });
+  });
+
+  it("F9: remainder is URL-decoded", () => {
+    const trie = buildTestTrie({ "docs.any": "/docs/:slug+" });
+    expect(tryTrieMatch(trie, "/docs/a%20b/c")?.params).toEqual({
+      slug: "a b/c",
+    });
   });
 });

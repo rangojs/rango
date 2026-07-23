@@ -7,12 +7,12 @@
  */
 
 import { RouterError } from "../errors.js";
-import { requireRequestContext } from "../server/request-context.js";
+import { getRequestContext } from "../server/request-context.js";
 import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
-import { traverseBack } from "../router/pattern-matching.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
+import { serveResponseRouteWithCache } from "./response-cache-serve.js";
 import { executeMiddleware } from "../router/middleware.js";
 import {
   createReverseFunction,
@@ -27,9 +27,10 @@ import {
   finalizeResponse,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
-  mergeStubHeadersAndFinalize,
+  rewrapResponseRouteResponse,
 } from "./helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import { stringifyJsonRouteResult } from "./json-route-result.js";
 
 export interface ResponseRouteMatch {
   responseType: string;
@@ -73,7 +74,7 @@ export async function handleResponseRoute<TEnv>(
   }
 
   // Build lightweight context for response handler
-  const reqCtx = requireRequestContext();
+  const reqCtx = getRequestContext();
   const cleanUrl = stripInternalParams(url);
   const responseHandlerCtx = {
     request,
@@ -98,58 +99,26 @@ export async function handleResponseRoute<TEnv>(
   const callHandler = async () => {
     const errorCtx = { request, url, env };
 
-    // Re-wrap a handler-returned Response through createResponseWithMergedHeaders
-    // so that stub headers (cookies, custom headers set via ctx.header()) are included.
-    // Use Headers (not Record<string, string>) to preserve duplicate entries like Set-Cookie.
-    const rewrapResponse = (result: Response) => {
-      // 204/205/304 are NOT short-circuited — they're valid for the Response
-      // constructor and must honor ctx.setStatus() overrides. Only upgrade
-      // responses (status 101 / `webSocket` property) bypass reconstruction.
-      if (isWebSocketUpgradeResponse(result)) {
-        return mergeStubHeadersAndFinalize(result);
-      }
-      const headers = new Headers();
-      result.headers.forEach((value, key) => {
-        if (key.toLowerCase() === "set-cookie") {
-          headers.append(key, value);
-        } else {
-          headers.set(key, value);
-        }
-      });
-      return createResponseWithMergedHeaders(result.body, {
-        status: result.status,
-        headers,
-      });
-    };
-
     try {
-      const result = await (preview.handler as Function)(responseHandlerCtx);
+      let result: unknown;
+      try {
+        result = await (preview.handler as Function)(responseHandlerCtx);
+      } catch (error) {
+        if (!(error instanceof Response)) throw error;
+        result = error;
+      }
 
       if (result instanceof Response) {
-        return rewrapResponse(result);
+        return rewrapResponseRouteResponse(result);
       }
 
       // Handled before the MIME lookup (json is also a RESPONSE_TYPE_MIME key).
       if (preview.responseType === "json") {
         // Runtime guard: the json() return type rejects nested Promises at
         // compile time, but an `as`-cast or untyped (JS) handler can still slip
-        // one through. JSON.stringify would silently emit {} for it (the
-        // forgotten-await footgun — the RSC pipeline awaits nested promises, this
-        // path does not). Throw a clear error instead of shipping empty data.
-        const body = JSON.stringify(result, (_key, value) => {
-          if (
-            value != null &&
-            typeof (value as { then?: unknown }).then === "function"
-          ) {
-            throw new RouterError(
-              "RESPONSE_NOT_SERIALIZABLE",
-              "A json() response route returned a Promise (likely a forgotten " +
-                "await). Await async values before returning so they serialize, " +
-                "instead of emitting an empty {}.",
-            );
-          }
-          return value;
-        });
+        // one through. stringifyJsonRouteResult throws a clear error instead of
+        // shipping empty data (shared with dispatch() so the two cannot drift).
+        const body = stringifyJsonRouteResult(result);
         return createResponseWithMergedHeaders(body, {
           status: 200,
           headers: { "content-type": "application/json;charset=utf-8" },
@@ -232,137 +201,20 @@ export async function handleResponseRoute<TEnv>(
     return callHandlerWithVary();
   };
 
-  // Resolve cache config from entry tree (same pattern as match-api.ts)
+  // Response-route cache: resolved through the shared serve leaf
+  // (rsc/response-cache-serve.ts) so production and the dispatch testing
+  // primitive share ONE owner of the cache contract. Returns undefined when no
+  // cache applies, so we fall through to a plain handler run.
   if (preview.manifestEntry) {
-    let cacheScope: ReturnType<typeof createCacheScope> = null;
-    for (const entry of traverseBack(preview.manifestEntry)) {
-      if (entry.cache) {
-        cacheScope = createCacheScope(entry.cache, cacheScope);
-      }
-    }
-
-    if (cacheScope?.enabled) {
-      // Evaluate condition — skip response cache when condition returns false
-      let conditionPassed = true;
-      if (cacheScope.config !== false && cacheScope.config.condition) {
-        try {
-          conditionPassed = !!cacheScope.config.condition(reqCtx);
-        } catch {
-          conditionPassed = false;
-        }
-      }
-
-      const store = cacheScope.getStore() ?? reqCtx._cacheStore;
-      if (conditionPassed && store?.getResponse && store?.putResponse) {
-        // Build cache key with response:{type}: prefix to avoid collision
-        // with segment keys and differentiate between response types.
-        // Include host and url.search so query-driven and multi-host
-        // responses cache separately.
-        let cacheKey = `response:${preview.responseType}:${url.host}${url.pathname}${url.search}`;
-
-        // Priority 1: Route-level key function (full override)
-        if (cacheScope.config !== false && cacheScope.config.key) {
-          try {
-            const customKey = await cacheScope.config.key(reqCtx);
-            cacheKey = `response:${customKey}`;
-          } catch {
-            // Fall back to default key on route-level key failure
-          }
-        } else if (store.keyGenerator) {
-          // Priority 2: Store-level keyGenerator (modifies default key)
-          try {
-            cacheKey = await store.keyGenerator(reqCtx, cacheKey);
-          } catch {
-            // Fall back to default key on keyGenerator failure
-          }
-        }
-
-        // Resolve cache tags for this document entry (static or dynamic),
-        // while request context is available. Passed to putResponse so the
-        // entry is tag-invalidatable.
-        const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
-
-        // Save pre-handler callbacks (registered by app-level middleware
-        // before we reach the cache block) and clear the live array.
-        // createResponseWithMergedHeaders (inside the handler) eagerly
-        // executes any callbacks present in _onResponseCallbacks, so
-        // handler-registered callbacks are baked into the handler's
-        // response and the cached artifact. Pre-handler callbacks are
-        // NOT in the live array during execution, so they are applied
-        // once per serve on every path (hit + miss) below.
-        const savedCallbacks = reqCtx._onResponseCallbacks;
-        reqCtx._onResponseCallbacks = [];
-
-        const applyPreHandlerCallbacks = (response: Response): Response => {
-          let result = response;
-          for (const callback of savedCallbacks) {
-            result = callback(result) ?? result;
-          }
-          return result;
-        };
-
-        try {
-          const cached = await store.getResponse(cacheKey);
-
-          if (cached && isCacheableStatus(cached.response.status)) {
-            if (!cached.shouldRevalidate) {
-              // Fresh hit
-              return applyPreHandlerCallbacks(cached.response);
-            }
-
-            // Stale hit (SWR) - return cached, revalidate in background
-            reqCtx.waitUntil(async () => {
-              try {
-                // finalizeResponse drains any onResponse callbacks registered
-                // during middleware execution (e.g. middleware short-circuit)
-                // that createResponseWithMergedHeaders didn't reach.
-                const fresh = finalizeResponse(await executeHandler());
-                if (isCacheableStatus(fresh.status)) {
-                  await store.putResponse!(
-                    cacheKey,
-                    fresh.clone(),
-                    cacheScope!.ttl,
-                    cacheScope!.swr,
-                    responseTags,
-                  );
-                }
-              } catch (error) {
-                console.error(`[ResponseCache] Revalidation failed:`, error);
-              }
-            });
-
-            return applyPreHandlerCallbacks(cached.response);
-          }
-        } catch (error) {
-          console.error(`[ResponseCache] Cache lookup failed:`, error);
-        }
-
-        // Cache miss - execute handler and cache the result.
-        // createResponseWithMergedHeaders inside the handler drains callbacks
-        // registered during handler execution. finalizeResponse catches any
-        // remaining callbacks (e.g. from middleware short-circuit where the
-        // handler never ran) so the cached artifact includes all transforms.
-        const response = finalizeResponse(await executeHandler());
-
-        if (isCacheableStatus(response.status)) {
-          reqCtx.waitUntil(async () => {
-            try {
-              await store.putResponse!(
-                cacheKey,
-                response.clone(),
-                cacheScope!.ttl,
-                cacheScope!.swr,
-                responseTags,
-              );
-            } catch (error) {
-              console.error(`[ResponseCache] Cache write failed:`, error);
-            }
-          });
-        }
-
-        return applyPreHandlerCallbacks(response);
-      }
-    }
+    const cached = await serveResponseRouteWithCache({
+      reqCtx,
+      manifestEntry: preview.manifestEntry,
+      responseType: preview.responseType,
+      url,
+      executeHandler,
+      deps: { createCacheScope, resolveCacheTags },
+    });
+    if (cached !== undefined) return cached;
   }
 
   return executeHandler().then(finalizeResponse);

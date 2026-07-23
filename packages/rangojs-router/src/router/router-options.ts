@@ -1,16 +1,20 @@
 import type { ComponentType, ReactNode } from "react";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheSearchParams } from "../cache/search-params-filter.js";
 import type {
   ErrorBoundaryHandler,
   NotFoundBoundaryHandler,
   OnErrorCallback,
 } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
+import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
+import type { PrefetchStrategy } from "./prefetch-default.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { RouterTracingConfig } from "./tracing.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
@@ -125,14 +129,6 @@ export interface RangoOptions<TEnv = any> {
   debugPerformance?: boolean;
 
   /**
-   * Allow the `?__debug_manifest` query parameter to return route manifest data as JSON.
-   * In development mode this is always enabled regardless of this setting.
-   * Defaults to false. Set to true to enable in production.
-   * @internal
-   */
-  allowDebugManifest?: boolean;
-
-  /**
    * DEVELOPMENT/TEST ONLY. Emit an `X-Rango-Cache` response header describing
    * the cache status of the matched route, for use by testing primitives such
    * as `assertCacheStatus`.
@@ -146,6 +142,18 @@ export interface RangoOptions<TEnv = any> {
    * production — it exposes internal cache decisions.
    */
   debugCacheSignal?: boolean;
+
+  /**
+   * Debug sink for the PPR shell-capture pipeline (routes with the `ppr` path
+   * option). `true` logs one structured line per capture attempt/skip to
+   * console (visible via `wrangler tail`); a function receives each
+   * `ShellCaptureDebugEvent` (outcome per attempt, snapshot bytes,
+   * write-barrier wait, backoff state) for programmatic capture. Off by
+   * default; the events also mirror into the dev Server-Timing surface when
+   * `debugPerformance` is on. Intended for validating capture behavior on a
+   * real deployment, not steady-state production.
+   */
+  debugShellCapture?: ShellCaptureDebug;
 
   /**
    * Document component that wraps the entire application.
@@ -297,15 +305,37 @@ export interface RangoOptions<TEnv = any> {
    *   }),
    * });
    * ```
+   *
+   * `searchParams` controls which query params key the cache (default:
+   * `"all"`). Cache keys only -- handlers still see the full query string.
+   * Excluding a param is a promise that rendered output does not depend on
+   * it; if it does, the first variant is cached and served to everyone.
+   *
+   * @example Ignore tracking params for cache keys
+   * ```typescript
+   * import { TRACKING_SEARCH_PARAMS } from "@rangojs/router";
+   *
+   * const router = createRouter({
+   *   cache: {
+   *     store: cacheStore,
+   *     searchParams: { exclude: TRACKING_SEARCH_PARAMS },
+   *   },
+   * });
+   * ```
    */
   cache?:
-    | { store: SegmentCacheStore; enabled?: boolean }
+    | {
+        store: SegmentCacheStore;
+        enabled?: boolean;
+        searchParams?: CacheSearchParams;
+      }
     | ((
         env: TEnv,
         ctx?: ExecutionContext,
       ) => {
         store: SegmentCacheStore;
         enabled?: boolean;
+        searchParams?: CacheSearchParams;
       });
 
   /**
@@ -497,6 +527,70 @@ export interface RangoOptions<TEnv = any> {
   prefetchCacheTTL?: number | false;
 
   /**
+   * Maximum number of decoded prefetch payloads the client keeps in its
+   * in-memory prefetch cache. When the cache is full the oldest entry is
+   * evicted (FIFO) to make room for a new prefetch.
+   *
+   * Each entry retains a fully decoded RSC payload (and the route's client
+   * chunks pulled in while decoding), so this is the lever on client-side
+   * prefetch memory: a higher value warms more routes at the cost of more
+   * retained payloads. Staleness is bounded separately by `prefetchCacheTTL`;
+   * this bounds the entry COUNT.
+   *
+   * Values below 1 (or non-finite) fall back to the default. To turn
+   * prefetching off entirely, set `prefetchCacheTTL: false` instead.
+   *
+   * @default 100
+   */
+  prefetchCacheSize?: number;
+
+  /**
+   * Maximum number of speculative prefetch requests (viewport/render strategy)
+   * the client runs concurrently. Hover prefetches bypass this queue and fire
+   * immediately; this caps only the background, idle-gated queue so prefetches
+   * never saturate the browser's connection pool.
+   *
+   * Values below 1 (or non-finite) fall back to the default.
+   *
+   * @default 2
+   */
+  prefetchConcurrency?: number;
+
+  /**
+   * Default prefetch strategy for every `<Link>` that does not set its own
+   * `prefetch` prop and every eligible intercepted plain anchor. Plain anchors
+   * can opt out with `data-prefetch="false"` or `data-prefetch="none"`. Common
+   * static-resource suffixes are excluded unless `data-prefetch="true"` marks
+   * the URL as an application route. Mark side-effectful GET links such as
+   * `/logout` with an opt-out because the router cannot infer endpoint safety.
+   * A per-Link `prefetch` prop always wins in both directions (a Link can opt
+   * out with `prefetch="none"`, or opt in under `defaultPrefetch: "none"`).
+   *
+   * - `"viewport"` (production default): prefetch when the link enters the viewport —
+   *   idle-gated and queued (see `prefetchConcurrency`), so prefetches never
+   *   compete with hydration or an active navigation.
+   * - `"hover"`: prefetch on mouse enter only. Much lighter on the server —
+   *   only links the pointer approaches are fetched — at the cost of the
+   *   ~100-300ms head start viewport prefetch gives.
+   * - `"adaptive"`: `"hover"` on pointer devices, `"viewport"` on touch
+   *   devices (no hover to wait for).
+   * - `"render"`: prefetch on mount regardless of visibility.
+   * - `"none"`: manual mode — nothing prefetches unless a Link opts in.
+   *
+   * Automatic prefetch defaults to `"none"` in development and `"viewport"`
+   * in production. With the production default, every visible Link triggers an
+   * RSC render (loaders included) on the server. Routes served from cache/PPR
+   * absorb this cheaply; per-user dynamic routes pay full price per viewport
+   * entry. Set `"hover"`, `"adaptive"`, or `"none"` when that cost matters.
+   *
+   * To disable the prefetch subsystem entirely (including per-Link opt-ins
+   * and `useRouter().prefetch()`), set `prefetchCacheTTL: false` instead.
+   *
+   * @default "none" in development; "viewport" in production
+   */
+  defaultPrefetch?: PrefetchStrategy;
+
+  /**
    * Prefix for the rango state cookie name. The resolved name is
    * `{prefix}_{routerId}`; the prefix is sanitized to cookie-name-safe
    * characters (`[A-Za-z0-9-]`) and an empty result falls back to the default.
@@ -521,6 +615,29 @@ export interface RangoOptions<TEnv = any> {
    * @default true
    */
   warmup?: boolean;
+
+  /**
+   * Wrap the hydrated client tree in `React.StrictMode`.
+   *
+   * The Rango browser entry hydrates the app inside `<React.StrictMode>` by
+   * default. StrictMode double-invokes render and (in development) mounts,
+   * unmounts, then remounts every effect to surface impure renders and missing
+   * effect cleanup. Production builds treat StrictMode as a no-op, so this flag
+   * only changes development behavior in a normal app.
+   *
+   * Set to `false` to hydrate without the StrictMode wrapper. The main reason to
+   * opt out is to isolate StrictMode's intentional double-render/double-effect
+   * from genuine re-renders when measuring client-hook stability — with
+   * StrictMode off, render counts are exact in development too.
+   *
+   * The value is resolved server-side at router creation and shipped to the
+   * client in the initial payload metadata; the browser entry reads it once at
+   * hydration. Changing it does not affect the SSR HTML (StrictMode emits no
+   * DOM), so toggling it never causes a hydration mismatch.
+   *
+   * @default true
+   */
+  strictMode?: boolean;
 
   /**
    * Shorthand timeout (ms) applied to both action execution and render start.
@@ -574,11 +691,14 @@ export interface RangoOptions<TEnv = any> {
   onTimeout?: OnTimeoutCallback<TEnv>;
 
   /**
-   * Telemetry sink for structured lifecycle events.
+   * Telemetry sink for structured, discrete lifecycle EVENTS: request
+   * start/end/error, loader start/end/error, handler errors, cache decisions,
+   * revalidation decisions, timeouts, origin rejections.
    *
-   * When provided, the router emits events for request start/end,
-   * loader start/end/error, handler errors, cache decisions, and
-   * revalidation decisions.
+   * This is the EVENT surface. Phase-duration SPANS (request/middleware/action/
+   * handler/loader/render/ssr timing wired into a tracing backend) come from the
+   * separate `tracing` option below — a sink does not emit them, because async-context nesting
+   * cannot be faithfully reconstructed from after-the-fact start/end events.
    *
    * No-op when not configured (zero overhead).
    *
@@ -588,6 +708,18 @@ export interface RangoOptions<TEnv = any> {
    *
    * const router = createRouter({
    *   telemetry: createConsoleSink(),
+   * });
+   * ```
+   *
+   * @example OpenTelemetry — pair the event sink with the tracing slot
+   * ```typescript
+   * import { createOTelTracing, createOTelSink } from "@rangojs/router";
+   * import { trace } from "@opentelemetry/api";
+   *
+   * const tracer = trace.getTracer("my-app");
+   * const router = createRouter({
+   *   tracing: createOTelTracing(tracer), // phase spans
+   *   telemetry: createOTelSink(tracer), // discrete-fact events
    * });
    * ```
    *
@@ -603,6 +735,44 @@ export interface RangoOptions<TEnv = any> {
    * ```
    */
   telemetry?: TelemetrySink;
+
+  /**
+   * Span tracing for the router's performance phases (request, middleware, action,
+   * loaders, render, ssr). Connects the same phases shown in the
+   * `debugPerformance` timeline to the host platform's tracing system. This is
+   * the SPAN surface (the `telemetry` option above is the event surface).
+   *
+   * Two factories produce a config, both for this slot:
+   * - `createOTelTracing(tracer)` from `@rangojs/router` — any platform with an
+   *   OpenTelemetry SDK (including Node). Bridges the phases onto
+   *   `tracer.startActiveSpan`.
+   * - `createCloudflareTracing()` from `@rangojs/router/cloudflare` — Cloudflare
+   *   Workers native custom spans, alongside the automatic KV/D1/fetch spans.
+   *
+   * When tracing is unset — or off-platform (no OTel SDK / no Cloudflare tracing
+   * destination) — every span call falls through to the work directly, so the
+   * request behaves exactly as if tracing were off.
+   *
+   * @example OpenTelemetry
+   * ```typescript
+   * import { createOTelTracing } from "@rangojs/router";
+   * import { trace } from "@opentelemetry/api";
+   *
+   * const router = createRouter({
+   *   tracing: createOTelTracing(trace.getTracer("my-app")),
+   * });
+   * ```
+   *
+   * @example Cloudflare
+   * ```typescript
+   * import { createCloudflareTracing } from "@rangojs/router/cloudflare";
+   *
+   * const router = createRouter({
+   *   tracing: createCloudflareTracing({ spans: { ssr: false } }),
+   * });
+   * ```
+   */
+  tracing?: RouterTracingConfig;
 
   /**
    * SSR configuration options.

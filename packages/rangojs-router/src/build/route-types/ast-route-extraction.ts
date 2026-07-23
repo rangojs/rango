@@ -15,19 +15,26 @@ import { extractParamsFromPattern } from "./param-extraction.js";
  * the pattern, name, params, and optional search schema from each.
  * Skips unnamed paths (no { name: "..." }).
  */
-export function extractRoutesFromSource(code: string): Array<{
+export function extractRoutesFromSource(
+  code: string,
+  sourceFileArg?: ts.SourceFile,
+): Array<{
   name: string;
   pattern: string;
   params?: Record<string, string>;
   search?: Record<string, string>;
 }> {
-  const sourceFile = ts.createSourceFile(
-    "input.tsx",
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
+  // Reuse a caller-provided SourceFile (parsed once per scan) when given;
+  // otherwise parse the block here. The walk does not mutate the tree.
+  const sourceFile =
+    sourceFileArg ??
+    ts.createSourceFile(
+      "input.tsx",
+      code,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
   const routes: Array<{
     name: string;
     pattern: string;

@@ -8,29 +8,53 @@
  */
 
 import type { EntryData } from "../../server/context";
+import { getRequestContext } from "../../server/request-context.js";
 
 /**
- * Resolve the effective `viewTransition` for a segment's transition config.
+ * Resolve a segment's transition config: stamp the `viewTransition` default and
+ * peel off a transition({ when }) predicate.
  *
- * The per-segment value (set via the transition() DSL) always wins. When it is
- * unset, the router-level createRouter({ viewTransition }) default is stamped
- * in so the render gate reads the boundary decision off the segment — server
- * and client, via the serialized segment — without the router option being
- * threaded to the client. Only `false` is ever stamped; an unset (or "auto")
- * value is left untouched because it already means "wrap" at the gate, which
- * also avoids needless object allocation and payload growth. Used by both the
- * fresh and revalidation resolution paths.
+ * `viewTransition`: the per-segment value (set via the transition() DSL) always
+ * wins. When it is unset, the router-level createRouter({ viewTransition })
+ * default is stamped in so the render gate reads the boundary decision off the
+ * segment — server and client, via the serialized segment — without the router
+ * option being threaded to the client. Only `false` is ever stamped; an unset
+ * (or "auto") value is left untouched because it already means "wrap" at the
+ * gate, which also avoids needless object allocation and payload growth.
+ *
+ * `when`: a server-only predicate. It is STRIPPED from the returned config (a
+ * function cannot cross Flight or the segment cache). PPR routes evaluate it
+ * from the manifest before the pipeline; other routes record it here for the
+ * existing post-handler gate. Used by both fresh and revalidation resolution.
  */
 export function applyViewTransitionDefault(
   transition: EntryData["transition"],
   viewTransitionDefault: "auto" | false | undefined,
+  segmentId?: string,
 ): EntryData["transition"] {
   if (!transition) return transition;
-  if (
-    transition.viewTransition === undefined &&
-    viewTransitionDefault === false
-  ) {
-    return { ...transition, viewTransition: false };
+  let result = transition;
+  if (result.when) {
+    if (segmentId !== undefined) {
+      try {
+        const ctx = getRequestContext();
+        if (!ctx._pprTransitionDecisions?.has(segmentId)) {
+          (ctx._transitionWhen ??= []).push({
+            id: segmentId,
+            when: result.when,
+          });
+        }
+      } catch {
+        // No active request context (e.g. a unit test calling this util
+        // directly). Skip collection; the strip below still applies so the
+        // serialized config never carries the function.
+      }
+    }
+    const { when: _when, ...rest } = result;
+    result = rest;
   }
-  return transition;
+  if (result.viewTransition === undefined && viewTransitionDefault === false) {
+    return { ...result, viewTransition: false };
+  }
+  return result;
 }

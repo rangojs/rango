@@ -65,11 +65,28 @@ export interface RscMetadata {
    * Used to detect version mismatches after HMR/deployment.
    */
   version?: string;
+  /** Cloudflare dev worker generation used for stale-document convergence. */
+  devDiscoveryEpoch?: number;
   /**
    * TTL in milliseconds for the client-side in-memory prefetch cache.
    * Sent on initial render so the browser can configure its cache duration.
    */
   prefetchCacheTTL?: number;
+  /**
+   * Max entries in the client-side in-memory prefetch cache (FIFO eviction).
+   * Sent on initial render so the browser can configure its cache capacity.
+   */
+  prefetchCacheSize?: number;
+  /**
+   * Max concurrent speculative prefetch requests on the client.
+   * Sent on initial render so the browser can configure its prefetch queue.
+   */
+  prefetchConcurrency?: number;
+  /**
+   * Router-wide default prefetch strategy for Links without a `prefetch` prop.
+   * Sent on initial render; applied once at init (default-strategy.ts).
+   */
+  defaultPrefetch?: import("../router/prefetch-default.js").PrefetchStrategy;
   /**
    * Server-resolved rango state cookie name (`{prefix}_{routerId}`). The client
    * reads it verbatim and binds the rango state cookie to it; composition
@@ -90,8 +107,18 @@ export interface RscMetadata {
   basename?: string;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
-  /** Server-side redirect with optional state (for partial requests) */
-  redirect?: { url: string };
+  /**
+   * Whether the client should hydrate inside React.StrictMode. Carried on the
+   * initial full-render payload only; the browser entry reads it once at
+   * hydration. Defaults to true on the client when omitted.
+   */
+  strictMode?: boolean;
+  /**
+   * Server-side redirect with optional state (for partial requests).
+   * `external: true` (from redirect(url, { external: true })) tells the client
+   * to hard-navigate to an off-host target instead of validating same-origin.
+   */
+  redirect?: { url: string; external?: boolean };
   /** Server-set location state to include in history.pushState */
   locationState?: Record<string, unknown>;
 }
@@ -410,24 +437,10 @@ export type StateListener = () => void;
 /**
  * Navigation store interface
  *
- * Manages both:
- * - NavigationState: Public state exposed via useNavigation hook
- * - SegmentState: Internal segment management for partial updates
+ * Owns segment state, history snapshots, and partial-update notifications.
+ * EventController owns the public navigation lifecycle exposed by hooks.
  */
 export interface NavigationStore {
-  // Public state (for useNavigation hook)
-  getState(): NavigationState;
-  setState(partial: Partial<NavigationState>): void;
-  subscribe(listener: StateListener): () => void;
-
-  // Inflight action management
-  addInflightAction(action: InflightAction): void;
-  removeInflightAction(id: string): void;
-
-  // Action state (for controlling update behavior during server actions)
-  isActionInProgress(): boolean;
-  setActionInProgress(value: boolean): void;
-
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;
@@ -437,6 +450,8 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
+  /** Monotonic token of the most recently committed navigation. */
+  getNavInstance(): number;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
@@ -448,11 +463,40 @@ export interface NavigationStore {
         stale: boolean;
         handleData?: HandleData;
         routerId?: string;
+        /**
+         * True when the entry's handle data is incomplete (a deferred Meta was
+         * still pending at navigate-away). A popstate return must revalidate with
+         * a FULL re-render so the server re-streams handles.
+         */
+        handlesPending?: boolean;
       }
     | undefined;
   hasHistoryCache(historyKey: string): boolean;
-  updateCacheHandleData(historyKey: string, handleData: HandleData): void;
-  markCacheAsStale(): void;
+  /**
+   * Update only the handleData (and optionally the stale / handlesPending flags)
+   * of an existing cache entry. When a flag is omitted the entry's current value
+   * is preserved. `stale=true` marks a single entry stale so a popstate return
+   * revalidates it; `handlesPending=true` additionally forces that revalidation
+   * to be a full re-render (so a deferred Meta re-streams).
+   */
+  updateCacheHandleData(
+    historyKey: string,
+    handleData: HandleData,
+    stale?: boolean,
+    handlesPending?: boolean,
+  ): void;
+  /**
+   * Owner-guarded variant of updateCacheHandleData: writes only when the entry
+   * is still owned by `ownerInstance`. Folds the caller's separate ownership
+   * probe and write into one historyCache scan for the per-yield streaming path.
+   */
+  updateCacheHandleDataIfOwned(
+    historyKey: string,
+    handleData: HandleData,
+    ownerInstance: number,
+    stale?: boolean,
+    handlesPending?: boolean,
+  ): void;
   markHistoryCacheStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
@@ -471,14 +515,6 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
-
-  // Action state tracking (for useAction hook)
-  getActionState(actionId: string): TrackedActionState;
-  setActionState(actionId: string, state: Partial<TrackedActionState>): void;
-  subscribeToAction(
-    actionId: string,
-    listener: ActionStateListener,
-  ): () => void;
 }
 
 // ============================================================================
@@ -511,6 +547,15 @@ export interface FetchPartialResult {
   payload: RscPayload;
   /** Promise that resolves when the response stream is fully consumed */
   streamComplete: Promise<void>;
+  /**
+   * True only when this payload came from a prefetch-cache hit whose stream had
+   * ALREADY fully drained at fetch time (the route was fully prefetched). The
+   * commit then runs in a startTransition so loading()/Suspense content — already
+   * resolved — swaps in directly without flashing a fallback. A partially-warmed
+   * (still-streaming) prefetch hit and a cold fetch leave this false so their
+   * fallbacks stream as usual.
+   */
+  fullyPrefetched?: boolean;
 }
 
 /**
@@ -568,6 +613,7 @@ export interface NavigationBridge {
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
+  registerDelegatedPrefetch(): () => void;
   /** Current RSC version (live, reflects the latest updateVersion). */
   getVersion(): string | undefined;
   /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */

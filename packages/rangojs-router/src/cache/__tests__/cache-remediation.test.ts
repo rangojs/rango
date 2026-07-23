@@ -64,6 +64,44 @@ describe("cache profile validation", () => {
     expect(resolved.default.ttl).toBe(42);
   });
 
+  // ttl/swr VALUE validation: a NaN ttl flows into computeExpiration and yields
+  // staleAt/expiresAt = NaN, so the entry never evicts and never revalidates
+  // (served fresh forever, unbounded growth). Reject non-finite/negative values
+  // at config time instead of producing a permanently-fresh runtime entry.
+  it("rejects a NaN ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: NaN } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects an Infinity ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: Infinity } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects a negative ttl", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: -5 } })).toThrow(
+      /Invalid cache profile "fast": ttl/,
+    );
+  });
+
+  it("rejects a non-finite swr", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 60, swr: NaN } })).toThrow(
+      /Invalid cache profile "fast": swr/,
+    );
+  });
+
+  it("rejects a negative swr", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 60, swr: -1 } })).toThrow(
+      /Invalid cache profile "fast": swr/,
+    );
+  });
+
+  it("accepts ttl 0 and swr undefined (valid edge values)", () => {
+    expect(() => resolveCacheProfiles({ fast: { ttl: 0 } })).not.toThrow();
+  });
+
   describe("resolveCacheProfiles", () => {
     it("returns default profile when called with undefined", () => {
       const resolved = resolveCacheProfiles(undefined);
@@ -313,11 +351,11 @@ describe("cache key search param handling (via CacheScope)", () => {
     expect(key1).not.toBe(key2);
   });
 
-  it("excludes _rsc* and __* params from key", async () => {
+  it("excludes _rsc* and the reserved __no_cache param but keeps consumer __ params (A4)", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
     mockGetRequestContext.mockReturnValue(
-      makeRequestContext("?page=1&_rsc_partial=1&__debug=true"),
+      makeRequestContext("?page=1&_rsc_partial=1&__no_cache=1&__variant=a"),
     );
     const scope = new CacheScope({ store } as any);
     await scope.lookupRoute("/test", {});
@@ -325,7 +363,10 @@ describe("cache key search param handling (via CacheScope)", () => {
 
     expect(key).toContain("page=1");
     expect(key).not.toContain("_rsc");
-    expect(key).not.toContain("__debug");
+    // __no_cache is reserved (handler bypass flag) and filtered; a `__`-prefixed
+    // consumer param is NOT reserved and must key the cache.
+    expect(key).not.toContain("__no_cache");
+    expect(key).toContain("__variant=a");
   });
 
   it("sorts params deterministically", async () => {
@@ -477,5 +518,40 @@ describe("segment self-heal (corrupt cached segments via CacheScope)", () => {
     expect(result).toBeNull(); // degrade to a miss
     expect(store.delete).toHaveBeenCalled(); // faulty entry self-healed
     expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+  });
+
+  it("notifies replay when the seeded document record is corrupt", async () => {
+    const onCorrupt = vi.fn();
+    const url = new URL("http://localhost/test");
+    const reqCtx = {
+      url,
+      originalUrl: new URL(url),
+      searchParams: url.searchParams,
+      _cacheStore: null,
+      _handleStore: null,
+      _shellImplicitCache: { onCorrupt },
+    };
+    mockGetRequestContext.mockReturnValue(reqCtx);
+    mock_getRequestContext.mockReturnValue(reqCtx);
+
+    const store = {
+      get: vi.fn().mockResolvedValue({
+        data: { segments: ["truncated"], handles: "" },
+        shouldRevalidate: false,
+      }),
+      set: vi.fn(),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+    const { deserializeSegments } = await import("../segment-codec.js");
+    vi.mocked(deserializeSegments).mockRejectedValueOnce(
+      new Error("truncated segment payload"),
+    );
+
+    const scope = new CacheScope({ store } as any, null, "doc");
+    const result = await scope.lookupRoute("/test", {});
+
+    expect(result).toBeNull();
+    expect(store.delete).toHaveBeenCalledTimes(1);
+    expect(onCorrupt).toHaveBeenCalledTimes(1);
   });
 });

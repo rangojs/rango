@@ -20,9 +20,10 @@ top-level [`@rolldown/plugin-babel`](https://www.npmjs.com/package/@rolldown/plu
 running `reactCompilerPreset()` from `@vitejs/plugin-react`.
 
 Ordering matters: the babel plugin goes **after `react()`** and **before** the
-plugin that supplies `@vitejs/plugin-rsc`. For the default (non-Cloudflare) preset
-that plugin is `rango()` itself; for the `cloudflare` preset it is
-`@cloudflare/vite-plugin`.
+plugin that supplies `@vitejs/plugin-rsc`. For both presets that plugin is
+`rango()` itself — for the `cloudflare` preset, `rango()` adds `@vitejs/plugin-rsc`
+with `serverHandler: false` (the `@cloudflare/vite-plugin` owns the worker/RSC
+runtime entry, but does not supply `@vitejs/plugin-rsc`).
 
 ## What gets compiled (client-only)
 
@@ -80,10 +81,10 @@ export default defineConfig({
   plugins: [
     react(),
     babel({ presets: [reactCompilerPreset()] }),
-    rango({ preset: "cloudflare" }),
+    rango({ preset: "cloudflare" }), // supplies @vitejs/plugin-rsc (serverHandler: false)
     cloudflare({
       /* ... */
-    }), // supplies @vitejs/plugin-rsc
+    }),
   ],
 });
 ```

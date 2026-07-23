@@ -1,14 +1,17 @@
 import type { Plugin, ResolvedConfig } from "vite";
 import * as Vite from "vite";
+import { isAbsolute, resolve } from "node:path";
 import { getPublishedPackageName } from "./package-resolution.js";
 import { performanceTracksOptimizeDepsPlugin } from "../plugins/performance-tracks.js";
 import {
   VIRTUAL_ENTRY_BROWSER,
-  VIRTUAL_ENTRY_SSR,
+  getVirtualEntrySSR,
   getVirtualEntryRSC,
+  getVirtualEntryRSCHost,
   getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
+import type { HeadScriptsOption } from "../plugin-types.js";
 
 // Cloudflare preset: @cloudflare/vite-plugin sets optimizeDeps.entries (string
 // or array) on the rsc environment. Single source for both the discovery plugin
@@ -55,12 +58,59 @@ export const sharedRolldownOptions: {
 };
 
 /**
+ * Normalize an explicit `hostRouter` option into the specifier emitted as the
+ * host entry's `import ... from "<path>"`, and — for the forms that resolve
+ * unambiguously against the project root — verify the file exists (failing with
+ * a rango message instead of a downstream bundler "failed to resolve").
+ *
+ * Only a BARE specifier ("src/worker.rsc.tsx") that exists under the root is
+ * rewritten (to "./src/...") so it is not read as a package. A bare specifier
+ * that does NOT exist under the root is passed through VERBATIM: it may be a
+ * Vite alias ("@/worker.rsc.tsx"), an imports-map entry ("#app/worker"), or a
+ * workspace package the bundler resolves — rewriting or rejecting those was a
+ * regression (aliases worked before normalization existed). "./"/"../", a
+ * leading-slash (Vite root-relative), and a filesystem-absolute path are
+ * emitted unchanged — Vite resolves each. A leading-slash path and a
+ * filesystem-absolute path are indistinguishable on POSIX, so both are treated
+ * as "rooted": passed through WITHOUT an existence check (guessing between the
+ * two would wrongly reject a valid file — this was a regression the first time
+ * the check was added). Only the explicitly-relative forms, which resolve
+ * unambiguously against the root, fail fast with a rango message.
+ *
+ * `exists` is injected so the logic is unit-testable without a real filesystem.
+ */
+export function normalizeHostRouterEntry(
+  rawInput: string,
+  root: string,
+  exists: (absPath: string) => boolean,
+): string {
+  const raw = rawInput.replaceAll("\\", "/");
+  const isRelative = raw.startsWith("./") || raw.startsWith("../");
+  const isRooted = raw.startsWith("/") || isAbsolute(rawInput);
+  if (isRooted) return raw;
+  if (isRelative) {
+    if (!exists(resolve(root, raw))) {
+      throw new Error(
+        `[rango] hostRouter entry not found: "${rawInput}" (resolved under ` +
+          `${root}). Point it at your createHostRouter() module, e.g. ` +
+          `rango({ hostRouter: "./src/worker.rsc.tsx" }).`,
+      );
+    }
+    return raw;
+  }
+  // Bare specifier: an existing root-relative file gets the explicit "./";
+  // anything else (alias, imports-map, package) is the bundler's to resolve.
+  return exists(resolve(root, raw)) ? "./" + raw : raw;
+}
+
+/**
  * Create a virtual modules plugin for default entry files.
  * Provides virtual module content when entries use VIRTUAL_IDS (no custom entry configured).
  */
 export function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  routerPathRef?: { path?: string },
+  routerPathRef?: { path?: string; kind?: "router" | "host" },
+  options?: { headScripts?: HeadScriptsOption },
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -69,7 +119,7 @@ export function createVirtualEntriesPlugin(
     virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
   }
   if (entries.ssr === VIRTUAL_IDS.ssr) {
-    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+    virtualModules[VIRTUAL_IDS.ssr] = getVirtualEntrySSR(options?.headScripts);
   }
 
   // RSC entry is resolved lazily in load() because routerPath may be
@@ -108,7 +158,9 @@ export function createVirtualEntriesPlugin(
             : routerPathRef.path;
           // Normalize backslashes for Windows (path.join/slice preserve native separators)
           const absoluteRouterPath = raw.replaceAll("\\", "/");
-          return getVirtualEntryRSC(absoluteRouterPath);
+          return routerPathRef.kind === "host"
+            ? getVirtualEntryRSCHost(absoluteRouterPath)
+            : getVirtualEntryRSC(absoluteRouterPath);
         }
       }
       return null;
@@ -200,6 +252,13 @@ export function onwarn(
 export function getManualChunks(id: string): string | undefined {
   const normalized = Vite.normalizePath(id);
 
+  if (
+    /\/browser\/prefetch\/(?:runtime|fetch|queue|observer|policy|resource-ready)\.[cm]?[jt]sx?(?:[?#].*)?$/.test(
+      normalized,
+    )
+  ) {
+    return undefined;
+  }
   if (
     normalized.includes("node_modules/react/") ||
     normalized.includes("node_modules/react-dom/") ||

@@ -88,7 +88,7 @@ export function hasContextVars(variables: object): boolean {
  */
 const NON_CACHEABLE_KEYS: unique symbol = Symbol.for(
   "rango:non-cacheable-keys",
-) as any;
+);
 
 function getNonCacheableKeys(variables: any): Set<string | symbol> {
   if (!variables[NON_CACHEABLE_KEYS]) {

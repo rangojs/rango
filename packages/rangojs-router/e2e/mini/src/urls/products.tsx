@@ -52,7 +52,6 @@ export const productsPatterns = urls(
     layout,
     parallel,
     intercept,
-    when,
     loader,
     loading,
     transition,
@@ -174,7 +173,7 @@ export const productsPatterns = urls(
               </div>
             );
           },
-          () => [when(({ from }) => from.pathname === "/products")],
+          { when: ({ from }) => from.pathname === "/products" },
         ),
       ],
     ),

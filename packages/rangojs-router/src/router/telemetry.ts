@@ -38,6 +38,14 @@ export interface RequestEndEvent extends BaseEvent {
   durationMs: number;
   segmentCount: number;
   cacheHit: boolean;
+  /**
+   * HTTP status when a Response ended the transaction — a thrown-Response
+   * short-circuit (redirect / auth gate carries the Response's status, e.g. 302),
+   * or dispatch()'s final response status. Absent for a normal render completion:
+   * the Response is built after match(), so match()/matchPartial() have no status
+   * to stamp there. Lets a sink split 3xx short-circuits from 2xx completions.
+   */
+  status?: number;
 }
 
 export interface RequestErrorEvent extends BaseEvent {
@@ -146,6 +154,7 @@ export interface RequestTimeoutEvent extends BaseEvent {
   actionId?: string;
   durationMs: number;
   customHandler: boolean;
+  render?: import("./timeout.js").RenderTimeoutContext;
 }
 
 export interface OriginCheckRejectedEvent extends BaseEvent {
@@ -320,7 +329,7 @@ export function createConsoleSink(): TelemetrySink {
           break;
         case "request.end":
           console.log(
-            `[telemetry] ${event.type} ${event.method} ${event.pathname} ${event.durationMs.toFixed(1)}ms segments=${event.segmentCount} cache=${event.cacheHit}`,
+            `[telemetry] ${event.type} ${event.method} ${event.pathname} ${event.durationMs.toFixed(1)}ms segments=${event.segmentCount} cache=${event.cacheHit}${event.status !== undefined ? ` status=${event.status}` : ""}`,
           );
           break;
         case "request.error":

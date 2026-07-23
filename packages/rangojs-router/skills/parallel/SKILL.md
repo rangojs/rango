@@ -1,12 +1,19 @@
 ---
 name: parallel
-description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router
+description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router. Use when a layout needs multiple independently-loading regions (e.g. a sidebar and main panel), or rendering more than one route segment at the same URL.
 argument-hint: [@slot-name]
 ---
 
 # Parallel Routes
 
 Parallel routes render multiple components simultaneously in named slots.
+
+## Not this skill if…
+
+- You want a modal or slide-over that appears only on soft navigation and shows
+  the full page on hard navigation — that is `intercept()`: see `/intercept`.
+- You want a slot rendered conditionally on HOW the user navigated — parallel
+  slots ALWAYS render alongside the page; see `/intercept`.
 
 ## Basic Parallel Routes
 
@@ -232,6 +239,8 @@ layout(<AccountLayout />, () => [
 
 A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an independent streaming unit, exactly as in the **Streaming Behavior** section above.
 
+Under a shared artifact (`cache()`, `"use cache"`, a PPR shell), the server-side `await ctx.use(CartLoader)` above is the BAKED lane — the capture-time value (identity reads included) freezes into the artifact; consume the loader client-side (`useLoader` in a `"use client"` component) to keep the slot live per request. One rule, stated once: `/rango` → Invariants ("the consumption-lane rule").
+
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
 `transition` is allowed in the slot allow-list, but slot-level rendering does **not** currently apply a `<ViewTransition>` wrapper — only the layout/route wraps take effect at render time. For a modal-only morph today, use an element-level React `<ViewTransition>` inside the slot's component. The reverse direction is the useful guarantee: a layout-level `transition()` fires when the layout's default outlet content changes but **not** when a `<ParallelOutlet />` mounts new content (modal opens are not subtree updates of the layout VT). See [skills/view-transitions](../view-transitions/SKILL.md) for the wrap rules and the intercept caveat.
@@ -263,6 +272,8 @@ parallel(
 ```
 
 Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items. See [skills/handler-use § `loading()` is a single-assignment item — scope it correctly](../handler-use/SKILL.md#loading-is-a-single-assignment-item--scope-it-correctly) for the full reasoning.
+
+Both a bare arrow slot handler (`"@cart": (ctx) => ...`) and an arrow inside a descriptor (`handler: (ctx) => ...`) infer their `ctx`; no explicit annotation is needed.
 
 ## Slot Override Semantics
 
@@ -344,9 +355,17 @@ parallel(
 )
 ```
 
-Revalidating only the parallel does not re-run outer handlers/layouts.
-If the slot reads `ctx.get()` data established above it, opt the outer
-segment into revalidation as well.
+Where the slot sits decides its action default. A parallel under a
+`path()` (or one of its orphan layouts) belongs to the route entry and
+revalidates together with it on every action — handler-set data stays
+consistent with no configuration. A parallel under a standalone
+`layout()` entry follows the parent-chain default instead: skipped on
+actions unless a `revalidate()` opts it in.
+
+In either position, revalidating only the parallel does not re-run outer
+handlers/layouts. If the slot reads `ctx.get()` data established above
+it, opt the outer segment into revalidation as well (see `/rango` →
+"Passing data down the tree").
 
 A `revalidate()` callback may return a hard `boolean`, a soft
 `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` /

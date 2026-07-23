@@ -38,11 +38,15 @@ the route tree is built.
 | Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition.ts` |
 | Needs a parent entry          | `intercept()` at root level          | `route-definition.ts` |
 
-### when()
+### `when` (intercept config)
 
-| Rule                                           | Example                            | Guard location        |
-| ---------------------------------------------- | ---------------------------------- | --------------------- |
-| Can only be used inside `intercept()` callback | `path("/a", A, () => [when(...)])` | `route-definition.ts` |
+The match-time selector is the `when` field of the `intercept()` config object
+(4th argument), not a standalone DSL helper. It is a single predicate or an
+array of predicates (AND logic); omit it to always activate.
+
+| Rule                                             | Example                                                     | Guard location        |
+| ------------------------------------------------ | ----------------------------------------------------------- | --------------------- |
+| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from }) => ... })` | `route-definition.ts` |
 
 ### Route names
 
@@ -204,7 +208,7 @@ inside `layout` inside `path`) are NOT caught because the direct child
 
 - `path()` (RouteItem) is not in `RouteUseItem` — direct path-in-path caught
 - `path()` is not in `ParallelUseItem` — cannot be inside parallel
-- `when()` (WhenItem) is not in `RouteUseItem` or `LayoutUseItem` — only in intercept
+- `when` is the `intercept()` config field (`InterceptConfig`), not a use-item — it cannot appear in any use callback
 - `parallel()` is not in `ParallelUseItem` — cannot nest
 - `intercept()` is not in `ParallelUseItem` — cannot be inside parallel
 

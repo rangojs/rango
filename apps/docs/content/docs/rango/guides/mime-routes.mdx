@@ -1,0 +1,129 @@
+---
+title: MIME Routes
+description: Serve different response types — RSC, JSON, text, XML — from the same URL, dispatched on the Accept header.
+type: guide
+---
+
+One URL often has two audiences: browsers want the page, API clients want JSON. Content negotiation lets you register multiple response types on the same URL pattern — the router inspects the `Accept` header and dispatches to the matching handler, and every negotiated response carries `Vary: Accept` so CDNs and HTTP caches store each variant separately.
+
+## Two handlers, one URL
+
+Declare the same pattern with an RSC route and a response-type route. Order within the `urls()` array does not matter — the trie merges them at build time:
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path }) => [
+  // RSC page + JSON API on the same URL
+  path("/products/:id", ProductPage, { name: "product" }),
+  path.json(
+    "/products/:id",
+    (ctx) => {
+      return db.getProduct(ctx.params.id);
+    },
+    { name: "productJson" },
+  ),
+]);
+```
+
+When a browser requests `/products/42` (`Accept: text/html`), the RSC page renders. When an API client requests the same URL with `Accept: application/json`, the JSON handler runs.
+
+## How the router picks
+
+1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC).
+2. **Client order tiebreaker** — when q-values are equal, the type listed first in Accept wins (matches Express/Hono behavior).
+3. **Specific MIME match** — the variant whose MIME type appears in Accept wins.
+4. **Wildcard / empty Accept** — `*/*` and a missing Accept header fall back to route definition order (the first-defined variant wins).
+5. **All responses** on a negotiated URL get the `Vary: Accept` header, including the RSC side.
+
+RSC participates as a `text/html` candidate alongside the response-type variants. There is no special short-circuit — RSC follows the same negotiation rules as every other type.
+
+The MIME mapping used for matching:
+
+| Tag                  | MIME type                                                    |
+| -------------------- | ------------------------------------------------------------ |
+| RSC (plain `path()`) | `text/html` (negotiation) / `text/x-component` (wire format) |
+| `json`               | `application/json`                                           |
+| `text`               | `text/plain`                                                 |
+| `xml`                | `application/xml`                                            |
+| `html`               | `text/html`                                                  |
+| `md`                 | `text/markdown`                                              |
+
+One subtlety worth knowing: RSC routes negotiate as `text/html` but respond with `text/x-component`, the RSC wire format. The browser's RSC runtime decodes this transparently — clients requesting `text/html` get the page rendered normally.
+
+The `image`, `stream`, and `any` tags are pass-through and do not participate in Accept matching.
+
+## More than two variants
+
+A single URL can carry an RSC route plus several response-type variants:
+
+```tsx
+export const urlpatterns = urls(({ path }) => [
+  path("/data", DataPage, { name: "data" }),
+  path.json("/data", () => ({ format: "json" }), { name: "dataJson" }),
+  path.text("/data", () => "plain text", { name: "dataText" }),
+  path.xml("/data", () => "<root>xml</root>", { name: "dataXml" }),
+]);
+```
+
+- `Accept: text/html` — RSC page
+- `Accept: application/json` — JSON handler
+- `Accept: text/plain` — text handler
+- `Accept: application/xml` — XML handler
+- `Accept: */*` — RSC page (the primary, since it was registered first)
+
+## Wildcard patterns
+
+Negotiation works with wildcard `/*` patterns too:
+
+```tsx
+path("/files/*", FileBrowserPage, { name: "files" }),
+path.json("/files/*", (ctx) => {
+  const filePath = ctx.params["*"];
+  return { entries: listDir(filePath) };
+}, { name: "filesJson" }),
+```
+
+## API-only negotiation (no RSC primary)
+
+Two or more response-type routes can share a URL without an RSC route. The last registered route becomes the primary; earlier ones become variants:
+
+```tsx
+path.json("/api/data", () => ({ format: "json" }), { name: "dataJson" }),
+path.text("/api/data", () => "plain text version", { name: "dataText" }),
+```
+
+Without an RSC primary there is no `text/html` candidate — the Accept header picks among the response-type candidates directly.
+
+## Typing negotiated responses
+
+`router.named-routes.gen.ts` validates route names, params, search, `href()`, and the `Rango.Path` type, but it does not carry response payload metadata. For MIME or response payload types, use one of these surfaces:
+
+- `RouteResponse<typeof patterns, "routeName">` for a specific response variant by route name. This is the clearest option when several MIME variants share one URL pattern.
+- `Rango.PathResponse<"/products/:id">` (ambient, no import) for global lookup by URL pattern or concrete path — after the app registers `typeof router.routeMap`:
+
+```tsx
+// router.tsx
+export const router = createRouter({ document: Document }).routes(urlpatterns);
+
+declare global {
+  namespace Rango {
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
+`RegisteredRoutes` is what exposes the richer routeMap entries containing response payload metadata. Without it, URL-pattern response lookup has paths but no payloads, so response types resolve to `never`.
+
+## Caching
+
+`Vary: Accept` is set automatically on all negotiated responses — CDNs and HTTP caches store separate entries per Accept header value. No additional cache configuration is needed for negotiated routes; the framework handles it.
+
+<Cards>
+  <Card href="/docs/rango/features/response-routes" title="Response Routes">
+    The base response-route API — path.json, path.text, and friends.
+  </Card>
+  <Card href="/docs/rango/guides/api-client" title="API Client">
+    A typed client for calling your negotiated JSON endpoints.
+  </Card>
+</Cards>

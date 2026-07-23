@@ -17,6 +17,11 @@ import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
 import { collectFallbackClientRefs } from "./collect-fallback-refs.js";
+import {
+  isIncludeProvider,
+  resolveIncludeModule,
+  type IncludeProvider,
+} from "../urls/include-provider.js";
 
 /**
  * Node in the prefix tree
@@ -61,13 +66,32 @@ export interface GeneratedManifest {
 // Merge tracked nested includes into `target`. Multiple includes can share a
 // fullPrefix (e.g. include("/", a), include("/", b)) — concat their routes and
 // Object.assign children rather than overwrite.
-function mergeIncludeNodes(
+async function mergeIncludeNodes(
   target: Record<string, PrefixTreeNode>,
   includes: TrackedInclude[],
-  buildChild: (include: TrackedInclude) => PrefixTreeNode,
-): void {
+  buildChild: (include: TrackedInclude) => Promise<PrefixTreeNode>,
+): Promise<void> {
   for (const include of includes) {
-    const node = buildChild(include);
+    let node: PrefixTreeNode;
+    try {
+      node = await buildChild(include);
+    } catch (err) {
+      // Discovery (build-time, and the dev trie-rebuild) populates the
+      // manifest / trie / generated types for the WHOLE app. A failing async
+      // include provider here — a broken import, a module that throws at eval —
+      // must HARD-FAIL, not be swallowed: swallowing produces a green build with
+      // the entire route group silently absent from the manifest/trie/types, so
+      // CI passes, the deploy ships, and every one of that group's URLs then
+      // 404s/500s in production. On main an eager include that threw failed the
+      // build loudly; the async form must keep that contract. Rethrow with the
+      // offending prefix so the failure is actionable. (Sibling isolation
+      // belongs at PER-REQUEST runtime — see find-match.ts — not at discovery.)
+      throw new Error(
+        `[@rangojs/router] Failed to resolve include at prefix "${include.fullPrefix}" ` +
+          `during route discovery: ${(err as Error)?.message ?? String(err)}`,
+        { cause: err },
+      );
+    }
     const existing = target[include.fullPrefix];
     if (existing) {
       existing.routes.push(...node.routes);
@@ -78,12 +102,11 @@ function mergeIncludeNodes(
   }
 }
 
-function buildPrefixTreeNode(
+async function buildPrefixTreeNode(
   urlPrefix: string,
   namePrefix: string | undefined,
-  patterns: UrlPatterns<any>,
+  patternsOrProvider: UrlPatterns<any> | IncludeProvider<any>,
   routeManifest: Record<string, string>,
-  routeAncestry: Record<string, string[]>, // internal: feeds trie building, not exported
   mountIndex: number,
   visited: Set<unknown> = new Set(),
   routeTrailingSlash?: Record<string, string>,
@@ -92,7 +115,15 @@ function buildPrefixTreeNode(
   passthroughRoutes?: string[],
   responseTypeRoutes?: Record<string, string>,
   routeSearchSchemas?: Record<string, Record<string, string>>,
-): PrefixTreeNode {
+  routerId?: string,
+): Promise<PrefixTreeNode> {
+  // Resolve an async include provider (`() => import("./routes")`) so its routes
+  // are walked into the build-time manifest/types/href. Runtime matching still
+  // defers the import via lazy-includes; this only runs during build/dev
+  // discovery, which is async.
+  const patterns: UrlPatterns<any> = isIncludeProvider(patternsOrProvider)
+    ? resolveIncludeModule(await patternsOrProvider(), urlPrefix)
+    : patternsOrProvider;
   if (visited.has(patterns)) {
     console.warn(
       `[@rangojs/router] Circular include detected at prefix "${urlPrefix}". Skipping.`,
@@ -106,137 +137,114 @@ function buildPrefixTreeNode(
     };
   }
   visited.add(patterns);
-  // Create context for running patterns with include tracking
-  const manifest = new Map<string, EntryData>();
-  const patternsMap = new Map<string, string>();
-  const patternsByPrefix = new Map<string, Map<string, string>>();
-  const trailingSlashMap = new Map<string, TrailingSlashMode>();
-  const searchSchemasMap = new Map<string, Record<string, string>>();
-  const trackedIncludes: TrackedInclude[] = [];
+  try {
+    // Create context for running patterns with include tracking
+    const manifest = new Map<string, EntryData>();
+    const patternsMap = new Map<string, string>();
+    const patternsByPrefix = new Map<string, Map<string, string>>();
+    const trailingSlashMap = new Map<string, TrailingSlashMode>();
+    const searchSchemasMap = new Map<string, Record<string, string>>();
+    const trackedIncludes: TrackedInclude[] = [];
 
-  RangoContext.run(
-    {
-      manifest,
-      patterns: patternsMap,
-      patternsByPrefix,
-      trailingSlash: trailingSlashMap,
-      searchSchemas: searchSchemasMap,
-      namespace: "build",
-      parent: null,
-      counters: {},
-      mountIndex,
-      trackedIncludes, // Enable nested include tracking
-    },
-    () => {
-      const helpers = createRouteHelpers();
-      // Wrap in root layout for correct parent hierarchy (matches runtime)
-      helpers.layout(MapRootLayout, () => {
-        if (urlPrefix || namePrefix) {
-          return runWithPrefixes(urlPrefix, namePrefix, () => {
-            return patterns.handler() as AllUseItems[];
-          });
-        }
-        return patterns.handler() as AllUseItems[];
-      });
-    },
-  );
+    RangoContext.run(
+      {
+        manifest,
+        patterns: patternsMap,
+        patternsByPrefix,
+        trailingSlash: trailingSlashMap,
+        searchSchemas: searchSchemasMap,
+        namespace: "build",
+        parent: null,
+        counters: {},
+        mountIndex,
+        ...(routerId ? { routerId } : {}),
+        trackedIncludes, // Enable nested include tracking
+      },
+      () => {
+        const helpers = createRouteHelpers();
+        // Wrap in root layout for correct parent hierarchy (matches runtime)
+        helpers.layout(MapRootLayout, () => {
+          if (urlPrefix || namePrefix) {
+            return runWithPrefixes(urlPrefix, namePrefix, () => {
+              return patterns.handler() as AllUseItems[];
+            });
+          }
+          return patterns.handler() as AllUseItems[];
+        });
+      },
+    );
 
-  // Collect route names defined in this include (routes have prefixes applied)
-  const routes: string[] = [];
-  for (const [name, pattern] of patternsMap.entries()) {
-    routes.push(name);
-    routeManifest[name] = pattern;
-  }
+    // Collect route names defined in this include (routes have prefixes applied)
+    const routes = [...patternsMap.keys()];
+    Object.assign(routeManifest, Object.fromEntries(patternsMap));
 
-  // Collect trailing slash config
-  if (routeTrailingSlash) {
-    for (const [name, mode] of trailingSlashMap.entries()) {
-      routeTrailingSlash[name] = mode;
+    // Collect trailing slash config
+    if (routeTrailingSlash) {
+      for (const [name, mode] of trailingSlashMap.entries()) {
+        routeTrailingSlash[name] = mode;
+      }
     }
-  }
-  if (routeSearchSchemas) {
-    for (const [name, schema] of searchSchemasMap.entries()) {
-      routeSearchSchemas[name] = schema;
+    if (routeSearchSchemas) {
+      for (const [name, schema] of searchSchemasMap.entries()) {
+        routeSearchSchemas[name] = schema;
+      }
     }
-  }
 
-  // Capture ancestry from manifest entries' parent chains
-  captureAncestry(manifest, routeAncestry);
-
-  // Collect prerender route names and handler definitions from manifest entries
-  if (prerenderRoutes) {
-    for (const [name, entry] of manifest) {
-      if (entry.type === "route" && entry.isPrerender) {
-        prerenderRoutes.push(name);
-        if (prerenderDefs && entry.prerenderDef) {
-          prerenderDefs[name] = entry.prerenderDef;
-        }
-        if (passthroughRoutes && entry.isPassthrough === true) {
-          passthroughRoutes.push(name);
+    // Collect prerender route names and handler definitions from manifest entries
+    if (prerenderRoutes) {
+      for (const [name, entry] of manifest) {
+        if (entry.type === "route" && entry.isPrerender) {
+          prerenderRoutes.push(name);
+          if (prerenderDefs && entry.prerenderDef) {
+            prerenderDefs[name] = entry.prerenderDef;
+          }
+          if (passthroughRoutes && entry.isPassthrough === true) {
+            passthroughRoutes.push(name);
+          }
         }
       }
     }
-  }
 
-  // Collect response type routes from manifest entries
-  if (responseTypeRoutes) {
-    for (const [name, entry] of manifest) {
-      if (entry.type === "route" && entry.responseType) {
-        responseTypeRoutes[name] = entry.responseType;
+    // Collect response type routes from manifest entries
+    if (responseTypeRoutes) {
+      for (const [name, entry] of manifest) {
+        if (entry.type === "route" && entry.responseType) {
+          responseTypeRoutes[name] = entry.responseType;
+        }
       }
     }
-  }
 
-  const children: Record<string, PrefixTreeNode> = {};
-  mergeIncludeNodes(children, trackedIncludes, (include) =>
-    buildPrefixTreeNode(
-      include.fullPrefix,
-      include.namePrefix,
-      include.patterns as UrlPatterns<any>,
-      routeManifest,
-      routeAncestry,
-      mountIndex,
-      visited,
-      routeTrailingSlash,
-      prerenderRoutes,
-      prerenderDefs,
-      passthroughRoutes,
-      responseTypeRoutes,
-      routeSearchSchemas,
-    ),
-  );
+    const children: Record<string, PrefixTreeNode> = {};
+    await mergeIncludeNodes(children, trackedIncludes, (include) =>
+      buildPrefixTreeNode(
+        include.fullPrefix,
+        include.namePrefix,
+        include.patterns as UrlPatterns<any> | IncludeProvider<any>,
+        routeManifest,
+        mountIndex,
+        visited,
+        routeTrailingSlash,
+        prerenderRoutes,
+        prerenderDefs,
+        passthroughRoutes,
+        responseTypeRoutes,
+        routeSearchSchemas,
+        routerId,
+      ),
+    );
 
-  // Remove from visited so sibling branches can reuse the same patterns
-  // without false circular-include detection. Only ancestors in the current
-  // recursion path should trigger the cycle guard.
-  visited.delete(patterns);
-
-  return {
-    staticPrefix: extractStaticPrefix(urlPrefix),
-    fullPrefix: urlPrefix,
-    namePrefix: namePrefix || undefined,
-    children,
-    routes,
-  };
-}
-
-/**
- * Walk parent chains of route entries to extract ancestry shortCodes.
- */
-function captureAncestry(
-  manifest: Map<string, EntryData>,
-  routeAncestry: Record<string, string[]>,
-): void {
-  for (const [routeName, entry] of manifest) {
-    if (entry.type === "route") {
-      const ancestry: string[] = [];
-      let current: EntryData | null = entry;
-      while (current) {
-        ancestry.unshift(current.shortCode);
-        current = current.parent;
-      }
-      routeAncestry[routeName] = ancestry;
-    }
+    return {
+      staticPrefix: extractStaticPrefix(urlPrefix),
+      fullPrefix: urlPrefix,
+      namePrefix: namePrefix || undefined,
+      children,
+      routes,
+    };
+  } finally {
+    // Remove from visited so sibling branches can reuse the same patterns without
+    // false circular-include detection — and so a throwing handler (caught by the
+    // parent mergeIncludeNodes) does not leak this entry into the shared set.
+    visited.delete(patterns);
   }
 }
 
@@ -245,7 +253,6 @@ function captureAncestry(
  * Not part of the public API — use generateManifest() for the public surface.
  */
 export interface FullManifest extends GeneratedManifest {
-  _routeAncestry: Record<string, string[]>;
   _prerenderDefs?: Record<string, any>;
 }
 
@@ -253,15 +260,15 @@ export interface FullManifest extends GeneratedManifest {
  * Generate manifest from UrlPatterns (public API).
  *
  * Returns only the public GeneratedManifest fields. Internal build pipeline
- * consumers that need _routeAncestry or _prerenderDefs should use
- * generateManifestFull() instead.
+ * consumers that need _prerenderDefs should use generateManifestFull() instead.
  *
  * @example
  * ```typescript
  * import { generateManifest } from "@rangojs/router/build";
  * import { urlpatterns } from "./urls";
  *
- * const manifest = generateManifest(urlpatterns);
+ * // Async: awaits async include() providers (`() => import("./routes")`).
+ * const manifest = await generateManifest(urlpatterns);
  * // Write to file for runtime use
  * fs.writeFileSync(
  *   "src/generated/route-manifest.json",
@@ -269,15 +276,14 @@ export interface FullManifest extends GeneratedManifest {
  * );
  * ```
  */
-export function generateManifest<TEnv>(
+export async function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-): GeneratedManifest {
-  const {
-    _routeAncestry: _,
-    _prerenderDefs: __,
-    ...publicManifest
-  } = generateManifestFull(urlpatterns, mountIndex);
+): Promise<GeneratedManifest> {
+  const { _prerenderDefs, ...publicManifest } = await generateManifestFull(
+    urlpatterns,
+    mountIndex,
+  );
   return publicManifest;
 }
 
@@ -288,11 +294,17 @@ export function generateManifest<TEnv>(
  * @rangojs/router/build), manifest-init (direct import), and trie
  * building. Not intended for external use.
  */
-export function generateManifestFull<TEnv>(
+export async function generateManifestFull<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
   options?: {
     urlPrefix?: string;
+    /**
+     * Owning router id. Threaded into the evaluation store so path() scopes
+     * its search-schema/root-scope registrations per router — same-named
+     * routes in different routers must not clobber each other.
+     */
+    routerId?: string;
     /**
      * Called once per `"use client"` component registered as an
      * errorBoundary/notFoundBoundary fallback, with its client-reference key
@@ -302,9 +314,8 @@ export function generateManifestFull<TEnv>(
      */
     collectClientFallbackRef?: (refKey: string) => void;
   },
-): FullManifest {
+): Promise<FullManifest> {
   const routeManifest: Record<string, string> = {};
-  const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
 
   // Run the root patterns handler with tracking enabled
@@ -326,6 +337,7 @@ export function generateManifestFull<TEnv>(
       parent: null,
       counters: {},
       mountIndex,
+      ...(options?.routerId ? { routerId: options.routerId } : {}),
       trackedIncludes, // Enable include tracking
       // basename sets the initial URL prefix for all path() registrations
       ...(options?.urlPrefix ? { urlPrefix: options.urlPrefix } : {}),
@@ -356,20 +368,13 @@ export function generateManifestFull<TEnv>(
   }
 
   // Collect root-level routes and trailing slash config
-  const routeTrailingSlash: Record<string, string> = {};
-  for (const [name, pattern] of patternsMap.entries()) {
-    routeManifest[name] = pattern;
-  }
-  for (const [name, mode] of trailingSlashMap.entries()) {
-    routeTrailingSlash[name] = mode;
-  }
-  const routeSearchSchemas: Record<string, Record<string, string>> = {};
-  for (const [name, schema] of searchSchemasMap.entries()) {
-    routeSearchSchemas[name] = schema;
-  }
-
-  // Capture ancestry from manifest entries' parent chains
-  captureAncestry(manifest, routeAncestry);
+  Object.assign(routeManifest, Object.fromEntries(patternsMap));
+  const routeTrailingSlash: Record<string, string> =
+    Object.fromEntries(trailingSlashMap);
+  const routeSearchSchemas: Record<
+    string,
+    Record<string, string>
+  > = Object.fromEntries(searchSchemasMap);
 
   // Collect prerender route names and handler definitions across all levels
   const prerenderRoutes: string[] = [];
@@ -393,13 +398,12 @@ export function generateManifestFull<TEnv>(
 
   // Shared visited set for cycle detection across all root-level includes.
   const visited = new Set<unknown>();
-  mergeIncludeNodes(prefixTree, trackedIncludes, (include) =>
+  await mergeIncludeNodes(prefixTree, trackedIncludes, (include) =>
     buildPrefixTreeNode(
       include.fullPrefix,
       include.namePrefix,
-      include.patterns as UrlPatterns<any>,
+      include.patterns as UrlPatterns<any> | IncludeProvider<any>,
       routeManifest,
-      routeAncestry,
       mountIndex,
       visited,
       routeTrailingSlash,
@@ -408,6 +412,7 @@ export function generateManifestFull<TEnv>(
       passthroughRoutes,
       responseTypeRoutes,
       routeSearchSchemas,
+      options?.routerId,
     ),
   );
 
@@ -429,7 +434,6 @@ export function generateManifestFull<TEnv>(
       Object.keys(routeSearchSchemas).length > 0
         ? routeSearchSchemas
         : undefined,
-    _routeAncestry: routeAncestry,
     // Internal: prerender handler definitions for build-time getParams() access
     _prerenderDefs:
       Object.keys(prerenderDefs).length > 0 ? prerenderDefs : undefined,
@@ -441,14 +445,14 @@ export function generateManifestFull<TEnv>(
  *
  * @example
  * ```typescript
- * const code = generateManifestCode(urlpatterns);
+ * const code = await generateManifestCode(urlpatterns);
  * fs.writeFileSync("src/generated/route-manifest.ts", code);
  * ```
  */
-export function generateManifestCode<TEnv>(
+export async function generateManifestCode<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
-): string {
-  const manifest = generateManifest(urlpatterns);
+): Promise<string> {
+  const manifest = await generateManifest(urlpatterns);
 
   return `/**
  * Auto-generated route manifest

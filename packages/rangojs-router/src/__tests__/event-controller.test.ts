@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createEventController,
+  subscribeToLocationChange,
   type EventController,
 } from "../browser/event-controller.js";
 
@@ -50,6 +51,227 @@ describe("createEventController", () => {
       expect(actionState.payload).toBeNull();
       expect(actionState.error).toBeNull();
       expect(actionState.result).toBeNull();
+    });
+  });
+
+  describe("location subscriptions", () => {
+    it("fans out through one controller subscription", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn();
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      expect(subscribe).toHaveBeenCalledOnce();
+
+      location = loc("/next");
+      controllerListeners.forEach((listener) => listener());
+      expect(first).toHaveBeenCalledWith(location.href);
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("tracks each registration baseline and cleanup independently", () => {
+      let location = loc("/");
+      const controllerListeners = new Set<() => void>();
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn((listener: () => void) => {
+        controllerListeners.add(listener);
+        return unsubscribe;
+      });
+      const controller = {
+        getState: () => ({ location }),
+        subscribe,
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const listener = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, listener);
+      location = loc("/next");
+      const stopSecond = subscribeToLocationChange(controller, listener);
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledOnce();
+
+      stopFirst();
+      stopFirst();
+      expect(unsubscribe).not.toHaveBeenCalled();
+      location = loc("/last");
+      controllerListeners.forEach((current) => current());
+      expect(listener).toHaveBeenCalledTimes(2);
+
+      stopSecond();
+      stopSecond();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not notify a registration removed during fan-out", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const unsubscribe = vi.fn();
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return unsubscribe;
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it("does not regress later listeners after a nested notification", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const first = vi.fn((href: string) => {
+        if (href === loc("/next").href) {
+          location = loc("/last");
+          notifyController();
+        }
+      });
+      const second = vi.fn();
+
+      const stopFirst = subscribeToLocationChange(controller, first);
+      const stopSecond = subscribeToLocationChange(controller, second);
+      location = loc("/next");
+      notifyController();
+
+      expect(first).toHaveBeenNthCalledWith(1, loc("/next").href);
+      expect(first).toHaveBeenNthCalledWith(2, loc("/last").href);
+      expect(second).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledWith(loc("/last").href);
+      stopFirst();
+      stopSecond();
+    });
+
+    it("notifies later registrations when an earlier listener throws", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const second = vi.fn();
+      const error = new Error("first failed");
+      const stopFirst = subscribeToLocationChange(controller, () => {
+        throw error;
+      });
+      const stopSecond = subscribeToLocationChange(controller, second);
+
+      location = loc("/next");
+      let thrown: unknown;
+      try {
+        notifyController();
+      } catch (current) {
+        thrown = current;
+      }
+      expect(thrown).toBe(error);
+      expect(second).toHaveBeenCalledWith(location.href);
+
+      stopFirst();
+      stopSecond();
+    });
+
+    it("aggregates every location-listener error after fan-out", () => {
+      let location = loc("/");
+      let notifyController!: () => void;
+      const controller = {
+        getState: () => ({ location }),
+        subscribe: vi.fn((listener: () => void) => {
+          notifyController = listener;
+          return vi.fn();
+        }),
+      } as unknown as Pick<EventController, "getState" | "subscribe">;
+      const firstError = new Error("first failed");
+      const secondError = new Error("second failed");
+      const third = vi.fn();
+      subscribeToLocationChange(controller, () => {
+        throw firstError;
+      });
+      subscribeToLocationChange(controller, () => {
+        throw secondError;
+      });
+      subscribeToLocationChange(controller, third);
+
+      location = loc("/next");
+      let thrown: unknown;
+      try {
+        notifyController();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
+    it("notifies raw controller subscribers after a location listener throws", () => {
+      const controller = createController();
+      const stopLocation = subscribeToLocationChange(controller, () => {
+        throw new Error("location failed");
+      });
+      const rawListener = vi.fn();
+      const stopRaw = controller.subscribe(rawListener);
+
+      controller.setLocation(loc("/next"));
+      expect(() => vi.runOnlyPendingTimers()).toThrow("location failed");
+      expect(rawListener).toHaveBeenCalledOnce();
+
+      stopLocation();
+      stopRaw();
+    });
+
+    it("does not notify a raw subscriber removed during dispatch", () => {
+      const controller = createController();
+      let stopSecond!: () => void;
+      const first = vi.fn(() => stopSecond());
+      const second = vi.fn();
+      const stopFirst = controller.subscribe(first);
+      stopSecond = controller.subscribe(second);
+
+      controller.setLocation(loc("/next"));
+      vi.runOnlyPendingTimers();
+
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).not.toHaveBeenCalled();
+      stopFirst();
     });
   });
 
@@ -365,6 +587,55 @@ describe("createEventController", () => {
       expect(second.hadConcurrentActions).toBe(true); // second saw first
     });
 
+    // #675: a completed action lingers in inflightActions for the 100ms
+    // doSettle window. An action starting inside that window is sequential,
+    // not concurrent — latching hadAnyConcurrentActions here made the second
+    // action classify as consolidation-needed, and its consolidation refetch
+    // re-ran revalidate-gated loaders as "new-segment" on a plain GET.
+    it("action starting during a completed action's settle window is not concurrent (#675)", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#target", []);
+      first.recordRevalidatedSegments(["R0D0.loaderA", "R0"]);
+      first.complete("done");
+
+      // Inside the 100ms settle window: first is completed but still in the map.
+      vi.advanceTimersByTime(50);
+      expect(ctrl.getInflightActions().size).toBe(1);
+
+      const second = ctrl.startAction("hash#decoy", []);
+      expect(second.hadConcurrentActions).toBe(false);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(false);
+    });
+
+    it("action starting after complete() but before stream end is not concurrent (#675)", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#target", []);
+      const token = first.startStreaming();
+      // Response fully processed and applied; the Flight stream's EOF is
+      // still draining (token not ended) — entry.completed is set, phase is
+      // still "streaming".
+      first.complete("done");
+
+      const second = ctrl.startAction("hash#decoy", []);
+      expect(second.hadConcurrentActions).toBe(false);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(false);
+
+      token.end();
+      vi.advanceTimersByTime(100);
+    });
+
+    it("action starting while another is still fetching stays concurrent", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#a", []);
+
+      const second = ctrl.startAction("hash#b", []);
+      expect(second.hadConcurrentActions).toBe(true);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(true);
+
+      first.complete();
+      second.complete();
+    });
+
     it("recordRevalidatedSegments accumulates into shared set", () => {
       const ctrl = createController();
       const first = ctrl.startAction("hash#a", []);
@@ -430,6 +701,140 @@ describe("createEventController", () => {
       expect(ctrl.getState().state).toBe("idle");
     });
 
+    describe("location-state claim (dispatch-order wins, cohort-scoped)", () => {
+      // Same cohort (history key) for the same-entry concurrency cases; passed
+      // to startAction so arbitration is scoped to that entry.
+      const K = "kA";
+
+      it("claims distinct keys for every concurrent action", () => {
+        const ctrl = createController();
+        const a = ctrl.startAction("hash#a", [], K);
+        const b = ctrl.startAction("hash#b", [], K);
+
+        expect(a.claimLocationState({ __rsc_ls_x: 1 })).toEqual({
+          __rsc_ls_x: 1,
+        });
+        expect(b.claimLocationState({ __rsc_ls_y: 2 })).toEqual({
+          __rsc_ls_y: 2,
+        });
+      });
+
+      it("same key: last-initiated wins even when it claims first (settles first)", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K); // initiated first
+        const second = ctrl.startAction("hash#b", [], K); // initiated later
+
+        // last-initiated settles first -> claims and wins the key.
+        expect(second.claimLocationState({ __rsc_ls_k: "second" })).toEqual({
+          __rsc_ls_k: "second",
+        });
+        // first-initiated settles last -> must NOT reclaim it (dispatch-order,
+        // not settle-order, decides the winner).
+        expect(first.claimLocationState({ __rsc_ls_k: "first" })).toEqual({});
+      });
+
+      it("same key: last-initiated wins when it claims last (settles last)", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K);
+        const second = ctrl.startAction("hash#b", [], K);
+
+        // first-initiated settles first -> provisionally wins (transiently).
+        expect(first.claimLocationState({ __rsc_ls_k: "first" })).toEqual({
+          __rsc_ls_k: "first",
+        });
+        // last-initiated settles last -> still wins on arrival (overrides).
+        expect(second.claimLocationState({ __rsc_ls_k: "second" })).toEqual({
+          __rsc_ls_k: "second",
+        });
+      });
+
+      it("a partial claim keeps winning distinct keys and drops only lost keys", () => {
+        const ctrl = createController();
+        const first = ctrl.startAction("hash#a", [], K);
+        const second = ctrl.startAction("hash#b", [], K);
+
+        // last-initiated wins the shared key.
+        second.claimLocationState({ __rsc_ls_shared: "second" });
+        // first-initiated wins its own distinct key but loses the shared one.
+        expect(
+          first.claimLocationState({
+            __rsc_ls_shared: "first",
+            __rsc_ls_own: "kept",
+          }),
+        ).toEqual({ __rsc_ls_own: "kept" });
+      });
+
+      it("scopes arbitration by cohort: same slot on different entries does not compete", () => {
+        const ctrl = createController();
+        const onEntry1 = ctrl.startAction("hash#a", [], "kEntry1"); // initiated first
+        const onEntry2 = ctrl.startAction("hash#b", [], "kEntry2"); // initiated later
+
+        // Newer action on entry 2 claims the slot in its own cohort.
+        expect(onEntry2.claimLocationState({ __rsc_ls_k: "from-2" })).toEqual({
+          __rsc_ls_k: "from-2",
+        });
+        // Older action on entry 1 writes the SAME slot key but in a DIFFERENT
+        // cohort -> it still wins (no cross-entry suppression). This is the P1
+        // regression guard.
+        expect(onEntry1.claimLocationState({ __rsc_ls_k: "from-1" })).toEqual({
+          __rsc_ls_k: "from-1",
+        });
+      });
+
+      it("frees a cohort's arbitration once its last action settles", () => {
+        const ctrl = createController();
+        // Two cohorts overlap; cohort 2 drains first while cohort 1 lingers.
+        const e1 = ctrl.startAction("hash#a", [], "k1");
+        const e2 = ctrl.startAction("hash#b", [], "k2");
+
+        e1.claimLocationState({ __rsc_ls_k: "1" });
+        e2.claimLocationState({ __rsc_ls_k: "2" });
+
+        // Settle cohort 2's only action; cohort 1 is still inflight.
+        e2.complete();
+        vi.advanceTimersByTime(100); // cohort 2 cleanup fires
+        // Cohort 1's action is still inflight, so cohort 1 retains its key but
+        // a fresh action re-entering cohort 2 starts clean (last-initiated wins
+        // trivially). The observable invariant is that nothing throws and both
+        // cohorts remain independent.
+        const e3 = ctrl.startAction("hash#c", [], "k2");
+        expect(e3.claimLocationState({ __rsc_ls_k: "3" })).toEqual({
+          __rsc_ls_k: "3",
+        });
+        // Cohort 1 still isolated.
+        expect(e1.claimLocationState({ __rsc_ls_other: "x" })).toEqual({
+          __rsc_ls_other: "x",
+        });
+      });
+
+      it("a stale settlement does not break a newer cohort generation's arbitration", () => {
+        const ctrl = createController();
+        // Gen 1 in cohort k1 settles, scheduling a 100ms cleanup; abortAllActions
+        // then clears the map while that cleanup is still pending.
+        const g1 = ctrl.startAction("hash#g1", [], "k1");
+        g1.complete();
+        ctrl.abortAllActions();
+
+        // Gen 2: two concurrent actions recreate cohort k1.
+        const a = ctrl.startAction("hash#a", [], "k1"); // initiated first
+        const b = ctrl.startAction("hash#b", [], "k1"); // initiated later
+
+        // last-initiated wins the shared key.
+        expect(b.claimLocationState({ __rsc_ls_k: "b" })).toEqual({
+          __rsc_ls_k: "b",
+        });
+
+        // The stale gen-1 settlement fires now. Pre-fix it deleted gen-2's
+        // arbitration by id, after which gen-2 claims saw no map and accepted
+        // every key (so `a` would wrongly win below). A monotonic-sequence test
+        // alone cannot catch this; the loser must be a LOWER-sequence sibling.
+        vi.advanceTimersByTime(100);
+
+        // first-initiated must STILL lose the shared key.
+        expect(a.claimLocationState({ __rsc_ls_k: "a" })).toEqual({});
+      });
+    });
+
     it("fail() before abortAllActions() delivers error to subscribers", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#save", []);
@@ -492,6 +897,65 @@ describe("createEventController", () => {
       // (not via debounced notifyAction which would fail suffix matching)
       expect(observed.length).toBeGreaterThan(0);
       expect(observed).toContain("idle");
+    });
+
+    it("aggregates action-listener errors after debounced fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first action listener failed");
+      const secondError = new Error("second action listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToAction("save", () => {
+        throw firstError;
+      });
+      ctrl.subscribeToAction("save", () => {
+        throw secondError;
+      });
+      ctrl.subscribeToAction("save", third);
+
+      ctrl.startAction("hash#save", []);
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
+    it("aggregates action-listener errors during abortAllActions", () => {
+      const ctrl = createController();
+      ctrl.startAction("hash#save", []);
+      vi.advanceTimersByTime(0);
+      const firstError = new Error("first abort listener failed");
+      const secondError = new Error("second abort listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToAction("save", () => {
+        throw firstError;
+      });
+      ctrl.subscribeToAction("save", () => {
+        throw secondError;
+      });
+      ctrl.subscribeToAction("save", third);
+
+      let thrown: unknown;
+      try {
+        ctrl.abortAllActions();
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
     });
   });
 
@@ -647,6 +1111,25 @@ describe("createEventController", () => {
       ctrl.setHandleData({}, ["L0", "R0.@panel", "R0"]);
       const state = ctrl.getHandleState();
       expect(state.segmentOrder).toEqual(["L0", "R0", "R0.@panel"]);
+    });
+
+    it("setRouteSegmentIds updates routeSegmentIds (useSegments) WITHOUT touching data/segmentOrder (deferred hold)", () => {
+      const ctrl = createController();
+      // Route A applied.
+      ctrl.setHandleData({ Crumbs: { A0: ["a"] } }, ["A0"]);
+      const before = ctrl.getHandleState();
+      expect(before.routeSegmentIds).toEqual(["A0"]);
+
+      // Soft-nav to route B with a deferred handle: the route changed, so
+      // useSegments must see B's segment ids, but useHandle still holds A's value
+      // (data + segmentOrder untouched) until the deferred snapshot lands. This
+      // decoupling is what lets the simpler await-then-apply model keep
+      // useSegments correct while holding useHandle.
+      ctrl.setRouteSegmentIds(["B0"]);
+      const held = ctrl.getHandleState();
+      expect(held.routeSegmentIds).toEqual(["B0"]); // useSegments sees B
+      expect(held.data).toEqual(before.data); // useHandle data held
+      expect(held.segmentOrder).toEqual(before.segmentOrder); // collect order held
     });
 
     /**
@@ -808,6 +1291,56 @@ describe("createEventController", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
+    it("flushes pending route-state notifications synchronously", () => {
+      const ctrl = createController();
+      const stateListener = vi.fn();
+      const handleListener = vi.fn();
+      ctrl.subscribe(stateListener);
+      ctrl.subscribeToHandles(handleListener);
+
+      ctrl.startNavigation("/about");
+      ctrl.setHandleData({}, ["R0"]);
+      expect(stateListener).not.toHaveBeenCalled();
+      expect(handleListener).not.toHaveBeenCalled();
+
+      ctrl.flushRouteState();
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+
+      vi.advanceTimersByTime(0);
+      expect(stateListener).toHaveBeenCalledOnce();
+      expect(handleListener).toHaveBeenCalledOnce();
+    });
+
+    it("aggregates every state-listener error after fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first state listener failed");
+      const secondError = new Error("second state listener failed");
+      const third = vi.fn();
+      ctrl.subscribe(() => {
+        throw firstError;
+      });
+      ctrl.subscribe(() => {
+        throw secondError;
+      });
+      ctrl.subscribe(third);
+
+      ctrl.startNavigation("/about");
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
+    });
+
     it("unsubscribe stops notifications", () => {
       const ctrl = createController();
       const listener = vi.fn();
@@ -835,6 +1368,23 @@ describe("createEventController", () => {
           actionId: "hash#addToCart",
         }),
       );
+    });
+
+    it("reads each subscription state when its fan-out begins", () => {
+      const ctrl = createController();
+      const observed: unknown[] = [];
+      ctrl.subscribeToAction("hash#save", () => {
+        vi.setSystemTime(new Date(Date.now() + 1));
+        ctrl.startAction("new#save", ["new"]);
+      });
+      ctrl.subscribeToAction("save", (state) => {
+        observed.push(state.payload);
+      });
+
+      ctrl.startAction("hash#save", ["old"]);
+      vi.advanceTimersByTime(0);
+
+      expect(observed[0]).toEqual(["new"]);
     });
 
     it("subscribeToAction does not notify for non-matching action", () => {
@@ -881,6 +1431,35 @@ describe("createEventController", () => {
       vi.advanceTimersByTime(0);
 
       expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("aggregates every handle-listener error after fan-out", () => {
+      const ctrl = createController();
+      const firstError = new Error("first handle listener failed");
+      const secondError = new Error("second handle listener failed");
+      const third = vi.fn();
+      ctrl.subscribeToHandles(() => {
+        throw firstError;
+      });
+      ctrl.subscribeToHandles(() => {
+        throw secondError;
+      });
+      ctrl.subscribeToHandles(third);
+
+      ctrl.setHandleData({ title: { s: ["T"] } }, ["s"]);
+      let thrown: unknown;
+      try {
+        vi.advanceTimersByTime(0);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      expect((thrown as AggregateError).errors).toEqual([
+        firstError,
+        secondError,
+      ]);
+      expect(third).toHaveBeenCalledOnce();
     });
   });
 

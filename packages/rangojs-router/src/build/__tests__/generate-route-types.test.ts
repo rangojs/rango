@@ -20,7 +20,7 @@ import {
   writePerModuleRouteTypesForFile,
   extractIncludesWithDiagnostics,
   detectUnresolvableIncludes,
-  extractUrlsVariableFromRouter,
+  buildCombinedRouteMapForRouterFile,
   extractUrlsFromRouter,
   extractBasenameFromRouter,
   findNestedRouterConflict,
@@ -1246,6 +1246,136 @@ export const patterns = urls(({ include }) => [
     expect(unresolvable[0].reason).toBe("factory-call");
     expect(unresolvable[1].reason).toBe("factory-call");
   });
+
+  it("resolves an async include `() => import()` (moduleSpecifier, not unresolvable)", () => {
+    const code = `
+import { urls } from "@rangojs/router";
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", () => import("./api/urls.js"), { name: "api" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+
+    expect(unresolvable).toHaveLength(0);
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toEqual({
+      pathPrefix: "/api",
+      moduleSpecifier: "./api/urls.js",
+      namePrefix: "api",
+    });
+    // An identifier include must NOT gain a moduleSpecifier key (exact shape).
+    expect(resolved[0].variableName).toBeUndefined();
+  });
+
+  it("resolves async include block-body and .then() thunks", () => {
+    const code = `
+export const patterns = urls(({ include }) => [
+  include("/a", () => { return import("./a.js"); }, { name: "a" }),
+  include("/b", () => import("./b.js").then((m) => m.default), { name: "b" }),
+  include("/c", async () => import("./c.js"), { name: "c" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+    expect(unresolvable).toHaveLength(0);
+    expect(resolved.map((r) => r.moduleSpecifier)).toEqual([
+      "./a.js",
+      "./b.js",
+      "./c.js",
+    ]);
+  });
+
+  it("flags a `.then()` selecting a non-default named export as unresolvable", () => {
+    const code = `
+export const patterns = urls(({ include }) => [
+  include("/x", () => import("./x.js").then((m) => m.routes), { name: "x" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+    expect(resolved).toHaveLength(0);
+    expect(unresolvable).toHaveLength(1);
+    expect(unresolvable[0].reason).toBe("dynamic-expression");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Async include end-to-end resolution (Finding 2): the static parser must walk
+// the `export default urls(...)` of a `() => import()` module — including a
+// nested include() inside it — so the CLI does not hard-fail and href/named
+// types cover the split group.
+// ---------------------------------------------------------------------------
+
+describe("async include() static resolution", () => {
+  const asyncFixtureDir = join(
+    __dirname,
+    "__fixtures__",
+    "app-with-async-include",
+  );
+
+  it("does not flag `() => import()` as an unresolvable include", () => {
+    const diagnostics = detectUnresolvableIncludes(
+      join(asyncFixtureDir, "router.tsx"),
+    );
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  it("resolves routes through the async module's default export, including a nested include", () => {
+    const { routes } = buildCombinedRouteMapForRouterFile(
+      join(asyncFixtureDir, "router.tsx"),
+    );
+
+    expect(routes).toMatchObject({
+      home: "/",
+      "shop.home": "/shop",
+      "shop.product.item": "/shop/product/:id",
+    });
+  });
+
+  it("resolves an async module whose default RE-EXPORTS an imported urls()", () => {
+    // `export default apiPatterns` where apiPatterns is IMPORTED — the resolver
+    // must follow the import chain, not just same-file extraction (F2).
+    const dir = mkdtempSync(join(tmpdir(), "rango-async-reexport-"));
+    writeFileSync(
+      join(dir, "router.tsx"),
+      `import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter().routes(urlpatterns);
+`,
+    );
+    writeFileSync(
+      join(dir, "urls.tsx"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", () => import("./api-mount.js"), { name: "api" }),
+]);
+`,
+    );
+    // Default export re-exports an imported urls() (no same-file const).
+    writeFileSync(
+      join(dir, "api-mount.tsx"),
+      `import { apiPatterns } from "./api-patterns.js";
+export default apiPatterns;
+`,
+    );
+    writeFileSync(
+      join(dir, "api-patterns.tsx"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const apiPatterns = urls(({ path }) => [
+  path.json("/health", handler, { name: "health" }),
+]);
+`,
+    );
+
+    const { routes } = buildCombinedRouteMapForRouterFile(
+      join(dir, "router.tsx"),
+    );
+    expect(routes).toMatchObject({ home: "/", "api.health": "/api/health" });
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1334,17 +1464,26 @@ export const urlpatterns = urls(({ path, include }) => [
 });
 
 // ---------------------------------------------------------------------------
-// extractUrlsVariableFromRouter (AST-based)
+// extractUrlsFromRouter — variable-name extraction (AST-based)
+// (Previously exercised through the removed extractUrlsVariableFromRouter shim;
+// migrated to the canonical extractUrlsFromRouter + a local variable-name
+// projection matching the old shim's `kind === "variable" ? name : null`.)
 // ---------------------------------------------------------------------------
 
-describe("extractUrlsVariableFromRouter", () => {
+/** Reproduce the removed shim's contract over the canonical extractor. */
+function urlsVariableName(code: string): string | null {
+  const result = extractUrlsFromRouter(code);
+  return result?.kind === "variable" ? result.name : null;
+}
+
+describe("extractUrlsFromRouter (variable-name projection)", () => {
   it("extracts from .routes(varName) chain", () => {
     const code = `
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter().routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("extracts from createRouter<T>().routes(varName) with generic", () => {
@@ -1355,7 +1494,7 @@ export const router = createRouter<AppEnv>({
   document: Document,
 }).routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("extracts from chained .middleware().routes(varName)", () => {
@@ -1366,7 +1505,7 @@ export const router = createRouter<AppEnv>({
   document: Document,
 }).middleware([authMiddleware]).routes(sitePatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("sitePatterns");
+    expect(urlsVariableName(code)).toBe("sitePatterns");
   });
 
   it("extracts from createRouter({ urls: varName })", () => {
@@ -1375,7 +1514,7 @@ import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter({ urls: urlpatterns, document: Document });
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 
   it("returns null when no createRouter call exists", () => {
@@ -1386,21 +1525,21 @@ export const patterns = urls(({ path }) => [
   path("/", handler, { name: "home" }),
 ]);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("does not match .routes() on non-createRouter calls", () => {
     const code = `
 const config = someBuilder().routes(myRoutes);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("does not match urls: in non-createRouter objects", () => {
     const code = `
 const config = { urls: myHelper, other: true };
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+    expect(urlsVariableName(code)).toBeNull();
   });
 
   it("handles createRouter with options and .routes() chained", () => {
@@ -1410,7 +1549,7 @@ export const router = createRouter({
   theme: { defaultTheme: "light" },
 }).routes(urlpatterns);
 `;
-    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+    expect(urlsVariableName(code)).toBe("urlpatterns");
   });
 });
 

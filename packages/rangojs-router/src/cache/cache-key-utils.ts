@@ -6,24 +6,55 @@
  * document-cache, and loader-cache.
  */
 
+import { encodeKV } from "../encode-kv.js";
+import type { SearchParamsFilter } from "./search-params-filter.js";
+
+/**
+ * Reserved URL query params that the router owns and must never key the cache
+ * on. `_rsc*` is the router's internal navigation/action/loader prefix (matched
+ * by prefix). `__no_cache` is the single `__`-prefixed param the router reads
+ * (handler.ts / testing dispatch.ts use it to bypass the store); it and the
+ * other router-internal `__`-prefixed request params are matched by an EXACT
+ * allowlist, not a blanket `__` prefix. A blanket `__` filter would silently
+ * collapse consumer params like `__variant=a` vs `__variant=b` onto one cache
+ * slot; an allowlist keeps the router's own params out of the key while leaving
+ * consumer `__` params intact.
+ */
+const RESERVED_SEARCH_PARAMS = new Set([
+  "__no_cache",
+  "__rsc",
+  "__html",
+  "__prerender_collect",
+]);
+
+function isReservedSearchParam(key: string): boolean {
+  return key.startsWith("_rsc") || RESERVED_SEARCH_PARAMS.has(key);
+}
+
 /**
  * Build a sorted, deterministic query string from URLSearchParams,
- * excluding internal _rsc* and __* params.
+ * excluding the router's reserved params (see isReservedSearchParam).
  *
- * Returns empty string when no user-facing params exist.
+ * `filter` is the compiled `cache.searchParams` config (search-params-filter.ts),
+ * applied AFTER the reserved-param exclusion and BEFORE the sort, so reserved
+ * params can never be re-included (`include: ["__no_cache"]` is a no-op) and
+ * surviving params stay order-insensitive. `undefined` means no filtering --
+ * that path must stay byte-identical to the pre-filter format (cacheKeyBase
+ * output is byte-stable by contract).
+ *
+ * Returns empty string when no user-facing params survive.
  */
-export function sortedSearchString(searchParams: URLSearchParams): string {
+export function sortedSearchString(
+  searchParams: URLSearchParams,
+  filter?: SearchParamsFilter,
+): string {
   const pairs: [string, string][] = [];
   for (const [k, v] of searchParams) {
-    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+    if (!isReservedSearchParam(k) && (filter === undefined || filter(k))) {
       pairs.push([k, v]);
     }
   }
-  if (pairs.length === 0) return "";
-  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
+  return encodeKV(pairs, { sort: true });
 }
 
 /**
@@ -35,10 +66,37 @@ export function sortedRouteParams(
   params: Record<string, string> | undefined,
 ): string {
   if (!params) return "";
-  const entries = Object.entries(params);
-  if (entries.length === 0) return "";
-  return entries
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
+  return encodeKV(Object.entries(params), { sort: true });
+}
+
+/**
+ * Host-namespaced cache key base: `${host}${pathname}[:params][?search]`.
+ *
+ * The ONE composition of the host-namespacing rule, shared by the segment tier
+ * (cache-scope.ts) and the document tier (document-cache.ts) so the rule cannot
+ * drift between them. Host prefixing matters because VercelCacheStore /
+ * MemorySegmentCacheStore key by the raw string (only CFCacheStore adds host
+ * internally) -- on a single function serving multiple domains an
+ * un-namespaced key bleeds tenant A's cached response to tenant B.
+ *
+ * Output is BYTE-STABLE by contract: changing the composition silently
+ * invalidates every persisted cache entry on upgrade. Callers append their own
+ * tier-specific suffixes (`:rsc`/`:html`, segment hash) after this base.
+ */
+export function cacheKeyBase(
+  host: string,
+  pathname: string,
+  searchParams?: URLSearchParams,
+  params?: Record<string, string>,
+  filter?: SearchParamsFilter,
+): string {
+  const paramStr = sortedRouteParams(params);
+  const searchStr = searchParams
+    ? sortedSearchString(searchParams, filter)
+    : "";
+
+  let key = `${host}${pathname}`;
+  if (paramStr) key += `:${paramStr}`;
+  if (searchStr) key += `?${searchStr}`;
+  return key;
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
@@ -11,12 +11,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * misclassified as orphan (which would clear its parent pointer
  * and break the middleware chain).
  */
-test.describe("include-layout-middleware", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function includeLayoutMiddlewareTests(f: Fixture) {
   test("layout middleware applies to included index route", async ({
     page,
   }) => {
@@ -98,4 +93,21 @@ test.describe("include-layout-middleware", () => {
     expect(response.headers()["x-global-middleware"]).toBe("applied");
     expect(response.headers()["x-include-layout-middleware"]).toBe("applied");
   });
+}
+
+test.describe("include-layout-middleware", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+  includeLayoutMiddlewareTests(f);
+});
+
+test.describe("include-layout-middleware (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+  test.setTimeout(120000);
+  includeLayoutMiddlewareTests(f);
 });

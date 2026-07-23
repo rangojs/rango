@@ -15,6 +15,16 @@ export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
 });
 
+// Speculative-prefetch test utilities live in the PUBLIC e2e harness
+// (`@rangojs/router/testing/e2e` page-helpers) — consumers hit the same
+// automatic production prefetch traffic in their own suites. Re-exported here
+// so repo tests use one implementation.
+export {
+  isPrefetchRequest,
+  blockPrefetch,
+  unblockPrefetch,
+} from "@rangojs/router/testing/e2e";
+
 /**
  * Wait for React hydration to complete and verify no hydration errors
  */
@@ -363,7 +373,7 @@ export function expectMaxTiming(elapsed: number, maximum: number) {
 //
 // To debug HMR issues interactively:
 //
-//   1. Start the test app:  cd e2e/test-app && pnpm dev --port 5188
+//   1. Start the test app:  cd e2e/test-app && pnpm dev --port <port>  (base 5188 + checkoutPortOffset, see playwright.config.ts)
 //   2. Open browser DevTools > Console, filter by "[vite]" to see HMR events
 //   3. Edit a file and watch for:
 //      - "[vite] hot updated: /path/to/file" = successful HMR (js-update)

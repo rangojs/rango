@@ -1,0 +1,118 @@
+---
+title: Agent
+description: The shopping assistant - AI-powered product discovery, cart management, and generative UI.
+type: guide
+prerequisites:
+  - /docs/getting-started
+---
+
+The storefront includes an AI shopping assistant powered by Claude via the Vercel AI SDK. It can search products, browse collections, manage the cart, and render rich product cards - all through natural conversation. The assistant is context-aware, adapting its behavior based on what page the user is viewing.
+
+## Configuration
+
+The agent is opt-in via `VITE_ENABLE_AGENT="1"` (read at build time through `import.meta.env` and exposed as `agent.enabled` in `lib/config.ts`). When unset, the agent button is hidden from the storefront and the `/api/chat` route returns 404.
+
+## Architecture
+
+The agent runs as a `ToolLoopAgent` that streams responses back to a floating chat panel:
+
+```
+AgentPanel (client) → POST /api/chat → ToolLoopAgent (Claude) → Shopify tools → streaming response
+```
+
+1. The client sends conversation history and a `chatId` to `/api/chat`
+2. The server resolves page context from the `Referer` header (home, product, collection, search, or cart page)
+3. A Shopify cart is created or retrieved from a cookie before the agent runs
+4. The agent calls tools to search products, manage the cart, or generate navigation links
+5. Tool results include json-render specs that the client renders as product cards, cart summaries, and variant pickers
+
+## Page context
+
+The agent adapts its instructions based on where the user is browsing. Page context is resolved server-side from the `Referer` header:
+
+- **Product page** - the full product is injected into the prompt with all variants, prices, availability, and variant IDs ready for "add to cart"
+- **Collection page** - the collection handle and title are included
+- **Search page** - the active search query is passed through
+- **Cart page** - the agent knows the user is viewing their cart
+- **Home page** - the agent knows the user is landing on the storefront and can help them start browsing
+
+The system prompt also includes the user's locale so the agent responds in the correct language.
+
+## Tools
+
+The agent has 11 tools organized into three groups. All tools access the agent context (chat ID, cart ID, locale, page) via AsyncLocalStorage.
+
+### Product discovery
+
+| Tool                        | Purpose                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `searchProducts`            | Keyword search with sorting (best matches, price low/high) - returns up to 10 results |
+| `getProductDetails`         | Full product info: title, description, price, variants, availability, images          |
+| `getProductRecommendations` | AI-powered similar products (up to 5)                                                 |
+| `listCollections`           | All store categories                                                                  |
+| `browseCollection`          | Products within a collection with sorting                                             |
+
+### Cart management
+
+| Tool                     | Purpose                                             |
+| ------------------------ | --------------------------------------------------- |
+| `addToCart`              | Add a variant to cart (requires Shopify variant ID) |
+| `getCart`                | View cart contents, line items, and costs           |
+| `updateCartItemQuantity` | Change quantity of a line item                      |
+| `removeFromCart`         | Remove items by line ID                             |
+| `addCartNote`            | Delivery notes, gift messages, special instructions |
+
+### Navigation
+
+| Tool           | Purpose                                                                               |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `navigateUser` | Generate links to product pages, collections, search, cart, checkout, account, orders |
+
+## Generative UI
+
+The agent doesn't just return text - it renders rich UI components via json-render. The system prompt includes a catalog of components the model can invoke:
+
+- **AgentProductCard** - clickable card with image, title, price, compare-at price, and availability
+- **AgentProductGrid** - 2-column responsive grid wrapping multiple product cards
+- **AgentCartSummary** - full cart breakdown with line item thumbnails, any bundle components, subtotal, total, and checkout button
+- **AgentCartConfirmation** - success card shown after adding an item to cart
+- **AgentVariantPicker** - display-only variant selector with option groups and availability status
+
+These components are registered in a json-render registry and rendered client-side from specs embedded in the assistant's streamed messages.
+
+## Cart reconciliation
+
+A `CartReconciler` component watches the agent's tool results for cart mutations. When `addToCart`, `updateCartItemQuantity`, `removeFromCart`, or `addCartNote` succeed, it extracts the updated cart object and syncs it to the global cart context - updating the cart UI without a page reload and opening the cart overlay for visual feedback.
+
+## Chat UI
+
+The agent panel is toggled from a button in the bottom bar. The panel includes:
+
+- Header controls to clear the conversation or minimize the panel
+- Message display with collapsible chain-of-thought (tool calls auto-collapse after completion)
+- Generative UI rendering via `useJsonRenderMessage()` and a component registry
+- Regenerate and copy message actions
+- Chat history and draft input persisted to localStorage (`template-agent-chat:v1`) until cleared
+- Click-outside and Escape to minimize
+
+## Abuse protection
+
+`/api/chat` ships without bot, rate-limit, or token-cap protection by default — it's reachable anonymously. Before exposing the agent to real traffic, harden it. A reasonable baseline on Vercel:
+
+- **[Vercel BotID](https://vercel.com/docs/botid)** — initialize BotID in the browser with `initBotId({ protect: [{ path: "/api/chat", method: "POST" }] })` from a client entry point (e.g. a `"use client"` module loaded by the root layout), and call `checkBotId()` at the top of `chatHandler`. Returns 403 when a bot is detected and works locally without a Vercel deployment.
+- **Per-IP rate limit** — a sliding-window log keyed by the client IP, backed by [Vercel Runtime Cache](https://vercel.com/docs/runtime-cache) (`getCache` from `@vercel/functions`) so it shares state across regions. Run it before `request.json()` and before any Shopify cart is created so bot floods don't poison cart records or burn gateway spend.
+- **Token cap** — set `maxOutputTokens` on the `ToolLoopAgent` defaults to bound worst-case gateway spend per call.
+
+If `/api/chat` sits behind an existing WAF (Cloudflare, etc.), prefer that and keep the token cap.
+
+## Key files
+
+| File                               | Purpose                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `src/routes/chat.tsx`              | `chatHandler` — page context, cart init, streaming (wired to `/api/chat` in `src/urls.tsx`) |
+| `lib/agent/server.ts`              | Agent creation, system prompt, AsyncLocalStorage context                                    |
+| `lib/agent/tools/`                 | Tool implementations using Shopify operations                                               |
+| `components/agent/agent-panel.tsx` | Chat panel UI                                                                               |
+| `components/agent/registry.tsx`    | Generative UI component registry                                                            |
+
+Auxiliary components (`client.tsx`, `agent-button.tsx`, `cart-reconciler.tsx`) and the json-render schemas in `lib/agent/index.ts` live next to these.

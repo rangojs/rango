@@ -13,17 +13,21 @@ test.describe.configure({ mode: "serial" });
 // rango state lives in a session cookie named `{prefix}_{routerId}` (default
 // prefix `rango-state`) so sibling apps on the same origin don't collide. Find
 // the namespaced cookie name without hard-coding the router id.
-async function findRangoStateKey(page: Page): Promise<string> {
-  return await page.evaluate(() => {
+async function findRangoStateKey(
+  page: Page,
+  exclude?: string,
+): Promise<string> {
+  return await page.evaluate((excluded) => {
     for (const part of document.cookie.split(";")) {
       const trimmed = part.trim();
       const eq = trimmed.indexOf("=");
-      if (eq > 0 && trimmed.slice(0, eq).startsWith("rango-state")) {
-        return trimmed.slice(0, eq);
+      const name = trimmed.slice(0, eq);
+      if (eq > 0 && name.startsWith("rango-state") && name !== excluded) {
+        return name;
       }
     }
     return "rango-state";
-  });
+  }, exclude);
 }
 
 async function readRangoStateAt(
@@ -45,6 +49,58 @@ test.describe("multi-router (dev)", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
+  });
+
+  test.describe("per-router search schemas (same-named routes)", () => {
+    test("site /lookup parses with site's schema, not admin's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      // { q: string } — admin's { page: number } must not leak in.
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
+
+    test("admin /lookup parses with admin's schema, not site's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const adminUrl = f
+        .url("/lookup?q=hello&page=2")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":2}',
+      );
+    });
+
+    test("site /lookup still parses with site's schema AFTER admin evaluated", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // Order matters: routers register their schemas when their urls module
+      // evaluates (admin's on the admin request above). This revisit is the
+      // collision case — a name-keyed global registry would now parse site's
+      // request with admin's { page: number } schema.
+      const adminUrl = f
+        .url("/lookup?page=7")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":7}',
+      );
+
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
   });
 
   test.describe("site app (localhost)", () => {
@@ -570,8 +626,7 @@ test.describe("multi-router (dev)", () => {
       // (a full document reload across the app boundary); tab 2 stays in A and
       // simulates a server-action invalidation (rotates app A's rango state
       // cookie). rango state cookies are namespaced per app, so tab 1 (now app
-      // B, watching its own cookie name) must ignore tab 2's app-A rotation —
-      // its next SPA request must send B's token, not the rotated A token.
+      // B, watching its own cookie name) must ignore tab 2's app-A rotation.
       const tab1 = await context.newPage();
       const tab2 = await context.newPage();
       try {
@@ -594,19 +649,13 @@ test.describe("multi-router (dev)", () => {
           "data-app-shell",
           "b",
         );
+        await waitForHydration(tab1);
 
-        // Tab 1 is now fully app B (with its own namespaced rango-state key).
-        // The property under test: tab 2's app-A token rotation must not surface
-        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
-
-        const tab1HeaderPromise = new Promise<string | null>((resolve) => {
-          tab1.on("request", (req) => {
-            const header = req.headerValue("x-rango-state");
-            if (req.url().includes("_rsc_partial") && header) {
-              resolve(header);
-            }
-          });
-        });
+        const appBKey = await findRangoStateKey(tab1, appAKey);
+        expect(appBKey).toMatch(/^rango-state_/);
+        expect(appBKey).not.toBe(appAKey);
+        const appBInitial = await readRangoStateAt(tab1, appBKey);
+        expect(appBInitial).toBeTruthy();
 
         // Tab 2 (still in A) rotates app A's rango state cookie — simulating a
         // server action invalidation. The jar is shared, but the cookie name is
@@ -620,18 +669,14 @@ test.describe("multi-router (dev)", () => {
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);
+        expect(await readRangoStateAt(tab1, appBKey)).toBe(appBInitial);
 
-        // Tab 1's next SPA navigation must use its own B token, not the
-        // rotated A token. The version prefix MAY match (shared build), so
-        // we compare the full string — only a key-namespace leak would
-        // cause `rotatedAState` to appear here.
         await testId(tab1, "app-b-nav-page").click();
         await expect(testId(tab1, "app-b-page")).toBeVisible({
           timeout: 10000,
         });
 
-        const sent = await tab1HeaderPromise;
-        expect(sent).not.toBe(rotatedAState);
+        expect(await readRangoStateAt(tab1, appBKey)).toBe(appBInitial);
       } finally {
         await tab1.close();
         await tab2.close();
@@ -669,6 +714,58 @@ test.describe("multi-router (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
+  });
+
+  test.describe("per-router search schemas (same-named routes)", () => {
+    test("site /lookup parses with site's schema, not admin's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      // { q: string } — admin's { page: number } must not leak in.
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
+
+    test("admin /lookup parses with admin's schema, not site's", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const adminUrl = f
+        .url("/lookup?q=hello&page=2")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":2}',
+      );
+    });
+
+    test("site /lookup still parses with site's schema AFTER admin evaluated", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      // Order matters: routers register their schemas when their urls module
+      // evaluates (admin's on the admin request above). This revisit is the
+      // collision case — a name-keyed global registry would now parse site's
+      // request with admin's { page: number } schema.
+      const adminUrl = f
+        .url("/lookup?page=7")
+        .replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-lookup-search")).toHaveText(
+        '{"page":7}',
+      );
+
+      await page.goto(f.url("/lookup?q=hello&page=2"));
+      await waitForHydration(page);
+      await expect(testId(page, "site-lookup-search")).toHaveText(
+        '{"q":"hello"}',
+      );
+    });
   });
 
   test.describe("site app (localhost)", () => {
@@ -1156,19 +1253,13 @@ test.describe("multi-router (production)", () => {
           "data-app-shell",
           "b",
         );
+        await waitForHydration(tab1);
 
-        // Tab 1 is now fully app B (with its own namespaced rango-state key).
-        // The property under test: tab 2's app-A token rotation must not surface
-        // in tab 1's app-B requests, asserted below via the X-Rango-State header.
-
-        const tab1HeaderPromise = new Promise<string | null>((resolve) => {
-          tab1.on("request", (req) => {
-            const header = req.headerValue("x-rango-state");
-            if (req.url().includes("_rsc_partial") && header) {
-              resolve(header);
-            }
-          });
-        });
+        const appBKey = await findRangoStateKey(tab1, appAKey);
+        expect(appBKey).toMatch(/^rango-state_/);
+        expect(appBKey).not.toBe(appAKey);
+        const appBInitial = await readRangoStateAt(tab1, appBKey);
+        expect(appBInitial).toBeTruthy();
 
         const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
         await tab2.evaluate(
@@ -1178,14 +1269,14 @@ test.describe("multi-router (production)", () => {
           [appAKey, rotatedAState],
         );
         await tab1.waitForTimeout(150);
+        expect(await readRangoStateAt(tab1, appBKey)).toBe(appBInitial);
 
         await testId(tab1, "app-b-nav-page").click();
         await expect(testId(tab1, "app-b-page")).toBeVisible({
           timeout: 10000,
         });
 
-        const sent = await tab1HeaderPromise;
-        expect(sent).not.toBe(rotatedAState);
+        expect(await readRangoStateAt(tab1, appBKey)).toBe(appBInitial);
       } finally {
         await tab1.close();
         await tab2.close();

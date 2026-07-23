@@ -8,15 +8,17 @@ type Precomputed = Array<{
   routes: Record<string, string>;
 }>;
 
-function flatten(patterns: ReturnType<typeof urls>): Precomputed {
-  const manifest = generateManifestFull(patterns, 0);
+async function flatten(
+  patterns: ReturnType<typeof urls>,
+): Promise<Precomputed> {
+  const manifest = await generateManifestFull(patterns, 0);
   const result: Precomputed = [];
   flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, result);
   return result;
 }
 
 describe("flattenLeafEntries — nested lazy-include staticPrefix collision (#506)", () => {
-  it("does NOT precompute a nested-include leaf whose staticPrefix collapses onto an ancestor (dynamic param)", () => {
+  it("does NOT precompute a nested-include leaf whose staticPrefix collapses onto an ancestor (dynamic param)", async () => {
     // root -> include("/g", group) -> group has a dynamic sibling path and
     // include("/:id/sub", section) -> section's OWN top-level is itself a lazy
     // include("/", item) -> item path "/leaf".
@@ -51,14 +53,14 @@ describe("flattenLeafEntries — nested lazy-include staticPrefix collision (#50
       ),
     ]);
 
-    const result = flatten(root);
+    const result = await flatten(root);
     const collided = result.find(
       (e) => e.staticPrefix === "/g" && "group.section.item.leaf" in e.routes,
     );
     expect(collided).toBeUndefined();
   });
 
-  it("still precomputes a nested leaf when each include level has a distinct staticPrefix (static)", () => {
+  it("still precomputes a nested leaf when each include level has a distinct staticPrefix (static)", async () => {
     const item = urls(({ path }) => [
       path("/leaf", () => null, { name: "leaf" }),
     ]);
@@ -78,13 +80,13 @@ describe("flattenLeafEntries — nested lazy-include staticPrefix collision (#50
       ),
     ]);
 
-    const result = flatten(root);
+    const result = await flatten(root);
     const leaf = result.find((e) => "group.section.item.leaf" in e.routes);
     expect(leaf).toBeDefined();
     expect(leaf!.staticPrefix).toBe("/g/sub/");
   });
 
-  it("precomputes a simple single-level include leaf", () => {
+  it("precomputes a simple single-level include leaf", async () => {
     const api = urls(({ path }) => [
       path("/users", () => null, { name: "users" }),
     ]);
@@ -93,7 +95,7 @@ describe("flattenLeafEntries — nested lazy-include staticPrefix collision (#50
       include("/api", api, { name: "api" }),
     ]);
 
-    const result = flatten(root);
+    const result = await flatten(root);
     const leaf = result.find((e) => "api.users" in e.routes);
     expect(leaf).toBeDefined();
     expect(leaf!.staticPrefix).toBe("/api");
