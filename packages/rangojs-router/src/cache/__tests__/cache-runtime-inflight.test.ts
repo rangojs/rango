@@ -13,7 +13,7 @@
  * in the non-Vite unit runner), same as the sibling cache-runtime suites.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NOCACHE_SYMBOL } from "../taint.js";
 
 // encodeReply serializes args so JSON-safe args still exercise the wrapper; the
@@ -227,5 +227,94 @@ describe('"use cache" in-flight dedup (C1)', () => {
     expect(store.setItem.mock.calls[0][2].handles).toBeDefined();
     // The follower replayed the same encoded handles into its handle store.
     expect(mockRestoreHandles).toHaveBeenCalled();
+  });
+
+  // Wedged-leader guard (autobarn pilot outage): a leader that never settles —
+  // e.g. registered by a background shell capture whose workerd context was
+  // killed while its upstream fetch tarpitted — must not hang followers
+  // forever. Followers trust an in-flight entry only for the leader trust
+  // window; past it they evict the entry and run fresh.
+  describe("leader trust window", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function wedgedThenFresh() {
+      let calls = 0;
+      const fn = async (_x: string): Promise<unknown> => {
+        if (++calls === 1) return new Promise<never>(() => {});
+        return "fresh";
+      };
+      return { fn, calls: () => calls };
+    }
+
+    it("a follower stops waiting on a wedged leader at the window and runs fresh", async () => {
+      const store = {
+        getItem: vi.fn().mockResolvedValue(null),
+        setItem: vi.fn().mockResolvedValue(undefined),
+      };
+      mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
+      const { fn, calls } = wedgedThenFresh();
+      const cached = registerCachedFunction(fn, "wedged-live", "default");
+
+      const leader = cached("k");
+      void leader.catch(() => {});
+      // Let the leader's miss path register the in-flight entry.
+      await vi.advanceTimersByTimeAsync(0);
+      const follower = cached("k");
+
+      await vi.advanceTimersByTimeAsync(15_001);
+      await expect(follower).resolves.toBe("fresh");
+      expect(calls()).toBe(2);
+    });
+
+    it("an already-expired leader entry is evicted on arrival with no wait", async () => {
+      const store = {
+        getItem: vi.fn().mockResolvedValue(null),
+        setItem: vi.fn().mockResolvedValue(undefined),
+      };
+      mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
+      const { fn, calls } = wedgedThenFresh();
+      const cached = registerCachedFunction(fn, "wedged-expired", "default");
+
+      const leader = cached("k");
+      void leader.catch(() => {});
+      await vi.advanceTimersByTimeAsync(15_001);
+
+      await expect(cached("k")).resolves.toBe("fresh");
+      expect(calls()).toBe(2);
+    });
+
+    it("a leader inside the trust window still dedups (no premature eviction)", async () => {
+      const store = {
+        getItem: vi.fn().mockResolvedValue(null),
+        setItem: vi.fn().mockResolvedValue(undefined),
+      };
+      mockGetRequestContext.mockReturnValue(ctxWithInvokingWaitUntil(store));
+      let calls = 0;
+      let release!: (v: string) => void;
+      const gate = new Promise<string>((r) => (release = r));
+      const fn = async (_x: string) => {
+        calls++;
+        return await gate;
+      };
+      const cached = registerCachedFunction(fn, "wedged-healthy", "default");
+
+      const leader = cached("k");
+      await vi.advanceTimersByTimeAsync(0);
+      const follower = cached("k");
+
+      await vi.advanceTimersByTimeAsync(14_000);
+      release("led");
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(leader).resolves.toBe("led");
+      await expect(follower).resolves.toBe("led");
+      expect(calls).toBe(1);
+      expect(store.setItem).toHaveBeenCalledTimes(1);
+    });
   });
 });

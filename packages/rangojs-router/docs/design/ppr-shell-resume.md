@@ -250,6 +250,19 @@ captureShellHTML({ maxWaitMs })`, so it bounds BOTH the fizz prerender and
   request re-captures). Node/dev and build-time captures have no `waitUntil`
   ceiling. Canonical in-code doc: `SHELL_CAPTURE_MAX_WAIT_MS` in
   `src/rsc/shell-capture-constants.ts`.
+- **Wedge containment.** The budget arms inside `captureShellHTML` — AFTER
+  the capture's `router.match()`, so a handler wedged on a never-settling
+  upstream await used to leave the task with no deadline at all (autobarn
+  pilot: a 30s+ tarpitting fetch). Two layers now bound it:
+  `SHELL_CAPTURE_TASK_HARD_CAP_MS` (25s) races the whole task — on expiry the
+  task settles through the normal error path (backoff + report) and releases
+  the stampede guard and the serialized queue slot; and the guard itself is
+  staleness-aware with a token-guarded release, so an entry stranded by a
+  killed workerd context (where no timer survives to fire) is reclaimed by
+  the next schedule past the cap. The cap bounds rango's bookkeeping, not the
+  wedged render itself — its awaits are never cancelled and die with the
+  context. The capture's `"use cache"` leader registrations are separately
+  bounded by the in-flight leader trust window (`use-cache-api-design.md`).
 - **Producer B parity.** Build-time captures (Prerender+ppr,
   `src/prerender/build-shell-capture.ts`) and the dev `/__rsc_shell` endpoint
   honor the same knob (`resolveBuildPprConfig` resolves it; the dev

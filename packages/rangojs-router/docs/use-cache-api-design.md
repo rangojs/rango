@@ -234,6 +234,29 @@ registerCachedFunction(fn, id, profileName);
 6. **Hit (stale)**: return stale value, trigger background revalidation via `waitUntil()`.
 7. **Miss**: execute `fn(...args)`, serialize result via `renderToReadableStream()`, capture handles if tainted args present, store in cache, return.
 
+### In-flight dedup and the leader trust window
+
+Concurrent misses on one key dedup onto a single leader: followers await the
+leader's envelope and serve it as a synthetic hit, and the store write stays
+exactly once. The entry lives in an isolate-global map and is cleared when the
+leader settles (a rejected leader propagates, and waiters retry fresh).
+
+A leader that never settles must not hang followers (scar tissue, autobarn
+pilot outage): a background shell capture's render became leader, awaited a
+tarpitting upstream fetch, and workerd killed the capture's `waitUntil` context
+-- orphaning the leader promise as permanently pending, its entry never
+cleared. Every later document render calling the same cached function (an
+isolate-global key for plain-args calls) awaited it forever before first byte:
+isolate-wide TTFB-0 until redeploy. Followers therefore trust an in-flight
+entry for at most `IN_FLIGHT_LEADER_MAX_WAIT_MS` (15s) from registration; past
+it they evict the entry and execute fresh -- bounded duplicate upstream work
+instead of an unbounded hang. Eviction is age-based off the registration
+timestamp, so it also heals entries stranded by a killed context (no timer in
+that context needs to survive). A follower timeout is reported through
+`reportCacheError` as `cache-read` with the `inflight-timeout` label. The shell
+capture pipeline that armed the incident has its own containment -- see "Wedge
+containment" in `docs/design/ppr-shell-resume.md`.
+
 ### Serialization
 
 - Serialization: RSC Flight protocol (`renderToReadableStream` / `createFromReadableStream`). Handles JSX, client references, Promises, plain data.

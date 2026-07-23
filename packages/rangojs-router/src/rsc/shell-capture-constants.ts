@@ -25,3 +25,21 @@
  * docs/design/ppr-shell-resume.md (Cost model).
  */
 export const SHELL_CAPTURE_MAX_WAIT_MS = 15_000;
+
+/**
+ * Hard cap on one capture TASK — runShellCapture end to end (both attempts +
+ * the in-place retry delay). SHELL_CAPTURE_MAX_WAIT_MS arms only inside
+ * captureShellHTML, AFTER the capture's router.match(); a handler wedged on a
+ * never-settling upstream await (autobarn pilot: a 30s+ tarpitting fetch)
+ * wedges the task with no deadline in force. The task's settle path releases
+ * the per-key stampede guard and the serialized capture-queue slot, so an
+ * unbounded task strands BOTH for the isolate's lifetime.
+ *
+ * 25s: above one full-budget attempt plus overhead (cutting a second attempt
+ * short is an acceptable loss — every terminal path backs the key off anyway),
+ * and below workerd's ~30s waitUntil grace so the cap timer still fires in a
+ * live context. When workerd kills the context BEFORE the cap fires, the timer
+ * dies with it — that stranding is healed by scheduleShellCapture's staleness
+ * check on the stampede guard, keyed off the same constant.
+ */
+export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;
