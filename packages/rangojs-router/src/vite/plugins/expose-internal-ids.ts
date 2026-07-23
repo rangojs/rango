@@ -68,6 +68,52 @@ const VIRTUAL_HANDLER_PREFIX = "virtual:handler-extract:";
 // Consolidated plugin
 // ---------------------------------------------------------------------------
 
+interface RscScanPluginApi {
+  manager?: { isScanBuild?: boolean };
+}
+
+/**
+ * Stub export-only loader modules before plugin-rsc reduces scan modules to
+ * imports. The regular post transform remains authoritative outside scan builds.
+ *
+ * Handles and location-state definitions are intentionally excluded: handle
+ * collect functions run in the browser, and location-state definitions are
+ * callable browser objects. Their dependencies must remain visible to non-RSC
+ * validation rather than being hidden behind an opaque scan stub.
+ */
+export function createLoaderScanStubPlugin(): Plugin {
+  let projectRoot = "";
+  let rscApi: RscScanPluginApi | undefined;
+
+  return {
+    name: "@rangojs/router:loader-scan-stubs",
+    apply: "build",
+    configResolved(config) {
+      projectRoot = config.root;
+      rscApi = config.plugins.find((plugin) => plugin.name === "rsc:minimal")
+        ?.api as RscScanPluginApi | undefined;
+    },
+    transform(code, id) {
+      if (
+        !rscApi?.manager?.isScanBuild ||
+        this.environment?.name === "rsc" ||
+        id.includes("/node_modules/") ||
+        !code.includes("createLoader") ||
+        !hasCreateLoaderImport(code)
+      ) {
+        return;
+      }
+
+      const fnNames = getImportedFnNames(code, "createLoader");
+      const bindings = collectCreateExportBindings(code, fnNames);
+      const filePath = normalizePath(path.relative(projectRoot, id));
+      return (
+        generateClientLoaderStubs(bindings, code, filePath, true) ?? undefined
+      );
+    },
+  };
+}
+
 export function exposeInternalIds(options?: { forceBuild?: boolean }): Plugin {
   let config: ResolvedConfig;
   let isBuild = false;

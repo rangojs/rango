@@ -45,6 +45,8 @@ import {
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { hashClientRefs } from "./plugins/client-ref-hashing.js";
+import { hashServerRefs } from "./plugins/server-ref-hashing.js";
+import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
@@ -224,9 +226,26 @@ async function createTempRscServer(
           ssr: "virtual:entry-ssr",
           rsc: state.resolvedEntryPath!,
         },
+        // The temp server renders Static/Prerender output and encrypts inline-
+        // action bound args. Give it the SAME key as the main build/dev runtime
+        // (defineEncryptionKeyExpr is process-cached) so those args decrypt at
+        // invocation. Unconditional, NOT build-only: under Cloudflare/workerd dev
+        // the RSC env has no module runner, so prerender is rendered by THIS temp
+        // server (via /__rsc_prerender), and the action decrypts in the main
+        // runtime with the rango.ts key -- gating on forceBuild left dev encrypting
+        // with the temp server's own random key, failing decryptActionBoundArgs.
+        // (hashServerRefs stays build-only: dev keeps dev-style ids the dev runtime
+        // resolves directly.)
+        defineEncryptionKey: defineEncryptionKeyExpr(),
       }),
-      // hashClientRefs only in build mode — production bundles need hashed refs
-      ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
+      // hashClientRefs/hashServerRefs only in build mode — production bundles
+      // need hashed refs. hashServerRefs is the server-side analog: it rewrites
+      // registerServerReference dev-style ids to production hashes so a
+      // server-created action embedded in prerendered/static Flight resolves
+      // against the production manifest on a build-time-cache hit.
+      ...(options.forceBuild
+        ? [hashClientRefs(state.projectRoot), hashServerRefs(state.projectRoot)]
+        : []),
       createVersionPlugin(),
       // Before the stub plugin, so "virtual:entry-ssr" resolves to the real
       // SSR entry when the shell endpoint needs it (see the option doc).

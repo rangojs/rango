@@ -188,6 +188,38 @@ export async function getProducts() {
 }
 ```
 
+### Inline server actions in cached modules (server-references manifest)
+
+An inline `"use server"` action defined inside a `"use cache"` function (or any
+module without a file-level `"use server"` directive) must still appear in the
+production `virtual:vite-rsc/server-references` manifest so the action remains
+invocable after a cache HIT -- when the cached value was deserialized without
+executing the body that would otherwise register the action in React's runtime
+registry.
+
+plugin-rsc's multi-pass build can drop such modules from the shared
+`serverReferenceMetaMap`: the ssr scan deletes any module lacking a file-level
+`"use server"`, and the rsc build emits the manifest (eagerly imported by the rsc
+runtime, so it snapshots the map early) before the lazily-loaded route module is
+re-added. The entry never lands in the manifest, and the route 500s with `server
+reference not found` on a hit (dev and the cache MISS hide it -- the body runs
+and self-registers). Upstream tracking: vitejs/vite-plugin-react issue #1250
+(fix PR #1251).
+
+Two defenses close this. The known trigger was a bad scan graph: plugin-rsc
+reduces scan modules to import-only form before the regular post-order loader
+transform can stub export-only `createLoader` modules, so their server
+implementation imports leaked into non-RSC analysis and dragged inline-action
+modules through the deleting ssr scan. `createLoaderScanStubPlugin`
+(`src/vite/plugins/expose-internal-ids.ts`) now emits the loader stubs first,
+during non-RSC scan builds only (RSC and normal builds are untouched), keeping
+those imports out of the non-RSC graph so the manifest retains its inline-action
+entries. Independently, `segment-codec` deserializes stored entries with
+plugin-rsc's `preserveServerReferences` (plugin-rsc #1246), so a hit re-emits
+embedded references opaquely instead of resolving them through the manifest at
+decode time. An earlier workaround that captured and re-asserted
+`serverReferenceMetaMap` entries in `exposeActionId` has been removed.
+
 ## Runtime: `registerCachedFunction`
 
 ```ts
@@ -210,6 +242,50 @@ registerCachedFunction(fn, id, profileName);
 ### Dev mode
 
 Caching is active in development (backed by `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. HMR invalidates the in-memory store so code changes take effect immediately.
+
+## Embedding server actions in cached components
+
+A cached function can return a component that creates an inline `"use server"`
+action -- e.g. a cached article list whose rows each have a like button. The
+contract, locked by `e2e/use-cache-inline-action.test.ts` (dev + production):
+
+| Aspect                                       | Behavior                                                                                                                                                                                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Values the action closes over (render scope) | Frozen at cache-WRITE. The closure compiles to encrypted bound args (`encryptActionBoundArgs`) captured when the entry is written, replayed verbatim on a hit. Correct for stable identities (an article id); a hazard for volatile/request-scoped values.               |
+| The action body                              | Runs live on every invocation. It is an ordinary server function once called: fresh computation, live request context. `cookies()`/`headers()` work in the body (it executes in the live request, not the cached one) -- the read guard applies only to the cached body. |
+| Cache hit                                    | The action survives serialize -> store -> deserialize and stays invocable (see the server-references manifest section under Build-Time).                                                                                                                                 |
+
+The freeze of captured scope is not a bug -- it is what makes a cached list with
+per-item actions work (the item identity is meant to be fixed). The hazard is
+capturing a per-request value (token, session, time) and expecting freshness;
+read those live in the action body instead.
+
+**Same-process vs cross-process hits.** This round-trips on a hit served by the
+same process that wrote the entry (node/memory store): the cache miss executed
+the function, registering the action in React's runtime registry, so the hit
+resolves a re-serializable reference. A hit served from an entry populated by a
+_different_ process (e.g. Cloudflare `CFCacheStore` across workers, or the first
+hit after a deploy) instead resolves via the build manifest to a raw function
+React refuses to re-serialize to a Client Component. The cache decoder closes
+that gap with plugin-rsc's `preserveServerReferences` option. The same preserve
+path is what lets `Static()`/`Prerender()` embed server-created actions -- see
+`prerender-api-design.md`.
+
+**Encryption key across deploys.** Closed-over bound args are encrypted
+(`encryptActionBoundArgs`) with a key plugin-rsc reads from
+`virtual:vite-rsc/encryption-key`. `rango()` supplies one shared key per build
+(`src/vite/encryption-key.ts`, via plugin-rsc's `defineEncryptionKey`) so the
+build-discovery temp server and the runtime agree. By default the key is random
+per build and inlined into the server bundle as a literal (plugin-rsc's default
+posture; it never reaches the client bundle -- but the server artifact contains
+it, so a "stable secret via env var" expectation does not hold). A cache entry
+that OUTLIVES its build -- a persistent cross-process store such as
+`CFCacheStore` serving entries written by the previous deploy -- holds bound
+args encrypted with the writing build's key, so invoking its embedded action
+after a deploy fails `decryptActionBoundArgs` until the entry expires or
+revalidates. Set `RANGO_ENCRYPTION_KEY` (base64-encoded 32 bytes, read at build
+time) to keep the key stable across deploys whenever cached values can span
+them.
 
 ## Interaction with Existing Caching
 

@@ -7,6 +7,7 @@ import {
   fetchWithBreadcrumbs,
   getSlowCachedData,
   getCachedReactNode,
+  getCachedInlineActionShell,
   CachedWithSlots,
   getCachedActionData,
   cachedReadsCookies,
@@ -267,6 +268,26 @@ export const useCachePatterns = urls(
         loading(
           <div data-testid="use-cache-node-fallback">
             Loading cached node...
+          </div>,
+        ),
+      ],
+    ),
+
+    // Cached server component that embeds an inline "use server" action which
+    // closes over a render-scope token, then hands it to a client component.
+    // Pins the cache + embedded-inline-action behavior (mechanical round-trip
+    // works; closure-captured scope is frozen at cache-write time).
+    path(
+      "/cached-inline-action",
+      async () => {
+        const node = await getCachedInlineActionShell();
+        return <div data-testid="use-cache-inline-action-page">{node}</div>;
+      },
+      { name: "useCacheTest.cachedInlineAction" },
+      () => [
+        loading(
+          <div data-testid="use-cache-inline-action-fallback">
+            Loading cached inline action...
           </div>,
         ),
       ],

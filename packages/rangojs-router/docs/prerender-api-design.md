@@ -592,9 +592,37 @@ not survive. The dev + production fixtures therefore pin the retained-tree path
 for both a producer-B document HIT and prerender-store partial navigation; they
 do not claim that a streamed action result survives default tree replacement.
 
-This does not extend to an inline closure-bound action embedded in the stored
-Flight payload. That path remains blocked by #584 / plugin-rsc #1246; runtime
-`ppr` covers encrypted bound actions separately.
+#### Embedded closure-bound actions
+
+A `Static` or `Prerender` handler may create an inline `"use server"` action,
+close over build-time scope such as an article id, and pass it to a client
+component. Because prerendering is a build-time cache, that reference must
+survive serialize -> store -> deserialize -> re-serialize -> invoke:
+
+1. `hashServerRefs` rewrites the build-discovery server's dev-style reference id
+   to the production hash.
+2. Export-only loader modules are replaced with non-RSC scan stubs before
+   plugin-rsc performs import-only analysis, keeping their server implementation
+   imports out of the SSR graph and the production reference manifest intact.
+3. `segment-codec` deserializes with plugin-rsc's
+   `preserveServerReferences` option so a cache hit re-emits the opaque
+   reference instead of resolving it to a raw function.
+4. Build discovery and the runtime share `defineEncryptionKey`
+   (`src/vite/encryption-key.ts`), allowing the runtime to decrypt bound
+   arguments captured while prerendering. `RANGO_ENCRYPTION_KEY` (base64-encoded
+   32 bytes, read at build time) pins a stable key across builds; otherwise each
+   build mints a random one. Prerender entries are rewritten every build, so the
+   per-build default is safe here -- the cross-deploy hazard applies to runtime
+   cache stores; see the encryption-key note in `use-cache-api-design.md`.
+
+A pure `Prerender` route has no live handler after build. Its action re-render
+therefore falls back to the stored prerender entry; the action has already run
+and `useActionState` applies its result client-side. `Passthrough` routes retain
+their live handler and continue to re-render fresh.
+
+The captured scope is frozen at build, while the action body and request context
+remain live at invocation. Dev and production coverage lives in
+`e2e/prerender-inline-action.test.ts` and the Cloudflare inline-action suite.
 
 ### Handle Data
 

@@ -2,7 +2,9 @@ import { type PluginOption } from "vite";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
+import { defineEncryptionKeyExpr } from "./encryption-key.js";
 import {
+  createLoaderScanStubPlugin,
   exposeInternalIds,
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
@@ -275,6 +277,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         entries: finalEntries,
         serverHandler: false,
         clientChunks,
+        // Share one encryption key with the build-discovery temp server so
+        // build-time prerender/static inline-action bound args decrypt at runtime.
+        defineEncryptionKey: defineEncryptionKeyExpr(),
       }) as PluginOption,
     );
     plugins.push(clientRefDedup());
@@ -521,6 +526,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       rsc({
         entries: finalEntries,
         clientChunks,
+        // Share one encryption key with the build-discovery temp server so
+        // build-time prerender/static inline-action bound args decrypt at runtime.
+        defineEncryptionKey: defineEncryptionKeyExpr(),
       }) as PluginOption,
     );
     plugins.push(clientRefDedup());
@@ -551,6 +559,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     },
   });
 
+  plugins.push(createLoaderScanStubPlugin());
   plugins.push(exposeActionId());
   plugins.push(useCacheTransform());
   plugins.push(exposeInternalIds());

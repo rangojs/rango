@@ -3,6 +3,11 @@ import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {
+  InlineLikeButton,
+  type InlineActionState,
+} from "../components/InlineLikeButton.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
+import {
   getBlogPosts,
   getBlogPost,
   BlogSidebarLoader,
@@ -302,6 +307,20 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
     href: ctx.reverse("blogPost", { slug: post.slug }),
   });
 
+  // Inline "use server" like action embedded in this runtime-cached blog post.
+  // It closes over the post slug (frozen into the cache entry at cache-write);
+  // the body runs live on click. On a cache HIT the handler is not re-run, so the
+  // action must resolve from the stored Flight -- exercising the embedded-action
+  // path on a runtime cache hit.
+  const postSlug = post.slug;
+  async function likeBlogPost(
+    _prev: InlineActionState,
+    _formData: FormData,
+  ): Promise<InlineActionState> {
+    "use server";
+    return buildInlineActionState(postSlug);
+  }
+
   return (
     <article data-testid="blog-post-detail">
       <nav
@@ -346,6 +365,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
       >
         {post.content}
       </div>
+      <InlineLikeButton capturedId={postSlug} action={likeBlogPost} />
       <footer
         data-testid="cache-info"
         style={{

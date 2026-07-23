@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  createLoaderScanStubPlugin,
   exposeInternalIds,
   type ExposeInternalIdsApi,
 } from "../plugins/expose-internal-ids.js";
@@ -32,6 +33,25 @@ function rscCtx() {
 
 function clientCtx() {
   return { environment: { name: "client" }, warn: vi.fn() };
+}
+
+function createLoaderScanPlugin(isScanBuild: boolean) {
+  const plugin = createLoaderScanStubPlugin() as ReturnType<
+    typeof createLoaderScanStubPlugin
+  > & {
+    configResolved: (config: any) => void;
+    transform: (this: any, code: string, id: string) => any;
+  };
+  plugin.configResolved({
+    root: ROOT,
+    plugins: [
+      {
+        name: "rsc:minimal",
+        api: { manager: { isScanBuild } },
+      },
+    ],
+  });
+  return plugin;
 }
 
 /**
@@ -775,8 +795,76 @@ export { DocsPage as DocsPagePublic };
 });
 
 // ---------------------------------------------------------------------------
-// Client loader stubs for const + export { X } pattern
+// Loader stubs
 // ---------------------------------------------------------------------------
+
+describe("createLoaderScanStubPlugin", () => {
+  const loaderSource = `import { createLoader as defineLoader } from "@rangojs/router";
+const InternalLoader = defineLoader(async () => {
+  await import("server-only");
+  return { ok: true };
+}, true);
+export { InternalLoader as PublicLoader };
+`;
+
+  it("stubs export-only loaders during non-RSC scan builds", () => {
+    const plugin = createLoaderScanPlugin(true);
+    const result = plugin.transform.call(clientCtx(), loaderSource, FILE_ID);
+
+    expect(result?.code).toContain("export const PublicLoader");
+    expect(result?.code).toContain('__brand: "loader"');
+    expect(result?.code).not.toContain("server-only");
+    expect(result?.code).not.toContain("defineLoader");
+  });
+
+  it("leaves RSC scan modules unchanged", () => {
+    const plugin = createLoaderScanPlugin(true);
+    expect(
+      plugin.transform.call(rscCtx(), loaderSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it("leaves real non-RSC builds to the post transform", () => {
+    const plugin = createLoaderScanPlugin(false);
+    expect(
+      plugin.transform.call(clientCtx(), loaderSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it("does not replace mixed-export loader modules", () => {
+    const plugin = createLoaderScanPlugin(true);
+    const mixedSource = `${loaderSource}export const title = "Mixed";\n`;
+    expect(
+      plugin.transform.call(clientCtx(), mixedSource, FILE_ID),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "createHandle",
+      `import "server-only";
+import { createHandle } from "@rangojs/router";
+export const Breadcrumbs = createHandle((segments) => segments.flat());
+`,
+    ],
+    [
+      "createLocationState",
+      `import "server-only";
+import { createLocationState } from "@rangojs/router";
+export const FlashMessage = createLocationState({ flash: true });
+`,
+    ],
+  ])("leaves %s modules visible to non-RSC validation", (_name, source) => {
+    const plugin = createLoaderScanPlugin(true);
+    expect(plugin.transform.call(clientCtx(), source, FILE_ID)).toBeUndefined();
+  });
+
+  it("runs only during build without joining the post transform group", () => {
+    const plugin = createLoaderScanStubPlugin();
+    expect(plugin.apply).toBe("build");
+    expect(plugin.enforce).toBeUndefined();
+  });
+});
 
 describe("exposeInternalIds - client loader stubs for const + export patterns", () => {
   it("generates client stub for const + export { X }", () => {

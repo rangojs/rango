@@ -18,6 +18,12 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
+// Preserve embedded server references on a cache/prerender HIT so they
+// re-serialize to the client instead of resolving to a raw function React
+// refuses to pass to a Client Component. Shared across the deserialize sites so
+// the decode policy has a single owner.
+const PRESERVE_SERVER_REFS = { preserveServerReferences: true } as const;
+
 /**
  * Convert a ReadableStream to a string.
  */
@@ -81,7 +87,11 @@ export async function rscDeserialize<T>(
 
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(
+    stream,
+    { temporaryReferences },
+    PRESERVE_SERVER_REFS,
+  );
 }
 
 /**
@@ -116,7 +126,11 @@ export async function serializeResult(value: unknown): Promise<string | null> {
 export async function deserializeResult<T>(encoded: string): Promise<T> {
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
+  return createFromReadableStream<T>(
+    stream,
+    { temporaryReferences },
+    PRESERVE_SERVER_REFS,
+  );
 }
 
 /**
@@ -271,9 +285,11 @@ export async function deserializeSegments(
 
       const [component, layout, loaderData, loaderDataPromise, loadingData] =
         await Promise.all([
-          createFromReadableStream(stringToStream(item.encoded), {
-            temporaryReferences,
-          }),
+          createFromReadableStream(
+            stringToStream(item.encoded),
+            { temporaryReferences },
+            PRESERVE_SERVER_REFS,
+          ),
           rscDeserialize(item.encodedLayout),
           rscDeserialize(item.encodedLoaderData),
           rscDeserialize(item.encodedLoaderDataPromise),

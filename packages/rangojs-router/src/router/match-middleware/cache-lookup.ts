@@ -450,21 +450,30 @@ export function withCacheLookup<TEnv>(
       resolveLoadersOnly,
     } = getRouterContext<TEnv>();
 
-    if (
-      !ctx.isAction &&
-      prerenderStoreShortCircuits(ctx.matched.pr, ctx.request)
-    ) {
-      await ensurePrerenderDeps();
-      if (prerenderStoreInstance) {
-        const served = yield* tryPrerenderLookup(
-          ctx,
-          state,
-          pipelineStart,
-          pipelineReqCtx,
-          resolveLoadersOnly,
-          resolveLoadersOnlyWithRevalidation,
-        );
-        if (served) return;
+    if (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request)) {
+      // Actions normally re-render fresh and skip the prerender store. But a pure
+      // Prerender route's handler is evicted at build, so there is no fresh
+      // handler to run on an action re-render -- without the fallback the
+      // re-render falls through to the evicted handler and throws "No prerender
+      // data found". Serve the prerendered entry instead (the action ran already;
+      // its result is applied client-side via useActionState). Passthrough routes
+      // keep a liveHandler, so they still re-render fresh on actions.
+      const isPassthroughPrerenderRoute = ctx.entries.some(
+        (entry) => entry.type === "route" && entry.isPassthrough === true,
+      );
+      if (!ctx.isAction || !isPassthroughPrerenderRoute) {
+        await ensurePrerenderDeps();
+        if (prerenderStoreInstance) {
+          const served = yield* tryPrerenderLookup(
+            ctx,
+            state,
+            pipelineStart,
+            pipelineReqCtx,
+            resolveLoadersOnly,
+            resolveLoadersOnlyWithRevalidation,
+          );
+          if (served) return;
+        }
       }
     }
 

@@ -13,8 +13,13 @@ import { ParallelOutlet } from "@rangojs/router/client";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+import {
+  CachedInlineActionForm,
+  type CachedInlineActionState,
+} from "../components/CachedInlineActionForm.js";
 import { PrerenderPprSeq } from "../components/PrerenderPprSeq.js";
 import { PrerenderPprActionForm } from "../components/InlineBoundActionForm.js";
+import { buildInlineActionState } from "../inline-action-helpers.js";
 // Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
 // resolve.alias. Reaching this through build-time Static/Prerender handlers
 // asserts discovery's runner honors third-party resolvers (issue #500).
@@ -154,6 +159,54 @@ export const PrerenderHandle = Prerender(async (ctx) => {
     </div>
   );
 });
+
+// Static handler embedding an inline action with build-time captured scope.
+// Runtime serves the stored Flight without re-running this handler, so action
+// invocation must resolve through the production server-reference manifest.
+export const StaticInlineActionPage = Static(() => {
+  const token = `stok-${Date.now().toString(36)}-${Math.floor(
+    Math.random() * 1e6,
+  ).toString(36)}`;
+
+  async function staticInlineAction(
+    _prev: CachedInlineActionState,
+    _formData: FormData,
+  ): Promise<CachedInlineActionState> {
+    "use server";
+    return buildInlineActionState(token);
+  }
+
+  return (
+    <CachedInlineActionForm
+      renderedToken={token}
+      cachedAction={staticInlineAction}
+    />
+  );
+});
+
+// Parameterized prerender fixture for a cached list-style action: each built
+// page freezes its id into the action while the action body remains live.
+export const PrerenderInlineActionPage = Prerender(
+  async () => [{ id: "a1" }, { id: "a2" }],
+  async (ctx) => {
+    const articleId = ctx.params.id;
+
+    async function likeAction(
+      _prev: CachedInlineActionState,
+      _formData: FormData,
+    ): Promise<CachedInlineActionState> {
+      "use server";
+      return buildInlineActionState(articleId);
+    }
+
+    return (
+      <CachedInlineActionForm
+        renderedToken={articleId}
+        cachedAction={likeAction}
+      />
+    );
+  },
+);
 
 // Prerender + ppr composition (docs/design/shell-fast-path.md): the SAME route
 // carries a build-time prerendered handler (trie pr:true) AND the ppr shell
@@ -413,5 +466,11 @@ export const prerenderPatterns = urls(
       name: "prerender-reverse",
     }),
     path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
+    path("/static-inline-action", StaticInlineActionPage, {
+      name: "static-inline-action",
+    }),
+    path("/prerender-inline-action/:id", PrerenderInlineActionPage, {
+      name: "prerender-inline-action",
+    }),
   ],
 );
