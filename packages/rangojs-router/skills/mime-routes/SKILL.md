@@ -132,9 +132,11 @@ response payload types, use one of these surfaces:
 // router.tsx
 export const router = createRouter({ document: Document }).routes(urlpatterns);
 
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```

@@ -333,7 +333,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * cannot stall the request; the read then falls through to its normal miss
    * path (L2/KV or render).
    *
-   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (10). Set to 0 (or any value
+   * Defaults to {@link EDGE_LOOKUP_TIMEOUT_MS} (25). Set to 0 (or any value
    * <= 0) to disable the budget and always await `match`.
    */
   edgeLookupTimeoutMs?: number;

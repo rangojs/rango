@@ -439,10 +439,14 @@ For response-aware and path-based utilities (`href()`, `Rango.Path`,
 // router.tsx
 const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
+// The alias is required: an interface heritage clause cannot take a `typeof`
+// type query directly (TS1109), so extend through a named alias.
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
     interface Env extends AppEnv {}
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```

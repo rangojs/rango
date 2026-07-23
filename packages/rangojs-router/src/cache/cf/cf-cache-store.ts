@@ -57,10 +57,13 @@ import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
 import { bufferToBase64, base64ToBuffer } from "./cf-base64.js";
 import {
+  KV_KEY_PRESERVED_PREFIX_BYTES,
   KV_MAX_KEY_BYTES,
   KV_MIN_EXPIRATION_TTL,
   kvKeyByteLength,
+  kvKeyDigest,
   remainingCacheControl,
+  truncateToBytes,
 } from "./cf-kv-utils.js";
 import {
   TAG_MARKER_CACHE_PREFIX,
@@ -1325,7 +1328,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: delete from KV
       if (this.kv && this.waitUntil) {
-        const kvKey = this.toKVKey(key);
+        const kvKey = await this.toKVKey(key);
         this.waitUntil(() =>
           reportingAsync(
             () => this.kv!.delete(kvKey),
@@ -1559,7 +1562,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = this.toDocKVKey(key);
+        const kvKey = await this.toDocKVKey(key);
         // Finding #3: never persist a per-client signal in the KV envelope.
         const headersArray: [string, string][] = [];
         response.headers.forEach((v, k) => {
@@ -1848,7 +1851,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // JSON.stringify(KVItemEnvelope); field names differ from L1 so we assemble
       // from the pre-escaped value/handles pieces rather than re-stringifying.
       if (this.kv && this.waitUntil && totalTtl >= 60) {
-        const kvKey = this.toKVKey(`fn:${key}`);
+        const kvKey = await this.toKVKey(`fn:${key}`);
         const expiresAt = staleAt + swrWindow * 1000;
         let envelopeJson = `{"v":${valueJson}`;
         if (handlesJson !== undefined) envelopeJson += `,"h":${handlesJson}`;
@@ -2073,20 +2076,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
-      const kvKey = this.toKVKey(`shell:${key}`);
-      let writeKv = retentionTtl >= KV_MIN_EXPIRATION_TTL;
-      const kvKeyBytes = kvKeyByteLength(kvKey);
-      if (kvKeyBytes > KV_MAX_KEY_BYTES) {
-        reportCacheError(
-          new Error(
-            `shell cache key produces a ${kvKeyBytes}-byte KV key, over the ` +
-              `${KV_MAX_KEY_BYTES}-byte limit; the shell was not persisted to KV (L2).`,
-          ),
-          "cache-write",
-          "[CFCacheStore] putShell",
-        );
-        writeKv = false;
-      }
+      const kvKey = await this.toKVKey(`shell:${key}`);
+      const writeKv = retentionTtl >= KV_MIN_EXPIRATION_TTL;
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
         if (
@@ -2219,7 +2210,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
     try {
       const readStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const kvKey = this.toKVKey(`shell:${key}`);
+      const kvKey = await this.toKVKey(`shell:${key}`);
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<CFShellEnvelope>(
           kvKey,
@@ -2330,11 +2321,27 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   /**
    * Convert string key to KV key string.
    * Uses same version prefix as Cache API for consistent invalidation.
+   *
+   * Single chokepoint for EVERY KV family (segments, items, shells, documents
+   * via toDocKVKey, tag markers via tagMarkerKey): a composed key over
+   * Cloudflare KV's 512-byte limit is normalized to a preserved readable
+   * prefix plus a SHA-256-derived 128-bit digest of the FULL key. Without
+   * this, kv.put/get reject with `414 ... exceeds key length limit of 512`
+   * and the entry silently never reaches L2 (observed in production for
+   * "use cache" items whose serialized args — e.g. a CMS query object — blow
+   * the cap; autobarn pilot). Keys are opaque storage identifiers, so
+   * normalization is semantics-preserving as long as distinct logical keys
+   * stay distinct: colliding requires an identical 400-byte prefix AND a
+   * 128-bit SHA-256 collision. Deterministic, so every family's read, write,
+   * and delete paths agree on the stored key.
    * @internal
    */
-  private toKVKey(key: string): string {
+  private async toKVKey(key: string): Promise<string> {
     const versionPath = this.version ? `v/${this.version}/` : "";
-    return `${versionPath}${key}`;
+    const composed = `${versionPath}${key}`;
+    if (kvKeyByteLength(composed) <= KV_MAX_KEY_BYTES) return composed;
+    const prefix = truncateToBytes(composed, KV_KEY_PRESERVED_PREFIX_BYTES);
+    return `${prefix}~${await kvKeyDigest(composed)}`;
   }
 
   /**
@@ -2364,7 +2371,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * document tier is the one with a request-host context here.
    * @internal
    */
-  private toDocKVKey(key: string): string {
+  private toDocKVKey(key: string): Promise<string> {
     return this.toKVKey(`h/${this.docKVHost()}/doc:${key}`);
   }
 
@@ -2480,7 +2487,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // ============================================================================
 
   /** KV key for a tag's invalidation marker. */
-  private tagMarkerKey(tag: string): string {
+  private tagMarkerKey(tag: string): Promise<string> {
     return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`);
   }
 
@@ -2805,7 +2812,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // (reported cache-read), which also fails open. Either way one slow tag
     // never amplifies into a per-segment stall.
     const { value: raw, timedOut } = await this.readWithTimeout<string | null>(
-      () => this.kv!.get(this.tagMarkerKey(tag), { type: "text" }),
+      async () => this.kv!.get(await this.tagMarkerKey(tag), { type: "text" }),
       this.kvReadTimeoutMs,
       "tag marker KV read",
     );
@@ -3012,7 +3019,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    *
    * Durable-write integrity: the in-memory write-through (memo + L1) for a tag
    * runs ONLY after that tag's KV marker write is confirmed. If any KV write
-   * fails (transient error, or an over-512-byte key), this rejects with the
+   * fails (transient error; over-limit keys are normalized by toKVKey rather
+   * than rejected), this rejects with the
    * failed tags so an awaiting updateTag() surfaces the failure instead of
    * silently reporting success while other requests/colos serve stale data. The
    * eager purge still fires for the whole batch first (it is additive).
@@ -3065,18 +3073,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       await Promise.all(
         tags.map(async (tag) => {
-          const markerKey = this.tagMarkerKey(tag);
-          const markerKeyBytes = kvKeyByteLength(markerKey);
-          if (markerKeyBytes > KV_MAX_KEY_BYTES) {
-            failedTags.add(tag);
-            errors.push(
-              new Error(
-                `tag "${tag}" produces a ${markerKeyBytes}-byte KV ` +
-                  `marker key, over the ${KV_MAX_KEY_BYTES}-byte limit`,
-              ),
-            );
-            return;
-          }
+          // An over-limit tag no longer rejects: tagMarkerKey normalizes
+          // through toKVKey, and the marker read path derives the key the same
+          // way, so oversized tags invalidate correctly instead of erroring.
+          const markerKey = await this.tagMarkerKey(tag);
           try {
             await this.kv!.put(markerKey, String(invalidatedAt), {
               ...(this.tagInvalidationTtl
@@ -3200,7 +3200,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toKVKey(key);
+      const kvKey = await this.toKVKey(key);
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVSegmentEnvelope>(
           kvKey,
@@ -3294,29 +3294,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // KV requires expirationTtl >= 60s. Skip write for short-lived entries.
     if (!this.kv || !this.waitUntil || totalTtl < 60) return;
 
-    const kvKey = this.toKVKey(key);
-
-    // Reject an oversized data-segment KV key the same way tag-marker keys are
-    // rejected in invalidateTags(). A key over KV_MAX_KEY_BYTES makes kv.put()
-    // fail, so the segment silently never lands in L2 (KV) and every cold-colo
-    // or TTL-expired read re-renders instead of serving stale. Segment keys can
-    // grow with user-controlled inputs (e.g. a route's search params), so report
-    // a clear, actionable error and skip the doomed write rather than letting it
-    // reject deep inside waitUntil as an opaque cache-write failure.
-    const kvKeyBytes = kvKeyByteLength(kvKey);
-    if (kvKeyBytes > KV_MAX_KEY_BYTES) {
-      reportCacheError(
-        new Error(
-          `cache segment key produces a ${kvKeyBytes}-byte KV key, over the ` +
-            `${KV_MAX_KEY_BYTES}-byte limit; the segment was not persisted to KV (L2). ` +
-            `Reduce the cache-key inputs (e.g. large search params on this route).`,
-        ),
-        "cache-write",
-        "[CFCacheStore] kvSetSegment",
-      );
-      return;
-    }
-
     const expiresAt = staleAt + swrWindow * 1000;
     // Same wire shape as JSON.stringify({ d, s, e }) — dataJson is already
     // valid JSON for CachedEntryData, so embedding it avoids re-walking the tree.
@@ -3324,8 +3301,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     this.waitUntil(() =>
       reportingAsync(
-        () =>
-          this.kv!.put(kvKey, envelopeJson, {
+        async () =>
+          this.kv!.put(await this.toKVKey(key), envelopeJson, {
             expirationTtl: totalTtl,
           }),
         "cache-write",
@@ -3386,7 +3363,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toKVKey(`fn:${key}`);
+      const kvKey = await this.toKVKey(`fn:${key}`);
       const { value: envelope, timedOut } =
         await this.kvGetOrEvict<KVItemEnvelope>(
           kvKey,
@@ -3508,7 +3485,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv) return null;
 
     try {
-      const kvKey = this.toDocKVKey(key);
+      const kvKey = await this.toDocKVKey(key);
       // The document path is debug-silent (op is only get/getItem): a KV-read
       // timeout here is bounded for resilience parity (kvGetOrEvict applies the
       // budget) but emits no kv-timeout event, so its absence from the debug

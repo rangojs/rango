@@ -76,9 +76,13 @@ below is only needed for **`Rango.PathResponse`** (response-payload inference), 
 `GeneratedRouteMap` cannot provide:
 
 ```typescript
+// The alias is required: an interface heritage clause cannot take a `typeof`
+// type query directly (TS1109).
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```
