@@ -128,10 +128,14 @@ test("build test-app", async () => {
       .join("\n")}`,
   ).toEqual([]);
 
-  // Prefetch fetch/queue machinery must stay off the eager startup path. The
-  // request header is a stable marker owned by browser/prefetch/fetch.ts; the
-  // small shared viewport observer intentionally remains eager so it can load
-  // this chunk only after the first intersection.
+  // Prefetch machinery must live in the eager router chunk, NOT a separate
+  // lazy chunk. The request header is a stable marker owned by
+  // browser/prefetch/fetch.ts. #766 split the prefetch runtime into its own
+  // chunk to trim eager bytes, but production's `defaultPrefetch: "viewport"`
+  // loads it on almost every page, so the split became a document -> router ->
+  // runtime request waterfall (measured 502 ms critical path; see the
+  // getManualChunks JSDoc). Same-chunk placement keeps loader.ts's dynamic
+  // import fetch-free.
   const clientDir = path.join(cwd, "dist", "client");
   const clientFiles = readJsFiles(clientDir);
   const prefetchChunks = clientFiles.filter((f) =>
@@ -139,22 +143,12 @@ test("build test-app", async () => {
   );
   expect(
     prefetchChunks.map((f) => path.relative(cwd, f.file)),
-    "Prefetch fetch/queue code must land in exactly one lazy client chunk",
+    "Prefetch machinery must land in exactly one client chunk",
   ).toHaveLength(1);
-  const prefetchChunk = prefetchChunks[0]!;
   expect(
-    staticImportRefs(clientFiles, prefetchChunk.base).map((f) =>
-      path.relative(cwd, f),
-    ),
-    `The prefetch chunk ${prefetchChunk.base} must not be imported statically`,
-  ).toEqual([]);
-  const prefetchRefs = clientFiles.filter(
-    (f) => f.file !== prefetchChunk.file && f.src.includes(prefetchChunk.base),
-  );
-  expect(
-    prefetchRefs.length,
-    `The prefetch chunk ${prefetchChunk.base} must be wired through dynamic import()`,
-  ).toBeGreaterThan(0);
+    prefetchChunks[0]!.base.startsWith("router-"),
+    `Prefetch machinery must live in the eager router chunk, found ${prefetchChunks[0]!.base}`,
+  ).toBe(true);
 
   // Bundle guard (Bundle Hygiene rule #1): serialized route data (trie +
   // precomputedEntries) lives in exactly ONE chunk, RSC-only, reachable only
