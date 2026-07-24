@@ -816,6 +816,13 @@ export const urlpatterns = urls(
       // clientUrls() group: browser-local presentation routes mounted through
       // include() like any urls() module — the canonical composition model.
       include("/client-urls-e2e", clientUrlPatterns),
+      // Async include + clientUrls: supported when the include chain and the
+      // client routes are NAMED (see urls/client-urls-async-named.ts).
+      include(
+        "/client-urls-async",
+        () => import("./urls/client-urls-async-named.js"),
+        { name: "asyncClient" },
+      ),
 
       // Intercept over a clientUrls TARGET: the shared layout declares the
       // modal intercept by the client route's canonical name. Origins:

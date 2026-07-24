@@ -57,6 +57,28 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expectItem(page, "hard-load");
   });
 
+  test("async include() mounts a clientUrls group when every segment is named", async ({
+    page,
+    request,
+  }) => {
+    // Nested lazy includes require explicit names (unnamed auto-names diverge
+    // between discovery and runtime expansion — see client-urls-async-named.ts).
+    // With names, the async-include mount composes and serves end to end.
+    const response = await request.get(
+      f.url("/client-urls-async/nested/items/beta"),
+      { headers: { accept: "text/html" } },
+    );
+    expect(response.ok()).toBe(true);
+    const html = await response.text();
+    expect(html).toContain('data-testid="ci-item"');
+    expect(html).toContain("client-urls-item:beta");
+
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-async/nested"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-index")).toBeVisible();
+  });
+
   test("intercept targets a client route from a server-page origin", async ({
     page,
   }) => {

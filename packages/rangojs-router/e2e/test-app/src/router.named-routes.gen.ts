@@ -11,6 +11,8 @@ export const NamedRoutes = {
   "apiShop.catalog": "/api/shop/catalog",
   "apiShop.health": "/api/shop/health",
   "apiShop.product": "/api/shop/catalog/:productId",
+  "asyncClient.nested.index": "/client-urls-async/nested",
+  "asyncClient.nested.item": "/client-urls-async/nested/items/:itemId",
   "authBoundary.apiProtected": "/auth-boundary/api/protected",
   "authBoundary.globalProtected": "/auth-boundary/global-protected",
   "authBoundary.index": "/auth-boundary",

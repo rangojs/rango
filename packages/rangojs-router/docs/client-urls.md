@@ -217,12 +217,13 @@ Composition limits around a client include, locked explicitly:
   non-intercepted navigation loses its optimistic loading, never the reverse.
   One narrow edge: a back/forward restore served purely from the history cache
   keeps the previous location's target set until the next fresh commit.
-- Async `include(() => import())` modules must NOT mount clientUrls groups.
-  Projection discovery itself is import-timing independent (filesystem scan)
-  and the manifest composes correctly, but the RUNTIME lazy expansion of a
-  nested substituted include does not yet reproduce discovery's auto-name
-  identity, so requests 404. Mount clientUrls includes in statically imported
-  urls modules; lifting this needs nested-include name-identity work.
+- A clientUrls include NESTED inside another include module — including async
+  `include(() => import())` modules — requires explicit names on the wrapping
+  include(s) AND the client routes. Unnamed segments get counter-allocated
+  auto-names (`$prefix_N` scope ids, `$path_*` route names) that diverge
+  between discovery's single-pass walk and runtime nested lazy expansion, so
+  requests 404 at entry resolution. Fully named nested mounts work and are
+  e2e-pinned; root-module mounts work with or without names.
 
 With composition in place, the next API exploration is suspending
 `useLoader()` inside client route components.
