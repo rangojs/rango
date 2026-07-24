@@ -153,5 +153,56 @@ test.describe.serial("basename-hmr", () => {
     const reverseAfterBody = await reverseAfter.json();
     expect(reverseAfterBody["blog.index"]).toBe("/app/blog");
     expect(reverseAfterBody["blog.post"]).toBe("/app/blog/:postId");
+
+    // ── Step 5: clientUrls include under basename ──
+    // The mount chain composes basename + include prefix (registration
+    // urlPrefix -> EntryData.mountPath -> MountContext), so useMount() inside
+    // ClientUrlsRoot returns "/app/client-urls-e2e" and browser-local matching
+    // strips it before consulting the definition-local trie.
+
+    const clientSsr = await page.request.get(
+      f.url("/app/client-urls-e2e/items/hard-load"),
+      { headers: { accept: "text/html" } },
+    );
+    expect(clientSsr.status()).toBe(200);
+    const clientHtml = await clientSsr.text();
+    expect(clientHtml).toContain('data-testid="client-urls-layout"');
+    expect(clientHtml).toContain("client-urls-item:hard-load");
+
+    await page.goto(f.url("/app/client-urls-e2e"));
+    await waitForHydration(page);
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+
+    // <Link> auto-prefixes the basename; gate the canonical partial request so
+    // the local-match presentation window is deterministic (the ungated
+    // ~700ms loader window races sequential assertions).
+    let releaseRequest!: () => void;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    await page.route(
+      "**/app/client-urls-e2e/items/soft-nav*",
+      async (route) => {
+        await requestGate;
+        await route.continue();
+      },
+    );
+    await testId(page, "client-urls-item-link").click();
+    try {
+      await expect(testId(page, "client-urls-item-loading")).toBeVisible();
+      await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+        "data-pending",
+        "true",
+      );
+    } finally {
+      releaseRequest();
+    }
+
+    await expect(testId(page, "client-urls-item-param")).toHaveText("soft-nav");
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-pending",
+      "false",
+    );
+    await expect(page).toHaveURL(f.url("/app/client-urls-e2e/items/soft-nav"));
   });
 });

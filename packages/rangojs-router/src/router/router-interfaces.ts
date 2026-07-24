@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
@@ -104,6 +105,20 @@ export interface Rango<
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
+        : Record<string, string>)
+  >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
         : Record<string, string>)
   >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
@@ -234,6 +249,20 @@ export interface RangoInternal<
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
+        : Record<string, string>)
+  >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
         : Record<string, string>)
   >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;

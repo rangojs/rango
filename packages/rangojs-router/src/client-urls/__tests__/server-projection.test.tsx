@@ -5,7 +5,7 @@ import { tryTrieMatch } from "../../router/trie-matching.js";
 import { RangoContext, type EntryData } from "../../server/context.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 import type { PathOptions } from "../../urls/pattern-types.js";
-import { createRouter } from "../../router.js";
+import { createRouter, toInternal } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
 import { generateManifestFull } from "../../build/generate-manifest.js";
 import { ClientUrlsLoading, ClientUrlsRoot } from "../client-root.js";
@@ -331,26 +331,68 @@ describe("client URL server projection", () => {
     );
   });
 
-  it("rejects router-level clientUrls() registration — include() is the mounting model", () => {
+  it("normalizes direct .routes(clientUrls) to a root include with bare names", async () => {
     const patterns = clientUrls(({ path }) => [
+      path("/", AccountPage, { name: "index" }),
       path("/accounts/:id", AccountPage, { name: "account" }),
     ]);
-    const reference = clientReference("app.urls#rejected");
 
-    expect(() =>
-      (
-        createRouter({ id: "client-urls-reject-direct" }).routes as (
-          p: unknown,
-        ) => unknown
-      )(patterns),
-    ).toThrow(/Mount them inside the canonical urls\(\) tree with include\(\)/);
-    expect(() =>
-      (
-        createRouter({ id: "client-urls-reject-ref" }).routes as (
-          p: unknown,
-        ) => unknown
-      )(reference),
-    ).toThrow(/Mount them inside the canonical urls\(\) tree with include\(\)/);
+    // Pure-client shorthand: sugar over include("/", definition, { name: "" })
+    // in the ONE composition model — no separate registration path.
+    const router = toInternal(
+      createRouter({ id: "client-urls-sugar" }).routes(patterns),
+    );
+    const manifest = await generateManifestFull(router.urlpatterns!);
+    expect(manifest.routeManifest["index"]).toBe("/");
+    expect(manifest.routeManifest["account"]).toBe("/accounts/:id");
+
+    // Under a basename the SAME normalization inherits the registration
+    // urlPrefix, exactly like discovery/manifest-init pass router.basename.
+    // The contract is PARITY with hand-writing the root include over a server
+    // module — whatever join/normalization include() applies, the sugar gets.
+    const basenameRouter = toInternal(
+      createRouter({
+        id: "client-urls-sugar-basename",
+        basename: "/app",
+      }).routes(patterns),
+    );
+    const prefixed = await generateManifestFull(
+      basenameRouter.urlpatterns!,
+      undefined,
+      { urlPrefix: "/app" },
+    );
+    const serverEquivalent = urls(({ include }) => [
+      include(
+        "/",
+        urls(({ path }) => [
+          path("/", AccountPage, { name: "index" }),
+          path("/accounts/:id", AccountPage, { name: "account" }),
+        ]),
+        { name: "" },
+      ),
+    ]);
+    const serverPrefixed = await generateManifestFull(
+      serverEquivalent,
+      undefined,
+      { urlPrefix: "/app" },
+    );
+    expect(prefixed.routeManifest).toEqual(serverPrefixed.routeManifest);
+    expect(prefixed.routeManifest["account"]).toBe("/app/accounts/:id");
+
+    // A client REFERENCE goes through the same lazy include: no projection ->
+    // clear error at evaluation; installed projection -> materializes.
+    const reference = clientReference("app.urls#sugar-ref");
+    const refRouter = toInternal(
+      createRouter({ id: "client-urls-sugar-ref" }).routes(
+        reference as unknown as typeof patterns,
+      ),
+    );
+    await expect(generateManifestFull(refRouter.urlpatterns!)).rejects.toThrow(
+      /could not resolve the server projection/,
+    );
+    setClientUrlProjection(reference, serializeClientUrlPatterns(patterns));
+    const refManifest = await generateManifestFull(refRouter.urlpatterns!);
+    expect(refManifest.routeManifest["account"]).toBe("/accounts/:id");
   });
 
   it("mounts through include() with URL and route-name prefixes from the server tree", async () => {

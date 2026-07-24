@@ -96,7 +96,13 @@ test.describe.serial("route-types-hmr", () => {
 
     function gitBaseline(absPath: string): string {
       const rel = path.relative(repoRoot, absPath);
-      return execSync(`git show HEAD:${rel}`, { encoding: "utf-8" });
+      // Read from the INDEX (`git show :path`), not HEAD: staged-but-uncommitted
+      // fixture edits are legitimate baselines during feature work, and a HEAD
+      // read silently REVERTS them in afterAll (scar: this clobbered the
+      // clientUrls include out of urls.tsx right before a commit, shipping a
+      // fixture without its mount). The index still recovers from a crashed
+      // prior run's worktree edits, which is what the git read is for.
+      return execSync(`git show :${rel}`, { encoding: "utf-8", cwd: repoRoot });
     }
 
     originalBlogContent = gitBaseline(blogUrlsPath);

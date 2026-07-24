@@ -3,8 +3,9 @@
 Status: the shipped slice mounts `clientUrls()` through `include()` in the
 canonical `urls()` tree — composition is the BASELINE model, not a later phase.
 Earlier drafts of this plan described a direct `.routes(clientUrlPatterns)`
-registration and deferred composition; that architecture was rejected and the
-direct form now throws. Phase references below are historical planning
+registration with its own deferral/ordering rules and deferred composition;
+that architecture was rejected. The direct form survives only as pure-client
+sugar normalizing to a root include. Phase references below are historical planning
 structure, not the mounting model. The broader destination architecture in
 [client URL groups and instant navigation](./client-urls-instant-navigation.md)
 remains design background, not a description of the current API. The next API
@@ -71,20 +72,24 @@ export default clientUrls(({ layout, path, loader, loading }) => [
 ```
 
 ```tsx
-// router.tsx
-import { createRouter } from "@rangojs/router";
-import clientUrlPatterns from "./app.client-urls.js";
-import { serverUrls } from "./server-urls.js";
+// urls.tsx
+import { urls } from "@rangojs/router";
+import appClientUrls from "./app.client-urls.js";
 
-export const router = createRouter()
-  .use(globalMiddleware)
-  .routes(serverUrls)
-  .routes(clientUrlPatterns);
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<AppRscLayout />, () => [
+    include("/posts", appClientUrls, { name: "posts" }),
+  ]),
+]);
+
+// router.tsx
+export const router = createRouter().use(globalMiddleware).routes(urlpatterns);
 ```
 
-The direct `.routes(clientUrlPatterns)` form is the only client URL mount. A
-router accepts one distinct client definition. `include()` and prefix mounting
-are not Phase 1 features.
+`clientUrls()` mounts through `include()` in the canonical `urls()` tree;
+direct `.routes(clientUrlPatterns)` survives only as pure-client sugar that
+normalizes to a root include. Client definitions follow normal include
+semantics — several may be mounted, under prefixes and RSC layouts.
 
 ### Supported Surface
 
@@ -96,7 +101,7 @@ are not Phase 1 features.
 | Non-fetchable loaders        | Supported; the projected route invokes the server definition directly          |
 | `loading()`                  | Client-owned value available for hydrated optimistic presentation              |
 | Path options                 | `name`, `search`, and `trailingSlash` only                                     |
-| Router registration          | Direct root `.routes(clientUrlPatterns)`; one client definition per router     |
+| Router registration          | `include()` in the canonical urls() tree; `.routes(def)` = root-include sugar  |
 | Global middleware            | Existing `.use(...)` chain, derived and run by the canonical server route      |
 | Hard request                 | Projected server match, loaders, SSR, and hydration                            |
 | Hydrated different-route nav | Local loading/pending, then canonical partial Flight commit                    |
@@ -118,7 +123,8 @@ A hydrated navigation to a different matching client route uses one existing
 navigation transaction:
 
 1. The current navigation bridge receives the click or imperative navigation.
-2. The mounted client definition matches the target pathname locally.
+2. The mounted client definition matches the target pathname locally, after
+   stripping the include mount prefix (`useMount()`).
 3. The client root marks its rendered outlet branch pending. If the destination
    has `loading()`, that value renders; otherwise the current branch remains.
 4. In parallel, the normal navigation client requests the canonical partial

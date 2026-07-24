@@ -116,6 +116,7 @@ import {
 import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import clientUrlPatterns from "./urls/client-urls.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -809,6 +810,10 @@ export const urlpatterns = urls(
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
+
+      // clientUrls() group: browser-local presentation routes mounted through
+      // include() like any urls() module — the canonical composition model.
+      include("/client-urls-e2e", clientUrlPatterns),
 
       // Factory-generated patterns (static parser can't resolve the function call)
       include("/factory-hmr", createFactoryHmrPatterns(), {

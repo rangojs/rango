@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizePath, parseAst } from "vite";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../plugins/client-ref-hashing.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import { createRangoDebugger, NS } from "../debug.js";
+import { findTsFiles } from "../../build/route-types/scan-filter.js";
 import type { DiscoveryState } from "./state.js";
 
 const debug = createRangoDebugger(NS.discovery);
@@ -115,6 +116,29 @@ export function resolveClientUrlsSource(
   );
 }
 
+/**
+ * Deterministic filesystem discovery of clientUrls modules. Transform-based
+ * recording only sees modules that some environment actually loads — a
+ * clientUrls module not yet reachable from any transformed graph at discovery
+ * time (cold ordering, a mount added before its first import is served) would
+ * never be recorded and its include would fail with empty projections. Walking
+ * the project source (the same walk static route-type generation performs)
+ * makes recording independent of module-graph timing. The transform hooks
+ * still record too — they refresh dev HMR edits between scans.
+ */
+export function scanForClientUrlModules(state: DiscoveryState): void {
+  if (!state.projectRoot) return;
+  for (const filePath of findTsFiles(state.projectRoot, state.scanFilter)) {
+    let code: string;
+    try {
+      code = readFileSync(filePath, "utf-8");
+    } catch {
+      continue;
+    }
+    recordClientUrlsModule(state, code, filePath);
+  }
+}
+
 function projectionError(
   referenceId: string,
   source: string | undefined,
@@ -216,6 +240,7 @@ export async function discoverClientUrlProjections(
   ssrEnv: ClientUrlSsrEnvironment | undefined,
   serverMod: ClientUrlProjectionServerModule,
 ): Promise<void> {
+  scanForClientUrlModules(state);
   const sourceByReferenceId = state.clientUrlSourceByReferenceId;
   if (!sourceByReferenceId?.size) {
     serverMod.clearClientUrlProjections();

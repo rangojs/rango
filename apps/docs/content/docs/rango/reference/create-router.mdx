@@ -275,7 +275,7 @@ export default { fetch: router.fetch }; // minimal
 
 ### ClientUrlPatterns
 
-A default-exported `clientUrls()` definition from a `"use client"` module mounts through `include()` inside the canonical `urls()` tree — `createRouter().routes()` rejects it directly:
+A default-exported `clientUrls()` definition from a `"use client"` module mounts through `include()` inside the canonical `urls()` tree. Passing it directly to `.routes()` is the pure-client shorthand — it normalizes to a root include (`include("/", definition, { name: "" })`) with the same lazy materialization:
 
 ```tsx
 import { createRouter, urls } from "@rangojs/router";

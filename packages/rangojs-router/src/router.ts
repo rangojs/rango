@@ -7,6 +7,7 @@ import {
   isClientUrlPatterns,
   isClientUrlReference,
 } from "./client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "./client-urls/types.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
 import {
@@ -762,22 +763,28 @@ export function createRouter<TEnv = any>(
     id: routerId,
     basename,
 
-    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
-      // clientUrls() definitions mount through include() inside the canonical
-      // urls() tree — never as a router-level registration. Composition is the
-      // baseline model: the include supplies URL/name prefixes, and wrapping
-      // RSC layouts, middleware scope, and boundaries derive from the server
-      // tree. Rejected here (not deprecated) so the wrong mounting model
-      // cannot ship.
+    routes(
+      patternsOrBuilder:
+        | UrlPatterns<TEnv>
+        | UrlBuilder<TEnv>
+        | ClientUrlPatterns,
+    ): any {
+      // Pure-client mounting shorthand: a clientUrls() definition passed
+      // directly NORMALIZES to a root include in the canonical urls() tree —
+      // exactly `include("/", definition, { name: "" })`, keeping local route
+      // names bare and local patterns app-absolute. This is sugar over the
+      // ONE composition model, not a second registration path: it rides the
+      // same lazy include materialization, so no ordering, one-definition, or
+      // deferral rules exist. Prefixing, wrapping RSC layouts, and middleware
+      // scope still come from mounting through include() in urls() yourself.
       if (
         isClientUrlPatterns(patternsOrBuilder) ||
         isClientUrlReference(patternsOrBuilder)
       ) {
-        throw new Error(
-          "createRouter().routes() does not accept clientUrls() definitions. " +
-            "Mount them inside the canonical urls() tree with include(): " +
-            'urls(({ include }) => [include("/account", accountClientUrls, { name: "account" })])',
-        );
+        const clientSource = patternsOrBuilder as ClientUrlPatterns;
+        patternsOrBuilder = urls(({ include }) => [
+          include("/", clientSource, { name: "" }),
+        ]) as UrlPatterns<TEnv>;
       }
 
       // Wrap builder functions in urls() automatically

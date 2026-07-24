@@ -133,11 +133,15 @@ export const router = createRouter({ document: Document })
   .routes(urlpatterns);
 ```
 
-There is exactly one canonical `.routes(urlpatterns)` call.
-`createRouter().routes()` rejects a `clientUrls()` definition outright — the
-mounting model is `include()`, and client definitions follow normal include
-semantics: mount several, nest them under layouts, scope `.use(prefix)`
-middleware to their prefix.
+There is exactly one canonical `.routes()` call. A pure-client app may pass
+the definition directly — `createRouter().routes(clientUrlPatterns)` is
+shorthand that NORMALIZES to a root include
+(`include("/", definition, { name: "" })`): same lazy materialization, bare
+route names, basename inherited like any registration. It is sugar over the one
+composition model, not a second registration path. For URL prefixes, wrapping
+RSC layouts, or prefix-scoped middleware, mount through `include()` yourself;
+client definitions follow normal include semantics — mount several, nest them
+under layouts, scope `.use(prefix)` middleware to their prefix.
 
 Pass the client module's default export, not a `clientUrls()` object built in a
 server module: a direct object cannot cross the server/client boundary and fails

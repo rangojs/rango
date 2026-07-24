@@ -17,7 +17,7 @@ implementation is also summarized in
 | `clientUrls()`                  | Implemented from `@rangojs/router/client`                   |
 | `path`, `layout`, `loader`      | Implemented with named client component values              |
 | `loading`                       | Implemented for server rendering and hydrated local display |
-| `include()` mounting            | BASELINE; direct `.routes(definition)` is rejected          |
+| `include()` mounting            | BASELINE; `.routes(definition)` is root-include sugar       |
 | Server projection               | Implemented for `name`, `search`, and `trailingSlash`       |
 | Hard SSR and hydration          | Implemented                                                 |
 | Local loading + outlet pending  | Implemented after hydration for a different matched route   |
@@ -36,9 +36,10 @@ Composition is not a later phase — it is the baseline mounting model.
 `clientUrls()` participates through `include()`: the include supplies URL and
 route-name prefixes, wrapping layouts stay ordinary RSC layouts, and nested
 middleware, loaders, boundaries, and route ownership derive from the canonical
-server tree. Direct `.routes(clientUrlPatterns)` registration is rejected, not
-retained as an alternative. Overlap ownership therefore follows ordinary
-include/tree semantics. With this foundation in place, the next API exploration
+server tree. Direct `.routes(clientUrlPatterns)` is a pure-client shorthand
+that NORMALIZES to a root include (`include("/", definition, { name: "" })`) —
+sugar over the same composition path, not a second registration model. Overlap
+ownership therefore follows ordinary include/tree semantics. With this foundation in place, the next API exploration
 is suspending `useLoader()` inside client route components.
 
 ## The Implemented Idea
