@@ -57,6 +57,21 @@ export interface ClientUrlRouteRecord {
   readonly loading: ReactNode | undefined;
 }
 
+/**
+ * A restricted intercept declared inside clientUrls(). Compared to the server
+ * intercept() there is no `when` selector, no middleware, and the target must
+ * be a dot-local NAMED route in the same definition — every field is
+ * JSON-projectable, which is what makes the declaration legal in a
+ * "use client" module. `targetName` is stored bare (no leading dot).
+ */
+export interface ClientUrlInterceptRecord {
+  readonly slotName: `@${string}`;
+  readonly targetName: string;
+  readonly component: ComponentType;
+  readonly loaders: readonly ClientUrlLoaderRecord[];
+  readonly loading: ReactNode | undefined;
+}
+
 export interface ClientUrlHelpers {
   readonly path: ClientPathFn;
   readonly layout: ClientLayoutFn;
@@ -64,6 +79,18 @@ export interface ClientUrlHelpers {
     definition: LoaderDefinition<TData>,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;
+  /**
+   * Declare an intercept for a named route in THIS definition. The target is
+   * dot-local (`.detail`); scoping is module-local — only navigations whose
+   * origin is inside this clientUrls() group render the intercept. `use` may
+   * contain loader() and loading() only.
+   */
+  readonly intercept: (
+    slotName: `@${string}`,
+    targetName: `.${string}`,
+    component: ComponentType,
+    use?: ClientUrlUse,
+  ) => ClientUrlItem;
 }
 
 export type ClientUrlBuilder<TItems extends ClientUrlItems = ClientUrlItems> = (
@@ -75,6 +102,7 @@ export interface ClientUrlPatterns<
 > {
   readonly __brand: "client-urls";
   readonly routes: readonly ClientUrlRouteRecord[];
+  readonly intercepts: readonly ClientUrlInterceptRecord[];
   readonly [CLIENT_URL_PATTERNS_BRAND]: void;
   readonly _routes?: TRoutes;
   match(pathname: string): TrieMatchResult | null;

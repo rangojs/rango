@@ -10,11 +10,14 @@ import {
 import { ClientUrlsItemLoader } from "./client-urls.loader.js";
 
 /**
- * Named clientUrls group used as an intercept() TARGET. The wrapping server
- * layout in urls.tsx declares `intercept("@modal", ".clientIntercept.item")`,
- * so navigations to the item route can be claimed as a modal from both a
- * server-page origin and a same-group client origin. Routes are NAMED because
- * intercepts target canonical route names.
+ * Named clientUrls group exercising both intercept declaration sites:
+ * - SERVER-declared: the wrapping layout in urls.tsx declares
+ *   `intercept("@modal", ".clientIntercept.item")`, claiming item navigations
+ *   from server-page and same-group origins alike.
+ * - CLIENT-declared (in-module, below): `intercept("@modal", ".detail", ...)`
+ *   is module-local — only in-group origins get the modal; an outside origin
+ *   commits the full detail route. Routes are NAMED because intercepts target
+ *   canonical route names.
  */
 
 function InterceptClientLayout() {
@@ -38,6 +41,13 @@ function InterceptClientIndex() {
       >
         Open item
       </Link>
+      <Link
+        to="/client-urls-intercept/detail/gamma"
+        prefetch="none"
+        data-testid="ci-detail-link"
+      >
+        Open detail
+      </Link>
     </div>
   );
 }
@@ -58,12 +68,42 @@ function InterceptClientLoading() {
   return <div data-testid="ci-item-loading">Loading item</div>;
 }
 
-export default clientUrls(({ layout, path, loader, loading }) => [
+function InterceptClientDetail() {
+  const { data } = useLoader(ClientUrlsItemLoader);
+  const params = useParams();
+
+  return (
+    <article data-testid="ci-detail">
+      <span data-testid="ci-detail-param">{params.itemId}</span>
+      <span data-testid="ci-detail-loader">{data}</span>
+    </article>
+  );
+}
+
+function InterceptClientDetailModal() {
+  const { data } = useLoader(ClientUrlsItemLoader);
+
+  return (
+    <dialog open data-testid="ci-client-modal">
+      <p data-testid="ci-client-modal-item">{data}</p>
+    </dialog>
+  );
+}
+
+export default clientUrls(({ layout, path, loader, loading, intercept }) => [
   layout(InterceptClientLayout, () => [
     path("/", InterceptClientIndex, { name: "index" }),
     path("/items/:itemId", InterceptClientItem, { name: "item" }, () => [
       loader(ClientUrlsItemLoader),
       loading(<InterceptClientLoading />),
+    ]),
+    path("/detail/:itemId", InterceptClientDetail, { name: "detail" }, () => [
+      loader(ClientUrlsItemLoader),
+    ]),
+    // Module-local intercept: no `when`, dot-local named target, loader()/
+    // loading() only — every field projects as JSON to the server tree.
+    intercept("@modal", ".detail", InterceptClientDetailModal, () => [
+      loader(ClientUrlsItemLoader),
     ]),
   ]),
 ]);

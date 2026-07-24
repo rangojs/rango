@@ -7,6 +7,7 @@ import type {
   ClientPathOptions,
   ClientUrlBuilder,
   ClientUrlHelpers,
+  ClientUrlInterceptRecord,
   ClientUrlItem,
   ClientUrlLoaderRecord,
   ClientUrlPatterns,
@@ -21,7 +22,6 @@ const ITEM_KIND = Symbol("client-url-item");
 const UNSUPPORTED_HELPERS = new Set([
   "include",
   "parallel",
-  "intercept",
   "cache",
   "transition",
   "error",
@@ -32,7 +32,12 @@ const UNSUPPORTED_HELPERS = new Set([
   "revalidate",
 ]);
 
-type InternalItem = PathItem | LayoutItem | LoaderItem | LoadingItem;
+type InternalItem =
+  | PathItem
+  | LayoutItem
+  | LoaderItem
+  | LoadingItem
+  | InterceptItem;
 
 interface ItemBase {
   readonly [ITEM_KIND]: true;
@@ -50,6 +55,15 @@ interface LayoutItem extends ItemBase {
   readonly type: "layout";
   readonly component: ComponentType;
   readonly children: readonly InternalItem[];
+}
+
+interface InterceptItem extends ItemBase {
+  readonly type: "intercept";
+  readonly slotName: `@${string}`;
+  /** Bare target name — the leading dot of the dot-local argument is stripped. */
+  readonly targetName: string;
+  readonly component: ComponentType;
+  readonly use: readonly InternalItem[];
 }
 
 interface LoaderItem extends ItemBase {
@@ -133,7 +147,7 @@ function rejectItems(
 
 function assertNamedComponent(
   component: unknown,
-  helper: "path" | "layout",
+  helper: "path" | "layout" | "intercept",
 ): asserts component is ComponentType {
   if (typeof component !== "function" || component.name.trim() === "") {
     throw new Error(
@@ -232,7 +246,7 @@ function createHelpers(): ClientUrlHelpers {
     const items = runUse(children, "layout children");
     rejectItems(
       items,
-      new Set(["path", "layout", "loader", "loading"]),
+      new Set(["path", "layout", "loader", "loading", "intercept"]),
       "layout",
     );
     return toPublicItem({
@@ -255,11 +269,45 @@ function createHelpers(): ClientUrlHelpers {
   const loading: ClientUrlHelpers["loading"] = (component) =>
     toPublicItem({ [ITEM_KIND]: true, type: "loading", component });
 
+  const intercept: ClientUrlHelpers["intercept"] = (
+    slotName,
+    targetName,
+    component,
+    use,
+  ) => {
+    if (typeof slotName !== "string" || !/^@.+/.test(slotName)) {
+      throw new Error(
+        'clientUrls() intercept() slot name must be a string beginning with "@"',
+      );
+    }
+    if (
+      typeof targetName !== "string" ||
+      !targetName.startsWith(".") ||
+      targetName.length < 2
+    ) {
+      throw new Error(
+        'clientUrls() intercept() target must be a dot-local route name like ".detail"',
+      );
+    }
+    assertNamedComponent(component, "intercept");
+    const items = use ? runUse(use, "intercept use") : [];
+    rejectItems(items, new Set(["loader", "loading"]), "intercept");
+    return toPublicItem({
+      [ITEM_KIND]: true,
+      type: "intercept",
+      slotName,
+      targetName: targetName.slice(1),
+      component,
+      use: items,
+    });
+  };
+
   const supported: ClientUrlHelpers = {
     path,
     layout,
     loader,
     loading,
+    intercept,
   };
 
   return new Proxy(supported, {
@@ -380,6 +428,53 @@ function validateRoutes(routes: readonly ClientUrlRouteRecord[]): void {
   }
 }
 
+function collectIntercepts(
+  items: readonly InternalItem[],
+  intercepts: ClientUrlInterceptRecord[],
+): void {
+  for (const item of items) {
+    if (item.type === "intercept") {
+      const loaders: ClientUrlLoaderRecord[] = [];
+      let loading: ReactNode | undefined;
+      for (const useItem of item.use) {
+        if (useItem.type === "loader") {
+          loaders.push(Object.freeze({ loader: useItem.definition }));
+        } else if (useItem.type === "loading") {
+          loading = useItem.component;
+        }
+      }
+      intercepts.push(
+        Object.freeze({
+          slotName: item.slotName,
+          targetName: item.targetName,
+          component: item.component,
+          loaders: Object.freeze(loaders),
+          loading,
+        }),
+      );
+    } else if (item.type === "layout") {
+      collectIntercepts(item.children, intercepts);
+    }
+  }
+}
+
+function validateIntercepts(
+  intercepts: readonly ClientUrlInterceptRecord[],
+  routes: readonly ClientUrlRouteRecord[],
+): void {
+  const names = new Set<string>();
+  for (const route of routes) {
+    if (route.name !== undefined) names.add(route.name);
+  }
+  for (const intercept of intercepts) {
+    if (!names.has(intercept.targetName)) {
+      throw new Error(
+        `clientUrls() intercept() target ".${intercept.targetName}" does not match a named path() in this definition`,
+      );
+    }
+  }
+}
+
 export function clientUrls<const TItems extends ClientUrlItems>(
   builder: ClientUrlBuilder<TItems>,
 ): ClientUrlPatterns<ExtractRoutes<TItems>> {
@@ -388,7 +483,7 @@ export function clientUrls<const TItems extends ClientUrlItems>(
   }
 
   const items = flattenItems(builder(createHelpers()), "builder");
-  rejectItems(items, new Set(["path", "layout"]), "clientUrls");
+  rejectItems(items, new Set(["path", "layout", "intercept"]), "clientUrls");
 
   const routes: ClientUrlRouteRecord[] = [];
   const rootContext = applyConfig(EMPTY_CONTEXT, items);
@@ -397,6 +492,10 @@ export function clientUrls<const TItems extends ClientUrlItems>(
     throw new Error("clientUrls() builder must define at least one path()");
   }
   validateRoutes(routes);
+
+  const intercepts: ClientUrlInterceptRecord[] = [];
+  collectIntercepts(items, intercepts);
+  validateIntercepts(intercepts, routes);
 
   const routeManifest: Record<string, string> = {};
   const staticPrefixes: Record<string, string> = {};
@@ -413,6 +512,7 @@ export function clientUrls<const TItems extends ClientUrlItems>(
   return Object.freeze({
     __brand: "client-urls" as const,
     routes: Object.freeze(routes),
+    intercepts: Object.freeze(intercepts),
     match(pathname: string) {
       return tryTrieMatch(trie, pathname);
     },
@@ -422,6 +522,7 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 export type {
   ClientUrlBuilder,
   ClientUrlHelpers,
+  ClientUrlInterceptRecord,
   ClientUrlItem,
   ClientUrlItemInput,
   ClientUrlItems,

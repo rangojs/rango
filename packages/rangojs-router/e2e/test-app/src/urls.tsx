@@ -840,6 +840,13 @@ export const urlpatterns = urls(
             >
               Open item from server page
             </Link>
+            <Link
+              to="/client-urls-intercept/detail/gamma"
+              prefetch="none"
+              data-testid="ci-origin-detail-link"
+            >
+              Open detail from server page
+            </Link>
           </div>
         ),
         { name: "ciOrigin" },

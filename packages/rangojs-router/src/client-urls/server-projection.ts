@@ -1,14 +1,28 @@
 import * as React from "react";
 import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
-import { getNamePrefix } from "../server/context.js";
+import {
+  getNamePrefix,
+  getUrlPrefix,
+  type InterceptSelectorContext,
+} from "../server/context.js";
 import type { LoaderDefinition, TrailingSlashMode } from "../types.js";
 import type { PathOptions, UrlPatterns } from "../urls/pattern-types.js";
 import type { PathHelpers } from "../urls/path-helper-types.js";
 import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
-import { ClientUrlsLoading, ClientUrlsRoot } from "./client-root.js";
-import type { ClientUrlPatterns, ClientUrlRouteRecord } from "./types.js";
+import {
+  ClientUrlsGroupLayout,
+  ClientUrlsInterceptLoading,
+  ClientUrlsInterceptSlot,
+  ClientUrlsLoading,
+  ClientUrlsRoot,
+} from "./client-root.js";
+import type {
+  ClientUrlInterceptRecord,
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./types.js";
 
 const CLIENT_REFERENCE = Symbol.for("react.client.reference");
 
@@ -50,9 +64,21 @@ export interface ClientUrlProjectionRoute {
   readonly hasLoading: boolean;
 }
 
+export interface ClientUrlProjectionIntercept {
+  readonly slotName: `@${string}`;
+  /** Bare local target name; materialization re-dots it so the server
+   *  intercept() helper composes it against the include's name prefix. */
+  readonly targetName: string;
+  readonly loaderIds: readonly string[];
+  readonly hasLoading: boolean;
+}
+
 export interface ClientUrlProjection {
   readonly version: 1;
   readonly routes: readonly ClientUrlProjectionRoute[];
+  /** Absent in projections serialized before intercept support; consumers
+   *  must treat missing as empty. */
+  readonly intercepts?: readonly ClientUrlProjectionIntercept[];
 }
 
 function routeDescription(route: ClientUrlRouteRecord): string {
@@ -143,12 +169,37 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
   });
 }
 
+function serializeIntercept(
+  record: ClientUrlInterceptRecord,
+  index: number,
+): ClientUrlProjectionIntercept {
+  const loaderIds = record.loaders.map(({ loader }, loaderIndex) => {
+    if (typeof loader.$$id !== "string" || loader.$$id.length === 0) {
+      throw new Error(
+        `clientUrls() cannot create a server projection for intercept ".${record.targetName}" ` +
+          `(index ${index}): loader at index ${loaderIndex} is missing a non-empty $$id`,
+      );
+    }
+    return loader.$$id;
+  });
+
+  return Object.freeze({
+    slotName: record.slotName,
+    targetName: record.targetName,
+    loaderIds: Object.freeze(loaderIds),
+    hasLoading: record.loading !== undefined,
+  });
+}
+
 export function serializeClientUrlPatterns(
   patterns: ClientUrlPatterns,
 ): ClientUrlProjection {
   return Object.freeze({
     version: 1 as const,
     routes: Object.freeze(patterns.routes.map(serializeRoute)),
+    intercepts: Object.freeze(
+      (patterns.intercepts ?? []).map(serializeIntercept),
+    ),
   });
 }
 
@@ -239,38 +290,113 @@ function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
 function materializeRouteItems(
   reference: ClientUrlDefinitionSource,
   projection: ClientUrlProjection,
-  { path, loader, loading }: PathHelpers<any>,
+  { path, layout, loader, loading, intercept }: PathHelpers<any>,
 ): AllUseItems[] {
   // The urls() builder runs under the include's prefixes, so the composed
   // route-name prefix is available here. ClientUrlsRoot needs it to compose
   // canonical names for intercept-target coordination in the browser.
   const namePrefix = getNamePrefix();
-  return projection.routes.map(
-    (route) =>
-      path(
-        route.pattern,
-        () =>
-          React.createElement(ClientUrlsRoot, {
-            definition: reference as ClientUrlPatterns,
-            routeId: route.id,
-            namePrefix,
-          }),
-        materializedPathOptions(route),
-        () => [
-          ...route.loaderIds.map((id) => loader(createLoaderStub(id))),
-          ...(route.hasLoading
-            ? [
-                loading(
-                  React.createElement(ClientUrlsLoading, {
-                    definition: reference as ClientUrlPatterns,
-                    routeId: route.id,
-                  }),
-                ),
-              ]
-            : []),
-        ],
-      ) as AllUseItems,
-  );
+
+  // Helper calls attach to the CURRENT ctx.parent as they execute, so these
+  // builders must run where the items belong: at the module top level for the
+  // flat (no-intercept) shape, or inside the group layout's children callback
+  // when intercepts wrap the group.
+  const buildRouteItems = (): AllUseItems[] =>
+    projection.routes.map(
+      (route) =>
+        path(
+          route.pattern,
+          () =>
+            React.createElement(ClientUrlsRoot, {
+              definition: reference as ClientUrlPatterns,
+              routeId: route.id,
+              namePrefix,
+            }),
+          materializedPathOptions(route),
+          () => [
+            ...route.loaderIds.map((id) => loader(createLoaderStub(id))),
+            ...(route.hasLoading
+              ? [
+                  loading(
+                    React.createElement(ClientUrlsLoading, {
+                      definition: reference as ClientUrlPatterns,
+                      routeId: route.id,
+                    }),
+                  ),
+                ]
+              : []),
+          ],
+        ) as AllUseItems,
+    );
+
+  const intercepts = projection.intercepts ?? [];
+  if (intercepts.length === 0) return buildRouteItems();
+
+  // Two server-side mechanics make client-declared intercepts work:
+  //
+  // 1. GROUP LAYOUT ATTACHMENT. findInterceptForRoute walks the TARGET
+  //    route's parent chain, so the intercept must live on an entry in that
+  //    chain that survives evaluation. Emitting intercepts at the module top
+  //    level attaches them to the lazy expansion's ISOLATED parent clone
+  //    (getIsolatedLazyParent in server/context.ts), which is discarded.
+  //    Wrapping the group in one materialized layout gives them a persistent
+  //    home in the target chain — and the layout renders each declared slot,
+  //    so the modal presents inside the group's own subtree (the slot segment
+  //    attaches to the declaring entry; an outer layout's same-named outlet
+  //    would never receive it).
+  //
+  // 2. SYNTHESIZED ORIGIN `when`. The target-chain walk is origin-blind: a
+  //    bare intercept would claim navigations from ANY origin — and for an
+  //    out-of-group origin the slot's host layout is not in the rendered
+  //    tree, so the modal would silently vanish. The declaration contract is
+  //    module-local, so materialization synthesizes the origin check the DSL
+  //    deliberately does not expose: activate only when the origin pathname
+  //    is inside this include's mount. This is server-generated code — no
+  //    function crosses the "use client" projection boundary.
+  const mount = getUrlPrefix() || "/";
+  const isInGroupOrigin = ({ from }: InterceptSelectorContext): boolean =>
+    mount === "/"
+      ? true
+      : from.pathname === mount || from.pathname.startsWith(`${mount}/`);
+  const slotNames = [...new Set(intercepts.map((record) => record.slotName))];
+  const buildInterceptItems = (): AllUseItems[] =>
+    intercepts.map(
+      (record, interceptIndex) =>
+        intercept(
+          record.slotName,
+          `.${record.targetName}`,
+          () =>
+            React.createElement(ClientUrlsInterceptSlot, {
+              definition: reference as ClientUrlPatterns,
+              interceptIndex,
+            }),
+          { when: isInGroupOrigin },
+          () => [
+            ...record.loaderIds.map((id) => loader(createLoaderStub(id))),
+            ...(record.hasLoading
+              ? [
+                  loading(
+                    React.createElement(ClientUrlsInterceptLoading, {
+                      definition: reference as ClientUrlPatterns,
+                      interceptIndex,
+                    }),
+                  ),
+                ]
+              : []),
+          ],
+        ) as AllUseItems,
+    );
+
+  function ClientUrlsGroup(): React.ReactNode {
+    return React.createElement(ClientUrlsGroupLayout, { slotNames });
+  }
+
+  return [
+    layout(ClientUrlsGroup, () => [
+      ...buildRouteItems(),
+      ...buildInterceptItems(),
+    ]) as AllUseItems,
+  ];
 }
 
 function assertClientUrlSource(

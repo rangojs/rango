@@ -2,13 +2,21 @@ import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildRouteTrie } from "../../build/route-trie.js";
 import { tryTrieMatch } from "../../router/trie-matching.js";
-import { RangoContext, type EntryData } from "../../server/context.js";
+import {
+  RangoContext,
+  runWithPrefixes,
+  type EntryData,
+} from "../../server/context.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 import type { PathOptions } from "../../urls/pattern-types.js";
 import { createRouter, toInternal } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
 import { generateManifestFull } from "../../build/generate-manifest.js";
-import { ClientUrlsLoading, ClientUrlsRoot } from "../client-root.js";
+import {
+  ClientUrlsInterceptSlot,
+  ClientUrlsLoading,
+  ClientUrlsRoot,
+} from "../client-root.js";
 import { clientUrls } from "../client-urls.js";
 import {
   clearClientUrlProjections,
@@ -128,6 +136,7 @@ describe("client URL server projection", () => {
           hasLoading: true,
         },
       ],
+      intercepts: [],
     });
     expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
     expect(JSON.stringify(serializeClientUrlPatterns(patterns))).toBe(
@@ -159,8 +168,9 @@ describe("client URL server projection", () => {
     ).toThrow(/path option "analytics" is not supported/);
 
     // Locked composition limits: these capabilities belong to the server tree
-    // and must not smuggle in through cast option objects either. (The DSL
-    // helpers are separately rejected — client-urls.test.ts pins all eleven.)
+    // and must not smuggle in through cast option objects either. (The
+    // unsupported DSL helpers are separately rejected — client-urls.test.ts
+    // pins every entry of UNSUPPORTED_HELPERS.)
     for (const key of ["intercept", "parallel", "revalidate"]) {
       const smuggled = { [key]: true } as unknown as PathOptions;
       expect(() =>
@@ -302,6 +312,215 @@ describe("client URL server projection", () => {
       params: { id: "42" },
       redirectTo: "/accounts/42/",
     });
+  });
+
+  it("serializes intercept records as JSON-safe data without components", () => {
+    function DetailModal(): null {
+      return null;
+    }
+    const ItemLoader = loaderDefinition("loaders#item");
+    const patterns = clientUrls(({ path, intercept, loader, loading }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/detail/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", DetailModal, () => [
+        loader(ItemLoader),
+        loading("Modal loading"),
+      ]),
+    ]);
+
+    const projection = serializeClientUrlPatterns(patterns);
+    expect(projection.intercepts).toEqual([
+      {
+        slotName: "@modal",
+        targetName: "detail",
+        loaderIds: ["loaders#item"],
+        hasLoading: true,
+      },
+    ]);
+    expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+    expect(JSON.stringify(projection)).not.toContain("DetailModal");
+  });
+
+  it("attaches materialized intercepts to a group layout entry, not the module parent", () => {
+    // Attachment contract (scar tissue): findInterceptForRoute walks the
+    // TARGET route's parent chain, and intercepts emitted at the TOP LEVEL of
+    // a lazily included module attach to the isolated parent clone
+    // (getIsolatedLazyParent) and are silently discarded. Materialization must
+    // therefore wrap the group in one layout entry that (a) owns the
+    // intercepts so the target chain reaches them, (b) hosts the slot outlets
+    // so the modal renders inside the group subtree, and (c) leaves the module
+    // parent's intercept array untouched.
+    function DetailModal(): null {
+      return null;
+    }
+    const source = clientUrls(({ path, intercept, loader, loading }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/detail/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", DetailModal, () => [
+        loader(loaderDefinition("loaders#item")),
+        loading("Modal loading"),
+      ]),
+    ]);
+    const reference = clientReference("app.urls#intercepts");
+    const materialized = materializeClientUrlPatterns(
+      reference,
+      serializeClientUrlPatterns(source),
+    );
+
+    const manifest = new Map<string, EntryData>();
+    const moduleParent = {
+      id: "test.module-parent",
+      shortCode: "P0",
+      type: "layout",
+      parent: null,
+      handler: () => null,
+      loader: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      layout: [],
+      parallel: {},
+      intercept: [],
+    } as unknown as EntryData;
+
+    RangoContext.run(
+      {
+        manifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: moduleParent,
+        counters: {},
+      },
+      () => materialized.handler(),
+    );
+
+    const index = manifest.get("index");
+    const detail = manifest.get("detail");
+    if (!index || !detail) throw new Error("Expected materialized routes");
+
+    // Both routes share ONE group layout entry; the module parent is its parent.
+    const groupLayout = index.parent;
+    expect(groupLayout?.type).toBe("layout");
+    expect(detail.parent).toBe(groupLayout);
+    expect(groupLayout?.parent).toBe(moduleParent);
+
+    // The intercept lives on the group layout — and ONLY there.
+    expect(moduleParent.intercept).toEqual([]);
+    expect(groupLayout?.intercept).toHaveLength(1);
+    const interceptEntry = groupLayout!.intercept[0];
+    expect(interceptEntry.slotName).toBe("@modal");
+    expect(interceptEntry.routeName).toBe("detail");
+    // The target-chain walk is origin-blind, so materialization synthesizes
+    // the module-local origin check as a `when` selector. At the root mount
+    // ("/") every origin is in-group.
+    expect(interceptEntry.when).toHaveLength(1);
+    expect(
+      interceptEntry.when[0]({
+        from: new URL("http://localhost/anywhere"),
+      } as Parameters<(typeof interceptEntry.when)[0]>[0]),
+    ).toBe(true);
+    expect(
+      interceptEntry.loader.map(({ loader }) => ({
+        $$id: loader.$$id,
+        hasFn: typeof loader.fn === "function",
+      })),
+    ).toEqual([{ $$id: "loaders#item", hasFn: true }]);
+
+    // Slot handler renders the definition's modal via ClientUrlsInterceptSlot.
+    const slotElement = (
+      interceptEntry.handler as unknown as () => React.ReactElement
+    )();
+    expect(slotElement.type).toBe(ClientUrlsInterceptSlot);
+    expect(slotElement.props).toEqual({
+      definition: reference,
+      interceptIndex: 0,
+    });
+
+    // A definition WITHOUT intercepts keeps the flat shape: no wrapper layout.
+    const flatSource = clientUrls(({ path }) => [
+      path("/", AccountPage, { name: "flat" }),
+    ]);
+    const flatManifest = new Map<string, EntryData>();
+    RangoContext.run(
+      {
+        manifest: flatManifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: moduleParent,
+        counters: {},
+      },
+      () =>
+        materializeClientUrlPatterns(
+          clientReference("app.urls#flat"),
+          serializeClientUrlPatterns(flatSource),
+        ).handler(),
+    );
+    expect(flatManifest.get("flat")?.parent).toBe(moduleParent);
+  });
+
+  it("composes intercept target names against the include's name prefix", () => {
+    function DetailModal(): null {
+      return null;
+    }
+    const source = clientUrls(({ path, intercept }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/detail/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", DetailModal),
+    ]);
+    const reference = clientReference("app.urls#prefixed-intercepts");
+    const materialized = materializeClientUrlPatterns(
+      reference,
+      serializeClientUrlPatterns(source),
+    );
+
+    const manifest = new Map<string, EntryData>();
+    RangoContext.run(
+      {
+        manifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: null,
+        counters: {},
+      },
+      () =>
+        runWithPrefixes("/client", "clientGroup", () => materialized.handler()),
+    );
+
+    const detail = manifest.get("clientGroup.detail");
+    if (!detail) throw new Error("Expected the prefixed detail route");
+    const groupLayout = detail.parent;
+    const interceptEntry = groupLayout?.intercept[0];
+    expect(interceptEntry?.routeName).toBe("clientGroup.detail");
+
+    // The synthesized origin `when` scopes activation to the include's mount:
+    // in-group origins activate, outside origins (including prefix-sharing
+    // siblings like "/client-extra") fall through to the full route.
+    const activates = (pathname: string): boolean =>
+      interceptEntry!.when.every((selector) =>
+        selector({
+          from: new URL(`http://localhost${pathname}`),
+        } as Parameters<typeof selector>[0]),
+      );
+    expect(activates("/client")).toBe(true);
+    expect(activates("/client/detail/7")).toBe(true);
+    expect(activates("/elsewhere")).toBe(false);
+    expect(activates("/client-extra")).toBe(false);
+    // The browser-side coordination composes the same canonical name:
+    // ClientUrlsRoot receives the prefix so beginClientUrlNavigation can
+    // decline presentations the intercept will claim.
+    const handlerElement = (
+      detail.handler as unknown as () => React.ReactElement
+    )();
+    expect((handlerElement.props as { namePrefix?: string }).namePrefix).toBe(
+      "clientGroup",
+    );
   });
 
   it("delegates projected loader execution by $$id with the original context", async () => {

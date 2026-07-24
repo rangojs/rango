@@ -181,8 +181,9 @@ boundary for those other scopes.
 
 The initial slice supports:
 
-- `path()`, `layout()`, `loader()`, and `loading()` inside `clientUrls()`;
-- named client component values for paths and layouts;
+- `path()`, `layout()`, `loader()`, `loading()`, and a restricted
+  `intercept()` inside `clientUrls()`;
+- named client component values for paths, layouts, and intercepts;
 - mounting through `include()` in the canonical `urls()` tree, with URL and
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
   deriving from the server tree;
@@ -192,10 +193,10 @@ The initial slice supports:
   navigation.
 
 INSIDE `clientUrls()` the DSL does not support `middleware()`, `revalidate()`,
-`include()`, `parallel()`, `intercept()`, `cache()`, `transition()`, error or
-not-found boundaries, or PPR — those belong to the surrounding server tree the
-include mounts into. Every helper rejection and the option-level rejections
-(`ppr`, `intercept`, `parallel`, `revalidate`, and any other non-projected
+`include()`, `parallel()`, `cache()`, `transition()`, error or not-found
+boundaries, or PPR — those belong to the surrounding server tree the include
+mounts into. Every helper rejection and the option-level rejections (`ppr`,
+`intercept`, `parallel`, `revalidate`, and any other non-projected
 `PathOptions` key) are pinned by tests.
 
 Composition limits around a client include, locked explicitly:
@@ -205,22 +206,39 @@ Composition limits around a client include, locked explicitly:
 - `revalidate()` has no surface to attach to projected client routes (their
   use-lists are generated: loader stubs and `loading()` only). Canonical
   revalidation of a committed page follows ordinary server semantics.
-- Intercepts are DECLARED in the server tree (a wrapping layout or route),
-  never inside `clientUrls()`. This is the projection boundary, not an
-  accident: an intercept decides what the server renders and commits for a
-  navigation, and its declaration carries server-executed material (`when`
-  selectors, middleware, server handlers) that cannot cross from a
-  `"use client"` module. To keep the modal wiring next to the routes it
-  belongs to, co-locate a small server module with the client module:
+- Intercepts come in TWO declaration forms, split by the projection boundary:
+  1. **Server-declared** (a wrapping layout or route in the server tree) — the
+     full form: `when` selectors, middleware, server handlers. Server-executed
+     material cannot cross from a `"use client"` module, so anything beyond
+     the restricted form below lives here. To keep that wiring next to the
+     routes it belongs to, co-locate a small server module with the client
+     module:
 
-  ```
-  photos/
-    photos.client-urls.tsx   # "use client" — the routes
-    photos.urls.ts           # server — urls() with the include + intercept
-  ```
+     ```
+     photos/
+       photos.client-urls.tsx   # "use client" — the routes
+       photos.urls.ts           # server — urls() with the include + intercept
+     ```
 
-  A restricted client-declared form (component + projected loaders, no
-  selectors) is a candidate future extension of the projection contract.
+  2. **Client-declared**, inside `clientUrls()` — the restricted, fully
+     JSON-projectable form: `intercept(slot, ".localTarget", Component,
+use?)` where the target is a dot-local NAMED route in the same
+     definition and `use` may contain `loader()`/`loading()` only. No `when`,
+     no middleware. Scoping is MODULE-LOCAL by contract: only navigations
+     whose origin is inside the group's mount render the modal; an outside
+     origin commits the full route. Materialization enforces this with a
+     synthesized origin-`when` — the server intercept walk resolves against
+     the TARGET's parent chain and is origin-blind, so without the
+     synthesized selector a client-declared intercept would claim every
+     origin (and for outside origins the slot's host layout is not even in
+     the rendered tree). The modal also PRESENTS module-locally: a
+     materialized group layout hosts the slot outlets, so the modal renders
+     inside the group's subtree rather than in a server layout of the
+     consumer's choosing. (Mechanics: the group wrapper exists because
+     top-level intercepts in a lazily included module attach to an isolated
+     parent clone and vanish — see `materializeRouteItems` in
+     `src/client-urls/server-projection.ts`.)
+
 - `intercept()` MAY target a client route by its canonical route name
   (include name prefix + local name; unnamed client routes cannot be targets).
   From a server-page origin this behaves like any intercept. From an origin

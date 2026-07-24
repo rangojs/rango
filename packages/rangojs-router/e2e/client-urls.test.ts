@@ -158,6 +158,58 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(page).toHaveURL(f.url("/client-urls-intercept/items/alpha"));
   });
 
+  test("client-declared intercept is module-local: modal in-group, full route from outside", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // In-group origin: the module's own intercept("@modal", ".detail") claims
+    // the navigation — the index stays rendered with the modal over it.
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-index")).toBeVisible();
+
+    {
+      await using __ = await expectNoReload(page);
+      await testId(page, "ci-detail-link").click();
+      await expect(testId(page, "ci-client-modal")).toBeVisible();
+      await expect(testId(page, "ci-client-modal-item")).toHaveText(
+        "client-urls-item:gamma",
+      );
+      await expect(testId(page, "ci-index")).toBeVisible();
+      await expect(testId(page, "ci-detail")).not.toBeVisible();
+      await expect(page).toHaveURL(
+        f.url("/client-urls-intercept/detail/gamma"),
+      );
+    }
+
+    // Outside origin: the intercept's owning layout entry is not in the origin
+    // chain, so the SAME navigation commits the full detail route — no modal.
+    await page.goto(f.url("/client-urls-intercept-origin"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-origin")).toBeVisible();
+
+    {
+      await using __ = await expectNoReload(page);
+      await testId(page, "ci-origin-detail-link").click();
+      await expect(testId(page, "ci-detail")).toBeVisible();
+      await expect(testId(page, "ci-detail-param")).toHaveText("gamma");
+      await expect(testId(page, "ci-detail-loader")).toHaveText(
+        "client-urls-item:gamma",
+      );
+      await expect(testId(page, "ci-client-modal")).not.toBeVisible();
+      await expect(page).toHaveURL(
+        f.url("/client-urls-intercept/detail/gamma"),
+      );
+    }
+
+    // Hard load renders the full detail route, never the modal.
+    await page.goto(f.url("/client-urls-intercept/detail/gamma"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-detail-param")).toHaveText("gamma");
+    await expect(testId(page, "ci-client-modal")).not.toBeVisible();
+  });
+
   test("soft navigation shows local loading and pending state before committing, then Back restores index", async ({
     page,
   }) => {

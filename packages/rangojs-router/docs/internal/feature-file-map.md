@@ -89,10 +89,13 @@ The client descriptor and both runtime projections are owned by:
   record types.
 - [`client-urls/server-projection.ts`](../../src/client-urls/server-projection.ts) -
   JSON-safe projection, `name`/`search`/`trailingSlash` validation, loader-ID
-  execution, and materialization into ordinary server URL patterns.
+  execution, and materialization into ordinary server URL patterns — including
+  client-declared intercepts (group-layout attachment + synthesized
+  module-local origin `when`).
 - [`client-urls/client-root.tsx`](../../src/client-urls/client-root.tsx) and
   [`client-urls/navigation.ts`](../../src/client-urls/navigation.ts) - hydrated
-  local presentation, loading UI, and outlet pending registration.
+  local presentation, loading UI, outlet pending registration, and the group
+  layout/intercept slot wrappers.
 
 Public entry and router integration are owned by
 [`client.tsx`](../../src/client.tsx),

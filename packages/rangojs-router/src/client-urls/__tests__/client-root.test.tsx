@@ -8,7 +8,13 @@ import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
-import { ClientUrlsLoading, ClientUrlsRoot } from "../client-root.js";
+import {
+  ClientUrlsGroupLayout,
+  ClientUrlsInterceptLoading,
+  ClientUrlsInterceptSlot,
+  ClientUrlsLoading,
+  ClientUrlsRoot,
+} from "../client-root.js";
 import { clientUrls } from "../client-urls.js";
 import {
   beginClientUrlNavigation,
@@ -324,6 +330,70 @@ describe("intercept coordination", () => {
       abort.signal,
     );
     expect(presentation?.routeId).toBe("client-route-0");
+  });
+});
+
+describe("client-declared intercept rendering", () => {
+  function DetailPage(): null {
+    return null;
+  }
+
+  function DetailModal(): ReactNode {
+    return <p data-testid="detail-modal">Modal</p>;
+  }
+
+  const definition = clientUrls(({ path, intercept, loading }) => [
+    path("/detail/:id", DetailPage, { name: "detail" }),
+    intercept("@modal", ".detail", DetailModal, () => [
+      loading(<p data-testid="modal-loading">Loading modal</p>),
+    ]),
+  ]);
+
+  it("renders the intercept component and loading node by index", () => {
+    const result = render(
+      <ClientUrlsInterceptSlot definition={definition} interceptIndex={0} />,
+    );
+    expect(result.getByTestId("detail-modal").textContent).toBe("Modal");
+
+    const loadingNode = ClientUrlsInterceptLoading({
+      definition,
+      interceptIndex: 0,
+    });
+    const loadingResult = render(<>{loadingNode}</>);
+    expect(loadingResult.getByTestId("modal-loading")).toBeDefined();
+  });
+
+  it("throws a clear mismatch error for an unknown intercept index", () => {
+    expect(() =>
+      render(
+        <ClientUrlsInterceptSlot definition={definition} interceptIndex={3} />,
+      ),
+    ).toThrow(
+      "Client URL intercept mismatch: intercept index 3 was not found in the provided definition",
+    );
+    expect(() =>
+      ClientUrlsInterceptLoading({ definition, interceptIndex: 3 }),
+    ).toThrow(
+      "Client URL intercept mismatch: intercept index 3 was not found in the provided definition",
+    );
+  });
+
+  it("renders child and slot outlets from the group layout", () => {
+    const slotSegment = {
+      id: "test.slot",
+      slot: "@modal",
+      component: <p data-testid="group-slot">Slot</p>,
+    } as unknown as import("../../types.js").ResolvedSegment;
+    const result = render(
+      <OutletProvider
+        content={<p data-testid="group-child">Child</p>}
+        parallel={[slotSegment]}
+      >
+        <ClientUrlsGroupLayout slotNames={["@modal"]} />
+      </OutletProvider>,
+    );
+    expect(result.getByTestId("group-child")).toBeDefined();
+    expect(result.getByTestId("group-slot")).toBeDefined();
   });
 });
 

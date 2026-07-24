@@ -1,13 +1,24 @@
 "use client";
 
-import { createElement, useEffect, useState, type ReactNode } from "react";
+import {
+  createElement,
+  Fragment,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { Outlet } from "../client.js";
 import { OutletProvider } from "../outlet-provider.js";
 import { useMount } from "../browser/react/use-mount.js";
 import {
   registerClientUrlGroup,
   type ClientUrlNavigationIntent,
 } from "./navigation.js";
-import type { ClientUrlPatterns, ClientUrlRouteRecord } from "./types.js";
+import type {
+  ClientUrlInterceptRecord,
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./types.js";
 
 function findRoute(
   definition: ClientUrlPatterns,
@@ -20,6 +31,71 @@ function findRoute(
     );
   }
   return route;
+}
+
+function findIntercept(
+  definition: ClientUrlPatterns,
+  interceptIndex: number,
+): ClientUrlInterceptRecord {
+  const record = definition.intercepts[interceptIndex];
+  if (!record) {
+    throw new Error(
+      `Client URL intercept mismatch: intercept index ${interceptIndex} was not found in the provided definition`,
+    );
+  }
+  return record;
+}
+
+/**
+ * Server-materialized wrapper layout for a clientUrls() group that declares
+ * intercepts. Attachment scar: intercepts emitted at the TOP LEVEL of a lazily
+ * included module attach to the isolated parent clone
+ * (getIsolatedLazyParent in server/context.ts) and are silently discarded —
+ * only intercepts attached to a layout entry created WITHIN the expansion
+ * survive in origin chains. Materialization therefore wraps the group's routes
+ * and intercept entries in this layout; it renders the child outlet plus one
+ * named outlet per declared slot, so the modal presents inside the group's own
+ * subtree (module-local declaration, module-local presentation).
+ */
+export function ClientUrlsGroupLayout({
+  slotNames,
+}: {
+  slotNames: readonly `@${string}`[];
+}): ReactNode {
+  return (
+    <Fragment>
+      <Outlet />
+      {slotNames.map((name) => (
+        <Outlet key={name} name={name} />
+      ))}
+    </Fragment>
+  );
+}
+
+/** Slot content for a client-declared intercept: renders the definition's
+ *  modal component; its useLoader() calls read the slot segment's loader data
+ *  from the surrounding outlet context. */
+export function ClientUrlsInterceptSlot({
+  definition,
+  interceptIndex,
+}: {
+  definition: ClientUrlPatterns;
+  interceptIndex: number;
+}): ReactNode {
+  const record = findIntercept(definition, interceptIndex);
+  return createElement(record.component, {
+    key: `intercept-${interceptIndex}`,
+  });
+}
+
+export function ClientUrlsInterceptLoading({
+  definition,
+  interceptIndex,
+}: {
+  definition: ClientUrlPatterns;
+  interceptIndex: number;
+}): ReactNode {
+  return findIntercept(definition, interceptIndex).loading ?? null;
 }
 
 export function ClientUrlsRoot({

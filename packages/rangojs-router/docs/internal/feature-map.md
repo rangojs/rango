@@ -183,12 +183,15 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
 `clientUrls()` is a separate, narrowed client DSL exported from `./client`. Its
-helpers are `path()`, `layout()`, `loader()`, and `loading()` only. It requires
-named client component values and projects only the `name`, `search`, and
-`trailingSlash` path options. It mounts through `include()` in the canonical
-`urls()` tree (the composition baseline — URL/name prefixes, wrapping RSC
-layouts, and middleware scope derive from the server tree);
-`createRouter().routes()` rejects it directly.
+helpers are `path()`, `layout()`, `loader()`, `loading()`, and a restricted
+`intercept()` (dot-local named target, `loader()`/`loading()` use only, no
+`when`/middleware; module-local origin scoping via a materialization-synthesized
+`when`). It requires named client component values and projects only the
+`name`, `search`, and `trailingSlash` path options. It mounts through
+`include()` in the canonical `urls()` tree (the composition baseline —
+URL/name prefixes, wrapping RSC layouts, and middleware scope derive from the
+server tree); `.routes(ClientUrlPatterns)` is pure-client sugar for a root
+include.
 
 `include(prefix, patterns, opts?)` takes its second argument two ways: **eager** (a `urls()` value already in the graph, evaluated at startup) or **async** (`() => import("./routes")`, code-split behind a thunk imported on the first request to the prefix, then cached — the split module exposes its `urls()` value as `export default`). Both are supported; prefer async for large independently-loadable groups. Build-time discovery awaits the provider, so `href()`/`reverse()`/generated types/prerender still cover every route in a split group, including nested `include()`s. Because discovery resolves the provider to build the trie/types/prerender, the `./build` `generateManifest*` functions and `Rango.findMatch` are `async`; provider normalization lives in the internal `urls/include-provider.ts` (`isIncludeProvider`, `resolveIncludeModule`). See [async-includes.md](./async-includes.md).
 

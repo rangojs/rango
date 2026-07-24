@@ -126,9 +126,9 @@ describe("clientUrls", () => {
     });
   });
 
-  it("exposes only the Phase 1 helper and record shape", () => {
+  it("exposes only the supported helper and record shape", () => {
     expectTypeOf<keyof ClientUrlHelpers>().toEqualTypeOf<
-      "path" | "layout" | "loader" | "loading"
+      "path" | "layout" | "loader" | "loading" | "intercept"
     >();
     expectTypeOf<
       Parameters<ClientUrlHelpers["loader"]>["length"]
@@ -212,7 +212,6 @@ describe("clientUrls", () => {
     for (const helperName of [
       "include",
       "parallel",
-      "intercept",
       "cache",
       "transition",
       "error",
@@ -238,6 +237,120 @@ describe("clientUrls", () => {
         path("/", HomePage, () => [path("/nested", UserPage)]),
       ]),
     ).toThrow("does not support path() inside path()");
+  });
+
+  it("collects intercept records with self-contained loader and loading config", () => {
+    const ItemLoader = loader("loaders#item");
+    function DetailModal(): null {
+      return null;
+    }
+
+    const patterns = clientUrls(
+      ({ path, layout, intercept, loader: useLoader, loading }) => [
+        layout(AppLayout, () => [
+          path("/", HomePage, { name: "index" }),
+          path("/detail/:id", AccountPage, { name: "detail" }),
+          intercept("@modal", ".detail", DetailModal, () => [
+            useLoader(ItemLoader),
+            loading("Modal loading"),
+          ]),
+        ]),
+      ],
+    );
+
+    expect(patterns.intercepts).toEqual([
+      {
+        slotName: "@modal",
+        targetName: "detail",
+        component: DetailModal,
+        loaders: [{ loader: ItemLoader }],
+        loading: "Modal loading",
+      },
+    ]);
+    // Intercepts never become matchable routes.
+    expect(patterns.routes).toHaveLength(2);
+  });
+
+  it("accepts top-level intercepts and defaults loaders/loading to empty", () => {
+    function DetailModal(): null {
+      return null;
+    }
+
+    const patterns = clientUrls(({ path, intercept }) => [
+      path("/detail/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", DetailModal),
+    ]);
+
+    expect(patterns.intercepts).toEqual([
+      {
+        slotName: "@modal",
+        targetName: "detail",
+        component: DetailModal,
+        loaders: [],
+        loading: undefined,
+      },
+    ]);
+  });
+
+  it("validates intercept arguments and target names", () => {
+    function DetailModal(): null {
+      return null;
+    }
+
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage, { name: "detail" }),
+        intercept("modal" as `@${string}`, ".detail", DetailModal),
+      ]),
+    ).toThrow('slot name must be a string beginning with "@"');
+
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage, { name: "detail" }),
+        intercept("@modal", "detail" as `.${string}`, DetailModal),
+      ]),
+    ).toThrow('target must be a dot-local route name like ".detail"');
+
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage, { name: "detail" }),
+        intercept("@modal", ".detail", (() => null) as never),
+      ]),
+    ).toThrow("intercept() expects a named client component value");
+
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage, { name: "detail" }),
+        intercept("@modal", ".missing", DetailModal),
+      ]),
+    ).toThrow(
+      'intercept() target ".missing" does not match a named path() in this definition',
+    );
+
+    // Unnamed routes cannot be targeted — names are the targeting contract.
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage),
+        intercept("@modal", ".detail", DetailModal),
+      ]),
+    ).toThrow(
+      'intercept() target ".detail" does not match a named path() in this definition',
+    );
+  });
+
+  it("restricts intercept use callbacks to loader() and loading()", () => {
+    function DetailModal(): null {
+      return null;
+    }
+
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/detail/:id", AccountPage, { name: "detail" }),
+        intercept("@modal", ".detail", DetailModal, () => [
+          path("/nested", HomePage),
+        ]),
+      ]),
+    ).toThrow("does not support path() inside intercept()");
   });
 
   it("rejects malformed values instead of executing them", () => {
