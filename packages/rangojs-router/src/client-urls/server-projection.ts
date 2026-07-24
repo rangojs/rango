@@ -19,6 +19,7 @@ import {
   ClientUrlsRoot,
 } from "./client-root.js";
 import type {
+  ClientTransitionConfig,
   ClientUrlInterceptRecord,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
@@ -62,6 +63,9 @@ export interface ClientUrlProjectionRoute {
   readonly options: ClientUrlProjectionOptions;
   readonly loaderIds: readonly string[];
   readonly hasLoading: boolean;
+  /** Data-only transition config (no `when` — server-tree only); absent in
+   *  projections serialized before transition support. */
+  readonly transition?: Readonly<ClientTransitionConfig>;
 }
 
 export interface ClientUrlProjectionIntercept {
@@ -148,6 +152,24 @@ function serializeOptions(
   return Object.freeze(options);
 }
 
+function serializeTransition(
+  route: ClientUrlRouteRecord,
+): Readonly<ClientTransitionConfig> | undefined {
+  const source = route.transition;
+  if (!source) return undefined;
+  // The DSL already validated shape and rejected `when`; re-copy defensively
+  // so the projection is a plain JSON value (class maps included).
+  const config: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    config[key] =
+      typeof value === "object" && value !== null
+        ? Object.freeze({ ...(value as Record<string, string>) })
+        : value;
+  }
+  return Object.freeze(config) as Readonly<ClientTransitionConfig>;
+}
+
 function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
   const loaderIds = route.loaders.map(({ loader }, index) => {
     if (typeof loader.$$id !== "string" || loader.$$id.length === 0) {
@@ -159,6 +181,7 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     return loader.$$id;
   });
 
+  const transition = serializeTransition(route);
   return Object.freeze({
     id: route.id,
     pattern: route.pattern,
@@ -166,6 +189,7 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     options: serializeOptions(route),
     loaderIds: Object.freeze(loaderIds),
     hasLoading: route.loading !== undefined,
+    ...(transition ? { transition } : {}),
   });
 }
 
@@ -290,7 +314,7 @@ function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
 function materializeRouteItems(
   reference: ClientUrlDefinitionSource,
   projection: ClientUrlProjection,
-  { path, layout, loader, loading, intercept }: PathHelpers<any>,
+  { path, layout, loader, loading, intercept, transition }: PathHelpers<any>,
 ): AllUseItems[] {
   // The urls() builder runs under the include's prefixes, so the composed
   // route-name prefix is available here. ClientUrlsRoot needs it to compose
@@ -325,6 +349,9 @@ function materializeRouteItems(
                   ),
                 ]
               : []),
+            // Data-only per-route transition config: same child position as a
+            // hand-written server transition(config) — no `when`.
+            ...(route.transition ? [transition({ ...route.transition })] : []),
           ],
         ) as AllUseItems,
     );

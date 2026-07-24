@@ -118,6 +118,7 @@ import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
+import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
@@ -853,6 +854,11 @@ export const urlpatterns = urls(
       ),
       include("/client-urls-intercept", clientUrlsInterceptPatterns, {
         name: "clientIntercept",
+      }),
+      // Data-only transition() projection: /items holds same-route param navs
+      // (client-declared transition), /plain re-streams its skeleton.
+      include("/client-urls-transition", clientUrlsTransitionPatterns, {
+        name: "clientTransition",
       }),
       intercept(
         "@modal",

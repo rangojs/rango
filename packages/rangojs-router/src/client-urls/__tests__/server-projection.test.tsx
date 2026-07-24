@@ -523,6 +523,56 @@ describe("client URL server projection", () => {
     );
   });
 
+  it("projects and materializes a data-only transition config onto the route entry", () => {
+    const source = clientUrls(({ path, transition, loading }) => [
+      path("/detail/:id", AccountPage, { name: "detail" }, () => [
+        loading("Detail loading"),
+        transition({
+          name: "detail-card",
+          exit: { navigation: "slide-out" },
+          viewTransition: "auto",
+        }),
+      ]),
+    ]);
+
+    const projection = serializeClientUrlPatterns(source);
+    expect(projection.routes[0].transition).toEqual({
+      name: "detail-card",
+      exit: { navigation: "slide-out" },
+      viewTransition: "auto",
+    });
+    expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+    const manifest = new Map<string, EntryData>();
+    RangoContext.run(
+      {
+        manifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: null,
+        counters: {},
+      },
+      () =>
+        materializeClientUrlPatterns(
+          clientReference("app.urls#transition"),
+          projection,
+        ).handler(),
+    );
+
+    // Materialization re-emits transition(config) in the path use list — the
+    // same child position a hand-written server transition() uses — so the
+    // route entry carries the config and the segment system applies the hold
+    // and (on experimental React) the ViewTransition boundary.
+    const detail = manifest.get("detail");
+    expect(detail?.transition).toEqual({
+      name: "detail-card",
+      exit: { navigation: "slide-out" },
+      viewTransition: "auto",
+    });
+  });
+
   it("delegates projected loader execution by $$id with the original context", async () => {
     const context = {
       params: { id: "42" },

@@ -128,7 +128,7 @@ describe("clientUrls", () => {
 
   it("exposes only the supported helper and record shape", () => {
     expectTypeOf<keyof ClientUrlHelpers>().toEqualTypeOf<
-      "path" | "layout" | "loader" | "loading" | "intercept"
+      "path" | "layout" | "loader" | "loading" | "intercept" | "transition"
     >();
     expectTypeOf<
       Parameters<ClientUrlHelpers["loader"]>["length"]
@@ -143,6 +143,7 @@ describe("clientUrls", () => {
       | "layouts"
       | "loaders"
       | "loading"
+      | "transition"
     >();
   });
 
@@ -213,7 +214,6 @@ describe("clientUrls", () => {
       "include",
       "parallel",
       "cache",
-      "transition",
       "error",
       "notFound",
       "errorBoundary",
@@ -336,6 +336,87 @@ describe("clientUrls", () => {
     ).toThrow(
       'intercept() target ".detail" does not match a named path() in this definition',
     );
+  });
+
+  it("stores a data-only transition config on the route record", () => {
+    const patterns = clientUrls(({ path, transition, loading }) => [
+      path("/", HomePage, { name: "index" }),
+      path("/detail/:id", AccountPage, { name: "detail" }, () => [
+        loading("Detail loading"),
+        transition({
+          name: "detail-card",
+          enter: "slide-in",
+          exit: { navigation: "slide-out", "navigation-back": "slide-back" },
+          viewTransition: "auto",
+        }),
+      ]),
+    ]);
+
+    expect(patterns.routes[0].transition).toBeUndefined();
+    expect(patterns.routes[1].transition).toEqual({
+      name: "detail-card",
+      enter: "slide-in",
+      exit: { navigation: "slide-out", "navigation-back": "slide-back" },
+      viewTransition: "auto",
+    });
+  });
+
+  it("validates transition config and rejects the server-only when gate", () => {
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage, () => [transition({ when: () => true } as never)]),
+      ]),
+    ).toThrow(
+      "transition() does not support `when` — the gate is a server-executed predicate",
+    );
+
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage, () => [transition({ types: "x" } as never)]),
+      ]),
+    ).toThrow('transition() option "types" is not supported');
+
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage, () => [
+          transition({ viewTransition: true } as never),
+        ]),
+      ]),
+    ).toThrow('transition() viewTransition must be "auto" or false');
+
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage, () => [transition({ enter: 3 } as never)]),
+      ]),
+    ).toThrow(
+      "transition() enter must be a string or a string map of transition types",
+    );
+
+    // Route position only: one per path, never at the top level or in layouts.
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage, () => [
+          transition({ name: "a" }),
+          transition({ name: "b" }),
+        ]),
+      ]),
+    ).toThrow("path() received more than one transition()");
+
+    expect(() =>
+      clientUrls(({ path, layout, transition }) => [
+        layout(AppLayout, () => [
+          path("/", HomePage),
+          transition({ name: "layout-level" }),
+        ]),
+      ]),
+    ).toThrow("does not support transition() inside layout()");
+
+    expect(() =>
+      clientUrls(({ path, transition }) => [
+        path("/", HomePage),
+        transition({ name: "top-level" }),
+      ]),
+    ).toThrow("does not support transition() inside clientUrls()");
   });
 
   it("restricts intercept use callbacks to loader() and loading()", () => {

@@ -12,6 +12,44 @@ const HARD_LOAD_PATH = "/client-urls-e2e/items/hard-load";
 const SOFT_NAV_PATH = "/client-urls-e2e/items/soft-nav";
 const ORDINARY_SERVER_PATH = "/factory-hmr/alpha";
 
+/**
+ * Flash detection via MutationObserver on addedNodes so even a single-frame
+ * skeleton is caught — a plain toBeHidden() would miss it. Same mechanism as
+ * e2e/conditional-transition.test.ts.
+ */
+async function watchFlash(page: Page, fallbackTestId: string): Promise<void> {
+  await page.evaluate((id) => {
+    const w = window as unknown as {
+      __flash?: boolean;
+      __obs?: MutationObserver;
+    };
+    w.__flash = document.querySelector(`[data-testid="${id}"]`) != null;
+    const hit = (n: Node) =>
+      n.nodeType === 1 &&
+      ((n as Element).matches?.(`[data-testid="${id}"]`) ||
+        (n as Element).querySelector?.(`[data-testid="${id}"]`) != null);
+    w.__obs = new MutationObserver((records) => {
+      for (const r of records)
+        for (const n of Array.from(r.addedNodes)) if (hit(n)) w.__flash = true;
+    });
+    w.__obs.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  }, fallbackTestId);
+}
+
+async function readFlash(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const w = window as unknown as {
+      __flash?: boolean;
+      __obs?: MutationObserver;
+    };
+    w.__obs?.disconnect();
+    return w.__flash === true;
+  });
+}
+
 async function expectItem(
   page: Page,
   itemId: "hard-load" | "soft-nav",
@@ -208,6 +246,55 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await waitForHydration(page);
     await expect(testId(page, "ci-detail-param")).toHaveText("gamma");
     await expect(testId(page, "ci-client-modal")).not.toBeVisible();
+  });
+
+  test("client-declared transition() holds same-route param navs; the plain twin re-streams", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // transition({...}) on the client route: the same-route param nav
+    // re-suspends the existing boundary, and the transition holds previous
+    // content — the loading() skeleton must never appear.
+    await page.goto(f.url("/client-urls-transition/items/one"));
+    await waitForHydration(page);
+    await expect(testId(page, "ct-item-loader")).toHaveText(
+      "client-urls-item:one",
+    );
+
+    {
+      await using __ = await expectNoReload(page);
+      await watchFlash(page, "ct-item-loading");
+      await testId(page, "ct-item-to-two").click();
+      await expect(testId(page, "ct-item-loader")).toHaveText(
+        "client-urls-item:two",
+      );
+      expect(
+        await readFlash(page),
+        "transition() must hold the same-route nav (no skeleton flash)",
+      ).toBe(false);
+    }
+
+    // Control: the twin route WITHOUT transition() re-streams its skeleton on
+    // the same navigation shape, proving the observable discriminates.
+    await page.goto(f.url("/client-urls-transition/plain/one"));
+    await waitForHydration(page);
+    await expect(testId(page, "ct-plain-loader")).toHaveText(
+      "client-urls-item:one",
+    );
+
+    {
+      await using __ = await expectNoReload(page);
+      await watchFlash(page, "ct-plain-loading");
+      await testId(page, "ct-plain-to-two").click();
+      await expect(testId(page, "ct-plain-loader")).toHaveText(
+        "client-urls-item:two",
+      );
+      expect(
+        await readFlash(page),
+        "the transition-less twin must re-stream the loading() skeleton",
+      ).toBe(true);
+    }
   });
 
   test("soft navigation shows local loading and pending state before committing, then Back restores index", async ({

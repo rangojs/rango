@@ -181,8 +181,8 @@ boundary for those other scopes.
 
 The initial slice supports:
 
-- `path()`, `layout()`, `loader()`, `loading()`, and a restricted
-  `intercept()` inside `clientUrls()`;
+- `path()`, `layout()`, `loader()`, `loading()`, a restricted `intercept()`,
+  and a data-only `transition()` inside `clientUrls()`;
 - named client component values for paths, layouts, and intercepts;
 - mounting through `include()` in the canonical `urls()` tree, with URL and
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
@@ -192,12 +192,26 @@ The initial slice supports:
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
   navigation.
 
+`transition(config)` is valid inside a `path()` use callback only and projects
+the data subset of `TransitionConfig`: ViewTransition classes
+(`enter`/`exit`/`update`/`share`/`default`), `name`, and the
+`viewTransition: "auto" | false` boundary opt-out. The `when` gate is a
+server-executed predicate and is rejected — declare it with a server-tree
+`transition()` wrapping the include. Materialization re-emits the config in
+the standard child position, so the canonical commit gets the transition
+hold (a same-route param nav keeps previous content instead of re-streaming
+the `loading()` fallback — pinned dev+prod in `e2e/client-urls.test.ts`) and,
+on experimental React, the router's ViewTransition boundary with those
+classes. `startTransition` itself needs no opt-in here: the local
+presentation already wraps its swaps, and the canonical commit is
+transition-driven once the config is present.
+
 INSIDE `clientUrls()` the DSL does not support `middleware()`, `revalidate()`,
-`include()`, `parallel()`, `cache()`, `transition()`, error or not-found
-boundaries, or PPR — those belong to the surrounding server tree the include
-mounts into. Every helper rejection and the option-level rejections (`ppr`,
-`intercept`, `parallel`, `revalidate`, and any other non-projected
-`PathOptions` key) are pinned by tests.
+`include()`, `parallel()`, `cache()`, error or not-found boundaries, or PPR —
+those belong to the surrounding server tree the include mounts into. Every
+helper rejection and the option-level rejections (`ppr`, `intercept`,
+`parallel`, `revalidate`, and any other non-projected `PathOptions` key) are
+pinned by tests.
 
 Composition limits around a client include, locked explicitly:
 

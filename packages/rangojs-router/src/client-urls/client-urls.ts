@@ -5,6 +5,7 @@ import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
 import type {
   ClientPathOptions,
+  ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,
   ClientUrlInterceptRecord,
@@ -19,11 +20,20 @@ import type { ClientUrlItems } from "./types.js";
 
 const ITEM_KIND = Symbol("client-url-item");
 
+const TRANSITION_CONFIG_KEYS = new Set<PropertyKey>([
+  "enter",
+  "exit",
+  "update",
+  "share",
+  "default",
+  "name",
+  "viewTransition",
+]);
+
 const UNSUPPORTED_HELPERS = new Set([
   "include",
   "parallel",
   "cache",
-  "transition",
   "error",
   "notFound",
   "errorBoundary",
@@ -37,7 +47,8 @@ type InternalItem =
   | LayoutItem
   | LoaderItem
   | LoadingItem
-  | InterceptItem;
+  | InterceptItem
+  | TransitionItem;
 
 interface ItemBase {
   readonly [ITEM_KIND]: true;
@@ -64,6 +75,11 @@ interface InterceptItem extends ItemBase {
   readonly targetName: string;
   readonly component: ComponentType;
   readonly use: readonly InternalItem[];
+}
+
+interface TransitionItem extends ItemBase {
+  readonly type: "transition";
+  readonly config: ClientTransitionConfig;
 }
 
 interface LoaderItem extends ItemBase {
@@ -227,7 +243,12 @@ function createHelpers(): ClientUrlHelpers {
     }
 
     const items = use ? runUse(use, "path use") : [];
-    rejectItems(items, new Set(["loader", "loading"]), "path");
+    rejectItems(items, new Set(["loader", "loading", "transition"]), "path");
+    if (items.filter((item) => item.type === "transition").length > 1) {
+      throw new Error(
+        "clientUrls() path() received more than one transition()",
+      );
+    }
     return toPublicItem({
       [ITEM_KIND]: true,
       type: "path",
@@ -269,6 +290,68 @@ function createHelpers(): ClientUrlHelpers {
   const loading: ClientUrlHelpers["loading"] = (component) =>
     toPublicItem({ [ITEM_KIND]: true, type: "loading", component });
 
+  const transition: ClientUrlHelpers["transition"] = (config) => {
+    if (
+      typeof config !== "object" ||
+      config === null ||
+      Array.isArray(config)
+    ) {
+      throw new Error(
+        "clientUrls() transition() expects a configuration object",
+      );
+    }
+    for (const key of Reflect.ownKeys(config)) {
+      if (key === "when") {
+        throw new Error(
+          "clientUrls() transition() does not support `when` — the gate is a " +
+            "server-executed predicate; declare it with a server-tree transition()",
+        );
+      }
+      if (!TRANSITION_CONFIG_KEYS.has(key)) {
+        throw new Error(
+          `clientUrls() transition() option ${JSON.stringify(String(key))} is not supported`,
+        );
+      }
+    }
+    if (config.name !== undefined && typeof config.name !== "string") {
+      throw new Error("clientUrls() transition() name must be a string");
+    }
+    if (
+      config.viewTransition !== undefined &&
+      config.viewTransition !== "auto" &&
+      config.viewTransition !== false
+    ) {
+      throw new Error(
+        'clientUrls() transition() viewTransition must be "auto" or false',
+      );
+    }
+    for (const key of [
+      "enter",
+      "exit",
+      "update",
+      "share",
+      "default",
+    ] as const) {
+      const value = config[key];
+      if (value === undefined || typeof value === "string") continue;
+      const isStringMap =
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        Object.values(value).every((entry) => typeof entry === "string");
+      if (!isStringMap) {
+        throw new Error(
+          `clientUrls() transition() ${key} must be a string or a string map of transition types`,
+        );
+      }
+    }
+    return toPublicItem({
+      [ITEM_KIND]: true,
+      type: "transition",
+      config: { ...config },
+    });
+  };
+
   const intercept: ClientUrlHelpers["intercept"] = (
     slotName,
     targetName,
@@ -308,6 +391,7 @@ function createHelpers(): ClientUrlHelpers {
     loader,
     loading,
     intercept,
+    transition,
   };
 
   return new Proxy(supported, {
@@ -356,6 +440,12 @@ function addPathRecord(
 ): void {
   const routeContext = applyConfig(context, item.use);
   const options = item.options ? Object.freeze({ ...item.options }) : undefined;
+  // Route-scoped only: transition() is rejected outside path() use callbacks,
+  // so there is no layout-level inheritance to fold in.
+  const transitionItem = item.use.find(
+    (useItem): useItem is Extract<InternalItem, { type: "transition" }> =>
+      useItem.type === "transition",
+  );
   routes.push(
     Object.freeze({
       id: `client-route-${routes.length}`,
@@ -366,6 +456,9 @@ function addPathRecord(
       layouts: Object.freeze([...routeContext.layouts]),
       loaders: Object.freeze([...routeContext.loaders]),
       loading: routeContext.loading,
+      transition: transitionItem
+        ? Object.freeze({ ...transitionItem.config })
+        : undefined,
     }),
   );
 }
@@ -520,6 +613,7 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 }
 
 export type {
+  ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,
   ClientUrlInterceptRecord,

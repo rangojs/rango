@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import type { LoaderDefinition } from "../types.js";
+import type { LoaderDefinition, TransitionConfig } from "../types.js";
 import type { TrieMatchResult } from "../router/trie-matching.js";
 import type { PathOptions } from "../urls/pattern-types.js";
 import type { SearchSchema } from "../search-params.js";
@@ -46,6 +46,17 @@ export interface ClientUrlLoaderRecord {
   readonly loader: LoaderDefinition<any, any>;
 }
 
+/**
+ * The data-only subset of TransitionConfig a clientUrls() route may declare:
+ * ViewTransition classes/name plus the boundary opt-out. The `when` gate is a
+ * server-executed predicate and stays in the server tree — it cannot cross the
+ * "use client" projection boundary.
+ */
+export type ClientTransitionConfig = Pick<
+  TransitionConfig,
+  "enter" | "exit" | "update" | "share" | "default" | "name" | "viewTransition"
+>;
+
 export interface ClientUrlRouteRecord {
   readonly id: string;
   readonly pattern: string;
@@ -55,6 +66,7 @@ export interface ClientUrlRouteRecord {
   readonly layouts: readonly ComponentType[];
   readonly loaders: readonly ClientUrlLoaderRecord[];
   readonly loading: ReactNode | undefined;
+  readonly transition: Readonly<ClientTransitionConfig> | undefined;
 }
 
 /**
@@ -91,6 +103,14 @@ export interface ClientUrlHelpers {
     component: ComponentType,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
+  /**
+   * Opt THIS route into transition-driven navigation: the canonical commit
+   * holds previous content instead of re-streaming the loading() fallback,
+   * and on experimental React the config's ViewTransition classes apply.
+   * Data-only — no `when` gate (server-executed; declare it in the server
+   * tree). Valid inside a path() use callback only.
+   */
+  readonly transition: (config: ClientTransitionConfig) => ClientUrlItem;
 }
 
 export type ClientUrlBuilder<TItems extends ClientUrlItems = ClientUrlItems> = (

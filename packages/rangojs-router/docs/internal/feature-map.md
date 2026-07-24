@@ -183,11 +183,13 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
 `clientUrls()` is a separate, narrowed client DSL exported from `./client`. Its
-helpers are `path()`, `layout()`, `loader()`, `loading()`, and a restricted
+helpers are `path()`, `layout()`, `loader()`, `loading()`, a restricted
 `intercept()` (dot-local named target, `loader()`/`loading()` use only, no
 `when`/middleware; module-local origin scoping via a materialization-synthesized
-`when`). It requires named client component values and projects only the
-`name`, `search`, and `trailingSlash` path options. It mounts through
+`when`), and a data-only `transition()` (ViewTransition classes/name/boundary
+opt-out, path-use position only, no `when`). It requires named client component
+values and projects only the `name`, `search`, and `trailingSlash` path
+options. It mounts through
 `include()` in the canonical `urls()` tree (the composition baseline —
 URL/name prefixes, wrapping RSC layouts, and middleware scope derive from the
 server tree); `.routes(ClientUrlPatterns)` is pure-client sugar for a root
