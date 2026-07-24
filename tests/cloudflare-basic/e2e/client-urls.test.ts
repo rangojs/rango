@@ -96,35 +96,35 @@ function runClientUrlsSpec(f: Fixture): void {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    {
-      await using __ = await expectNoReload(page);
-      await testId(page, "nav-mixed-client-routes").click();
-      await expect(testId(page, "mixed-rsc-layout")).toBeVisible();
-      await expect(testId(page, "mixed-client-index")).toBeVisible();
-      await testId(page, "mixed-client-counter").click();
-      await expect(testId(page, "mixed-client-counter")).toHaveText(
-        "Client count: 1",
-      );
+    // One router serves everything now: the mixed group AND the pure client
+    // group are include() mounts in the canonical urls() tree, so every hop —
+    // including into and out of the pure client group — is a soft navigation.
+    await using __ = await expectNoReload(page);
 
-      await testId(page, "mixed-client-detail-link").click();
-      await expect(testId(page, "mixed-rsc-layout")).toBeVisible();
-      await expect(testId(page, "mixed-client-loading")).toBeVisible();
-      await expect(testId(page, "mixed-client-param")).toHaveText("example");
-      await expect(testId(page, "mixed-client-loader")).toHaveText(
-        "Cloudflare server loader: example",
-      );
-      await expect(page).toHaveURL(f.url("/mixed-client-routes/example"));
-    }
+    await testId(page, "nav-mixed-client-routes").click();
+    await expect(testId(page, "mixed-rsc-layout")).toBeVisible();
+    await expect(testId(page, "mixed-client-index")).toBeVisible();
+    await testId(page, "mixed-client-counter").click();
+    await expect(testId(page, "mixed-client-counter")).toHaveText(
+      "Client count: 1",
+    );
+
+    await testId(page, "mixed-client-detail-link").click();
+    await expect(testId(page, "mixed-rsc-layout")).toBeVisible();
+    await expect(testId(page, "mixed-client-loading")).toBeVisible();
+    await expect(testId(page, "mixed-client-param")).toHaveText("example");
+    await expect(testId(page, "mixed-client-loader")).toHaveText(
+      "Cloudflare server loader: example",
+    );
+    await expect(page).toHaveURL(f.url("/mixed-client-routes/example"));
 
     await testId(page, "nav-home").click();
     await expect(page).toHaveURL(f.url("/"));
     await testId(page, "nav-pure-client-routes").click();
-    await waitForHydration(page);
     await expect(testId(page, "client-urls-index")).toBeVisible();
     await expect(page).toHaveURL(f.url("/__client-urls"));
 
     await testId(page, "client-urls-main-nav").click();
-    await waitForHydration(page);
     await expect(testId(page, "nav")).toBeVisible();
     await expect(page).toHaveURL(f.url("/"));
   });

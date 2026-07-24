@@ -1,9 +1,15 @@
 # Client URLs Implementation Plan
 
-Status: Phase 1 is implemented. This document records the shipped vertical slice
-and keeps later phases separate from it. The broader destination architecture in
+Status: the shipped slice mounts `clientUrls()` through `include()` in the
+canonical `urls()` tree — composition is the BASELINE model, not a later phase.
+Earlier drafts of this plan described a direct `.routes(clientUrlPatterns)`
+registration and deferred composition; that architecture was rejected and the
+direct form now throws. Phase references below are historical planning
+structure, not the mounting model. The broader destination architecture in
 [client URL groups and instant navigation](./client-urls-instant-navigation.md)
-remains design background, not a description of the current API.
+remains design background, not a description of the current API. The next API
+exploration on this foundation is suspending `useLoader()` in client route
+components.
 
 The consumer contract is documented in [Client URL Routes](../client-urls.md).
 When this plan and the guide differ, the guide and current source are the shipped

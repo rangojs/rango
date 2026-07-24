@@ -19,57 +19,53 @@ function Page(): null {
   return null;
 }
 
-function createFactoryPatterns() {
-  return urls(({ path }) => [
-    path("/factory/alpha", Page, { name: "factory.alpha" }),
-  ]);
-}
-
-describe("multi-mount manifest initialization", () => {
+describe("manifest initialization", () => {
   beforeEach(() => {
     clearClientUrlProjections();
     clearAllRouterData();
   });
 
-  it("tracks a projected client mount only after installation and builds both mounts", async () => {
-    const factoryPatterns = createFactoryPatterns();
+  it("builds every server mount plus a clientUrls include from the installed projection", async () => {
     const clientPatterns = clientUrls(({ path }) => [
-      path("/projected/:id", Page, { name: "projected.item" }),
+      path("/:id", Page, { name: "item" }),
     ]);
     const reference: ClientUrlReference = {
       $$typeof: Symbol.for("react.client.reference"),
       $$id: "/src/projected.urls.tsx#default",
     };
-    const router = toInternal(
-      createRouter({ id: "manifest-init-multi-mount" }).routes(factoryPatterns),
-    );
-
-    (router.routes as (patterns: ClientUrlPatterns) => unknown)(
-      reference as unknown as ClientUrlPatterns,
-    );
-
-    expect(router.__urlpatternMounts).toEqual([
-      { patterns: factoryPatterns, mountIndex: 0 },
-    ]);
-    expect(router.urlpatterns).toBe(factoryPatterns);
-
     setClientUrlProjection(
       reference,
       serializeClientUrlPatterns(clientPatterns),
     );
 
-    expect(router.__urlpatternMounts).toHaveLength(2);
-    expect(router.__urlpatternMounts.map((mount) => mount.mountIndex)).toEqual([
-      0, 1,
+    // One canonical tree containing the clientUrls include; a second server
+    // mount keeps the multi-mount rebuild loop covered (still legal for
+    // server patterns).
+    const primaryTree = urls(({ path, include }) => [
+      path("/factory/alpha", Page, { name: "factory.alpha" }),
+      include("/projected", reference as unknown as ClientUrlPatterns, {
+        name: "projected",
+      }),
     ]);
-    expect(router.__urlpatternMounts[0]?.patterns).toBe(factoryPatterns);
-    expect(router.__urlpatternMounts[1]?.patterns).toBe(router.urlpatterns);
+    const secondaryMount = urls(({ path }) => [
+      path("/extra", Page, { name: "extra" }),
+    ]);
 
+    const router = toInternal(
+      createRouter({ id: "manifest-init-multi-mount" })
+        .routes(primaryTree)
+        .routes(secondaryMount),
+    );
+    expect(router.__urlpatternMounts).toHaveLength(2);
+
+    // Dev/HMR trie rebuild: the lazy clientUrls include materializes from the
+    // projection registry during manifest generation, prefixed by the include.
     await buildRouterTrieFromUrlpatterns(router);
 
     expect(getRouterManifest(router.id)).toEqual({
       "factory.alpha": "/factory/alpha",
       "projected.item": "/projected/:id",
+      extra: "/extra",
     });
   });
 });

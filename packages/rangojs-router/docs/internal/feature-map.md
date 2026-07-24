@@ -183,10 +183,12 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
 `clientUrls()` is a separate, narrowed client DSL exported from `./client`. Its
-Phase 1 helpers are `path()`, `layout()`, `loader()`, and `loading()` only. It
-requires named client component values, projects only the `name`, `search`, and
-`trailingSlash` path options, and supports direct root registration rather than
-`include()` or prefix mounting.
+helpers are `path()`, `layout()`, `loader()`, and `loading()` only. It requires
+named client component values and projects only the `name`, `search`, and
+`trailingSlash` path options. It mounts through `include()` in the canonical
+`urls()` tree (the composition baseline — URL/name prefixes, wrapping RSC
+layouts, and middleware scope derive from the server tree);
+`createRouter().routes()` rejects it directly.
 
 `include(prefix, patterns, opts?)` takes its second argument two ways: **eager** (a `urls()` value already in the graph, evaluated at startup) or **async** (`() => import("./routes")`, code-split behind a thunk imported on the first request to the prefix, then cached — the split module exposes its `urls()` value as `export default`). Both are supported; prefer async for large independently-loadable groups. Build-time discovery awaits the provider, so `href()`/`reverse()`/generated types/prerender still cover every route in a split group, including nested `include()`s. Because discovery resolves the provider to build the trie/types/prerender, the `./build` `generateManifest*` functions and `Rango.findMatch` are `async`; provider normalization lives in the internal `urls/include-provider.ts` (`isIncludeProvider`, `resolveIncludeModule`). See [async-includes.md](./async-includes.md).
 
@@ -195,9 +197,10 @@ requires named client component values, projects only the `name`, `search`, and
 Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
-- `.routes(ClientUrlPatterns)` registers one distinct root client definition per
-  router. It may be chained with ordinary server patterns; the browser match is
-  presentation-only and the materialized server routes remain canonical.
+- `clientUrls()` definitions mount through `include()` in the canonical
+  `urls()` tree (`.routes(ClientUrlPatterns)` is rejected with a pointer to
+  include()). The browser match is presentation-only and the materialized
+  server routes remain canonical.
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - `strictMode` (default true) — wraps client hydration in `React.StrictMode`; shipped to the client via initial payload metadata and read once by the browser entry. `strictMode: false` opts out (used to isolate StrictMode's double-render when measuring hook stability)
 - `prefetchCacheSize` (default 100) and `prefetchConcurrency` (default 2) — client prefetch tuning knobs: max decoded prefetch payloads kept before FIFO eviction, and max concurrent speculative prefetches. Resolved server-side (`router/prefetch-limits.ts`) and shipped via initial payload metadata. The synchronous cache and small shared viewport observer stay eager so navigation can adopt a warm response and detect the first intersection; `browser/prefetch/loader.ts` holds decoder/concurrency configuration and defers evaluating the fetch/queue runtime until an actual prefetch trigger. That deferral is evaluation-only: every `browser/prefetch/` module ships inside the eager `router` chunk, so the dynamic import resolves without a network fetch — the #766 lazy-chunk split created a document -> router -> runtime request waterfall on production's `"viewport"` default and was folded back (`getManualChunks` JSDoc has the numbers). Sub-1/non-finite values fall back to the default; disabling prefetch entirely remains `prefetchCacheTTL: false`'s job

@@ -9,7 +9,7 @@ import {
   redirect,
 } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
 import { NavLayout } from "./components/NavLayout.js";
@@ -156,9 +156,27 @@ import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
-import { mixedClientPathPatterns } from "./client-paths/urls.js";
+import mixedClientUrls from "./mixed-client/urls.js";
+import pureClientUrls from "./client-urls/urls.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
+
+// Server Component layout for the mixed clientUrls() example — stays RSC while
+// its included pages are client components with local matching.
+function MixedRscLayout(): ReactNode {
+  return (
+    <section data-testid="mixed-rsc-layout">
+      <header>
+        <h1>RSC layout with client pages</h1>
+        <p>
+          The route layout is a Server Component; its pages are client
+          components.
+        </p>
+      </header>
+      <Outlet />
+    </section>
+  );
+}
 
 /**
  * Main URL patterns - Django-style routing API
@@ -517,7 +535,17 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
-        include("/", mixedClientPathPatterns, { name: "mixedClient" }),
+        // Mixed example: an ordinary RSC layout wrapping a clientUrls()
+        // group mounted through include() — the layout is a Server Component;
+        // the pages keep browser-local matching and optimistic presentation.
+        layout(<MixedRscLayout />, () => [
+          include("/mixed-client-routes", mixedClientUrls, {
+            name: "mixedClient",
+          }),
+        ]),
+        // Pure client group: the whole subtree is clientUrls(), mounted in the
+        // SAME canonical urls() tree (no separate router, no worker dispatch).
+        include("/__client-urls", pureClientUrls),
         // Deployable cache lab: two independently tagged "use cache" values
         // rendered inside a tagged PPR shell with promised Meta. The paired e2e
         // drives its authenticated /api/cache/invalidate endpoint and proves

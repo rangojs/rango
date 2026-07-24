@@ -102,9 +102,10 @@ test.describe.serial("client-urls-hmr", () => {
   test("route-shape edit refreshes serving patterns and restore heals", async ({
     request,
   }) => {
-    const oldPattern = 'path("/client-urls-e2e/items/:itemId", ClientUrlsItem';
-    const newPattern =
-      'path("/client-urls-e2e/entries/:itemId", ClientUrlsItem';
+    // Patterns are definition-LOCAL now (the include supplies the
+    // /client-urls-e2e prefix); the URL assertions below stay absolute.
+    const oldPattern = 'path("/items/:itemId", ClientUrlsItem';
+    const newPattern = 'path("/entries/:itemId", ClientUrlsItem';
     expect(originalContent).toContain(oldPattern);
 
     // Baseline: the committed pattern serves, the edited one does not.

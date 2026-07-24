@@ -275,20 +275,24 @@ export default { fetch: router.fetch }; // minimal
 
 ### ClientUrlPatterns
 
-A default-exported `clientUrls()` definition from a `"use client"` module mounts through the direct `.routes(clientUrlPatterns)` form. It may be chained after ordinary server patterns:
+A default-exported `clientUrls()` definition from a `"use client"` module mounts through `include()` inside the canonical `urls()` tree — `createRouter().routes()` rejects it directly:
 
 ```tsx
-import { createRouter } from "@rangojs/router";
-import clientUrlPatterns from "./catalog.client-urls.js";
-import { serverUrls } from "./server-urls.js";
+import { createRouter, urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
+
+const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
 
 export const router = createRouter({ document: Document })
   .use(globalMiddleware)
-  .routes(serverUrls)
-  .routes(clientUrlPatterns);
+  .routes(urlpatterns);
 ```
 
-One distinct client URL definition is allowed per router. The initial surface is root-only: do not mount it through `include()` or a prefix. It supports named client components with `path()`, `layout()`, `loader()`, and `loading()`; only the `name`, `search`, and `trailingSlash` path options project to the canonical server tree. The browser match may present loading after hydration, but global middleware, loaders, redirects, history, and the committed route remain owned by the ordinary server partial Flight response. See the [client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md) for the full example and limitations.
+Client definitions follow normal include semantics: mount several, nest them under RSC layouts, scope middleware to their prefix. It supports named client components with `path()`, `layout()`, `loader()`, and `loading()`; only the `name`, `search`, and `trailingSlash` path options project to the canonical server tree. The browser match may present loading after hydration, but global middleware, loaders, redirects, history, and the committed route remain owned by the ordinary server partial Flight response. See the [client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md) for the full example and limitations.
 
 On Cloudflare Workers, pass bindings and `ExecutionContext` through explicitly instead:
 

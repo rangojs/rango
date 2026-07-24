@@ -387,12 +387,15 @@ export default clientUrls(({ path, layout, loader, loading }) => [
   ]),
 ]);
 
-// router.tsx
-import { createRouter } from "@rangojs/router";
-import clientUrlPatterns from "./catalog.client-urls.js";
-import { serverUrls } from "./server-urls.js";
+// urls.tsx
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
 
-createRouter().routes(serverUrls).routes(clientUrlPatterns);
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
 ```
 
 The browser match is not a second authority. It only selects transient
@@ -404,11 +407,13 @@ for SSR and hydration.
 
 That narrower contract avoids a second loader cache or navigation protocol, but
 it also keeps the initial API deliberately small: named client components,
-`path`/`layout`/`loader`/`loading`, one direct root definition per router, and
-only `name`, `search`, and `trailingSlash` path options. Prefix mounting,
-route-local middleware/revalidation, parallel/intercept routes, cache,
-transitions, boundaries, and PPR are not available inside `clientUrls()`. See
-the [client URL guide](./client-urls.md) for the complete limits.
+`path`/`layout`/`loader`/`loading`, `include()` mounting in the canonical
+`urls()` tree, and only `name`, `search`, and `trailingSlash` path options.
+The include supplies URL/name prefixes and the surrounding RSC layouts,
+middleware scope, and boundaries; route-local middleware/revalidation,
+parallel/intercept routes, cache, transitions, boundaries, and PPR are not
+available INSIDE `clientUrls()`. See the
+[client URL guide](./client-urls.md) for the complete limits.
 
 The immediate loading branch can appear before global auth middleware completes.
 It must not reveal protected data or sensitive route state; if the shell itself

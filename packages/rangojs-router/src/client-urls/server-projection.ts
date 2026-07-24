@@ -3,6 +3,8 @@ import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import type { LoaderDefinition, TrailingSlashMode } from "../types.js";
 import type { PathOptions, UrlPatterns } from "../urls/pattern-types.js";
+import type { PathHelpers } from "../urls/path-helper-types.js";
+import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
 import { ClientUrlsLoading, ClientUrlsRoot } from "./client-root.js";
 import type { ClientUrlPatterns, ClientUrlRouteRecord } from "./types.js";
@@ -25,7 +27,6 @@ const PROJECTION_OPTIONS = new Set<PropertyKey>([
 ]);
 
 const clientUrlProjections = new Map<string, ClientUrlProjection>();
-const projectionListeners = new Set<(referenceId: string) => void>();
 
 export interface ClientUrlReference {
   readonly $$typeof: symbol;
@@ -195,9 +196,7 @@ export function setClientUrlProjection(
   reference: string | ClientUrlReference,
   projection: ClientUrlProjection,
 ): void {
-  const key = projectionKey(reference);
-  clientUrlProjections.set(key, projection);
-  for (const listener of projectionListeners) listener(key);
+  clientUrlProjections.set(projectionKey(reference), projection);
 }
 
 export function getClientUrlProjection(
@@ -208,13 +207,6 @@ export function getClientUrlProjection(
 
 export function clearClientUrlProjections(): void {
   clientUrlProjections.clear();
-}
-
-export function subscribeClientUrlProjections(
-  listener: (referenceId: string) => void,
-): () => void {
-  projectionListeners.add(listener);
-  return () => projectionListeners.delete(listener);
 }
 
 function createLoaderStub(id: string): LoaderDefinition<unknown> {
@@ -243,18 +235,13 @@ function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
   };
 }
 
-export function materializeClientUrlPatterns(
+function materializeRouteItems(
   reference: ClientUrlDefinitionSource,
   projection: ClientUrlProjection,
-): UrlPatterns {
-  if (!isClientUrlReference(reference) && !isClientUrlPatterns(reference)) {
-    throw new Error(
-      "materializeClientUrlPatterns() expects clientUrls() patterns or a React client reference with a non-empty $$id",
-    );
-  }
-
-  return urls(({ path, loader, loading }) =>
-    projection.routes.map((route) =>
+  { path, loader, loading }: PathHelpers<any>,
+): AllUseItems[] {
+  return projection.routes.map(
+    (route) =>
       path(
         route.pattern,
         () =>
@@ -276,7 +263,57 @@ export function materializeClientUrlPatterns(
               ]
             : []),
         ],
-      ),
-    ),
+      ) as AllUseItems,
   );
+}
+
+function assertClientUrlSource(
+  value: unknown,
+  caller: string,
+): asserts value is ClientUrlDefinitionSource {
+  if (!isClientUrlReference(value) && !isClientUrlPatterns(value)) {
+    throw new Error(
+      `${caller} expects clientUrls() patterns or a React client reference with a non-empty $$id`,
+    );
+  }
+}
+
+export function materializeClientUrlPatterns(
+  reference: ClientUrlDefinitionSource,
+  projection: ClientUrlProjection,
+): UrlPatterns {
+  assertClientUrlSource(reference, "materializeClientUrlPatterns()");
+  return urls((helpers) =>
+    materializeRouteItems(reference, projection, helpers),
+  );
+}
+
+/**
+ * Adapt a clientUrls() source for `include()` mounting inside the canonical
+ * urls() tree. Materialization is DEFERRED into the returned handler: it
+ * resolves the discovery-installed projection at evaluation time (lazy include
+ * expansion, build manifest generation, dev per-request trie rebuild) — by
+ * then the routes-manifest bootstrap has installed projections, so registration
+ * order never matters. The include machinery applies the URL and route-name
+ * prefixes exactly as it does for any urls() module; surrounding RSC layouts,
+ * middleware scoping, and boundaries derive from the canonical server tree.
+ */
+export function clientUrlIncludePatterns(
+  source: ClientUrlDefinitionSource,
+): UrlPatterns {
+  assertClientUrlSource(source, "include() with a clientUrls() definition");
+  return urls((helpers) => {
+    const projection = isClientUrlPatterns(source)
+      ? serializeClientUrlPatterns(source)
+      : getClientUrlProjection(source);
+    if (!projection) {
+      const id = isClientUrlReference(source) ? source.$$id : "(inline)";
+      throw new Error(
+        `include() could not resolve the server projection for clientUrls() module "${id}". ` +
+          'The definition must be the default export of a "use client" module so the ' +
+          "Vite discovery pass can project it; in unit tests pass the clientUrls() object directly.",
+      );
+    }
+    return materializeRouteItems(source, projection, helpers);
+  });
 }

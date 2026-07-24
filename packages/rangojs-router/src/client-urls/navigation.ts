@@ -9,6 +9,8 @@ export interface ClientUrlNavigationIntent {
 
 interface ActiveClientUrlGroup {
   readonly definition: ClientUrlPatterns;
+  /** include() mount prefix the group is rendered under ("/" at root). */
+  readonly mount: string;
   readonly setIntent: (intent: ClientUrlNavigationIntent | null) => void;
   intent: ClientUrlNavigationIntent | null;
 }
@@ -20,12 +22,31 @@ export interface ClientUrlNavigationPresentation {
 
 let activeGroup: ActiveClientUrlGroup | null = null;
 
+/**
+ * Strip the include mount prefix from an absolute pathname, yielding the
+ * definition-local pathname the module trie was built from. Returns null when
+ * the pathname lies outside the mount — the navigation then targets a server
+ * route and gets no optimistic presentation. Mirrors joinMount() in
+ * use-reverse.ts: the bare mount maps to the module index "/".
+ */
+function stripMountPrefix(pathname: string, mount: string): string | null {
+  if (mount === "" || mount === "/") return pathname;
+  const normalized = mount.endsWith("/") ? mount.slice(0, -1) : mount;
+  if (pathname === normalized) return "/";
+  if (pathname.startsWith(`${normalized}/`)) {
+    return pathname.slice(normalized.length);
+  }
+  return null;
+}
+
 export function registerClientUrlGroup(
   definition: ClientUrlPatterns,
+  mount: string,
   setIntent: (intent: ClientUrlNavigationIntent | null) => void,
 ): () => void {
   const group: ActiveClientUrlGroup = {
     definition,
+    mount,
     setIntent,
     intent: null,
   };
@@ -43,7 +64,10 @@ export function beginClientUrlNavigation(
   const group = activeGroup;
   if (!group) return null;
 
-  const match = group.definition.match(targetUrl.pathname);
+  const localPathname = stripMountPrefix(targetUrl.pathname, group.mount);
+  if (localPathname === null) return null;
+
+  const match = group.definition.match(localPathname);
   if (!match || match.redirectTo) return null;
 
   const intent: ClientUrlNavigationIntent = { routeId: match.routeKey };

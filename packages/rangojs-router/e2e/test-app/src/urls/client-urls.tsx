@@ -59,8 +59,8 @@ function ClientUrlsItemLoading() {
 
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
-    path("/client-urls-e2e", ClientUrlsIndex),
-    path("/client-urls-e2e/items/:itemId", ClientUrlsItem, () => [
+    path("/", ClientUrlsIndex),
+    path("/items/:itemId", ClientUrlsItem, () => [
       loader(ClientUrlsItemLoader),
       loading(<ClientUrlsItemLoading />),
     ]),

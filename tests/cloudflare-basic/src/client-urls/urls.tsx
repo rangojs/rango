@@ -17,7 +17,7 @@ function ClientUrlsLayout(): ReactNode {
     <main data-testid="client-urls-layout">
       <h1>Pure client routes</h1>
       <nav aria-label="Pure client route navigation">
-        <Link to="/" reloadDocument data-testid="client-urls-main-nav">
+        <Link to="/" data-testid="client-urls-main-nav">
           Server route examples
         </Link>
         <Link to="/__client-urls" data-testid="client-urls-index-nav">
@@ -77,8 +77,8 @@ function ClientUrlsLoading(): ReactNode {
 
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
-    path("/__client-urls", ClientUrlsIndex),
-    path("/__client-urls/:slug", ClientUrlsDetail, () => [
+    path("/", ClientUrlsIndex),
+    path("/:slug", ClientUrlsDetail, () => [
       loader(ClientUrlsDetailLoader),
       loading(<ClientUrlsLoading />),
     ]),

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizePath, parseAst } from "vite";
 import {
@@ -14,14 +15,6 @@ import { createRangoDebugger, NS } from "../debug.js";
 import type { DiscoveryState } from "./state.js";
 
 const debug = createRangoDebugger(NS.discovery);
-
-interface ClientUrlReferenceLike {
-  readonly $$id: string;
-}
-
-interface ClientUrlRouterLike {
-  readonly __clientUrlReferences?: readonly ClientUrlReferenceLike[];
-}
 
 interface ClientUrlSsrEnvironment {
   readonly runner?: {
@@ -122,18 +115,6 @@ export function resolveClientUrlsSource(
   );
 }
 
-function collectReferenceIds(
-  registry: ReadonlyMap<string, ClientUrlRouterLike>,
-): string[] {
-  const referenceIds = new Set<string>();
-  for (const router of registry.values()) {
-    for (const reference of router.__clientUrlReferences ?? []) {
-      referenceIds.add(reference.$$id);
-    }
-  }
-  return [...referenceIds];
-}
-
 function projectionError(
   referenceId: string,
   source: string | undefined,
@@ -219,38 +200,64 @@ export async function refreshRecordedClientUrlProjections(
   }
 }
 
+/**
+ * Strict projection discovery over every RECORDED clientUrls module. Recorded
+ * modules — not router references — are the source of truth: include() mounts
+ * materialize lazily from the projection registry, so there is no router-level
+ * reference list to consult. Serializes every source before atomically
+ * installing the new projections (a failure preserves last-known state).
+ *
+ * A recorded source whose file no longer exists is dropped silently
+ * (recordClientUrlsModule never un-records, so deletions must self-heal here).
+ * A present-but-broken module is a hard error: it is part of the app graph.
+ */
 export async function discoverClientUrlProjections(
   state: DiscoveryState,
   ssrEnv: ClientUrlSsrEnvironment | undefined,
   serverMod: ClientUrlProjectionServerModule,
-  registry: ReadonlyMap<string, ClientUrlRouterLike>,
 ): Promise<void> {
-  const referenceIds = collectReferenceIds(registry);
-  const sources = referenceIds.map((id) => {
-    const source = resolveClientUrlsSource(state, id);
-    if (!source) {
-      throw projectionError(id, undefined, "no source module was recorded");
-    }
-    return { id, source };
-  });
+  const sourceByReferenceId = state.clientUrlSourceByReferenceId;
+  if (!sourceByReferenceId?.size) {
+    serverMod.clearClientUrlProjections();
+    state.clientUrlProjectionMap = new Map();
+    return;
+  }
 
-  if (sources.length > 0 && typeof ssrEnv?.runner?.import !== "function") {
-    const first = sources[0];
+  const referenceIdsBySource = new Map<string, string[]>();
+  for (const [referenceId, source] of sourceByReferenceId) {
+    const ids = referenceIdsBySource.get(source);
+    if (ids) {
+      ids.push(referenceId);
+    } else {
+      referenceIdsBySource.set(source, [referenceId]);
+    }
+  }
+
+  if (typeof ssrEnv?.runner?.import !== "function") {
+    const [source, ids] = referenceIdsBySource.entries().next().value as [
+      string,
+      string[],
+    ];
     throw projectionError(
-      first.id,
-      first.source,
+      ids[0],
+      source,
       "the SSR module runner is unavailable",
     );
   }
 
   const nextProjections = new Map<string, ClientUrlProjection>();
-  for (const { id, source } of sources) {
+  const removedSources: string[] = [];
+  for (const [source, referenceIds] of referenceIdsBySource) {
     let module: Record<string, unknown>;
     try {
-      module = await ssrEnv!.runner!.import(source);
+      module = await ssrEnv.runner.import(source);
     } catch (cause) {
+      if (!existsSync(source)) {
+        removedSources.push(source);
+        continue;
+      }
       throw projectionError(
-        id,
+        referenceIds[0],
         source,
         "failed to import the source module",
         cause,
@@ -263,15 +270,23 @@ export async function discoverClientUrlProjections(
       (definition as { __brand?: unknown }).__brand !== "client-urls"
     ) {
       throw projectionError(
-        id,
+        referenceIds[0],
         source,
         'the module default export must be created by clientUrls() and have __brand === "client-urls"',
       );
     }
-    nextProjections.set(
-      id,
-      serializeClientUrlPatterns(definition as ClientUrlPatterns),
+    const projection = serializeClientUrlPatterns(
+      definition as ClientUrlPatterns,
     );
+    for (const referenceId of referenceIds) {
+      nextProjections.set(referenceId, projection);
+    }
+  }
+
+  for (const source of removedSources) {
+    for (const [referenceId, recorded] of sourceByReferenceId) {
+      if (recorded === source) sourceByReferenceId.delete(referenceId);
+    }
   }
 
   serverMod.clearClientUrlProjections();

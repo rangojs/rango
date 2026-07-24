@@ -1,10 +1,16 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Link, useLoader, useParams } from "@rangojs/router/client";
+import { clientUrls, Link, useLoader, useParams } from "@rangojs/router/client";
 import { MixedClientDetailLoader } from "./loader.js";
 
-export function MixedClientIndex(): ReactNode {
+// The mixed example: this clientUrls() group is mounted through include()
+// UNDER an ordinary RSC layout (see urls.tsx) — the layout stays a Server
+// Component while these pages keep browser-local matching and optimistic
+// presentation. Patterns are definition-local; the include supplies the
+// "/mixed-client-routes" URL prefix and the "mixedClient" name prefix.
+
+function MixedClientIndex(): ReactNode {
   const [count, setCount] = useState(0);
 
   return (
@@ -28,7 +34,7 @@ export function MixedClientIndex(): ReactNode {
   );
 }
 
-export function MixedClientDetail(): ReactNode {
+function MixedClientDetail(): ReactNode {
   const { slug } = useParams<{ slug: string }>();
   const { data } = useLoader(MixedClientDetailLoader);
 
@@ -45,3 +51,11 @@ export function MixedClientDetail(): ReactNode {
     </section>
   );
 }
+
+export default clientUrls(({ path, loader, loading }) => [
+  path("/", MixedClientIndex, { name: "index" }),
+  path("/:slug", MixedClientDetail, { name: "detail" }, () => [
+    loader(MixedClientDetailLoader),
+    loading(<p data-testid="mixed-client-loading">Loading server data...</p>),
+  ]),
+]);

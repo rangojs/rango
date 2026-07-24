@@ -2,8 +2,6 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
-import type { ClientUrlPatterns } from "../client-urls/types.js";
-import type { ClientUrlReference } from "../client-urls/server-projection.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
@@ -106,15 +104,6 @@ export interface Rango<
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
-        : Record<string, string>)
-  >;
-  routes<T extends ClientUrlPatterns<any>>(
-    patterns: T,
-  ): Rango<
-    TEnv,
-    TRoutes &
-      (NonNullable<T["_routes"]> extends Record<string, unknown>
-        ? NonNullable<T["_routes"]>
         : Record<string, string>)
   >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
@@ -247,26 +236,7 @@ export interface RangoInternal<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
-  routes<T extends ClientUrlPatterns<any>>(
-    patterns: T,
-  ): Rango<
-    TEnv,
-    TRoutes &
-      (NonNullable<T["_routes"]> extends Record<string, unknown>
-        ? NonNullable<T["_routes"]>
-        : Record<string, string>)
-  >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
-
-  /** Client URL module references awaiting or using generated server projections. */
-  readonly __clientUrlReferences?: readonly ClientUrlReference[];
-
-  /**
-   * Dispose a pending client URL projection subscription. Called by
-   * createRouter() when dev HMR replaces the instance under the same id, so the
-   * module-level listener set in server-projection.ts cannot pin stale routers.
-   */
-  __disposeClientUrlProjectionSubscription?(): void;
 
   /** Materialized UrlPatterns registrations in registration order. */
   readonly __urlpatternMounts: readonly UrlPatternMount<TEnv>[];

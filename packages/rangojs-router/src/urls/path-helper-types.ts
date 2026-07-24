@@ -57,6 +57,7 @@ import type {
   IncludeOptions,
 } from "./pattern-types.js";
 import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 
 /**
  * Base path function signature for defining routes with URL patterns.
@@ -175,6 +176,11 @@ export type IncludeArg<
   TResponses extends Record<string, unknown>,
 > =
   | UrlPatterns<TEnv, TRoutes, TResponses>
+  // clientUrls() definitions mount through include() like any urls() module;
+  // on the server the runtime value is the module's client reference, but the
+  // TypeScript type of that default export IS ClientUrlPatterns, so route
+  // names flow into NamedRoutes through the same TRoutes inference.
+  | ClientUrlPatterns<TRoutes>
   | (() =>
       | IncludeResolved<TEnv, TRoutes, TResponses>
       | Promise<IncludeResolved<TEnv, TRoutes, TResponses>>);

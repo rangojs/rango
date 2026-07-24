@@ -11,30 +11,35 @@ implementation is also summarized in
 
 ## Status Boundary
 
-| Area                              | Status                                                      |
-| --------------------------------- | ----------------------------------------------------------- |
-| Default `"use client"` module     | Implemented                                                 |
-| `clientUrls()`                    | Implemented from `@rangojs/router/client`                   |
-| `path`, `layout`, `loader`        | Implemented with named client component values              |
-| `loading`                         | Implemented for server rendering and hydrated local display |
-| Direct root `.routes(definition)` | Implemented; one client definition per router               |
-| Server projection                 | Implemented for `name`, `search`, and `trailingSlash`       |
-| Hard SSR and hydration            | Implemented                                                 |
-| Local loading + outlet pending    | Implemented after hydration for a different matched route   |
-| Canonical partial Flight          | Implemented and still authoritative                         |
-| Global router middleware          | Implemented through the existing canonical server chain     |
-| Route-local middleware            | Unsupported; future design only                             |
-| Client loader revalidation        | Unsupported; future design only                             |
-| Loader-produced segment handles   | Unsupported; optional future experiment                     |
-| Prefix/include mounting           | Unsupported; future design only                             |
-| Parallel/intercept routes         | Unsupported; future design only                             |
-| Cache, transition, boundaries     | Unsupported                                                 |
-| PPR                               | Unsupported                                                 |
-| Dedicated route-data transport    | Not implemented; future optimization idea                   |
+| Area                            | Status                                                      |
+| ------------------------------- | ----------------------------------------------------------- |
+| Default `"use client"` module   | Implemented                                                 |
+| `clientUrls()`                  | Implemented from `@rangojs/router/client`                   |
+| `path`, `layout`, `loader`      | Implemented with named client component values              |
+| `loading`                       | Implemented for server rendering and hydrated local display |
+| `include()` mounting            | BASELINE; direct `.routes(definition)` is rejected          |
+| Server projection               | Implemented for `name`, `search`, and `trailingSlash`       |
+| Hard SSR and hydration          | Implemented                                                 |
+| Local loading + outlet pending  | Implemented after hydration for a different matched route   |
+| Canonical partial Flight        | Implemented and still authoritative                         |
+| Global router middleware        | Implemented through the existing canonical server chain     |
+| Route-local middleware          | Unsupported; future design only                             |
+| Client loader revalidation      | Unsupported; future design only                             |
+| Loader-produced segment handles | Unsupported; optional future experiment                     |
+| Prefix/include mounting         | BASELINE: `include()` in the canonical urls() tree          |
+| Parallel/intercept routes       | Unsupported; future design only                             |
+| Cache, transition, boundaries   | Unsupported                                                 |
+| PPR                             | Unsupported                                                 |
+| Dedicated route-data transport  | Not implemented; future optimization idea                   |
 
-Phase 1 does not promise overlap rejection. A future composition design must
-define overlap ownership before documentation can claim either support or
-rejection.
+Composition is not a later phase — it is the baseline mounting model.
+`clientUrls()` participates through `include()`: the include supplies URL and
+route-name prefixes, wrapping layouts stay ordinary RSC layouts, and nested
+middleware, loaders, boundaries, and route ownership derive from the canonical
+server tree. Direct `.routes(clientUrlPatterns)` registration is rejected, not
+retained as an alternative. Overlap ownership therefore follows ordinary
+include/tree semantics. With this foundation in place, the next API exploration
+is suspending `useLoader()` inside client route components.
 
 ## The Implemented Idea
 
@@ -72,14 +77,17 @@ export default clientUrls(({ path, layout, loader, loading }) => [
 ]);
 ```
 
-The definition mounts directly, including when a router also has ordinary server
-patterns:
+The definition mounts through `include()` in the canonical `urls()` tree,
+alongside ordinary server patterns and under ordinary RSC layouts:
 
 ```tsx
-createRouter()
-  .use(globalMiddleware)
-  .routes(serverUrls)
-  .routes(clientUrlPatterns);
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+
+createRouter().use(globalMiddleware).routes(urlpatterns);
 ```
 
 The server projection turns the client patterns into ordinary server paths. Hard

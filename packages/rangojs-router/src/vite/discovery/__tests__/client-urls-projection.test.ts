@@ -173,13 +173,15 @@ describe("refreshRecordedClientUrlProjections", () => {
 });
 
 describe("discoverClientUrlProjections", () => {
-  it("serializes every reference before atomically installing the new projections", async () => {
+  it("serializes every recorded source once before atomically installing projections", async () => {
     const state = createState();
-    const firstReference = "/src/first.urls.tsx#default";
+    const devReference = "/src/first.urls.tsx#default";
+    const hashedReference = "abc123#default";
     const secondReference = "/src/second.urls.tsx#default";
     const firstSource = `${PROJECT_ROOT}/src/first.urls.tsx`;
     const secondSource = `${PROJECT_ROOT}/src/second.urls.tsx`;
-    state.clientUrlSourceByReferenceId.set(firstReference, firstSource);
+    state.clientUrlSourceByReferenceId.set(devReference, firstSource);
+    state.clientUrlSourceByReferenceId.set(hashedReference, firstSource);
     state.clientUrlSourceByReferenceId.set(secondReference, secondSource);
     const previous = new Map([["old#default", projection]]);
     state.clientUrlProjectionMap = previous;
@@ -192,29 +194,28 @@ describe("discoverClientUrlProjections", () => {
       }),
     };
     const serverMod = createServerModule();
-    const registry = new Map([
-      ["first", { __clientUrlReferences: [{ $$id: firstReference }] }],
-      ["second", { __clientUrlReferences: [{ $$id: secondReference }] }],
-    ]);
 
-    await discoverClientUrlProjections(state, { runner }, serverMod, registry);
+    await discoverClientUrlProjections(state, { runner }, serverMod);
 
+    // One import per SOURCE; the projection installs under every reference id.
     expect(importedSources).toEqual([firstSource, secondSource]);
     expect(serverMod.calls).toEqual([
       "clear",
-      `set:${firstReference}`,
+      `set:${devReference}`,
+      `set:${hashedReference}`,
       `set:${secondReference}`,
     ]);
     expect(state.clientUrlProjectionMap).not.toBe(previous);
     expect(state.clientUrlProjectionMap).toEqual(
       new Map([
-        [firstReference, projection],
+        [devReference, projection],
+        [hashedReference, projection],
         [secondReference, projection],
       ]),
     );
   });
 
-  it("preserves last-known state and makes no registry calls when a later default export is invalid", async () => {
+  it("preserves last-known state and makes no registry calls when a default export is invalid", async () => {
     const state = createState();
     const firstReference = "/src/first.urls.tsx#default";
     const secondReference = "/src/broken.urls.tsx#default";
@@ -233,13 +234,9 @@ describe("discoverClientUrlProjections", () => {
       ),
     };
     const serverMod = createServerModule();
-    const registry = new Map([
-      ["first", { __clientUrlReferences: [{ $$id: firstReference }] }],
-      ["second", { __clientUrlReferences: [{ $$id: secondReference }] }],
-    ]);
 
     await expect(
-      discoverClientUrlProjections(state, { runner }, serverMod, registry),
+      discoverClientUrlProjections(state, { runner }, serverMod),
     ).rejects.toThrow(
       `reference "${secondReference}" from source "${secondSource}"`,
     );
@@ -256,21 +253,20 @@ describe("discoverClientUrlProjections", () => {
     const previous = new Map([["old#default", projection]]);
     state.clientUrlProjectionMap = previous;
     const serverMod = createServerModule();
-    const registry = new Map([
-      ["app", { __clientUrlReferences: [{ $$id: reference }] }],
-    ]);
 
     await expect(
-      discoverClientUrlProjections(state, undefined, serverMod, registry),
+      discoverClientUrlProjections(state, undefined, serverMod),
     ).rejects.toThrow(`reference "${reference}" from source "${source}"`);
     expect(state.clientUrlProjectionMap).toBe(previous);
     expect(serverMod.calls).toEqual([]);
   });
 
-  it("wraps source import failures without changing state or the registry", async () => {
+  it("wraps import failures for a source that still exists on disk", async () => {
     const state = createState();
+    // Use THIS test file as the source so existsSync() is true and the
+    // failure is treated as a real breakage, not a deleted module.
+    const source = new URL(import.meta.url).pathname;
     const reference = "/src/broken.urls.tsx#default";
-    const source = `${PROJECT_ROOT}/src/broken.urls.tsx`;
     state.clientUrlSourceByReferenceId.set(reference, source);
     const previous = new Map([["old#default", projection]]);
     state.clientUrlProjectionMap = previous;
@@ -281,15 +277,11 @@ describe("discoverClientUrlProjections", () => {
       }),
     };
     const serverMod = createServerModule();
-    const registry = new Map([
-      ["app", { __clientUrlReferences: [{ $$id: reference }] }],
-    ]);
 
     const failure = await discoverClientUrlProjections(
       state,
       { runner },
       serverMod,
-      registry,
     ).catch((error: unknown) => error);
 
     expect(failure).toMatchObject({ cause: importFailure });
@@ -301,37 +293,44 @@ describe("discoverClientUrlProjections", () => {
     expect(serverMod.calls).toEqual([]);
   });
 
-  it("names an unresolved reference without importing or changing state", async () => {
+  it("drops records for a deleted source instead of failing discovery forever", async () => {
     const state = createState();
-    const reference = "/src/missing.urls.tsx#default";
-    const previous = new Map([["old#default", projection]]);
-    state.clientUrlProjectionMap = previous;
-    const runner = { import: vi.fn() };
-    const serverMod = createServerModule();
-    const registry = new Map([
-      ["app", { __clientUrlReferences: [{ $$id: reference }] }],
-    ]);
+    const goneReference = "/src/deleted.urls.tsx#default";
+    const goneHashed = "gone123#default";
+    const keptReference = "/src/kept.urls.tsx#default";
+    const goneSource = `${PROJECT_ROOT}/src/deleted.urls.tsx`;
+    const keptSource = `${PROJECT_ROOT}/src/kept.urls.tsx`;
+    state.clientUrlSourceByReferenceId.set(goneReference, goneSource);
+    state.clientUrlSourceByReferenceId.set(goneHashed, goneSource);
+    state.clientUrlSourceByReferenceId.set(keptReference, keptSource);
 
-    await expect(
-      discoverClientUrlProjections(state, { runner }, serverMod, registry),
-    ).rejects.toThrow(`reference "${reference}"`);
-    expect(runner.import).not.toHaveBeenCalled();
-    expect(state.clientUrlProjectionMap).toBe(previous);
-    expect(serverMod.calls).toEqual([]);
+    const runner = {
+      import: vi.fn(async (source: string) => {
+        if (source === goneSource) throw new Error("ENOENT");
+        return { default: patterns };
+      }),
+    };
+    const serverMod = createServerModule();
+
+    await discoverClientUrlProjections(state, { runner }, serverMod);
+
+    // recordClientUrlsModule never un-records; deletion self-heals here.
+    expect(state.clientUrlSourceByReferenceId).toEqual(
+      new Map([[keptReference, keptSource]]),
+    );
+    expect(serverMod.calls).toEqual(["clear", `set:${keptReference}`]);
+    expect(state.clientUrlProjectionMap).toEqual(
+      new Map([[keptReference, projection]]),
+    );
   });
 
-  it("clears projections atomically when no router has client URL references", async () => {
+  it("clears projections atomically when nothing is recorded", async () => {
     const state = createState();
     const previous = new Map([["old#default", projection]]);
     state.clientUrlProjectionMap = previous;
     const serverMod = createServerModule();
 
-    await discoverClientUrlProjections(
-      state,
-      undefined,
-      serverMod,
-      new Map([["app", {}]]),
-    );
+    await discoverClientUrlProjections(state, undefined, serverMod);
 
     expect(state.clientUrlProjectionMap).not.toBe(previous);
     expect(state.clientUrlProjectionMap).toEqual(new Map());

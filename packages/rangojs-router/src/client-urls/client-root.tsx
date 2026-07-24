@@ -2,6 +2,7 @@
 
 import { createElement, useEffect, useState, type ReactNode } from "react";
 import { OutletProvider } from "../outlet-provider.js";
+import { useMount } from "../browser/react/use-mount.js";
 import {
   registerClientUrlGroup,
   type ClientUrlNavigationIntent,
@@ -28,8 +29,16 @@ export function ClientUrlsRoot({
   definition: ClientUrlPatterns;
   routeId: string;
 }): ReactNode {
+  // The include() mount prefix this group renders under ("/" at root). The
+  // module trie is built from definition-LOCAL patterns; navigation strips
+  // this prefix before matching (see stripMountPrefix in navigation.ts), the
+  // same way client href()/useMount resolve include-relative URLs.
+  const mount = useMount();
   const [intent, setIntent] = useState<ClientUrlNavigationIntent | null>(null);
-  useEffect(() => registerClientUrlGroup(definition, setIntent), [definition]);
+  useEffect(
+    () => registerClientUrlGroup(definition, mount, setIntent),
+    [definition, mount],
+  );
 
   const pendingRoute =
     intent && intent.routeId !== routeId

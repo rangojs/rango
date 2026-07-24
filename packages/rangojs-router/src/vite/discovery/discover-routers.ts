@@ -130,7 +130,7 @@ export async function discoverRouters(
   }
 
   await timed(debug, "inner: discover client URL projections", () =>
-    discoverClientUrlProjections(state, ssrEnv, serverMod, registry),
+    discoverClientUrlProjections(state, ssrEnv, serverMod),
   );
 
   // generateManifestFull must run in the RSC runner realm: it invokes the

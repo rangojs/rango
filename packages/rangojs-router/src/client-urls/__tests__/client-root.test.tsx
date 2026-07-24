@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { Outlet, useOutlet } from "../../client.js";
+import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
@@ -146,6 +147,81 @@ describe("ClientUrlsRoot", () => {
     expect(result.getByText("Home")).toBeDefined();
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "false",
+    );
+  });
+
+  it("matches mount-relative patterns under the include() prefix and ignores outside paths", async () => {
+    function AppLayout(): ReactNode {
+      const outlet = useOutlet();
+      return (
+        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
+      );
+    }
+
+    function IndexPage(): ReactNode {
+      return <p>Index</p>;
+    }
+
+    function DetailPage(): ReactNode {
+      return <p>Detail</p>;
+    }
+
+    // Patterns are definition-LOCAL; the include() mount ("/catalog", read via
+    // useMount) is stripped from the navigated pathname before matching.
+    const definition = clientUrls(({ layout, path, loading }) => [
+      layout(AppLayout, () => [
+        path("/", IndexPage),
+        path("/:productId", DetailPage, () => [loading(<p>Loading detail</p>)]),
+      ]),
+    ]);
+    const result = render(
+      <MountContextProvider value="/catalog">
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </MountContextProvider>,
+    );
+    const abort = new AbortController();
+
+    // A navigation OUTSIDE the mount gets no optimistic presentation.
+    let outside: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      outside = beginClientUrlNavigation(
+        new URL("http://localhost/elsewhere/espresso"),
+        abort.signal,
+      );
+    });
+    expect(outside).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+
+    // Inside the mount, the local pathname "/espresso" matches the detail
+    // route and presents its loading state.
+    const presentation: {
+      current: ReturnType<typeof beginClientUrlNavigation>;
+    } = { current: null };
+    await act(async () => {
+      presentation.current = beginClientUrlNavigation(
+        new URL("http://localhost/catalog/espresso"),
+        abort.signal,
+      );
+    });
+    expect(presentation.current?.routeId).toBe("client-route-1");
+    expect(result.getByText("Loading detail")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    // The bare mount is the module index.
+    await act(async () => presentation.current?.clear());
+    let bare: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      bare = beginClientUrlNavigation(
+        new URL("http://localhost/catalog"),
+        abort.signal,
+      );
+    });
+    expect((bare as ReturnType<typeof beginClientUrlNavigation>)?.routeId).toBe(
+      "client-route-0",
     );
   });
 

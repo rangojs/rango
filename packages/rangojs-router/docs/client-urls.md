@@ -6,10 +6,16 @@ hydration. On a soft navigation, that local match can show the destination's
 partial Flight request is still running.
 
 The browser match is presentation only. The server still matches the request,
-runs global router middleware and route loaders, and returns the canonical
-partial Flight response. Only that response commits the URL, history, and route
-content. Hard requests use the same projected server routes, so SSR and hydration
-work without a separate client-only entry path.
+runs middleware and route loaders, and returns the canonical partial Flight
+response. Only that response commits the URL, history, and route content. Hard
+requests use the same projected server routes, so SSR and hydration work without
+a separate client-only entry path.
+
+Composition is the baseline mounting model: a `clientUrls()` definition
+participates in the canonical `urls()` tree through `include()`, exactly like a
+server route module. The include supplies the URL and route-name prefixes,
+surrounding layouts remain ordinary RSC layouts, and nested middleware, loaders,
+boundaries, and route ownership derive from the server tree.
 
 ## End-to-end example
 
@@ -79,9 +85,9 @@ function ProductLoading() {
 
 export default clientUrls(({ path, layout, loader, loading }) => [
   layout(CatalogLayout, () => [
-    path("/catalog", CatalogIndex, { name: "catalog" }),
+    path("/", CatalogIndex, { name: "index" }),
     path(
-      "/catalog/products/:productId",
+      "/products/:productId",
       ProductPage,
       {
         name: "product",
@@ -94,33 +100,49 @@ export default clientUrls(({ path, layout, loader, loading }) => [
 ]);
 ```
 
-Register the definition directly at the router root. It may follow ordinary
-server URL patterns, but it cannot be mounted through `include()` or under a
-client URL prefix.
+Patterns are definition-local. The `include()` mount below supplies the
+`/catalog` URL prefix (the bare mount is the module index `/`) and the
+`catalog.` route-name prefix; the browser strips the same mount prefix before
+local matching, mirroring `useMount()` and client `href()`.
+
+Mount the definition inside the canonical `urls()` tree with `include()` —
+under an RSC layout, alongside server routes, wherever it belongs:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
+import { CatalogRscLayout } from "./catalog-layout.js";
+
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+```
 
 ```tsx
 // src/router.tsx
 import { createRouter } from "@rangojs/router";
-import clientUrlPatterns from "./catalog.client-urls.js";
 import { Document } from "./document.js";
 import { globalMiddleware } from "./middleware.js";
-import { serverUrls } from "./server-urls.js";
+import { urlpatterns } from "./urls.js";
 
 export const router = createRouter({ document: Document })
   .use(globalMiddleware)
-  .routes(serverUrls)
-  .routes(clientUrlPatterns);
+  .routes(urlpatterns);
 ```
 
-A router accepts one distinct `clientUrls()` definition, and it must be the
-FINAL `.routes()` registration — registering server URL patterns after it
-throws. This keeps runtime registration order identical to build discovery,
-which always orders the client mount last. Keep each client route pattern
-absolute in that root definition.
+There is exactly one canonical `.routes(urlpatterns)` call.
+`createRouter().routes()` rejects a `clientUrls()` definition outright — the
+mounting model is `include()`, and client definitions follow normal include
+semantics: mount several, nest them under layouts, scope `.use(prefix)`
+middleware to their prefix.
 
 Pass the client module's default export, not a `clientUrls()` object built in a
 server module: a direct object cannot cross the server/client boundary and fails
-at render. Development warns at the `.routes()` call site when it receives one.
+at render. The include materializes lazily from the discovery-installed server
+projection, so a broken mounting surfaces as a clear error at evaluation time.
 
 ## Navigation authority
 
@@ -133,7 +155,7 @@ pending.
 The local result cannot authorize the request, run or skip middleware, execute a
 loader, commit history, or override a redirect or error from the server. The
 existing navigation bridge still sends the canonical partial Flight request;
-global `createRouter().use(...)` middleware and projected loaders run on the
+middleware scoped over the include prefix and projected loaders run on the
 server, and the response remains authoritative.
 
 `pending` is deliberately narrow in this release:
@@ -157,18 +179,25 @@ The initial slice supports:
 
 - `path()`, `layout()`, `loader()`, and `loading()` inside `clientUrls()`;
 - named client component values for paths and layouts;
-- direct root registration through `.routes(clientUrlsDefinition)`;
+- mounting through `include()` in the canonical `urls()` tree, with URL and
+  route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
+  deriving from the server tree;
 - `PathOptions` projection for `name`, `search`, and `trailingSlash` only;
 - server `createLoader()` definitions, including non-fetchable loaders;
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
-  navigation;
-- global router middleware through `createRouter().use(...)`.
+  navigation.
 
-The current `clientUrls()` DSL does not support `middleware()`, `revalidate()`,
+INSIDE `clientUrls()` the DSL does not support `middleware()`, `revalidate()`,
 `include()`, `parallel()`, `intercept()`, `cache()`, `transition()`, error or
-not-found boundaries, or PPR. Route-local middleware remains unsupported; global
-router middleware remains canonical. Other `PathOptions`, including `ppr`, are
-rejected by server projection.
+not-found boundaries, or PPR — those belong to the surrounding server tree the
+include mounts into. Other `PathOptions`, including `ppr`, are rejected by
+server projection. One known ordering limit: mount clientUrls includes in
+statically imported urls modules, not inside async `include(() => import())`
+modules — build discovery projects recorded modules before manifest generation,
+and an async include module is only recorded during it.
+
+With composition in place, the next API exploration is suspending
+`useLoader()` inside client route components.
 
 ## Security boundary
 

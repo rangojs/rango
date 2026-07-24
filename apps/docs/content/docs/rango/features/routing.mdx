@@ -98,21 +98,25 @@ Build-time discovery still awaits the provider, so route types, `href()`, and pr
 
 export default clientUrls(({ path, layout, loader, loading }) => [
   layout(CatalogLayout, () => [
-    path("/catalog", CatalogIndex),
-    path("/catalog/:productId", ProductPage, () => [
+    path("/", CatalogIndex),
+    path("/:productId", ProductPage, () => [
       loader(ProductLoader),
       loading(<ProductLoading />),
     ]),
   ]),
 ]);
 
-// router.tsx
-createRouter().routes(serverUrls).routes(clientUrlPatterns);
+// urls.tsx — mount through include() like any route module
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
 ```
 
 After hydration, the browser can match a different client route immediately, show its `loading()` UI, and set the wrapping `useOutlet().pending`. The existing partial Flight request is still authoritative: the server matches the route, runs global router middleware and `createLoader()` definitions by ID, and commits content, URL, and history. Hard requests still SSR and hydrate normally.
 
-The supported helpers are `path`, `layout`, `loader`, and `loading`; projected path options are limited to `name`, `search`, and `trailingSlash`. One client definition is allowed per router, with no `include()` or prefix mount. Route middleware/revalidation, parallel routes, intercepts, cache, transitions, boundaries, and PPR are not supported in `clientUrls()`. See the [complete client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md).
+The supported helpers are `path`, `layout`, `loader`, and `loading`; projected path options are limited to `name`, `search`, and `trailingSlash`. Definitions mount through `include()` in the canonical `urls()` tree — the include supplies URL/name prefixes and the wrapping RSC layouts and middleware scope; patterns are definition-local. Route middleware/revalidation, parallel routes, intercepts, cache, transitions, boundaries, and PPR are not supported inside `clientUrls()`. See the [complete client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md).
 
 ## Not-found handling
 

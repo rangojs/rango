@@ -5,7 +5,9 @@ import { tryTrieMatch } from "../../router/trie-matching.js";
 import { RangoContext, type EntryData } from "../../server/context.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 import type { PathOptions } from "../../urls/pattern-types.js";
-import { createRouter, toInternal } from "../../router.js";
+import { createRouter } from "../../router.js";
+import { urls } from "../../urls/urls-function.js";
+import { generateManifestFull } from "../../build/generate-manifest.js";
 import { ClientUrlsLoading, ClientUrlsRoot } from "../client-root.js";
 import { clientUrls } from "../client-urls.js";
 import {
@@ -329,93 +331,77 @@ describe("client URL server projection", () => {
     );
   });
 
-  it("registers direct patterns with a dev warning and installs a deferred client-reference projection", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const patterns = clientUrls(({ path }) => [
-        path("/accounts/:id", AccountPage, { name: "account" }),
-      ]);
-      const direct = createRouter({ id: "client-urls-direct" }).routes(
-        patterns,
-      );
-      expect(toInternal(direct).urlpatterns).toBeDefined();
-      expect(direct.reverse("account", { id: "42" })).toBe("/accounts/42");
-      // Direct objects register (unit tests rely on it) but cannot cross the
-      // RSC boundary in an app, so registration warns once in development.
-      expect(warn).toHaveBeenCalledOnce();
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("received a clientUrls() object directly"),
-      );
-
-      const reference = clientReference("app.urls#deferred");
-      const deferred = createRouter({ id: "client-urls-deferred" }).routes(
-        reference as unknown as typeof patterns,
-      );
-      expect(toInternal(deferred).urlpatterns).toBeUndefined();
-      expect(toInternal(deferred).__clientUrlReferences).toEqual([reference]);
-
-      setClientUrlProjection(reference, serializeClientUrlPatterns(patterns));
-      expect(toInternal(deferred).urlpatterns).toBeDefined();
-      // A client reference is the supported shape — no additional warning.
-      expect(warn).toHaveBeenCalledOnce();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("rejects server URL patterns registered after a clientUrls() definition", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const patterns = clientUrls(({ path }) => [
-        path("/accounts/:id", AccountPage, { name: "account" }),
-      ]);
-      // Direct definition: the client mount materializes inline, and a later
-      // server mount must still throw — build discovery orders the client
-      // mount last, so runtime source order has to match.
-      const direct = createRouter({ id: "client-urls-order-direct" }).routes(
-        patterns,
-      );
-      expect(() =>
-        (direct.routes as (p: unknown) => unknown)({
-          handler: () => [],
-          __brand: "urlpatterns",
-        }),
-      ).toThrow(/register clientUrls\(\) last/);
-
-      // Deferred reference: same rule while the projection is still pending.
-      const reference = clientReference("app.urls#order-deferred");
-      const deferred = createRouter({
-        id: "client-urls-order-deferred",
-      }).routes(reference as unknown as typeof patterns);
-      expect(() =>
-        (deferred.routes as (p: unknown) => unknown)({
-          handler: () => [],
-          __brand: "urlpatterns",
-        }),
-      ).toThrow(/register clientUrls\(\) last/);
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it("disposes a replaced router's pending projection subscription (dev HMR)", () => {
+  it("rejects router-level clientUrls() registration — include() is the mounting model", () => {
     const patterns = clientUrls(({ path }) => [
       path("/accounts/:id", AccountPage, { name: "account" }),
     ]);
-    const reference = clientReference("app.urls#hmr");
-    const stale = createRouter({ id: "client-urls-hmr" }).routes(
-      reference as unknown as typeof patterns,
+    const reference = clientReference("app.urls#rejected");
+
+    expect(() =>
+      (
+        createRouter({ id: "client-urls-reject-direct" }).routes as (
+          p: unknown,
+        ) => unknown
+      )(patterns),
+    ).toThrow(/Mount them inside the canonical urls\(\) tree with include\(\)/);
+    expect(() =>
+      (
+        createRouter({ id: "client-urls-reject-ref" }).routes as (
+          p: unknown,
+        ) => unknown
+      )(reference),
+    ).toThrow(/Mount them inside the canonical urls\(\) tree with include\(\)/);
+  });
+
+  it("mounts through include() with URL and route-name prefixes from the server tree", async () => {
+    const definition = clientUrls(({ path, loader }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/:accountId", AccountPage, { name: "detail" }, () => [
+        loader(loaderDefinition("loaders#account")),
+      ]),
+    ]);
+
+    const serverTree = urls(({ include }) => [
+      include("/account", definition, { name: "account" }),
+    ]);
+
+    // Discovery (generateManifestFull) is what powers reverse()/types/trie —
+    // the include supplies both prefixes; the bare mount is the module index.
+    const manifest = await generateManifestFull(serverTree);
+    expect(manifest.routeManifest["account.index"]).toBe("/account");
+    expect(manifest.routeManifest["account.detail"]).toBe(
+      "/account/:accountId",
     );
-    // HMR re-evaluates the router module before the projection ever arrived:
-    // re-creating the same id must dispose the stale instance's listener so the
-    // module-level listener set cannot pin replaced routers.
-    const replacement = createRouter({ id: "client-urls-hmr" }).routes(
-      reference as unknown as typeof patterns,
+  });
+
+  it("materializes a client-reference include lazily from the installed projection", async () => {
+    const source = clientUrls(({ path, loader, loading }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/:accountId", AccountPage, { name: "detail" }, () => [
+        loader(loaderDefinition("loaders#account")),
+        loading("Loading account"),
+      ]),
+    ]);
+    const reference = clientReference("app.urls#include-ref");
+
+    const serverTree = urls(({ include }) => [
+      include("/account", reference as unknown as typeof source, {
+        name: "account",
+      }),
+    ]);
+
+    // No projection yet: definition/registration stays lazy; the clear error
+    // surfaces only when the include is evaluated.
+    await expect(generateManifestFull(serverTree)).rejects.toThrow(
+      /could not resolve the server projection/,
     );
 
-    setClientUrlProjection(reference, serializeClientUrlPatterns(patterns));
-
-    expect(toInternal(replacement).urlpatterns).toBeDefined();
-    expect(toInternal(stale).urlpatterns).toBeUndefined();
+    // Installing the projection makes the SAME lazy include materialize.
+    setClientUrlProjection(reference, serializeClientUrlPatterns(source));
+    const manifest = await generateManifestFull(serverTree);
+    expect(manifest.routeManifest["account.index"]).toBe("/account");
+    expect(manifest.routeManifest["account.detail"]).toBe(
+      "/account/:accountId",
+    );
   });
 });
