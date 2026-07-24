@@ -194,11 +194,26 @@ The initial slice supports:
 INSIDE `clientUrls()` the DSL does not support `middleware()`, `revalidate()`,
 `include()`, `parallel()`, `intercept()`, `cache()`, `transition()`, error or
 not-found boundaries, or PPR — those belong to the surrounding server tree the
-include mounts into. Other `PathOptions`, including `ppr`, are rejected by
-server projection. One known ordering limit: mount clientUrls includes in
-statically imported urls modules, not inside async `include(() => import())`
-modules — build discovery projects recorded modules before manifest generation,
-and an async include module is only recorded during it.
+include mounts into. Every helper rejection and the option-level rejections
+(`ppr`, `intercept`, `parallel`, `revalidate`, and any other non-projected
+`PathOptions` key) are pinned by tests.
+
+Composition limits around a client include, locked explicitly:
+
+- `parallel()` slots are handler-valued, so a client include is structurally
+  unrepresentable inside one; parallel routes attach to server routes only.
+- `revalidate()` has no surface to attach to projected client routes (their
+  use-lists are generated: loader stubs and `loading()` only). Canonical
+  revalidation of a committed page follows ordinary server semantics.
+- Do NOT target a `clientUrls()` route pattern with `intercept()`: the
+  browser-local optimistic presentation and the intercept presentation are not
+  coordinated, and the combined behavior is undefined.
+- Async `include(() => import())` modules must NOT mount clientUrls groups.
+  Projection discovery itself is import-timing independent (filesystem scan)
+  and the manifest composes correctly, but the RUNTIME lazy expansion of a
+  nested substituted include does not yet reproduce discovery's auto-name
+  identity, so requests 404. Mount clientUrls includes in statically imported
+  urls modules; lifting this needs nested-include name-identity work.
 
 With composition in place, the next API exploration is suspending
 `useLoader()` inside client route components.

@@ -158,6 +158,18 @@ describe("client URL server projection", () => {
       ),
     ).toThrow(/path option "analytics" is not supported/);
 
+    // Locked composition limits: these capabilities belong to the server tree
+    // and must not smuggle in through cast option objects either. (The DSL
+    // helpers are separately rejected — client-urls.test.ts pins all eleven.)
+    for (const key of ["intercept", "parallel", "revalidate"]) {
+      const smuggled = { [key]: true } as unknown as PathOptions;
+      expect(() =>
+        serializeClientUrlPatterns(
+          clientUrls(({ path }) => [path("/limit", AccountPage, smuggled)]),
+        ),
+      ).toThrow(new RegExp(`path option "${key}" is not supported`));
+    }
+
     expect(() =>
       serializeClientUrlPatterns(
         clientUrls(({ path, loader }) => [
@@ -413,6 +425,43 @@ describe("client URL server projection", () => {
     expect(manifest.routeManifest["account.index"]).toBe("/account");
     expect(manifest.routeManifest["account.detail"]).toBe(
       "/account/:accountId",
+    );
+  });
+
+  // MECHANICS-LEVEL ONLY: the manifest composes correctly through an async
+  // include (projection lookup is import-timing independent), but the full
+  // pipeline is NOT supported — runtime lazy expansion of a nested substituted
+  // include does not reproduce discovery's auto-name identity and requests
+  // 404 (documented limit in docs/client-urls.md). This test pins the
+  // manifest half so lifting the limit only needs the runtime half.
+  it("composes manifest prefixes for a clientUrls include nested in an async include()", async () => {
+    const source = clientUrls(({ path, loader }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/:accountId", AccountPage, { name: "detail" }, () => [
+        loader(loaderDefinition("loaders#account")),
+      ]),
+    ]);
+    const reference = clientReference("app.urls#async-nested");
+    setClientUrlProjection(reference, serializeClientUrlPatterns(source));
+
+    // The async include module is only evaluated when discovery resolves the
+    // provider — the projection must already be installed by then (the
+    // filesystem scan makes recording independent of import-graph timing).
+    const asyncModule = urls(({ include }) => [
+      include("/nested", reference as unknown as typeof source, {
+        name: "client",
+      }),
+    ]);
+    const outerTree = urls(({ include }) => [
+      include("/lazy", async () => ({ default: asyncModule }), {
+        name: "lazy",
+      }),
+    ]);
+
+    const manifest = await generateManifestFull(outerTree);
+    expect(manifest.routeManifest["lazy.client.index"]).toBe("/lazy/nested");
+    expect(manifest.routeManifest["lazy.client.detail"]).toBe(
+      "/lazy/nested/:accountId",
     );
   });
 
