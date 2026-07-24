@@ -205,6 +205,22 @@ Composition limits around a client include, locked explicitly:
 - `revalidate()` has no surface to attach to projected client routes (their
   use-lists are generated: loader stubs and `loading()` only). Canonical
   revalidation of a committed page follows ordinary server semantics.
+- Intercepts are DECLARED in the server tree (a wrapping layout or route),
+  never inside `clientUrls()`. This is the projection boundary, not an
+  accident: an intercept decides what the server renders and commits for a
+  navigation, and its declaration carries server-executed material (`when`
+  selectors, middleware, server handlers) that cannot cross from a
+  `"use client"` module. To keep the modal wiring next to the routes it
+  belongs to, co-locate a small server module with the client module:
+
+  ```
+  photos/
+    photos.client-urls.tsx   # "use client" — the routes
+    photos.urls.ts           # server — urls() with the include + intercept
+  ```
+
+  A restricted client-declared form (component + projected loaders, no
+  selectors) is a candidate future extension of the projection contract.
 - `intercept()` MAY target a client route by its canonical route name
   (include name prefix + local name; unnamed client routes cannot be targets).
   From a server-page origin this behaves like any intercept. From an origin
