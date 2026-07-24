@@ -3,6 +3,8 @@ import type { ResolvedSegment } from "./types";
 
 export interface OutletContextValue {
   content: ReactNode;
+  /** Unresolved client-route work owned by descendants of this outlet. */
+  pending?: boolean;
   parallel?: ResolvedSegment[];
   segment?: ResolvedSegment;
   loaderData?: Record<string, any>;

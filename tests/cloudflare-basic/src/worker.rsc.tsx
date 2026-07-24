@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import { router } from "./router.js";
 import { prefetchScopeRouter } from "./prefetch-scope-router.js";
+import { clientUrlsRouter } from "./client-urls-router.js";
 import type { AppBindings } from "./env.js";
 import { createRecordingTracer } from "./trace-debug.js";
 // Registers a fetchable loader the trace-spans e2e hits via _rsc_loader to
@@ -29,6 +30,13 @@ export default {
       url.pathname.startsWith("/.well-known/")
     ) {
       return new Response(null, { status: 404 });
+    }
+
+    if (
+      url.pathname === "/__client-urls" ||
+      url.pathname.startsWith("/__client-urls/")
+    ) {
+      return clientUrlsRouter.fetch(request, { env, ctx });
     }
 
     if (

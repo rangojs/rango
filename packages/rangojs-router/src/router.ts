@@ -3,6 +3,16 @@ import { createCacheScope } from "./cache/cache-scope.js";
 import { resolveCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
+import {
+  getClientUrlProjection,
+  isClientUrlPatterns,
+  isClientUrlReference,
+  materializeClientUrlPatterns,
+  serializeClientUrlPatterns,
+  subscribeClientUrlProjections,
+  type ClientUrlDefinitionSource,
+} from "./client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "./client-urls/types.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
 import {
@@ -100,6 +110,7 @@ import type {
   Rango,
   RangoInternal,
   RouterRequestInput,
+  UrlPatternMount,
 } from "./router/router-interfaces.js";
 
 // Extracted closure functions
@@ -330,6 +341,11 @@ export function createRouter<TEnv = any>(
 
   // Store reference to urlpatterns for runtime manifest generation
   let storedUrlPatterns: UrlPatterns<TEnv, any> | null = null;
+  const urlpatternMounts: UrlPatternMount<TEnv>[] = [];
+  let clientUrlDefinition: ClientUrlDefinitionSource | null = null;
+  let clientUrlPatternsRegistered = false;
+  let materializingClientUrlPatterns = false;
+  let unsubscribeClientUrlProjections: (() => void) | null = null;
 
   // Global middleware storage
   const globalMiddleware: MiddlewareEntry<TEnv>[] = [];
@@ -756,7 +772,100 @@ export function createRouter<TEnv = any>(
     id: routerId,
     basename,
 
-    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
+    routes(
+      patternsOrBuilder:
+        | UrlPatterns<TEnv>
+        | UrlBuilder<TEnv>
+        | ClientUrlPatterns,
+    ): any {
+      if (
+        isClientUrlPatterns(patternsOrBuilder) ||
+        isClientUrlReference(patternsOrBuilder)
+      ) {
+        if (
+          clientUrlDefinition !== null &&
+          clientUrlDefinition !== patternsOrBuilder
+        ) {
+          throw new Error(
+            "createRouter().routes() accepts only one clientUrls() definition",
+          );
+        }
+        if (
+          clientUrlDefinition === null &&
+          process.env.NODE_ENV !== "production" &&
+          isClientUrlPatterns(patternsOrBuilder)
+        ) {
+          // A direct clientUrls() object registers fine, but its component
+          // values cannot cross the RSC boundary as ClientUrlsRoot props — the
+          // failure would otherwise surface as an opaque Flight serialization
+          // error at render, far from this call site. Unit tests use direct
+          // objects deliberately and never Flight-render them.
+          console.warn(
+            "[@rangojs/router] createRouter().routes() received a clientUrls() object directly. " +
+              'In an app, default-export the definition from a "use client" module and pass ' +
+              "that import to .routes() — a direct object cannot cross the server/client " +
+              "boundary and fails at render.",
+          );
+        }
+        clientUrlDefinition = patternsOrBuilder;
+        if (clientUrlPatternsRegistered) return router;
+
+        const projection = isClientUrlPatterns(patternsOrBuilder)
+          ? serializeClientUrlPatterns(patternsOrBuilder)
+          : getClientUrlProjection(patternsOrBuilder);
+        if (!projection) {
+          // Client-reference registration ahead of discovery: defer until the
+          // Vite pass installs the projection. Subscribed lazily so the
+          // module-level listener set only holds routers that are actually
+          // waiting, and disposed on registration or registry replacement —
+          // an undisposed listener would pin an HMR-replaced instance forever.
+          unsubscribeClientUrlProjections ??= subscribeClientUrlProjections(
+            (referenceId) => {
+              if (
+                !clientUrlPatternsRegistered &&
+                clientUrlDefinition &&
+                isClientUrlReference(clientUrlDefinition) &&
+                clientUrlDefinition.$$id === referenceId
+              ) {
+                (
+                  router.routes as (
+                    patterns: ClientUrlDefinitionSource,
+                  ) => unknown
+                )(clientUrlDefinition);
+              }
+            },
+          );
+          return router;
+        }
+
+        clientUrlPatternsRegistered = true;
+        unsubscribeClientUrlProjections?.();
+        unsubscribeClientUrlProjections = null;
+        materializingClientUrlPatterns = true;
+        try {
+          return router.routes(
+            materializeClientUrlPatterns(
+              patternsOrBuilder,
+              projection,
+            ) as UrlPatterns<TEnv>,
+          );
+        } finally {
+          materializingClientUrlPatterns = false;
+        }
+      }
+
+      // clientUrls() must be the FINAL registration: a deferred client
+      // reference (projection not yet discovered) registers its materialized
+      // mount AFTER every synchronous .routes() call, and build discovery
+      // orders it the same way — allowing server mounts after clientUrls()
+      // would let runtime and build-time mount order silently disagree on
+      // name/pattern collisions (mergeFullManifests is last-wins).
+      if (clientUrlDefinition !== null && !materializingClientUrlPatterns) {
+        throw new Error(
+          "createRouter().routes() cannot register URL patterns after a clientUrls() definition — register clientUrls() last",
+        );
+      }
+
       // Wrap builder functions in urls() automatically
       const urlPatterns: UrlPatterns<TEnv> =
         typeof patternsOrBuilder === "function"
@@ -766,6 +875,10 @@ export function createRouter<TEnv = any>(
       // Store reference for runtime manifest generation
       storedUrlPatterns = urlPatterns;
       const currentMountIndex = mountIndex++;
+      urlpatternMounts.push({
+        patterns: urlPatterns,
+        mountIndex: currentMountIndex,
+      });
 
       // Create manifest and patterns maps for route registration
       const manifest = new Map<string, EntryData>();
@@ -1095,6 +1208,21 @@ export function createRouter<TEnv = any>(
       return storedUrlPatterns ?? undefined;
     },
 
+    get __urlpatternMounts() {
+      return urlpatternMounts;
+    },
+
+    get __clientUrlReferences() {
+      return clientUrlDefinition && isClientUrlReference(clientUrlDefinition)
+        ? [clientUrlDefinition]
+        : undefined;
+    },
+
+    __disposeClientUrlProjectionSubscription() {
+      unsubscribeClientUrlProjections?.();
+      unsubscribeClientUrlProjections = null;
+    },
+
     // Expose source file for per-router type generation
     __sourceFile,
 
@@ -1166,7 +1294,11 @@ export function createRouter<TEnv = any>(
     debugManifest: () => buildDebugManifest<TEnv>(routesEntries),
   };
 
-  // Register router in the global registry for build-time discovery
+  // Register router in the global registry for build-time discovery. Dev HMR
+  // re-creates a router under the same id; dispose the replaced instance's
+  // pending projection subscription so stale routers cannot accumulate in the
+  // module-level listener set.
+  RouterRegistry.get(routerId)?.__disposeClientUrlProjectionSubscription?.();
   RouterRegistry.set(routerId, router);
 
   // If urls option was provided, auto-register them

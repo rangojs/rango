@@ -12,8 +12,9 @@ import { findTsFiles } from "./scan-filter.js";
 
 /**
  * Generate per-module route type files by statically parsing url module source.
- * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
- * extracted route name/pattern pairs. Only writes when content has changed.
+ * Scans for files containing `urls(` or `clientUrls(` and writes a sibling
+ * `.gen.ts` with the extracted route name/pattern pairs. Only writes when
+ * content has changed.
  */
 export function writePerModuleRouteTypes(
   root: string,
@@ -26,7 +27,7 @@ export function writePerModuleRouteTypes(
 }
 
 /**
- * Find all variable names assigned to urls() calls in source code.
+ * Find all variable names assigned to urls() or clientUrls() calls in source.
  * e.g. `export const patterns = urls(...)` -> ["patterns"]
  */
 export function findUrlsVariableNames(code: string): string[] {
@@ -47,7 +48,10 @@ export function findUrlsVariableNames(code: string): string[] {
       ts.isCallExpression(node.initializer)
     ) {
       const callee = node.initializer.expression;
-      if (ts.isIdentifier(callee) && callee.text === "urls") {
+      if (
+        ts.isIdentifier(callee) &&
+        (callee.text === "urls" || callee.text === "clientUrls")
+      ) {
         names.push(node.name.text);
       }
     }
@@ -61,12 +65,13 @@ export function findUrlsVariableNames(code: string): string[] {
 /**
  * Generate per-module route types for a single url module file.
  * Follows include() calls recursively to produce the full route tree.
- * No-ops if the file doesn't contain `urls(` or has no named routes.
+ * No-ops if the file doesn't contain `urls(`/`clientUrls(` or has no named
+ * routes.
  */
 export function writePerModuleRouteTypesForFile(filePath: string): void {
   try {
     const source = readFileSync(filePath, "utf-8");
-    if (!source.includes("urls(")) return;
+    if (!source.includes("urls(") && !source.includes("clientUrls(")) return;
 
     const varNames = findUrlsVariableNames(source);
 

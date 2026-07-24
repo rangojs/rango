@@ -154,13 +154,22 @@ import {
   decodeAction,
   decodeFormState,
 } from "@rangojs/router/internal/deps/rsc";
-import { router } from "${routerPath}";
-import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
-import { VERSION } from "@rangojs/router:version";
 
 // Startup bootstrap imports (routes + loader manifests). See
 // RSC_ENTRY_BOOTSTRAP_IMPORTS — the same list the custom-entry injector uses.
+//
+// ORDER IS LOAD-BEARING: the bootstrap imports MUST precede the router import.
+// The routes-manifest module installs client URL projections
+// (setClientUrlProjection), and createRouter().routes(clientUrlsReference)
+// consults them at router-module evaluation. Router-first would silently push
+// every clientUrls() app onto the deferred-subscription path and change mount
+// registration order with no error. The custom-entry injector keeps the same
+// guarantee by PREPENDING this list at file top (version-injector.ts).
 ${bootstrapImports}
+
+import { router } from "${routerPath}";
+import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
+import { VERSION } from "@rangojs/router:version";
 
 // Lazily create the handler on first request so that ESM live bindings
 // have resolved by the time we read \`router\`. During HMR the module may

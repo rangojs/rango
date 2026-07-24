@@ -29,6 +29,8 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 - [`README.md`](../README.md) - package overview and quick start
 - [Route definition rules](./route-definition-rules.md) - what the route DSL
   allows and rejects
+- [Client URL routes](./client-urls.md) - opt-in client route matching for
+  immediate loading UI while canonical server Flight remains authoritative
 - [Manifests](./manifests.md) - generated route maps and runtime manifest data
 
 ## Rendering And Semantics
@@ -106,6 +108,14 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 ## Design Notes
 
+- [Client URL implementation plan](./design/client-urls-implementation-plan.md) -
+  implementation record for the shipped Phase 1 vertical slice, plus deferred
+  design phases for composition and route-data optimization
+- [Client URL groups and instant navigation](./design/client-urls-instant-navigation.md) -
+  design background for `"use client"` + `clientUrls()` route groups. Phase 1
+  browser matching and canonical partial-Flight navigation are implemented;
+  route-local middleware, client loader revalidation, loader-owned handles,
+  composition, and the dedicated route-data transport remain future design
 - [Render stage driver](./design/render-stage-driver.md) - the migration from
   post-work async-generator checkpoints to a synchronous typed effect plan and
   one async foreground driver, including streaming, diagnostics, observability,

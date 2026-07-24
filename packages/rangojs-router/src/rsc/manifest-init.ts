@@ -1,8 +1,8 @@
 /**
  * Router Manifest Initialization
  *
- * Builds a fresh route trie from router.urlpatterns for dev/HMR scenarios
- * where the manifest exists but the trie needs rebuilding.
+ * Builds a fresh route trie from every registered URL-pattern mount for
+ * dev/HMR scenarios where the manifest exists but the trie needs rebuilding.
  */
 
 import {
@@ -13,11 +13,12 @@ import {
   setRouterTrie,
   setRouterPrecomputedEntries,
 } from "../route-map-builder.js";
+import { mergeFullManifests } from "../build/merge-full-manifests.js";
 
 /**
- * Build a fresh route trie from router.urlpatterns and store it in the
- * per-router cache. Also sets the per-router manifest and merges into
- * the global manifest for reverse()/href().
+ * Build a fresh route trie from the router's URL-pattern mounts and store it in
+ * the per-router cache. Also sets the per-router manifest and merges into the
+ * global manifest for reverse()/href().
  *
  * Called when manifest data may exist but the per-router trie is missing,
  * which happens in dev mode after HMR: the virtual module sets the manifest
@@ -30,10 +31,28 @@ export async function buildRouterTrieFromUrlpatterns(
 ): Promise<void> {
   const { generateManifestFull } =
     await import("../build/generate-manifest.js");
-  const generated = await generateManifestFull(router.urlpatterns, undefined, {
-    routerId: router.id,
-    ...(router.basename ? { urlPrefix: router.basename } : {}),
-  });
+  const mounts =
+    router.__urlpatternMounts ??
+    (router.urlpatterns
+      ? [{ patterns: router.urlpatterns, mountIndex: undefined }]
+      : []);
+  // mount.mountIndex mirrors the live router's per-mount counter partitioning
+  // (context.ts getShortCode `M{i}` prefixes), so entries generated here carry
+  // the same shortCodes as runtime registration. Build discovery
+  // (discover-routers.ts / runtime-discovery.ts) numbers mounts GLOBALLY across
+  // routers instead — that divergence is invisible: shortCodes never leave
+  // their realm, and route names (the trie keys) carry no mount index (unnamed
+  // routes are `$path_*`, see path-helper.ts).
+  const mountManifests = [];
+  for (const mount of mounts) {
+    mountManifests.push(
+      await generateManifestFull(mount.patterns, mount.mountIndex, {
+        routerId: router.id,
+        ...(router.basename ? { urlPrefix: router.basename } : {}),
+      }),
+    );
+  }
+  const generated = mergeFullManifests(mountManifests);
   // Build the trie through the SAME shared helper the production discovery uses
   // (discover-routers.ts), so the dev runtime-rebuilt trie and the prod
   // serialized trie cannot drift. buildPerRouterTrie returns null when there

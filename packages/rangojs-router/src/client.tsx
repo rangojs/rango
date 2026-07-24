@@ -199,7 +199,7 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
 // internal component and is intentionally not part of the public ./client API.
 
 /**
- * Hook to access outlet content programmatically
+ * Hook to access outlet content and descendant pending state programmatically.
  *
  * Alternative to using <Outlet /> component. Useful when you need
  * direct access to the outlet content in your logic.
@@ -208,13 +208,21 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
  * ```tsx
  * function BlogLayout() {
  *   const outlet = useOutlet();
- *   return <div><h1>Blog</h1>{outlet}</div>;
+ *   return <div aria-busy={outlet.pending}><h1>Blog</h1>{outlet.content}</div>;
  * }
  * ```
  */
-export function useOutlet(): ReactNode {
+export interface OutletState {
+  readonly content: ReactNode;
+  readonly pending: boolean;
+}
+
+export function useOutlet(): OutletState {
   const context = useContext(OutletContext);
-  return context?.content ?? null;
+  return {
+    content: context?.content ?? null,
+    pending: context?.pending ?? false,
+  };
 }
 
 export {
@@ -226,6 +234,12 @@ export {
   type UseFetchLoaderResult,
   type UseLoaderOptions,
 } from "./use-loader.js";
+
+export { clientUrls } from "./client-urls/client-urls.js";
+export type {
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./client-urls/client-urls.js";
 
 /**
  * Props for the ErrorBoundary component

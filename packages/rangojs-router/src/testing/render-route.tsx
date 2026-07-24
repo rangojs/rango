@@ -19,18 +19,19 @@
  *     props crossing the RSC boundary), loader execution on the server,
  *     middleware, or handler ordering. Those are renderServerTree / renderHandler
  *     / e2e territory.
- *   - Loader data, location state, and handle output are SEEDED directly into
- *     client context (see the `loaders` / `locationState` / `handles` options) —
- *     nothing is executed on the server. This exercises the read path
- *     (useLoader / useLocationState / useHandle from context), not the run path.
+ *   - Loader data, location state, handle output, and outlet pending state are
+ *     SEEDED directly into client context (see the `loaders` / `locationState` /
+ *     `handles` / `outletPending` options) — nothing is executed on the server.
+ *     This exercises the context read path, not the run path.
  *   - navigate() commits synchronously, so it does NOT drive the navigation
  *     lifecycle: useNavigation().state, useLinkStatus().pending, and
  *     useAction().state stay "idle". Assert pending/loading/submitting transition
  *     states with renderServerTree / e2e instead (navigate() warns once if used).
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
- * useRouter, usePathname, useSearchParams, Outlet nesting, useLoader /
- * useFetchLoader (seeded data), useLocationState (seeded), and useHandle (seeded).
+ * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
+ * descendant pending state, useLoader/useFetchLoader (seeded data),
+ * useLocationState (seeded), and useHandle (seeded).
  * Basename-mounted apps: pass the `basename` option so useRouter().basename,
  * <Link> prefixing, and useMount/useHref resolve against the mount prefix
  * (without it they resolve at the root "/"). For an include("/shop", ...)
@@ -149,6 +150,15 @@ export interface RenderRouteOptions {
    * the read path is exercised without executing any loader.
    */
   loaderData?: Record<string, unknown>;
+  /**
+   * Descendant client-route pending state to seed into each synthetic segment's
+   * production OutletProvider, so `useOutlet().pending` can be tested alongside
+   * `useOutlet().content`. Defaults to false.
+   *
+   * This is a seeded outlet-context value only. It does not model arbitrary
+   * Suspense, navigation, or action pending state.
+   */
+  outletPending?: boolean;
   /**
    * Loaders to seed by REFERENCE — the robust way to test a component that calls
    * `useLoader(loader)`. A real `createLoader()` handle has an empty `$$id` in a
@@ -560,7 +570,9 @@ export async function renderRoute(
     const match = resolve(nextUrl.pathname);
     const segments = buildSegments(routes, match.params, loaderData, mount);
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
-    const root = await renderSegments(segments);
+    const root = await renderSegments(segments, {
+      outletPending: options.outletPending,
+    });
     eventController.setLocation(nextUrl);
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
@@ -595,7 +607,9 @@ export async function renderRoute(
     ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
     defaultPrefetch: options.defaultPrefetch,
   };
-  const initialTree = await renderSegments(initialSegments);
+  const initialTree = await renderSegments(initialSegments, {
+    outletPending: options.outletPending,
+  });
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
   // loading states, deferred handle entries that arrive as a Promise) settles its

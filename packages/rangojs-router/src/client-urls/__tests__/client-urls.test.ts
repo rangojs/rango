@@ -1,0 +1,260 @@
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+  clientUrls,
+  type ClientUrlBuilder,
+  type ClientUrlHelpers,
+  type ClientUrlItem,
+  type ClientUrlLoaderRecord,
+  type ClientUrlRouteRecord,
+} from "../client-urls.js";
+import type { LoaderDefinition } from "../../types.js";
+
+function HomePage(): null {
+  return null;
+}
+
+function UserPage(): null {
+  return null;
+}
+
+function AppLayout(): null {
+  return null;
+}
+
+function AccountLayout(): null {
+  return null;
+}
+
+function AccountPage(): null {
+  return null;
+}
+
+function SettingsPage(): null {
+  return null;
+}
+
+function loader(id: string): LoaderDefinition<unknown> {
+  return { __brand: "loader", $$id: id };
+}
+
+describe("clientUrls", () => {
+  it("rejects unsupported path options at the type boundary", () => {
+    const build = () =>
+      clientUrls(({ path }) => [
+        // @ts-expect-error ppr is not part of the Phase 1 client projection.
+        path("/ppr", HomePage, { ppr: true }),
+      ]);
+
+    expect(build).toBeTypeOf("function");
+  });
+
+  it("matches root and dynamic routes without executing component values", () => {
+    let componentCalls = 0;
+    function TrackedHomePage(): null {
+      componentCalls++;
+      return null;
+    }
+
+    const patterns = clientUrls(({ path }) => [
+      path("/", TrackedHomePage, { name: "home" }),
+      path("/users/:id", UserPage, { name: "user" }),
+    ]);
+
+    expect(patterns.match("/")).toMatchObject({
+      routeKey: "client-route-0",
+      params: {},
+    });
+    expect(patterns.match("/users/42")).toMatchObject({
+      routeKey: "client-route-1",
+      params: { id: "42" },
+    });
+    expect(patterns.match("/missing")).toBeNull();
+    expect(patterns.routes.map((route) => route.component)).toEqual([
+      TrackedHomePage,
+      UserPage,
+    ]);
+    expect(componentCalls).toBe(0);
+  });
+
+  it("flattens ordered layouts and inherited route configuration", () => {
+    const AuthLoader = loader("loaders#auth");
+    const AccountLoader = loader("loaders#account");
+
+    const patterns = clientUrls(
+      ({ path, layout, loader: useLoader, loading }) => [
+        layout(AppLayout, () => [
+          useLoader(AuthLoader),
+          loading("App loading"),
+          layout(AccountLayout, () => [
+            path("/account/:id", AccountPage, () => [
+              useLoader(AccountLoader),
+              loading("Account loading"),
+            ]),
+          ]),
+        ]),
+      ],
+    );
+
+    const [route] = patterns.routes;
+    expect(route.layouts).toEqual([AppLayout, AccountLayout]);
+    expect(route.loaders.map((entry) => entry.loader)).toEqual([
+      AuthLoader,
+      AccountLoader,
+    ]);
+    expect(route.loading).toBe("Account loading");
+  });
+
+  it("stores only Phase 1 route and loader fields", () => {
+    const AccountLoader = loader("loaders#account");
+
+    const patterns = clientUrls(({ path, loader: useLoader, loading }) => [
+      path("/account/:id", AccountPage, () => [
+        useLoader(AccountLoader),
+        loading("Loading account"),
+      ]),
+    ]);
+
+    expect(patterns.routes[0]).toEqual({
+      id: "client-route-0",
+      pattern: "/account/:id",
+      name: undefined,
+      options: undefined,
+      component: AccountPage,
+      layouts: [],
+      loaders: [{ loader: AccountLoader }],
+      loading: "Loading account",
+    });
+  });
+
+  it("exposes only the Phase 1 helper and record shape", () => {
+    expectTypeOf<keyof ClientUrlHelpers>().toEqualTypeOf<
+      "path" | "layout" | "loader" | "loading"
+    >();
+    expectTypeOf<
+      Parameters<ClientUrlHelpers["loader"]>["length"]
+    >().toEqualTypeOf<1>();
+    expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<"loader">();
+    expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
+      | "id"
+      | "pattern"
+      | "name"
+      | "options"
+      | "component"
+      | "layouts"
+      | "loaders"
+      | "loading"
+    >();
+  });
+
+  it("supports PathOptions, use-only, and options-plus-use overloads", () => {
+    const DirectLoader = loader("loaders#direct");
+    const ConfiguredLoader = loader("loaders#configured");
+
+    const patterns = clientUrls(({ path, loader: useLoader, loading }) => [
+      path("/direct", HomePage, () => [useLoader(DirectLoader)]),
+      path(
+        "/settings",
+        SettingsPage,
+        { name: "settings", trailingSlash: "never" },
+        () => [useLoader(ConfiguredLoader), loading("Settings loading")],
+      ),
+    ]);
+
+    expect(patterns.routes[0].options).toBeUndefined();
+    expect(patterns.routes[0].loaders[0].loader).toBe(DirectLoader);
+    expect(patterns.routes[1]).toMatchObject({
+      name: "settings",
+      options: { name: "settings", trailingSlash: "never" },
+      loading: "Settings loading",
+    });
+    expect(patterns.routes[1].loaders[0].loader).toBe(ConfiguredLoader);
+  });
+
+  it("shares constraint and trailing-slash behavior with trie matching", () => {
+    const patterns = clientUrls(({ path }) => [
+      path("/:locale(en|gb)/docs", HomePage, {
+        name: "docs",
+        trailingSlash: "always",
+      }),
+    ]);
+
+    expect(patterns.match("/en/docs")).toMatchObject({
+      params: { locale: "en" },
+      redirectTo: "/en/docs/",
+    });
+    expect(patterns.match("/gb/docs/")).toMatchObject({
+      params: { locale: "gb" },
+    });
+    expect(patterns.match("/fr/docs")).toBeNull();
+  });
+
+  it("assigns deterministic route ids in flattened declaration order", () => {
+    const build = (): ReturnType<typeof clientUrls> =>
+      clientUrls(({ path, layout }) => [
+        layout(AppLayout, () => [
+          path("/", HomePage),
+          path("/account", AccountPage),
+        ]),
+        path("/settings", SettingsPage),
+      ]);
+
+    expect(build().routes.map((route) => route.id)).toEqual([
+      "client-route-0",
+      "client-route-1",
+      "client-route-2",
+    ]);
+    expect(build().routes.map((route) => route.id)).toEqual(
+      build().routes.map((route) => route.id),
+    );
+  });
+
+  it("rejects unsupported helpers and malformed nesting clearly", () => {
+    for (const helperName of [
+      "include",
+      "parallel",
+      "intercept",
+      "cache",
+      "transition",
+      "error",
+      "notFound",
+      "errorBoundary",
+      "notFoundBoundary",
+      "middleware",
+      "revalidate",
+    ]) {
+      expect(() =>
+        clientUrls(((helpers: ClientUrlHelpers) => {
+          const unsupported = helpers as unknown as Record<
+            string,
+            () => ClientUrlItem
+          >;
+          return [unsupported[helperName]()];
+        }) as ClientUrlBuilder),
+      ).toThrow(`clientUrls() does not support ${helperName}()`);
+    }
+
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/", HomePage, () => [path("/nested", UserPage)]),
+      ]),
+    ).toThrow("does not support path() inside path()");
+  });
+
+  it("rejects malformed values instead of executing them", () => {
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/", HomePage, () => [{} as ClientUrlItem]),
+      ]),
+    ).toThrow("must return only client URL helper items");
+
+    expect(() =>
+      clientUrls(({ layout, loading }) => [
+        layout(AppLayout, () => [loading("No route")]),
+      ]),
+    ).toThrow("layout() children must contain at least one path()");
+
+    expect(() =>
+      clientUrls((() => null) as unknown as ClientUrlBuilder),
+    ).toThrow("builder callback must return an array");
+  });
+});

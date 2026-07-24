@@ -20,6 +20,8 @@ import {
   resolveImportedVariable,
   resolveImportPath,
   buildCombinedRouteMapWithSearch,
+  createScanMemo,
+  type ScanMemo,
   type UnresolvableInclude,
 } from "./include-resolution.js";
 import { findUrlsVariableNames } from "./per-module-writer.js";
@@ -197,6 +199,101 @@ export type UrlsExtractionResult =
   | { kind: "variable"; name: string }
   | { kind: "inline"; block: string };
 
+function isCreateRouterCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = node.expression;
+  return ts.isIdentifier(callee) && callee.text === "createRouter";
+}
+
+function extractUrlsArgument(
+  node: ts.Expression,
+  sourceFile: ts.SourceFile,
+): UrlsExtractionResult | null {
+  if (ts.isIdentifier(node)) {
+    return { kind: "variable", name: node.text };
+  }
+  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+    return { kind: "inline", block: node.getText(sourceFile) };
+  }
+  return null;
+}
+
+/** Return a createRouter call chain in runtime registration order. */
+function collectCreateRouterCallChain(
+  endpoint: ts.CallExpression,
+): ts.CallExpression[] | null {
+  const calls: ts.CallExpression[] = [];
+  let current = endpoint;
+
+  while (true) {
+    calls.push(current);
+    if (isCreateRouterCall(current)) return calls.reverse();
+    if (!ts.isPropertyAccessExpression(current.expression)) return null;
+    const receiver = current.expression.expression;
+    if (!ts.isCallExpression(receiver)) return null;
+    current = receiver;
+  }
+}
+
+function extractAllUrlsFromRouter(code: string): UrlsExtractionResult[] {
+  const sourceFile = ts.createSourceFile(
+    "router.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let result: UrlsExtractionResult[] | null = null;
+
+  function visit(node: ts.Node) {
+    if (result) return;
+    if (ts.isCallExpression(node)) {
+      const chain = collectCreateRouterCallChain(node);
+      if (chain) {
+        const extracted: UrlsExtractionResult[] = [];
+        const createRouterCall = chain[0];
+
+        for (const callArg of createRouterCall.arguments) {
+          if (!ts.isObjectLiteralExpression(callArg)) continue;
+          for (const prop of callArg.properties) {
+            if (
+              !ts.isPropertyAssignment(prop) ||
+              !ts.isIdentifier(prop.name) ||
+              prop.name.text !== "urls"
+            ) {
+              continue;
+            }
+            const urls = extractUrlsArgument(prop.initializer, sourceFile);
+            if (urls) extracted.push(urls);
+            break;
+          }
+        }
+
+        for (const call of chain.slice(1)) {
+          if (
+            !ts.isPropertyAccessExpression(call.expression) ||
+            call.expression.name.text !== "routes" ||
+            call.arguments.length === 0
+          ) {
+            continue;
+          }
+          const urls = extractUrlsArgument(call.arguments[0], sourceFile);
+          if (urls) extracted.push(urls);
+        }
+
+        if (extracted.length > 0) {
+          result = extracted;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return result ?? [];
+}
+
 /**
  * Extract the url patterns from a router file using AST.
  * Detects four patterns:
@@ -209,92 +306,8 @@ export type UrlsExtractionResult =
 export function extractUrlsFromRouter(
   code: string,
 ): UrlsExtractionResult | null {
-  const sourceFile = ts.createSourceFile(
-    "router.tsx",
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
-  let result: UrlsExtractionResult | null = null;
-
-  function isCreateRouterCall(node: ts.Node): boolean {
-    if (!ts.isCallExpression(node)) return false;
-    const callee = node.expression;
-    return ts.isIdentifier(callee) && callee.text === "createRouter";
-  }
-
-  /** Check if a node is an arrow/function expression (inline builder). */
-  function isInlineBuilder(node: ts.Node): boolean {
-    return ts.isArrowFunction(node) || ts.isFunctionExpression(node);
-  }
-
-  /** Check if a .routes() call chains from createRouter(). */
-  function isRoutesOnCreateRouter(node: ts.CallExpression): boolean {
-    if (
-      !ts.isPropertyAccessExpression(node.expression) ||
-      node.expression.name.text !== "routes"
-    )
-      return false;
-    let inner: ts.Expression = node.expression.expression;
-    while (
-      ts.isCallExpression(inner) &&
-      ts.isPropertyAccessExpression(inner.expression)
-    ) {
-      inner = inner.expression.expression;
-    }
-    return isCreateRouterCall(inner);
-  }
-
-  function visit(node: ts.Node) {
-    if (result) return;
-
-    // Pattern 1 & 3: createRouter(...).routes(variableName | builder)
-    if (
-      ts.isCallExpression(node) &&
-      node.arguments.length >= 1 &&
-      isRoutesOnCreateRouter(node)
-    ) {
-      const arg = node.arguments[0];
-      if (ts.isIdentifier(arg)) {
-        result = { kind: "variable", name: arg.text };
-      } else if (isInlineBuilder(arg)) {
-        result = { kind: "inline", block: arg.getText(sourceFile) };
-      }
-      return;
-    }
-
-    // Pattern 2 & 4: createRouter({ urls: variableName | builder, ... })
-    if (isCreateRouterCall(node)) {
-      const callExpr = node as ts.CallExpression;
-      for (const callArg of callExpr.arguments) {
-        if (ts.isObjectLiteralExpression(callArg)) {
-          for (const prop of callArg.properties) {
-            if (
-              ts.isPropertyAssignment(prop) &&
-              ts.isIdentifier(prop.name) &&
-              prop.name.text === "urls"
-            ) {
-              if (ts.isIdentifier(prop.initializer)) {
-                result = { kind: "variable", name: prop.initializer.text };
-              } else if (isInlineBuilder(prop.initializer)) {
-                result = {
-                  kind: "inline",
-                  block: prop.initializer.getText(sourceFile),
-                };
-              }
-              return;
-            }
-          }
-        }
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return result;
+  const extractions = extractAllUrlsFromRouter(code);
+  return extractions[extractions.length - 1] ?? null;
 }
 
 /**
@@ -365,6 +378,77 @@ function applyBasenameToRoutes(
   return { routes: prefixed, searchSchemas: result.searchSchemas };
 }
 
+type RouteMapWithSearch = {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+};
+
+function resolveRouterUrlsExtraction(
+  routerFilePath: string,
+  routerSource: string,
+  extraction: UrlsExtractionResult,
+  diagnosticsOut: UnresolvableInclude[] | undefined,
+  memo: ScanMemo,
+): RouteMapWithSearch {
+  if (extraction.kind === "inline") {
+    return buildCombinedRouteMapWithSearch(
+      routerFilePath,
+      undefined,
+      new Set(),
+      diagnosticsOut,
+      extraction.block,
+      memo,
+    );
+  }
+
+  const imported = resolveImportedVariable(routerSource, extraction.name);
+  if (imported) {
+    const targetFile = resolveImportPath(imported.specifier, routerFilePath);
+    if (!targetFile) {
+      diagnosticsOut?.push({
+        pathPrefix: "/",
+        namePrefix: null,
+        reason: "file-not-found",
+        sourceFile: routerFilePath,
+        detail: `import "${imported.specifier}" resolved to no file`,
+      });
+      return { routes: {}, searchSchemas: {} };
+    }
+    return buildCombinedRouteMapWithSearch(
+      targetFile,
+      imported.exportedName,
+      new Set(),
+      diagnosticsOut,
+      undefined,
+      memo,
+    );
+  }
+
+  return buildCombinedRouteMapWithSearch(
+    routerFilePath,
+    extraction.name,
+    new Set(),
+    diagnosticsOut,
+    undefined,
+    memo,
+  );
+}
+
+function mergeRouteMaps(
+  target: RouteMapWithSearch,
+  source: RouteMapWithSearch,
+): void {
+  for (const [name, pattern] of Object.entries(source.routes)) {
+    target.routes[name] = pattern;
+    const search = source.searchSchemas[name];
+    if (search) {
+      target.searchSchemas[name] = search;
+    } else {
+      delete target.searchSchemas[name];
+    }
+  }
+}
+
 // Filesystem path of the generated route-types file for a router source file.
 // Native separators — matches the self-gen-tracking Map key the watcher compares.
 export function genFileTsPath(sourceFile: string): string {
@@ -396,9 +480,8 @@ export function resolveSearchSchemas(
 }
 
 /**
- * Resolve routes and search schemas from a router source file by following the
- * variable passed to `.routes(...)` or `urls: ...` in createRouter options,
- * or by parsing an inline builder function directly.
+ * Resolve routes and search schemas from every direct mount in a createRouter
+ * chain. Registrations are merged in runtime order, with later mounts winning.
  */
 export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
   routes: Record<string, string>;
@@ -411,8 +494,8 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
     return { routes: {}, searchSchemas: {} };
   }
 
-  const extraction = extractUrlsFromRouter(routerSource);
-  if (!extraction) {
+  const extractions = extractAllUrlsFromRouter(routerSource);
+  if (extractions.length === 0) {
     return { routes: {}, searchSchemas: {} };
   }
 
@@ -422,40 +505,24 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
     ? ("/" + rawBasename.replace(/^\/+|\/+$/g, "")).replace(/^\/$/, "")
     : undefined;
 
-  let result: {
-    routes: Record<string, string>;
-    searchSchemas: Record<string, Record<string, string>>;
-  };
-
-  // Inline builder: extract routes directly from the function body
-  if (extraction.kind === "inline") {
-    result = buildCombinedRouteMapWithSearch(
-      routerFilePath,
-      undefined,
-      undefined,
-      undefined,
-      extraction.block,
+  const result: RouteMapWithSearch = { routes: {}, searchSchemas: {} };
+  const memo = createScanMemo();
+  for (const extraction of extractions) {
+    mergeRouteMaps(
+      result,
+      resolveRouterUrlsExtraction(
+        routerFilePath,
+        routerSource,
+        extraction,
+        undefined,
+        memo,
+      ),
     );
-  } else {
-    // Variable reference: follow imports or same-file declaration
-    const imported = resolveImportedVariable(routerSource, extraction.name);
-    if (imported) {
-      const targetFile = resolveImportPath(imported.specifier, routerFilePath);
-      if (!targetFile) {
-        return { routes: {}, searchSchemas: {} };
-      }
-      result = buildCombinedRouteMapWithSearch(
-        targetFile,
-        imported.exportedName,
-      );
-    } else {
-      result = buildCombinedRouteMapWithSearch(routerFilePath, extraction.name);
-    }
   }
 
   // Apply basename prefix to all extracted route patterns
   if (basename) {
-    result = applyBasenameToRoutes(result, basename);
+    return applyBasenameToRoutes(result, basename);
   }
 
   return result;
@@ -481,56 +548,20 @@ export function detectUnresolvableIncludes(
     return [];
   }
 
-  // Extract the urls source from the router file
-  const extraction = extractUrlsFromRouter(source);
-  if (!extraction) return [];
+  const extractions = extractAllUrlsFromRouter(source);
+  if (extractions.length === 0) return [];
 
   const diagnostics: UnresolvableInclude[] = [];
-
-  if (extraction.kind === "inline") {
-    // Inline builder: parse directly
-    buildCombinedRouteMapWithSearch(
+  const memo = createScanMemo();
+  for (const extraction of extractions) {
+    resolveRouterUrlsExtraction(
       realPath,
-      undefined,
-      new Set(),
+      source,
+      extraction,
       diagnostics,
-      extraction.block,
+      memo,
     );
-    return diagnostics;
   }
-
-  // Variable reference: resolve where it comes from
-  const imported = resolveImportedVariable(source, extraction.name);
-  let targetFile: string;
-  let exportedName: string | undefined;
-
-  if (imported) {
-    const resolved = resolveImportPath(imported.specifier, realPath);
-    if (!resolved) {
-      return [
-        {
-          pathPrefix: "/",
-          namePrefix: null,
-          reason: "file-not-found",
-          sourceFile: realPath,
-          detail: `import "${imported.specifier}" resolved to no file`,
-        },
-      ];
-    }
-    targetFile = resolved;
-    exportedName = imported.exportedName;
-  } else {
-    // Same-file urls() definition
-    targetFile = realPath;
-    exportedName = extraction.name;
-  }
-
-  buildCombinedRouteMapWithSearch(
-    targetFile,
-    exportedName,
-    new Set(),
-    diagnostics,
-  );
   return diagnostics;
 }
 

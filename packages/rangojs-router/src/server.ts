@@ -47,3 +47,10 @@ export {
 
 // Component utilities (used internally for server/client boundary checks)
 export { isClientComponent, assertClientComponent } from "./component-utils.js";
+
+// Client URL projection registry (Vite discovery/bootstrap bridge)
+export {
+  clearClientUrlProjections,
+  setClientUrlProjection,
+  type ClientUrlProjection,
+} from "./client-urls/server-projection.js";

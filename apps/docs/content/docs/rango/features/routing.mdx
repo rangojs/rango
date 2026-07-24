@@ -88,6 +88,32 @@ include("/shop", () => import("./urls/shop"), { name: "shop" }),
 
 Build-time discovery still awaits the provider, so route types, `href()`, and prerendering see every route in the split group — lazily loaded, still fully typed.
 
+## Client URL routes
+
+`clientUrls()` is a narrow opt-in for routes whose path and layout values are named client components. Put the definition in a `"use client"` module, default-export it, and mount it directly at the router root:
+
+```tsx
+// catalog.client-urls.tsx
+"use client";
+
+export default clientUrls(({ path, layout, loader, loading }) => [
+  layout(CatalogLayout, () => [
+    path("/catalog", CatalogIndex),
+    path("/catalog/:productId", ProductPage, () => [
+      loader(ProductLoader),
+      loading(<ProductLoading />),
+    ]),
+  ]),
+]);
+
+// router.tsx
+createRouter().routes(serverUrls).routes(clientUrlPatterns);
+```
+
+After hydration, the browser can match a different client route immediately, show its `loading()` UI, and set the wrapping `useOutlet().pending`. The existing partial Flight request is still authoritative: the server matches the route, runs global router middleware and `createLoader()` definitions by ID, and commits content, URL, and history. Hard requests still SSR and hydrate normally.
+
+The supported helpers are `path`, `layout`, `loader`, and `loading`; projected path options are limited to `name`, `search`, and `trailingSlash`. One client definition is allowed per router, with no `include()` or prefix mount. Route middleware/revalidation, parallel routes, intercepts, cache, transitions, boundaries, and PPR are not supported in `clientUrls()`. See the [complete client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md).
+
 ## Not-found handling
 
 Two distinct 404s:

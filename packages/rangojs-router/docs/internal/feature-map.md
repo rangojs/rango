@@ -42,6 +42,11 @@ Related docs:
 | `./testing/flight`          | Real Flight (RSC) rendering, `react-server` condition only: `renderToFlightString` (wire string), `normalizeFlight`, `assertFlightRuntimeAvailable`; plus `renderServerTree` (serialize -> deserialize to an inspectable React element tree) with `findClientBoundaries(tree, selector?)` (client islands; selector = export-name string OR `{ name, testId, props (subset deep-equal), where }`; always an array, destructure for the first), `findElements(tree, selector?)` (the SERVER/host elements a server component rendered: `{ tag, props, children, text, element }`, host-only; selector = tag string OR `{ tag, testId, props, text, where }` — server components don't survive Flight as identities, so you match the host elements they produced), `textContent(node)` (concatenated subtree text — replaces `JSON.stringify(tree).toContain`), and `assertFlightTreeRuntimeAvailable`. The rsc vitest project MUST alias bare `@rangojs/router` -> `index.rsc.ts` (via `rangoTestAliases`) IN ADDITION to `resolve.conditions`, or a rendered handler/component reading `getRequestContext()`/`cookies()` resolves the throwing out-of-react-server stub (symptom: `renderHandler` returns `tree: undefined`, stub error on `thrown`); `resolve.conditions` alone is not reliably applied to bare-package export resolution. `renderServerTree`/`renderToFlightString` render an ELEMENT and accept a `vars` seed (plus `headers`/`params`/`env`) so a server component reading `getRequestContext()`/`cookies()`/`ctx.get(var)` DURING render is testable. `renderHandler(handler, opts)` runs a REAL route handler — the pure function `(ctx) => rsc` you pass to `path(...)` — with the router's real `HandlerContext` (`createHandlerContext` + an overridden `ctx.use`: loaders SEEDED by reference like `runLoader`, handles return a recording push fn), then serializes its RSC to an inspectable tree; returns `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles, dynamic }` (the render counterpart to `runInRequestContext` — same effect snapshot PLUS the rendered RSC; a `throw redirect()` is captured on `thrown` with `tree` undefined; an unseeded loader rejects; `dynamic` is `true` when the handler called `ctx.dynamic()`, and the `build` option seeds `ctx.build` so a build-gated opt-out is reachable). `seedVariables`/`VarsInit` live in the react-server-safe `testing/internal/seed-vars.ts`; `serializeNodeToFlight` (flight.ts) + `deserializeFlight`/`makeClientManifest`/`registerClientComponents` (flight-tree.ts) are the shared serialize/deserialize core renderHandler reuses. Separate entry because its vendored react-server-dom serializer loads only under that node condition; `renderServerTree` also imports the vendored client deserializer (inert in the same worker since deserialize-only never renders) and shims `__webpack_require__`/`__webpack_chunk_load__` internally. A thrown Server Component surfaces as a rejected promise (the stream still completes), not a hang. No hydration/interaction (that is the e2e tier).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `./testing/flight-matchers` | Vitest matchers for Flight strings: `flightMatchers` (`toMatchFlight` containment, `toMatchFlightSnapshot`). Split from `./testing/flight` so the renderer entry never top-level-imports `vitest` (an optional peer). Importable WITHOUT the `react-server` condition (e.g. `expect.extend(flightMatchers)` in a shared `setupFiles`): it imports `normalizeFlight` from the serializer-free `flight-normalize.ts`, NOT from `./testing/flight` (whose vendored serializer throws outside `react-server`). The matchers still operate on Flight strings produced by the react-server tier, so the usage context stays RSC tests — only the module's reachability changed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
+The public `./client` client-URL surface is intentionally small:
+`clientUrls` and the `ClientUrlPatterns`, `ClientUrlRouteRecord`, and
+`OutletState` types. Both client entry conditions expose the same names. There
+are no public client-URL middleware or revalidation types in the narrowed API.
+
 `renderRoute` in `./testing/dom` accepts an instance-scoped `defaultPrefetch`
 and uses the production delegated-anchor registration inside that test's RTL
 container. This keeps Link fallback behavior, basename/static-resource scope,
@@ -103,31 +108,32 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Hooks
 
-| Hook                   | Purpose                                 |
-| ---------------------- | --------------------------------------- |
-| `useLoader`            | Access loader data                      |
-| `useFetchLoader`       | Client-side fetch loader                |
-| `useRefreshLoaders`    | Refresh cross-loader refresh group(s)   |
-| `useNavigation`        | Navigation state                        |
-| `useRouter`            | Imperative navigation                   |
-| `usePathname`          | Current pathname                        |
-| `useSearchParams`      | Search parameters                       |
-| `useParams`            | Route params                            |
-| `useSegments`          | Segments state                          |
-| `useAction`            | Server action state tracking            |
-| `useHandle`            | Access handle data                      |
-| `useNonce`             | CSP nonce for userland head scripts     |
-| `useLocationState`     | Navigation state persistence            |
-| `useLinkStatus`        | Link navigation status                  |
-| `useMount`             | `include()` mount context               |
-| `useHref`              | Mount-aware href generation             |
-| `useReverse`           | Local reverse for imported `routes` map |
-| `useScrollRestoration` | Scroll restoration control              |
-| `useTheme`             | Theme management (via `./theme`)        |
+| Hook                   | Purpose                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `useLoader`            | Access loader data                                                                                   |
+| `useFetchLoader`       | Client-side fetch loader                                                                             |
+| `useRefreshLoaders`    | Refresh cross-loader refresh group(s)                                                                |
+| `useNavigation`        | Navigation state                                                                                     |
+| `useRouter`            | Imperative navigation                                                                                |
+| `usePathname`          | Current pathname                                                                                     |
+| `useSearchParams`      | Search parameters                                                                                    |
+| `useParams`            | Route params                                                                                         |
+| `useSegments`          | Segments state                                                                                       |
+| `useAction`            | Server action state tracking                                                                         |
+| `useHandle`            | Access handle data                                                                                   |
+| `useNonce`             | CSP nonce for userland head scripts                                                                  |
+| `useLocationState`     | Navigation state persistence                                                                         |
+| `useLinkStatus`        | Link navigation status                                                                               |
+| `useMount`             | `include()` mount context                                                                            |
+| `useHref`              | Mount-aware href generation                                                                          |
+| `useReverse`           | Local reverse for imported `routes` map                                                              |
+| `useOutlet`            | `{ content, pending }` outlet state; pending is the hydrated `clientUrls()` local-presentation scope |
+| `useScrollRestoration` | Scroll restoration control                                                                           |
+| `useTheme`             | Theme management (via `./theme`)                                                                     |
 
 ### Factories
 
-`createLoader`, `createHandle`, `isHandle`, `createLocationState`, `href()`
+`createLoader`, `createHandle`, `isHandle`, `createLocationState`, `clientUrls`, `href()`
 
 ### Deferred handle values — `ctx.use(Handle).defer()`
 
@@ -176,6 +182,12 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
+`clientUrls()` is a separate, narrowed client DSL exported from `./client`. Its
+Phase 1 helpers are `path()`, `layout()`, `loader()`, and `loading()` only. It
+requires named client component values, projects only the `name`, `search`, and
+`trailingSlash` path options, and supports direct root registration rather than
+`include()` or prefix mounting.
+
 `include(prefix, patterns, opts?)` takes its second argument two ways: **eager** (a `urls()` value already in the graph, evaluated at startup) or **async** (`() => import("./routes")`, code-split behind a thunk imported on the first request to the prefix, then cached — the split module exposes its `urls()` value as `export default`). Both are supported; prefer async for large independently-loadable groups. Build-time discovery awaits the provider, so `href()`/`reverse()`/generated types/prerender still cover every route in a split group, including nested `include()`s. Because discovery resolves the provider to build the trie/types/prerender, the `./build` `generateManifest*` functions and `Rango.findMatch` are `async`; provider normalization lives in the internal `urls/include-provider.ts` (`isIncludeProvider`, `resolveIncludeModule`). See [async-includes.md](./async-includes.md).
 
 ### Router Lifecycle
@@ -183,6 +195,9 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
+- `.routes(ClientUrlPatterns)` registers one distinct root client definition per
+  router. It may be chained with ordinary server patterns; the browser match is
+  presentation-only and the materialized server routes remain canonical.
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - `strictMode` (default true) — wraps client hydration in `React.StrictMode`; shipped to the client via initial payload metadata and read once by the browser entry. `strictMode: false` opts out (used to isolate StrictMode's double-render when measuring hook stability)
 - `prefetchCacheSize` (default 100) and `prefetchConcurrency` (default 2) — client prefetch tuning knobs: max decoded prefetch payloads kept before FIFO eviction, and max concurrent speculative prefetches. Resolved server-side (`router/prefetch-limits.ts`) and shipped via initial payload metadata. The synchronous cache and small shared viewport observer stay eager so navigation can adopt a warm response and detect the first intersection; `browser/prefetch/loader.ts` holds decoder/concurrency configuration and defers evaluating the fetch/queue runtime until an actual prefetch trigger. That deferral is evaluation-only: every `browser/prefetch/` module ships inside the eager `router` chunk, so the dynamic import resolves without a network fetch — the #766 lazy-chunk split created a document -> router -> runtime request waterfall on production's `"viewport"` default and was folded back (`getManualChunks` JSDoc has the numbers). Sub-1/non-finite values fall back to the default; disabling prefetch entirely remains `prefetchCacheTTL: false`'s job
@@ -243,6 +258,22 @@ Response middleware wrapping, automatic content negotiation, bare-value JSON res
 ### Match and Execution Pipeline
 
 URL pattern matching, middleware execution, segment resolution, error matching, route preview, partial matching, handler resolution for full requests, partial RSC, and actions.
+
+### Client URL Discovery and Navigation
+
+A default-exported `clientUrls()` value in a `"use client"` module is recorded by
+Vite discovery, evaluated through the SSR runner, serialized without component
+implementations, and installed in the server projection registry. The router
+materializes ordinary `urls()` paths from that projection; loaders resolve by
+their registered IDs, including non-fetchable definitions. Static and runtime
+route-type discovery both include named client routes.
+
+After hydration, `client-urls/navigation.ts` supplies a pathname-only local match
+to the existing navigation bridge. It can select transient destination
+`loading()` and set `useOutlet().pending` for a different matched client route.
+The existing partial Flight fetch, global middleware, server match, history, and
+commit path remain authoritative. Hard SSR and hydration use the materialized
+server projection.
 
 ### Data Loading
 

@@ -9,7 +9,7 @@ import type {
   TrieNode,
   TrieLeaf,
   NegotiateVariant,
-} from "../build/route-trie.js";
+} from "./route-trie-builder.js";
 import { safeDecodeURIComponent } from "./url-params.js";
 
 export interface TrieMatchResult {
@@ -219,8 +219,8 @@ function walkTrie(
 
   if (node.xp) {
     // node.xp keys are pre-sorted longest-suffix-first at build time
-    // (route-trie.ts sortSuffixParams), so the first match is the most specific
-    // suffix: `/app.min.js` matches `:file.min.js` before `:file.js`.
+    // (route-trie-builder.ts sortSuffixParams), so the first match is the most
+    // specific suffix: `/app.min.js` matches `:file.min.js` before `:file.js`.
     for (const suffix in node.xp) {
       if (segment.endsWith(suffix) && segment.length > suffix.length) {
         const paramValue = segment.slice(0, -suffix.length);

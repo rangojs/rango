@@ -49,6 +49,8 @@ export const NamedRoutes = {
   inlinePricing: "/inline/pricing",
   itemDetail: "/item/:itemId/detail",
   localeInfo: "/:locale(en|fr)/info",
+  "mixedClient.detail": "/mixed-client-routes/:slug",
+  "mixedClient.index": "/mixed-client-routes",
   orphanFetch: "/orphan-fetch",
   pprBakeSlow: "/ppr-shell/bake-slow",
   pprBasket: "/ppr-basket",

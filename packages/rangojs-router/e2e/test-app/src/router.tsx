@@ -7,6 +7,7 @@ import {
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
+import clientUrlPatterns from "./urls/client-urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
 
@@ -361,7 +362,8 @@ export const router = createRouter<AppEnv>({
   // needs NO middleware — serving is integral; routes opt in via the `ppr` path
   // option (see urls/shell-cache.tsx, urls/shell-secure.tsx).
   .use("/shell-secure/*", shellSecureAuthMiddleware)
-  .routes(urlpatterns);
+  .routes(urlpatterns)
+  .routes(clientUrlPatterns);
 
 export const reverse = router.reverse;
 

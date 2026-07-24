@@ -156,6 +156,7 @@ import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import { mixedClientPathPatterns } from "./client-paths/urls.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -516,6 +517,7 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        include("/", mixedClientPathPatterns, { name: "mixedClient" }),
         // Deployable cache lab: two independently tagged "use cache" values
         // rendered inside a tagged PPR shell with promised Meta. The paired e2e
         // drives its authenticated /api/cache/invalidate endpoint and proves

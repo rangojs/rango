@@ -584,6 +584,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "client-url-routes",
+        "text": "Client URL routes"
+      },
+      {
+        "depth": 2,
         "id": "not-found-handling",
         "text": "Not-found handling"
       },
@@ -947,11 +952,6 @@ export const pageMeta: PageMeta[] = [
     "slug": "rango/guides/debug-manifest",
     "title": "Debug Manifest",
     "toc": [
-      {
-        "depth": 2,
-        "id": "quick-look-in-the-browser",
-        "text": "Quick look in the browser"
-      },
       {
         "depth": 2,
         "id": "programmatic-access",
@@ -2408,6 +2408,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "defaultprefetch",
+        "text": "defaultPrefetch"
+      },
+      {
+        "depth": 2,
         "id": "nonce",
         "text": "nonce"
       },
@@ -2425,6 +2430,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "routerfetch-routes-and-use",
         "text": "router.fetch, .routes(), and .use()"
+      },
+      {
+        "depth": 3,
+        "id": "clienturlpatterns",
+        "text": "ClientUrlPatterns"
       }
     ],
     "type": "reference",
