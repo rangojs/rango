@@ -57,6 +57,85 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expectItem(page, "hard-load");
   });
 
+  test("intercept targets a client route from a server-page origin", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Server-page origin: no client group is mounted, so there is no local
+    // presentation to coordinate — the canonical response commits the modal
+    // over the origin page like any server-target intercept.
+    await page.goto(f.url("/client-urls-intercept-origin"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-origin")).toBeVisible();
+
+    {
+      await using __ = await expectNoReload(page);
+      await testId(page, "ci-origin-link").click();
+      await expect(testId(page, "ci-modal")).toBeVisible();
+      await expect(testId(page, "ci-modal-item")).toHaveText(
+        "client-urls-item:alpha",
+      );
+      // The origin page stays rendered underneath; the full item view did not.
+      await expect(testId(page, "ci-origin")).toBeVisible();
+      await expect(testId(page, "ci-item")).not.toBeVisible();
+      await expect(page).toHaveURL(f.url("/client-urls-intercept/items/alpha"));
+    }
+
+    // Hard load of the same URL renders the full client route, not the modal.
+    await page.goto(f.url("/client-urls-intercept/items/alpha"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-item-param")).toHaveText("alpha");
+    await expect(testId(page, "ci-item-loader")).toHaveText(
+      "client-urls-item:alpha",
+    );
+  });
+
+  test("intercept claims a client target from a same-group origin without local presentation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Same-group origin: the local matcher KNOWS the target, but the current
+    // location's metadata lists it as intercept-claimed — the optimistic
+    // presentation declines, the origin stays untouched, and the canonical
+    // response commits the modal over it (no loading flash-and-revert).
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await expect(testId(page, "ci-index")).toBeVisible();
+
+    await using __ = await expectNoReload(page);
+    let releaseRequest!: () => void;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    await page.route("**/client-urls-intercept/items/alpha*", async (route) => {
+      await requestGate;
+      await route.continue();
+    });
+    await testId(page, "ci-item-link").click();
+    try {
+      // Hold the gate open long enough that a wrongly-fired presentation
+      // would be visible, then assert its absence.
+      await page.waitForTimeout(250);
+      await expect(testId(page, "ci-item-loading")).not.toBeVisible();
+      await expect(testId(page, "ci-layout")).toHaveAttribute(
+        "data-pending",
+        "false",
+      );
+      await expect(testId(page, "ci-index")).toBeVisible();
+    } finally {
+      releaseRequest();
+    }
+
+    await expect(testId(page, "ci-modal")).toBeVisible();
+    await expect(testId(page, "ci-modal-item")).toHaveText(
+      "client-urls-item:alpha",
+    );
+    await expect(testId(page, "ci-index")).toBeVisible();
+    await expect(page).toHaveURL(f.url("/client-urls-intercept/items/alpha"));
+  });
+
   test("soft navigation shows local loading and pending state before committing, then Back restores index", async ({
     page,
   }) => {

@@ -25,9 +25,13 @@ function findRoute(
 export function ClientUrlsRoot({
   definition,
   routeId,
+  namePrefix = "",
 }: {
   definition: ClientUrlPatterns;
   routeId: string;
+  /** include() route-name prefix, injected at materialization for canonical
+   *  name composition (intercept-target coordination). */
+  namePrefix?: string;
 }): ReactNode {
   // The include() mount prefix this group renders under ("/" at root). The
   // module trie is built from definition-LOCAL patterns; navigation strips
@@ -36,8 +40,8 @@ export function ClientUrlsRoot({
   const mount = useMount();
   const [intent, setIntent] = useState<ClientUrlNavigationIntent | null>(null);
   useEffect(
-    () => registerClientUrlGroup(definition, mount, setIntent),
-    [definition, mount],
+    () => registerClientUrlGroup(definition, mount, namePrefix, setIntent),
+    [definition, mount, namePrefix],
   );
 
   const pendingRoute =

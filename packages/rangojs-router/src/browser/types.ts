@@ -54,6 +54,14 @@ export interface RscMetadata {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Intercept TARGET route names reachable from this location as a
+   * navigation origin. The browser-local clientUrls matcher declines its
+   * optimistic presentation for these targets (the canonical response would
+   * commit the intercept over the ORIGIN page, so destination loading would
+   * flash and revert). Missing/empty means no targets.
+   */
+  interceptTargets?: string[];
   /** Root layout component for browser-side re-renders */
   rootLayout?: ComponentType<{ children: ReactNode }>;
   /** Handle data accumulated across route segments (async generator that yields on each push) */

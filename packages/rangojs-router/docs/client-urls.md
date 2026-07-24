@@ -205,9 +205,18 @@ Composition limits around a client include, locked explicitly:
 - `revalidate()` has no surface to attach to projected client routes (their
   use-lists are generated: loader stubs and `loading()` only). Canonical
   revalidation of a committed page follows ordinary server semantics.
-- Do NOT target a `clientUrls()` route pattern with `intercept()`: the
-  browser-local optimistic presentation and the intercept presentation are not
-  coordinated, and the combined behavior is undefined.
+- `intercept()` MAY target a client route by its canonical route name
+  (include name prefix + local name; unnamed client routes cannot be targets).
+  From a server-page origin this behaves like any intercept. From an origin
+  INSIDE the same client group, the local optimistic presentation DECLINES for
+  claimed targets — payload metadata ships the current location's intercept
+  target names, and the browser matcher composes the local record's canonical
+  name to check membership — so the origin stays untouched until the canonical
+  response commits the modal. `when`-conditional intercepts suppress
+  conservatively (selectors need live navigation context); worst case a
+  non-intercepted navigation loses its optimistic loading, never the reverse.
+  One narrow edge: a back/forward restore served purely from the history cache
+  keeps the previous location's target set until the next fresh commit.
 - Async `include(() => import())` modules must NOT mount clientUrls groups.
   Projection discovery itself is import-timing independent (filesystem scan)
   and the manifest composes correctly, but the RUNTIME lazy expansion of a

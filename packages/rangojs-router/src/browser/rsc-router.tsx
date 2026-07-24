@@ -38,6 +38,7 @@ import {
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
+import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -204,6 +205,11 @@ export async function initBrowserApp(
   // default name active during that wait would discard this router's messages.
   const version = initialPayload.metadata?.version;
   initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
+
+  // Seed the intercept-target set for the initial location so the FIRST
+  // clientUrls navigation already declines intercepted targets (refreshed on
+  // every commit in partial-update.ts).
+  setActiveInterceptTargets(initialPayload.metadata?.interceptTargets);
 
   // Create navigation store with history-based caching
   const store = createNavigationStore({

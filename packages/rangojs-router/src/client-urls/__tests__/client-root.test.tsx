@@ -13,6 +13,8 @@ import { clientUrls } from "../client-urls.js";
 import {
   beginClientUrlNavigation,
   clearClientUrlNavigationRegistry,
+  registerClientUrlGroup,
+  setActiveInterceptTargets,
 } from "../navigation.js";
 
 afterEach(() => {
@@ -266,6 +268,62 @@ describe("ClientUrlsRoot", () => {
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "true",
     );
+  });
+});
+
+describe("intercept coordination", () => {
+  function Page(): null {
+    return null;
+  }
+
+  it("declines the optimistic presentation for intercept-claimed targets", () => {
+    const definition = clientUrls(({ path }) => [
+      path("/", Page, { name: "index" }),
+      path("/items/:itemId", Page, { name: "item" }),
+    ]);
+    const intents: Array<unknown> = [];
+    registerClientUrlGroup(
+      definition,
+      "/client-urls-intercept",
+      "clientIntercept",
+      (intent) => intents.push(intent),
+    );
+    setActiveInterceptTargets(["clientIntercept.item"]);
+    const abort = new AbortController();
+
+    // The canonical name (namePrefix + local name) is claimed: no intent, no
+    // presentation — the canonical response will commit the modal instead.
+    const claimed = beginClientUrlNavigation(
+      new URL("http://localhost/client-urls-intercept/items/alpha"),
+      abort.signal,
+    );
+    expect(claimed).toBeNull();
+    expect(intents).toEqual([]);
+
+    // A non-claimed sibling route in the same group still presents.
+    const allowed = beginClientUrlNavigation(
+      new URL("http://localhost/client-urls-intercept"),
+      abort.signal,
+    );
+    expect(allowed?.routeId).toBe("client-route-0");
+  });
+
+  it("clears the target set with the registry and treats missing metadata as empty", () => {
+    const definition = clientUrls(({ path }) => [
+      path("/items/:itemId", Page, { name: "item" }),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+    setActiveInterceptTargets(["item"]);
+    clearClientUrlNavigationRegistry();
+
+    registerClientUrlGroup(definition, "/", "", () => {});
+    setActiveInterceptTargets(undefined);
+    const abort = new AbortController();
+    const presentation = beginClientUrlNavigation(
+      new URL("http://localhost/items/alpha"),
+      abort.signal,
+    );
+    expect(presentation?.routeId).toBe("client-route-0");
   });
 });
 

@@ -11,8 +11,28 @@ interface ActiveClientUrlGroup {
   readonly definition: ClientUrlPatterns;
   /** include() mount prefix the group is rendered under ("/" at root). */
   readonly mount: string;
+  /** include() route-name prefix ("" at root) for canonical name composition. */
+  readonly namePrefix: string;
   readonly setIntent: (intent: ClientUrlNavigationIntent | null) => void;
   intent: ClientUrlNavigationIntent | null;
+}
+
+/**
+ * Intercept TARGET route names reachable from the CURRENT location as a
+ * navigation origin, shipped in payload metadata (MatchResult.interceptTargets)
+ * and refreshed on every commit. When a local match's canonical route name is
+ * in this set, the optimistic presentation DECLINES: the canonical response
+ * will commit the intercept over the ORIGIN page, so destination loading would
+ * flash and revert. Conservative for `when`-conditional intercepts (their
+ * selectors need live navigation context): a non-intercepted navigation may
+ * lose its optimistic loading, never the reverse.
+ */
+let activeInterceptTargets: ReadonlySet<string> = new Set();
+
+export function setActiveInterceptTargets(
+  targets: readonly string[] | undefined,
+): void {
+  activeInterceptTargets = new Set(targets ?? []);
 }
 
 export interface ClientUrlNavigationPresentation {
@@ -42,11 +62,13 @@ function stripMountPrefix(pathname: string, mount: string): string | null {
 export function registerClientUrlGroup(
   definition: ClientUrlPatterns,
   mount: string,
+  namePrefix: string,
   setIntent: (intent: ClientUrlNavigationIntent | null) => void,
 ): () => void {
   const group: ActiveClientUrlGroup = {
     definition,
     mount,
+    namePrefix,
     setIntent,
     intent: null,
   };
@@ -69,6 +91,20 @@ export function beginClientUrlNavigation(
 
   const match = group.definition.match(localPathname);
   if (!match || match.redirectTo) return null;
+
+  // Decline when an intercept would claim this target: compose the matched
+  // record's canonical route name (include namePrefix + local name) and check
+  // it against the current location's intercept target set. Unnamed records
+  // cannot be intercept targets (intercepts target route NAMES).
+  const record = group.definition.routes.find(
+    (candidate) => candidate.id === match.routeKey,
+  );
+  if (record?.name) {
+    const canonicalName = group.namePrefix
+      ? `${group.namePrefix}.${record.name}`
+      : record.name;
+    if (activeInterceptTargets.has(canonicalName)) return null;
+  }
 
   const intent: ClientUrlNavigationIntent = { routeId: match.routeKey };
   group.intent = intent;
@@ -99,4 +135,5 @@ export function beginClientUrlNavigation(
 
 export function clearClientUrlNavigationRegistry(): void {
   activeGroup = null;
+  activeInterceptTargets = new Set();
 }

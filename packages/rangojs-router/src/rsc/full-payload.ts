@@ -44,6 +44,7 @@ export function buildFullPayload(
       resolvedIds: m.resolvedIds,
       params: m.params,
       isPartial: false,
+      interceptTargets: m.interceptTargets,
       rootLayout: ctx.router.rootLayout,
       // Full render: resolve deferred handle values server-side so SSR markup and
       // the first sync useHandle read see resolved values. Partial payloads

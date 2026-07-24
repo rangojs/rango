@@ -117,6 +117,8 @@ import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
+import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
+import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -814,6 +816,43 @@ export const urlpatterns = urls(
       // clientUrls() group: browser-local presentation routes mounted through
       // include() like any urls() module — the canonical composition model.
       include("/client-urls-e2e", clientUrlPatterns),
+
+      // Intercept over a clientUrls TARGET: the shared layout declares the
+      // modal intercept by the client route's canonical name. Origins:
+      // (A) the server page below — no client group active, standard modal;
+      // (B) the group's own index — the local presentation must decline in
+      //     favor of the intercept (coordination in client-urls/navigation.ts).
+      path(
+        "/client-urls-intercept-origin",
+        () => (
+          <div data-testid="ci-origin">
+            <Link
+              to="/client-urls-intercept/items/alpha"
+              prefetch="none"
+              data-testid="ci-origin-link"
+            >
+              Open item from server page
+            </Link>
+          </div>
+        ),
+        { name: "ciOrigin" },
+      ),
+      include("/client-urls-intercept", clientUrlsInterceptPatterns, {
+        name: "clientIntercept",
+      }),
+      intercept(
+        "@modal",
+        ".clientIntercept.item",
+        async (ctx) => {
+          const item = await ctx.use(ClientUrlsItemLoader);
+          return (
+            <Modal testId="ci-modal">
+              <p data-testid="ci-modal-item">{item}</p>
+            </Modal>
+          );
+        },
+        () => [loader(ClientUrlsItemLoader)],
+      ),
 
       // Factory-generated patterns (static parser can't resolve the function call)
       include("/factory-hmr", createFactoryHmrPatterns(), {

@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
+import { getNamePrefix } from "../server/context.js";
 import type { LoaderDefinition, TrailingSlashMode } from "../types.js";
 import type { PathOptions, UrlPatterns } from "../urls/pattern-types.js";
 import type { PathHelpers } from "../urls/path-helper-types.js";
@@ -240,6 +241,10 @@ function materializeRouteItems(
   projection: ClientUrlProjection,
   { path, loader, loading }: PathHelpers<any>,
 ): AllUseItems[] {
+  // The urls() builder runs under the include's prefixes, so the composed
+  // route-name prefix is available here. ClientUrlsRoot needs it to compose
+  // canonical names for intercept-target coordination in the browser.
+  const namePrefix = getNamePrefix();
   return projection.routes.map(
     (route) =>
       path(
@@ -248,6 +253,7 @@ function materializeRouteItems(
           React.createElement(ClientUrlsRoot, {
             definition: reference as ClientUrlPatterns,
             routeId: route.id,
+            namePrefix,
           }),
         materializedPathOptions(route),
         () => [

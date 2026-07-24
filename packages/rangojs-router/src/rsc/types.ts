@@ -35,6 +35,12 @@ export interface RscPayload {
     /** Merged route params from the matched route */
     params?: Record<string, string>;
     slots?: Record<string, SlotState>;
+    /**
+     * Intercept TARGET route names reachable from this location as a
+     * navigation origin (see MatchResult.interceptTargets). The browser-local
+     * clientUrls matcher declines optimistic presentation for these.
+     */
+    interceptTargets?: string[];
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */

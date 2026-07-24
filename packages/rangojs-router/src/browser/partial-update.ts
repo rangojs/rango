@@ -30,6 +30,7 @@ import {
   validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
+import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -523,6 +524,13 @@ export function createPartialUpdater(
           all: reconciled.segments.map((s) => s.id),
         });
       }
+      // Refresh the browser-local intercept-target set for the location being
+      // committed — the clientUrls matcher declines optimistic presentation
+      // for targets an intercept would claim from here. Back/forward commits
+      // served purely from the history cache keep the previous set (no fresh
+      // metadata); popstate navigations get no optimistic presentation anyway.
+      setActiveInterceptTargets(payload.metadata?.interceptTargets);
+
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
