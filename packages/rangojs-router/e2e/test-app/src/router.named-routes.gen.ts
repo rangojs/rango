@@ -80,6 +80,7 @@ export const NamedRoutes = {
   "catchall.shop": "/catch-all/shop/:path+",
   changelog: "/changelog",
   ciOrigin: "/client-urls-intercept-origin",
+  "clientAction.index": "/client-urls-action",
   "clientIntercept.detail": "/client-urls-intercept/detail/:itemId",
   "clientIntercept.index": "/client-urls-intercept",
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",

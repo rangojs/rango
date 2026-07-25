@@ -119,6 +119,8 @@ import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
+import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
@@ -147,6 +149,21 @@ function TxBlockShell(): React.ReactNode {
     <div data-testid="tx-block-shell">
       <Outlet />
     </div>
+  );
+}
+
+/**
+ * Parent-chain RSC layout for the clientUrls action-revalidation fixture. It
+ * reads the same counter the group's projected loader reads, and declares no
+ * revalidate(): after the action, the loader shows the new count while this
+ * value stays pre-action (locked `action:parent-chain-skip` default).
+ */
+function ClientUrlsActionParent(): React.ReactNode {
+  return (
+    <section>
+      <p data-testid="ca-parent-count">{`parent:${getClientUrlsActionCount()}`}</p>
+      <Outlet />
+    </section>
   );
 }
 
@@ -860,6 +877,15 @@ export const urlpatterns = urls(
       include("/client-urls-transition", clientUrlsTransitionPatterns, {
         name: "clientTransition",
       }),
+      // Action revalidation over a clientUrls group: the group's projected
+      // loaders re-run on the action follow-up (route-owned default true);
+      // this parent-chain layout reads the SAME counter and keeps the locked
+      // skip (no revalidate() declared), so its value stays pre-action.
+      layout(ClientUrlsActionParent, () => [
+        include("/client-urls-action", clientUrlsActionPatterns, {
+          name: "clientAction",
+        }),
+      ]),
       intercept(
         "@modal",
         ".clientIntercept.item",

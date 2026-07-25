@@ -248,6 +248,30 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ci-client-modal")).not.toBeVisible();
   });
 
+  test("action revalidates the clientUrls group's loaders; parent RSC layout keeps the locked skip", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // The group's loaders are its server-side revalidation surface: declared
+    // on the client LAYOUT, flattened into the route record, re-run on the
+    // action follow-up (route-owned segments default true on actions). The
+    // parent-chain RSC layout reads the SAME counter and declares no
+    // revalidate(), so the locked `action:parent-chain-skip` default keeps
+    // its pre-action value in the same commit.
+    await page.goto(f.url("/client-urls-action"));
+    await waitForHydration(page);
+    const initial = await testId(page, "ca-loader").textContent();
+    const count = Number(initial?.replace("count:", ""));
+    expect(Number.isNaN(count)).toBe(false);
+    await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "ca-bump").click();
+    await expect(testId(page, "ca-loader")).toHaveText(`count:${count + 1}`);
+    await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
+  });
+
   test("client-declared transition() holds same-route param navs; the plain twin re-streams", async ({
     page,
   }) => {

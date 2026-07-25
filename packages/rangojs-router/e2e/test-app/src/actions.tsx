@@ -20,6 +20,7 @@ import {
   getCartQuantitySync,
   resetCurrentCart,
 } from "./cart-store.js";
+import { bumpClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -678,4 +679,14 @@ export async function invalidateTagAction(
   const tag = String(formData.get("tag") ?? "");
   await updateTag(tag);
   return { tag };
+}
+
+/**
+ * Bumps the clientUrls action-revalidation counter. The follow-up render's
+ * revalidation is the pinned contract: the clientUrls group's projected
+ * loaders re-run (route-owned segments default true on actions) while the
+ * parent-chain RSC layout reading the same counter keeps the locked skip.
+ */
+export async function bumpClientUrlsCounter(): Promise<number> {
+  return bumpClientUrlsActionCount();
 }
