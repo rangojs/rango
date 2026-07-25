@@ -96,7 +96,12 @@ function runDefaultPrefetchNoneSpec(f: Fixture): void {
     const req = await prefetchRequest;
 
     expect(new URL(req.url()).searchParams.get("_rsc_partial")).toBe("true");
-    expect(runtimeRequests).toHaveLength(1);
+    // Mode-dependent, and load-bearing in production: #809 folded the prefetch
+    // runtime into the eager router chunk, so a production build must NOT fetch
+    // a separate runtime chunk on intersection — that fetch was the #766
+    // document -> router -> runtime waterfall. Dev still serves
+    // browser/prefetch/runtime.ts as its own unbundled module request.
+    expect(runtimeRequests).toHaveLength(f.mode === "build" ? 0 : 1);
   });
 }
 

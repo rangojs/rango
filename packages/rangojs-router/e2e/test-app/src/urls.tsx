@@ -104,6 +104,7 @@ import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-preren
 import { colocatedFastRefreshPatterns } from "./urls/colocated-fast-refresh.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
 import { parallelRevalAfterActionPatterns } from "./urls/parallel-reval-after-action.js";
+import { parallelNewSlotRevalPatterns } from "./urls/parallel-new-slot-reval.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -1002,6 +1003,12 @@ export const urlpatterns = urls(
       // skipped revalidate fns)
       include("/", parallelRevalAfterActionPatterns, {
         name: "parallelRevalAfterAction",
+      }),
+
+      // Regression: revalidate(() => false) on a route-scoped parallel slot
+      // must not blank the slot on the soft nav that first introduces it
+      include("/", parallelNewSlotRevalPatterns, {
+        name: "parallelNewSlotReval",
       }),
 
       // Skip test patterns (prerender + static skip/error handling)

@@ -50,6 +50,8 @@ export const NamedRoutes = {
   itemDetail: "/item/:itemId/detail",
   localeInfo: "/:locale(en|fr)/info",
   orphanFetch: "/orphan-fetch",
+  "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
+  "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",
   pprBakeSlow: "/ppr-shell/bake-slow",
   pprBasket: "/ppr-basket",
   pprBlog: "/ppr-blog",
