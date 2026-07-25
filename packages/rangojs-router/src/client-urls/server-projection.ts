@@ -265,9 +265,27 @@ export function isClientUrlReference(
   }
 }
 
+/**
+ * Strip vite's HMR timestamp query from a module id. After an HMR update of
+ * a clientUrls module, the RSC graph re-imports it under
+ * `<path>?t=<timestamp>#default`, so the include's client reference carries a
+ * t-stamped $$id while the projection was registered under the bare id — the
+ * lookup missed and every request 500'd until a server restart. Only the
+ * `t` param is removed (other queries are part of module identity).
+ */
+function stripHmrTimestamp(id: string): string {
+  return id.replace(/([?&])t=\d+(&)?/, (_match, lead: string, trail?: string) =>
+    trail ? lead : "",
+  );
+}
+
 function projectionKey(reference: string | ClientUrlReference): string {
-  if (typeof reference === "string" && reference.length > 0) return reference;
-  if (isClientUrlReference(reference)) return reference.$$id;
+  if (typeof reference === "string" && reference.length > 0) {
+    return stripHmrTimestamp(reference);
+  }
+  if (isClientUrlReference(reference)) {
+    return stripHmrTimestamp(reference.$$id);
+  }
   throw new Error(
     "Client URL projections require a React client reference with a non-empty $$id",
   );

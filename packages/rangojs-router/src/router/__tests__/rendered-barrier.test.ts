@@ -176,7 +176,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("streamingLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Prices);
+        return loaderCtx.get(Prices);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -294,8 +294,8 @@ describe("rendered barrier", () => {
     });
   });
 
-  describe("ctx.use(handle) before rendered()", () => {
-    it("throws when reading a handle without awaiting rendered() first", async () => {
+  describe("handle access split: ctx.get(handle) reads, ctx.use(handle) writes", () => {
+    it("ctx.get(handle) throws when reading without awaiting rendered() first", async () => {
       mockInsideLoaderScope = true;
       mockRequestContext = createMockRequestContext();
       const ctx = createMockContext();
@@ -308,7 +308,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("noRenderedLoader", async (loaderCtx) => {
         // Try to read handle without rendered()
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -319,6 +319,33 @@ describe("rendered barrier", () => {
       expect(rejection.reason.message).toContain(
         'requires "await ctx.rendered()" first',
       );
+    });
+
+    it("ctx.use(handle) in a loader is the WRITE: pushes land in the handle store attributed to the owning segment", async () => {
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      (ctx as any)._currentSegmentId = "owning.segment";
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const Products = createHandle<string, string[]>(
+        (s) => s.flat(),
+        "test#ProductsWrite",
+      );
+
+      const loader = createLoader("handleWriterLoader", async (loaderCtx) => {
+        const push = loaderCtx.use(Products);
+        push("from-loader");
+        return "done";
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+      await expect(ctx.use(loader)).resolves.toBe("done");
+
+      const store = mockRequestContext._handleStore;
+      expect(store.getDataForSegment("owning.segment")).toEqual({
+        "test#ProductsWrite": ["from-loader"],
+      });
     });
   });
 
@@ -336,7 +363,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("priceLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        const products = loaderCtx.use(Products);
+        const products = loaderCtx.get(Products);
         return products;
       });
 
@@ -371,7 +398,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("emptyLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -422,7 +449,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("breadcrumbLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Breadcrumbs);
+        return loaderCtx.get(Breadcrumbs);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -459,7 +486,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("titleLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(PageTitle);
+        return loaderCtx.get(PageTitle);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -498,7 +525,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("cacheLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -529,7 +556,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("prerenderLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Meta);
+        return loaderCtx.get(Meta);
       });
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -558,7 +585,7 @@ describe("rendered barrier", () => {
       const depLoader = createLoader("depLoader", async (loaderCtx) => {
         const base = await loaderCtx.use(baseLoader);
         await loaderCtx.rendered();
-        const products = loaderCtx.use(Products);
+        const products = loaderCtx.get(Products);
         return { base, products };
       });
 
@@ -677,7 +704,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("pushCallbackLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       // Start the loader from DSL scope
@@ -726,7 +753,7 @@ describe("rendered barrier", () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
         loaderRenderedCalled = true;
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       // Start the loader from DSL scope
@@ -782,7 +809,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("streamPushLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       const handleStore = mockRequestContext._handleStore;
@@ -843,7 +870,7 @@ describe("rendered barrier", () => {
 
       const loader = createLoader("dedupLoader", async (loaderCtx) => {
         await loaderCtx.rendered();
-        return loaderCtx.use(Products);
+        return loaderCtx.get(Products);
       });
 
       setupLoaderAccess(ctx, loaderPromises);

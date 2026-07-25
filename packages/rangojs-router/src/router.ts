@@ -579,6 +579,13 @@ export function createRouter<TEnv = any>(
             }
           }
         : undefined,
+      // notFound() resolution deps: the streamed envelope carries the
+      // server-rendered not-found UI, mirroring the consumption lane's
+      // boundary resolution (segment-resolution/helpers.ts).
+      {
+        findNearestNotFoundBoundary,
+        notFoundComponent: notFound,
+      },
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)

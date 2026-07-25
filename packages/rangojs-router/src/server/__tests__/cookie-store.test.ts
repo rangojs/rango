@@ -11,7 +11,7 @@ import {
   getRequestContext,
 } from "../request-context.js";
 import { cookies, headers } from "../cookie-store.js";
-import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
+import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import { RangoContext, runInsideLoaderScope } from "../context.js";
 
 /** Helper: create a RequestContext and run `fn` inside it. */
@@ -401,7 +401,11 @@ describe("headers()", () => {
 });
 
 describe('"use cache" guards', () => {
-  /** Helper: create a RequestContext with INSIDE_CACHE_EXEC flag set. */
+  /**
+   * Helper: run fn on a real request context inside the "use cache" exec
+   * scope — the AsyncLocalStorage frame cache-runtime.ts enters around the
+   * cached body (runWithCacheExecScope), which is what the guard checks.
+   */
   function withCacheExecContext(fn: () => void) {
     const ctx = createRequestContext({
       env: {},
@@ -412,14 +416,7 @@ describe('"use cache" guards', () => {
       variables: {},
     });
 
-    // Simulate what cache-runtime.ts does: stamp the taint flag on ctx
-    (ctx as any)[INSIDE_CACHE_EXEC] = true;
-
-    try {
-      runWithRequestContext(ctx, fn);
-    } finally {
-      delete (ctx as any)[INSIDE_CACHE_EXEC];
-    }
+    runWithRequestContext(ctx, () => runWithCacheExecScope(fn));
   }
 
   it("cookies() throws inside a 'use cache' context", () => {
@@ -440,7 +437,7 @@ describe('"use cache" guards', () => {
     });
   });
 
-  it("cookies() works normally when INSIDE_CACHE_EXEC is not set", () => {
+  it("cookies() works normally outside the exec scope", () => {
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com", {
@@ -455,7 +452,40 @@ describe('"use cache" guards', () => {
     });
   });
 
-  it("headers() works normally when INSIDE_CACHE_EXEC is not set", () => {
+  it("cookies() works in a chain PARALLEL to an active 'use cache' execution", async () => {
+    // The guard follows the cached body's own async chain. A sibling loader
+    // reading cookies() while a slow "use cache" fetch is in flight on the
+    // same request must not throw (scar: the previous stamp on the shared
+    // RequestContext poisoned exactly this read for the fetch's whole window).
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "ok=yes" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    await runWithRequestContext(ctx, async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inFlightCachedBody = runWithCacheExecScope(async () => {
+        await gate;
+        // Still inside the scope after resumption.
+        expect(() => cookies()).toThrow(/cannot be called inside/i);
+      });
+
+      expect(cookies().get("ok")?.value).toBe("yes");
+      expect(headers().get("cookie")).toBe("ok=yes");
+
+      release();
+      await inFlightCachedBody;
+    });
+  });
+
+  it("headers() works normally outside the exec scope", () => {
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com", {
@@ -614,11 +644,14 @@ describe("cache() DSL scope guards", () => {
   });
 });
 
-// Integration test with registerCachedFunction is not possible in unit tests
-// because cache-runtime.ts imports @vitejs/plugin-rsc/rsc (virtual modules).
-// The guard contract is tested in two parts:
-//   1. cookies()/headers() check INSIDE_CACHE_EXEC on RequestContext (above)
-//   2. registerCachedFunction stamps INSIDE_CACHE_EXEC on tainted args (cache-runtime.ts:252-257)
+// The guard contract is tested in three parts:
+//   1. cookies()/headers() check the cache-exec ALS scope (above) — the scope
+//      cache-runtime.ts enters around the cached body via runWithCacheExecScope
+//   2. registerCachedFunction stamps INSIDE_CACHE_EXEC on tainted ARG objects
+//      for the ctx.set()/ctx.header() guards (cache-runtime.ts)
+//   3. the production registerCachedFunction path (mocked virtual modules) in
+//      src/cache/__tests__/cache-exec-parallel-guard.test.ts — in-body reads
+//      throw, PARALLEL same-request reads don't
 // The full transformed path (Vite transform -> registerCachedFunction -> guard -> throw)
 // is covered by e2e/use-cache.test.ts:
 //   "cookies() throws inside a 'use cache' function"

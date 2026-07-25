@@ -66,6 +66,13 @@ export interface RscMetadata {
   rootLayout?: ComponentType<{ children: ReactNode }>;
   /** Handle data accumulated across route segments (async generator that yields on each push) */
   handles?: AsyncGenerator<HandleData, void, unknown>;
+  /**
+   * Document-lane late handle channel: pushes landing after the handler
+   * barrier (streaming loader ctx.use(Handle) writes). Consumed non-blocking
+   * post-hydration (rsc-router.tsx); `handles` above is drained in blocking
+   * positions and must complete at the handler barrier.
+   */
+  handlesLate?: AsyncGenerator<HandleData, void, unknown>;
   /** Cached handle data (for back/forward navigation from cache) */
   cachedHandleData?: HandleData;
   /**

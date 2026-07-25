@@ -63,6 +63,17 @@ export async function resolveLoaders<TEnv>(
   if (loaderEntries.length === 0) return [];
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+
+  // Pin `_currentSegmentId` to the OWNING entry BEFORE the loader kickoffs:
+  // createLoaderExecutor captures it synchronously at kickoff for
+  // ctx.use(Handle) push attribution (loader writes land in the same bucket
+  // as the entry's handler pushes — shortCode is in matched/segmentOrder, so
+  // collectHandleData keeps them; an id outside the order is silently
+  // dropped). resolveLoaders runs BEFORE the handler-resolution sites assign
+  // this (fresh.ts handler-first ordering), so without the pin the captured
+  // value is a stale sibling's id (document lane) or undefined (navigation
+  // lane — pushes silently vanished).
+  (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 

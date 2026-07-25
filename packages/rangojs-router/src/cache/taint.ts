@@ -21,14 +21,19 @@ export function isTainted(value: unknown): boolean {
 }
 
 /**
- * Symbol stamped on tainted ctx during "use cache" function execution.
- * cookies(), headers(), ctx.set(), ctx.header(), etc. check this flag and
- * throw if present — reads would cache per-request data under a shared key,
- * and side effects would be lost on cache hit.
+ * Symbol stamped on tainted ctx objects PASSED AS ARGUMENTS to a "use cache"
+ * function during its execution. ctx.set(), ctx.header(), etc. check this
+ * flag and throw if present — those side effects are lost on cache hit.
+ *
+ * Argument objects only. Ambient access (cookies()/headers() and ctx methods
+ * reached via getRequestContext()) is guarded by the AsyncLocalStorage scope
+ * in cache-exec-scope.ts instead: stamping the SHARED RequestContext made
+ * every parallel read on the request throw for the cached body's whole
+ * execution window (a 2s cached fetch poisoned a sibling loader's cookies()).
  *
  * The value is a numeric reference count, not a boolean. Multiple concurrent
- * cached functions sharing the same ctx/requestCtx each increment on entry
- * and decrement on exit. Guards fire when count > 0.
+ * cached functions sharing the same ctx each increment on entry and decrement
+ * on exit. Guards fire when count > 0.
  */
 export const INSIDE_CACHE_EXEC: unique symbol = Symbol.for(
   "rango:inside-cache-exec",
@@ -57,6 +62,20 @@ export function unstampCacheExec(obj: object): void {
 }
 
 /**
+ * Probe for the AsyncLocalStorage-based "use cache" execution scope.
+ * Registered by cache-exec-scope.ts at module init; the default ("never
+ * inside") keeps this module free of node:async_hooks — taint.ts is reachable
+ * from browser-bundled DSL helpers. Covers AMBIENT ctx access inside a cached
+ * body (getRequestContext().set(...)) chain-scoped, where the object stamp
+ * below only covers ctx objects explicitly passed as arguments.
+ */
+let cacheExecScopeProbe: () => boolean = () => false;
+
+export function _setCacheExecScopeProbe(probe: () => boolean): void {
+  cacheExecScopeProbe = probe;
+}
+
+/**
  * Throw if ctx is inside a "use cache" execution.
  * Call from side-effecting ctx methods (set, header, etc.) and cookie mutations.
  */
@@ -64,12 +83,12 @@ export function assertNotInsideCacheExec(
   ctx: unknown,
   methodName: string,
 ): void {
-  if (
+  const argStamped =
     ctx !== null &&
     ctx !== undefined &&
     typeof ctx === "object" &&
-    (INSIDE_CACHE_EXEC as symbol) in (ctx as Record<symbol, unknown>)
-  ) {
+    (INSIDE_CACHE_EXEC as symbol) in (ctx as Record<symbol, unknown>);
+  if (argStamped || cacheExecScopeProbe()) {
     throw new Error(
       `ctx.${methodName}() cannot be called inside a "use cache" function. ` +
         `Side effects on the request context are lost on cache hit because ` +

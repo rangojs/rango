@@ -8,6 +8,7 @@ import {
   generateHistoryKey,
 } from "./navigation-store.js";
 import { createEventController } from "./event-controller.js";
+import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
@@ -274,6 +275,43 @@ export async function initBrowserApp(
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
     store.updateCacheHandleData(initialHistoryKey, lastHandleData);
+
+    // Late handle channel: pushes from streaming loader bodies that missed the
+    // handler barrier (ctx.handle() writes mid-body). Consumed NON-BLOCKING —
+    // hydration must not wait on loader bodies — and applied through the same
+    // controller/cache path as the initial snapshot, so useHandle readers
+    // re-render as meta/breadcrumbs stream in.
+    const lateGenerator = initialPayload.metadata?.handlesLate;
+    if (lateGenerator) {
+      void (async () => {
+        try {
+          // Never apply before React commits hydration — a pre-commit
+          // application mutates the state useHandle initializers read during
+          // the hydration render (mismatch). Yields buffer in the generator
+          // meanwhile; nothing is lost.
+          await hydrationCommitted;
+          for await (const rawLateData of lateGenerator) {
+            // Handles are async by design: a push(promise) value resolves
+            // whenever it resolves — only SSR'd handles are awaited server-
+            // side. The main document snapshot arrives server-resolved
+            // (resolvedHandleStream); this late channel is raw, so resolve
+            // deferred values here exactly like the nav lane's processHandles
+            // does before applying.
+            const lateData = await resolveDeferredHandleValues(rawLateData);
+            bootLog("handles: late push applied", {
+              segments: Object.keys(lateData),
+            });
+            eventController.setHandleData(
+              lateData,
+              initialPayload.metadata?.matched,
+            );
+            store.updateCacheHandleData(initialHistoryKey, lateData);
+          }
+        } catch (err) {
+          console.error("[rsc-router] Error consuming late handles:", err);
+        }
+      })();
+    }
   } else {
     bootLog("handles: none in payload");
   }
@@ -574,6 +612,18 @@ export async function initBrowserApp(
 // re-runs the root effect; the second flush is not a second hydration).
 let hydrationCommitLogged = false;
 
+// Hydration-commit barrier for the late handle channel. useHandle's useState
+// initializer reads the eventController's LIVE state during the hydration
+// render, so applying a late handle update BEFORE hydration commits changes
+// that state out from under React — the classic "external changing data"
+// hydration mismatch (seen when a loader's push lost the handler-barrier race
+// by milliseconds and its late yield landed mid-hydration). The root effect
+// below resolves this; the late consumer awaits it before applying anything.
+let resolveHydrationCommitted!: () => void;
+const hydrationCommitted: Promise<void> = new Promise((resolve) => {
+  resolveHydrationCommitted = resolve;
+});
+
 /**
  * Get the browser app context. Throws if initBrowserApp hasn't been called.
  */
@@ -649,6 +699,9 @@ export function Rango(_props: RangoProps): React.ReactElement {
       hydrationCommitLogged = true;
       bootLog("hydration commit (root effect flushed)");
     }
+    // Release the late handle channel (see hydrationCommitted above).
+    // StrictMode double-invoke: resolving twice is a no-op.
+    resolveHydrationCommitted();
     return cleanupPrefetch;
   }, [bridge, linkInterceptionEnabled]);
 

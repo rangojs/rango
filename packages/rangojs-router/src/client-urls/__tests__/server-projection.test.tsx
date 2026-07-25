@@ -212,6 +212,24 @@ describe("client URL server projection", () => {
     expect(getClientUrlProjection(equivalentReference)).toBe(projection);
     expect(getClientUrlProjection("app.urls#default")).toBe(projection);
 
+    // HMR: after an update vite stamps the module id with a `?t=<timestamp>`
+    // (or `&t=` behind existing queries); the include's client reference then
+    // carries the stamped $$id while the projection was registered under the
+    // bare id. The key funnel strips ONLY the t-param — this lookup missing
+    // meant every request 500'd until a server restart.
+    expect(getClientUrlProjection("app.urls?t=1784988833465#default")).toBe(
+      projection,
+    );
+    expect(
+      getClientUrlProjection({
+        $$typeof: Symbol.for("react.client.reference"),
+        $$id: "app.urls?t=99#default",
+      } as never),
+    ).toBe(projection);
+    const queried = { routes: [], intercepts: [] } as never;
+    setClientUrlProjection("mod?v=abc&t=5#default", queried);
+    expect(getClientUrlProjection("mod?v=abc#default")).toBe(queried);
+
     clearClientUrlProjections();
     expect(getClientUrlProjection(firstReference)).toBeUndefined();
   });

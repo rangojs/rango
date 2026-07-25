@@ -9,7 +9,7 @@ import {
   runWithRequestContext,
 } from "../request-context.js";
 import { invalidateClientCache } from "../cookie-store.js";
-import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
+import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 
 function makeCtx(
   opts: {
@@ -164,9 +164,10 @@ describe("invalidateClientCache() (server seat)", () => {
       stateCookieName: "rango-state_router_0",
       version: "v1",
     });
-    (ctx as unknown as Record<symbol, unknown>)[INSIDE_CACHE_EXEC] = true;
-    runWithRequestContext(ctx, () => {
-      expect(() => invalidateClientCache()).toThrow(/use cache/);
-    });
+    runWithRequestContext(ctx, () =>
+      runWithCacheExecScope(() => {
+        expect(() => invalidateClientCache()).toThrow(/use cache/);
+      }),
+    );
   });
 });

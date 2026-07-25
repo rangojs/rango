@@ -506,7 +506,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       const TailLoader = (createLoader as Function)(
         async (loaderCtx: any) => {
           await loaderCtx.rendered();
-          seen.push(loaderCtx.use(TailHandle));
+          seen.push(loaderCtx.get(TailHandle));
           return null;
         },
         undefined,

@@ -1626,12 +1626,23 @@ export function createUseFunction<TEnv>(
       env: ctx.env as any,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,
-      get: ctx.get as any,
-      use: (<TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>,
-      ): Promise<TDep> => {
-        return ctx.use(dep);
-      }) as LoaderContext["use"],
+      get: ((keyOrVar: any) => {
+        // Handle READS need the rendered() barrier, which this lane
+        // (action/dispatch-invoked loaders) does not run. Fail with guidance
+        // instead of returning a misleading empty collect.
+        if (isHandle(keyOrVar)) {
+          throw new Error(
+            `ctx.get(handle) is only available in DSL loaders after ` +
+              `"await ctx.rendered()". It cannot be used from request-context ` +
+              `loaders or server actions.`,
+          );
+        }
+        return (ctx.get as any)(keyOrVar);
+      }) as any,
+      // Pass items through: loaders delegate to the request ctx's loader
+      // executor; a handle yields the ctx's push function (write parity —
+      // ctx.use(Meta)({...}) works in this lane exactly like in a handler).
+      use: ((item: any) => ctx.use(item)) as LoaderContext["use"],
       method: "GET",
       body: undefined,
       reverse: createReverseFunction(

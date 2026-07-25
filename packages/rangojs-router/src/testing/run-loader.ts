@@ -42,6 +42,7 @@ import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import { isHandle, type Handle } from "../handle.js";
+import { withDefer } from "../defer.js";
 import { collectHandle } from "./collect-handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import type { SegmentCacheStore } from "../cache/types.js";
@@ -74,6 +75,9 @@ export type TestLoaderContext<TEnv = any> = Omit<
   ) => string;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): TAccumulated;
     <T = unknown>(key: string): T | undefined;
   };
 };
@@ -248,6 +252,7 @@ function runWithLoaderContext<R>(
   reqCtx: RequestContext<any>,
   opts: RunLoaderOptions,
   fn: (ctx: TestLoaderContext) => R,
+  pushRecorder?: Array<{ handle: Handle<any, any>; value: unknown }>,
 ): R {
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
@@ -275,17 +280,37 @@ function runWithLoaderContext<R>(
       env: reqCtx.env,
       waitUntil: reqCtx.waitUntil.bind(reqCtx),
       executionContext: reqCtx.executionContext,
-      get: reqCtx.get as TestLoaderContext["get"],
-      use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
-        if (isHandle(dep) && !renderedResolved) {
-          throw new Error(
-            `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
-              `Handle "${(dep as Handle<any, any>).$$id}" cannot be read until ` +
-              `the render tree has settled.`,
-          );
+      get: ((keyOrVar: any) => {
+        // Handle READ (mirrors production's ctx.get(handle)): rendered-gated,
+        // seeded via the `handles` option.
+        if (isHandle(keyOrVar)) {
+          if (!renderedResolved) {
+            throw new Error(
+              `ctx.get(handle) in a loader requires "await ctx.rendered()" first. ` +
+                `Handle "${(keyOrVar as Handle<any, any>).$$id}" cannot be read until ` +
+                `the render tree has settled.`,
+            );
+          }
+          if (handleSeeds.has(keyOrVar)) return handleSeeds.get(keyOrVar);
+          return collectHandle(keyOrVar, []);
         }
-        if (handleSeeds.has(dep)) return handleSeeds.get(dep);
-        if (isHandle(dep)) return collectHandle(dep, []);
+        return (reqCtx.get as any)(keyOrVar);
+      }) as TestLoaderContext["get"],
+      use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
+        // Handle WRITE (mirrors production's ctx.use(Meta)({...}) push): the
+        // same withDefer wrapper shape, recording into the result envelope's
+        // `handlePushes` so tests assert what the loader wrote. Deferred
+        // resolvers record their resolved value when called.
+        if (isHandle(dep)) {
+          const handleDef = dep as Handle<any, any>;
+          return withDefer((dataOrFn: unknown) => {
+            const value =
+              typeof dataOrFn === "function"
+                ? (dataOrFn as () => unknown)()
+                : dataOrFn;
+            pushRecorder?.push({ handle: handleDef, value });
+          });
+        }
         // Production ctx.use(Loader) ALWAYS returns a Promise (the cached loader
         // promise). The seeded path must match, so a consumer composing on the
         // result (ctx.use(Dep).then(...), Promise.race, etc.) works the same as
@@ -313,7 +338,7 @@ function runWithLoaderContext<R>(
                   "requires the DSL render barrier, which only exists during a " +
                   "full route match. To unit-test a loader's post-barrier logic, " +
                   "pass { rendered: true } to mock the barrier and { handles: " +
-                  "[[SomeHandle, accumulatedData]] } to seed ctx.use(SomeHandle). " +
+                  "[[SomeHandle, accumulatedData]] } to seed ctx.get(SomeHandle). " +
                   "For the real push/accumulate/barrier wiring, use an e2e test.",
               );
             },
@@ -361,6 +386,11 @@ export interface RunLoaderResult<T> {
   locationState: Record<string, unknown>;
   /** The resolved rango state cookie name seeded for the run (default `rango-state_router_0`). */
   stateCookieName: string;
+  /**
+   * Handle writes the loader made via `ctx.use(SomeHandle)({...})`, in push
+   * order. A `.defer()` resolver's value is recorded when the resolver runs.
+   */
+  handlePushes: Array<{ handle: Handle<any, any>; value: unknown }>;
 }
 
 export async function runLoaderResult<T>(
@@ -372,14 +402,22 @@ export async function runLoaderResult<T>(
     buildLoaderCtxOpts(opts),
   );
   const reqCtx = ctx as RequestContext<any>;
+  const handlePushes: Array<{ handle: Handle<any, any>; value: unknown }> = [];
   let result: T | undefined;
   let thrown: unknown;
   try {
-    result = await runWithLoaderContext(reqCtx, opts, (loaderCtx) =>
-      Promise.resolve(loaderFn(loaderCtx)),
+    result = await runWithLoaderContext(
+      reqCtx,
+      opts,
+      (loaderCtx) => Promise.resolve(loaderFn(loaderCtx)),
+      handlePushes,
     );
   } catch (error) {
     thrown = error;
   }
-  return { result, ...buildRunSnapshot(reqCtx, thrown, stateCookieName) };
+  return {
+    result,
+    handlePushes,
+    ...buildRunSnapshot(reqCtx, thrown, stateCookieName),
+  };
 }

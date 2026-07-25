@@ -15,6 +15,7 @@ import { kanbanPatterns } from "./kanban.js";
 import { loadersPatterns } from "./loaders.js";
 import { middlewarePatterns } from "./middleware.js";
 import { shopPatterns } from "./shop.js";
+import clientShopUrls from "./client-shop.client.js";
 import { magazinePatterns } from "./magazine.js";
 import { compositionPatterns } from "./composition-test.js";
 import { refreshDemoPatterns } from "./refresh-demo.js";
@@ -77,6 +78,10 @@ export const urlpatterns = urls(({ path, include, parallel }) => [
   include("/refresh", refreshDemoPatterns, { name: "refresh" }),
   include("/middleware", middlewarePatterns, { name: "middleware" }),
   include("/shop", shopPatterns, { name: "shop" }),
+  // clientUrls() shop mirror: the /shop product experience with all data
+  // consumption moved from handler ctx.use() to useLoader at read sites —
+  // clientUrls routes have no handlers, so the shape is forced.
+  include("/client-shop", clientShopUrls, { name: "clientShop" }),
   include("/magazine", magazinePatterns, { name: "magazine" }),
   include("/composition", compositionPatterns, { name: "composition" }),
   include("/gtm", gtmDemoPatterns, { name: "gtm" }),

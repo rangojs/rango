@@ -1,5 +1,6 @@
 import type { ContextVar } from "../context-var.js";
 import type { Handle } from "../handle.js";
+import type { HandlePush } from "../defer.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
@@ -51,14 +52,41 @@ export type LoaderContext<
    */
   routeParams: Record<string, string>;
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
+  /**
+   * Read a context variable — or READ collected handle data after
+   * `await ctx.rendered()` (the rendered-barrier contract; handle reads
+   * moved here from ctx.use(handle), which is now the write).
+   */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): TAccumulated;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /**
-   * Access another loader's data, or read handle data after rendered().
+   * Access another loader's data, or WRITE handle data (meta, breadcrumbs, …)
+   * — handler parity: `ctx.use(Meta)({ title })` pushes exactly like it does
+   * in a handler. Handle READS live on `ctx.get(handle)` (after rendered()).
    *
    * For loaders: returns a promise (loaders run in parallel).
-   * For handles: returns collected data (only after `await ctx.rendered()`).
+   * For handles: returns the push function, legal for the whole body,
+   * streaming loaders included. Delivery is async by the race model: pushes
+   * that settle before the handler barrier ride the SSR handle snapshot;
+   * later ones stream to the client and apply post-hydration (document lane)
+   * or progressively (navigation/action lanes). To guarantee a loader's
+   * handles are in the SSR'd document, mark the loader `stream: 'navigation'`
+   * so the document render awaits it.
+   *
+   * @example
+   * ```typescript
+   * export const ProductLoader = createLoader(async (ctx) => {
+   *   "use server";
+   *   const product = await getProduct(ctx.params.slug);
+   *   ctx.use(Meta)({ title: product.name });
+   *   ctx.use(Breadcrumbs)({ label: product.name });
+   *   return product;
+   * });
+   * ```
    */
   use: {
     <T, TLoaderParams = any>(
@@ -66,13 +94,13 @@ export type LoaderContext<
     ): Promise<T>;
     <TData, TAccumulated = TData[]>(
       handle: Handle<TData, TAccumulated>,
-    ): TAccumulated;
+    ): HandlePush<TData>;
   };
   /**
    * **Experimental.** Wait for all non-loader segments to settle.
    *
    * After the returned promise resolves, handle data is available via
-   * `ctx.use(handle)`. Supported in DSL loaders, including on streaming
+   * `ctx.get(handle)`. Supported in DSL loaders, including on streaming
    * trees that use `loading()` — the barrier waits for the streaming
    * handlers to finish pushing before it resolves. Throws if called from a
    * handler-invoked loader, or if a handler is already awaiting this loader
@@ -84,7 +112,7 @@ export type LoaderContext<
    * const PricesLoader = createLoader(async (ctx) => {
    *   "use server";
    *   await ctx.rendered();
-   *   const products = ctx.use(Products); // reads handle data
+   *   const products = ctx.get(Products); // reads handle data
    *   return pricing.getLive(products.map(p => p.id));
    * });
    * ```

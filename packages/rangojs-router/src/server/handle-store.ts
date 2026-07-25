@@ -93,6 +93,26 @@ export interface HandleStore {
   onError?: (error: Error) => void;
 
   /**
+   * Track a promise on the AUXILIARY (loader) settlement lane. Aux tracking
+   * keeps the store OPEN for pushes (a mid-body `ctx.handle(H)(...)` from a
+   * streaming loader is legal until this lane drains) WITHOUT joining
+   * `settled` — the handler barrier that rendered()-readers, the document
+   * handle snapshot, and prerender/cache collection wait on. Two lanes exist
+   * because loader bodies stream: joining them to `settled` would block SSR
+   * markup and hydration on the slowest loader (ssr-root.tsx and
+   * rsc-router.tsx both drain the document handle stream in blocking
+   * positions), and would self-deadlock any loader awaiting ctx.rendered().
+   */
+  trackAuxiliary<T>(promise: Promise<T>): Promise<T>;
+
+  /**
+   * Promise that resolves when the store is sealed AND BOTH lanes (handler +
+   * auxiliary) have drained. Late-push legality and default stream completion
+   * key on this, not on `settled`.
+   */
+  readonly fullySettled: Promise<void>;
+
+  /**
    * Push handle data for a specific handle and segment.
    * Multiple pushes to the same handle/segment accumulate in an array.
    * Each push triggers an emission on the stream.
@@ -101,16 +121,32 @@ export interface HandleStore {
 
   /**
    * Get all collected handle data after all handlers have settled.
-   * Waits for `settled`, then returns the finalized data.
+   * Waits for `settled` (handler lane), then returns the data at that point.
    */
   getData(): Promise<HandleData>;
 
   /**
    * Get an async iterator that yields handle data on each push.
-   * The iterator completes when all handlers have settled.
+   * Completes at the chosen settlement barrier: "fullySettled" (default —
+   * nav/action payloads, whose consumer applies each yield progressively) or
+   * "settled" (the document lane, whose consumers drain to completion in
+   * blocking positions and must not wait on loader bodies).
    * Each yield contains the full accumulated state (not just the delta).
+   * Safe for concurrent consumers (per-consumer version cursor).
    */
-  stream(): AsyncGenerator<HandleData, void, unknown>;
+  stream(
+    until?: "settled" | "fullySettled",
+  ): AsyncGenerator<HandleData, void, unknown>;
+
+  /**
+   * Document-lane late channel: yields full-state updates for pushes that
+   * land AFTER the handler barrier (streaming loader bodies), completing at
+   * fullySettled. Returns without yielding when the auxiliary lane is empty
+   * by the time `settled` resolves. The client consumes this post-hydration
+   * (rsc-router.tsx) and merges via the same application path as nav-lane
+   * progressive handle updates.
+   */
+  streamLate(): AsyncGenerator<HandleData, void, unknown>;
 
   /**
    * Get handle data for a specific segment (for caching).
@@ -151,20 +187,64 @@ export interface HandleStore {
 export function createHandleStore(): HandleStore {
   const data: HandleData = {};
 
-  // Settlement barrier: resolved only when sealed AND inflight === 0.
-  // seal() signals "no more track() calls". Each track() increments
-  // inflightCount, each promise.finally() decrements. settled resolves
-  // once both conditions are met — even if tracks are added while
-  // earlier ones are still in flight.
+  // Settlement barriers: `settled` (handler lane) resolves when sealed AND
+  // handler inflight === 0. `fullySettled` additionally waits for the
+  // auxiliary (loader) lane. seal() signals "no more track() calls"; each
+  // track/trackAuxiliary increments its lane's count, each promise settle
+  // decrements. Barriers resolve once their conditions are met — even if
+  // tracks are added while earlier ones are still in flight.
   let sealed = false;
   let inflightCount = 0;
+  let auxInflightCount = 0;
   let drainWaiters: (() => void)[] = [];
+  let fullDrainWaiters: (() => void)[] = [];
+
+  // Swap the waiter list out before resolving: a resolver may synchronously
+  // re-await and push onto the fresh list, which must not be drained by this
+  // pass. All three waiter lists (drain, full-drain, emission) flush through
+  // here so that ordering rule cannot drift between them.
+  function flushWaiters(waiters: (() => void)[]): void {
+    for (const resolve of waiters) resolve();
+  }
+
+  // Both lanes settle identically — the handler lane (`track`) gates `settled`,
+  // the auxiliary loader lane (`trackAuxiliary`) gates `fullySettled`. Shared so
+  // neither copy can lose this rule: .then() rather than .finally(), because
+  // .finally() re-throws on a NEW branch, producing an unhandled rejection that
+  // can crash the process when the tracked promise rejects.
+  function trackSettlement<T>(
+    promise: Promise<T>,
+    release: () => void,
+  ): Promise<T> {
+    const onSettle = () => {
+      release();
+      notifyDrain();
+    };
+    promise.then(onSettle, onSettle);
+    return promise;
+  }
 
   function notifyDrain() {
     if (sealed && inflightCount === 0 && drainWaiters.length > 0) {
       const waiters = drainWaiters;
       drainWaiters = [];
-      for (const resolve of waiters) resolve();
+      flushWaiters(waiters);
+    }
+    if (sealed && inflightCount === 0 && auxInflightCount === 0) {
+      if (streamConsumed && !completed) {
+        // Late-push guard + stream termination key on FULL drain, so a
+        // streaming loader body's ctx.handle() push stays legal until the
+        // auxiliary lane empties. Armed only once a stream consumer exists —
+        // getData()-only paths (prerender collection) keep their historical
+        // no-guard behavior.
+        completed = true;
+        signalEmission();
+      }
+      if (fullDrainWaiters.length > 0) {
+        const waiters = fullDrainWaiters;
+        fullDrainWaiters = [];
+        flushWaiters(waiters);
+      }
     }
   }
 
@@ -174,44 +254,50 @@ export function createHandleStore(): HandleStore {
     notifyDrain();
   }
 
-  // Dirty flag for pending emissions and resolver for waiting consumer.
-  // stream() only ever yields the latest full state, so we track a single
-  // dirty bit and clone `data` once at yield time instead of per push.
-  let hasPendingEmission = false;
-  let emissionResolver: (() => void) | null = null;
+  // Emission versioning. Each push bumps `version`; every stream consumer
+  // keeps its own cursor and yields whenever the version advanced past it.
+  // Multi-consumer safe (the document "settled" stream and the late channel
+  // overlap until the handler barrier): a single dirty bit + single resolver
+  // slot would drop wakeups for all but one consumer.
+  let version = 0;
+  let emissionWaiters: (() => void)[] = [];
   let completed = false;
+  let streamConsumed = false;
 
-  // Signal that a new emission is available
+  // Wake every waiting consumer (new push or a settlement barrier fired).
   function signalEmission() {
-    if (emissionResolver) {
-      const resolver = emissionResolver;
-      emissionResolver = null;
-      resolver();
+    if (emissionWaiters.length > 0) {
+      const waiters = emissionWaiters;
+      emissionWaiters = [];
+      flushWaiters(waiters);
     }
   }
 
   // Wait for the next emission or completion
-  function waitForEmission(): Promise<void> {
-    if (hasPendingEmission || completed) {
+  // Resolve when the consumer's cursor is behind the current version, the
+  // given done-flag reader reports termination, or a new signal arrives.
+  function waitForEmission(seen: number, isDone: () => boolean): Promise<void> {
+    if (version > seen || isDone()) {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      emissionResolver = resolve;
+      emissionWaiters.push(resolve);
     });
   }
 
   return {
     track<T>(promise: Promise<T>): Promise<T> {
       inflightCount++;
-      // Use .then() instead of .finally() to avoid creating an unhandled rejection
-      // branch when the promise rejects. .finally() re-throws on a new branch that
-      // can crash the process if not caught.
-      const onSettle = () => {
+      return trackSettlement(promise, () => {
         inflightCount--;
-        notifyDrain();
-      };
-      promise.then(onSettle, onSettle);
-      return promise;
+      });
+    },
+
+    trackAuxiliary<T>(promise: Promise<T>): Promise<T> {
+      auxInflightCount++;
+      return trackSettlement(promise, () => {
+        auxInflightCount--;
+      });
     },
 
     seal() {
@@ -222,6 +308,15 @@ export function createHandleStore(): HandleStore {
       if (sealed && inflightCount === 0) return Promise.resolve();
       return new Promise<void>((resolve) => {
         drainWaiters.push(resolve);
+      });
+    },
+
+    get fullySettled(): Promise<void> {
+      if (sealed && inflightCount === 0 && auxInflightCount === 0) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        fullDrainWaiters.push(resolve);
       });
     },
 
@@ -240,8 +335,8 @@ export function createHandleStore(): HandleStore {
       }
       data[handleName][segmentId].push(value);
 
-      // Mark dirty; the actual snapshot is cloned once at yield time.
-      hasPendingEmission = true;
+      // Bump the version; each consumer's cursor decides when to clone+yield.
+      version++;
       signalEmission();
     },
 
@@ -250,33 +345,75 @@ export function createHandleStore(): HandleStore {
       return this.settled.then(() => cloneHandleData(data));
     },
 
-    async *stream(): AsyncGenerator<HandleData, void, unknown> {
+    async *stream(
+      until: "settled" | "fullySettled" = "fullySettled",
+    ): AsyncGenerator<HandleData, void, unknown> {
+      streamConsumed = true;
       sealInternal();
+      // Re-evaluate: the store may have been sealed and drained BEFORE this
+      // consumer existed (seal() then stream()); sealInternal early-returns
+      // then, so the completed flag must be armed here.
+      notifyDrain();
 
-      this.settled.then(() => {
-        completed = true;
+      // Per-consumer termination flag driven by the chosen barrier. The
+      // global `completed` (late-push guard) always keys on FULL drain via
+      // notifyDrain — a "settled"-scoped consumer finishing does not make
+      // later loader pushes illegal.
+      let done = false;
+      const barrier = until === "settled" ? this.settled : this.fullySettled;
+      barrier.then(() => {
+        done = true;
         signalEmission();
       });
 
       // Batch rapid synchronous pushes with initial delay
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      if (Object.keys(data).length > 0) {
-        hasPendingEmission = false;
-        yield cloneHandleData(data);
-      }
-
-      while (!completed) {
-        await waitForEmission();
-
-        if (hasPendingEmission) {
-          hasPendingEmission = false;
+      let seen = 0;
+      while (true) {
+        if (version > seen && Object.keys(data).length > 0) {
+          seen = version;
           yield cloneHandleData(data);
         }
+        if (done) break;
+        await waitForEmission(seen, () => done);
+      }
+    },
+
+    async *streamLate(): AsyncGenerator<HandleData, void, unknown> {
+      streamConsumed = true;
+      sealInternal();
+      // Re-evaluate: the store may have been sealed and drained BEFORE this
+      // consumer existed (seal() then stream()); sealInternal early-returns
+      // then, so the completed flag must be armed here.
+      notifyDrain();
+
+      // Skip everything the handler-barrier snapshot already carried; the
+      // document consumers (SSR seed + pre-hydration drain) deliver that
+      // state. This channel exists only for pushes that land AFTER `settled`
+      // — streaming loader bodies writing meta/breadcrumbs mid-body.
+      await this.settled;
+      let seen = version;
+      if (auxInflightCount === 0) {
+        // Auxiliary lane already drained: every loader push (if any) beat the
+        // handler barrier and rode the normal snapshot. Nothing late follows —
+        // handler pushes after settled are illegal by contract.
+        return;
       }
 
-      if (hasPendingEmission) {
-        yield cloneHandleData(data);
+      let done = false;
+      this.fullySettled.then(() => {
+        done = true;
+        signalEmission();
+      });
+
+      while (true) {
+        if (version > seen) {
+          seen = version;
+          yield cloneHandleData(data);
+        }
+        if (done) break;
+        await waitForEmission(seen, () => done);
       }
     },
 
@@ -303,7 +440,7 @@ export function createHandleStore(): HandleStore {
         // segment, not accumulate on top of data from a different route.
         data[handleName][segmentId] = [...segmentHandles[handleName]];
       }
-      hasPendingEmission = true;
+      version++;
       signalEmission();
     },
   };

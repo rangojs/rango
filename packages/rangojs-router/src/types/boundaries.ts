@@ -74,6 +74,21 @@ export type LoaderDataResult<T = unknown> =
       ok: false;
       error: ErrorInfo;
       fallback: ReactNode | null;
+      /**
+       * Loader threw notFound() (DataNotFoundError). `fallback` carries the
+       * SERVER-RENDERED not-found UI (nearest notFoundBoundary → router
+       * notFound option → default), so the client swaps to 404 presentation
+       * with zero extra round trips. Routed by decodeLoaderEntry via
+       * LOADER_NOT_FOUND_FALLBACK, not the error-fallback marker.
+       */
+      notFound?: true;
+      /**
+       * Loader threw redirect(...) (a 3xx Response). `to` is resolved through
+       * the soft-redirect same-origin rules BEFORE leaving the server
+       * (resolveSoftRedirectUrl), so unsafe targets never reach the wire. The
+       * client navigates (replace) when the entry decodes.
+       */
+      redirect?: { to: string };
     };
 
 export function isLoaderDataResult(value: unknown): value is LoaderDataResult {

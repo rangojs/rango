@@ -375,6 +375,16 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `docs/internal/security-checklist.md`.
 - Typed error model: `RouteNotFoundError`, `DataNotFoundError`, etc.
 - Not-found and error boundary propagation across the route tree
+- Loader-thrown authority signals: `throw notFound()` / `throw redirect(...)`
+  from any loader (streamed useLoader consumption included). The envelope
+  (`wrapLoaderWithErrorHandling`) carries the server-rendered not-found UI or
+  the same-origin-resolved redirect target; the client routes them via the
+  `LOADER_NOT_FOUND_FALLBACK` / `LOADER_REDIRECT` markers
+  (`decode-loader-results.ts` → `StreamedLoaderErrorBoundary` /
+  `loader-redirect.tsx`). Document loads get a real 404 status when the
+  rejection settles before response construction (opportunistic `_setStatus`);
+  loader redirects are always client-side navigations (document-lane 302
+  authority stays with middleware).
 
 ### Action System
 
@@ -407,6 +417,27 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 ### Handle Data
 
 `createHandle`, `useHandle`, handle propagation from route handlers into client components, segment ordering and reconciler. Built-in: `Meta` handle for head tags, `Script` handle (+ `<Scripts>` renderer) for injecting nonced scripts into head/body, `Breadcrumbs` handle for breadcrumb navigation.
+
+- **Loader handle writes**: `ctx.use(SomeHandle)({...})` in a LOADER body is
+  the push (handler parity); the rendered()-gated READ moved to
+  `ctx.get(handle)`. Pushes attribute to the loader's owning segment
+  (`_currentSegmentId` pinned at the kickoff sites in
+  `segment-resolution/fresh.ts` + `revalidation.ts` — an id outside
+  matched/segmentOrder is silently dropped by `collectHandleData`). Delivery is
+  async by the race model: the handle store has TWO settlement lanes
+  (`handle-store.ts`: `track` = handlers, `trackAuxiliary` = DSL loader bodies;
+  `settled` vs `fullySettled`) so streaming loader pushes stay legal without
+  blocking SSR/hydration (both drain the document handle stream in blocking
+  positions) or deadlocking `ctx.rendered()`. Document lane: pushes that beat
+  the handler barrier ride the SSR snapshot; later ones stream via
+  `metadata.handlesLate` (`streamLate()`), applied post-hydration behind the
+  hydration-commit barrier in `rsc-router.tsx` (applying earlier mutates state
+  `useHandle` initializers read mid-hydration — mismatch). Nav/action lanes:
+  the payload `handles` generator now streams to `fullySettled`, applied
+  progressively by `processHandles`. `stream: 'navigation'` (planned knob)
+  upgrades a loader's handles to guaranteed-SSR. Userland:
+  `runLoaderResult().handlePushes` records writes; `runLoader` seeds reads via
+  `{ handles }` + `ctx.get`.
 
 ### Revalidation
 

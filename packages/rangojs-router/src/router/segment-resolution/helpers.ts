@@ -8,13 +8,14 @@
  * - Error boundary segment creation
  */
 
-import { createElement, type ReactNode } from "react";
-import { DataNotFoundError } from "../../errors";
+import type { ReactNode } from "react";
+import { isDataNotFoundError } from "../../errors";
 import {
   createErrorInfo,
   createErrorSegment,
   createNotFoundInfo,
   createNotFoundSegment,
+  resolveNotFoundFallback,
 } from "../error-handling.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
@@ -252,15 +253,12 @@ export function catchSegmentError<TEnv>(
     }
   };
 
-  if (error instanceof DataNotFoundError) {
-    const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-    // Fall back to router's notFound component, then a plain default
-    const notFoundOption = deps.notFoundComponent;
-    const defaultFallback =
-      typeof notFoundOption === "function"
-        ? notFoundOption({ pathname: pathname ?? "" })
-        : (notFoundOption ?? createElement("h1", null, "Not Found"));
-    const effectiveNotFoundFallback = notFoundFallback ?? defaultFallback;
+  if (isDataNotFoundError(error)) {
+    const effectiveNotFoundFallback = resolveNotFoundFallback(
+      deps.findNearestNotFoundBoundary(entry),
+      deps.notFoundComponent,
+      pathname,
+    );
 
     const notFoundInfo = createNotFoundInfo(
       error,
