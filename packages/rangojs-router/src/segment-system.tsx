@@ -451,6 +451,15 @@ export async function renderSegments(
     if (loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
+      // SPIKE (streaming useLoader): per-loader streams for the boundary's
+      // readers. MUST come from the individual loader refs — splitting the
+      // aggregate client-side is wrong (Promise.all resolves at the slowest
+      // loader, erasing per-loader timing; measured 400ms data held to a
+      // 2000ms sibling). Zero-loader boundaries pass NO streams so the
+      // resolver keeps the fresh-promise resolve-above suspension — that
+      // microtask suspension is what makes SSR emit the loading() fallback
+      // for content-suspending routes (segment-loader-promise.ts).
+      let boundaryLoaderStreams: Record<string, unknown> | undefined;
       if (forceAwait || isAction) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData = await loaderDataPromise;
@@ -460,16 +469,23 @@ export async function renderSegments(
             ms: Math.round(performance.now() - awaitStart),
           });
         }
-      } else if (segDebug) {
-        segDebugLog(
-          `segment ${id}: streaming loaders via LoaderBoundary (suspense)`,
-          { loaderIds },
-        );
+      } else if (loaderEntries.length > 0) {
+        boundaryLoaderStreams = {};
+        for (const l of loaderEntries) {
+          boundaryLoaderStreams[l.loaderId!] = l.loaderData;
+        }
+        if (segDebug) {
+          segDebugLog(
+            `segment ${id}: per-loader streams via LoaderBoundary (read-site suspense)`,
+            { loaderIds },
+          );
+        }
       }
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise: boundaryLoaderData,
         loaderIds,
+        loaderStreams: boundaryLoaderStreams,
         fallback: loading,
         outletKey: key,
         outletContent,

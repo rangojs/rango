@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Suspense, use, useMemo } from "react";
+import { Suspense, use } from "react";
 import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
@@ -67,6 +67,13 @@ const Suspender = ({
 export interface LoaderBoundaryProps {
   loaderDataPromise: Promise<any[]> | any[];
   loaderIds: string[];
+  /**
+   * SPIKE (streaming useLoader): per-loader UNDECODED results from the
+   * producer (values or individually-pending promises). When present, the
+   * resolver passes them through instead of resolving the aggregate above
+   * the children; useLoader suspends per loader at the read site.
+   */
+  loaderStreams?: Record<string, unknown>;
   fallback?: ReactNode;
   outletKey: string;
   outletContent: ReactNode;
@@ -78,6 +85,7 @@ export interface LoaderBoundaryProps {
 export function LoaderBoundary({
   loaderDataPromise,
   loaderIds,
+  loaderStreams,
   fallback,
   outletKey,
   outletContent,
@@ -90,6 +98,7 @@ export function LoaderBoundary({
       <LoaderResolver
         loaderDataPromise={loaderDataPromise}
         loaderIds={loaderIds}
+        loaderStreams={loaderStreams}
         outletKey={outletKey}
         outletContent={outletContent}
         segment={segment}
@@ -104,37 +113,32 @@ export function LoaderBoundary({
 /**
  * Internal component that resolves loader promises and renders OutletProvider
  *
- * SPIKE (streaming useLoader): a PENDING aggregate no longer resolves here
- * above the children. It is split into stable per-loader promises
- * (aggregate.then(results => results[index])) provided via loaderStreams, and
- * children render immediately — useLoader suspends at the read site, with the
- * LoaderBoundary's loading() fallback as the catching boundary. Consequences
- * to catalog: loading() shows only while a reader is actually suspended, and
- * boundary-level errorFallback handling moves to read-site throws
- * (decodeLoaderEntry). Resolved arrays (forceAwait/action lanes) keep the
- * synchronous decode so those lanes still commit whole.
+ * SPIKE (streaming useLoader): when the producer provides per-loader streams,
+ * nothing resolves here above the children — the streams pass through
+ * OutletProvider and useLoader suspends at the read site, with the
+ * LoaderBoundary's loading() fallback as the catching boundary. The streams
+ * MUST be per-loader promises from the producer: deriving them by splitting
+ * the aggregate (aggregate.then(r => r[i])) is wrong — Promise.all resolves
+ * at the SLOWEST loader, so every derived promise inherits the slowest
+ * timing and per-loader granularity is erased (measured: a 400ms loader's
+ * content held until a 2000ms sibling resolved).
+ *
+ * Without streams, the pre-spike behavior is preserved: a pending aggregate
+ * resolves ABOVE via use() (parallel/intercept slots still take this path —
+ * ResolvedSegment carries only the aggregate for slots), and a resolved
+ * array decodes synchronously (forceAwait/action lanes commit whole).
  */
 function LoaderResolver({
   loaderDataPromise,
   loaderIds,
+  loaderStreams,
   outletKey,
   outletContent,
   segment,
   parallel,
   children,
 }: Omit<LoaderBoundaryProps, "fallback">): ReactNode {
-  const pending = loaderDataPromise instanceof Promise;
-  const loaderStreams = useMemo(() => {
-    if (!pending) return undefined;
-    const aggregate = loaderDataPromise as Promise<any[]>;
-    const streams: Record<string, unknown> = {};
-    loaderIds.forEach((id, index) => {
-      streams[id] = aggregate.then((results) => results[index]);
-    });
-    return streams;
-  }, [pending, loaderDataPromise, loaderIds]);
-
-  if (pending) {
+  if (loaderStreams) {
     return (
       <OutletProvider
         key={outletKey}
@@ -148,8 +152,13 @@ function LoaderResolver({
     );
   }
 
+  const resolvedData =
+    loaderDataPromise instanceof Promise
+      ? use(loaderDataPromise)
+      : loaderDataPromise;
+
   const { loaderData, errorFallback } = decodeLoaderResults(
-    loaderDataPromise,
+    resolvedData,
     loaderIds,
   );
 
