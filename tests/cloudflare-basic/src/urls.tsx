@@ -124,6 +124,7 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
@@ -516,6 +517,11 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // Streaming useLoader demo (feat/useloader-suspense): no-loading()
+        // route streams per-loader; /gated contrasts the loading() boundary.
+        include("/suspense-demo", suspenseDemoPatterns, {
+          name: "suspenseDemo",
+        }),
         // Deployable cache lab: two independently tagged "use cache" values
         // rendered inside a tagged PPR shell with promised Meta. The paired e2e
         // drives its authenticated /api/cache/invalidate endpoint and proves
