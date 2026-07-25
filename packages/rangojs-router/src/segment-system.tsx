@@ -8,6 +8,7 @@ import { invariant } from "./errors.js";
 import {
   RouteContentWrapper,
   LoaderBoundary,
+  StreamedLoaderErrorBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { INTERNAL_RANGO_DEBUG } from "./internal-debug.js";
@@ -447,6 +448,18 @@ export async function renderSegments(
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
+
+    // Loader-bearing segments get the router-owned error boundary around
+    // their children so a read-site loader error renders its errorBoundary()
+    // fallback (LOADER_ERROR_FALLBACK marker on the thrown error) instead of
+    // escaping to app boundaries. Wrapped UNCONDITIONALLY on loader presence
+    // — streams and forceAwait lanes must produce the same tree shape or
+    // lane changes remount the subtree (docs/tree-structure.md).
+    if (loaderEntries.length > 0) {
+      nodeContent = createElement(StreamedLoaderErrorBoundary, {
+        children: nodeContent,
+      });
+    }
 
     if (loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);

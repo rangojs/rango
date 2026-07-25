@@ -1,9 +1,45 @@
 "use client";
 import type { ReactNode } from "react";
-import { Suspense, use } from "react";
+import { Component, Suspense, use } from "react";
 import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
-import { decodeLoaderResults } from "./decode-loader-results.js";
+import {
+  decodeLoaderResults,
+  LOADER_ERROR_FALLBACK,
+} from "./decode-loader-results.js";
+
+/**
+ * Router-owned error boundary for read-site loader errors. segment-system
+ * wraps every loader-bearing segment's children in one (unconditionally —
+ * streams and forceAwait lanes alike, so the tree shape never differs between
+ * navigation lanes; see docs/tree-structure.md). A loader error thrown by a
+ * suspending read carries its errorBoundary() fallback via
+ * LOADER_ERROR_FALLBACK (decodeLoaderEntry); this boundary renders that node,
+ * restoring the pre-streaming errorFallback-swap contract. Errors without the
+ * marker rethrow to the app's own boundaries.
+ */
+export class StreamedLoaderErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: unknown }
+> {
+  state: { error: unknown } = { error: null };
+
+  static getDerivedStateFromError(error: unknown): { error: unknown } {
+    return { error };
+  }
+
+  render(): ReactNode {
+    const { error } = this.state;
+    if (error !== null && error !== undefined) {
+      const fallback = (error as Record<PropertyKey, unknown>)[
+        LOADER_ERROR_FALLBACK
+      ];
+      if (fallback !== undefined) return fallback as ReactNode;
+      throw error;
+    }
+    return this.props.children;
+  }
+}
 
 /**
  * Stable async wrapper component for route content

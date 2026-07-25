@@ -627,72 +627,87 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   // the consumer's own inner Suspense — a hole. On every HIT the capture
   // snapshot's loader family overlays the recorded container onto the fresh
   // run (the outer label is PINNED at its capture-time seq, byte-parity with
-  // the frozen prelude) while the nested promise stays live (inner seq
-  // advances per request).
-  test("no loading() (bake lane): HITs with the container baked+pinned and the nested promise live", async ({
+  // the reader's own boundary) — CONTRACT CHANGE (streaming useLoader): route
+  // loaders are LIVE at capture unconditionally; the bake lane for value-slot
+  // loaders is gone. This route's outer read has NO boundary above it, so the
+  // masked loader root-postpones the capture and the <body> sanity gate
+  // refuses the shell: ppr on a boundary-less route degrades to runtime
+  // rendering (plus the once-per-key eternal-MISS warning). Axis 1 is
+  // untouched — everything streams FRESH per request. Baking route data into
+  // a shell is expressed via cache()/"use cache" now, never by omitting
+  // loading().
+  test("no loading() and no boundary above the reader: capture refuses, stays MISS, axis 1 streams fresh", async ({
     request,
   }) => {
     const url = f.url("/shell-cache/no-hole?probe=nohole");
-    await warmToHit(request, url);
 
-    const { html } = await measureFirstChunk(url);
-    const { prelude, resumed } = splitPrelude(html);
-
-    // Container baked into the frozen prelude; nested promise is a hole (its
-    // fallback froze, its value resumes).
-    expect(prelude).toMatch(/Streamed outer \d+/);
-    expect(prelude).toContain("Loading inner...");
-    expect(prelude).not.toMatch(/Streamed inner \d+/);
-    expect(resumed).toMatch(/Streamed inner \d+/);
-
-    // Pinning vs liveness across HITs: the baked container replays the
-    // CAPTURE-time value (snapshot overlay — no drift, no hydration mismatch)
-    // while the nested hole re-runs fresh (loader seq advances).
-    const second = await measureFirstChunk(url);
     const outerSeq = (h: string) =>
       Number(h.match(/Streamed outer (\d+)/)?.[1]);
     const innerSeq = (h: string) =>
       Number(h.match(/Streamed inner (\d+)/)?.[1]);
-    expect(outerSeq(second.html)).toBe(outerSeq(html));
-    expect(innerSeq(second.html)).toBeGreaterThan(innerSeq(html)!);
+
+    let firstHtml = "";
+    for (let i = 0; i < 3; i++) {
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.status()).toBe(200);
+      expect(
+        res.headers()["x-rango-shell"],
+        `request #${i} must stay MISS (no boundary above the reader)`,
+      ).toBe("MISS");
+      const html = await res.text();
+      // Axis 1 streams: the inner Suspense fallback flushes, the value lands
+      // later in the same body, and the outer value is present.
+      expect(html).toMatch(/Streamed outer \d+/);
+      expect(html).toContain("Loading inner...");
+      expect(html).toMatch(/Streamed inner \d+/);
+      if (i === 0) firstHtml = html;
+      if (i < 2) await new Promise((r) => setTimeout(r, 350));
+    }
+
+    // Liveness: nothing pinned anywhere — both values advance per request.
+    const last = await request.get(url, { headers: HTML_HEADERS });
+    const lastHtml = await last.text();
+    expect(outerSeq(lastHtml)).toBeGreaterThan(outerSeq(firstHtml)!);
+    expect(innerSeq(lastHtml)).toBeGreaterThan(innerSeq(firstHtml)!);
   });
 
-  // /shell-cache/settled: nested-promise SHAPE is the liveness declaration.
-  // A bake-lane loader's nested promise that is ALREADY RESOLVED at container
-  // return previously won the capture window and its VALUE was snapshot-pinned
-  // — every HIT then served the capture-time value to every visitor (found
-  // live: a storefront basket, with the capturing session's basketId/customer
-  // data, frozen into the shared shell and served to anonymous requests).
-  // Nested thenables are now MASKED at capture regardless of settle timing:
-  // the consumer's own Suspense postpones (its fallback bakes as the hole in
-  // the prelude) and every HIT streams the FRESH value. The consumer still
-  // receives a real promise, so the original #438 regression (raw value handed
-  // to use()) stays impossible by construction.
-  test("bake lane, nested promise settled inside the window: holes anyway — outer pins, nested value stays FRESH per request", async ({
+  // /shell-cache/settled — CONTRACT CHANGE (streaming useLoader): the bake
+  // lane for value-slot loaders is gone, so the settle-timing question this
+  // fixture used to probe (a nested promise resolving inside the capture
+  // window) can no longer pin ANY value: the whole loader is masked at
+  // capture, and this route's outer read has no boundary above it, so the
+  // capture refuses and the route stays MISS. The cross-session bake leak
+  // this fixture guarded against (a storefront basket frozen into the shared
+  // shell) is now impossible by construction — nothing from a value-slot
+  // loader can enter a shell. Axis 1 serves everything fresh; hydration
+  // stays clean and use(data.fast) still receives a real promise (#438).
+  test("nested promise settled inside the window: stays MISS, everything fresh per request, hydration clean", async ({
     request,
     page,
   }) => {
     const url = f.url("/shell-cache/settled?probe=settled");
-    await warmToHit(request, url);
 
-    const { html } = await measureFirstChunk(url);
     const outerSeq = (h: string) => Number(h.match(/Settled outer (\d+)/)?.[1]);
     const fastSeq = (h: string) => Number(h.match(/Settled fast (\d+)/)?.[1]);
-    // Parity: the outer (non-promise) container material is snapshot-pinned.
-    expect(outerSeq(html)).toBeGreaterThan(0);
-    // The frozen prelude holds the consumer's Suspense fallback, never a
-    // pinned nested value — the nested promise holes by declaration.
-    const { prelude } = splitPrelude(html);
-    expect(prelude).toContain("fast pending...");
-    expect(prelude).not.toMatch(/Settled fast \d+/);
-    // Liveness: the nested value in the full body is a FRESH execution's
-    // (seq beyond the pinned capture seq), and it advances on every HIT.
-    expect(fastSeq(html)).toBeGreaterThan(outerSeq(html)!);
-    const second = await measureFirstChunk(url);
-    expect(outerSeq(second.html)).toBe(outerSeq(html));
-    expect(fastSeq(second.html)).toBeGreaterThan(fastSeq(html)!);
 
-    // Browser: the HIT hydrates cleanly — use(data.fast) still receives a real
+    const first = await request.get(url, { headers: HTML_HEADERS });
+    expect(first.headers()["x-rango-shell"]).toBe("MISS");
+    const html = await first.text();
+    expect(outerSeq(html)).toBeGreaterThan(0);
+    expect(html).toMatch(/Settled fast \d+/);
+
+    await new Promise((r) => setTimeout(r, 350));
+    const second = await request.get(url, { headers: HTML_HEADERS });
+    expect(
+      second.headers()["x-rango-shell"],
+      "no boundary above the reader — capture must keep refusing",
+    ).toBe("MISS");
+    const secondHtml = await second.text();
+    // Liveness: nothing pinned — both values advance per request.
+    expect(outerSeq(secondHtml)).toBeGreaterThan(outerSeq(html)!);
+    expect(fastSeq(secondHtml)).toBeGreaterThan(fastSeq(html)!);
+
+    // Browser: axis 1 hydrates cleanly — use(data.fast) still receives a real
     // promise (the fresh one), so #438 cannot recur. The SSR'd text is in the
     // DOM before hydration, so waitForHydration keeps the error window inside
     // the guard.
@@ -739,51 +754,38 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     expect(seqOf(second.html)).toBeGreaterThan(seqOf(html)!);
   });
 
-  // /shell-cache/bake-slow: the PIN-FIRST optimization (loader-cache.ts
-  // `if (!recorded.holes)`). The layout registers a 600ms bake-lane loader
-  // (no loading() on the layout) returning a plain HOLE-FREE container. Its
-  // container bakes into the snapshot's loader family hole-free, so on a HIT the
-  // payload resolves the loaderData from the PIN immediately instead of gating
-  // on the fresh 600ms run (which still executes ungated for side effects). The
-  // child keeps a fast ~30ms price hole behind loading() so a real shell
-  // captures. Two guarantees in one: the served label is pinned (frozen across
-  // HITs, not the advancing fresh seq) AND the pin makes the full HIT response
-  // beat the 600ms fresh run.
-  test("pin-first bake lane: a HIT serves the pinned 600ms container fast and frozen across HITs", async ({
+  // /shell-cache/bake-slow — CONTRACT CHANGE (streaming useLoader): the
+  // pin-first bake optimization is gone with the bake lane itself. The
+  // layout's 600ms loader is masked at capture like every value-slot loader;
+  // its reader sits inside the child route's loading() boundary, so the
+  // shell still captures (chrome baked, the route area one live hole) and
+  // every HIT re-runs the loader FRESH — the label ADVANCES across HITs
+  // instead of freezing. The full HIT body now gates on the real 600ms run
+  // (the pin-first fast path no longer applies); a route that wants the old
+  // fast+frozen behavior expresses it with cache()/"use cache".
+  test("slow layout loader under the child's loading(): HITs with the label LIVE per request (no pin)", async ({
     request,
   }) => {
     const url = f.url("/shell-cache/bake-slow?probe=bakeslow");
     await warmToHit(request, url);
 
-    // request.get buffers the WHOLE body, so elapsed covers stream completion.
-    // Without pin-first the payload gates on the fresh 600ms bake run
-    // (elapsed >= 600ms); pinned, the recorded container resolves immediately
-    // and only the ~30ms live hole remains — the 400ms bound leaves a 200ms+
-    // margin for CI noise either side.
-    const start = Date.now();
     const res = await request.get(url, { headers: HTML_HEADERS });
-    const elapsed = Date.now() - start;
     expect(res.status()).toBe(200);
     expect(res.headers()["x-rango-shell"]).toBe("HIT");
     const html = await res.text();
 
-    // The pinned bake label rides the HIT body beside the live hole's content.
-    const captured = /bake-\d+/.exec(html)?.[0];
-    expect(captured, "the pinned bake label rides the HIT body").toBeTruthy();
+    // The fresh bake label rides the HIT body beside the live hole's content.
+    const captured = /bake-(\d+)/.exec(html);
+    expect(captured, "the bake label rides the HIT body").toBeTruthy();
     expect(html).toContain("Live price:");
 
-    expect(
-      elapsed,
-      `HIT full-response ${elapsed}ms must beat the 600ms fresh bake run`,
-    ).toBeLessThan(400);
-
-    // Frozen: a second HIT serves the SAME captured label (the pin, not the
-    // fresh seq that keeps advancing in the background) while the price hole
-    // stays live.
+    // LIVE: a second HIT serves an ADVANCED label — the loader re-ran fresh;
+    // nothing from a value-slot loader is pinned into the shell.
     const second = await request.get(url, { headers: HTML_HEADERS });
     expect(second.headers()["x-rango-shell"]).toBe("HIT");
     const secondHtml = await second.text();
-    expect(/bake-\d+/.exec(secondHtml)?.[0]).toBe(captured);
+    const secondLabel = /bake-(\d+)/.exec(secondHtml);
+    expect(Number(secondLabel![1])).toBeGreaterThan(Number(captured![1]));
     expect(secondHtml).toContain("Live price:");
   });
 

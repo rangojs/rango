@@ -13,6 +13,9 @@ function MockLoaderBoundary(props: any) {
 function MockRouteContentWrapper(props: any) {
   return null;
 }
+function MockStreamedLoaderErrorBoundary(props: any) {
+  return props.children;
+}
 function MockMountContextProvider(props: any) {
   return props.children;
 }
@@ -31,6 +34,7 @@ vi.mock("../browser/react/mount-context.js", () => ({
 vi.mock("../route-content-wrapper.js", () => ({
   RouteContentWrapper: MockRouteContentWrapper,
   LoaderBoundary: MockLoaderBoundary,
+  StreamedLoaderErrorBoundary: MockStreamedLoaderErrorBoundary,
 }));
 
 vi.mock("../root-error-boundary.js", () => ({
@@ -38,7 +42,10 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
-import { decodeLoaderEntry } from "../decode-loader-results";
+import {
+  decodeLoaderEntry,
+  LOADER_ERROR_FALLBACK,
+} from "../decode-loader-results";
 
 // Helper to create a minimal segment
 function seg(
@@ -459,13 +466,13 @@ describe("segment-system", () => {
         expect(decodeLoaderEntry(entry)).toEqual({ value: 42 });
       });
 
-      it("streams an error entry; the read site throws instead of rendering the boundary fallback", async () => {
-        // DIVERGENCE (streaming useLoader): the build no longer swaps in the
-        // errorBoundary() fallback for a failed loader — the undecoded error
-        // entry streams to the read site and decodeLoaderEntry throws to the
-        // nearest React error boundary, even when result.fallback exists.
-        // Restoring DSL-boundary routing for read-site errors is follow-up
-        // work; this pin documents the current behavior.
+      it("streams an error entry; the thrown error carries the boundary fallback for StreamedLoaderErrorBoundary", async () => {
+        // Read-site error routing: the build no longer swaps children for the
+        // errorBoundary() fallback — the undecoded error entry streams to the
+        // read site, decodeLoaderEntry throws with the fallback riding the
+        // error via LOADER_ERROR_FALLBACK, and the router-owned
+        // StreamedLoaderErrorBoundary (wrapped around every loader-bearing
+        // segment's children) renders it.
         const errorFallback = createElement("div", null, "Error occurred");
 
         const segments: ResolvedSegment[] = [
@@ -487,11 +494,21 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // Children are NOT replaced at build time; the error entry rides the
-        // stream and throws when decoded.
+        // Children are NOT replaced at build time; the boundary wrapper is in
+        // place and the error entry rides the stream.
         expect(outlets[0].props.children).not.toBe(errorFallback);
+        expect(
+          collectByType(tree, MockStreamedLoaderErrorBoundary),
+        ).toHaveLength(1);
         const entry = outlets[0].props.loaderStreams["my-loader"];
-        expect(() => decodeLoaderEntry(entry)).toThrow("Failed");
+        let thrown: unknown;
+        try {
+          decodeLoaderEntry(entry);
+        } catch (e) {
+          thrown = e;
+        }
+        expect((thrown as Error).message).toBe("Failed");
+        expect((thrown as any)[LOADER_ERROR_FALLBACK]).toBe(errorFallback);
       });
 
       it("no longer rejects the tree build for a loader error; the error surfaces at the read site", async () => {

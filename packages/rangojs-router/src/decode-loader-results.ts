@@ -52,12 +52,24 @@ export function decodeLoaderResults(
 }
 
 /**
- * SPIKE (streaming useLoader): single-entry decode for read-site resolution.
- * Mirrors decodeLoaderResults for one result, with one deliberate divergence:
- * a hook cannot swap the subtree for an errorBoundary() fallback, so an error
- * entry ALWAYS throws the reconstructed error (nearest React error boundary
- * catches), even when result.fallback is present. Catalog which e2e pins this
- * breaks before promoting the spike.
+ * Marker property carrying the errorBoundary() fallback on a read-site loader
+ * error. decodeLoaderEntry attaches the pre-rendered boundary node (produced
+ * server-side by loader-resolution) to the thrown error; the router-owned
+ * StreamedLoaderErrorBoundary above the readers (segment-system wires it for
+ * every loader-bearing segment) catches by this marker and renders the
+ * fallback — restoring the build-time errorFallback-swap contract for
+ * streamed loaders. Errors without the marker rethrow to the app's boundaries.
+ */
+export const LOADER_ERROR_FALLBACK: unique symbol = Symbol(
+  "rango.loaderErrorFallback",
+);
+
+/**
+ * Streaming useLoader: single-entry decode for read-site resolution. Mirrors
+ * decodeLoaderResults for one result. An error entry throws the reconstructed
+ * error (name/stack/code/cause preserved); when the entry carries an
+ * errorBoundary() fallback, the node rides the throw via
+ * LOADER_ERROR_FALLBACK for the boundary above the readers to render.
  */
 export function decodeLoaderEntry(result: any): any {
   if (!isLoaderDataResult(result)) {
@@ -74,5 +86,8 @@ export function decodeLoaderEntry(result: any): any {
   if (info.name) err.name = info.name;
   if (info.stack) err.stack = info.stack;
   if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  if (result.fallback != null) {
+    (err as any)[LOADER_ERROR_FALLBACK] = result.fallback;
+  }
   throw err;
 }
