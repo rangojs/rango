@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Suspense, use } from "react";
+import { Suspense, use, useMemo } from "react";
 import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
@@ -103,6 +103,16 @@ export function LoaderBoundary({
 
 /**
  * Internal component that resolves loader promises and renders OutletProvider
+ *
+ * SPIKE (streaming useLoader): a PENDING aggregate no longer resolves here
+ * above the children. It is split into stable per-loader promises
+ * (aggregate.then(results => results[index])) provided via loaderStreams, and
+ * children render immediately — useLoader suspends at the read site, with the
+ * LoaderBoundary's loading() fallback as the catching boundary. Consequences
+ * to catalog: loading() shows only while a reader is actually suspended, and
+ * boundary-level errorFallback handling moves to read-site throws
+ * (decodeLoaderEntry). Resolved arrays (forceAwait/action lanes) keep the
+ * synchronous decode so those lanes still commit whole.
  */
 function LoaderResolver({
   loaderDataPromise,
@@ -113,14 +123,33 @@ function LoaderResolver({
   parallel,
   children,
 }: Omit<LoaderBoundaryProps, "fallback">): ReactNode {
-  // Resolve loader promises using React's use()
-  const resolvedData =
-    loaderDataPromise instanceof Promise
-      ? use(loaderDataPromise)
-      : loaderDataPromise;
+  const pending = loaderDataPromise instanceof Promise;
+  const loaderStreams = useMemo(() => {
+    if (!pending) return undefined;
+    const aggregate = loaderDataPromise as Promise<any[]>;
+    const streams: Record<string, unknown> = {};
+    loaderIds.forEach((id, index) => {
+      streams[id] = aggregate.then((results) => results[index]);
+    });
+    return streams;
+  }, [pending, loaderDataPromise, loaderIds]);
+
+  if (pending) {
+    return (
+      <OutletProvider
+        key={outletKey}
+        content={outletContent}
+        segment={segment}
+        parallel={parallel}
+        loaderStreams={loaderStreams}
+      >
+        {children}
+      </OutletProvider>
+    );
+  }
 
   const { loaderData, errorFallback } = decodeLoaderResults(
-    resolvedData,
+    loaderDataPromise,
     loaderIds,
   );
 

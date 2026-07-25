@@ -38,6 +38,7 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
+import { decodeLoaderEntry } from "../decode-loader-results";
 
 // Helper to create a minimal segment
 function seg(
@@ -238,7 +239,7 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(1);
       });
 
-      it("uses OutletProvider with awaited data when loaders exist but no loading", async () => {
+      it("streams per-loader entries through OutletProvider.loaderStreams when loaders exist but no loading", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -254,9 +255,36 @@ describe("segment-system", () => {
 
         // No LoaderBoundary because loading is undefined
         expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
-        // Uses OutletProvider with loaderData injected
+        // Streaming lanes no longer block the tree build: the UNDECODED
+        // per-loader entry rides loaderStreams and useLoader decodes (and
+        // suspends, when pending) at the read site.
         const outlets = collectByType(tree, MockOutletProvider);
         expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.loaderData).toBeUndefined();
+        expect(outlets[0].props.loaderStreams).toEqual({
+          "my-loader": { value: 42 },
+        });
+      });
+
+      it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {
+        // popstate / stale-revalidation / fully-prefetched commits must stay
+        // whole: the awaited lane still provides DECODED loaderData and no
+        // stream channel, so nothing suspends at the read site.
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.data",
+            type: "loader",
+            loaderId: "my-loader",
+            loaderData: { value: 42 },
+          }),
+        ];
+
+        const result = await renderSegments(segments, { forceAwait: true });
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.loaderStreams).toBeUndefined();
         expect(outlets[0].props.loaderData).toEqual({
           "my-loader": { value: 42 },
         });
@@ -394,14 +422,14 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // Layout L0 gets the loader data (parent of "L0D0.products" is "L0")
+        // Layout L0 gets the loader stream (parent of "L0D0.products" is "L0")
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "products-loader": { products: ["a", "b"] },
         });
       });
 
-      it("resolves LoaderDataResult success wrapper", async () => {
+      it("streams the LoaderDataResult success wrapper undecoded; the read site unwraps it", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -420,13 +448,24 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // Should unwrap LoaderDataResult to get the inner data
-        expect(outlets[0].props.loaderData).toEqual({
-          "my-loader": { value: 42 },
+        // The wrapper crosses the stream channel intact; decodeLoaderEntry
+        // (useLoader's read-site decode) unwraps it.
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        expect(entry).toEqual({
+          __loaderResult: true,
+          ok: true,
+          data: { value: 42 },
         });
+        expect(decodeLoaderEntry(entry)).toEqual({ value: 42 });
       });
 
-      it("renders error fallback for LoaderDataResult with error+fallback", async () => {
+      it("streams an error entry; the read site throws instead of rendering the boundary fallback", async () => {
+        // DIVERGENCE (streaming useLoader): the build no longer swaps in the
+        // errorBoundary() fallback for a failed loader — the undecoded error
+        // entry streams to the read site and decodeLoaderEntry throws to the
+        // nearest React error boundary, even when result.fallback exists.
+        // Restoring DSL-boundary routing for read-site errors is follow-up
+        // work; this pin documents the current behavior.
         const errorFallback = createElement("div", null, "Error occurred");
 
         const segments: ResolvedSegment[] = [
@@ -448,11 +487,17 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        // The OutletProvider children should be the error fallback
-        expect(outlets[0].props.children).toBe(errorFallback);
+        // Children are NOT replaced at build time; the error entry rides the
+        // stream and throws when decoded.
+        expect(outlets[0].props.children).not.toBe(errorFallback);
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        expect(() => decodeLoaderEntry(entry)).toThrow("Failed");
       });
 
-      it("throws for LoaderDataResult with error but no fallback", async () => {
+      it("no longer rejects the tree build for a loader error; the error surfaces at the read site", async () => {
+        // Error TIMING moved: the build used to await + throw here. Streaming
+        // lanes complete the build and the reconstructed error (name/stack/
+        // code preserved) throws from decodeLoaderEntry during render.
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -467,7 +512,11 @@ describe("segment-system", () => {
           }),
         ];
 
-        await expect(renderSegments(segments)).rejects.toThrow("Loader failed");
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const entry = outlets[0].props.loaderStreams["my-loader"];
+        expect(() => decodeLoaderEntry(entry)).toThrow("Loader failed");
       });
     });
 
@@ -600,7 +649,7 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "modal-loader": { modal: true },
         });
       });
@@ -631,7 +680,7 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
-        expect(layoutOutlet.props.loaderData).toEqual({
+        expect(layoutOutlet.props.loaderStreams).toEqual({
           "detail-loader": { detail: true },
         });
       });
@@ -1051,8 +1100,8 @@ describe("segment-system", () => {
         // (loaders from parallels are merged into parent's loaders)
         const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         // The sidebar loader is grouped under the parallel "L0.@sidebar"
-        // which is a child of L0, so it gets included in L0's loaders
-        expect(layoutOutlet.props.loaderData).toBeDefined();
+        // which is a child of L0, so it gets included in L0's loader streams
+        expect(layoutOutlet.props.loaderStreams).toBeDefined();
       });
 
       it("reconstructs missing parallel loader markers for layout-owned parallels", async () => {

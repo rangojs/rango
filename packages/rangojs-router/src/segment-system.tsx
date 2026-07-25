@@ -492,28 +492,49 @@ export async function renderSegments(
       );
 
       const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
-      // No loading() on this segment, so its loader data cannot stream behind
-      // a Suspense fallback — the tree build BLOCKS here until the data
-      // arrives. On the initial document this await runs before hydrateRoot.
-      const layoutAwaitStart = segDebug ? performance.now() : 0;
-      const resolvedData = await buildLoaderPromise(layoutLoaders);
-      if (segDebug) {
-        segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
-          loaderIds: layoutLoaderIds,
-          ms: Math.round(performance.now() - layoutAwaitStart),
-        });
-      }
-      const decodeStart = segDebug ? performance.now() : 0;
-      const { loaderData, errorFallback } = decodeLoaderResults(
-        resolvedData,
-        layoutLoaderIds,
-      );
-      if (segDebug) {
-        const decodeMs = Math.round(performance.now() - decodeStart);
-        if (decodeMs > 0) {
-          segDebugLog(`segment ${id}: loader results decoded`, {
-            ms: decodeMs,
+      // SPIKE (streaming useLoader): a segment without loading() used to BLOCK
+      // the tree build here (await buildLoaderPromise) so its data was always
+      // resolved before render. Streaming lanes now skip the await and pass
+      // per-loader UNDECODED results (possibly pending promises) through
+      // OutletProvider.loaderStreams — useLoader suspends at the read site to
+      // the nearest CONSUMER Suspense boundary. forceAwait (popstate, stale
+      // revalidation, fully-prefetched) and action lanes keep the blocking
+      // await so those commits stay whole with no fallback flash.
+      let loaderData: Record<string, any> = {};
+      let errorFallback: ReactNode = null;
+      let loaderStreams: Record<string, unknown> | undefined;
+      if (forceAwait || isAction) {
+        const layoutAwaitStart = segDebug ? performance.now() : 0;
+        const resolvedData = await buildLoaderPromise(layoutLoaders);
+        if (segDebug) {
+          segDebugLog(`segment ${id}: layout loaders awaited (blocking)`, {
+            loaderIds: layoutLoaderIds,
+            ms: Math.round(performance.now() - layoutAwaitStart),
           });
+        }
+        const decodeStart = segDebug ? performance.now() : 0;
+        ({ loaderData, errorFallback } = decodeLoaderResults(
+          resolvedData,
+          layoutLoaderIds,
+        ));
+        if (segDebug) {
+          const decodeMs = Math.round(performance.now() - decodeStart);
+          if (decodeMs > 0) {
+            segDebugLog(`segment ${id}: loader results decoded`, {
+              ms: decodeMs,
+            });
+          }
+        }
+      } else if (layoutLoaders.length > 0) {
+        loaderStreams = {};
+        for (const l of layoutLoaders) {
+          loaderStreams[l.loaderId!] = l.loaderData;
+        }
+        if (segDebug) {
+          segDebugLog(
+            `segment ${id}: layout loaders streaming to read sites (no loading())`,
+            { loaderIds: layoutLoaderIds },
+          );
         }
       }
 
@@ -574,6 +595,7 @@ export async function renderSegments(
         segment: node.segment,
         parallel: node.parallel,
         loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
+        loaderStreams,
         children: errorFallback ?? nodeContent,
       });
     }

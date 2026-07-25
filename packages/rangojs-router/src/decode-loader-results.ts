@@ -50,3 +50,29 @@ export function decodeLoaderResults(
 
   return { loaderData, errorFallback };
 }
+
+/**
+ * SPIKE (streaming useLoader): single-entry decode for read-site resolution.
+ * Mirrors decodeLoaderResults for one result, with one deliberate divergence:
+ * a hook cannot swap the subtree for an errorBoundary() fallback, so an error
+ * entry ALWAYS throws the reconstructed error (nearest React error boundary
+ * catches), even when result.fallback is present. Catalog which e2e pins this
+ * breaks before promoting the spike.
+ */
+export function decodeLoaderEntry(result: any): any {
+  if (!isLoaderDataResult(result)) {
+    return result;
+  }
+  if (result.ok) {
+    return result.data;
+  }
+  const info = result.error;
+  const err = new Error(
+    info.message,
+    info.cause !== undefined ? { cause: info.cause } : undefined,
+  );
+  if (info.name) err.name = info.name;
+  if (info.stack) err.stack = info.stack;
+  if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  throw err;
+}
