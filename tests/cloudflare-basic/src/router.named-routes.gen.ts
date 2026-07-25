@@ -107,6 +107,7 @@ export const NamedRoutes = {
   streamTestIndex: "/stream-test",
   "suspenseDemo.gated": "/suspense-demo/gated",
   "suspenseDemo.index": "/suspense-demo",
+  "suspenseDemo.ppr": "/suspense-demo/ppr",
   swrAction: "/swr-action",
   swrCtx: "/swr-ctx",
   taggedDocument: "/tagged-document",

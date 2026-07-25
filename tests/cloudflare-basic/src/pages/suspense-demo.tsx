@@ -51,6 +51,10 @@ function SuspenseDemoIndexPage() {
         <Link to="/suspense-demo/gated" data-testid="sd-to-gated">
           Compare: same loaders behind route-level loading()
         </Link>
+        {" · "}
+        <Link to="/suspense-demo/ppr" data-testid="sd-to-ppr">
+          Compare: PPR shell with live holes
+        </Link>
       </p>
     </div>
   );
@@ -80,6 +84,37 @@ function SuspenseDemoGatedPage() {
   );
 }
 
+function SuspenseDemoPprPage() {
+  return (
+    <div data-testid="suspense-demo-ppr-page">
+      <h1 data-testid="sd-ppr-hero">PPR variant</h1>
+      <p>
+        This route is <strong>ppr + loading()</strong>. The renderable loading()
+        puts all three loaders in the LIVE lane: the capture masks them with
+        never-resolving promises, so each card's useLoader read postpones at its
+        OWN Suspense boundary — the shell freezes the hero plus three skeletons
+        as three separate holes, and nothing bakes. On a HIT the shell serves
+        instantly and the loaders run fresh, filling the holes at 400/1200/2000
+        with fresh timestamps.
+      </p>
+      <Suspense fallback={<CardSkeleton label="stats" />}>
+        <StatsCard />
+      </Suspense>
+      <Suspense fallback={<CardSkeleton label="activity" />}>
+        <ActivityCard />
+      </Suspense>
+      <Suspense fallback={<CardSkeleton label="report" />}>
+        <ReportCard />
+      </Suspense>
+      <p>
+        <Link to="/suspense-demo" data-testid="sd-ppr-to-index">
+          Back to the streaming variant
+        </Link>
+      </p>
+    </div>
+  );
+}
+
 export const suspenseDemoPatterns = urls(({ path, loader, loading }) => [
   path("/", SuspenseDemoIndexPage, { name: "index" }, () => [
     loader(FastStatsLoader),
@@ -91,4 +126,20 @@ export const suspenseDemoPatterns = urls(({ path, loader, loading }) => [
     loader(SlowReportLoader),
     loading(<div data-testid="sd-gated-fallback">Loading the gated page…</div>),
   ]),
+  // PPR: loading() is the LIVE-lane trigger (entryLoadingMasksLoaders) — the
+  // capture masks the loaders and the frozen shell holds holes at each card's
+  // consumer Suspense boundary. Without loading() this route would be BAKE
+  // lane: loaders execute at capture and the card values (timestamps included)
+  // freeze into the shared shell.
+  path(
+    "/ppr",
+    SuspenseDemoPprPage,
+    { name: "ppr", ppr: { ttl: 300, swr: 120 } },
+    () => [
+      loader(FastStatsLoader),
+      loader(MediumActivityLoader),
+      loader(SlowReportLoader),
+      loading(<div data-testid="sd-ppr-fallback">Loading the PPR page…</div>),
+    ],
+  ),
 ]);
