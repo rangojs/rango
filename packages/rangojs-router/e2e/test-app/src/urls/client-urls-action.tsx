@@ -1,9 +1,16 @@
 "use client";
 
-import { clientUrls, useLoader, useOutlet } from "@rangojs/router/client";
+import {
+  clientUrls,
+  Link,
+  useLoader,
+  useOutlet,
+  useParams,
+} from "@rangojs/router/client";
 import { bumpClientUrlsCounter } from "../actions.jsx";
 import {
   ClientUrlsCounterLoader,
+  ClientUrlsItemLoader,
   ClientUrlsSessionLoader,
 } from "./client-urls.loader.js";
 
@@ -49,14 +56,44 @@ function ActionClientIndex() {
   );
 }
 
+function ActionClientItem() {
+  const { data } = useLoader(ClientUrlsItemLoader);
+  const { data: count } = useLoader(ClientUrlsCounterLoader);
+  const { data: session } = useLoader(ClientUrlsSessionLoader);
+  const params = useParams();
+
+  return (
+    <div data-testid="ca-item">
+      <span data-testid="ca-item-param">{params.itemId}</span>
+      <span data-testid="ca-item-loader">{data}</span>
+      <span data-testid="ca-item-count">{count}</span>
+      <span data-testid="ca-item-session">{session}</span>
+      <button
+        data-testid="ca-item-bump"
+        onClick={() => void bumpClientUrlsCounter()}
+      >
+        Bump counter
+      </button>
+      <Link
+        to="/client-urls-action/items/beta"
+        prefetch="none"
+        data-testid="ca-item-to-beta"
+      >
+        Item beta
+      </Link>
+    </div>
+  );
+}
+
 export default clientUrls(({ layout, path, loader, revalidate }) => [
   layout(ActionClientLayout, () => [
     loader(ClientUrlsCounterLoader),
-    loader(ClientUrlsSessionLoader, () => [
-      revalidate(({ isAction, defaultShouldRevalidate }) =>
-        isAction ? false : defaultShouldRevalidate,
-      ),
-    ]),
+    // Session pattern: load once, never revalidate — the decision transports
+    // on BOTH request kinds (the action POST and same-route param-nav GETs).
+    loader(ClientUrlsSessionLoader, () => [revalidate(() => false)]),
     path("/", ActionClientIndex, { name: "index" }),
+    path("/items/:itemId", ActionClientItem, { name: "item" }, () => [
+      loader(ClientUrlsItemLoader),
+    ]),
   ]),
 ]);

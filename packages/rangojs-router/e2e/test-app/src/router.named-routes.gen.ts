@@ -81,6 +81,7 @@ export const NamedRoutes = {
   changelog: "/changelog",
   ciOrigin: "/client-urls-intercept-origin",
   "clientAction.index": "/client-urls-action",
+  "clientAction.item": "/client-urls-action/items/:itemId",
   "clientIntercept.detail": "/client-urls-intercept/detail/:itemId",
   "clientIntercept.index": "/client-urls-intercept",
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",

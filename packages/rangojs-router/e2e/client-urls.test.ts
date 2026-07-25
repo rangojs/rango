@@ -276,6 +276,51 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
   });
 
+  test("client revalidate() decisions transport on same-route param navs, not only actions", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // The session loader never revalidates (revalidate(() => false)); the
+    // counter loader follows defaults. The action bump makes them diverge,
+    // and the param nav is the probe: its GET re-evaluates the held route's
+    // loaders (params changed -> default true), so WITHOUT the decision
+    // header the session value would catch up to the counter. Holding proves
+    // the skip rode the navigation request.
+    await page.goto(f.url("/client-urls-action/items/alpha"));
+    await waitForHydration(page);
+    const initial = await testId(page, "ca-item-count").textContent();
+    const count = Number(initial?.replace("count:", ""));
+    expect(Number.isNaN(count)).toBe(false);
+    await expect(testId(page, "ca-item-session")).toHaveText(
+      `session:${count}`,
+    );
+
+    await using __ = await expectNoReload(page);
+
+    // Action: counter refreshes, session decision (skip) rides the POST.
+    await testId(page, "ca-item-bump").click();
+    await expect(testId(page, "ca-item-count")).toHaveText(
+      `count:${count + 1}`,
+    );
+    await expect(testId(page, "ca-item-session")).toHaveText(
+      `session:${count}`,
+    );
+
+    // Same-route param nav: the skip rides the partial GET.
+    await testId(page, "ca-item-to-beta").click();
+    await expect(testId(page, "ca-item-param")).toHaveText("beta");
+    await expect(testId(page, "ca-item-loader")).toHaveText(
+      "client-urls-item:beta",
+    );
+    await expect(testId(page, "ca-item-count")).toHaveText(
+      `count:${count + 1}`,
+    );
+    await expect(testId(page, "ca-item-session")).toHaveText(
+      `session:${count}`,
+    );
+  });
+
   test("client-declared transition() holds same-route param navs; the plain twin re-streams", async ({
     page,
   }) => {
