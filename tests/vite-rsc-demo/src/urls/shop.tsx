@@ -34,6 +34,7 @@ import {
   RecentOrders,
 } from "../handlers/shop/components.js";
 import {
+  ProductDetailSkeleton,
   CartSkeleton,
   CheckoutSkeleton,
 } from "../handlers/shop/components/loading.js";
@@ -186,14 +187,7 @@ export const shopPatterns = urls(
           ProductDetailRouteWithBreadcrumbs,
           { name: "products.detail.view" },
           () => [
-            // loading() dropped deliberately: the route-level boundary made
-            // every same-route re-render (the ?tab= navs — handler re-runs,
-            // loaders all revalidate-false) swap the whole page for the
-            // skeleton. Without it the commit holds current content until the
-            // new tab's content is ready. First document paint now waits for
-            // the handler instead of showing <ProductDetailSkeleton />; put
-            // inline <Suspense> around actual data reads if a skeleton is
-            // wanted there.
+            loading(<ProductDetailSkeleton />, { ssr: true }),
             loader(ProductLoader, () => [revalidate(() => false), cache()]),
             loader(RelatedProductsLoader, () => [revalidate(() => false)]),
             revalidate(productDetailRevalidation),
