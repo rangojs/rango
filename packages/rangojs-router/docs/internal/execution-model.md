@@ -660,6 +660,27 @@ should not be treated as equivalent.
   outer entry. The consumer-facing ladder is documented in
   `skills/rango/SKILL.md` ("Passing data down the tree").
 
+- **First-render guarantee (client-knowledge seed).** A segment absent from the
+  request's client-segment set (`_rsc_segments`) always renders. The client has
+  no cached copy of it, so a `false` decision would emit `component: null` and
+  leave a hole rather than keep anything on screen. Predicates may raise that
+  decision, never lower it. All four resolvers in
+  `router/segment-resolution/revalidation.ts` honour it, in two shapes:
+
+  | Resolver                                                   | Shape                                                        |
+  | ---------------------------------------------------------- | ------------------------------------------------------------ |
+  | loaders, layout/route entries, orphan-layout entries       | early return `true`; user predicates never run               |
+  | parallel slots (`resolveParallelSegmentsWithRevalidation`) | `defaultOverride.floor` — predicates run, but can only raise |
+
+  The parallel path differs deliberately. PR #482 made it consult predicates
+  even for an unknown slot, so a `skip-parent-chain` seed (`false`) could still
+  be raised to `true`, and so a predicate that throws a `Response`
+  (`throw redirect(...)`) still performs control flow. Flooring instead of
+  early-returning keeps both of those while restoring the guarantee. Regressing
+  it blanks the slot on the navigation that first introduces it while a direct
+  load looks fine — pinned by `parallel-revalidate-fns-invocation.test.ts`
+  ("new-segment floor") and three dev+production e2e specs.
+
 - During partial action revalidation:
   - only revalidated segments recompute
   - non-revalidated ancestors do not rerun just to rebuild `ctx.set()` state

@@ -96,8 +96,14 @@ interface EvaluateRevalidationOptions<TEnv> {
    * reason flows into the trace. Callers use this when client-knowledge
    * (e.g. parallel slot not in clientSegmentIds) should dictate the seed
    * instead of the params/method-based heuristic.
+   *
+   * `floor` makes a `true` seed a guarantee rather than a suggestion: user fns
+   * may raise the decision but never lower it. Set it when the segment has no
+   * client-side content to fall back on, so a `false` would render nothing
+   * instead of keeping a cached copy — see the parallel-slot call site in
+   * segment-resolution/revalidation.ts.
    */
-  defaultOverride?: { value: boolean; reason: string };
+  defaultOverride?: { value: boolean; reason: string; floor?: boolean };
 }
 
 /**
@@ -142,6 +148,20 @@ export async function evaluateRevalidation<TEnv>(
       reason,
       customRevalidators: revalidations.length || undefined,
     });
+  }
+
+  // A floored seed can only be raised, never lowered (see `defaultOverride`).
+  // Applied at every exit so one trace entry carries the real decision — a
+  // second, contradicting entry would let flushRevalidationTrace count the
+  // segment as both revalidated and skipped.
+  const floorTrue = defaultOverride?.floor === true && defaultOverride.value;
+  function decide(finalVal: boolean, reason: string): boolean {
+    if (floorTrue && !finalVal) {
+      pushTrace(defaultShouldRevalidate, true, `${reason}:floored`);
+      return true;
+    }
+    pushTrace(defaultShouldRevalidate, finalVal, reason);
+    return finalVal;
   }
 
   let defaultShouldRevalidate: boolean;
@@ -213,8 +233,7 @@ export async function evaluateRevalidation<TEnv>(
         segmentId: segment.id,
       });
     }
-    pushTrace(defaultShouldRevalidate, defaultShouldRevalidate, defaultReason);
-    return defaultShouldRevalidate;
+    return decide(defaultShouldRevalidate, defaultReason);
   }
 
   const prevSegment = getPrevSegment ? await getPrevSegment() : null;
@@ -303,8 +322,7 @@ export async function evaluateRevalidation<TEnv>(
         revalidator: name,
         revalidate: result,
       });
-      pushTrace(defaultShouldRevalidate, result, `hard:${name}`);
-      return result;
+      return decide(result, `hard:${name}`);
     } else if (
       result &&
       typeof result === "object" &&
@@ -330,10 +348,5 @@ export async function evaluateRevalidation<TEnv>(
     revalidate: currentSuggestion,
   });
   const softNames = revalidations.map((r) => r.name).join(",");
-  pushTrace(
-    defaultShouldRevalidate,
-    currentSuggestion,
-    `soft-chain:${softNames}`,
-  );
-  return currentSuggestion;
+  return decide(currentSuggestion, `soft-chain:${softNames}`);
 }
