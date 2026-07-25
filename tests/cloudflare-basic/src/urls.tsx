@@ -827,7 +827,20 @@ export const urlpatterns = urls(
             name: "pprShellInlineAction",
             ppr: { ttl: 300, swr: 120 },
           },
-          () => [loader(PprInlineActionHoleLoader)],
+          () => [
+            loader(PprInlineActionHoleLoader),
+            // CONTRACT CHANGE (streaming useLoader): value-slot loaders are
+            // live at capture unconditionally — the old bake lane (no
+            // loading(); the loader executed at capture and its container
+            // baked around the nested hole) can no longer produce this
+            // fixture's shell. The route-level loading() is now the page
+            // hole the bound action streams through.
+            loading(
+              <div data-testid="ppr-inline-action-fallback">
+                Loading inline action…
+              </div>,
+            ),
+          ],
         ),
         // Prerender + ppr composition (docs/design/shell-fast-path.md):
         // build-time segments are the frozen prelude; the slot-owned loader
