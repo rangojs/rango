@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
@@ -89,7 +90,18 @@ export async function CacheLabPage(ctx: HandlerContext) {
         </div>
         <div className="cache-lab-live-row">
           <span>Nested promise PPR hole</span>
-          <CacheLabLivePulse loader={CacheLabPulseLoader} />
+          {/* CONTRACT CHANGE (streaming useLoader): value-slot loaders are
+              live at capture unconditionally — the pulse reader needs its own
+              boundary for the capture to postpone here (the old bake lane
+              executed the loader and holed only the nested promise). The
+              shell still bakes the handler-rendered products around it. */}
+          <Suspense
+            fallback={
+              <span data-testid="cache-lab-pulse-fallback">pulse pending…</span>
+            }
+          >
+            <CacheLabLivePulse loader={CacheLabPulseLoader} />
+          </Suspense>
         </div>
         <CacheLabProductGrid
           products={[

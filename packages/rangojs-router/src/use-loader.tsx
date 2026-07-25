@@ -3,6 +3,7 @@
 import {
   isValidElement,
   startTransition,
+  use,
   useCallback,
   useContext,
   useEffect,
@@ -13,6 +14,7 @@ import {
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import { loaderStore, type LoaderEntry } from "./loader-store.js";
+import { decodeLoaderEntry } from "./decode-loader-results.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -34,18 +36,46 @@ let privateGroupBucketSeq = 0;
 
 const NOT_FOUND = Symbol("not-found");
 
+/**
+ * SPIKE (streaming useLoader): lookup results distinguish a synchronously
+ * available value from a still-streaming per-loader promise. A pending stream
+ * is `use()`d at the read site (implicit suspension); the promise identity is
+ * stable per commit (it comes from the provider's memoized context value /
+ * element props), which use() requires across replays.
+ */
+type LoaderLookup =
+  | typeof NOT_FOUND
+  | { value: unknown }
+  | { stream: Promise<unknown> };
+
+function lookupLoaderStreams(
+  loaderStreams: Record<string, unknown> | undefined,
+  loaderId: string,
+): LoaderLookup {
+  if (!loaderStreams || !(loaderId in loaderStreams)) return NOT_FOUND;
+  const entry = loaderStreams[loaderId];
+  // Within the loaderStreams channel a Promise always means "still streaming";
+  // settled entries are undecoded result values, never promises.
+  return entry instanceof Promise
+    ? { stream: entry }
+    : { value: decodeLoaderEntry(entry) };
+}
+
 function extractContentLoaderData(
   node: ReactNode,
   loaderId: string,
-): unknown | typeof NOT_FOUND {
+): LoaderLookup {
   if (!isValidElement(node)) return NOT_FOUND;
   const props = node.props as Record<string, any> | undefined;
   if (!props) return NOT_FOUND;
 
   // Direct OutletProvider with loaderData
   if (props.loaderData && loaderId in props.loaderData) {
-    return props.loaderData[loaderId];
+    return { value: props.loaderData[loaderId] };
   }
+
+  const streamed = lookupLoaderStreams(props.loaderStreams, loaderId);
+  if (streamed !== NOT_FOUND) return streamed;
 
   if (
     props.loaderIds &&
@@ -57,9 +87,9 @@ function extractContentLoaderData(
     if (idx !== -1) {
       const data = (props.loaderDataPromise as any[])[idx];
       if (data && typeof data === "object" && "ok" in data) {
-        return data.ok ? data.data : NOT_FOUND;
+        return data.ok ? { value: data.data } : NOT_FOUND;
       }
-      return data;
+      return { value: data };
     }
   }
 
@@ -102,9 +132,10 @@ function useLoaderInternal<T>(
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
-  const { contextData, hasContextData } = useMemo((): {
+  const walk = useMemo((): {
     contextData: T | undefined;
     hasContextData: boolean;
+    pendingStream?: Promise<unknown>;
   } => {
     let current: OutletContextValue | null | undefined = context;
     while (current) {
@@ -114,17 +145,47 @@ function useLoaderInternal<T>(
           hasContextData: true,
         };
       }
+      const streamed = lookupLoaderStreams(current.loaderStreams, loader.$$id);
+      if (streamed !== NOT_FOUND) {
+        if ("stream" in streamed) {
+          return {
+            contextData: undefined,
+            hasContextData: true,
+            pendingStream: streamed.stream,
+          };
+        }
+        return { contextData: streamed.value as T, hasContextData: true };
+      }
       const contentData = extractContentLoaderData(
         current.content,
         loader.$$id,
       );
       if (contentData !== NOT_FOUND) {
-        return { contextData: contentData as T, hasContextData: true };
+        if ("stream" in contentData) {
+          return {
+            contextData: undefined,
+            hasContextData: true,
+            pendingStream: contentData.stream,
+          };
+        }
+        return { contextData: contentData.value as T, hasContextData: true };
       }
       current = current.parent;
     }
     return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
+
+  // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
+  // the implicit-suspense read. use() is exempt from hook-order rules, so the
+  // conditional call is legal; on replay after resolution it returns
+  // synchronously and the decoded value takes the contextData slot. Hooks
+  // below never run in a suspended render, so their order is stable across
+  // every COMPLETED render.
+  const { hasContextData } = walk;
+  let contextData = walk.contextData;
+  if (walk.pendingStream) {
+    contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
+  }
 
   const loaderId = loader.$$id;
   const key = options?.key;

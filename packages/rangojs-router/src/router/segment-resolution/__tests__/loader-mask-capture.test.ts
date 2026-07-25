@@ -174,7 +174,13 @@ describe("revalidation loader lanes under PPR shell capture", () => {
     mockRequestCtx._shellCaptureRun = undefined;
   });
 
-  it("executes a BAKE-lane loader instead of whole-container masking", async () => {
+  it("masks a loader WITHOUT loading() at capture — the lane trigger is gone (always live)", async () => {
+    // CONTRACT CHANGE (streaming useLoader): route loaders are live at
+    // capture unconditionally. Formerly this entry (no renderable loading())
+    // was BAKE lane — executed at capture, container baked. Now it is masked
+    // exactly like a loading() entry: never executes, the consumer's own
+    // Suspense boundary postpones as the hole, every HIT runs it fresh.
+    // Baking route data into a shell is expressed via cache()/"use cache".
     mockRequestCtx._shellCaptureRun = true;
     const loader = createMockLoader("bake#L");
     const ctx = createMockCtx();
@@ -182,10 +188,9 @@ describe("revalidation loader lanes under PPR shell capture", () => {
     const { segments } = await runRevalidationFunnel(createEntry(loader), ctx);
 
     expect(segments).toHaveLength(1);
-    expect(await settlesWithin(segments[0].loaderData!, 30)).toBe(true);
-    expect(ctx.use).toHaveBeenCalledWith(loader);
-    expect(loader).toHaveBeenCalledTimes(1);
-    await expect(segments[0].loaderData).resolves.toEqual({ data: "real" });
+    expect(await settlesWithin(segments[0].loaderData!, 30)).toBe(false);
+    expect(ctx.use).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
   });
 
   it("still whole-container-masks a LIVE-lane loader", async () => {

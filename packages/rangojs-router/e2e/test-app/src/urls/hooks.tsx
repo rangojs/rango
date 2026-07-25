@@ -31,7 +31,7 @@ import {
  * Hook test routes URL patterns
  * Routes: fetchLoader, hookTests.*, loaderComposition, inlineAction, progressiveEnhancement
  */
-export const hooksPatterns = urls(({ path, loader }) => [
+export const hooksPatterns = urls(({ path, loader, loading }) => [
   // JSON-LD breakout-escaping fixture: meta emits a script:ld+json descriptor
   // whose string field contains a literal </script>.
   path("/meta-escape", MetaEscapeHandler, { name: "metaEscape" }),
@@ -71,7 +71,19 @@ export const hooksPatterns = urls(({ path, loader }) => [
       name: "inlineBoundAction",
       ppr: true,
     },
-    () => [loader(InlineBoundPageHoleLoader)],
+    () => [
+      loader(InlineBoundPageHoleLoader),
+      // CONTRACT CHANGE (streaming useLoader): value-slot loaders are live
+      // at capture unconditionally — the old bake lane (no loading()) can no
+      // longer produce this fixture's shell. The route-level loading() is
+      // now the page hole the bound action streams through (mirrors the
+      // cloudflare-basic /ppr-shell/inline-action fixture).
+      loading(
+        <div data-testid="inline-bound-action-fallback">
+          Loading inline action…
+        </div>,
+      ),
+    ],
   ),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
