@@ -50,3 +50,44 @@ export function decodeLoaderResults(
 
   return { loaderData, errorFallback };
 }
+
+/**
+ * Marker property carrying the errorBoundary() fallback on a read-site loader
+ * error. decodeLoaderEntry attaches the pre-rendered boundary node (produced
+ * server-side by loader-resolution) to the thrown error; the router-owned
+ * StreamedLoaderErrorBoundary above the readers (segment-system wires it for
+ * every loader-bearing segment) catches by this marker and renders the
+ * fallback — restoring the build-time errorFallback-swap contract for
+ * streamed loaders. Errors without the marker rethrow to the app's boundaries.
+ */
+export const LOADER_ERROR_FALLBACK: unique symbol = Symbol(
+  "rango.loaderErrorFallback",
+);
+
+/**
+ * Streaming useLoader: single-entry decode for read-site resolution. Mirrors
+ * decodeLoaderResults for one result. An error entry throws the reconstructed
+ * error (name/stack/code/cause preserved); when the entry carries an
+ * errorBoundary() fallback, the node rides the throw via
+ * LOADER_ERROR_FALLBACK for the boundary above the readers to render.
+ */
+export function decodeLoaderEntry(result: any): any {
+  if (!isLoaderDataResult(result)) {
+    return result;
+  }
+  if (result.ok) {
+    return result.data;
+  }
+  const info = result.error;
+  const err = new Error(
+    info.message,
+    info.cause !== undefined ? { cause: info.cause } : undefined,
+  );
+  if (info.name) err.name = info.name;
+  if (info.stack) err.stack = info.stack;
+  if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  if (result.fallback != null) {
+    (err as any)[LOADER_ERROR_FALLBACK] = result.fallback;
+  }
+  throw err;
+}

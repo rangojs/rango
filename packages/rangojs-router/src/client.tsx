@@ -141,16 +141,40 @@ function useSlotSegment(
  * }
  * ```
  */
-export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
+export function Outlet({
+  name,
+  fallback,
+}: { name?: `@${string}`; fallback?: ReactNode } = {}): ReactNode {
   const context = useContext(OutletContext);
   const namedSegment = useSlotSegment(context, name);
 
   if (name) {
-    return renderSlotContent(namedSegment);
+    const slot = renderSlotContent(namedSegment);
+    // EXPERIMENT (Outlet fallback): layout-declared pending UI for a named
+    // slot — an outer Suspense catching whatever the slot's content leaves
+    // unhandled.
+    return fallback !== undefined ? (
+      <Suspense fallback={fallback}>{slot}</Suspense>
+    ) : (
+      slot
+    );
   }
 
   // Default: render child content
   const content = context?.content ?? null;
+
+  // EXPERIMENT (Outlet fallback): the layout owns the outlet position, so it
+  // may declare the placeholder for pending child content right where it
+  // renders — a plain Suspense boundary, no DSL wiring, no segment-resolution
+  // threading. With read-site useLoader suspension this covers loading()'s
+  // roles by construction: document SSR streams the fallback then the
+  // content; PPR postpones unresolved readers here (the outlet becomes the
+  // hole); same-route re-renders are held before commit so the fallback does
+  // NOT flash; cross-route navs show it as destination feedback. An explicit
+  // prop wins over the child segment's loading().
+  if (fallback !== undefined) {
+    return <Suspense fallback={fallback}>{content}</Suspense>;
+  }
 
   // If this segment defines a loading component, wrap outlet content with Suspense
   // The loading component becomes the Suspense fallback, shown during streaming/navigation

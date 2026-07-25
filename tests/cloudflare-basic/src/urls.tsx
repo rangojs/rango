@@ -124,6 +124,7 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
@@ -546,6 +547,11 @@ export const urlpatterns = urls(
         // Pure client group: the whole subtree is clientUrls(), mounted in the
         // SAME canonical urls() tree (no separate router, no worker dispatch).
         include("/__client-urls", pureClientUrls),
+        // Streaming useLoader demo: no-loading() route streams per-loader;
+        // /gated contrasts the loading() boundary; /ppr pins live holes.
+        include("/suspense-demo", suspenseDemoPatterns, {
+          name: "suspenseDemo",
+        }),
         // Deployable cache lab: two independently tagged "use cache" values
         // rendered inside a tagged PPR shell with promised Meta. The paired e2e
         // drives its authenticated /api/cache/invalidate endpoint and proves
@@ -851,7 +857,20 @@ export const urlpatterns = urls(
             name: "pprShellInlineAction",
             ppr: { ttl: 300, swr: 120 },
           },
-          () => [loader(PprInlineActionHoleLoader)],
+          () => [
+            loader(PprInlineActionHoleLoader),
+            // CONTRACT CHANGE (streaming useLoader): value-slot loaders are
+            // live at capture unconditionally — the old bake lane (no
+            // loading(); the loader executed at capture and its container
+            // baked around the nested hole) can no longer produce this
+            // fixture's shell. The route-level loading() is now the page
+            // hole the bound action streams through.
+            loading(
+              <div data-testid="ppr-inline-action-fallback">
+                Loading inline action…
+              </div>,
+            ),
+          ],
         ),
         // Prerender + ppr composition (docs/design/shell-fast-path.md):
         // build-time segments are the frozen prelude; the slot-owned loader

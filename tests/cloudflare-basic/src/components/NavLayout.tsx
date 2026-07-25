@@ -28,6 +28,9 @@ export function NavLayout() {
         <Link to="/cache-lab" data-testid="nav-cache-lab">
           Cache Lab
         </Link>
+        <Link to="/suspense-demo" data-testid="nav-suspense-demo">
+          Suspense Demo
+        </Link>
         <Link to={href("/api-demo")} data-testid="nav-api-demo">
           API Demo
         </Link>

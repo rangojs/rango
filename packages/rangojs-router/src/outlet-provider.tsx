@@ -12,6 +12,7 @@ export function OutletProvider({
   parallel,
   segment,
   loaderData,
+  loaderStreams,
   pending = false,
   children,
 }: {
@@ -19,6 +20,7 @@ export function OutletProvider({
   parallel?: ResolvedSegment[];
   segment?: ResolvedSegment;
   loaderData?: Record<string, any>;
+  loaderStreams?: Record<string, unknown>;
   pending?: boolean;
   children: ReactNode;
 }): ReactNode {
@@ -31,11 +33,20 @@ export function OutletProvider({
       parallel,
       segment,
       loaderData,
+      loaderStreams,
       pending,
       parent: parentContext,
       loading: segment?.loading,
     }),
-    [content, parallel, segment, loaderData, pending, parentContext],
+    [
+      content,
+      parallel,
+      segment,
+      loaderData,
+      loaderStreams,
+      pending,
+      parentContext,
+    ],
   );
 
   return (

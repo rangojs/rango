@@ -157,30 +157,20 @@ export function resolveLoaderData<TEnv>(
   //   shell HIT the recorded container is overlaid onto the fresh run so the
   //   payload matches the frozen prelude byte-for-byte.
   if (isShellCaptureActive(reqCtx)) {
-    if (!bakeSegmentKey) {
-      return createMaskedLoaderPromise();
-    }
-    const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
-    // Pre-attach a no-op catch: a bake-lane rejection during capture must
-    // surface through the drain's refusal (and the wrapper's error boundary),
-    // never as an unhandled rejection that can kill the worker before the
-    // drain probes this record.
-    containerPromise.catch(() => {});
-    // Nested-promise SHAPE is the liveness declaration: mask nested thenables
-    // in the capture's copy of the container so the consuming subtree
-    // postpones as a hole no matter when the promise settles, elide records a
-    // HOLE marker, and every HIT streams the fresh value. Without this, a
-    // nested promise that settled before the quiet window baked its value into
-    // the SHARED shell and the snapshot pinned it for every visitor
-    // (per-request basket data served cross-session, found live). The raw
-    // container is untouched: handler-side ctx.use consumption (the
-    // consumption-lane rule, semantic-matrix PPR3) keeps real values.
-    const maskedPromise = containerPromise.then((container: unknown) =>
-      maskNestedContainerThenables(container),
-    );
-    maskedPromise.catch(() => {});
-    reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, maskedPromise);
-    return maskedPromise;
+    // EXPERIMENT (streaming useLoader, feat/useloader-suspense): route
+    // loaders are LIVE at capture UNCONDITIONALLY — the loading()-keyed lane
+    // trigger is suspended on this branch. Read-site suspension postpones
+    // each masked stream at the consumer's own Suspense boundary, so holes
+    // no longer require a route-level loading(); baking route data into a
+    // shell is expressed via cache()/"use cache", not by omitting loading().
+    // The former bake-at-capture path (execute + nested-thenable mask +
+    // snapshot pinning via _shellCaptureLoaderRecords, see git history) is
+    // bypassed: with no records registered the serve-side seed overlay is a
+    // no-op and every HIT runs loaders fresh. A masked reader with NO
+    // Suspense above it root-postpones and the capture's <body> sanity gate
+    // refuses the shell (runtime render + eternal-MISS warning), which is
+    // the intended degrade for boundary-less ppr routes.
+    return createMaskedLoaderPromise();
   }
 
   if (bakeSegmentKey) {
