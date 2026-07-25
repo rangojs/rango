@@ -139,7 +139,6 @@ export const suspenseDemoPatterns = urls(({ path, loader, loading }) => [
       loader(FastStatsLoader),
       loader(MediumActivityLoader),
       loader(SlowReportLoader),
-      loading(<div data-testid="sd-ppr-fallback">Loading the PPR page…</div>),
     ],
   ),
 ]);

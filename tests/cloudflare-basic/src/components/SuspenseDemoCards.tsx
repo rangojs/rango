@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLoader } from "@rangojs/router/client";
 import {
   FastStatsLoader,
@@ -17,8 +17,17 @@ import type { SuspenseDemoData } from "../loaders/suspense-demo.js";
  * (client clock) — the deltas between cards make the stagger measurable.
  */
 
-function usePaintedAt(): number {
-  const [paintedAt] = useState(() => Math.round(performance.now()));
+/**
+ * Client-only paint stamp. SSR renders a stable placeholder — rendering
+ * performance.now() during SSR can never match the client's value and
+ * guarantees a hydration text mismatch (the initial version of this demo did
+ * exactly that). The stamp fills in after mount.
+ */
+function usePaintedAt(): string {
+  const [paintedAt, setPaintedAt] = useState<string>("…");
+  useEffect(() => {
+    setPaintedAt(`+${Math.round(performance.now())}ms`);
+  }, []);
   return paintedAt;
 }
 
@@ -37,7 +46,7 @@ function Card({ testid, data }: { testid: string; data: SuspenseDemoData }) {
       <strong>{data.label}</strong> — loader delay {data.delayMs}ms
       <div>{data.detail}</div>
       <small>
-        served {data.servedAt} · painted at client +{paintedAt}ms
+        served {data.servedAt} · painted at client {paintedAt}
       </small>
     </div>
   );
