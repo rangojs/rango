@@ -5,6 +5,7 @@ import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
 import type {
   ClientPathOptions,
+  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,
@@ -39,7 +40,6 @@ const UNSUPPORTED_HELPERS = new Set([
   "errorBoundary",
   "notFoundBoundary",
   "middleware",
-  "revalidate",
 ]);
 
 type InternalItem =
@@ -48,7 +48,8 @@ type InternalItem =
   | LoaderItem
   | LoadingItem
   | InterceptItem
-  | TransitionItem;
+  | TransitionItem
+  | RevalidateItem;
 
 interface ItemBase {
   readonly [ITEM_KIND]: true;
@@ -85,6 +86,12 @@ interface TransitionItem extends ItemBase {
 interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
+  readonly revalidate: readonly ClientRevalidateFn[];
+}
+
+interface RevalidateItem extends ItemBase {
+  readonly type: "revalidate";
+  readonly fn: ClientRevalidateFn;
 }
 
 interface LoadingItem extends ItemBase {
@@ -278,12 +285,31 @@ function createHelpers(): ClientUrlHelpers {
     });
   }) as ClientUrlHelpers["layout"];
 
-  const loader: ClientUrlHelpers["loader"] = (definition) => {
+  const loader: ClientUrlHelpers["loader"] = (definition, use) => {
     assertLoaderDefinition(definition);
+    const items = use ? runUse(use, "loader use") : [];
+    rejectItems(items, new Set(["revalidate"]), "loader");
     return toPublicItem({
       [ITEM_KIND]: true,
       type: "loader",
       definition,
+      revalidate: items
+        .filter(
+          (item): item is Extract<InternalItem, { type: "revalidate" }> =>
+            item.type === "revalidate",
+        )
+        .map((item) => item.fn),
+    });
+  };
+
+  const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
+    if (typeof fn !== "function") {
+      throw new Error("clientUrls() revalidate() expects a predicate function");
+    }
+    return toPublicItem({
+      [ITEM_KIND]: true,
+      type: "revalidate",
+      fn,
     });
   };
 
@@ -392,6 +418,7 @@ function createHelpers(): ClientUrlHelpers {
     loading,
     intercept,
     transition,
+    revalidate,
   };
 
   return new Proxy(supported, {
@@ -419,6 +446,7 @@ function applyConfig(
       loaders.push(
         Object.freeze({
           loader: item.definition,
+          revalidate: Object.freeze([...item.revalidate]),
         }),
       );
     } else if (item.type === "loading") {
@@ -531,7 +559,12 @@ function collectIntercepts(
       let loading: ReactNode | undefined;
       for (const useItem of item.use) {
         if (useItem.type === "loader") {
-          loaders.push(Object.freeze({ loader: useItem.definition }));
+          loaders.push(
+            Object.freeze({
+              loader: useItem.definition,
+              revalidate: Object.freeze([...useItem.revalidate]),
+            }),
+          );
         } else if (useItem.type === "loading") {
           loading = useItem.component;
         }
@@ -613,6 +646,8 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 }
 
 export type {
+  ClientRevalidateArgs,
+  ClientRevalidateFn,
   ClientTransitionConfig,
   ClientUrlBuilder,
   ClientUrlHelpers,

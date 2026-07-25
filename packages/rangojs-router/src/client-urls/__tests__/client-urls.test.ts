@@ -121,19 +121,27 @@ describe("clientUrls", () => {
       options: undefined,
       component: AccountPage,
       layouts: [],
-      loaders: [{ loader: AccountLoader }],
+      loaders: [{ loader: AccountLoader, revalidate: [] }],
       loading: "Loading account",
     });
   });
 
   it("exposes only the supported helper and record shape", () => {
     expectTypeOf<keyof ClientUrlHelpers>().toEqualTypeOf<
-      "path" | "layout" | "loader" | "loading" | "intercept" | "transition"
+      | "path"
+      | "layout"
+      | "loader"
+      | "loading"
+      | "intercept"
+      | "transition"
+      | "revalidate"
     >();
     expectTypeOf<
       Parameters<ClientUrlHelpers["loader"]>["length"]
-    >().toEqualTypeOf<1>();
-    expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<"loader">();
+    >().toEqualTypeOf<1 | 2>();
+    expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<
+      "loader" | "revalidate"
+    >();
     expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
       | "id"
       | "pattern"
@@ -219,7 +227,6 @@ describe("clientUrls", () => {
       "errorBoundary",
       "notFoundBoundary",
       "middleware",
-      "revalidate",
     ]) {
       expect(() =>
         clientUrls(((helpers: ClientUrlHelpers) => {
@@ -263,7 +270,7 @@ describe("clientUrls", () => {
         slotName: "@modal",
         targetName: "detail",
         component: DetailModal,
-        loaders: [{ loader: ItemLoader }],
+        loaders: [{ loader: ItemLoader, revalidate: [] }],
         loading: "Modal loading",
       },
     ]);
@@ -432,6 +439,87 @@ describe("clientUrls", () => {
         ]),
       ]),
     ).toThrow("does not support path() inside intercept()");
+  });
+
+  it("stores client-run revalidate predicates per loader without executing them", () => {
+    const SessionLoader = loader("loaders#session");
+    const ItemLoader = loader("loaders#item");
+    let predicateCalls = 0;
+    const skipOnAction = () => {
+      predicateCalls++;
+      return false;
+    };
+
+    const patterns = clientUrls(
+      ({ path, layout, loader: useLoader, revalidate }) => [
+        layout(AppLayout, () => [
+          useLoader(SessionLoader, () => [revalidate(skipOnAction)]),
+          path("/items/:id", AccountPage, { name: "item" }, () => [
+            useLoader(ItemLoader),
+          ]),
+        ]),
+      ],
+    );
+
+    const [route] = patterns.routes;
+    expect(
+      route.loaders.map(({ loader: def, revalidate: fns }) => [
+        def.$$id,
+        fns.length,
+      ]),
+    ).toEqual([
+      ["loaders#session", 1],
+      ["loaders#item", 0],
+    ]);
+    expect(route.loaders[0].revalidate[0]).toBe(skipOnAction);
+    expect(predicateCalls).toBe(0);
+  });
+
+  it("restricts revalidate() to loader use callbacks and validates the predicate", () => {
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/", HomePage, () => [
+          useLoader(loader("loaders#a"), () => [
+            "nope" as unknown as ClientUrlItem,
+          ]),
+        ]),
+      ]),
+    ).toThrow("must return only client URL helper items");
+
+    expect(() =>
+      clientUrls(({ path, revalidate }) => [
+        path("/", HomePage, () => [revalidate(() => true)]),
+      ]),
+    ).toThrow("does not support revalidate() inside path()");
+
+    expect(() =>
+      clientUrls(({ path, layout, revalidate }) => [
+        layout(AppLayout, () => [path("/", HomePage), revalidate(() => true)]),
+      ]),
+    ).toThrow("does not support revalidate() inside layout()");
+
+    expect(() =>
+      clientUrls(({ path, revalidate }) => [
+        path("/", HomePage),
+        revalidate(() => true),
+      ]),
+    ).toThrow("does not support revalidate() inside clientUrls()");
+
+    expect(() =>
+      clientUrls(({ path, loader: useLoader, revalidate }) => [
+        path("/", HomePage, () => [
+          useLoader(loader("loaders#a"), () => [revalidate("nope" as never)]),
+        ]),
+      ]),
+    ).toThrow("revalidate() expects a predicate function");
+
+    expect(() =>
+      clientUrls(({ path, loader: useLoader, loading }) => [
+        path("/", HomePage, () => [
+          useLoader(loader("loaders#a"), () => [loading("no")]),
+        ]),
+      ]),
+    ).toThrow("does not support loading() inside loader()");
   });
 
   it("rejects malformed values instead of executing them", () => {

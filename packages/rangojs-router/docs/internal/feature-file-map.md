@@ -94,8 +94,12 @@ The client descriptor and both runtime projections are owned by:
   module-local origin `when`).
 - [`client-urls/client-root.tsx`](../../src/client-urls/client-root.tsx) and
   [`client-urls/navigation.ts`](../../src/client-urls/navigation.ts) - hydrated
-  local presentation, loading UI, outlet pending registration, and the group
-  layout/intercept slot wrappers.
+  local presentation, loading UI, outlet pending registration, the group
+  layout/intercept slot wrappers, and browser-side collection of per-loader
+  revalidation decisions.
+- [`client-urls/revalidation-protocol.ts`](../../src/client-urls/revalidation-protocol.ts) -
+  shared wire protocol (header name, encode/decode) for client-run per-loader
+  revalidation decisions.
 
 Public entry and router integration are owned by
 [`client.tsx`](../../src/client.tsx),

@@ -182,7 +182,8 @@ boundary for those other scopes.
 The initial slice supports:
 
 - `path()`, `layout()`, `loader()`, `loading()`, a restricted `intercept()`,
-  and a data-only `transition()` inside `clientUrls()`;
+  a data-only `transition()`, and a client-run per-loader `revalidate()`
+  inside `clientUrls()`;
 - named client component values for paths, layouts, and intercepts;
 - mounting through `include()` in the canonical `urls()` tree, with URL and
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
@@ -206,20 +207,41 @@ classes. `startTransition` itself needs no opt-in here: the local
 presentation already wraps its swaps, and the canonical commit is
 transition-driven once the config is present.
 
-INSIDE `clientUrls()` the DSL does not support `middleware()`, `revalidate()`,
-`include()`, `parallel()`, `cache()`, error or not-found boundaries, or PPR —
-those belong to the surrounding server tree the include mounts into. Every
-helper rejection and the option-level rejections (`ppr`, `intercept`,
-`parallel`, `revalidate`, and any other non-projected `PathOptions` key) are
-pinned by tests.
+`revalidate(fn)` is valid inside a `loader()` use callback only —
+`loader(SessionLoader, () => [revalidate(fn)])` — and gives each loader its
+OWN revalidation decision instead of the route-level batch. The predicate is
+declared in the `"use client"` module, so it never crosses the projection
+boundary: it EXECUTES IN THE BROWSER before the partial or action request,
+with a client-computable subset of the server args (`currentUrl`, `nextUrl`,
+`currentParams`, `nextParams`, `defaultShouldRevalidate`, `stale`,
+`isAction`, `actionId`), and only its DECISION crosses — an
+`X-Rango-Client-Reval` header carrying skip/force loader ids. On the server,
+every materialized loader stub has a synthesized per-loader `revalidate()`
+that honors a decision addressed to its id and otherwise applies the locked
+default; requests that carry no decisions (no-JS, PE, prefetch, document
+loads) always get the defaults, and decisions can only address client-urls
+stubs — server-tree loaders never see the header. Trust model: same class as
+`_rsc_segments` — a decision only makes the client's own view staler or
+fresher, never bypasses middleware or authorization. Pinned dev+prod in
+`e2e/client-urls.test.ts`: after an action, one loader of the group refreshes
+while a sibling with `isAction ? false : defaultShouldRevalidate` keeps its
+held value in the same commit.
+
+INSIDE `clientUrls()` the DSL does not support `middleware()`, `include()`,
+`parallel()`, `cache()`, error or not-found boundaries, or PPR — those belong
+to the surrounding server tree the include mounts into. Every helper
+rejection and the option-level rejections (`ppr`, `intercept`, `parallel`,
+`revalidate`, and any other non-projected `PathOptions` key) are pinned by
+tests.
 
 Composition limits around a client include, locked explicitly:
 
 - `parallel()` slots are handler-valued, so a client include is structurally
   unrepresentable inside one; parallel routes attach to server routes only.
-- `revalidate()` has no surface to attach to projected client routes (their
-  use-lists are generated: loader stubs and `loading()` only). Canonical
-  revalidation of a committed page follows ordinary server semantics.
+- Canonical revalidation of a committed page follows ordinary server
+  semantics; the group's loaders participate per-loader through client-run
+  `revalidate()` decisions (see Supported surface). Segment-level
+  `revalidate()` on the surrounding server tree is unaffected by the group.
 - Intercepts come in TWO declaration forms, split by the projection boundary:
   1. **Server-declared** (a wrapping layout or route in the server tree) — the
      full form: `when` selectors, middleware, server handlers. Server-executed

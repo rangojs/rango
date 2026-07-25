@@ -539,6 +539,13 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  /**
+   * Encoded client-run per-loader revalidation decisions
+   * (clientUrls revalidate() predicates executed in the browser); sent as
+   * X-Rango-Client-Reval and honored only by materialized client-urls loader
+   * stubs. Null/absent = locked server defaults.
+   */
+  clientRevalidation?: string | null;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;

@@ -186,8 +186,12 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 helpers are `path()`, `layout()`, `loader()`, `loading()`, a restricted
 `intercept()` (dot-local named target, `loader()`/`loading()` use only, no
 `when`/middleware; module-local origin scoping via a materialization-synthesized
-`when`), and a data-only `transition()` (ViewTransition classes/name/boundary
-opt-out, path-use position only, no `when`). It requires named client component
+`when`), a data-only `transition()` (ViewTransition classes/name/boundary
+opt-out, path-use position only, no `when`), and a client-run per-loader
+`revalidate()` (loader-use position only; the predicate executes in the
+browser and its decision rides the `X-Rango-Client-Reval` header, honored by
+synthesized predicates on the materialized loader stubs —
+`client-urls/revalidation-protocol.ts`). It requires named client component
 values and projects only the `name`, `search`, and `trailingSlash` path
 options. It mounts through
 `include()` in the canonical `urls()` tree (the composition baseline —

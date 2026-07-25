@@ -573,6 +573,69 @@ describe("client URL server projection", () => {
     });
   });
 
+  it("attaches a synthesized per-loader revalidate honoring client decisions by $$id", () => {
+    const source = clientUrls(({ path, loader }) => [
+      path("/items/:id", AccountPage, { name: "item" }, () => [
+        loader(loaderDefinition("loaders#session")),
+        loader(loaderDefinition("loaders#item")),
+      ]),
+    ]);
+    const manifest = new Map<string, EntryData>();
+    RangoContext.run(
+      {
+        manifest,
+        patterns: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+        namespace: "test",
+        parent: null,
+        counters: {},
+      },
+      () =>
+        materializeClientUrlPatterns(
+          clientReference("app.urls#client-reval"),
+          serializeClientUrlPatterns(source),
+        ).handler(),
+    );
+
+    const entry = manifest.get("item");
+    if (!entry || entry.type !== "route") throw new Error("Expected route");
+    // Every stub carries exactly one synthesized predicate.
+    expect(entry.loader.map(({ revalidate }) => revalidate.length)).toEqual([
+      1, 1,
+    ]);
+
+    const run = (
+      loaderIndex: number,
+      headerValue: string | null,
+      defaultShouldRevalidate: boolean,
+    ): boolean => {
+      const request = new Request("http://localhost/items/1", {
+        headers: headerValue
+          ? { "X-Rango-Client-Reval": headerValue }
+          : undefined,
+      });
+      return entry.loader[loaderIndex].revalidate[0]({
+        defaultShouldRevalidate,
+        context: { request },
+      } as unknown as Parameters<
+        (typeof entry.loader)[number]["revalidate"][number]
+      >[0]) as boolean;
+    };
+
+    const header = encodeURIComponent(
+      JSON.stringify({ skip: ["loaders#session"], force: ["loaders#item"] }),
+    );
+    // Decisions address stubs by $$id: session skipped, item forced.
+    expect(run(0, header, true)).toBe(false);
+    expect(run(1, header, false)).toBe(true);
+    // No header (no-JS, PE, prefetch, document loads): locked default applies.
+    expect(run(0, null, true)).toBe(true);
+    expect(run(1, null, false)).toBe(false);
+    // Malformed header degrades to absent.
+    expect(run(0, "not-json", true)).toBe(true);
+  });
+
   it("delegates projected loader execution by $$id with the original context", async () => {
     const context = {
       params: { id: "42" },

@@ -1,7 +1,8 @@
 "use client";
 
 import { startTransition } from "react";
-import type { ClientUrlPatterns } from "./types.js";
+import { encodeClientRevalidationDecisions } from "./revalidation-protocol.js";
+import type { ClientRevalidateArgs, ClientUrlPatterns } from "./types.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
@@ -131,6 +132,103 @@ export function beginClientUrlNavigation(
       clear();
     },
   };
+}
+
+/**
+ * Run the held clientUrls route's per-loader revalidate() predicates and
+ * encode their decisions for the request header. Predicates are CLIENT code
+ * (declared in the "use client" definition module); only decisions cross the
+ * wire — the synthesized per-loader revalidate() on every materialized stub
+ * (server-projection.ts) reads them back by loader $$id.
+ *
+ * Decisions exist only for the loaders the client currently HOLDS: the local
+ * match of currentUrl. They matter when the server would re-evaluate those
+ * held loader segments — same-route param/search navs, actions, and stale
+ * restores. Cross-route targets render new segments unconditionally, so a
+ * decision would be ignored; we still compute against the current route since
+ * only its held segments are addressable.
+ *
+ * Returns null when no group is active, the current location is not a client
+ * route, or no predicate produced a decision that differs from the locked
+ * default — the server then applies defaults, which is also the behavior for
+ * requests that cannot carry decisions (no-JS, PE, prefetch, document loads).
+ */
+export function collectClientRevalidationDecisions(options: {
+  currentUrl: URL;
+  nextUrl: URL;
+  isAction: boolean;
+  actionId?: string;
+  stale: boolean;
+}): string | null {
+  const group = activeGroup;
+  if (!group) return null;
+
+  const { currentUrl, nextUrl, isAction, actionId, stale } = options;
+  const currentLocal = stripMountPrefix(currentUrl.pathname, group.mount);
+  if (currentLocal === null) return null;
+  const currentMatch = group.definition.match(currentLocal);
+  if (!currentMatch || currentMatch.redirectTo) return null;
+  const record = group.definition.routes.find(
+    (candidate) => candidate.id === currentMatch.routeKey,
+  );
+  if (!record) return null;
+
+  const nextLocal = stripMountPrefix(nextUrl.pathname, group.mount);
+  const nextMatch =
+    nextLocal === null ? null : group.definition.match(nextLocal);
+  const nextParams = nextMatch?.params ?? {};
+
+  // Locked default, mirrored client-side: actions re-run route-owned loaders;
+  // navigations re-run them when params or search changed.
+  const paramsEqual = (
+    a: Record<string, string>,
+    b: Record<string, string>,
+  ): boolean => {
+    const aKeys = Object.keys(a);
+    return (
+      aKeys.length === Object.keys(b).length &&
+      aKeys.every((key) => a[key] === b[key])
+    );
+  };
+  const defaultShouldRevalidate = isAction
+    ? true
+    : !paramsEqual(currentMatch.params, nextParams) ||
+      currentUrl.search !== nextUrl.search;
+
+  const skip: string[] = [];
+  const force: string[] = [];
+  for (const { loader, revalidate } of record.loaders) {
+    if (revalidate.length === 0) continue;
+    const args: ClientRevalidateArgs = {
+      currentUrl,
+      nextUrl,
+      currentParams: currentMatch.params,
+      nextParams,
+      defaultShouldRevalidate,
+      stale,
+      isAction,
+      ...(actionId !== undefined ? { actionId } : {}),
+    };
+    // Same iteration contract as the server: every predicate runs, the last
+    // boolean verdict wins. A throwing predicate fails open to the default
+    // (mirrors evaluateRevalidation's fail-open).
+    let decision = defaultShouldRevalidate;
+    for (const fn of revalidate) {
+      try {
+        const verdict = fn(args);
+        if (typeof verdict === "boolean") decision = verdict;
+      } catch (error) {
+        console.error(
+          `[@rangojs/router] clientUrls revalidate() threw for loader "${loader.$$id}"; using default decision:`,
+          error,
+        );
+      }
+    }
+    if (decision === defaultShouldRevalidate) continue;
+    (decision ? force : skip).push(loader.$$id);
+  }
+
+  return encodeClientRevalidationDecisions({ skip, force });
 }
 
 export function clearClientUrlNavigationRegistry(): void {

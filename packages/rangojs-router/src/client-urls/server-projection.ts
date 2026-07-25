@@ -12,6 +12,11 @@ import type { PathHelpers } from "../urls/path-helper-types.js";
 import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
 import {
+  CLIENT_REVALIDATION_HEADER,
+  decodeClientRevalidationDecisions,
+  type ClientRevalidationDecisions,
+} from "./revalidation-protocol.js";
+import {
   ClientUrlsGroupLayout,
   ClientUrlsInterceptLoading,
   ClientUrlsInterceptSlot,
@@ -285,6 +290,56 @@ export function clearClientUrlProjections(): void {
   clientUrlProjections.clear();
 }
 
+/**
+ * Per-request memo for decoded client revalidation decisions: the synthesized
+ * predicate below runs once per loader stub per revalidation pass, and every
+ * stub reads the same header.
+ */
+const decisionsByRequest = new WeakMap<
+  Request,
+  ClientRevalidationDecisions | null
+>();
+
+function clientDecisionsFor(
+  request: Request | undefined,
+): ClientRevalidationDecisions | null {
+  if (!request) return null;
+  if (decisionsByRequest.has(request)) {
+    return decisionsByRequest.get(request) ?? null;
+  }
+  const decoded = decodeClientRevalidationDecisions(
+    request.headers.get(CLIENT_REVALIDATION_HEADER),
+  );
+  decisionsByRequest.set(request, decoded);
+  return decoded;
+}
+
+/**
+ * The server end of client-run per-loader revalidation: clientUrls()
+ * revalidate() predicates EXECUTE in the browser (they are client-module
+ * code), and their decisions arrive on the request header. This synthesized
+ * predicate — attached to every materialized loader stub — honors a decision
+ * addressed to its loader id and otherwise returns the locked default, which
+ * is also the behavior for requests that carry no decisions (no-JS, PE,
+ * prefetch, document loads). Decisions can only address client-urls stubs;
+ * server-tree loaders never see this predicate.
+ */
+function makeClientDecisionRevalidate(
+  loaderId: string,
+): (args: {
+  defaultShouldRevalidate: boolean;
+  context: { request: Request };
+}) => boolean {
+  return ({ defaultShouldRevalidate, context }) => {
+    const decisions = clientDecisionsFor(context?.request);
+    if (decisions) {
+      if (decisions.skip.includes(loaderId)) return false;
+      if (decisions.force.includes(loaderId)) return true;
+    }
+    return defaultShouldRevalidate;
+  };
+}
+
 function createLoaderStub(id: string): LoaderDefinition<unknown> {
   return {
     __brand: "loader",
@@ -314,7 +369,15 @@ function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
 function materializeRouteItems(
   reference: ClientUrlDefinitionSource,
   projection: ClientUrlProjection,
-  { path, layout, loader, loading, intercept, transition }: PathHelpers<any>,
+  {
+    path,
+    layout,
+    loader,
+    loading,
+    intercept,
+    transition,
+    revalidate,
+  }: PathHelpers<any>,
 ): AllUseItems[] {
   // The urls() builder runs under the include's prefixes, so the composed
   // route-name prefix is available here. ClientUrlsRoot needs it to compose
@@ -338,7 +401,11 @@ function materializeRouteItems(
             }),
           materializedPathOptions(route),
           () => [
-            ...route.loaderIds.map((id) => loader(createLoaderStub(id))),
+            ...route.loaderIds.map((id) =>
+              loader(createLoaderStub(id), () => [
+                revalidate(makeClientDecisionRevalidate(id)),
+              ]),
+            ),
             ...(route.hasLoading
               ? [
                   loading(

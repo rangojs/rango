@@ -19,9 +19,11 @@ import { clientUrls } from "../client-urls.js";
 import {
   beginClientUrlNavigation,
   clearClientUrlNavigationRegistry,
+  collectClientRevalidationDecisions,
   registerClientUrlGroup,
   setActiveInterceptTargets,
 } from "../navigation.js";
+import { decodeClientRevalidationDecisions } from "../revalidation-protocol.js";
 
 afterEach(() => {
   cleanup();
@@ -394,6 +396,132 @@ describe("client-declared intercept rendering", () => {
     );
     expect(result.getByTestId("group-child")).toBeDefined();
     expect(result.getByTestId("group-slot")).toBeDefined();
+  });
+});
+
+describe("client revalidation decisions", () => {
+  function Page(): null {
+    return null;
+  }
+
+  const SessionLoader = {
+    __brand: "loader",
+    $$id: "loaders#session",
+  } as LoaderDefinition<unknown>;
+  const ItemLoader = {
+    __brand: "loader",
+    $$id: "loaders#item",
+  } as LoaderDefinition<unknown>;
+
+  it("runs per-loader predicates on the held route and encodes only non-default verdicts", () => {
+    // Session skips action revalidation; item follows defaults (no predicate).
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/items/:itemId", Page, { name: "item" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction, defaultShouldRevalidate }) =>
+            isAction ? false : defaultShouldRevalidate,
+          ),
+        ]),
+        loader(ItemLoader),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/shop", "shop", () => {});
+
+    // Action on the held route: default true, session predicate says false.
+    const action = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/shop/items/a"),
+      nextUrl: new URL("http://localhost/shop/items/a"),
+      isAction: true,
+      actionId: "actions#bump",
+      stale: false,
+    });
+    expect(decodeClientRevalidationDecisions(action)).toEqual({
+      skip: ["loaders#session"],
+      force: [],
+    });
+
+    // Same-route param nav: default true (params changed), predicate returns
+    // the default — every verdict matches, so no header at all.
+    const paramNav = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/shop/items/a"),
+      nextUrl: new URL("http://localhost/shop/items/b"),
+      isAction: false,
+      stale: false,
+    });
+    expect(paramNav).toBeNull();
+  });
+
+  it("supports forcing revalidation against a false default (stale restores)", () => {
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ stale, defaultShouldRevalidate }) =>
+            stale ? true : defaultShouldRevalidate,
+          ),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    const decisions = collectClientRevalidationDecisions({
+      currentUrl: new URL("http://localhost/"),
+      nextUrl: new URL("http://localhost/"),
+      isAction: false,
+      stale: true,
+    });
+    expect(decodeClientRevalidationDecisions(decisions)).toEqual({
+      skip: [],
+      force: ["loaders#session"],
+    });
+  });
+
+  it("returns null without an active group or off-mount current location", () => {
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/anywhere"),
+        nextUrl: new URL("http://localhost/anywhere"),
+        isAction: true,
+        stale: false,
+      }),
+    ).toBeNull();
+
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [revalidate(() => false)]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/shop", "shop", () => {});
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/elsewhere"),
+        nextUrl: new URL("http://localhost/shop"),
+        isAction: false,
+        stale: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("fails open to the default when a predicate throws", () => {
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(() => {
+            throw new Error("boom");
+          }),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    // Action default is true; the throwing predicate keeps it — no header.
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/"),
+        nextUrl: new URL("http://localhost/"),
+        isAction: true,
+        stale: false,
+      }),
+    ).toBeNull();
   });
 });
 

@@ -42,8 +42,43 @@ export type ClientLayoutFn = <const TItems extends ClientUrlItems>(
   children: () => TItems,
 ) => ClientUrlItem & TypedLayoutItem<ExtractRoutes<TItems>>;
 
+/**
+ * Arguments a clientUrls() revalidate() predicate receives. A client-computable
+ * subset of the server ShouldRevalidateFn args — the predicate RUNS IN THE
+ * BROWSER (it is declared in a "use client" module and never crosses the
+ * projection boundary); only its decision is sent to the server. There is no
+ * `context` — no server handler context exists where this executes.
+ */
+export interface ClientRevalidateArgs {
+  /** Full URL of the page being navigated away from (current location). */
+  readonly currentUrl: URL;
+  /** Full URL of the navigation target (equals currentUrl for actions). */
+  readonly nextUrl: URL;
+  /** Route params of the held client route (definition-local match). */
+  readonly currentParams: Record<string, string>;
+  /** Route params for the navigation target (definition-local match). */
+  readonly nextParams: Record<string, string>;
+  /**
+   * The locked default decision for this loader, computed client-side with
+   * the same rules the server would apply: `true` on actions and when
+   * params/search changed, `false` otherwise. Return it for default behavior
+   * plus your own conditions.
+   */
+  readonly defaultShouldRevalidate: boolean;
+  /** True when this is a stale history-entry background revalidation. */
+  readonly stale: boolean;
+  /** True when revalidation is triggered by a server action. */
+  readonly isAction: boolean;
+  /** The triggering server action's id, when isAction. */
+  readonly actionId?: string;
+}
+
+export type ClientRevalidateFn = (args: ClientRevalidateArgs) => boolean;
+
 export interface ClientUrlLoaderRecord {
   readonly loader: LoaderDefinition<any, any>;
+  /** Client-run per-loader revalidation predicates; empty = locked defaults. */
+  readonly revalidate: readonly ClientRevalidateFn[];
 }
 
 /**
@@ -87,10 +122,24 @@ export interface ClientUrlInterceptRecord {
 export interface ClientUrlHelpers {
   readonly path: ClientPathFn;
   readonly layout: ClientLayoutFn;
+  /**
+   * Attach a projected loader. The optional use callback may contain
+   * revalidate() only — a CLIENT-RUN per-loader predicate; its decision (not
+   * the function) is sent with the revalidation request.
+   */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,
+    use?: ClientUrlUse,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;
+  /**
+   * Per-loader revalidation predicate, valid inside a loader() use callback
+   * only. Runs IN THE BROWSER with client-computable args; return true to
+   * re-run the loader, false to keep held data. Absent predicates (and
+   * requests that carry no decisions: no-JS, PE, prefetch, document loads)
+   * follow the locked server defaults.
+   */
+  readonly revalidate: (fn: ClientRevalidateFn) => ClientUrlItem;
   /**
    * Declare an intercept for a named route in THIS definition. The target is
    * dot-local (`.detail`); scoping is module-local — only navigations whose

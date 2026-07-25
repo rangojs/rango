@@ -264,11 +264,15 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     const initial = await testId(page, "ca-loader").textContent();
     const count = Number(initial?.replace("count:", ""));
     expect(Number.isNaN(count)).toBe(false);
+    await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
     await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
 
     await using __ = await expectNoReload(page);
     await testId(page, "ca-bump").click();
     await expect(testId(page, "ca-loader")).toHaveText(`count:${count + 1}`);
+    // Per-loader CLIENT-RUN revalidate(): the session loader's predicate
+    // opted out of action revalidation — same route, same commit, held data.
+    await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
     await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
   });
 

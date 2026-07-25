@@ -30,7 +30,10 @@ import {
   validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
-import { setActiveInterceptTargets } from "../client-urls/navigation.js";
+import {
+  collectClientRevalidationDecisions,
+  setActiveInterceptTargets,
+} from "../client-urls/navigation.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -188,6 +191,22 @@ export function createPartialUpdater(
       );
     }
 
+    // Client-run per-loader revalidation: execute the held clientUrls route's
+    // revalidate() predicates now and ship their decisions with the request.
+    // Fails soft to null (locked server defaults) when no group is active or
+    // URLs do not parse.
+    let clientRevalidation: string | null = null;
+    try {
+      clientRevalidation = collectClientRevalidationDecisions({
+        currentUrl: new URL(previousUrl, window.location.origin),
+        nextUrl: new URL(url, window.location.origin),
+        isAction: false,
+        stale: mode.type === "stale-revalidation",
+      });
+    } catch {
+      clientRevalidation = null;
+    }
+
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
       targetUrl: url,
@@ -195,6 +214,7 @@ export function createPartialUpdater(
       previousUrl,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
+      clientRevalidation,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });

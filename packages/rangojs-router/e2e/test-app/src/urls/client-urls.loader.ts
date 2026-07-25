@@ -9,3 +9,13 @@ export const ClientUrlsItemLoader = createLoader(async (ctx) => {
 export const ClientUrlsCounterLoader = createLoader(async () => {
   return `count:${getClientUrlsActionCount()}`;
 });
+
+/**
+ * Distinct $$id reading the SAME counter — its client-run revalidate() skips
+ * action revalidation, so after an action this value diverges from
+ * ClientUrlsCounterLoader in the same commit (per-loader decisions, not a
+ * route-level batch).
+ */
+export const ClientUrlsSessionLoader = createLoader(async () => {
+  return `session:${getClientUrlsActionCount()}`;
+});
