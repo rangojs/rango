@@ -576,17 +576,21 @@ export const urlpatterns = urls(
       ),
 
       // Contrast route: same :param + loading() skeleton, but WITHOUT
-      // transition(). This is the default behavior — navigating between params
-      // remounts the route and shows the skeleton. Pins that the opt-in is
-      // required and the default is unchanged.
+      // transition(). PARAM navs remount and show the skeleton (param-bearing
+      // key — the opt-in is required for the param hold). SEARCH-only navs on
+      // the same param reconcile and HOLD by default (isSameStructureNav
+      // transition commit in browser/partial-update.ts): the tab link + echo
+      // below pin that split.
       path(
         "/plain-product/:id",
         async (ctx) => {
           const { id, name, loadedAt } = await ctx.use(SwrProductLoader);
+          const tab = ctx.url.searchParams.get("tab") ?? "none";
           return (
             <div data-testid="plain-product-page">
               <h1 data-testid="plain-product-name">{name}</h1>
               <p data-testid="plain-product-loaded-at">{loadedAt}</p>
+              <p data-testid="plain-product-tab">tab: {tab}</p>
               <SwrProductCounter />
               <nav>
                 <Link to="/plain-product/1" data-testid="plain-product-link-1">
@@ -594,6 +598,12 @@ export const urlpatterns = urls(
                 </Link>
                 <Link to="/plain-product/2" data-testid="plain-product-link-2">
                   Product 2
+                </Link>
+                <Link
+                  to="/plain-product/1?tab=specs"
+                  data-testid="plain-product-link-1-specs"
+                >
+                  Product 1 specs
                 </Link>
               </nav>
             </div>

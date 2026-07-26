@@ -132,7 +132,14 @@ export function ClientUrlsRoot({
   const route = hasPendingLoading
     ? pendingRoute
     : findRoute(definition, routeId);
-  const pending = pendingRoute !== null;
+  // ANY in-flight group navigation is pending — including same-route navs
+  // (intent.routeId === routeId). For the search-only shape (filters, tabs)
+  // the canonical commit is HELD in a transition (isSameStructureNav in
+  // partial-update.ts) with no content swap to signal progress — this flag
+  // is the only affordance. The urgent setIntent at nav start flips it
+  // immediately; the transition-wrapped clear() entangles with the held
+  // commit, so pending drops exactly when the data lands.
+  const pending = intent !== null;
   let content: ReactNode = hasPendingLoading
     ? pendingRoute.loading
     : createElement(route.component, { key: route.id });

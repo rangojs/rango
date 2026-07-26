@@ -12,7 +12,9 @@ export interface ClientShopProductSummary {
 }
 
 /**
- * Product list for the clientUrls shop (/client-shop). Server-executed by
+ * Product list for the clientUrls shop (/client-shop), filtered by the
+ * `?category=` search param — the PLP shape where a filter change is a
+ * SAME-ROUTE navigation that must re-run this loader. Server-executed by
  * generated id like every projected clientUrls loader; the client module
  * imports only the definition. Small artificial delay so the index's inline
  * Suspense boundary is observable.
@@ -29,7 +31,11 @@ export const ClientShopProductsLoader = createLoader(async (ctx) => {
   ctx.use(Breadcrumbs)({ label: "Client Shop", href: "/client-shop" });
 
   await new Promise((resolve) => setTimeout(resolve, 400));
-  return products.map(
+  const category = ctx.url.searchParams.get("category");
+  const list = category
+    ? products.filter((p) => p.category === category)
+    : products;
+  return list.map(
     ({ slug, name, price, category }): ClientShopProductSummary => ({
       slug,
       name,

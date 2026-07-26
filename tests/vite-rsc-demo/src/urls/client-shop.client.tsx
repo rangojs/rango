@@ -134,10 +134,51 @@ function ClientShopGrid() {
   );
 }
 
+const FILTER_CATEGORIES = ["electronics", "sports", "home"];
+
+function FilterLink({
+  category,
+  active,
+}: {
+  category: string | null;
+  active: boolean;
+}) {
+  return (
+    <Link
+      to={category ? `/client-shop?category=${category}` : "/client-shop"}
+      // Filter combinations are unbounded in a real PLP — nothing to prefetch.
+      prefetch="none"
+      data-testid={`client-shop-filter-${category ?? "all"}`}
+      style={{
+        padding: "0.4rem 0.9rem",
+        borderRadius: 6,
+        textDecoration: "none",
+        background: active ? "#0f766e" : "#e5e7eb",
+        color: active ? "white" : "#111",
+      }}
+    >
+      {category ?? "all"}
+    </Link>
+  );
+}
+
 function ClientShopIndex() {
+  const category = useSearchParams().get("category");
+
   return (
     <div data-testid="client-shop-index">
       <h2>All products</h2>
+      {/* Filters are SAME-ROUTE navigations (search change only): the list
+          loader re-runs while the route — and this component — stay mounted. */}
+      <nav
+        data-testid="client-shop-filters"
+        style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}
+      >
+        <FilterLink category={null} active={category === null} />
+        {FILTER_CATEGORIES.map((c) => (
+          <FilterLink key={c} category={c} active={category === c} />
+        ))}
+      </nav>
       {/* Inline boundary: the heading paints instantly, the grid fills when
           its loader streams in. */}
       <Suspense fallback={<GridSkeleton />}>
@@ -481,7 +522,17 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       ),
     ]),
     path("/", ClientShopIndex, { name: "index" }, () => [
-      loader(ClientShopProductsLoader, () => [revalidate(productData)]),
+      // The list is search-driven (category filters): a search change must
+      // refetch, an action (add-to-cart) must not, and slug-param logic from
+      // productData does not apply here.
+      loader(ClientShopProductsLoader, () => [
+        revalidate(
+          ({ isAction, currentUrl, nextUrl, defaultShouldRevalidate }) =>
+            !isAction && currentUrl.search !== nextUrl.search
+              ? defaultShouldRevalidate
+              : false,
+        ),
+      ]),
     ]),
     path("/product/:slug", ClientShopProductPage, { name: "product" }, () => [
       // Cache-backed ("use cache" inside the fetch): a WARM document load has
@@ -492,9 +543,10 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       loader(RelatedProductsLoader, () => [revalidate(productData)]),
       // No loading(): the inline Suspense boundaries above each read are the
       // pending UI (they cover cross-route navs too — the canonical commit
-      // lands in ~100ms and the skeletons take over). A route-level loading()
-      // was measured re-flashing during same-route tab navs — the exact
-      // pattern this demo exists to retire.
+      // lands in ~100ms and the skeletons take over). Same-route SEARCH navs
+      // hold previous content by default (isSameStructureNav transition
+      // commit), so a route-level loading() could no longer re-flash on tab
+      // navs — inline boundaries remain the finer-grained choice here.
     ]),
     path("/ssr/:slug", ClientShopSsrPage, { name: "ssr" }, () => [
       loader(ClientShopSsrProductLoader, { stream: "navigation" }, () => [

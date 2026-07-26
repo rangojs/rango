@@ -166,16 +166,49 @@ server, and the response remains authoritative.
 
 - it is `false` during SSR and before the client URL registry mounts after
   hydration;
-- it covers a local match to a different `clientUrls()` route record while its
-  canonical navigation is unresolved;
+- it covers ANY local match while its canonical navigation is unresolved —
+  a different `clientUrls()` route record, or a parameter/search change that
+  stays on the same record (a filter or tab nav, whose held content it is the
+  only progress signal for — see the same-route commit below);
 - it clears when that navigation commits, fails, redirects, is cancelled, or is
   superseded;
 - it does not report prefetching, generic Suspense, ordinary server-route work,
-  unrelated actions, or a parameter/search change that stays on the same client
-  route record.
+  or unrelated actions.
 
 Use `useNavigation()`, `useLinkStatus()`, loader state, or your own Suspense
 boundary for those other scopes.
+
+## Same-route search navigations hold previous content
+
+A navigation that mounts no new segments commits inside `startTransition`,
+the same treatment actions get (`isSameStructureNav` in
+`src/browser/partial-update.ts`). Where this is visible: SEARCH-only
+navigations — filters, tabs, query-driven pagination. Search is never part
+of a segment's key, so the route subtree reconciles; the re-run loaders
+stream as always, but React holds the currently visible content until their
+data lands instead of re-suspending the already-revealed boundary into its
+fallback. Without the hold, a category-filter click replaced the visible
+product grid with its skeleton for the loader's full duration. During the
+hold the wrapping layout sees `useOutlet().pending === true` (the urgent
+intent set at navigation start), so `aria-busy`-style dimming covers the
+wait; the pending flag and the fresh content land in one commit.
+
+Two boundaries, both deliberate:
+
+- **Param navigations without `transition()` are unchanged.** A param change
+  remounts the route subtree (the param rides the segment key —
+  `segment-system.tsx`), and a freshly mounted boundary reveals its fallback
+  even inside a transition: fresh skeleton, fresh component state.
+  `transition()` remains the opt-in that drops the param from the key and
+  extends the hold to param navs.
+- **Cross-route navigations are unchanged.** Mounting new segments commits
+  urgently, so destination fallbacks stream in like a first load and the
+  click has immediate visible feedback.
+
+Pinned dev+prod in `tests/vite-rsc-demo/e2e/client-shop-filters.test.ts`
+(hold + pending on a filter nav); the param-nav remount default and the
+`transition()` opt-in stay pinned in `e2e/same-route-nav.test.ts` and
+`e2e/client-urls.test.ts`.
 
 ## Outer layouts and middleware across group navigations
 
@@ -193,12 +226,12 @@ export const urlpatterns = urls(({ include, layout, middleware }) => [
 Middleware and layout handlers ride DIFFERENT schedules, and conflating them
 is the common misread:
 
-| Runs on…                    | Hard load | Within-group navigation                    | Nav with all loaders held               | Action                                    |
-| --------------------------- | --------- | ------------------------------------------ | ---------------------------------------- | ----------------------------------------- |
-| `AdminRscLayout` handler    | yes       | no — its segment HOLDS (partial rendering) | no                                       | no by default (`action:parent-chain-skip`) |
-| `requireAdmin` middleware   | yes       | **yes — every canonical request**          | **yes**                                  | yes (wraps the revalidation render)       |
-| Group loaders               | yes       | per-loader `revalidate()` decision         | skipped (the decision crossed the wire)  | per-loader decision (`isAction`)          |
-| Optimistic loading/pending  | n/a       | renders BEFORE the response — presentation only | same                                | n/a                                       |
+| Runs on…                   | Hard load | Within-group navigation                         | Nav with all loaders held               | Action                                     |
+| -------------------------- | --------- | ----------------------------------------------- | --------------------------------------- | ------------------------------------------ |
+| `AdminRscLayout` handler   | yes       | no — its segment HOLDS (partial rendering)      | no                                      | no by default (`action:parent-chain-skip`) |
+| `requireAdmin` middleware  | yes       | **yes — every canonical request**               | **yes**                                 | yes (wraps the revalidation render)        |
+| Group loaders              | yes       | per-loader `revalidate()` decision              | skipped (the decision crossed the wire) | per-loader decision (`isAction`)           |
+| Optimistic loading/pending | n/a       | renders BEFORE the response — presentation only | same                                    | n/a                                        |
 
 Two consequences worth stating plainly:
 
@@ -257,12 +290,14 @@ the data subset of `TransitionConfig`: ViewTransition classes
 server-executed predicate and is rejected — declare it with a server-tree
 `transition()` wrapping the include. Materialization re-emits the config in
 the standard child position, so the canonical commit gets the transition
-hold (a same-route param nav keeps previous content instead of re-streaming
-the `loading()` fallback — pinned dev+prod in `e2e/client-urls.test.ts`) and,
-on experimental React, the router's ViewTransition boundary with those
-classes. `startTransition` itself needs no opt-in here: the local
-presentation already wraps its swaps, and the canonical commit is
-transition-driven once the config is present.
+hold — its remaining delta over the same-route default above is PARAM navs:
+the config drops the param from the segment key, so `/items/one → /items/two`
+reconciles and holds instead of remounting into its skeleton (pinned dev+prod
+in `e2e/client-urls.test.ts` against a transition-less twin) — and, on
+experimental React, the router's ViewTransition boundary with those classes.
+`startTransition` itself needs no opt-in here: the local presentation already
+wraps its swaps, and the canonical commit is transition-driven once the
+config is present.
 
 `revalidate(fn)` is valid inside a `loader()` use callback only —
 `loader(SessionLoader, () => [revalidate(fn)])` — and gives each loader its

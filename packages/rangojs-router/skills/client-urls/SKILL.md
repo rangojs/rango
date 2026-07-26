@@ -30,7 +30,7 @@ own inline boundary instead of gating the commit. Add per-Link prefetch
 - You are defining server routes with handlers — that is `urls()`: see
   `/route`.
 - You want loader mechanics (createLoader, caching a loader, fetchable
-  loaders) — see `/loader`. This skill covers what is *different* inside
+  loaders) — see `/loader`. This skill covers what is _different_ inside
   `clientUrls()`.
 - You want `useOutlet`/`useLoader`/`useHandle` reference — see `/hooks`.
 
@@ -69,23 +69,34 @@ import { Suspense } from "react";
 import { clientUrls, useLoader, Link } from "@rangojs/router/client";
 import { ProductsLoader, ProductLoader } from "@/loaders/products.js";
 
-function ShopLayout() { /* useOutlet().content + chrome */ }
-function ShopIndex() { /* <Suspense><Grid/></Suspense> */ }
-function ProductPage() { /* useLoader(ProductLoader) under Suspense */ }
+function ShopLayout() {
+  /* useOutlet().content + chrome */
+}
+function ShopIndex() {
+  /* <Suspense><Grid/></Suspense> */
+}
+function ProductPage() {
+  /* useLoader(ProductLoader) under Suspense */
+}
 
 export default clientUrls(({ path, layout, loader, revalidate }) => [
   layout(ShopLayout, () => [
-    path("/", ShopIndex, { name: "index" }, () => [
-      loader(ProductsLoader),
-    ]),
+    path("/", ShopIndex, { name: "index" }, () => [loader(ProductsLoader)]),
     path("/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [
-        revalidate(({ isAction, currentParams, nextParams, defaultShouldRevalidate }) => {
-          if (isAction) return false;
-          return currentParams.slug !== nextParams.slug
-            ? defaultShouldRevalidate
-            : false;
-        }),
+        revalidate(
+          ({
+            isAction,
+            currentParams,
+            nextParams,
+            defaultShouldRevalidate,
+          }) => {
+            if (isAction) return false;
+            return currentParams.slug !== nextParams.slug
+              ? defaultShouldRevalidate
+              : false;
+          },
+        ),
       ]),
     ]),
   ]),
@@ -107,15 +118,15 @@ typing work exactly as for server routes (`/typesafety`).
 
 ## Helpers: what exists inside clientUrls()
 
-| Helper         | Notes                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------- |
-| `path()`       | Options are `name`, `search`, `trailingSlash` only (no `ppr`, no response variants)      |
-| `layout()`     | Must contain at least one `path()`                                                       |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { stream: "navigation" }, use?)` — see below         |
-| `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better       |
-| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                       |
-| `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)        |
-| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`    |
+| Helper         | Notes                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `path()`       | Options are `name`, `search`, `trailingSlash` only (no `ppr`, no response variants)   |
+| `layout()`     | Must contain at least one `path()`                                                    |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { stream: "navigation" }, use?)` — see below      |
+| `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better    |
+| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                    |
+| `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)     |
+| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()` |
 
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,
 `notFoundBoundary` **throw** — and that is a design position, not a gap.
@@ -169,7 +180,7 @@ A server-tree `revalidate()` predicate executes on the server. A `clientUrls()`
 predicate is client-module code, so it executes **in the browser** with
 client-computable args — `currentUrl`, `nextUrl`, `currentParams`,
 `nextParams`, `defaultShouldRevalidate`, `stale`, `isAction`, `actionId` — and
-only its *decision* crosses the wire with the navigation request. Requests that
+only its _decision_ crosses the wire with the navigation request. Requests that
 carry no decisions (no-JS, progressive enhancement, prefetch, document loads)
 follow the locked server defaults.
 
@@ -201,7 +212,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 ```
 
 On a document load, `notFound()` streams the resolved not-found UI in the
-envelope and *opportunistically* sets a real 404 status — the status write only
+envelope and _opportunistically_ sets a real 404 status — the status write only
 wins if the rejection settles before the document Response is constructed (a
 fast, pre-fetch existence check usually wins; see `stream: "navigation"` below
 for the deterministic version). On navigations the 404 UI swaps in with the
@@ -220,7 +231,7 @@ contract.
 ## `stream: "navigation"` — the SSR-completeness opt-in
 
 By default every loader streams on every render, so nothing a slow loader
-produces is *guaranteed* to be in the SSR'd HTML — data SSRs as the Suspense
+produces is _guaranteed_ to be in the SSR'd HTML — data SSRs as the Suspense
 fallback, a late handle push applies post-hydration, a late `notFound()` loses
 the status race. When the loader feeds something that must exist in the
 document — `<head>` meta via a handle, or a real 404 status — flag it:
@@ -243,7 +254,7 @@ Constraints:
 
 - A flagged loader must not `await ctx.rendered()` (or read handles via
   `ctx.get(handle)`, which rendered() gates) — the document render awaits the
-  loader *before* the render barrier resolves, so that wait is a cycle by
+  loader _before_ the render barrier resolves, so that wait is a cycle by
   construction. It throws a deadlock error naming the fix.
 - `intercept()` loaders reject the flag — intercepts render on client
   navigations only, so a document-render await can never apply.
@@ -282,10 +293,15 @@ a hard load of the target URL renders the full route.
 - **Duplicate patterns or names throw** at definition time, per definition.
 - **`layout()` with no `path()` inside throws** — a client layout exists only
   to wrap routes.
-- **`loading()` vs inline Suspense:** a route-level `loading()` re-flashes on
-  same-route param/search navigations (measured in the demo — the exact
-  pattern the client-shop exists to retire). Prefer an inline `<Suspense>`
-  above each `useLoader` read; it covers cross-route navigations too.
+- **`loading()` vs inline Suspense:** same-route SEARCH navigations
+  (filters, tabs) hold previous content by default — the canonical commit
+  runs in a `startTransition` when no new segments mount, and the wrapping
+  layout sees `useOutlet().pending === true` for the held window; a
+  route-level `loading()` no longer re-flashes there. PARAM navigations
+  still remount (fresh skeleton, fresh state) unless the route declares
+  `transition()` — that opt-in drops the param from the segment key. Inline
+  `<Suspense>` above each `useLoader` read is still the finer-grained tool
+  when different reads on one route should wait independently.
 - **Two parallel loaders with equal latency look "SSR'd" together.** Loaders
   kick off in parallel, so awaiting one (`stream: "navigation"`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was

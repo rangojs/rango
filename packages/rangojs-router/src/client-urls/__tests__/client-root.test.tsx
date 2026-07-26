@@ -160,6 +160,55 @@ describe("ClientUrlsRoot", () => {
     );
   });
 
+  it("signals pending on a same-route intent without presenting loading", async () => {
+    function AppLayout(): ReactNode {
+      const outlet = useOutlet();
+      return (
+        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
+      );
+    }
+
+    function HomePage(): ReactNode {
+      return <p>Home</p>;
+    }
+
+    // The route HAS a loading() node — the stronger pin: a same-route intent
+    // (filter/search nav) must keep the current content, never swap to the
+    // route's own loading, while still reporting pending to the layouts.
+    const definition = clientUrls(({ layout, path, loading }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage, () => [loading(<p>Loading home</p>)]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+
+    const presentation: {
+      current: ReturnType<typeof beginClientUrlNavigation>;
+    } = { current: null };
+    await act(async () => {
+      presentation.current = beginClientUrlNavigation(
+        new URL("http://localhost/?category=electronics"),
+        abort.signal,
+      );
+    });
+
+    expect(presentation.current?.routeId).toBe("client-route-0");
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.queryByText("Loading home")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    await act(async () => presentation.current?.clear());
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "false",
+    );
+  });
+
   it("matches mount-relative patterns under the include() prefix and ignores outside paths", async () => {
     function AppLayout(): ReactNode {
       const outlet = useOutlet();
