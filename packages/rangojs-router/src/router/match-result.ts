@@ -111,6 +111,7 @@ import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
+import { collectInterceptTargetNames } from "./intercept-resolution.js";
 
 export async function collectSegments(
   generator: AsyncGenerator<ResolvedSegment>,
@@ -266,6 +267,11 @@ export function buildMatchResult<TEnv>(
     diff.push(s.id);
   }
 
+  // Intercept targets reachable when THIS location becomes a navigation
+  // origin — the browser-local clientUrls matcher declines its optimistic
+  // presentation for these (see collectInterceptTargetNames).
+  const interceptTargets = collectInterceptTargetNames(ctx.manifestEntry);
+
   return {
     segments: cleanedSegments,
     matched: matchedIds,
@@ -274,6 +280,7 @@ export function buildMatchResult<TEnv>(
     params: ctx.matched.params,
     routeName: ctx.routeKey,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };

@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
@@ -27,6 +28,12 @@ export interface RouterRequestInput<TEnv, TVars = DefaultVars> {
   env?: TEnv;
   vars?: Partial<TVars>;
   ctx?: ExecutionContext;
+}
+
+/** One materialized UrlPatterns registration and its live router mount index. */
+export interface UrlPatternMount<TEnv = any> {
+  readonly patterns: UrlPatterns<TEnv, any>;
+  readonly mountIndex: number;
 }
 
 /**
@@ -98,6 +105,20 @@ export interface Rango<
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
+        : Record<string, string>)
+  >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
         : Record<string, string>)
   >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
@@ -230,7 +251,24 @@ export interface RangoInternal<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  /**
+   * Pure-client mounting shorthand: normalizes to a root include in the
+   * canonical urls() tree (`include("/", definition, { name: "" })`) — same
+   * lazy materialization as mounting through include() yourself.
+   */
+  routes<T extends ClientUrlPatterns<any>>(
+    patterns: T,
+  ): Rango<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? NonNullable<T["_routes"]>
+        : Record<string, string>)
+  >;
   routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
+
+  /** Materialized UrlPatterns registrations in registration order. */
+  readonly __urlpatternMounts: readonly UrlPatternMount<TEnv>[];
 
   /**
    * Add global middleware that runs on all routes

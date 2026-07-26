@@ -45,7 +45,7 @@ const collected: string[][] = [];
 const BarrierLoader = (createLoader as Function)(
   async (lctx: any) => {
     await lctx.rendered();
-    const titles = lctx.use(TitleHandle);
+    const titles = lctx.get(TitleHandle);
     collected.push(titles);
     return { titles };
   },

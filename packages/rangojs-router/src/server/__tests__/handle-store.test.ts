@@ -280,3 +280,87 @@ describe("HandleStore settlement", () => {
     });
   });
 });
+
+describe("HandleStore two-lane settlement (loader handle writes)", () => {
+  it("auxiliary tracking does not block `settled` (handler barrier)", async () => {
+    const store = createHandleStore();
+    let releaseLoader!: () => void;
+    store.trackAuxiliary(new Promise<void>((r) => (releaseLoader = r)));
+    store.seal();
+    // settled resolves with the aux lane still in flight.
+    await store.settled;
+    releaseLoader();
+    await store.fullySettled;
+  });
+
+  it("a push AFTER settled but BEFORE fullySettled is legal and reaches the default stream", async () => {
+    const store = createHandleStore();
+    let releaseLoader!: () => void;
+    const loaderBody = new Promise<void>((r) => (releaseLoader = r));
+    store.trackAuxiliary(
+      loaderBody.then(() => {
+        store.push("meta", "seg1", { title: "late" });
+      }),
+    );
+
+    const yields: unknown[] = [];
+    const consume = (async () => {
+      for await (const d of store.stream()) yields.push(d);
+    })();
+
+    await store.settled;
+    releaseLoader();
+    await consume;
+
+    expect(yields.at(-1)).toEqual({ meta: { seg1: [{ title: "late" }] } });
+  });
+
+  it('stream("settled") completes at the handler barrier while the aux lane is pending', async () => {
+    const store = createHandleStore();
+    store.push("meta", "seg1", "early");
+    let releaseLoader!: () => void;
+    store.trackAuxiliary(new Promise<void>((r) => (releaseLoader = r)));
+
+    const yields: unknown[] = [];
+    for await (const d of store.stream("settled")) yields.push(d);
+    // Completed without waiting for the loader; early push included.
+    expect(yields.at(-1)).toEqual({ meta: { seg1: ["early"] } });
+
+    // The aux lane is still open: a loader push now must NOT throw.
+    expect(() => store.push("meta", "seg1", "late")).not.toThrow();
+    releaseLoader();
+    await store.fullySettled;
+  });
+
+  it("streamLate yields only post-settle pushes and completes at fullySettled", async () => {
+    const store = createHandleStore();
+    store.push("meta", "seg1", "early");
+    let releaseLoader!: () => void;
+    store.trackAuxiliary(
+      new Promise<void>((r) => (releaseLoader = r)).then(() => {
+        store.push("crumbs", "seg2", "late-crumb");
+      }),
+    );
+
+    const lateYields: any[] = [];
+    const consume = (async () => {
+      for await (const d of store.streamLate()) lateYields.push(d);
+    })();
+
+    await store.settled;
+    releaseLoader();
+    await consume;
+
+    expect(lateYields).toHaveLength(1);
+    // Full-state yield: includes the early push too (cumulative snapshot).
+    expect(lateYields[0].crumbs).toEqual({ seg2: ["late-crumb"] });
+  });
+
+  it("streamLate returns without yielding when the aux lane is empty at settled", async () => {
+    const store = createHandleStore();
+    store.push("meta", "seg1", "early");
+    const lateYields: unknown[] = [];
+    for await (const d of store.streamLate()) lateYields.push(d);
+    expect(lateYields).toHaveLength(0);
+  });
+});

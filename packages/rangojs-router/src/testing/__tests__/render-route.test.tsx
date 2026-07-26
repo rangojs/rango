@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
-import { Outlet } from "../../client.js";
+import { Outlet, useOutlet } from "../../client.js";
 import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useReverse } from "../../browser/react/use-reverse.js";
@@ -242,6 +242,43 @@ describe("renderRoute", () => {
     expect(getByTestId("param").textContent).toBe("1");
     // useReverse substitutes explicit params against the local map.
     expect(getByTestId("link").getAttribute("href")).toBe("/products/2");
+  });
+
+  it("seeds useOutlet content and descendant pending state", async () => {
+    function Layout() {
+      const outlet = useOutlet();
+      return (
+        <div>
+          <span data-testid="pending">{String(outlet.pending)}</span>
+          {outlet.content}
+        </div>
+      );
+    }
+
+    function Page() {
+      return <span data-testid="content">page</span>;
+    }
+
+    const defaultResult = await renderRoute(
+      [
+        { path: "/", Component: Layout },
+        { path: "/page", Component: Page },
+      ],
+      { request: "/page" },
+    );
+    expect(defaultResult.getByTestId("content").textContent).toBe("page");
+    expect(defaultResult.getByTestId("pending").textContent).toBe("false");
+    defaultResult.unmount();
+
+    const pendingResult = await renderRoute(
+      [
+        { path: "/", Component: Layout },
+        { path: "/page", Component: Page },
+      ],
+      { request: "/page", outletPending: true },
+    );
+    expect(pendingResult.getByTestId("content").textContent).toBe("page");
+    expect(pendingResult.getByTestId("pending").textContent).toBe("true");
   });
 
   it("merges explicit params over URL-extracted params", async () => {

@@ -114,6 +114,9 @@ export interface RenderSegmentsOptions {
    */
   forceAwait?: boolean;
 
+  /** Seeded descendant client-route pending state for testing. */
+  outletPending?: boolean;
+
   /**
    * Intercept segments to inject into the tree.
    * These are parallel segments from intercept routes that need to be
@@ -232,6 +235,7 @@ export async function renderSegments(
     isAction,
     interceptSegments,
     forceAwait,
+    outletPending = false,
     rootLayout: RootLayout,
   } = options || {};
 
@@ -512,6 +516,7 @@ export async function renderSegments(
         content: outletContent,
         segment: node.segment,
         parallel: node.parallel,
+        pending: outletPending,
         children: nodeContent,
       });
     } else {
@@ -625,6 +630,7 @@ export async function renderSegments(
         parallel: node.parallel,
         loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
         loaderStreams,
+        pending: outletPending,
         children: errorFallback ?? nodeContent,
       });
     }

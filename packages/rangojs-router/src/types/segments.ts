@@ -259,6 +259,13 @@ export interface MatchResult {
    */
   slots?: Record<string, SlotState>;
   /**
+   * Intercept TARGET route names reachable when this location is a navigation
+   * origin (chain walk of the matched entry, when-conditionals included).
+   * Shipped in payload metadata so the browser-local clientUrls matcher can
+   * decline its optimistic presentation for targets an intercept would claim.
+   */
+  interceptTargets?: string[];
+  /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL
    * instead of rendering the page.

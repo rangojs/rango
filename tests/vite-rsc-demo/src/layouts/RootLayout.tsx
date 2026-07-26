@@ -12,6 +12,7 @@ import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
 import { GtmPageViews } from "../components/GtmPageViews.js";
+import { TitleUpdater } from "../components/TitleUpdater.js";
 import { DEFAULT_GTM_ID, gtmNoScriptSrc } from "../handles/gtm.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
@@ -79,6 +80,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
           />
         </noscript>
         <GtmPageViews />
+        <TitleUpdater />
         <ScrollRestoration />
         <nav>
           <Link to={href("/")} prefetch="hover">
@@ -96,6 +98,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/shop")} prefetch="hover">
             Shop
+          </Link>
+          <Link to="/client-shop" prefetch="hover">
+            Client Shop
           </Link>
           <Link to={href("/magazine")} prefetch="hover">
             Magazine

@@ -555,6 +555,13 @@ const { getByTitle } = await renderRoute(
 );
 ```
 
+For a component that reads `useOutlet()`, pass `outletPending: true` to seed the
+production `OutletProvider` shape alongside the synthetic child content. The
+default is `false`. This option does not run navigation, Suspense, loaders, or
+actions; it only makes the two render states directly assertable. The hydrated
+`clientUrls()` transition that toggles pending remains a dev + production e2e
+contract.
+
 Seed `useLocationState(def)` reads with the `locationState` option (`[def, value]`
 pairs), and `useHandle(handle)` reads (e.g. a client Breadcrumbs trail) with the
 `handles` option (`[handle, pushedValues[]]` pairs) — both seed by reference for
@@ -1269,6 +1276,7 @@ renderRoute(                            // async; lazy-loads RTL at call time
   options?: {
     request?: Request | string,         // initial location (URL is read; client render)
     params?, routeMap?,
+    outletPending?: boolean,             // seed useOutlet().pending; context only, no lifecycle
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
     locationState?: [def, value][],     // seed useLocationState by REFERENCE

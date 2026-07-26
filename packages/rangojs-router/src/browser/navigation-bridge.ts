@@ -48,6 +48,7 @@ import {
   schedulePrefetchWhenRouterIdle,
 } from "./prefetch/loader.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
+import { beginClientUrlNavigation } from "../client-urls/navigation.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -342,6 +343,10 @@ export function createNavigationBridge(
         state: resolvedState,
         skipLoadingState: false,
       });
+      const clientUrlPresentation = beginClientUrlNavigation(
+        targetUrl,
+        tx.handle.signal,
+      );
 
       // REVALIDATE: Fetch fresh data from server
       try {
@@ -422,6 +427,7 @@ export function createNavigationBridge(
         console.error("[Browser] Unprocessable navigation response:", error);
         emitNavigationError(onUpdate, error, url);
       } finally {
+        clientUrlPresentation?.clear();
         tx[Symbol.dispose]();
       }
     },

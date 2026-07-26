@@ -3,6 +3,11 @@ import { createCacheScope } from "./cache/cache-scope.js";
 import { resolveCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
+import {
+  isClientUrlPatterns,
+  isClientUrlReference,
+} from "./client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "./client-urls/types.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
 import {
@@ -100,6 +105,7 @@ import type {
   Rango,
   RangoInternal,
   RouterRequestInput,
+  UrlPatternMount,
 } from "./router/router-interfaces.js";
 
 // Extracted closure functions
@@ -330,6 +336,7 @@ export function createRouter<TEnv = any>(
 
   // Store reference to urlpatterns for runtime manifest generation
   let storedUrlPatterns: UrlPatterns<TEnv, any> | null = null;
+  const urlpatternMounts: UrlPatternMount<TEnv>[] = [];
 
   // Global middleware storage
   const globalMiddleware: MiddlewareEntry<TEnv>[] = [];
@@ -572,6 +579,13 @@ export function createRouter<TEnv = any>(
             }
           }
         : undefined,
+      // notFound() resolution deps: the streamed envelope carries the
+      // server-rendered not-found UI, mirroring the consumption lane's
+      // boundary resolution (segment-resolution/helpers.ts).
+      {
+        findNearestNotFoundBoundary,
+        notFoundComponent: notFound,
+      },
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)
@@ -756,7 +770,30 @@ export function createRouter<TEnv = any>(
     id: routerId,
     basename,
 
-    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
+    routes(
+      patternsOrBuilder:
+        | UrlPatterns<TEnv>
+        | UrlBuilder<TEnv>
+        | ClientUrlPatterns,
+    ): any {
+      // Pure-client mounting shorthand: a clientUrls() definition passed
+      // directly NORMALIZES to a root include in the canonical urls() tree —
+      // exactly `include("/", definition, { name: "" })`, keeping local route
+      // names bare and local patterns app-absolute. This is sugar over the
+      // ONE composition model, not a second registration path: it rides the
+      // same lazy include materialization, so no ordering, one-definition, or
+      // deferral rules exist. Prefixing, wrapping RSC layouts, and middleware
+      // scope still come from mounting through include() in urls() yourself.
+      if (
+        isClientUrlPatterns(patternsOrBuilder) ||
+        isClientUrlReference(patternsOrBuilder)
+      ) {
+        const clientSource = patternsOrBuilder as ClientUrlPatterns;
+        patternsOrBuilder = urls(({ include }) => [
+          include("/", clientSource, { name: "" }),
+        ]) as UrlPatterns<TEnv>;
+      }
+
       // Wrap builder functions in urls() automatically
       const urlPatterns: UrlPatterns<TEnv> =
         typeof patternsOrBuilder === "function"
@@ -766,6 +803,10 @@ export function createRouter<TEnv = any>(
       // Store reference for runtime manifest generation
       storedUrlPatterns = urlPatterns;
       const currentMountIndex = mountIndex++;
+      urlpatternMounts.push({
+        patterns: urlPatterns,
+        mountIndex: currentMountIndex,
+      });
 
       // Create manifest and patterns maps for route registration
       const manifest = new Map<string, EntryData>();
@@ -1093,6 +1134,10 @@ export function createRouter<TEnv = any>(
     // Expose urlpatterns for runtime manifest generation
     get urlpatterns() {
       return storedUrlPatterns ?? undefined;
+    },
+
+    get __urlpatternMounts() {
+      return urlpatternMounts;
     },
 
     // Expose source file for per-router type generation

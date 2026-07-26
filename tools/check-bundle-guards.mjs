@@ -12,6 +12,7 @@
  *     chunk stays under ROUTER_CHUNK_GZIP_MAX — catches client-runtime creep
  *     the rejected-optimizations list (AGENTS.md Bundle hygiene) exists to
  *     prevent. Baseline measured 2026-07-10: 33.2KB gzip; budget 50-60KB.
+ *     Re-baselined 2026-07-26 at 42.4KB for clientUrls() — see the constant.
  *  3. EAGER MANIFEST CEILING (cloudflare-stress-demo): the eager
  *     `virtual:rsc-router/routes-manifest` module stays tiny in the RSC
  *     metafile. Measured 284B gzip at 26k routes; the regression mode is
@@ -41,7 +42,27 @@ import {
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const ROUTER_CHUNK_GZIP_MAX = 40 * 1024;
+// Raised 40KB -> 43KB on 2026-07-26 for clientUrls() (PR #812), measured at
+// 42443B on cloudflare-basic. This was a DELIBERATE call, not a red-check
+// silencing: the runtime is still well inside the 50-60KB budget above, and the
+// ratchet fired exactly as intended — it forced the decision below.
+//
+// What the +4.3KB buys, and the known wart: the clientUrls() runtime
+// (client-urls/client-urls.ts ~11.7KB rendered, plus router/trie-matching.ts
+// and router/route-trie-builder.ts, whose ONLY client-graph consumer it is)
+// lands in the eager router chunk, so every page of every app pays for it —
+// including apps that never call clientUrls(). In cloudflare-basic the feature
+// is two routes behind a separate router at /__client-urls.
+//
+// Why it is not simply chunk-split: `manualChunks` returning undefined does not
+// move it (measured: 42443B -> 41878B, only client-root.tsx relocates). The
+// implementation is pinned by the static re-export at client.tsx:262, and both
+// public barrels (src/client.tsx AND src/index.ts) sit in the eager chunk, so
+// re-homing the export does not help either. The real fix is a dedicated
+// `@rangojs/router/client-urls` subpath whose only importer is the consumer's
+// "use client" definition module — a public API change, tracked separately.
+// Do NOT raise this again to absorb that; land the split instead.
+const ROUTER_CHUNK_GZIP_MAX = 43 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

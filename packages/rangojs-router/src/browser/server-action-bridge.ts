@@ -37,6 +37,8 @@ import {
 import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
+import { collectClientRevalidationDecisions } from "../client-urls/navigation.js";
+import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -294,12 +296,36 @@ export function createServerActionBridge(
       const onHandleAbort = () => fetchAbort.abort();
       handle.signal.addEventListener("abort", onHandleAbort, { once: true });
 
+      // Client-run per-loader revalidation for the action follow-up render:
+      // run the held clientUrls route's revalidate() predicates with the
+      // action context and ship their decisions. Fails soft to null (locked
+      // server defaults).
+      let clientRevalidation: string | null = null;
+      try {
+        const actionPageUrl = new URL(
+          segmentState.currentUrl,
+          window.location.origin,
+        );
+        clientRevalidation = collectClientRevalidationDecisions({
+          currentUrl: actionPageUrl,
+          nextUrl: actionPageUrl,
+          isAction: true,
+          actionId: id,
+          stale: false,
+        });
+      } catch {
+        clientRevalidation = null;
+      }
+
       // Send action request with stream tracking
       const responsePromise = fetch(url, {
         method: "POST",
         headers: {
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
+          ...(clientRevalidation && {
+            [CLIENT_REVALIDATION_HEADER]: clientRevalidation,
+          }),
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,

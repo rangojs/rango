@@ -358,8 +358,11 @@ path("/moved", () => redirect("/new-location", 301), { name: "moved" });
 > **Redirecting from a route with `loading()`:** an `async` handler that returns
 > a `Response`/`redirect()` on a route that also declares `loading()` is streamed,
 > so the redirect is rendered into the RSC stream instead of becoming an HTTP
-> redirect. Issue the redirect from `middleware`, a loader, or a **synchronous**
-> handler return instead. (Dev logs a warning if this is hit.)
+> redirect. For a real HTTP redirect, issue it from `middleware` or a
+> **synchronous** handler return — pre-stream redirect authority belongs there.
+> (A loader `throw redirect()` also navigates the user, but it is ALWAYS a
+> client-side replace on document loads — 200 document, never a 302; see
+> `/loader` → "Loader Authority". Dev logs a warning if this is hit.)
 
 ### Redirect with location state
 

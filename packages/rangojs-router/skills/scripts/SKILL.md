@@ -7,9 +7,9 @@ argument-hint: "[vendor]"
 # Scripts
 
 Inject `<script>` tags into the document the idiomatic Rango way: push a config
-from a **server** route/layout handler with `ctx.use(Script)(config)`, and render
-them with the built-in **`<Scripts />`** component (the `Meta` / `<MetaTags>`
-pair, but for scripts). The request CSP **nonce is applied automatically to
+from a **server** route/layout handler — or a loader body — with
+`ctx.use(Script)(config)`, and render them with the built-in **`<Scripts />`**
+component (the `Meta` / `<MetaTags>` pair, but for scripts). The request CSP **nonce is applied automatically to
 document-rendered scripts** — you never read or pass it. (The one exception is an
 async script first encountered on a soft navigation; see the nonce caveat under
 "Execution contract".)
@@ -40,7 +40,7 @@ export function Document({ children }) {
 }
 ```
 
-## Push from a handler
+## Push from a handler (or loader)
 
 `ScriptConfig` is a discriminated union — exactly one of three shapes, so invalid
 combinations are compile errors:
@@ -101,6 +101,15 @@ inert (silently dead) `<script>`. Async configs stay reactive. Reusing an `id`
 shapes the INITIAL document output (last-push-wins) — it does not re-run a script
 during navigation.
 
+> **Loader pushes meet the freeze.** A LOADER push to the Script handle
+> follows the delivery race (`/loader`): it is in the initial HTML only if it
+> settles before the handler barrier. A push that lands after a slow fetch
+> arrives post-hydration — and for an inline/ordered script the frozen set
+> means it is silently dropped. If a loader must contribute an inline script
+> to the document, register it `loader(Def, { stream: "navigation" })` so the
+> document render awaits the push; otherwise push from a handler (or use an
+> `async` config, which stays reactive).
+
 **Nonce caveat for soft-nav async.** The "nonce is applied automatically" claim
 holds for DOCUMENT-RENDERED scripts (they carry the nonce in the SSR HTML). An
 async script first encountered on a soft navigation is injected by React on the
@@ -143,7 +152,7 @@ per-route data into the FIRST (hard-load) page_view server-side — the Script
 handle is collected after handlers run (parent → child, last-wins):
 
 ```ts
-// root layout: generic bootstrap
+// root layout: generic bootstrap (handler push — always pre-barrier)
 ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 // a route: same id, with content_group baked in
 ctx.use(Script)({
@@ -176,4 +185,5 @@ Otherwise allow the vendor hosts. For GTM/GA4 (Google's wildcards): `script-src
   `type: "text/partytown"` and wire Partytown's own nonce config manually.
 
 A full GTM + GA4-style integration (page_view on first render + soft nav, nonce,
-ecommerce events) lives in `tests/vite-rsc-demo`.
+ecommerce events) lives in the router repository's `tests/vite-rsc-demo` app
+(not shipped in this package).

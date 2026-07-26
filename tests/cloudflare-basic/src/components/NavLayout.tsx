@@ -19,6 +19,12 @@ export function NavLayout() {
         <Link to={href("/counter")} data-testid="nav-counter">
           Counter
         </Link>
+        <Link to="/__client-urls" data-testid="nav-pure-client-routes">
+          Pure client routes
+        </Link>
+        <Link to="/mixed-client-routes" data-testid="nav-mixed-client-routes">
+          RSC layout + client pages
+        </Link>
         <Link to="/cache-lab" data-testid="nav-cache-lab">
           Cache Lab
         </Link>

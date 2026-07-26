@@ -21,7 +21,7 @@ const PRICE_MAP: Record<string, number> = {
 export const LivePricesLoader = createLoader(async (ctx) => {
   "use server";
   await ctx.rendered();
-  const productIds = ctx.use(RenderedProducts);
+  const productIds = ctx.get(RenderedProducts);
   const prices: Record<string, number> = {};
   for (const id of productIds) {
     prices[id] = PRICE_MAP[id] ?? 0;

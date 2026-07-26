@@ -129,6 +129,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
 
+  // Pin `_currentSegmentId` to the OWNING entry before the kickoffs below —
+  // createLoaderExecutor captures it synchronously for ctx.use(Handle) push
+  // attribution. Same pin as resolveLoaders (fresh.ts); this REVALIDATION
+  // funnel is the navigation/action lane's kickoff site, where nothing else
+  // assigns the id first (pushes silently vanished: an id outside
+  // matched/segmentOrder is dropped by collectHandleData).
+  (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
+
   const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
     loaderEntry,
     loader: loaderEntry.loader,

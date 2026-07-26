@@ -154,7 +154,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
       .toBe(1);
 
     // Hover over Shop link
-    await page.locator('nav a:has-text("Shop")').hover();
+    await page.locator('nav a:text-is("Shop")').hover();
     await expect
       .poll(
         () => ({
@@ -523,7 +523,7 @@ base.describe("prefetch-on-hover (router mode) (production)", () => {
       .toBe(1);
 
     // Hover over Shop link
-    await page.locator('nav a:has-text("Shop")').hover();
+    await page.locator('nav a:text-is("Shop")').hover();
     await baseExpect
       .poll(
         () => ({

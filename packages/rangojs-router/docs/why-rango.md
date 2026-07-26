@@ -365,6 +365,60 @@ Forget the call and you merely lose warmth — the default invalidation covers
 you. Every failure direction in this subsystem points toward freshness, never
 toward staleness.
 
+## Instant loading with server authority
+
+An opt-in `clientUrls()` module lets the hydrated browser recognize a destination
+route and show its loading UI before the server response arrives:
+
+```tsx
+// catalog.client-urls.tsx
+"use client";
+
+import { clientUrls } from "@rangojs/router/client";
+import { ProductLoader } from "./product.loader.js";
+
+export default clientUrls(({ path, layout, loader, loading }) => [
+  layout(CatalogLayout, () => [
+    path("/catalog", CatalogIndex),
+    path("/catalog/:productId", ProductPage, () => [
+      loader(ProductLoader),
+      loading(<ProductLoading />),
+    ]),
+  ]),
+]);
+
+// urls.tsx
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
+
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+```
+
+The browser match is not a second authority. It only selects transient
+destination loading and `useOutlet().pending` after hydration. The existing
+partial Flight request still runs the canonical server matcher, global router
+middleware, and the route's `createLoader()` definitions by ID; its response
+commits URL, history, and content. Hard requests use the same projected routes
+for SSR and hydration.
+
+That narrower contract avoids a second loader cache or navigation protocol, but
+it also keeps the initial API deliberately small: named client components,
+`path`/`layout`/`loader`/`loading`, `include()` mounting in the canonical
+`urls()` tree, and only `name`, `search`, and `trailingSlash` path options.
+The include supplies URL/name prefixes and the surrounding RSC layouts,
+middleware scope, and boundaries; route-local middleware/revalidation,
+parallel/intercept routes, cache, transitions, boundaries, and PPR are not
+available INSIDE `clientUrls()`. See the
+[client URL guide](./client-urls.md) for the complete limits.
+
+The immediate loading branch can appear before global auth middleware completes.
+It must not reveal protected data or sensitive route state; if the shell itself
+is sensitive, do not use optimistic loading for that destination.
+
 ## Semantics are a contract, not folklore
 
 The execution model — middleware scope, handler-first ordering, context
@@ -412,6 +466,10 @@ them:
   internalize, precisely because other frameworks use the same words for
   different things. The [skills](../skills/rango/SKILL.md) exist to make
   that session short.
+- **Client URL loading is optimistic, not authorization.** Its loading branch can
+  render before global middleware finishes, and the `clientUrls()` DSL
+  intentionally omits route middleware, nested `include()`/`parallel()`,
+  boundaries, cache, and PPR — those stay in the server tree around the mount.
 - **The router is experimental.** The semantics are pinned and tested, and
   the API is converging, but pre-1.0 means pre-1.0.
 

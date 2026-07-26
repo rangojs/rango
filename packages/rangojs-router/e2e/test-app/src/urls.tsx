@@ -117,6 +117,12 @@ import {
 import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import clientUrlPatterns from "./urls/client-urls.js";
+import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
+import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
+import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
+import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -144,6 +150,21 @@ function TxBlockShell(): React.ReactNode {
     <div data-testid="tx-block-shell">
       <Outlet />
     </div>
+  );
+}
+
+/**
+ * Parent-chain RSC layout for the clientUrls action-revalidation fixture. It
+ * reads the same counter the group's projected loader reads, and declares no
+ * revalidate(): after the action, the loader shows the new count while this
+ * value stays pre-action (locked `action:parent-chain-skip` default).
+ */
+function ClientUrlsActionParent(): React.ReactNode {
+  return (
+    <section>
+      <p data-testid="ca-parent-count">{`parent:${getClientUrlsActionCount()}`}</p>
+      <Outlet />
+    </section>
   );
 }
 
@@ -555,17 +576,21 @@ export const urlpatterns = urls(
       ),
 
       // Contrast route: same :param + loading() skeleton, but WITHOUT
-      // transition(). This is the default behavior — navigating between params
-      // remounts the route and shows the skeleton. Pins that the opt-in is
-      // required and the default is unchanged.
+      // transition(). PARAM navs remount and show the skeleton (param-bearing
+      // key — the opt-in is required for the param hold). SEARCH-only navs on
+      // the same param reconcile and HOLD by default (isSameStructureNav
+      // transition commit in browser/partial-update.ts): the tab link + echo
+      // below pin that split.
       path(
         "/plain-product/:id",
         async (ctx) => {
           const { id, name, loadedAt } = await ctx.use(SwrProductLoader);
+          const tab = ctx.url.searchParams.get("tab") ?? "none";
           return (
             <div data-testid="plain-product-page">
               <h1 data-testid="plain-product-name">{name}</h1>
               <p data-testid="plain-product-loaded-at">{loadedAt}</p>
+              <p data-testid="plain-product-tab">tab: {tab}</p>
               <SwrProductCounter />
               <nav>
                 <Link to="/plain-product/1" data-testid="plain-product-link-1">
@@ -573,6 +598,12 @@ export const urlpatterns = urls(
                 </Link>
                 <Link to="/plain-product/2" data-testid="plain-product-link-2">
                   Product 2
+                </Link>
+                <Link
+                  to="/plain-product/1?tab=specs"
+                  data-testid="plain-product-link-1-specs"
+                >
+                  Product 1 specs
                 </Link>
               </nav>
             </div>
@@ -810,6 +841,75 @@ export const urlpatterns = urls(
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
+
+      // clientUrls() group: browser-local presentation routes mounted through
+      // include() like any urls() module — the canonical composition model.
+      include("/client-urls-e2e", clientUrlPatterns),
+      // Async include + clientUrls: supported when the include chain and the
+      // client routes are NAMED (see urls/client-urls-async-named.ts).
+      include(
+        "/client-urls-async",
+        () => import("./urls/client-urls-async-named.js"),
+        { name: "asyncClient" },
+      ),
+
+      // Intercept over a clientUrls TARGET: the shared layout declares the
+      // modal intercept by the client route's canonical name. Origins:
+      // (A) the server page below — no client group active, standard modal;
+      // (B) the group's own index — the local presentation must decline in
+      //     favor of the intercept (coordination in client-urls/navigation.ts).
+      path(
+        "/client-urls-intercept-origin",
+        () => (
+          <div data-testid="ci-origin">
+            <Link
+              to="/client-urls-intercept/items/alpha"
+              prefetch="none"
+              data-testid="ci-origin-link"
+            >
+              Open item from server page
+            </Link>
+            <Link
+              to="/client-urls-intercept/detail/gamma"
+              prefetch="none"
+              data-testid="ci-origin-detail-link"
+            >
+              Open detail from server page
+            </Link>
+          </div>
+        ),
+        { name: "ciOrigin" },
+      ),
+      include("/client-urls-intercept", clientUrlsInterceptPatterns, {
+        name: "clientIntercept",
+      }),
+      // Data-only transition() projection: /items holds same-route param navs
+      // (client-declared transition), /plain re-streams its skeleton.
+      include("/client-urls-transition", clientUrlsTransitionPatterns, {
+        name: "clientTransition",
+      }),
+      // Action revalidation over a clientUrls group: the group's projected
+      // loaders re-run on the action follow-up (route-owned default true);
+      // this parent-chain layout reads the SAME counter and keeps the locked
+      // skip (no revalidate() declared), so its value stays pre-action.
+      layout(ClientUrlsActionParent, () => [
+        include("/client-urls-action", clientUrlsActionPatterns, {
+          name: "clientAction",
+        }),
+      ]),
+      intercept(
+        "@modal",
+        ".clientIntercept.item",
+        async (ctx) => {
+          const item = await ctx.use(ClientUrlsItemLoader);
+          return (
+            <Modal testId="ci-modal">
+              <p data-testid="ci-modal-item">{item}</p>
+            </Modal>
+          );
+        },
+        () => [loader(ClientUrlsItemLoader)],
+      ),
 
       // Factory-generated patterns (static parser can't resolve the function call)
       include("/factory-hmr", createFactoryHmrPatterns(), {

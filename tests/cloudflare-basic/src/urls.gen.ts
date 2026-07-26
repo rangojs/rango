@@ -13,6 +13,8 @@ export const routes = {
   inlineDocs: "/inline/docs",
   inlineIndex: "/inline",
   inlinePricing: "/inline/pricing",
+  "mixedClient.detail": "/mixed-client-routes/:slug",
+  "mixedClient.index": "/mixed-client-routes",
   proactiveCache: "/proactive-cache",
   proactiveCacheItemA: "/proactive-cache/item-a",
   proactiveCacheItemB: "/proactive-cache/item-b",

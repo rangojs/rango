@@ -9,7 +9,7 @@ import {
   runWithRequestContext,
 } from "../request-context.js";
 import { keepClientCache } from "../cookie-store.js";
-import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
+import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 
 function makeCtx() {
   return createRequestContext({
@@ -47,9 +47,10 @@ describe("keepClientCache() (server seat)", () => {
 
   it("throws inside a cache-exec boundary (the cookies() guard)", () => {
     const ctx = makeCtx();
-    (ctx as unknown as Record<symbol, unknown>)[INSIDE_CACHE_EXEC] = true;
-    runWithRequestContext(ctx, () => {
-      expect(() => keepClientCache()).toThrow(/use cache/);
-    });
+    runWithRequestContext(ctx, () =>
+      runWithCacheExecScope(() => {
+        expect(() => keepClientCache()).toThrow(/use cache/);
+      }),
+    );
   });
 });

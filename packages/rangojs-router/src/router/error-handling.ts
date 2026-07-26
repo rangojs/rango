@@ -5,7 +5,7 @@
  * Also includes the shared invokeOnError utility for error callback invocation.
  */
 
-import type { ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import type { EntryData } from "../server/context";
 import type {
   ResolvedSegment,
@@ -281,6 +281,69 @@ export function createNotFoundInfo(
   };
 }
 
+/** Router-level `createRouter({ notFound })` option shape. */
+export type NotFoundComponentOption =
+  | ReactNode
+  | ((props: { pathname: string }) => ReactNode);
+
+/**
+ * Pick the effective notFound fallback: nearest `notFoundBoundary`, else the
+ * router-level `notFound` option, else a plain default.
+ *
+ * The router option is resolved ONLY when no nearer boundary won — it may be a
+ * user render function doing arbitrary work, so computing it eagerly (as three
+ * earlier copies of this policy did) burned a full render on every 404 that a
+ * boundary was going to handle anyway.
+ *
+ * Every 404 origin routes through here — segment resolution
+ * (`segment-resolution/helpers.ts`), loader-thrown `notFound()`
+ * (`loader-resolution.ts`), and the unmatched-route path (`rsc/handler.ts`) —
+ * so the default text and the boundary-wins precedence cannot drift apart.
+ */
+export function resolveNotFoundFallback(
+  boundary: ReactNode | NotFoundBoundaryHandler | null | undefined,
+  notFoundComponent: NotFoundComponentOption | undefined,
+  pathname: string | undefined,
+): ReactNode | NotFoundBoundaryHandler {
+  if (boundary !== null && boundary !== undefined) return boundary;
+  return resolveDefaultNotFound(notFoundComponent, pathname);
+}
+
+/**
+ * The router-level default alone: `createRouter({ notFound })` rendered, or the
+ * plain fallback node. Separate from {@link resolveNotFoundFallback} for the
+ * unmatched-route path, which has no entry chain and therefore no boundary to
+ * consult — it gets a `ReactNode` back rather than a possible handler.
+ */
+export function resolveDefaultNotFound(
+  notFoundComponent: NotFoundComponentOption | undefined,
+  pathname: string | undefined,
+): ReactNode {
+  if (typeof notFoundComponent === "function") {
+    return notFoundComponent({ pathname: pathname ?? "" });
+  }
+  return notFoundComponent ?? createElement("h1", null, "Not Found");
+}
+
+/**
+ * Invoke a notFound fallback that may be a boundary handler or a plain node.
+ *
+ * Callers that cannot propagate a throw (the loader envelope) wrap this in
+ * their own try/catch; it deliberately does not swallow, so a throwing boundary
+ * still surfaces where that is the correct behavior.
+ */
+export function renderNotFoundFallback(
+  fallback: ReactNode | NotFoundBoundaryHandler,
+  notFoundInfo: NotFoundInfo,
+): ReactNode {
+  if (typeof fallback === "function") {
+    return fallback({
+      notFound: notFoundInfo,
+    } satisfies NotFoundBoundaryFallbackProps);
+  }
+  return fallback;
+}
+
 /**
  * Create a notFound segment with the fallback component
  * Renders the fallback with not found info
@@ -291,16 +354,7 @@ export function createNotFoundSegment(
   entry: EntryData,
   params: Record<string, string>,
 ): ResolvedSegment {
-  let component: ReactNode;
-
-  if (typeof fallback === "function") {
-    const props: NotFoundBoundaryFallbackProps = {
-      notFound: notFoundInfo,
-    };
-    component = fallback(props);
-  } else {
-    component = fallback;
-  }
+  const component: ReactNode = renderNotFoundFallback(fallback, notFoundInfo);
 
   return {
     id: `${entry.shortCode}.notFound`,

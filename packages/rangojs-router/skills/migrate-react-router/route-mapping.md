@@ -52,9 +52,12 @@ In framework mode, each route is a file with conventional exports (`loader`,
 RR7 route module export     → Rango equivalent
 ─────────────────────────────────────────────────────
 default (Component)         → handler in path()
-loader                      → fetch in handler, or createLoader()
+loader                      → fetch in handler, or createLoader() — a Rango
+                              loader keeps the RR shape: throw redirect()/
+                              notFound(), push meta from the body
 action                      → "use server" function
-meta                        → ctx.use(Meta) in handler
+meta                        → ctx.use(Meta) in handler; meta({ data }) →
+                              ctx.use(Meta) push in the loader that owns data
 headers                     → ctx.header() in handler or middleware
 shouldRevalidate            → revalidate() DSL
 ErrorBoundary               → errorBoundary() DSL
@@ -127,6 +130,16 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 Key shift: the route module's scattered exports consolidate into the handler
 (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+
+The loader-shaped variant is equally valid — and closer to the RR module when
+the loader carried authority. A `createLoader()` body can throw `notFound()`
+for the missing product AND push the data-derived meta itself
+(`ctx.use(Meta)({ title: product.name })`); register it with
+`loader(ProductLoader, { stream: "navigation" })` when the 404 status and
+title must be in the document deterministically. See `/loader` → "Loader
+Authority" and "Writing Handles from Loaders". (One RR habit that does NOT
+carry over: a loader `throw redirect()` is a client-side navigate on document
+loads, never an HTTP 302 — pre-stream 302s belong in middleware.)
 
 ### RR7 file routing → urls() DSL
 

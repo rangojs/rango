@@ -21,6 +21,7 @@ import {
 // RangoContext from the runner realm) — see the runner.import below.
 import { buildPerRouterTrie } from "../../build/route-trie.js";
 import { collectFallbackClientRefs } from "../../build/collect-fallback-refs.js";
+import { mergeFullManifests } from "../../build/merge-full-manifests.js";
 import { flattenLeafEntries } from "../utils/manifest-utils.js";
 import type { DiscoveryState, PrecomputedEntry } from "./state.js";
 import {
@@ -34,6 +35,10 @@ import {
 } from "./discovery-errors.js";
 import { createRangoDebugger, timed, NS } from "../debug.js";
 import { computeProductionHash } from "../plugins/client-ref-hashing.js";
+import {
+  discoverClientUrlProjections,
+  refreshRecordedClientUrlProjections,
+} from "./client-urls-projection.js";
 
 const debug = createRangoDebugger(NS.discovery);
 
@@ -48,8 +53,24 @@ const debug = createRangoDebugger(NS.discovery);
 export async function discoverRouters(
   state: DiscoveryState,
   rscEnv: any,
+  ssrEnv?: any,
 ): Promise<any> {
   if (!state.resolvedEntryPath) return;
+
+  // Import the router package FIRST (leaf module, no side effects on user
+  // code) so recorded clientUrls projections can be refreshed BEFORE the entry
+  // import: routers re-created by that import call `.routes(reference)` at
+  // module scope and materialize whatever projection is installed at that
+  // moment. On HMR re-discovery that must be the CURRENT module contents, not
+  // the previous pass's snapshot (see refreshRecordedClientUrlProjections).
+  const serverMod = await timed(
+    debug,
+    "inner: import @rangojs/router/server",
+    () => rscEnv.runner.import("@rangojs/router/server"),
+  );
+  await timed(debug, "inner: refresh recorded client URL projections", () =>
+    refreshRecordedClientUrlProjections(state, ssrEnv, serverMod),
+  );
 
   // Import the entry file via RSC environment.
   // For node preset: this is the router file (createRouter() registers in RouterRegistry).
@@ -58,12 +79,6 @@ export async function discoverRouters(
     rscEnv.runner.import(state.resolvedEntryPath),
   );
 
-  // Import the router package to access the registry
-  const serverMod = await timed(
-    debug,
-    "inner: import @rangojs/router/server",
-    () => rscEnv.runner.import("@rangojs/router/server"),
-  );
   let registry: Map<string, any> = serverMod.RouterRegistry;
 
   if (!registry || registry.size === 0) {
@@ -113,6 +128,10 @@ export async function discoverRouters(
       throw new DiscoveryError(state.resolvedEntryPath, discoveryErrors);
     }
   }
+
+  await timed(debug, "inner: discover client URL projections", () =>
+    discoverClientUrlProjections(state, ssrEnv, serverMod),
+  );
 
   // generateManifestFull must run in the RSC runner realm: it invokes the
   // user's urlpatterns.handler() via RangoContext, consuming router instances
@@ -176,20 +195,27 @@ export async function discoverRouters(
 
   const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
-    if (!router.urlpatterns || !generateManifestFull) {
+    if (!generateManifestFull) {
       continue;
     }
 
-    const manifest = await generateManifestFull(
-      router.urlpatterns,
-      routerMountIndex,
-      {
-        routerId: id,
-        ...(router.__basename ? { urlPrefix: router.__basename } : {}),
-        ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
-      },
-    );
-    routerMountIndex++;
+    const mounts =
+      router.__urlpatternMounts ??
+      (router.urlpatterns ? [{ patterns: router.urlpatterns }] : []);
+    if (mounts.length === 0) continue;
+
+    const mountManifests = [];
+    for (const mount of mounts) {
+      mountManifests.push(
+        await generateManifestFull(mount.patterns, routerMountIndex, {
+          routerId: id,
+          ...(router.__basename ? { urlPrefix: router.__basename } : {}),
+          ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
+        }),
+      );
+      routerMountIndex++;
+    }
+    const manifest = mergeFullManifests(mountManifests);
     allManifests.push({ id, manifest });
 
     // Router-level "use client" boundary defaults -> app-fallback (the

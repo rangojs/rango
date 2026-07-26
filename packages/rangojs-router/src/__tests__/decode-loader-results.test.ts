@@ -152,3 +152,92 @@ describe("decodeLoaderResults", () => {
     });
   });
 });
+
+// --- Loader-thrown authority signals (notFound()/redirect()) ---
+
+import {
+  decodeLoaderEntry,
+  LOADER_NOT_FOUND_FALLBACK,
+  LOADER_REDIRECT,
+} from "../decode-loader-results.js";
+import { LoaderRedirect } from "../loader-redirect.js";
+import { isValidElement } from "react";
+
+const notFoundResult = (fallback: unknown): LoaderDataResult => ({
+  __loaderResult: true,
+  ok: false,
+  notFound: true,
+  error: { message: "Product not found", name: "DataNotFoundError" } as any,
+  fallback: fallback as any,
+});
+
+const redirectResult = (to: string): LoaderDataResult => ({
+  __loaderResult: true,
+  ok: false,
+  redirect: { to },
+  error: { message: `Loader redirected to ${to}` } as any,
+  fallback: null,
+});
+
+describe("decodeLoaderEntry signals (read-site throw path)", () => {
+  it("throws with LOADER_NOT_FOUND_FALLBACK carrying the server-rendered node", () => {
+    let thrown: unknown;
+    try {
+      decodeLoaderEntry(notFoundResult("not-found-ui"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).name).toBe("DataNotFoundError");
+    expect((thrown as any)[LOADER_NOT_FOUND_FALLBACK]).toBe("not-found-ui");
+  });
+
+  it("notFound with a null fallback still carries the marker (renders empty, not error)", () => {
+    let thrown: unknown;
+    try {
+      decodeLoaderEntry(notFoundResult(null));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(LOADER_NOT_FOUND_FALLBACK in (thrown as object)).toBe(true);
+    expect((thrown as any)[LOADER_NOT_FOUND_FALLBACK]).toBeNull();
+  });
+
+  it("throws with LOADER_REDIRECT carrying the resolved target", () => {
+    let thrown: unknown;
+    try {
+      decodeLoaderEntry(redirectResult("/new-home"));
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as any)[LOADER_REDIRECT]).toEqual({ to: "/new-home" });
+  });
+});
+
+describe("decodeLoaderResults signals (aggregate non-throw path)", () => {
+  it("notFound takes the errorFallback slot without throwing (runs during server tree build)", () => {
+    const { errorFallback } = decodeLoaderResults(
+      [ok("healthy"), notFoundResult("not-found-ui")],
+      ["a", "b"],
+    );
+    expect(errorFallback).toBe("not-found-ui");
+  });
+
+  it("a signal outranks a later plain error fallback (scan stops at the signal)", () => {
+    const { errorFallback } = decodeLoaderResults(
+      [notFoundResult("not-found-ui"), fail("boom", "error-ui")],
+      ["a", "b"],
+    );
+    expect(errorFallback).toBe("not-found-ui");
+  });
+
+  it("redirect plants a LoaderRedirect element in the errorFallback slot", () => {
+    const { errorFallback } = decodeLoaderResults(
+      [redirectResult("/moved")],
+      ["a"],
+    );
+    expect(isValidElement(errorFallback)).toBe(true);
+    expect((errorFallback as any).type).toBe(LoaderRedirect);
+    expect((errorFallback as any).props.to).toBe("/moved");
+  });
+});

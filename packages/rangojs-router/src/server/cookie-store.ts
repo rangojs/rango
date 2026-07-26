@@ -14,7 +14,7 @@ import {
   getCurrentLoaderBodyId,
   isInsideHandlerInvokedLoaderBody,
 } from "./context.js";
-import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
+import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
 
 /**
  * A single cookie entry returned by get() and getAll().
@@ -65,7 +65,7 @@ export interface CookieStore {
  */
 export function cookies(): CookieStore {
   const ctx = getRequestContext();
-  assertNotInsideCacheContext(ctx, "cookies");
+  assertNotInsideCacheContext("cookies");
   assertNotInsideShellCapture(ctx, "cookies");
   return createCookieStore(ctx);
 }
@@ -91,9 +91,10 @@ type HeadersIterator<T> = IterableIterator<T>;
 
 /**
  * Throw if called inside a cache boundary — either a "use cache" function
- * (`INSIDE_CACHE_EXEC` stamped on ctx by the cache runtime) or a `cache()`
- * DSL boundary (`isInsideCacheScope()` — the render-store flag set while
- * resolving a `type: "cache"` route entry).
+ * (`isInsideCacheExecScope()` — the AsyncLocalStorage scope the cache runtime
+ * enters around the cached body) or a `cache()` DSL boundary
+ * (`isInsideCacheScope()` — the render-store flag set while resolving a
+ * `type: "cache"` route entry).
  *
  * Reading request-scoped data (cookies, headers) inside a cached scope
  * produces per-request values that are NOT reflected in the cache key, so
@@ -103,18 +104,17 @@ type HeadersIterator<T> = IterableIterator<T>;
  * here is baked into the shell exactly like a `"use cache"` return value is
  * baked into its cache entry.
  *
- * `isInsideCacheScope()` returns false inside loaders (loaders always run
- * fresh on every request, even on a cache hit), so reading cookies()/headers()
- * from a loader is allowed — loaders are the dynamic "holes" of a cached
- * document.
+ * Both checks are scoped so loaders stay exempt — loaders are the dynamic
+ * "holes" of a cached document and always run fresh. `isInsideCacheScope()`
+ * returns false inside loaders by construction; `isInsideCacheExecScope()`
+ * follows the cached body's own async chain, so a loader running in PARALLEL
+ * with a slow "use cache" fetch on the same request reads cookies() freely.
+ * (Scar: the previous INSIDE_CACHE_EXEC stamp on the shared RequestContext
+ * made exactly that parallel read throw for the cached fetch's whole
+ * execution window — see cache-exec-scope.ts.)
  */
-function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
-  if (
-    ctx !== null &&
-    ctx !== undefined &&
-    typeof ctx === "object" &&
-    (INSIDE_CACHE_EXEC as symbol) in (ctx as Record<symbol, unknown>)
-  ) {
+function assertNotInsideCacheContext(fnName: string): void {
+  if (isInsideCacheExecScope()) {
     throw new Error(
       `${fnName}() cannot be called inside a "use cache" function. ` +
         `Request-scoped data (cookies, headers) varies per request but is not ` +
@@ -222,7 +222,7 @@ const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
  */
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
-  assertNotInsideCacheContext(ctx, "headers");
+  assertNotInsideCacheContext("headers");
   assertNotInsideShellCapture(ctx, "headers");
   return new Proxy(ctx.request.headers, {
     get(target, prop, receiver) {
@@ -262,7 +262,7 @@ export function invalidateClientCache(): void {
     }
     return;
   }
-  assertNotInsideCacheContext(ctx, "invalidateClientCache");
+  assertNotInsideCacheContext("invalidateClientCache");
   ctx._rotateStateCookie();
 }
 
@@ -287,7 +287,7 @@ export function keepClientCache(): void {
     }
     return;
   }
-  assertNotInsideCacheContext(ctx, "keepClientCache");
+  assertNotInsideCacheContext("keepClientCache");
   ctx._setKeepCacheDirective();
 }
 

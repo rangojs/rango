@@ -15,6 +15,7 @@ export {
   Outlet,
   ParallelOutlet,
   useOutlet,
+  type OutletState,
   useLoader,
   ErrorBoundary,
   type ErrorBoundaryProps,
@@ -30,6 +31,12 @@ export {
 } from "./use-loader.js";
 
 export { createLoader } from "./route-definition.js";
+
+export { clientUrls } from "./client-urls/client-urls.js";
+export type {
+  ClientUrlPatterns,
+  ClientUrlRouteRecord,
+} from "./client-urls/client-urls.js";
 
 // "use client" hooks the default ./client entry exports. They are client
 // references in the RSC graph, identical in kind to useHref/useReverse/

@@ -35,10 +35,27 @@ export interface RscPayload {
     /** Merged route params from the matched route */
     params?: Record<string, string>;
     slots?: Record<string, SlotState>;
+    /**
+     * Intercept TARGET route names reachable from this location as a
+     * navigation origin (see MatchResult.interceptTargets). The browser-local
+     * clientUrls matcher declines optimistic presentation for these.
+     */
+    interceptTargets?: string[];
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */
     handles?: AsyncGenerator<HandleData, void, unknown>;
+    /**
+     * Document-lane late handle channel: full-state updates for pushes landing
+     * AFTER the handler barrier (streaming loader bodies writing handles
+     * mid-body). `handles` above is drained to completion in blocking
+     * positions (SSR seed, pre-hydration), so late pushes need this separate
+     * generator, consumed non-blocking post-hydration (rsc-router.tsx).
+     * Empty/instantly-complete when no auxiliary-lane work is pending at the
+     * handler barrier. Full payloads only — partial payloads' `handles`
+     * generator streams to full settle already.
+     */
+    handlesLate?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
     /** Cloudflare dev worker generation used for stale-document convergence. */

@@ -7,7 +7,6 @@
  * and progressive enhancement (no-JS form submissions).
  */
 
-import { createElement } from "react";
 import { isRouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
@@ -50,7 +49,10 @@ import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
-import { invokeOnError } from "../router/error-handling.js";
+import {
+  invokeOnError,
+  resolveDefaultNotFound,
+} from "../router/error-handling.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -1309,11 +1311,12 @@ export function createRSCHandler<
             handledByBoundary: true,
           });
 
-          const notFoundOption = router.notFound;
-          const notFoundComponent =
-            typeof notFoundOption === "function"
-              ? notFoundOption({ pathname: url.pathname })
-              : (notFoundOption ?? createElement("h1", null, "Not Found"));
+          // No boundary to consult: an unmatched route has no entry chain, so
+          // this always lands on the router option or the shared default.
+          const notFoundComponent = resolveDefaultNotFound(
+            router.notFound,
+            url.pathname,
+          );
 
           const notFoundSegment = {
             id: "notFound",

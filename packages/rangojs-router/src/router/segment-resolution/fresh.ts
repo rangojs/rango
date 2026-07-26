@@ -33,6 +33,7 @@ import {
   buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
+import { _getRequestContext } from "../../server/request-context.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import { observeHandler } from "../instrument.js";
@@ -63,6 +64,17 @@ export async function resolveLoaders<TEnv>(
   if (loaderEntries.length === 0) return [];
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
+
+  // Pin `_currentSegmentId` to the OWNING entry BEFORE the loader kickoffs:
+  // createLoaderExecutor captures it synchronously at kickoff for
+  // ctx.use(Handle) push attribution (loader writes land in the same bucket
+  // as the entry's handler pushes — shortCode is in matched/segmentOrder, so
+  // collectHandleData keeps them; an id outside the order is silently
+  // dropped). resolveLoaders runs BEFORE the handler-resolution sites assign
+  // this (fresh.ts handler-first ordering), so without the pin the captured
+  // value is a stale sibling's id (document lane) or undefined (navigation
+  // lane — pushes silently vanished).
+  (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
@@ -92,6 +104,32 @@ export async function resolveLoaders<TEnv>(
   const errorContext = buildLoaderErrorContext(ctx);
 
   if (emitStreaming) {
+    // awaitBeforeFlush (loader(Def, { stream: "navigation" })): document
+    // renders await these loaders before returning, so their data is settled,
+    // their handle pushes beat the barrier snapshot, and a thrown notFound()'s
+    // status write deterministically precedes Response construction. The ids
+    // must register on the request context BEFORE kickoff — rendered() checks
+    // the set to fail fast on the barrier cycle (segment resolution awaits the
+    // loader, the barrier awaits segment resolution, rendered() awaits the
+    // barrier), and the loader body can call rendered() before the await below
+    // is reached. Skipped during shell capture: LIVE-lane loaders are masked
+    // with never-resolving promises there (loader-mask.ts) and would hang.
+    const awaitedIndices: number[] = [];
+    if (!isShellCaptureActive()) {
+      for (let i = 0; i < loaderEntries.length; i++) {
+        if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
+      }
+    }
+    if (awaitedIndices.length > 0) {
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx._awaitBeforeFlushLoaderIds ??= new Set();
+        for (const i of awaitedIndices) {
+          reqCtx._awaitBeforeFlushLoaderIds.add(loaderEntries[i]!.loader.$$id);
+        }
+      }
+    }
+
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
@@ -121,6 +159,15 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
+
+    // Await only the flagged loaders; unflagged siblings keep streaming (their
+    // promises were kicked off above and stay pending in the emitted segments).
+    // The wrapped promise is contracted to never reject (wrapLoaderPromise), so
+    // a flagged loader failure resolves with its error envelope and cannot
+    // collapse resolution — same contract the loading-disabled path relies on.
+    if (awaitedIndices.length > 0) {
+      await Promise.all(awaitedIndices.map((i) => segments[i]!.loaderData));
+    }
 
     return segments;
   }

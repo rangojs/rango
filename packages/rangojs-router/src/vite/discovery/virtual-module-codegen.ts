@@ -44,6 +44,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
   const hasManifest =
     state.mergedRouteManifest &&
     Object.keys(state.mergedRouteManifest).length > 0;
+  const hasClientUrlModules = Boolean(state.clientUrlSourceByReferenceId?.size);
 
   if (hasManifest) {
     // Build gen file import statements for each router with a sourceFile.
@@ -83,6 +84,9 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       "setRouterManifest",
       ...(state.isBuildMode ? ["registerRouterManifestLoader"] : []),
       "clearAllRouterData",
+      ...(hasClientUrlModules
+        ? ["clearClientUrlProjections", "setClientUrlProjection"]
+        : []),
     ];
     const lines = [
       `import { ${serverImports.join(", ")} } from "@rangojs/router/server";`,
@@ -94,6 +98,16 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       // handler finds stale trie data and never rebuilds from updated urlpatterns.
       `clearAllRouterData();`,
     ];
+
+    if (hasClientUrlModules) {
+      lines.push(`clearClientUrlProjections();`);
+      for (const [referenceId, projection] of state.clientUrlProjectionMap ??
+        []) {
+        lines.push(
+          `setClientUrlProjection(${JSON.stringify(referenceId)}, ${jsonParseExpression(projection)});`,
+        );
+      }
+    }
 
     if (varIdx > 0) {
       lines.push(
@@ -169,6 +183,12 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
   }
 
   const lines: string[] = [];
+  if (hasClientUrlModules) {
+    lines.push(
+      `import { clearClientUrlProjections } from "@rangojs/router/server";`,
+      `clearClientUrlProjections();`,
+    );
+  }
   if (!state.isBuildMode) {
     const origin =
       state.devServerOrigin ||

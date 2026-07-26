@@ -125,6 +125,7 @@ export default defineConfig({
             "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-urls-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
@@ -176,6 +177,15 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-client-urls",
+          testMatch: "**/client-urls-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          // Mutates the clientUrls fixture source; isolated server, but keep
+          // it out of the parallel dev window like the other HMR suites.
           dependencies: ["dev"],
         },
         {
@@ -257,6 +267,7 @@ export default defineConfig({
             "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-urls-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
@@ -341,6 +352,16 @@ export default defineConfig({
           use: browserConfig,
           fullyParallel: false,
           dependencies: ["dev"],
+        },
+        {
+          name: "hmr-client-urls",
+          // Mutates the clientUrls fixture source (route-shape edit), which
+          // triggers rediscovery on every watching server — run at the end of
+          // the serial HMR chain like the other file-mutating suites.
+          testMatch: "**/client-urls-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev", "hmr-basename"],
         },
         {
           name: "hmr-prerender",

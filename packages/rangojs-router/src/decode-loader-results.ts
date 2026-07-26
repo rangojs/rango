@@ -1,5 +1,61 @@
 import type { ReactNode } from "react";
+import { createElement } from "react";
 import { isLoaderDataResult } from "./types.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+
+/**
+ * Markers for loader-thrown AUTHORITY SIGNALS (notFound()/redirect()) on the
+ * reconstructed read-site error. Siblings of LOADER_ERROR_FALLBACK, routed
+ * differently by StreamedLoaderErrorBoundary: NOT_FOUND renders the
+ * server-rendered not-found UI riding the envelope; REDIRECT triggers a
+ * client replace-navigation to the (server-resolved, same-origin-guarded)
+ * target. Signals are control flow, not failures — they take precedence over
+ * the plain error-fallback path.
+ *
+ * Only decodeLoaderEntry (the read-site path — client components, so the
+ * throw lands in the router-owned boundary; during document SSR, Fizz emits
+ * the Suspense fallback and replays the throw at hydration) throws these.
+ * decodeLoaderResults runs during the SERVER tree build on forceAwait/action
+ * lanes, where a throw would collapse the whole payload — it routes signals
+ * through the errorFallback slot instead (same visual: the slot replaces the
+ * children under OutletProvider).
+ */
+export const LOADER_NOT_FOUND_FALLBACK: unique symbol = Symbol(
+  "rango.loaderNotFound",
+);
+export const LOADER_REDIRECT: unique symbol = Symbol("rango.loaderRedirect");
+
+function throwSignal(result: any): void {
+  if (result.notFound === true) {
+    const err = new Error(result.error?.message ?? "Not found");
+    err.name = result.error?.name ?? "DataNotFoundError";
+    (err as any)[LOADER_NOT_FOUND_FALLBACK] = result.fallback ?? null;
+    throw err;
+  }
+  if (result.redirect) {
+    const err = new Error(result.error?.message ?? "Loader redirect");
+    err.name = "LoaderRedirect";
+    (err as any)[LOADER_REDIRECT] = result.redirect;
+    throw err;
+  }
+}
+
+/**
+ * Non-throwing signal resolution for the aggregate path. Returns the node to
+ * place in the errorFallback slot, or undefined when the result carries no
+ * signal.
+ */
+function signalFallback(result: any): ReactNode | undefined {
+  if (result.notFound === true) {
+    return (result.fallback ?? null) as ReactNode;
+  }
+  if (result.redirect) {
+    return createElement(LoaderRedirect, {
+      to: (result.redirect as { to: string }).to,
+    });
+  }
+  return undefined;
+}
 
 // Shared by segment-system (server) and LoaderResolver (client) so the
 // legacy/ok/error-fallback/throw decode of resolved loader values lives once.
@@ -23,6 +79,16 @@ export function decodeLoaderResults(
     if (result.ok) {
       loaderData[id] = result.data;
       continue;
+    }
+
+    // Authority signals take the errorFallback slot (this decode runs during
+    // the server tree build on forceAwait/action lanes — throwing here would
+    // collapse the payload). A signal outranks a plain error fallback and
+    // stops the scan: notFound renders the server-rendered 404 UI, redirect
+    // mounts LoaderRedirect which navigates.
+    const signal = signalFallback(result);
+    if (signal !== undefined) {
+      return { loaderData, errorFallback: signal };
     }
 
     // null/undefined is the producer's ONLY "no boundary found" sentinel
@@ -78,6 +144,7 @@ export function decodeLoaderEntry(result: any): any {
   if (result.ok) {
     return result.data;
   }
+  throwSignal(result);
   const info = result.error;
   const err = new Error(
     info.message,

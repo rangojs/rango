@@ -10,26 +10,26 @@ Data fetching itself happens in server-side [loaders](/docs/rango/features/loade
 
 ## Summary
 
-| Hook                      | Purpose                                | Returns                                                            |
-| ------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
-| `useNavigation()`         | Reactive navigation state              | state, location, isStreaming                                       |
-| `useRouter()`             | Stable router actions                  | push, replace, refresh, prefetch, back, forward                    |
-| `useSegments()`           | URL path & segment IDs                 | path, segmentIds, location                                         |
-| `useLinkStatus()`         | Link pending state                     | `{ pending }`                                                      |
-| `useLoader()`             | Loader data (strict)                   | data, isLoading, error, load, refetch                              |
-| `useFetchLoader()`        | Loader with on-demand fetch            | data, load, isLoading, error, refetch                              |
-| `useRefreshLoaders()`     | Refresh cross-loader group(s)          | `(groups: string \| string[]) => Promise<void>`                    |
-| `useParams()`             | Route params                           | `Readonly<T>` (default `Record<string, string>`) or selected value |
-| `usePathname()`           | Current pathname                       | `string`                                                           |
-| `useSearchParams()`       | URL search params                      | `ReadonlyURLSearchParams`                                          |
-| `useHref()`               | Mount-aware href                       | `(path) => string`                                                 |
-| `useMount()`              | Current `include()` mount path         | `string`                                                           |
-| `useReverse(routes)`      | Local reverse for imported routes      | `(name, params?, search?) => string`                               |
-| `useHandle()`             | Accumulated handle data                | `T` (handle type)                                                  |
-| `useAction()`             | Server action state                    | state, error, result                                               |
-| `useLocationState()`      | History state (persistent or flash)    | `T \| undefined`                                                   |
-| `useOutlet()`             | Outlet content                         | `ReactNode \| null`                                                |
-| `invalidateClientCache()` | Force client caches to miss (function) | `void`                                                             |
+| Hook                      | Purpose                                       | Returns                                                            |
+| ------------------------- | --------------------------------------------- | ------------------------------------------------------------------ |
+| `useNavigation()`         | Reactive navigation state                     | state, location, isStreaming                                       |
+| `useRouter()`             | Stable router actions                         | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`           | URL path & segment IDs                        | path, segmentIds, location                                         |
+| `useLinkStatus()`         | Link pending state                            | `{ pending }`                                                      |
+| `useLoader()`             | Loader data (strict)                          | data, isLoading, error, load, refetch                              |
+| `useFetchLoader()`        | Loader with on-demand fetch                   | data, load, isLoading, error, refetch                              |
+| `useRefreshLoaders()`     | Refresh cross-loader group(s)                 | `(groups: string \| string[]) => Promise<void>`                    |
+| `useParams()`             | Route params                                  | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`           | Current pathname                              | `string`                                                           |
+| `useSearchParams()`       | URL search params                             | `ReadonlyURLSearchParams`                                          |
+| `useHref()`               | Mount-aware href                              | `(path) => string`                                                 |
+| `useMount()`              | Current `include()` mount path                | `string`                                                           |
+| `useReverse(routes)`      | Local reverse for imported routes             | `(name, params?, search?) => string`                               |
+| `useHandle()`             | Accumulated handle data                       | `T` (handle type)                                                  |
+| `useAction()`             | Server action state                           | state, error, result                                               |
+| `useLocationState()`      | History state (persistent or flash)           | `T \| undefined`                                                   |
+| `useOutlet()`             | Outlet content and client-route pending state | `{ content: ReactNode, pending: boolean }`                         |
+| `invalidateClientCache()` | Force client caches to miss (function)        | `void`                                                             |
 
 ## Navigation
 
@@ -301,12 +301,33 @@ socket.on("catalog-updated", () => invalidateClientCache());
 
 ### useOutlet()
 
-Outlet content as `ReactNode | null`, for conditional rendering around child content. The companion components `Outlet` and `ParallelOutlet` (`<ParallelOutlet name="@sidebar" />`) render child and named-slot content in layouts — see [Parallel Routes](/docs/rango/guides/parallel-routes).
+Returns `OutletState`, not a bare React node:
+
+```ts
+interface OutletState {
+  readonly content: ReactNode;
+  readonly pending: boolean;
+}
+```
+
+`content` is the child outlet content. `pending` is the descendant presentation signal for hydrated `clientUrls()` navigation: it becomes `true` when the browser locally matches a different client route beneath that layout, and clears when the canonical partial Flight navigation commits or otherwise settles. It is `false` during SSR and for ordinary server routes, prefetches, generic Suspense, unrelated actions, and parameter/search changes that remain on the same client route record. Use `useNavigation()`, `useLinkStatus()`, or loader state for those other pending scopes.
+
+The companion components `Outlet` and `ParallelOutlet` (`<ParallelOutlet name="@sidebar" />`) render child and named-slot content in layouts — see [Parallel Routes](/docs/rango/guides/parallel-routes).
 
 ```tsx
 "use client";
 import { useOutlet } from "@rangojs/router/client";
 
-const outlet = useOutlet();
-return outlet ? <div className="with-content">{outlet}</div> : <Empty />;
+function CatalogLayout() {
+  const { content, pending } = useOutlet();
+  return content ? (
+    <div className="with-content" aria-busy={pending}>
+      {content}
+    </div>
+  ) : (
+    <Empty />
+  );
+}
 ```
+
+Migration from the old return shape is direct: replace `const outlet = useOutlet()` and `{outlet}` with `const { content, pending } = useOutlet()` and `{content}`. `<Outlet />` is unchanged when a layout only needs to render its child.

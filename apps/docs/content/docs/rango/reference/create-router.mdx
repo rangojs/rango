@@ -265,13 +265,34 @@ const router = createRouter({
 
 ## router.fetch, .routes(), and .use()
 
-`createRouter()` returns a builder. `.routes()` attaches the URL pattern tree — an imported `UrlPatterns` value or the `urls()` DSL callback inline — and the result exposes `fetch`, the request handler:
+`createRouter()` returns a builder. `.routes()` attaches an imported `UrlPatterns`, a `urls()` DSL callback inline, or a `ClientUrlPatterns` value returned by `clientUrls()`. The result exposes `fetch`, the request handler:
 
 ```typescript
 const router = createRouter({ document: Document }).routes(urlpatterns);
 
 export default { fetch: router.fetch }; // minimal
 ```
+
+### ClientUrlPatterns
+
+A default-exported `clientUrls()` definition from a `"use client"` module mounts through `include()` inside the canonical `urls()` tree. Passing it directly to `.routes()` is the pure-client shorthand — it normalizes to a root include (`include("/", definition, { name: "" })`) with the same lazy materialization:
+
+```tsx
+import { createRouter, urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls.js";
+
+const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+
+export const router = createRouter({ document: Document })
+  .use(globalMiddleware)
+  .routes(urlpatterns);
+```
+
+Client definitions follow normal include semantics: mount several, nest them under RSC layouts, scope middleware to their prefix. It supports named client components with `path()`, `layout()`, `loader()`, and `loading()`; only the `name`, `search`, and `trailingSlash` path options project to the canonical server tree. The browser match may present loading after hydration, but global middleware, loaders, redirects, history, and the committed route remain owned by the ordinary server partial Flight response. See the [client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md) for the full example and limitations.
 
 On Cloudflare Workers, pass bindings and `ExecutionContext` through explicitly instead:
 

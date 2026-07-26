@@ -6,7 +6,10 @@ import type { ResolvedSegment } from "./types.js";
 import {
   decodeLoaderResults,
   LOADER_ERROR_FALLBACK,
+  LOADER_NOT_FOUND_FALLBACK,
+  LOADER_REDIRECT,
 } from "./decode-loader-results.js";
+import { LoaderRedirect } from "./loader-redirect.js";
 
 /**
  * Router-owned error boundary for read-site loader errors. segment-system
@@ -15,8 +18,18 @@ import {
  * navigation lanes; see docs/tree-structure.md). A loader error thrown by a
  * suspending read carries its errorBoundary() fallback via
  * LOADER_ERROR_FALLBACK (decodeLoaderEntry); this boundary renders that node,
- * restoring the pre-streaming errorFallback-swap contract. Errors without the
- * marker rethrow to the app's own boundaries.
+ * restoring the pre-streaming errorFallback-swap contract.
+ *
+ * Loader-thrown AUTHORITY SIGNALS ride sibling markers:
+ * - LOADER_NOT_FOUND_FALLBACK (notFound()): renders the SERVER-RENDERED
+ *   not-found UI carried on the marker — nearest notFoundBoundary → router
+ *   notFound option — zero extra fetches. Document lane: Fizz emitted the
+ *   Suspense fallback and replays the throw at hydration, so the swap happens
+ *   client-side (the HTTP status was already set opportunistically by the
+ *   producer when the rejection won the flush race).
+ * - LOADER_REDIRECT (redirect()): mounts LoaderRedirect, which navigates.
+ *
+ * Errors without any marker rethrow to the app's own boundaries.
  */
 export class StreamedLoaderErrorBoundary extends Component<
   { children: ReactNode },
@@ -31,9 +44,14 @@ export class StreamedLoaderErrorBoundary extends Component<
   render(): ReactNode {
     const { error } = this.state;
     if (error !== null && error !== undefined) {
-      const fallback = (error as Record<PropertyKey, unknown>)[
-        LOADER_ERROR_FALLBACK
-      ];
+      const marked = error as Record<PropertyKey, unknown>;
+      const notFoundFallback = marked[LOADER_NOT_FOUND_FALLBACK];
+      if (notFoundFallback !== undefined) return notFoundFallback as ReactNode;
+      const redirect = marked[LOADER_REDIRECT];
+      if (redirect !== undefined) {
+        return <LoaderRedirect to={(redirect as { to: string }).to} />;
+      }
+      const fallback = marked[LOADER_ERROR_FALLBACK];
       if (fallback !== undefined) return fallback as ReactNode;
       throw error;
     }

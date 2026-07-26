@@ -619,6 +619,17 @@ export interface RequestContext<
   _handlerLoaderDeps?: Set<string>;
 
   /**
+   * @internal Loader IDs ($$id) whose entries carry `awaitBeforeFlush`
+   * (loader(Def, { stream: "navigation" })): segment resolution awaits these
+   * before returning, so the render barrier cannot resolve until they settle.
+   * rendered() checks this set to fail fast — a flagged loader awaiting the
+   * barrier is a guaranteed cycle, not a race. Registered by resolveLoaders
+   * (fresh.ts) before loader kickoff; only ever populated on document renders
+   * (the flag is stamped per-isSSR at DSL evaluation).
+   */
+  _awaitBeforeFlushLoaderIds?: Set<string>;
+
+  /**
    * @internal Cached HandleData snapshot built at barrier resolution time.
    * Avoids rebuilding the snapshot on every loader ctx.use(handle) call.
    */
@@ -765,6 +776,7 @@ export type PublicRequestContext<
   | "_treeHasStreaming"
   | "_renderBarrierWaiters"
   | "_handlerLoaderDeps"
+  | "_awaitBeforeFlushLoaderIds"
   | "_renderBarrierHandleSnapshot"
   | "_renderBarrierGuardClosed"
   | "_reportBackgroundError"
@@ -1384,6 +1396,7 @@ export function wireRenderBarrier(
   ctx._renderBarrierHandleSnapshot = undefined;
   ctx._renderBarrierGuardClosed = undefined;
   ctx._handlerLoaderDeps = undefined;
+  ctx._awaitBeforeFlushLoaderIds = undefined;
   ctx._treeHasStreaming = undefined;
 
   // Lazy allocation: only create the Promise when a loader calls rendered().
@@ -1626,12 +1639,23 @@ export function createUseFunction<TEnv>(
       env: ctx.env as any,
       waitUntil: ctx.waitUntil.bind(ctx),
       executionContext: ctx.executionContext,
-      get: ctx.get as any,
-      use: (<TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>,
-      ): Promise<TDep> => {
-        return ctx.use(dep);
-      }) as LoaderContext["use"],
+      get: ((keyOrVar: any) => {
+        // Handle READS need the rendered() barrier, which this lane
+        // (action/dispatch-invoked loaders) does not run. Fail with guidance
+        // instead of returning a misleading empty collect.
+        if (isHandle(keyOrVar)) {
+          throw new Error(
+            `ctx.get(handle) is only available in DSL loaders after ` +
+              `"await ctx.rendered()". It cannot be used from request-context ` +
+              `loaders or server actions.`,
+          );
+        }
+        return (ctx.get as any)(keyOrVar);
+      }) as any,
+      // Pass items through: loaders delegate to the request ctx's loader
+      // executor; a handle yields the ctx's push function (write parity —
+      // ctx.use(Meta)({...}) works in this lane exactly like in a handler).
+      use: ((item: any) => ctx.use(item)) as LoaderContext["use"],
       method: "GET",
       body: undefined,
       reverse: createReverseFunction(

@@ -11,6 +11,12 @@ import {
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
 import type { IncludeProvider } from "./include-provider.js";
 import type { IncludeFn } from "./path-helper-types.js";
+import {
+  clientUrlIncludePatterns,
+  isClientUrlPatterns,
+  isClientUrlReference,
+} from "../client-urls/server-projection.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 
 function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
   return !!options && Object.prototype.hasOwnProperty.call(options, "name");
@@ -61,14 +67,26 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
     prefix: string,
-    // A `urls()` value (eager) OR an async provider thunk
+    // A `urls()` value (eager), an async provider thunk
     // (`() => import("./routes")`) whose evaluation is deferred to the first
-    // request matching `prefix`. The provider is stored unevaluated and
-    // resolved by the runtime lazy-include expansion / build-time discovery.
-    patterns: UrlPatterns<TEnv> | IncludeProvider<TEnv>,
+    // request matching `prefix`, or a clientUrls() definition (object or
+    // client reference). Providers are stored unevaluated and resolved by the
+    // runtime lazy-include expansion / build-time discovery.
+    patterns: UrlPatterns<TEnv> | IncludeProvider<TEnv> | ClientUrlPatterns,
     options?: IncludeOptions,
   ): IncludeItem => {
     const { ctx } = requireDslContext("include() must be called inside urls()");
+
+    // clientUrls() sources mount through include() like any urls() module.
+    // Detect them FIRST: a client REFERENCE is a callable proxy, so the
+    // downstream provider check (`typeof === "function"`) would otherwise
+    // invoke it as an async include thunk. The substituted handler defers
+    // materialization to evaluation time, when the discovery-installed
+    // projection is available; the include machinery then applies URL and
+    // route-name prefixes exactly as for server modules.
+    if (isClientUrlPatterns(patterns) || isClientUrlReference(patterns)) {
+      patterns = clientUrlIncludePatterns(patterns) as UrlPatterns<TEnv>;
+    }
 
     const explicitName = options?.name;
     const hasExplicitName = hasExplicitNameOption(options);

@@ -2,12 +2,22 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
 import { ServerRedirect } from "../errors";
 
-// Mock startTransition to run callbacks synchronously
+// Mock startTransition to run callbacks synchronously, recording whether a
+// callback is currently executing so tests can assert which commit lane
+// (transition vs urgent) an onUpdate call happened in.
+const transitionState = vi.hoisted(() => ({ inTransition: false }));
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
-    startTransition: (fn: () => void) => fn(),
+    startTransition: (fn: () => void) => {
+      transitionState.inTransition = true;
+      try {
+        fn();
+      } finally {
+        transitionState.inTransition = false;
+      }
+    },
   };
 });
 
@@ -344,6 +354,90 @@ describe("partial-update", () => {
       // The layout should preserve loading=false (suppressed boundary).
       // BUG: current code clears it to undefined, changing the tree structure.
       expect(layout.loading).toBe(false);
+    });
+  });
+
+  describe("commit lane (same-structure content-hold)", () => {
+    function runNav(opts: {
+      cached: ResolvedSegment[];
+      matched: string[];
+      diff: string[];
+      serverSegments: ResolvedSegment[];
+      mode?: any;
+    }) {
+      const store = createMockStore({ cachedSegments: opts.cached });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: opts.serverSegments,
+          matched: opts.matched,
+          diff: opts.diff,
+        },
+      });
+      const commitLanes: boolean[] = [];
+      const onUpdate = vi.fn(() => {
+        commitLanes.push(transitionState.inTransition);
+      });
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments: vi.fn(async () => "tree"),
+      });
+      return {
+        commitLanes,
+        onUpdate,
+        run: () =>
+          updater(
+            "http://localhost/page?f=1",
+            opts.matched,
+            false,
+            undefined,
+            createMockTx() as any,
+            opts.mode,
+          ),
+      };
+    }
+
+    it("commits a same-structure nav (every rendered id already on screen) in a transition", async () => {
+      // The PLP filter-change shape: same route, search changed, the route
+      // segment re-rendered with a still-streaming loader. An urgent commit
+      // would re-suspend the revealed boundary and flash its fallback.
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        serverSegments: [seg("L0R0", { component: "refreshed" })],
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([true]);
+    });
+
+    it("commits a nav that mounts a new segment urgently (fallbacks stream like a first load)", async () => {
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R1"],
+        diff: ["L0R1"],
+        serverSegments: [seg("L0R1")],
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([false]);
+    });
+
+    it("commits leave-intercept urgently even when same-structure (modal close must not be held)", async () => {
+      const { commitLanes, onUpdate, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        serverSegments: [seg("L0R0", { component: "restored" })],
+        mode: { type: "leave-intercept" },
+      });
+      await run();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(commitLanes).toEqual([false]);
     });
   });
 

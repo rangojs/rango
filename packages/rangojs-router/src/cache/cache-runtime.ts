@@ -51,6 +51,7 @@ import {
   recordRequestTags,
   runWithCacheTagScope,
 } from "./cache-tag.js";
+import { runWithCacheExecScope } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
 import type { CacheItemResult } from "./types.js";
 
@@ -289,11 +290,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // cacheTag() call inside the function degrades to a no-op rather than
     // throwing "must be called inside a use cache function" - adopting cacheTag()
     // must not hard-fail in apps/tests without an item-capable cache configured.
-    // Note: the INSIDE_CACHE_EXEC guard (cookies()/headers()/ctx.set() rejection)
-    // is intentionally NOT stamped here. It is a cached-path-only check; in the
-    // bypass the body actually executes, so the guarded side effects take effect
-    // and nothing is lost on a (non-existent) hit. Same applies to the
-    // non-serializable-args bypass below.
+    // Note: the cache-exec guards (cookies()/headers()/ctx.set() rejection —
+    // runWithCacheExecScope + the INSIDE_CACHE_EXEC arg stamp) are intentionally
+    // NOT active here. They are cached-path-only checks; in the bypass the body
+    // actually executes, so the guarded side effects take effect and nothing is
+    // lost on a (non-existent) hit. Same applies to the non-serializable-args
+    // bypass below.
     if (!store?.getItem) {
       // Test-ergonomics guard: under a test runner, a "use cache" function that
       // executes with no item-capable store seeded is exercising the UNCACHED
@@ -507,9 +509,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           // property stamped onto that SHARED object — so for the whole
           // revalidation window a concurrent foreground ctx.set() /
           // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
-          // not stamped for the same reason. In-fn misuse is already caught
-          // by the miss path's stamps on the function's FIRST execution — the
-          // background re-runs the same function with the same request.
+          // never stamped anywhere for the same reason. In-body misuse IS
+          // still guarded here: runWithCacheExecScope below follows only this
+          // body's async chain, so a conditional cookies()/headers() read
+          // that fires only during revalidation throws instead of baking one
+          // user's value into the shared entry — with zero visibility to the
+          // concurrent foreground.
 
           try {
             // Re-establish the request-context ALS so a "use cache" body that
@@ -530,7 +535,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 PHASES.background("use-cache-revalidation"),
                 async () => {
                   const scoped = runWithCacheTagScope(() =>
-                    fn.apply(this, args),
+                    runWithCacheExecScope(() => fn.apply(this, args)),
                   );
                   const freshResult = await scoped.result;
                   bgStopCapture?.();
@@ -678,12 +683,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Uses ref-counted stamp/unstamp so overlapping executions
     // sharing the same ctx don't clear each other's guards.
     //
-    // LOAD-BEARING for the stale-revalidation path above: the background
-    // re-execution deliberately does NOT re-stamp (the objects are live
-    // foreground state mid-render), relying on THIS stamp having caught in-fn
-    // misuse on the function's first execution — an entry only becomes
-    // stale-revalidatable because a stamped miss ran clean and stored it. Do
-    // not create a "use cache" entry via any path that skips this stamp.
+    // The ambient guards (cookies()/headers() and getRequestContext()-reached
+    // ctx methods) ride runWithCacheExecScope below instead — an ALS scoped to
+    // the cached body's own async chain. The RequestContext itself is
+    // deliberately NOT stamped: a property on that SHARED object made every
+    // parallel read on the request throw for the cached body's whole
+    // execution window (a 2s cached fetch poisoned a sibling loader's
+    // cookies() — same hazard class as issue #684, plan 010).
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg)) {
@@ -691,17 +697,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         taintedArgs.push(arg);
       }
     }
-    // Always stamp the ALS RequestContext so cookies()/headers() guards fire
-    // even when the cached function receives no tainted args. The guard in
-    // cookie-store.ts checks RequestContext, not function args.
-    if (requestCtx) {
-      stampCacheExec(requestCtx as object);
-    }
 
     let result: any;
     let scoped: ReturnType<typeof runWithCacheTagScope>;
     try {
-      scoped = runWithCacheTagScope(() => fn.apply(this, args));
+      scoped = runWithCacheTagScope(() =>
+        runWithCacheExecScope(() => fn.apply(this, args)),
+      );
       result = await scoped.result;
     } catch (execError) {
       // The function threw: drop the in-flight entry and reject any waiters so
@@ -713,9 +715,6 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
         unstampCacheExec(arg as object);
-      }
-      if (requestCtx) {
-        unstampCacheExec(requestCtx as object);
       }
       // Remove this capture token (order-independent, safe for concurrent use)
       stopCapture?.();

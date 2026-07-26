@@ -140,6 +140,11 @@
     "reason": "Historical debt: production twin deferred"
   },
   {
+    "base": "client-urls-hmr",
+    "file": "packages/rangojs-router/e2e/client-urls-hmr.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
     "base": "route-types-hmr",
     "file": "packages/rangojs-router/e2e/route-types-hmr.test.ts",
     "reason": "HMR / Vite serve-only; no production preview counterpart"

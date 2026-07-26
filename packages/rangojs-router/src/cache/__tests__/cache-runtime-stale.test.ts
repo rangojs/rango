@@ -864,8 +864,15 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(keyA).not.toBe(keyB);
   });
 
-  it("stamps RequestContext even when cached function has no tainted args", async () => {
+  it("guards ambient access via the exec ALS scope, never by stamping RequestContext", async () => {
+    // The ambient cookies()/headers()/ctx guards ride the AsyncLocalStorage
+    // scope entered around the cached body (cache-exec-scope.ts). The shared
+    // RequestContext must NEVER carry the INSIDE_CACHE_EXEC stamp: a property
+    // on that object poisoned every PARALLEL read on the request for the
+    // cached body's whole execution window (a 2s cached fetch made a sibling
+    // loader's cookies() throw).
     const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const { isInsideCacheExecScope } = await import("../cache-exec-scope.js");
     const waitUntilFns: Array<() => Promise<void>> = [];
 
     const mockStore = {
@@ -883,19 +890,23 @@ describe("use cache stale revalidation handle preservation", () => {
     mockGetRequestContext.mockReturnValue(requestCtxObj);
 
     // No tainted args — plain string argument only
-    let stampedDuringExec = false;
+    let scopedDuringExec = false;
+    let ctxStampedDuringExec = false;
     const fn = async (locale: string) => {
-      stampedDuringExec = INSIDE_CACHE_EXEC in requestCtxObj;
+      scopedDuringExec = isInsideCacheExecScope();
+      ctxStampedDuringExec = INSIDE_CACHE_EXEC in requestCtxObj;
       return `theme-${locale}`;
     };
 
     const cached = registerCachedFunction(fn, "no-taint-fn", "default");
     await cached("en");
 
-    // The guard must have been active during execution
-    expect(stampedDuringExec).toBe(true);
+    // The guard must have been active during execution — chain-scoped only.
+    expect(scopedDuringExec).toBe(true);
+    expect(ctxStampedDuringExec).toBe(false);
 
-    // After execution completes, the stamp must be removed
+    // And inactive outside the cached body's chain.
+    expect(isInsideCacheExecScope()).toBe(false);
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 

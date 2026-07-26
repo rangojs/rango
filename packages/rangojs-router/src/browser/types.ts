@@ -54,10 +54,25 @@ export interface RscMetadata {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Intercept TARGET route names reachable from this location as a
+   * navigation origin. The browser-local clientUrls matcher declines its
+   * optimistic presentation for these targets (the canonical response would
+   * commit the intercept over the ORIGIN page, so destination loading would
+   * flash and revert). Missing/empty means no targets.
+   */
+  interceptTargets?: string[];
   /** Root layout component for browser-side re-renders */
   rootLayout?: ComponentType<{ children: ReactNode }>;
   /** Handle data accumulated across route segments (async generator that yields on each push) */
   handles?: AsyncGenerator<HandleData, void, unknown>;
+  /**
+   * Document-lane late handle channel: pushes landing after the handler
+   * barrier (streaming loader ctx.use(Handle) writes). Consumed non-blocking
+   * post-hydration (rsc-router.tsx); `handles` above is drained in blocking
+   * positions and must complete at the handler barrier.
+   */
+  handlesLate?: AsyncGenerator<HandleData, void, unknown>;
   /** Cached handle data (for back/forward navigation from cache) */
   cachedHandleData?: HandleData;
   /**
@@ -531,6 +546,13 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  /**
+   * Encoded client-run per-loader revalidation decisions
+   * (clientUrls revalidate() predicates executed in the browser); sent as
+   * X-Rango-Client-Reval and honored only by materialized client-urls loader
+   * stubs. Null/absent = locked server defaults.
+   */
+  clientRevalidation?: string | null;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;

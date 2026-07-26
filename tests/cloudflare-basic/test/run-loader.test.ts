@@ -119,7 +119,7 @@ describe("runLoader against cloudflare-basic loader bodies", () => {
   });
 
   // The REAL rendered-barrier loader: it awaits ctx.rendered() then reads handle
-  // data via ctx.use(RenderedProducts). Mock the barrier + seed the handle to
+  // data via ctx.get(RenderedProducts). Mock the barrier + seed the handle to
   // unit-test the post-barrier price-mapping logic (the real push/accumulate/
   // barrier wiring stays e2e — rendered-barrier.test.ts).
   describe("livePricesLoaderBody (awaits ctx.rendered(), reads a handle)", () => {

@@ -95,23 +95,26 @@ stated, greppable contract.
 
 ## Pick a primitive
 
-| I need to…                              | Use                                | Skill                   |
-| --------------------------------------- | ---------------------------------- | ----------------------- |
-| render data fresh every request         | `loader()` + `useLoader()`         | /loader                 |
-| cache a rendered subtree                | `cache()` on a segment             | /caching                |
-| cache one function/component's result   | `"use cache"`                      | /use-cache              |
-| cache a loader's data                   | `loader(L, () => [cache()])`       | /loader, /caching       |
-| re-render a segment after an action     | `revalidate()`                     | /loader                 |
-| mutate                                  | `"use server"` action              | /server-actions         |
-| debug a slow request                    | `debugPerformance` / telemetry     | /observability          |
-| share config across routes              | factory returning a helper array   | /composability          |
-| compose a sub-app / module              | `include()`                        | /route                  |
-| modal / soft navigation                 | `intercept()`                      | /intercept              |
-| pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
-| feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
-| cache the HTML shell, keep loaders live | `ppr` path option                  | /ppr                    |
-| choose in-function vs CDN caching       | deployment cache boundary          | /deployment-caching     |
-| stream SSE / upgrade a WebSocket        | `path.stream()` / `path.any()`     | /streams-and-websockets |
+| I need to…                              | Use                                   | Skill                   |
+| --------------------------------------- | ------------------------------------- | ----------------------- |
+| render data fresh every request         | `loader()` + `useLoader()`            | /loader                 |
+| cache a rendered subtree                | `cache()` on a segment                | /caching                |
+| cache one function/component's result   | `"use cache"`                         | /use-cache              |
+| cache a loader's data                   | `loader(L, () => [cache()])`          | /loader, /caching       |
+| re-render a segment after an action     | `revalidate()`                        | /loader                 |
+| mutate                                  | `"use server"` action                 | /server-actions         |
+| debug a slow request                    | `debugPerformance` / telemetry        | /observability          |
+| share config across routes              | factory returning a helper array      | /composability          |
+| compose a sub-app / module              | `include()`                           | /route                  |
+| modal / soft navigation                 | `intercept()`                         | /intercept              |
+| route group of client components        | `clientUrls()` in `"use client"`      | /client-urls            |
+| set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader       | /loader                 |
+| guarantee loader output in the SSR HTML | `loader(L, { stream: "navigation" })` | /loader                 |
+| pre-render a route at build time        | `Prerender(...)` wrapper              | /prerender              |
+| feed live loaders from a cached shell   | replayed handle + `ctx.rendered()`    | /shell-manifest         |
+| cache the HTML shell, keep loaders live | `ppr` path option                     | /ppr                    |
+| choose in-function vs CDN caching       | deployment cache boundary             | /deployment-caching     |
+| stream SSE / upgrade a WebSocket        | `path.stream()` / `path.any()`        | /streams-and-websockets |
 
 ## Invariants
 
@@ -243,6 +246,7 @@ Grouped by concern — read when you need to…
 | ------------------------- | -------------------------------------------------------------------------- |
 | `/router-setup`           | Create and configure the RSC router                                        |
 | `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
+| `/client-urls`            | Client-component route groups with `clientUrls()` — no handlers            |
 | `/layout`                 | Layouts that wrap child routes                                             |
 | `/parallel`               | Multi-column layouts and sidebars                                          |
 | `/intercept`              | Modal/slide-over patterns for soft navigation                              |

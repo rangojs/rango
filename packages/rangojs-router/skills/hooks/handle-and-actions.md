@@ -30,6 +30,13 @@ function BreadcrumbNav() {
 const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 ```
 
+Writers: handlers AND loader bodies — `ctx.use(Handle)` returns the push
+function in each (middleware has no handle APIs). Loader pushes follow a delivery race (settle before
+the handler barrier → in the SSR'd document; later → applied client-side), and
+`loader(Def, { stream: "navigation" })` makes them deterministic in the
+document. See `/loader` → "Writing Handles from Loaders". `useHandle`
+re-renders on every handle update, late loader pushes included.
+
 Handles can be passed as props from server to client components:
 
 ```tsx

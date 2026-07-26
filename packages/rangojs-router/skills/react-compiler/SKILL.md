@@ -163,6 +163,6 @@ should find **none** — that is the client-only contract.
 ## Reference
 
 A worked, tested wiring (dev + production e2e markers, incl. the client-only
-contract) lives in the `@rangojs/router` repo: `docs/react-compiler.md` and the
-`react-compiler.test.ts` files under `e2e/e2e-basic`, `tests/cloudflare-basic`,
-and `tests/vite-rsc-demo`.
+contract) lives in the `@rangojs/router` repository — not shipped in this
+package: `docs/react-compiler.md` and the `react-compiler.test.ts` files under
+`e2e/e2e-basic`, `tests/cloudflare-basic`, and `tests/vite-rsc-demo`.

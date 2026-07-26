@@ -12,6 +12,7 @@ RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter
 | ----------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `request`         | `Request \| string`                                                    | Initial location. Only the URL is read (client render — headers/method ignored). Defaults to the leaf spec's static prefix or `"/"`.                                                                                                          |
 | `loaderData`      | `Record<string, unknown>`                                              | Loader data keyed by loader `$$id`. `useLoader(L)` reads `loaderData[L.$$id]`.                                                                                                                                                                |
+| `outletPending`   | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                  |
 | `loaders`         | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                           |
 | `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                        |
 | `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; written to `history.state`.                                                                                                                                                  |
@@ -43,6 +44,7 @@ RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter
 | `useLocationState`             | SEEDED `history.state` value.                                                                 |
 | `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |
 | `Outlet`                       | Renders the next segment in the chain (layout nesting).                                       |
+| `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                   |
 | `useTheme`                     | Theme; throws without `options.theme` (see caveat).                                           |
 
 ### Returns — `RenderRouteResult`
@@ -110,6 +112,10 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
 
 - Client tree ONLY. Does NOT catch server/client boundary reference-identity remount bugs, real Flight serialization errors, loader execution, middleware, or handler ordering — those are `renderServerTree` / `renderHandler` / e2e territory. Loader data is SEEDED, never run.
 - `router.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle`. `useNavigation()` / `useLinkStatus()` / `useAction()` non-idle states (loading/streaming/pending, action result/error) are NOT reachable — test those at e2e.
+- `outletPending` seeds only the production-shaped outlet context. It is useful
+  for the two settled render states of a layout that reads `useOutlet()`, but it
+  does not prove the hydrated `clientUrls()` transition that toggles the value;
+  keep that transition in dev + production e2e.
 - CATCH — streaming `use(promise)` Suspense content (e.g. an async breadcrumb `content: Promise<ReactNode>`): a plain `Promise.resolve(node)` does NOT flush its Suspense retry in RTL/happy-dom, so the DOM stays on the fallback. Assert the PENDING fallback with `new Promise(() => {})`; for the ARRIVED state pass an already-settled promise so `use()` reads it synchronously: `const p = Promise.resolve(node) as any; p.status = "fulfilled"; p.value = node;`. The real pending->resolved transition is an e2e concern.
 - ARIA gotcha — an explicit `role` on a `<Link>` (e.g. `<Link role="tab">` in a tablist) OVERRIDES the implicit `link` role, so `getByRole("link")` finds nothing. Query the explicit role (`getByRole("tab")`) or fall back to `getByText` / `getByTestId` and assert `getAttribute("href")`.
 - `ctx.theme` is undefined unless `theme` is passed; the typed `ctx.search` defaults to `{}` (seed `searchData` on `runLoader`, not here).

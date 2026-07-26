@@ -62,6 +62,20 @@ export class DataNotFoundError extends Error {
   }
 }
 
+// name fallback covers cross-realm errors (Vite dev dupes, RSC serialization)
+// where instanceof fails — same rationale as isRouteNotFoundError above. Every
+// notFound() origin (segment resolution, loader envelopes, fetchable loaders)
+// must use this rather than a bare instanceof, or the same thrown signal is
+// honored on one path and escapes as a 500 on another.
+export function isDataNotFoundError(
+  error: unknown,
+): error is DataNotFoundError {
+  return (
+    error instanceof DataNotFoundError ||
+    (error instanceof Error && error.name === "DataNotFoundError")
+  );
+}
+
 /**
  * Convenience function to throw a DataNotFoundError
  * Shorter syntax for common not-found scenarios

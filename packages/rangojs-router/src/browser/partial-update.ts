@@ -30,6 +30,10 @@ import {
   validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
+import {
+  collectClientRevalidationDecisions,
+  setActiveInterceptTargets,
+} from "../client-urls/navigation.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -187,6 +191,22 @@ export function createPartialUpdater(
       );
     }
 
+    // Client-run per-loader revalidation: execute the held clientUrls route's
+    // revalidate() predicates now and ship their decisions with the request.
+    // Fails soft to null (locked server defaults) when no group is active or
+    // URLs do not parse.
+    let clientRevalidation: string | null = null;
+    try {
+      clientRevalidation = collectClientRevalidationDecisions({
+        currentUrl: new URL(previousUrl, window.location.origin),
+        nextUrl: new URL(url, window.location.origin),
+        isAction: false,
+        stale: mode.type === "stale-revalidation",
+      });
+    } catch {
+      clientRevalidation = null;
+    }
+
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
     fetchResult = await client.fetchPartial({
       targetUrl: url,
@@ -194,6 +214,7 @@ export function createPartialUpdater(
       previousUrl,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
+      clientRevalidation,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });
@@ -467,6 +488,23 @@ export function createPartialUpdater(
         payload.metadata?.slots,
       );
 
+      // Same-structure revalidation: every segment this commit will render
+      // already exists on screen (by id) — the navigation mounts nothing new,
+      // it only refreshes what the user is looking at. The hold this enables
+      // manifests on SEARCH-only navs (filters, tabs — search is never in the
+      // segment key, so the subtree reconciles); a PARAM nav outside a
+      // transition() scope still remounts via its param-bearing key
+      // (segment-system.tsx) and reveals its fresh skeleton inside the
+      // transition, unchanged. Compared against the CURRENT page's cache, not
+      // cachedSegs: for a popstate restore cachedSegs is the TARGET's history
+      // cache, which says nothing about what is visible now. Restricted to
+      // plain navigations — leave-intercept must close its modal urgently,
+      // and action/stale modes have their own transition branch.
+      const onScreenIds = new Set(getCurrentCachedSegments().map((s) => s.id));
+      const isSameStructureNav =
+        mode.type === "navigate" &&
+        reconciled.segments.every((s) => onScreenIds.has(s.id));
+
       const effectiveInterceptSource =
         interceptSourceUrl || segmentState.currentUrl;
       if (mode.type !== "action" && mode.type !== "stale-revalidation") {
@@ -523,6 +561,13 @@ export function createPartialUpdater(
           all: reconciled.segments.map((s) => s.id),
         });
       }
+      // Refresh the browser-local intercept-target set for the location being
+      // committed — the clientUrls matcher declines optimistic presentation
+      // for targets an intercept would claim from here. Back/forward commits
+      // served purely from the history cache keep the previous set (no fresh
+      // metadata); popstate navigations get no optimistic presentation anyway.
+      setActiveInterceptTargets(payload.metadata?.interceptTargets);
+
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
@@ -547,15 +592,22 @@ export function createPartialUpdater(
             scroll: scrollPayload,
           });
         });
-      } else if (fullyPrefetched) {
-        // Fully-prefetched nav: the payload is fully resolved (forceAwait
-        // above), so commit inside a transition to hold the current UI across
-        // the synchronous resolution — no fallback flash. No addTransitionType:
-        // this is the React content-hold, not a view transition. Deliberate
-        // trade-off (#622 introduced, #624 reverted, then reinstated): a client
-        // component that suspends during its FIRST render (use() of a promise
-        // created at mount — see ClientMountSuspense in the e2e test-app) under
-        // an ALREADY-REVEALED boundary holds the old content until it resolves
+      } else if (fullyPrefetched || isSameStructureNav) {
+        // Content-hold commit, two triggers. Fully-prefetched nav: the payload
+        // is fully resolved (forceAwait above), so the transition commits
+        // synchronously — no fallback flash. Same-structure nav: the re-run
+        // loaders are still streaming, and an urgent commit would re-suspend
+        // the ALREADY-REVEALED boundaries — replacing visible content with its
+        // own fallback for the loader's full duration (the PLP filter-change
+        // flash). Inside a transition React holds the current UI until the
+        // suspended data lands, the action treatment; nothing new mounts (by
+        // the isSameStructureNav definition), so no fallback is being withheld
+        // from a first paint. No addTransitionType: this is the React
+        // content-hold, not a view transition. Deliberate trade-off (#622
+        // introduced, #624 reverted, then reinstated): a client component that
+        // suspends during its FIRST render (use() of a promise created at
+        // mount — see ClientMountSuspense in the e2e test-app) under an
+        // ALREADY-REVEALED boundary holds the old content until it resolves
         // instead of revealing that boundary's fallback; its render happens
         // pre-commit inside the transition, so userland effects cannot run
         // first. Boundaries newly mounted by this nav still reveal their
@@ -568,10 +620,10 @@ export function createPartialUpdater(
           });
         });
       } else {
-        // Cold/partially-prefetched nav: normal commit so fallbacks stream
-        // like a first load and the click has visible feedback. Explicit
-        // transition() routes keep the content-hold via the hasTransition
-        // branch above (the opt-in).
+        // Cold/partially-prefetched nav that mounts NEW segments: normal
+        // commit so fallbacks stream like a first load and the click has
+        // visible feedback. Explicit transition() routes keep the
+        // content-hold via the hasTransition branch above (the opt-in).
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,

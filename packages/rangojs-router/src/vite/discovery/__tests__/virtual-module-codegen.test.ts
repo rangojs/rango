@@ -142,13 +142,30 @@ describe("generatePerRouterModule — cloudflare Text module channel", () => {
   });
 });
 
-describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
-  function makeManifestState(isBuildMode: boolean): DiscoveryState {
-    const s = makeState("node", { isBuildMode, trie: SMALL });
-    s.mergedRouteManifest = { home: "/" };
-    return s;
-  }
+function makeManifestState(isBuildMode: boolean): DiscoveryState {
+  const s = makeState("node", { isBuildMode, trie: SMALL });
+  s.mergedRouteManifest = { home: "/" };
+  return s;
+}
 
+describe("generateRoutesManifestModule — client URL projections", () => {
+  it("clears stale client URL projections after the last definition is removed", () => {
+    const s = makeManifestState(false);
+    s.clientUrlSourceByReferenceId = new Map([
+      ["/src/removed.tsx#default", "/src/removed.tsx"],
+    ]);
+    s.clientUrlProjectionMap = new Map();
+    s.mergedRouteManifest = null;
+    s.perRouterManifests = [];
+
+    const code = generateRoutesManifestModule(s);
+
+    expect(code).toContain("clearClientUrlProjections();");
+    expect(code).not.toContain('setClientUrlProjection("');
+  });
+});
+
+describe("generateRoutesManifestModule — per-router loaders are build-only", () => {
   it("build: registers the lazy per-router manifest loader", () => {
     const code = generateRoutesManifestModule(makeManifestState(true));
     expect(code).toContain('registerRouterManifestLoader("r1"');

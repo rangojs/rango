@@ -212,12 +212,12 @@ describe("runLoader", () => {
   });
 
   describe("rendered barrier + handle reads (rendered + handles options)", () => {
-    it("mocks ctx.rendered() and seeds ctx.use(handle) by reference", async () => {
+    it("mocks ctx.rendered() and seeds ctx.get(handle) by reference", async () => {
       const Products = createHandle<string, string[]>((s) => s.flat());
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
-          const ids = ctx.use(Products) as string[];
+          const ids = ctx.get(Products);
           return { count: ids.length, first: ids[0] };
         },
         { rendered: true, handles: [[Products, ["a", "b", "c"]]] },
@@ -248,7 +248,7 @@ describe("runLoader", () => {
         runLoader(
           async (ctx) => {
             await ctx.rendered();
-            return ctx.use(Products);
+            return ctx.get(Products);
           },
           { handles: [[Products, ["a"]]] },
         ),
@@ -263,7 +263,7 @@ describe("runLoader", () => {
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
-          return ctx.use(Products);
+          return ctx.get(Products);
         },
         { rendered: true },
       );
@@ -277,7 +277,7 @@ describe("runLoader", () => {
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
-          return ctx.use(PageTitle);
+          return ctx.get(PageTitle);
         },
         { rendered: true },
       );
@@ -292,7 +292,7 @@ describe("runLoader", () => {
       const data = await runLoader(
         async (ctx) => {
           await ctx.rendered();
-          return ctx.use(Products);
+          return ctx.get(Products);
         },
         {
           rendered: true,
@@ -306,19 +306,45 @@ describe("runLoader", () => {
       expect(data).toEqual([]);
     });
 
-    it("throws if ctx.use(handle) is read BEFORE await ctx.rendered() (production parity)", async () => {
+    it("throws if ctx.get(handle) is read BEFORE await ctx.rendered() (production parity)", async () => {
       // Production gates handle reads on the render barrier
       // (loader-resolution.ts). A loader that forgets `await ctx.rendered()`
       // must fail in the test too — not silently return the seeded data — or
       // the bug (a loader that throws on the first real request) ships green.
-      // This test fails on the pre-fix code (which returned the seed regardless).
       const Products = createHandle<string, string[]>((s) => s.flat());
       await expect(
-        runLoader(async (ctx) => ({ products: ctx.use(Products) }), {
+        runLoader(async (ctx) => ({ products: ctx.get(Products) }), {
           rendered: true,
           handles: [[Products, ["a", "b"]]],
         }),
       ).rejects.toThrow(/requires "await ctx\.rendered\(\)" first/);
+    });
+  });
+
+  describe("handle writes (ctx.use(Handle) push, production parity)", () => {
+    it("records pushes in runLoaderResult().handlePushes in push order", async () => {
+      const Meta = createHandle<{ title: string }>();
+      const Breadcrumbs = createHandle<{ label: string }>();
+      const { result, handlePushes } = await runLoaderResult(async (ctx) => {
+        ctx.use(Meta)({ title: "Product X" });
+        ctx.use(Breadcrumbs)({ label: "Product X" });
+        return "data";
+      });
+      expect(result).toBe("data");
+      expect(handlePushes).toEqual([
+        { handle: Meta, value: { title: "Product X" } },
+        { handle: Breadcrumbs, value: { label: "Product X" } },
+      ]);
+    });
+
+    it("push is available WITHOUT rendered() — writes are not barrier-gated", async () => {
+      const Meta = createHandle<{ title: string }>();
+      const { handlePushes, thrown } = await runLoaderResult(async (ctx) => {
+        ctx.use(Meta)({ title: "no barrier needed" });
+        return null;
+      });
+      expect(thrown).toBeUndefined();
+      expect(handlePushes).toHaveLength(1);
     });
   });
 

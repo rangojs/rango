@@ -106,6 +106,16 @@ export type LoaderEntry = {
   revalidate: ShouldRevalidateFn<any, any>[];
   /** Cache config for this specific loader (loaders are NOT cached by default) */
   cache?: EntryCacheConfig;
+  /**
+   * Document renders await this loader before segment resolution returns
+   * (loader(Def, { stream: "navigation" })), so its data, handle pushes, and
+   * thrown notFound()/redirect() deterministically precede first flush.
+   * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
+   * per-isSSR (router/manifest.ts cache key), so the flag is already
+   * request-mode-correct when resolveLoaders (fresh.ts) reads it and never
+   * appears on navigation-lane entries.
+   */
+  awaitBeforeFlush?: true;
 };
 
 /**

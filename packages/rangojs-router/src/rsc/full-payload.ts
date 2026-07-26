@@ -44,11 +44,17 @@ export function buildFullPayload(
       resolvedIds: m.resolvedIds,
       params: m.params,
       isPartial: false,
+      interceptTargets: m.interceptTargets,
       rootLayout: ctx.router.rootLayout,
       // Full render: resolve deferred handle values server-side so SSR markup and
       // the first sync useHandle read see resolved values. Partial payloads
       // (rsc-rendering.ts) keep streaming (handleStore.stream()).
       handles: resolvedHandleStream(handleStore),
+      // Post-handler-barrier pushes (streaming loader ctx.handle() writes)
+      // stream here; the client applies them after hydration. Instantly
+      // complete when the loader lane is idle — including PPR shell capture,
+      // where masked loaders never run.
+      handlesLate: handleStore.streamLate(),
       version: ctx.version,
       prefetchCacheTTL: ctx.router.prefetchCacheTTL,
       prefetchCacheSize: ctx.router.prefetchCacheSize,

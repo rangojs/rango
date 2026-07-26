@@ -88,6 +88,36 @@ include("/shop", () => import("./urls/shop"), { name: "shop" }),
 
 Build-time discovery still awaits the provider, so route types, `href()`, and prerendering see every route in the split group — lazily loaded, still fully typed.
 
+## Client URL routes
+
+`clientUrls()` is a narrow opt-in for routes whose path and layout values are named client components. Put the definition in a `"use client"` module, default-export it, and mount it directly at the router root:
+
+```tsx
+// catalog.client-urls.tsx
+"use client";
+
+export default clientUrls(({ path, layout, loader, loading }) => [
+  layout(CatalogLayout, () => [
+    path("/", CatalogIndex),
+    path("/:productId", ProductPage, () => [
+      loader(ProductLoader),
+      loading(<ProductLoading />),
+    ]),
+  ]),
+]);
+
+// urls.tsx — mount through include() like any route module
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+```
+
+After hydration, the browser can match a different client route immediately, show its `loading()` UI, and set the wrapping `useOutlet().pending`. The existing partial Flight request is still authoritative: the server matches the route, runs global router middleware and `createLoader()` definitions by ID, and commits content, URL, and history. Hard requests still SSR and hydrate normally.
+
+The supported helpers are `path`, `layout`, `loader`, and `loading`; projected path options are limited to `name`, `search`, and `trailingSlash`. Definitions mount through `include()` in the canonical `urls()` tree — the include supplies URL/name prefixes and the wrapping RSC layouts and middleware scope; patterns are definition-local. Route middleware/revalidation, parallel routes, intercepts, cache, transitions, boundaries, and PPR are not supported inside `clientUrls()`. See the [complete client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md).
+
 ## Not-found handling
 
 Two distinct 404s:

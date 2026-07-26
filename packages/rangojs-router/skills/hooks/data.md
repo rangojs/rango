@@ -2,7 +2,7 @@
 
 ### useLoader()
 
-Access loader data (strict - data guaranteed):
+Access loader data (strict — data guaranteed once the read returns):
 
 ```tsx
 "use client";
@@ -13,12 +13,21 @@ function ProductPrice() {
   const { data, isLoading, error } = useLoader(ProductLoader);
 
   // data: T (guaranteed - throws if not in context)
-  // isLoading: boolean
+  // isLoading: boolean (refetch/load() states — NOT the initial streamed read)
   // error: Error | null
 
   return <span>${data.price}</span>;
 }
 ```
+
+**Loaders stream, and `useLoader` implicitly suspends.** A first read whose
+loader data has not streamed in yet suspends to the nearest `<Suspense>`
+boundary (or the route's `loading()`) — it does NOT render with
+`isLoading: true`. Put a boundary above every read whose loader can be slow;
+`isLoading` covers later refetches (`load()`, key/group refreshes). Once the
+component renders, `data` is present. (On document loads a loader registered
+with `{ stream: "navigation" }` is already settled at first paint, so its
+reads never suspend there — see `/loader`.)
 
 **Precondition**: Loader must be registered on route via `loader()` helper.
 

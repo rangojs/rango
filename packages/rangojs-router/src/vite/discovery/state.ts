@@ -7,6 +7,7 @@
  */
 
 import type { ScanFilter } from "../../build/generate-route-types.js";
+import type { ClientUrlProjection } from "../../client-urls/server-projection.js";
 
 export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 
@@ -79,6 +80,11 @@ export interface ShellPrerenderCandidate {
     | { ttl?: number; swr?: number; tags?: string[]; captureTimeout?: number };
 }
 
+export interface ClientUrlDiscoveryState {
+  clientUrlSourceByReferenceId: Map<string, string>;
+  clientUrlProjectionMap: Map<string, ClientUrlProjection>;
+}
+
 export interface DiscoveryState {
   resolvedEntryPath: string | undefined;
   projectRoot: string;
@@ -109,6 +115,8 @@ export interface DiscoveryState {
   perRouterTrieMap: Map<string, any>;
   perRouterPrecomputedMap: Map<string, PrecomputedEntry[]>;
   perRouterManifestDataMap: Map<string, Record<string, string>>;
+  clientUrlSourceByReferenceId?: Map<string, string>;
+  clientUrlProjectionMap?: Map<string, ClientUrlProjection>;
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
@@ -164,7 +172,7 @@ export interface DiscoveryState {
 export function createDiscoveryState(
   entryPath: string | undefined,
   opts: PluginOptions | undefined,
-): DiscoveryState {
+): DiscoveryState & ClientUrlDiscoveryState {
   return {
     resolvedEntryPath: entryPath,
     projectRoot: "",
@@ -182,6 +190,8 @@ export function createDiscoveryState(
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
+    clientUrlSourceByReferenceId: new Map(),
+    clientUrlProjectionMap: new Map(),
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,

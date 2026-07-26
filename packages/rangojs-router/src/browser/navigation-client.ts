@@ -14,6 +14,7 @@ import {
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
 import { isActionFenceActive } from "./action-fence.js";
+import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
 import {
   expandPayloadFragments,
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
@@ -79,6 +80,7 @@ export function createNavigationClient(
         previousUrl,
         signal,
         staleRevalidation,
+        clientRevalidation,
         interceptSourceUrl,
         version,
         routerId,
@@ -260,6 +262,9 @@ export function createNavigationClient(
             }),
             ...(fragmentRecovery && {
               [SEGMENT_FRAGMENT_RECOVERY_HEADER]: "1",
+            }),
+            ...(clientRevalidation && {
+              [CLIENT_REVALIDATION_HEADER]: clientRevalidation,
             }),
             ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
             ...(interceptSourceUrl && {

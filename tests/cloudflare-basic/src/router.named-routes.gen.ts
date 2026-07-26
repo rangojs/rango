@@ -49,6 +49,8 @@ export const NamedRoutes = {
   inlinePricing: "/inline/pricing",
   itemDetail: "/item/:itemId/detail",
   localeInfo: "/:locale(en|fr)/info",
+  "mixedClient.detail": "/mixed-client-routes/:slug",
+  "mixedClient.index": "/mixed-client-routes",
   orphanFetch: "/orphan-fetch",
   "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
   "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",

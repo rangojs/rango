@@ -5,6 +5,7 @@ import type {
   Handler,
   HandlerContext,
   LoaderDefinition,
+  LoaderOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   PartialCacheOptions,
@@ -57,6 +58,7 @@ import type {
   IncludeOptions,
 } from "./pattern-types.js";
 import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
 
 /**
  * Base path function signature for defining routes with URL patterns.
@@ -175,6 +177,11 @@ export type IncludeArg<
   TResponses extends Record<string, unknown>,
 > =
   | UrlPatterns<TEnv, TRoutes, TResponses>
+  // clientUrls() definitions mount through include() like any urls() module;
+  // on the server the runtime value is the module's client reference, but the
+  // TypeScript type of that default export IS ClientUrlPatterns, so route
+  // names flow into NamedRoutes through the same TRoutes inference.
+  | ClientUrlPatterns<TRoutes>
   | (() =>
       | IncludeResolved<TEnv, TRoutes, TResponses>
       | Promise<IncludeResolved<TEnv, TRoutes, TResponses>>);
@@ -338,10 +345,16 @@ export type PathHelpers<TEnv> = {
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
 
   /**
-   * Attach a data loader to the current route/layout
+   * Attach a data loader to the current route/layout.
+   *
+   * Pass `{ stream: "navigation" }` to await this loader before first flush
+   * on DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming.
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | (() => LoaderUseItem[]),
     use?: () => LoaderUseItem[],
   ) => LoaderItem;
 

@@ -50,6 +50,7 @@ export type {
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  LoaderOptions,
   FetchableLoaderOptions,
   LoadOptions,
   // Error boundary types

@@ -107,7 +107,7 @@ export const ManifestPricesLoader = createLoader(async (ctx) => {
   // shell ACTUALLY rendered — never re-derive the list independently, or the
   // holes can desync from a stale shell.
   await ctx.rendered();
-  const ids = ctx.use(RenderedProducts);
+  const ids = ctx.get(RenderedProducts);
   manifestPriceSeq += 1;
   return {
     seq: manifestPriceSeq,

@@ -19,7 +19,11 @@ import {
  * resolves — no skeleton flash. This works on stable React (no ViewTransition).
  *
  * A route WITHOUT transition() remounts on param change and shows its skeleton
- * (the default; covered by the plain-product case below). Cross-route
+ * (the default; covered by the plain-product case below). SEARCH-only changes
+ * on the same route are different: search never rides the segment key, so the
+ * subtree reconciles and the same-structure transition commit
+ * (isSameStructureNav in browser/partial-update.ts) holds content by default —
+ * no transition() required (the plain-product ?tab case below). Cross-route
  * navigations always remount and show the destination skeleton.
  *
  * Routes under test: e2e/test-app/src/urls.tsx -> "/swr-product/:id" (with
@@ -187,12 +191,37 @@ function describeSameRouteNav(label: string, mode: "dev" | "build") {
       await expect(testId(page, "plain-product-name")).toHaveText("Product 1");
 
       // No transition() opt-in: navigating between params remounts the route,
-      // so its loading skeleton appears (the default behavior, unchanged).
+      // so its loading skeleton appears (the default behavior, unchanged —
+      // the param rides the segment key regardless of the commit lane).
       await testId(page, "plain-product-link-2").click();
       await expect(testId(page, "plain-product-skeleton")).toBeVisible({
         timeout: 2000,
       });
       await expect(testId(page, "plain-product-name")).toHaveText("Product 2");
+    });
+
+    test("same-route SEARCH nav holds content by default, no transition() required", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/plain-product/1"));
+      await waitForHydration(page);
+      await expect(testId(page, "plain-product-name")).toHaveText("Product 1");
+      await expect(testId(page, "plain-product-tab")).toHaveText("tab: none");
+
+      await using __ = await expectNoReload(page);
+      await installSkeletonSentinel(page, "plain-product-skeleton");
+
+      // Search-only change on the SAME param: the segment key is unchanged
+      // (search is never part of it), so the subtree reconciles and the
+      // same-structure transition commit (isSameStructureNav in
+      // browser/partial-update.ts) holds the visible content while the
+      // handler re-runs — no skeleton, even on this transition-less route.
+      await testId(page, "plain-product-link-1-specs").click();
+      await expect(testId(page, "plain-product-tab")).toHaveText("tab: none");
+      await expect(testId(page, "plain-product-tab")).toHaveText("tab: specs");
+      expect(await skeletonSeen(page)).toBe(false);
     });
 
     // Block-form transition() (a shared wrapper over two distinct routes):

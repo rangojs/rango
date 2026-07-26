@@ -86,6 +86,35 @@ export function evaluateInterceptWhen(
  * Find an intercept for the target route by walking up the entry chain.
  * Returns the first (innermost) matching intercept along with the entry that defines it.
  */
+/**
+ * Collect every intercept TARGET route name reachable from an origin entry —
+ * the same chain walk findInterceptForRoute() performs when this location is
+ * the navigation origin. Shipped in payload metadata so the browser-local
+ * clientUrls matcher can DECLINE its optimistic presentation for targets an
+ * intercept would claim (the committed result keeps the origin page + modal,
+ * so destination loading would flash and revert). Deliberately includes
+ * `when`-conditional intercepts: selectors need the live navigation context,
+ * so the browser stays conservative — worst case a non-intercepted navigation
+ * loses its optimistic loading, never the reverse.
+ */
+export function collectInterceptTargetNames(
+  fromEntry: EntryData | null,
+): string[] {
+  const names = new Set<string>();
+  let current: EntryData | null = fromEntry;
+  while (current) {
+    // Tolerate partial entries (unit-test mocks omit the arrays); real
+    // registration always populates layout/intercept.
+    for (const source of [current, ...(current.layout ?? [])]) {
+      for (const intercept of source.intercept ?? []) {
+        names.add(intercept.routeName);
+      }
+    }
+    current = current.parent;
+  }
+  return [...names];
+}
+
 export function findInterceptForRoute(
   targetRouteKey: string,
   fromEntry: EntryData | null,

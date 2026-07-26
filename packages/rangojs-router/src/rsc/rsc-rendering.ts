@@ -699,6 +699,7 @@ function* preparePayloadPlan<TEnv>(
           params: result.params,
           isPartial: true,
           slots: result.slots,
+          interceptTargets: result.interceptTargets,
           handles: handleStore.stream(),
           version: ctx.version,
           prefetchCacheTTL: ctx.router.prefetchCacheTTL,

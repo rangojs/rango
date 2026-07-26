@@ -601,8 +601,12 @@ the current state for a known no-op.
 TanStack Router is the real peer here (`preload="intent|viewport|render"`,
 `preloadDelay`, `preloadStaleTime`); Rango's edge is the resource-aware
 idle + image-ready gating and RSC-payload reuse. Next has an internal prefetch
-scheduler, but its public `<Link prefetch>` surface does not expose Rango's choice
-of trigger and resource gates. Waku has manual route prefetching plus experimental
+scheduler — the machinery behind its "instant navigations" pitch — but its
+public `<Link prefetch>` surface does not expose Rango's choice of trigger and
+resource gates. Rango's counterpart to instant navigations is the same
+outcome, spelled explicitly: a viewport/hover-warmed Link commits its
+prefetched payload as a whole on click, so the complete page lands with no
+fetch waterfall. Waku has manual route prefetching plus experimental
 `unstable_prefetchOnEnter` / `unstable_prefetchOnView` Link triggers, but without
 this resource-aware policy layer.
 
@@ -613,10 +617,14 @@ excluded from an enclosing segment cache and resolve on every request unless the
 loader itself explicitly opts into `cache()`. They may safely read `cookies()`,
 `headers()`, request context, and `env` because loader execution is outside the
 cached shell. Loaders run in parallel, stream independently under `loading()`
-boundaries, compose server-side via `ctx.use(OtherLoader)`, and can
-`await ctx.rendered()` to read handle data after the render settles. Reads happen
-through `useLoader` in a client component (including its SSR pass) or
-`useFetchLoader` for standalone client fetches. "Fetchable" loaders are callable
+boundaries, compose server-side via `ctx.use(OtherLoader)`, and carry
+route-level authority: they can throw `notFound()`/`redirect()`, WRITE handles
+(`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the data's
+producer), read handle data after the render settles (`ctx.get(handle)` behind
+`await ctx.rendered()`), and opt into `loader(Def, { stream: "navigation" })`
+so a document render awaits them before first flush (deterministic SSR'd data,
+meta, and 404 status). Reads happen through `useLoader` in a client component
+(including its SSR pass) or `useFetchLoader` for standalone client fetches. "Fetchable" loaders are callable
 endpoints with their own middleware and GET/POST/PUT/PATCH/DELETE bodies.
 
 One sharp edge is worth stating because the distinction matters: a cached handler
@@ -682,12 +690,18 @@ that no loader-before-render has:
 - it is **standalone and composable**, not route-coupled — one `createLoader()`
   read by many segments, composed via `ctx.use`, or exposed as a fetchable endpoint;
 - it **streams as a hole, not a gate** — concurrent, Suspense-resolved under
-  `loading()`, so the shell never blocks on it;
+  `loading()`, so the shell never blocks on it (and gating is a deliberate
+  per-loader opt-in — `{ stream: "navigation" }` awaits ONE loader on document
+  renders while the rest keep streaming — not the model's default);
 - it is **client-addressable and refreshable** independent of navigation (`key`,
   `refreshGroup`, `useRefreshLoaders`), behaving like a built-in, server-defined
   data cell with zero loader logic in the client bundle;
-- it can **read render output** via `await ctx.rendered()` — a loader that depends
-  on what the render produced, which a strictly before-render model cannot express.
+- it carries **route authority and document side-effects** — thrown
+  `notFound()`/`redirect()` and handle writes (page meta, breadcrumbs) travel
+  with the data unit itself, not with a route-coupled function beside it;
+- it can **read render output** via `ctx.get(handle)` behind
+  `await ctx.rendered()` — a loader that depends on what the render produced,
+  which a strictly before-render model cannot express.
 
 The fair objections, and why they do not collapse the distinction:
 

@@ -347,11 +347,18 @@ Two distinct 404 scenarios:
 ```typescript
 import { notFound } from "@rangojs/router";
 
-// In a handler or loader
+// In a handler
 path("/product/:slug", async (ctx) => {
   const product = await db.getProduct(ctx.params.slug);
   if (!product) notFound("Product not found");
   return <ProductPage product={product} />;
+});
+
+// In a loader — data-dependent authority lives with the data
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+  if (!(await exists(ctx.params.slug))) notFound("Product not found");
+  return getProduct(ctx.params.slug);
 });
 ```
 
@@ -364,7 +371,14 @@ When `notFound()` is thrown, the router looks for a fallback in this order:
 3. **`notFound`** — from `createRouter()` config (same component used for no-route-match)
 4. **Default `<h1>Not Found</h1>`** — built-in fallback
 
-All cases set HTTP 404 status.
+Handler and no-match cases set HTTP 404 status. A LOADER-thrown `notFound()`
+on a document load always streams the resolved not-found UI, but the 404
+STATUS is opportunistic — real only when the rejection settles before the
+document Response is constructed (loaders stream). Register the loader as
+`loader(Def, { stream: "navigation" })` to make the 404 status deterministic;
+on client navigations the 404 UI swaps in with the URL preserved (payload
+stays 200 — the client owns presentation there). See `/loader` → "Loader
+Authority".
 
 ### notFoundBoundary
 
