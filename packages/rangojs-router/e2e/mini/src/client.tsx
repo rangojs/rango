@@ -329,7 +329,7 @@ export function GlobalReverse() {
 // ---------------------------------------------------------------------------
 
 export function SearchControls() {
-  const params = useSearchParams();
+  const [params] = useSearchParams();
   const router = useRouter();
   const current = params.get("q") ?? "";
   return (

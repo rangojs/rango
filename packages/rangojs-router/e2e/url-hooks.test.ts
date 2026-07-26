@@ -3,6 +3,89 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId, goBack } from "./helper";
 
 // ============================================================================
+// setSearchParams (the useSearchParams tuple setter) — shared spec, invoked
+// from BOTH the dev and (production) describes below.
+// ============================================================================
+
+function setSearchParamsTests(f: ReturnType<typeof useFixture>) {
+  test("setSearchParams replaces the whole search string and pushes", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/hook-tests/url-hooks/test?q=react&page=2"));
+    await waitForHydration(page);
+    await expect(testId(page, "search-q")).toContainText("q:react");
+
+    await testId(page, "set-search-replace-all").click();
+
+    // Wholesale replace (RR semantics): page is GONE, not merged.
+    await expect(testId(page, "search-output")).toContainText(
+      "search:q=vue&sort=asc",
+    );
+    await expect(testId(page, "search-page")).toContainText("page:none");
+    // Same-route write: pathname untouched.
+    await expect(testId(page, "pathname-output")).toContainText(
+      "pathname:/hook-tests/url-hooks/test",
+    );
+
+    // Default is push: Back restores the previous search state.
+    await goBack(page);
+    await expect(testId(page, "search-q")).toContainText("q:react");
+    await expect(testId(page, "search-page")).toContainText("page:2");
+  });
+
+  test("setSearchParams functional form merges with current params", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/hook-tests/url-hooks/test?q=react&page=2"));
+    await waitForHydration(page);
+    await expect(testId(page, "search-page")).toContainText("page:2");
+
+    await testId(page, "set-search-merge").click();
+
+    // prev is the live params: q survives, page is overwritten.
+    await expect(testId(page, "search-q")).toContainText("q:react");
+    await expect(testId(page, "search-page")).toContainText("page:9");
+  });
+
+  test("setSearchParams replace:true rewrites the entry instead of pushing", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    // Entry A.
+    await page.goto(f.url("/hook-tests/url-hooks/test?q=first"));
+    await waitForHydration(page);
+    await expect(testId(page, "search-q")).toContainText("q:first");
+
+    // Entry B (push).
+    await testId(page, "push-with-search").click();
+    await expect(testId(page, "search-q")).toContainText("q:react");
+
+    // Replace B in place.
+    await testId(page, "set-search-history-replace").click();
+    await expect(testId(page, "search-q")).toContainText("q:replaced");
+
+    // Back skips the replaced entry and lands on A.
+    await goBack(page);
+    await expect(testId(page, "search-q")).toContainText("q:first");
+  });
+
+  test("setSearchParams with an empty init clears the search string", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/hook-tests/url-hooks/test?q=react&page=2"));
+    await waitForHydration(page);
+
+    await testId(page, "set-search-clear").click();
+
+    await expect(testId(page, "search-output")).toHaveText("search:");
+    await expect(page).toHaveURL(f.url("/hook-tests/url-hooks/test"));
+  });
+}
+
+// ============================================================================
 // useParams, usePathname, useSearchParams - Dev mode
 // ============================================================================
 
@@ -11,6 +94,8 @@ test.describe("URL hooks", () => {
     root: "./e2e/test-app",
     mode: "dev",
   });
+
+  setSearchParamsTests(f);
 
   // ---------- useParams ----------
 
@@ -256,6 +341,8 @@ test.describe("URL hooks (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
   });
+
+  setSearchParamsTests(f);
 
   // ---------- useParams ----------
 

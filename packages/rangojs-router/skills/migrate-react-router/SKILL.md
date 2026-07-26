@@ -109,19 +109,19 @@ unsupported behavior until runtime, and keep the old packages in the dependency
 graph. Replace every `react-router` / `react-router-dom` / `@remix-run/*`
 import at its call site:
 
-| React Router import                           | Replace with                                                                                            |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`, see §6)               |
-| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                                  |
-| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                                    |
-| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()`, `useParams()` from `@rangojs/router/client`                       |
-| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes (see §3) |
-| `useActionData`                               | `useActionState` (standard React, see §3)                                                               |
-| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                                  |
-| `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()`                      |
-| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>` (see §5)                                                           |
-| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                                  |
-| `useRouteError`                               | the `error` prop of `errorBoundary()` (see §5)                                                          |
+| React Router import                           | Replace with                                                                                                         |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`, see §6)                            |
+| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                                               |
+| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                                                 |
+| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()` (same `[params, setParams]` tuple), `useParams()` from `@rangojs/router/client` |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes (see §3)              |
+| `useActionData`                               | `useActionState` (standard React, see §3)                                                                            |
+| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                                               |
+| `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()`                                   |
+| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>` (see §5)                                                                        |
+| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                                               |
+| `useRouteError`                               | the `error` prop of `errorBoundary()` (see §5)                                                                       |
 
 If an import has no row here and no obvious Rango equivalent, stop and surface
 it to the user — do not mock it to keep the build green.

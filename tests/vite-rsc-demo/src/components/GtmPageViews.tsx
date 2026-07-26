@@ -37,7 +37,8 @@ function pushDataLayer(event: GtmDataLayerEvent) {
  */
 export function GtmPageViews() {
   const pathname = usePathname();
-  const search = useSearchParams().toString();
+  const [searchParams] = useSearchParams();
+  const search = searchParams.toString();
   const page = useHandle(Gtm, (c) => c.page);
   const navKey = search ? `${pathname}?${search}` : pathname;
 

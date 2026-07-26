@@ -51,26 +51,57 @@ Returns the pathname string without search params or hash. Updates on navigation
 
 ### useSearchParams()
 
-Access the current URL search params:
+Read and write the current URL search params (React Router-style tuple):
 
 ```tsx
 "use client";
 import { useSearchParams } from "@rangojs/router/client";
 
 function SearchResults() {
-  const searchParams = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get("q"); // "react"
   const page = searchParams.get("page"); // "2"
 
   return (
     <div>
       Searching for: {query}, page {page}
+      <button onClick={() => setSearchParams({ q: query ?? "", page: "2" })}>
+        Page 2
+      </button>
     </div>
   );
 }
 ```
 
-Returns a `ReadonlyURLSearchParams` (URLSearchParams without mutation methods). During SSR, returns empty params and syncs from the browser URL on mount.
+The first element is a `ReadonlyURLSearchParams` (URLSearchParams without
+mutation methods) from the committed location. During SSR it is empty and
+syncs from the browser URL on mount.
+
+The setter REPLACES the whole search string (React Router semantics) and
+navigates to the current pathname with the new params — a same-route
+navigation, so loaders re-evaluate per their `revalidate()` contract and the
+commit holds previous content. Accepted inits: a string, a `URLSearchParams`,
+a record (numbers/booleans stringified, arrays append, `null`/`undefined`
+skipped), or a function receiving a mutable copy of the current params for
+merging:
+
+```tsx
+// Merge: keep everything, change one key
+setSearchParams((prev) => {
+  prev.set("page", "3");
+  return prev;
+});
+
+// Filter UIs usually want replace + preserved scroll
+setSearchParams({ category: "home" }, { replace: true, scroll: false });
+
+// URL-only update: skip the server fetch for purely client-derived state
+setSearchParams({ view: "grid" }, { revalidate: false });
+```
+
+Options: `replace` (default false — push), `scroll` (default true),
+`revalidate` (default true; `false` skips the server fetch — legal because
+the setter never changes the pathname).
 
 ### useHref()
 

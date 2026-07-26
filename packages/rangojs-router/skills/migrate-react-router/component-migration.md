@@ -85,19 +85,19 @@ layout(<ShopLayout />, () => [
 
 ## 6. Navigation
 
-| React Router                              | Rango                                                                            |
-| ----------------------------------------- | -------------------------------------------------------------------------------- |
-| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                  |
-| `<Link to="/about">`                      | `<Link to="/about">`                                                             |
-| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                      |
-| `navigate("/about")`                      | `useRouter().push("/about")`                                                     |
-| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                  |
-| `navigate(-1)`                            | `useRouter().back()`                                                             |
-| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
-| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
-| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
-| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                               |
-| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
+| React Router                              | Rango                                                                                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                                                                                                          |
+| `<Link to="/about">`                      | `<Link to="/about">`                                                                                                                                                     |
+| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                                                                                                              |
+| `navigate("/about")`                      | `useRouter().push("/about")`                                                                                                                                             |
+| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                                                                                                          |
+| `navigate(-1)`                            | `useRouter().back()`                                                                                                                                                     |
+| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                                                                                                            |
+| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client` — same `[params, setParams]` tuple; setter replaces the whole search string, options `{ replace, scroll, revalidate }` |
+| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers)                                                                                         |
+| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                                                                                                                       |
+| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                                                                                                           |
 
 ### useNavigate → useRouter
 

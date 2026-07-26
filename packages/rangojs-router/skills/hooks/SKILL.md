@@ -69,7 +69,7 @@ the one for your case.
 | ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `useParams()`             | Route params                                                   | `Readonly<T>` (default `Record<string, string>`) or selected value |
 | `usePathname()`           | Current pathname                                               | `string`                                                           |
-| `useSearchParams()`       | URL search params                                              | `ReadonlyURLSearchParams`                                          |
+| `useSearchParams()`       | URL search params (read + write)                               | `[ReadonlyURLSearchParams, SetSearchParams]` (RR-style tuple)      |
 | `useHref()`               | Mount-aware href                                               | `(path) => string`                                                 |
 | `useMount()`              | Current include() mount path                                   | `string`                                                           |
 | `useReverse()`            | Local reverse for imported routes                              | `(name, params?, search?) => string`                               |

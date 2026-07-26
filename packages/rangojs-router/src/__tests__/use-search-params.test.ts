@@ -37,6 +37,8 @@ vi.mock("react", async () => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
+    useCallback: vi.fn((fn: Function) => fn),
+    useMemo: vi.fn((fn: Function) => fn()),
   };
 });
 
@@ -51,6 +53,12 @@ function createMockEventController(search = "?q=react&page=2") {
     getState: vi.fn(() => ({ location })),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
+}
+
+function mockCtx(ec: ReturnType<typeof createMockEventController>) {
+  const navigate = vi.fn(() => Promise.resolve());
+  mockedUseContext.mockReturnValue({ eventController: ec, navigate } as any);
+  return { navigate };
 }
 
 describe("useSearchParams", () => {
@@ -75,11 +83,11 @@ describe("useSearchParams", () => {
     const ec = createMockEventController("?q=react&page=2");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    const result = useSearchParams();
+    const [params] = useSearchParams();
 
     // Initial render: empty, NOT seeded from ctx's "?q=react&page=2".
-    expect(result.toString()).toBe("");
-    expect(result.get("q")).toBeNull();
+    expect(params.toString()).toBe("");
+    expect(params.get("q")).toBeNull();
   });
 
   /**
@@ -163,13 +171,106 @@ describe("useSearchParams", () => {
   it("does not subscribe when context is null (SSR)", () => {
     mockedUseContext.mockReturnValue(null as any);
 
-    const result = useSearchParams();
+    const [params] = useSearchParams();
     const setSearchParams = stateSlots[0][1];
 
     // Effect runs but bails early because ctx is null.
     capturedEffectFn!();
 
-    expect(result.toString()).toBe("");
+    expect(params.toString()).toBe("");
     expect(setSearchParams).not.toHaveBeenCalled();
+  });
+
+  describe("setter", () => {
+    it("replaces the whole search string and pushes by default", async () => {
+      const ec = createMockEventController("?q=react&page=2");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({ category: "electronics" });
+
+      // Wholesale replace (RR semantics): q/page are gone, not merged.
+      expect(navigate).toHaveBeenCalledWith("/products?category=electronics", {
+        replace: false,
+      });
+    });
+
+    it("functional init merges against params read at CALL time", async () => {
+      const ec = createMockEventController("?q=a");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+
+      // Location changes AFTER render: the functional form must see it.
+      ec.getState.mockReturnValue({
+        location: new URL("http://localhost/products?q=b"),
+      } as any);
+
+      await setSearch((prev) => {
+        expect(prev.get("q")).toBe("b");
+        prev.set("page", "3");
+        return prev;
+      });
+
+      expect(navigate).toHaveBeenCalledWith("/products?q=b&page=3", {
+        replace: false,
+      });
+    });
+
+    it("normalizes record inits: stringifies, appends arrays, skips null/undefined", async () => {
+      const ec = createMockEventController("");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({
+        page: 2,
+        active: true,
+        tag: ["a", "b"],
+        gone: null,
+        alsoGone: undefined,
+      });
+
+      expect(navigate).toHaveBeenCalledWith(
+        "/products?page=2&active=true&tag=a&tag=b",
+        { replace: false },
+      );
+    });
+
+    it("navigates to the bare pathname when the result is empty", async () => {
+      const ec = createMockEventController("?q=react");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({});
+
+      expect(navigate).toHaveBeenCalledWith("/products", { replace: false });
+    });
+
+    it("forwards replace, scroll, and revalidate options", async () => {
+      const ec = createMockEventController("");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch("q=x", {
+        replace: true,
+        scroll: false,
+        revalidate: false,
+      });
+
+      expect(navigate).toHaveBeenCalledWith("/products?q=x", {
+        replace: true,
+        scroll: false,
+        revalidate: false,
+      });
+    });
+
+    it("throws when called without NavigationProvider", () => {
+      mockedUseContext.mockReturnValue(null as any);
+
+      const [, setSearch] = useSearchParams();
+      expect(() => setSearch({ q: "x" })).toThrow(
+        "useSearchParams setter must be used within NavigationProvider",
+      );
+    });
   });
 });
