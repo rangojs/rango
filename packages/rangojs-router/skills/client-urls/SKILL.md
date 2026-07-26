@@ -118,10 +118,16 @@ typing work exactly as for server routes (`/typesafety`).
 | `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`    |
 
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,
-`notFoundBoundary` **throw** — they are server-tree concerns. Put them at or
-around the `include()` mount in the server `urls()` tree: middleware wrapping
-the mount runs for every route in the group; a `notFoundBoundary()` on an
-enclosing server layout catches loader-thrown `notFound()` from the group.
+`notFoundBoundary` **throw** — and that is a design position, not a gap.
+Client route groups are a PERFORMANCE surface (instant presentation, held
+data, streaming reads), not full-feature routing; the server tree around the
+mount is the full-feature router. Put those helpers at or around the
+`include()` mount in the server `urls()` tree: middleware wrapping the mount
+runs for every route in the group; a `notFoundBoundary()` on an enclosing
+server layout catches loader-thrown `notFound()` from the group. (Caching
+still reaches the group's data the right way: `"use cache"` inside a loader
+body — the loaders stay the live layer, the expensive function is what
+caches.)
 
 Boundaries are a deliberate exclusion, not a projection limitation: the
 server-tree boundary around the mount gives group-scoped custom UI with the

@@ -227,7 +227,10 @@ contract.
 
 ## Other Deferred Work
 
-The following remain unshipped:
+The group DSL is deliberately minimal — client route groups are a
+performance surface, not full-feature routing, and the server tree around
+the mount owns the rest. The items below are non-goals absent real demand,
+not a roadmap:
 
 - parallel routes inside `clientUrls()`;
 - the `cache()` helper inside the group;

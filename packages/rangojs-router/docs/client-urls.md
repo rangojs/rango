@@ -248,9 +248,12 @@ deadlock error), and `intercept()` loaders reject the option (intercepts
 render on client navigations only). Pinned dev+prod in
 `tests/vite-rsc-demo/e2e/client-shop-stream.test.ts`.
 
-INSIDE `clientUrls()` the DSL does not support `middleware()`, `include()`,
-`parallel()`, `cache()`, error or not-found boundaries, or PPR — those belong
-to the surrounding server tree the include mounts into. (Boundaries are a
+INSIDE `clientUrls()` the DSL is deliberately minimal: client route groups
+exist for transition performance — instant optimistic presentation, held
+data, streaming reads — not for full-feature routing. `middleware()`,
+`include()`, `parallel()`, `cache()`, error or not-found boundaries, and PPR
+are not supported inside the group and are not a roadmap; they belong to the
+surrounding server tree the include mounts into. (Boundaries are a
 deliberate exclusion: a server-tree boundary around the mount catches
 loader-thrown signals from the group with the uniform server-resolved
 envelope, and inside the group plain React error boundaries work — every

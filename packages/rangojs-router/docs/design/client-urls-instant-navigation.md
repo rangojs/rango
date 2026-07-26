@@ -332,6 +332,12 @@ open questions.
 
 ## Non-goals
 
+- Growing the group DSL toward server-tree parity. `clientUrls()` is
+  deliberately minimal — a performance surface (instant presentation, held
+  data, streaming reads), not full-feature routing. Full-feature concerns
+  (middleware, parallels, caching, boundaries, PPR) stay in the server tree
+  around the mount; the "future design" sections above record what a change
+  of heart would have to prove, not an intent.
 - Making all Rango routes client routes by default.
 - Running server middleware in the browser.
 - Treating a browser match or server-reference ID as authorization.
