@@ -1,9 +1,14 @@
 # Client URL Groups and Instant Navigation
 
-Status: Phase 1 is implemented. The broader client URL architecture described
-here is not. This document is design background: it records what the initial POC
-proved, what the shipped vertical slice does, and which ideas remain optional
-future work.
+Status: the `clientUrls()` slice is shipped and converging — browser matching,
+canonical partial-Flight navigation, client-run per-loader `revalidate()`,
+restricted `intercept()`, data-only `transition()`, loader authority signals
+and handle writes, implicitly-suspending `useLoader`, and
+`loader(Def, { stream: "navigation" })`. This document is design background:
+it records what the initial POC proved, what the shipped slice does, and which
+ideas remain optional future work. Sections below marked "since shipped" are
+kept as the historical design record; the current contract is
+[Client URL Routes](../client-urls.md).
 
 For the public contract, use [Client URL Routes](../client-urls.md). The current
 implementation is also summarized in
@@ -24,11 +29,14 @@ implementation is also summarized in
 | Canonical partial Flight        | Implemented and still authoritative                         |
 | Global router middleware        | Implemented through the existing canonical server chain     |
 | Route-local middleware          | Unsupported; future design only                             |
-| Client loader revalidation      | Unsupported; future design only                             |
-| Loader-produced segment handles | Unsupported; optional future experiment                     |
+| Client loader revalidation      | Implemented: browser-run per-loader `revalidate()` predicates, decision header |
+| Loader handle writes / signals  | Implemented via the general loader contract: `ctx.use(Handle)` pushes, thrown `notFound()`/`redirect()`; no `{ data, handles }` resource shape |
+| Loader delivery options         | Implemented: `loader(Def, { stream: "navigation" })` document-render await |
 | Prefix/include mounting         | BASELINE: `include()` in the canonical urls() tree          |
-| Parallel/intercept routes       | Unsupported; future design only                             |
-| Cache, transition, boundaries   | Unsupported                                                 |
+| Intercept routes                | Implemented, restricted: dot-local named target, loader/loading use only |
+| Parallel routes                 | Unsupported; future design only                             |
+| Transition                      | Implemented, data-only (no `when`)                          |
+| Cache, boundaries               | Unsupported (boundaries deliberately — server tree owns them) |
 | PPR                             | Unsupported                                                 |
 | Dedicated route-data transport  | Not implemented; future optimization idea                   |
 
@@ -39,8 +47,9 @@ middleware, loaders, boundaries, and route ownership derive from the canonical
 server tree. Direct `.routes(clientUrlPatterns)` is a pure-client shorthand
 that NORMALIZES to a root include (`include("/", definition, { name: "" })`) —
 sugar over the same composition path, not a second registration model. Overlap
-ownership therefore follows ordinary include/tree semantics. With this foundation in place, the next API exploration
-is suspending `useLoader()` inside client route components.
+ownership therefore follows ordinary include/tree semantics. `useLoader()`
+inside client route components suspends implicitly (streaming loaders) —
+shipped, no longer an exploration.
 
 ## The Implemented Idea
 
@@ -150,8 +159,8 @@ record.
 Projected loaders are ordinary server loader work. The materialized definition
 uses the loader's generated ID to recover its registered server implementation and
 calls it with the canonical loader context. This works for the default
-non-fetchable `createLoader()` form; Phase 1 does not turn route loaders into
-browser loader RPCs.
+non-fetchable `createLoader()` form; the shipped slice does not turn route
+loaders into browser loader RPCs.
 
 ## Implemented Loading and Pending Scope
 
@@ -216,9 +225,11 @@ The POC also showed that an inline function-level `"use server"` directive insid
 a `"use client"` module left the function body, JSX, and captured value in the
 browser bundle. That shape remains unsupported.
 
-## Future Design: Composition and Route Middleware
+## Future Design: Route Middleware
 
-This section is not Phase 1 behavior.
+This section is not shipped behavior. (The composition half of the original
+question is settled: `include()` mounting with URL/name prefixes IS the
+baseline model, above.)
 
 A future static-prefix mount could make a client group one sub-application inside
 a larger server tree. Before shipping, the server and browser projections would
@@ -245,9 +256,9 @@ only global `createRouter().use(...)` middleware applies.
 
 ## Future Design: Dedicated Route Data
 
-This section is not Phase 1 behavior.
+This section is not shipped behavior.
 
-Phase 1 deliberately keeps canonical partial Flight. A future route-data request
+The shipped slice deliberately keeps canonical partial Flight. A future route-data request
 could batch loader work or prefetch data separately from route code, but it would
 need to preserve all behavior currently inherited from the navigation path:
 
@@ -258,59 +269,51 @@ need to preserve all behavior currently inherited from the navigation path:
 - cancellation, supersession, Back/Forward, and history staleness.
 
 The fetchable-loader endpoint is not a substitute for that protocol. A dedicated
-transport either reaches parity and replaces the Phase 1 data lane or remains an
+transport either reaches parity and replaces the shipped data lane or remains an
 experiment; two silently different authoritative paths would be a correctness
 bug.
 
-## Future Design: Client Loader Revalidation
+## Since Shipped: Client Loader Revalidation
 
-This section is not Phase 1 behavior. `revalidate()` is rejected by
-`clientUrls()` today.
+This design has since shipped: per-loader `revalidate()` predicates are
+declared in the client module, execute in the browser with client-computable
+args, and only their DECISION crosses on the request header — exactly the
+boundary this section demanded (no request/env/cookies/middleware context in
+the predicate, server-side decisions only address the group's own loader
+stubs, defaults for decision-less requests). See
+[Client URL Routes](../client-urls.md) for the contract.
 
-A later client predicate could decide which route loaders to reuse before a
-route-data request. Such a predicate could only receive browser-known current and
-next URL state, action identity/result, and staleness. It could not receive the
-request, environment, cookies, headers, or middleware context.
+## Since Shipped (differently): Loader Handle Writes
 
-The server would still have to verify that every requested loader belongs to the
-canonical matched route. A client revalidation decision can be an optimization;
-it cannot grant execution permission.
+The original proposal here — a `{ data, handles }` resource shape with a
+loader-owned handle bucket and a client installation protocol — did NOT ship
+and remains rejected. What shipped instead is simpler: loader bodies gained
+the GENERAL handle contract (`ctx.use(Handle)` pushes with handler parity,
+delivery by the barrier race model, `ctx.get(handle)` reads behind
+`await ctx.rendered()`), so a projected client-urls loader pushes meta and
+breadcrumbs like any DSL loader, and
+`loader(Def, { stream: "navigation" })` makes document delivery
+deterministic. The open questions below were resolved by that framing —
+pushes attribute to the loader's owning segment, and no second ownership
+lifetime exists. Fetchable loaders invoked outside a route render still have
+no segment owner and their pushes are not exposed.
 
-## Optional Future Experiment: Loader-Produced Segment Handles
+## Future Design: Parallel Routes
 
-Loader-produced segment handles are not a working design decision and are not
-part of Phase 1. Existing projected loaders return their normal data through the
-ordinary server segment path; Phase 1 adds no `{ data, handles }` resource shape,
-loader-owned handle bucket, or client installation protocol.
+This section is not shipped behavior: `parallel()` is rejected inside
+`clientUrls()`. (`intercept()` HAS since shipped in a restricted,
+JSON-projectable form — dot-local named target, `loader()`/`loading()` use,
+module-local scoping via a synthesized origin-`when`; see
+[Client URL Routes](../client-urls.md).)
 
-An optional future experiment could investigate capturing handle pushes from a
-segment-bound loader and committing data plus handle contributions atomically.
-Before becoming a design decision it would need answers for:
-
-- ownership when one loader definition is mounted under multiple segments;
-- ordering across route loaders and parallel slots;
-- failed, cancelled, or revalidated loader pushes;
-- deferred handle values and settlement;
-- prefetch and Back/Forward snapshot retention;
-- compatibility with the current post-render handle read contract.
-
-Fetchable loaders have no route-segment owner, so any future proposal would also
-need to decide whether their pushes are discarded or exposed separately. No such
-behavior ships today.
-
-## Future Design: Parallel Routes and Intercepts
-
-This section is not Phase 1 behavior. `parallel()` and `intercept()` are rejected
-inside `clientUrls()`.
-
-A future design would need stable slot ownership, independent loading and pending
-scope, canonical hard-load behavior, history restoration, and a definition for
-cross-boundary intercepts. A browser-known modal choice cannot bypass server
-matching, middleware, or redirect authority.
+A future parallel design would need stable slot ownership, independent
+loading and pending scope, canonical hard-load behavior, and history
+restoration. A browser-known slot choice cannot bypass server matching,
+middleware, or redirect authority.
 
 ## Future Design: Prefetch and History Resources
 
-This section is not Phase 1 behavior. The shipped slice uses the existing partial
+This section is not shipped behavior. The shipped slice uses the existing partial
 Flight prefetch/history machinery; it adds no client-route resource cache or
 second history payload.
 
@@ -336,17 +339,18 @@ open questions.
 - Replacing loaders with a second user-facing query abstraction.
 - Claiming unsupported future helpers through generated fallback behavior.
 
-## Open Questions for Later Phases
+## Open Questions
 
-- What static prefix composition syntax preserves one source route graph?
 - What overlap policy can be enforced consistently without excluding legitimate
   response/MIME routes?
 - Can a route-data transport reach full partial-Flight parity without duplicating
   navigation state?
-- Which invalidation signals override a future client loader-retention decision?
-- Is loader-produced handle capture useful enough to justify a second ownership
-  lifetime?
 - How would parallel outlet pending avoid marking sibling slots?
 - What PPR artifact, if any, composes safely with a client-owned loading branch?
 
-These questions do not expand the Phase 1 public surface.
+(Resolved since first drafted: static-prefix composition is the shipped
+`include()` model; client loader retention is the shipped browser-run
+`revalidate()`; loader handle capture shipped as the general loader handle
+contract with segment-attributed pushes, no second ownership lifetime.)
+
+These questions do not expand the shipped public surface.

@@ -123,6 +123,15 @@ around the `include()` mount in the server `urls()` tree: middleware wrapping
 the mount runs for every route in the group; a `notFoundBoundary()` on an
 enclosing server layout catches loader-thrown `notFound()` from the group.
 
+Boundaries are a deliberate exclusion, not a projection limitation: the
+server-tree boundary around the mount gives group-scoped custom UI with the
+uniform server-resolved envelope (PE/no-JS correct), and INSIDE the group
+plain React error boundaries just work — every component is a client
+component, and a streamed loader rejection throws to the boundary above its
+`useLoader` read (siblings keep reading it from `error`). Per-read boundary +
+inline Suspense is the clientUrls idiom; a route-level DSL boundary would be
+the same regression `loading()` is relative to inline Suspense.
+
 ## Revalidation runs in the browser
 
 A server-tree `revalidate()` predicate executes on the server. A `clientUrls()`

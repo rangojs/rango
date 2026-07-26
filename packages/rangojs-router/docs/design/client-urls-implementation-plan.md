@@ -1,16 +1,18 @@
 # Client URLs Implementation Plan
 
 Status: the shipped slice mounts `clientUrls()` through `include()` in the
-canonical `urls()` tree — composition is the BASELINE model, not a later phase.
-Earlier drafts of this plan described a direct `.routes(clientUrlPatterns)`
-registration with its own deferral/ordering rules and deferred composition;
-that architecture was rejected. The direct form survives only as pure-client
-sugar normalizing to a root include. Phase references below are historical planning
-structure, not the mounting model. The broader destination architecture in
+canonical `urls()` tree — composition is the BASELINE model. Earlier drafts of
+this plan described a direct `.routes(clientUrlPatterns)` registration with
+its own deferral/ordering rules and deferred composition; that architecture
+was rejected. The direct form survives only as pure-client sugar normalizing
+to a root include. The broader destination architecture in
 [client URL groups and instant navigation](./client-urls-instant-navigation.md)
-remains design background, not a description of the current API. The next API
-exploration on this foundation is suspending `useLoader()` in client route
-components.
+remains design background, not a description of the current API. Since the
+initial gate, the slice has also shipped: client-run per-loader
+`revalidate()`, restricted `intercept()`, data-only `transition()`, loader
+authority signals and handle writes (the general loader contract),
+implicitly-suspending `useLoader`, and
+`loader(Def, { stream: "navigation" })`.
 
 The consumer contract is documented in [Client URL Routes](../client-urls.md).
 When this plan and the guide differ, the guide and current source are the shipped
@@ -18,7 +20,7 @@ contract.
 
 ## Release Gate Status
 
-The initial public gate passed for the narrow Phase 1 slice:
+The initial public gate passed for the narrow first slice:
 
 | Seat                   | Checked evidence                                                               |
 | ---------------------- | ------------------------------------------------------------------------------ |
@@ -33,12 +35,15 @@ canonical URL commit, and Back restoration. The source tests separately pin
 projection serialization, server matching, loader execution by ID, route typing,
 and the public `renderRoute({ outletPending })` seam.
 
-This evidence does not mark the original broader design complete. In particular,
-it does not ship prefixed composition, route-local middleware, client-side loader
-revalidation, loader-owned handles, a dedicated route-data transport, parallel
-routes, intercepts, boundaries, caching, transitions, or PPR.
+That initial gate did not cover the surface shipped since — client-run
+`revalidate()`, restricted `intercept()`, data-only `transition()`, loader
+signals/handle writes, and `stream: "navigation"` each landed with their own
+dev+production e2e (see [Client URL Routes](../client-urls.md) for the pinned
+suites). Still not shipped: route-local middleware, a dedicated route-data
+transport, parallel routes, boundaries (deliberately — the server tree around
+the mount owns them), caching, and PPR.
 
-## Implemented Phase 1 Contract
+## Implemented Contract
 
 ```tsx
 // app.client-urls.tsx
@@ -93,12 +98,16 @@ semantics — several may be mounted, under prefixes and RSC layouts.
 
 ### Supported Surface
 
-| Capability                   | Phase 1 behavior                                                               |
+| Capability                   | Behavior                                                                       |
 | ---------------------------- | ------------------------------------------------------------------------------ |
 | Module shape                 | `"use client"` module with a default-exported `clientUrls()` value             |
 | `path()` and `layout()`      | Named client component values                                                  |
-| `loader()`                   | Imported server `createLoader()` definition, executed by registered ID         |
+| `loader()`                   | Imported server `createLoader()` definition, executed by registered ID — full loader body contract (signals, handle writes, `rendered()` reads) |
 | Non-fetchable loaders        | Supported; the projected route invokes the server definition directly          |
+| Loader delivery options      | `loader(Def, { stream: "navigation" }, use?)` — document renders await the loader before first flush |
+| `revalidate()`               | Client-run per-loader predicate inside a `loader()` use callback; decision crosses on the request header |
+| `intercept()`                | Restricted: dot-local named target, `loader()`/`loading()` use, module-local scoping |
+| `transition()`               | Data-only `TransitionConfig` subset (no `when`)                                |
 | `loading()`                  | Client-owned value available for hydrated optimistic presentation              |
 | Path options                 | `name`, `search`, and `trailingSlash` only                                     |
 | Router registration          | `include()` in the canonical urls() tree; `.routes(def)` = root-include sugar  |
@@ -109,13 +118,13 @@ semantics — several may be mounted, under prefixes and RSC layouts.
 | Type generation              | Global and per-module maps recognize statically legible `clientUrls()` routes  |
 | `useOutlet()`                | Returns `{ content, pending }`; pending is the narrow local-presentation scope |
 
-Named means the component value has a non-empty function name. Phase 1 does not
-require consumers to export every path or layout component.
+Named means the component value has a non-empty function name. The contract
+does not require consumers to export every path or layout component.
 
-The unsupported list is explicit: `middleware()`, `revalidate()`, `include()`,
-`parallel()`, `intercept()`, `cache()`, `transition()`, error/not-found
-boundaries, and PPR. Other path options are rejected by server projection. The
-implementation does not currently make a documented overlap-rejection promise.
+The unsupported list is explicit: `middleware()`, `include()`, `parallel()`,
+`cache()`, error/not-found boundaries, and PPR. Other path options are
+rejected by server projection. The implementation does not currently make a
+documented overlap-rejection promise.
 
 ## Implemented Navigation Flow
 
@@ -193,22 +202,20 @@ canonical matching.
 The exhaustive ownership list lives in
 [feature-file-map.md](../internal/feature-file-map.md).
 
-## Deferred Phase 2: Composition
+## Deferred: Route-Local Middleware
 
-Phase 2 is not implemented. It may investigate:
+Not implemented. A future design may investigate route-local middleware
+imported from a top-level `"use server"` module. It must preserve canonical
+server middleware derivation and Node/Cloudflare dev/production parity.
+Inline function-level `"use server"` middleware inside the client module is
+not a supported fallback. (Static-prefix mounting, the other half of the
+original deferral, shipped as the baseline `include()` model.) Dynamic/nested
+mounts and overlap policy need a separate, source-backed contract before they
+can be documented as behavior.
 
-1. Route-local middleware imported from a top-level `"use server"` module.
-2. A client URL group mounted beneath a static prefix.
+## Deferred: Route-Data Transport
 
-Either feature must preserve canonical server middleware derivation and
-Node/Cloudflare dev/production parity. Inline function-level `"use server"`
-middleware inside the client module is not a supported fallback. Dynamic/nested
-mounts and overlap policy need a separate, source-backed contract before they can
-be documented as behavior.
-
-## Deferred Phase 3: Route-Data Transport
-
-Phase 3 is not implemented. A future dedicated route-data transport could batch
+Not implemented. A future dedicated route-data transport could batch
 selected loader work and prefetch route data independently from route code, but it
 would replace security- and correctness-sensitive behavior currently inherited
 from partial Flight. Before replacing that path it must prove parity for canonical
@@ -220,20 +227,20 @@ contract.
 
 ## Other Deferred Work
 
-The following are not part of Phase 1 or implied by its release:
+The following remain unshipped:
 
-- client-side loader `revalidate()` predicates;
-- loader-produced segment handles;
-- a suspending `useLoader()` contract;
-- parallel routes and intercepts inside `clientUrls()`;
-- cache and transition helpers;
-- error and not-found boundaries;
+- parallel routes inside `clientUrls()`;
+- the `cache()` helper inside the group;
+- error and not-found boundaries (deliberately — the server tree around the
+  mount owns them, and plain React boundaries work inside the group);
 - PPR or prerender integration;
 - nested/dynamic group mounts and a documented overlap policy.
 
-Loader-produced handles are, at most, an optional future experiment. They are not
-a working design decision and no `{ data, handles }` resource shape ships in
-Phase 1.
+Formerly on this list and since shipped: client-run `revalidate()`
+predicates, the suspending `useLoader()` contract, restricted `intercept()`,
+data-only `transition()`, and loader handle writes — the last via the general
+loader contract (`ctx.use(Handle)` pushes), NOT the once-sketched
+`{ data, handles }` resource shape, which remains rejected.
 
 ## Verification Commands
 

@@ -179,7 +179,7 @@ boundary for those other scopes.
 
 ## Supported surface
 
-The initial slice supports:
+`clientUrls()` supports:
 
 - `path()`, `layout()`, `loader()`, `loading()`, a restricted `intercept()`,
   a data-only `transition()`, and a client-run per-loader `revalidate()`
@@ -189,9 +189,14 @@ The initial slice supports:
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
   deriving from the server tree;
 - `PathOptions` projection for `name`, `search`, and `trailingSlash` only;
-- server `createLoader()` definitions, including non-fetchable loaders;
+- server `createLoader()` definitions, including non-fetchable loaders — with
+  the full loader body contract: thrown `notFound()`/`redirect()` authority
+  signals, handle writes (`ctx.use(Meta)({ title })`, handler parity), and
+  `ctx.get(handle)` reads behind `await ctx.rendered()`;
+- per-loader delivery options: `loader(Def, { stream: "navigation" }, use?)`;
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
-  navigation.
+  navigation, with implicitly-suspending `useLoader` reads (a pending first
+  read suspends to its `<Suspense>` boundary while the loader streams).
 
 `transition(config)` is valid inside a `path()` use callback only and projects
 the data subset of `TransitionConfig`: ViewTransition classes
@@ -227,12 +232,32 @@ fresher, never bypasses middleware or authorization. Pinned dev+prod in
 while a sibling with `isAction ? false : defaultShouldRevalidate` keeps its
 held value in the same commit.
 
+`loader(Def, { stream: "navigation" }, use?)` is the SSR-completeness opt-in.
+By default every loader streams on every render, so nothing a slow loader
+produces is guaranteed to be in the SSR'd HTML — its section SSRs as the
+Suspense fallback, a late handle push applies post-hydration, and a
+loader-thrown `notFound()` only wins a real 404 status opportunistically.
+With `stream: "navigation"`, DOCUMENT renders await that loader before first
+flush: its data is settled at first paint, its handle pushes ride the SSR
+handle snapshot, and a thrown `notFound()` deterministically precedes
+Response construction. Client navigations stream unchanged — the name says
+where streaming still applies. Scoped per loader: unflagged siblings keep
+streaming behind their boundaries. A flagged loader must not
+`await ctx.rendered()` (a barrier cycle by construction — it throws a
+deadlock error), and `intercept()` loaders reject the option (intercepts
+render on client navigations only). Pinned dev+prod in
+`tests/vite-rsc-demo/e2e/client-shop-stream.test.ts`.
+
 INSIDE `clientUrls()` the DSL does not support `middleware()`, `include()`,
 `parallel()`, `cache()`, error or not-found boundaries, or PPR — those belong
-to the surrounding server tree the include mounts into. Every helper
-rejection and the option-level rejections (`ppr`, `intercept`, `parallel`,
-`revalidate`, and any other non-projected `PathOptions` key) are pinned by
-tests.
+to the surrounding server tree the include mounts into. (Boundaries are a
+deliberate exclusion: a server-tree boundary around the mount catches
+loader-thrown signals from the group with the uniform server-resolved
+envelope, and inside the group plain React error boundaries work — every
+component is a client component, and a streamed loader rejection throws to
+the boundary above its `useLoader` read.) Every helper rejection and the
+option-level rejections (`ppr`, `intercept`, `parallel`, `revalidate`, and
+any other non-projected `PathOptions` key) are pinned by tests.
 
 Composition limits around a client include, locked explicitly:
 
@@ -295,8 +320,9 @@ use?)` where the target is a dot-local NAMED route in the same
   requests 404 at entry resolution. Fully named nested mounts work and are
   e2e-pinned; root-module mounts work with or without names.
 
-With composition in place, the next API exploration is suspending
-`useLoader()` inside client route components.
+`useLoader()` inside client route components suspends implicitly: loaders
+stream, and a pending first read suspends to the nearest `<Suspense>`
+boundary (or the route's `loading()`) instead of rendering a loading flag.
 
 ## Security boundary
 

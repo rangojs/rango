@@ -41,7 +41,7 @@ describe("clientUrls", () => {
   it("rejects unsupported path options at the type boundary", () => {
     const build = () =>
       clientUrls(({ path }) => [
-        // @ts-expect-error ppr is not part of the Phase 1 client projection.
+        // @ts-expect-error ppr is not part of the client projection.
         path("/ppr", HomePage, { ppr: true }),
       ]);
 
@@ -104,7 +104,7 @@ describe("clientUrls", () => {
     expect(route.loading).toBe("Account loading");
   });
 
-  it("stores only Phase 1 route and loader fields", () => {
+  it("stores only projectable route and loader fields", () => {
     const AccountLoader = loader("loaders#account");
 
     const patterns = clientUrls(({ path, loader: useLoader, loading }) => [

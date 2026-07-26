@@ -467,8 +467,9 @@ them:
   different things. The [skills](../skills/rango/SKILL.md) exist to make
   that session short.
 - **Client URL loading is optimistic, not authorization.** Its loading branch can
-  render before global middleware finishes, and the Phase 1 DSL intentionally
-  omits composition, route middleware/revalidation, boundaries, cache, and PPR.
+  render before global middleware finishes, and the `clientUrls()` DSL
+  intentionally omits route middleware, nested `include()`/`parallel()`,
+  boundaries, cache, and PPR — those stay in the server tree around the mount.
 - **The router is experimental.** The semantics are pinned and tested, and
   the API is converging, but pre-1.0 means pre-1.0.
 
