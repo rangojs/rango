@@ -265,6 +265,8 @@ export const NamedRoutes = {
   "parallelMeta.product": "/parallel-meta/:slug",
   "parallelMetaStale.index": "/parallel-meta-stale",
   "parallelMetaStale.item": "/parallel-meta-stale/:item",
+  "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
+  "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",
   "parallelRevalAfterAction.revalAfterActionPageA": "/parallel-reval-after-action/page-a",
   "parallelRevalAfterAction.revalAfterActionPageB": "/parallel-reval-after-action/page-b",
   "paramsAfterAction.error": "/params-after-action/error/:postId/section/:section",

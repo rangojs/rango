@@ -45,7 +45,10 @@ vi.mock("../segment-resolution/helpers.js", () => ({
   buildLoaderErrorContext: vi.fn(() => ({})),
 }));
 
-import { resolveLoadersWithRevalidation } from "../segment-resolution/revalidation.js";
+import {
+  resolveLoadersWithRevalidation,
+  resolveParallelSegmentsWithRevalidation,
+} from "../segment-resolution/revalidation.js";
 import {
   runWithRouterLogContext,
   startRevalidationTrace,
@@ -102,6 +105,39 @@ function makeEntry(loaderId: string): EntryData {
     errorBoundary: [],
     notFoundBoundary: [],
     middleware: [],
+    handle: [],
+  } as any;
+}
+
+/** Layout owning an @panel parallel slot carrying `revalidateFns`. */
+function makeLayoutWithSlot(revalidateFns: unknown[]): EntryData {
+  const parallelEntry = {
+    id: "L0.parallel",
+    type: "parallel",
+    shortCode: "L0P0",
+    handler: { "@panel": () => "PANEL" },
+    loader: [],
+    layout: [],
+    parallel: {},
+    intercept: [],
+    middleware: [],
+    revalidate: revalidateFns,
+    errorBoundary: [],
+    notFoundBoundary: [],
+  } as any;
+  return {
+    id: "L0",
+    type: "layout",
+    shortCode: "L0",
+    handler: () => null,
+    loader: [],
+    layout: [],
+    parallel: { "@panel": parallelEntry },
+    intercept: [],
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
     handle: [],
   } as any;
 }
@@ -265,6 +301,92 @@ describe("revalidation trace through segment resolution pipeline", () => {
     expect(trace!.entries[1].segmentId).toBe("L0R0D1.loader-B");
     expect(trace!.entries[1].reason).toBe("nav:non-route-skip");
     expect(trace!.entries[1].finalShouldRevalidate).toBe(false);
+
+    consoleSpy.mockRestore();
+  });
+
+  // A floored "new-segment" seed overrides a user `false`. The floor must emit
+  // ONE entry carrying the real decision: flushRevalidationTrace buckets by
+  // finalShouldRevalidate with no dedup by segmentId, so a second entry would
+  // count this slot as both revalidated AND skipped and inflate `total`.
+  it("emits a single floored entry when a revalidate fn is overridden on a new slot", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const trace = await runWithRouterLogContext(
+      { request: new Request("http://localhost/b"), transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+        });
+
+        // Parent on the client, slot not, belongsToRoute -> floored seed.
+        await resolveParallelSegmentsWithRevalidation(
+          makeLayoutWithSlot([() => false]),
+          { id: "1" },
+          makeContext(),
+          true,
+          new Set(["L0"]),
+          { id: "1" },
+          new Request("http://localhost/b"),
+          new URL("http://localhost/a"),
+          new URL("http://localhost/b"),
+          "test.route",
+          makeDeps(),
+        );
+
+        return flushRevalidationTrace();
+      },
+    );
+
+    expect(trace).not.toBeNull();
+    expect(trace!.entries).toHaveLength(1);
+    expect(trace!.entries[0].segmentId).toBe("L0.@panel");
+    expect(trace!.entries[0].reason).toBe("hard:revalidate0:floored");
+    expect(trace!.entries[0].finalShouldRevalidate).toBe(true);
+
+    consoleSpy.mockRestore();
+  });
+
+  it("leaves an unfloored skip-parent-chain decision alone", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const trace = await runWithRouterLogContext(
+      { request: new Request("http://localhost/b"), transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+        });
+
+        // Same shape but belongsToRoute=false -> seed false, no floor.
+        await resolveParallelSegmentsWithRevalidation(
+          makeLayoutWithSlot([() => false]),
+          { id: "1" },
+          makeContext(),
+          false,
+          new Set(["L0"]),
+          { id: "1" },
+          new Request("http://localhost/b"),
+          new URL("http://localhost/a"),
+          new URL("http://localhost/b"),
+          "test.route",
+          makeDeps(),
+        );
+
+        return flushRevalidationTrace();
+      },
+    );
+
+    expect(trace!.entries).toHaveLength(1);
+    expect(trace!.entries[0].reason).toBe("hard:revalidate0");
+    expect(trace!.entries[0].finalShouldRevalidate).toBe(false);
 
     consoleSpy.mockRestore();
   });

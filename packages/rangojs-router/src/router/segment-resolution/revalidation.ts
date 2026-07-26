@@ -613,7 +613,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       // For non-empty client sets, consult user revalidate fns. When the slot
       // is unknown to the client, override the type-derived default so the
       // soft chain seeds with the right "new segment" / "parent-chain" value.
-      let defaultOverride: { value: boolean; reason: string } | undefined;
+      //
+      // A "new segment" seed is floored: the client has no cached copy of this
+      // slot, so a user `false` would render component:null and leave it blank
+      // rather than keep anything. Sibling resolvers (loaders, layout/route
+      // entries, orphan layouts) get the same guarantee by short-circuiting
+      // without consulting user fns at all; #482 made this path consult them so
+      // a "skip-parent-chain" seed could still be raised, so floor instead of
+      // short-circuiting — user fns run, and may only raise.
+      let defaultOverride:
+        | { value: boolean; reason: string; floor?: boolean }
+        | undefined;
       if (!clientSegmentIds.has(parallelId)) {
         const value =
           parentChainDefault === "force-render"
@@ -622,6 +632,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         defaultOverride = {
           value,
           reason: value ? "new-segment" : "skip-parent-chain",
+          floor: value,
         };
       }
 

@@ -134,6 +134,7 @@ import { compositionPatterns } from "./pages/composition.js";
 import { buildSkipPatterns } from "./pages/build-skip.js";
 import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
 import { handlerFirstPatterns } from "./pages/handler-first.js";
+import { parallelNewSlotRevalPatterns } from "./pages/parallel-new-slot-reval.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -1414,6 +1415,12 @@ export const urlpatterns = urls(
         // Handler-first execution order test
         include("/handler-first", handlerFirstPatterns, {
           name: "handlerFirst",
+        }),
+
+        // Regression: revalidate(() => false) on a route-scoped parallel slot
+        // must not blank the slot on the soft nav that first introduces it
+        include("/parallel-new-slot-reval", parallelNewSlotRevalPatterns, {
+          name: "parallelNewSlotReval",
         }),
 
         // Rendered barrier: loader reads handle data after ctx.rendered()

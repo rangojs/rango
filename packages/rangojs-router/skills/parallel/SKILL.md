@@ -374,6 +374,16 @@ A `revalidate()` callback may return a hard `boolean`, a soft
 for the full contract — it's the same across `loader()`, `path()`,
 `layout()`, `parallel()`, and `intercept()`.
 
+`revalidate()` decides whether to _re_-render a slot, never whether to render
+it the first time. A slot the browser has not rendered yet has nothing cached
+to keep showing, so returning `false` for it would just leave a hole. On that
+first render the decision is clamped to `true` and your callback's `false` is
+ignored; from the second visit onward it is honored and the browser keeps the
+copy it already has. This is what makes `revalidate(() => false)` mean "render
+once, then never refetch" rather than "sometimes never appear at all" — before
+the clamp, landing on a sibling route and navigating in left the slot blank
+until a full reload.
+
 ### Revalidation Contracts for Parallel Dependencies
 
 Prefer named revalidation contracts shared by both the upstream producer and
