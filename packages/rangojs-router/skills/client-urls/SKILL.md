@@ -138,6 +138,27 @@ component, and a streamed loader rejection throws to the boundary above its
 inline Suspense is the clientUrls idiom; a route-level DSL boundary would be
 the same regression `loading()` is relative to inline Suspense.
 
+## Outer layouts and middleware across group navigations
+
+With the common shape — `layout(<AdminRscLayout />, () => [middleware(requireAdmin), include("/admin", adminUrls)])` — middleware and layout handlers ride
+DIFFERENT schedules:
+
+- **Middleware runs on EVERY canonical request**, not just the first
+  encounter. Every navigation inside the group — including a tab switch whose
+  loaders all hold — still sends the canonical partial request (it commits
+  URL/history and carries the revalidation decisions), and middleware wraps
+  each one: `requireAdmin` re-authorizes every navigation, and its
+  `ctx.set()` variables are fresh for the group's loaders on every pass. The
+  instant feel comes from held data and optimistic presentation, not from
+  skipping the server.
+- **The outer layout handler does NOT re-run on within-group navigations** —
+  partial rendering holds its segment (and the parent chain skips on actions
+  by default). Layout-rendered data that must track the group belongs in
+  middleware `ctx.set()`, not the layout body.
+- The only thing that precedes middleware is the optimistic branch
+  (destination `loading()` / `useOutlet().pending`) — presentation, never
+  authorization.
+
 ## Revalidation runs in the browser
 
 A server-tree `revalidate()` predicate executes on the server. A `clientUrls()`

@@ -177,6 +177,51 @@ server, and the response remains authoritative.
 Use `useNavigation()`, `useLinkStatus()`, loader state, or your own Suspense
 boundary for those other scopes.
 
+## Outer layouts and middleware across group navigations
+
+The common mounting shape puts server structure and guards AROUND the group:
+
+```tsx
+export const urlpatterns = urls(({ include, layout, middleware }) => [
+  layout(<AdminRscLayout />, () => [
+    middleware(requireAdmin),
+    include("/admin", adminClientUrls, { name: "admin" }),
+  ]),
+]);
+```
+
+Middleware and layout handlers ride DIFFERENT schedules, and conflating them
+is the common misread:
+
+| Runs on…                    | Hard load | Within-group navigation                    | Nav with all loaders held               | Action                                    |
+| --------------------------- | --------- | ------------------------------------------ | ---------------------------------------- | ----------------------------------------- |
+| `AdminRscLayout` handler    | yes       | no — its segment HOLDS (partial rendering) | no                                       | no by default (`action:parent-chain-skip`) |
+| `requireAdmin` middleware   | yes       | **yes — every canonical request**          | **yes**                                  | yes (wraps the revalidation render)       |
+| Group loaders               | yes       | per-loader `revalidate()` decision         | skipped (the decision crossed the wire)  | per-loader decision (`isAction`)          |
+| Optimistic loading/pending  | n/a       | renders BEFORE the response — presentation only | same                                | n/a                                       |
+
+Two consequences worth stating plainly:
+
+- **Middleware does NOT run "on first encounter" only.** Every navigation
+  inside the group — including a tab/param switch whose loaders all hold —
+  still sends the canonical partial Flight request (that request is what
+  commits URL, history, and content, and it carries the client revalidation
+  DECISIONS). Middleware in the matched chain wraps every one of those
+  requests, so `requireAdmin` re-authorizes each navigation and its
+  `ctx.set()` variables are fresh for the group's loaders on every pass. The
+  instant feel comes from held data and optimistic presentation, not from
+  skipping the server.
+- **The outer layout handler does not re-run on within-group navigations.**
+  Partial rendering diffs below the common ancestor, so the server layout's
+  rendered segment is preserved client-side; on actions the parent chain
+  skips by default. If the layout renders request-derived data that must
+  refresh with the group, use middleware `ctx.set()` (fresh every pass) or a
+  shared revalidation contract — not the layout handler's own body.
+
+The one window that precedes middleware is the optimistic branch (destination
+`loading()` / `useOutlet().pending`) — presentation only, never
+authorization; see the security boundary below.
+
 ## Supported surface
 
 `clientUrls()` supports:
