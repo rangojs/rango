@@ -222,6 +222,13 @@ The one window that precedes middleware is the optimistic branch (destination
 `loading()` / `useOutlet().pending`) — presentation only, never
 authorization; see the security boundary below.
 
+Pinned dev+prod in `tests/vite-rsc-demo/e2e/client-shop-guards.test.ts`: the
+demo's `/client-shop` mount is wrapped in exactly this shape
+(`src/urls/client-shop-guard.tsx` — a monotonic middleware header per
+request, a layout run-count DOM stamp), and the suite asserts the header
+advances on a within-group navigation AND on a held-loader tab switch while
+the layout stamp holds.
+
 ## Supported surface
 
 `clientUrls()` supports:

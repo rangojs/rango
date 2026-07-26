@@ -159,6 +159,10 @@ DIFFERENT schedules:
   (destination `loading()` / `useOutlet().pending`) — presentation, never
   authorization.
 
+All three pinned by dev + production e2e in the router repository (a
+middleware-stamped header per request, a layout run-count stamp held across
+navigations).
+
 ## Revalidation runs in the browser
 
 A server-tree `revalidate()` predicate executes on the server. A `clientUrls()`
