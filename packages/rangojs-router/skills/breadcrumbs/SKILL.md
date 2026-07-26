@@ -7,8 +7,9 @@ argument-hint: "[setup]"
 # Breadcrumbs
 
 Built-in handle for accumulating breadcrumb items across route segments.
-Each layout/route pushes items via `ctx.use(Breadcrumbs)`, and they are
-collected in parent-to-child order with automatic deduplication by `href`.
+Handlers and loader bodies push items via `ctx.use(Breadcrumbs)`, and they
+are collected in parent-to-child order with automatic deduplication by
+`href`.
 
 ## BreadcrumbItem Type
 
@@ -58,6 +59,32 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 On `/blog/my-post`, breadcrumbs accumulate: `Home > Blog > my-post`.
 
+## Pushing from Loaders
+
+A data-derived crumb belongs where the data lives — the loader body pushes
+with the same API (handler parity), so routes without handlers (`useLoader`
+consumption, `clientUrls()` groups) still build trails:
+
+```typescript
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+  const product = await getProduct(ctx.params.slug);
+
+  const pushCrumb = ctx.use(Breadcrumbs);
+  pushCrumb({ label: "Shop", href: "/shop" });
+  pushCrumb({ label: product.name, href: `/shop/product/${product.slug}` });
+
+  return product;
+});
+```
+
+Two pushes from one segment accumulate in push order (`Shop › product`).
+Delivery follows the loader race model: a push that beats the handler barrier
+is in the SSR'd document; a push after a slow fetch streams and applies
+client-side (`useHandle` re-renders when it lands). To guarantee document
+delivery, register the loader as `loader(Def, { stream: "navigation" })` —
+see `/loader` → "Writing Handles from Loaders".
+
 ## Async Content
 
 The `content` field supports `Promise<ReactNode>` for streaming:
@@ -83,9 +110,10 @@ with React's `use()` hook wrapped in `<Suspense>`.
 
 ### Deferred content (decide now, resolve from a deep component)
 
-When the handler should DECIDE to push a crumb (it holds `ctx`, so the decision
-must land before the handles stream seals) but the value is produced far away — by
-a deep async component, not the handler — call `.defer()` on the push function.
+When the handler should DECIDE to push a crumb early but the value is produced
+far away — by a deep async component, not the handler — call `.defer()` on the
+push function. (If the value comes from a LOADER, skip `.defer()` entirely and
+push from the loader body — see "Pushing from Loaders" above.)
 `ctx.use(Handle)` returns the push function; `.defer(options)` reserves the crumb's
 slot synchronously and returns a **resolver that is push-equal** — you call it
 later, anywhere in the render, with the same argument you'd have passed to the
@@ -140,10 +168,12 @@ On a full/SSR load the value is resolved server-side; on a soft navigation the
 breadcrumbs HOLD the previous resolved value until the deferred value lands, then
 swap in — no blank, no pending entry. If the slot times out to `else: null`/
 undefined, the entry is simply dropped. Use `.defer()` only when even
-`label`/`href` are unknown at handler time — if you know them and only the
-`content` is async, push a concrete item with a `Promise` `content` field instead
-(the `content` field is a nested promise you resolve with `use()` in your
-component; no `.defer()` needed).
+`label`/`href` are unknown at handler time AND the producer is a component,
+not a loader — a loader-produced crumb pushes directly from the loader body
+(add `{ stream: "navigation" }` if it must be in the SSR'd document), and if
+you know `label`/`href` and only the `content` is async, push a concrete item
+with a `Promise` `content` field instead (the `content` field is a nested
+promise you resolve with `use()` in your component; no `.defer()` needed).
 
 ## Consuming Breadcrumbs (Client)
 

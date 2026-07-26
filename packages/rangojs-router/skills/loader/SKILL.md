@@ -1,7 +1,7 @@
 ---
 name: loader
-description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.
-argument-hint: [loader]
+description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, client components need reactive server data, a loader should throw notFound()/redirect(), set page meta/breadcrumbs from loader data (handle writes), or loader data must be guaranteed in the SSR'd document (stream:"navigation").
+argument-hint: "[loader]"
 ---
 
 # Data Loaders with loader()
@@ -182,9 +182,9 @@ Loaders receive the same context shape as route handlers.
 | `searchParams` | `URLSearchParams`              | Shortcut for `ctx.url.searchParams`.                                                                                                                    |
 | `search`       | `ResolveSearchSchema<TSearch>` | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                       |
 | `env`          | `TEnv`                         | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                                                                     |
-| `get`          | `(key \| ContextVar) => value` | Reads variables/context-vars set by middleware.                                                                                                         |
-| `use`          | `(loader \| handle) => T`      | Access another loader's data (Promise) or a handle's collected data (after `await ctx.rendered()`).                                                     |
-| `rendered`     | `() => Promise<void>`          | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. |
+| `get`          | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                             |
+| `use`          | `(loader \| handle) => T`      | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`. |
+| `rendered`     | `() => Promise<void>`          | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `stream: "navigation"` (cycle; throws). |
 | `method`       | `string`                       | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                   |
 | `body`         | `TBody \| undefined`           | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                          |
 | `formData`     | `FormData \| undefined`        | Present when a fetchable loader is invoked via form submission.                                                                                         |
@@ -442,7 +442,10 @@ boundary a parallel loader blocks its parent, so add one to keep the overlap.)
 
 If you come from a framework where the loader is a blocking step that runs
 before the response is built, this is the shift to internalize: here the
-response starts streaming first and loader data fills in.
+response starts streaming first and loader data fills in. (The one deliberate
+exception is per-loader: `loader(Def, { stream: "navigation" })` awaits that
+loader before first flush on document renders — see "`stream: "navigation"`"
+below.)
 
 ### See it: `debugPerformance`
 
@@ -659,6 +662,115 @@ function ProductPage() {
   );
 }
 ```
+
+## Loader Authority: notFound() and redirect()
+
+A loader may **throw** `notFound()` and `redirect()` — data-dependent
+authority lives with the data, so every consumer of the loader inherits the
+signal instead of re-checking existence at each read site:
+
+```typescript
+import { createLoader, notFound, redirect } from "@rangojs/router";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+  const moved = LEGACY_SLUGS[ctx.params.slug];
+  if (moved) throw redirect(`/shop/product/${moved}`);
+
+  // Existence check BEFORE the expensive fetch: a near-instant rejection
+  // usually wins the race to first flush (see the semantics below).
+  if (!(await exists(ctx.params.slug))) notFound(`No "${ctx.params.slug}"`);
+
+  return getProduct(ctx.params.slug);
+});
+```
+
+Semantics by lane:
+
+| Signal       | Document load                                                                                                    | Client navigation                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `stream: "navigation"` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200     |
+| `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware | Redirect envelope navigates to the target             |
+
+Session/auth gates belong in middleware (they are request-shaped, not
+data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
+"this slug moved / does not exist" belongs in the loader.
+
+## Writing Handles from Loaders (meta, breadcrumbs)
+
+Loader bodies can WRITE handles with handler parity — `ctx.use(Handle)`
+returns the push function, legal for the whole body, streaming loaders
+included. This is how data-derived page titles and breadcrumb trails live
+where the data lives:
+
+```typescript
+import { Meta, Breadcrumbs } from "./handles";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+  const product = await getProduct(ctx.params.slug);
+
+  ctx.use(Meta)({ title: `${product.name} — Shop` });
+  const pushCrumb = ctx.use(Breadcrumbs);
+  pushCrumb({ label: "Shop", href: "/shop" });
+  pushCrumb({ label: product.name, href: `/shop/product/${product.slug}` });
+
+  return product;
+});
+```
+
+Delivery is async **by the race model**: pushes that settle before the handler
+barrier ride the SSR handle snapshot (in the SSR'd document — `<MetaTags />`,
+`useHandle` reads); later pushes stream to the client and apply post-hydration
+on document loads (`metadata.handlesLate`) or progressively on navigations.
+A push before your slow fetch usually beats the barrier; a push derived from
+the fetched data usually does not. When it MUST be in the document, use
+`stream: "navigation"` below.
+
+Reads are the other direction and gated: `ctx.get(handle)` throws unless the
+loader first does `await ctx.rendered()` (DSL-registered loaders only —
+handler-invoked loaders cannot use `rendered()`, and a handler already
+awaiting the loader via `ctx.use()` makes it a detected deadlock).
+
+## `stream: "navigation"` — Guarantee a Loader in the Document
+
+Streaming means nothing a slow loader produces is *guaranteed* in the SSR'd
+HTML: its section SSRs as the fallback, a late handle push applies
+post-hydration, a late `notFound()` loses the status race. When the loader
+feeds something that must exist in the document — `<head>` meta via a handle,
+or a real 404 status — pass delivery options between the definition and the
+use callback:
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader, { stream: "navigation" }, () => [cache({ ttl: 60 })]),
+  loader(RelatedLoader),   // untouched: still streams behind its boundary
+]),
+```
+
+The name says WHERE streaming still applies, not that it is disabled:
+document renders await this loader before first flush — data is settled
+(`useLoader` reads it synchronously, no fallback paints), handle pushes beat
+the barrier snapshot, and a thrown `notFound()` deterministically precedes
+Response construction (real 404, no warm-up race). Client navigations stream
+exactly as before. Scoped per LOADER: the flagged loader awaits only itself;
+siblings keep streaming.
+
+The costs and constraints:
+
+- Every document load pays the flagged loader's latency before first byte.
+  That is the point — but keep flagged loaders fast, and flag loaders, not
+  routes.
+- A flagged loader must not `await ctx.rendered()` / `ctx.get(handle)` — the
+  document render awaits the loader before the render barrier resolves, so
+  that wait is a cycle by construction; it throws a deadlock error naming the
+  fix.
+- PPR capture renders mask loaders and skip the await — the flag does not
+  bake anything into a shell (`/ppr`).
+
+Also available in `clientUrls()` route groups (`/client-urls`), where the
+loader-heavy shape makes it most useful. `LoaderOptions` is exported from the
+package root.
 
 ## Fetchable Loaders
 

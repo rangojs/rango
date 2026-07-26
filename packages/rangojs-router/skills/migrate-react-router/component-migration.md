@@ -132,6 +132,11 @@ const HomePage: Handler<"home"> = (ctx) => {
 };
 ```
 
+RR's data-derived `meta({ data })` maps to the same push from the LOADER that
+owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body, with
+`loader(Def, { stream: "navigation" })` when the title must be in the SSR'd
+head. See `/loader` → "Writing Handles from Loaders".
+
 Add `<MetaTags />` in the Document component's `<head>`:
 
 ```typescript

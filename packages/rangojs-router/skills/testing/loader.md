@@ -29,7 +29,7 @@
 | `cacheProfiles` | `Record<string, CacheProfile>`                                  | Cache profiles, the `createRouter({ cacheProfiles })` shape.                                                                                                                                                    |
 | `stateCookie`   | `StateCookieSeed` (`{ prefix?, routerId?, version? }`)          | Customize the rango state cookie a loader calling `invalidateClientCache()` rotates (the name is always seeded — default `rango-state_router_0`).                                                               |
 | `rendered`      | `boolean \| (() => void \| Promise<void>)`                      | Mock the `ctx.rendered()` render barrier so a loader that `await ctx.rendered()`s can be unit-tested. By default `ctx.rendered()` throws. `true` resolves immediately; a function controls timing/side effects. |
-| `handles`       | `ReadonlyArray<readonly [Handle<any, any>, unknown]>`           | Seed the values `ctx.use(SomeHandle)` returns — the ACCUMULATED handle data read after `await ctx.rendered()`. Matched by handle reference.                                                                     |
+| `handles`       | `ReadonlyArray<readonly [Handle<any, any>, unknown]>`           | Seed the values `ctx.get(SomeHandle)` returns — the ACCUMULATED handle data read after `await ctx.rendered()`. Matched by handle reference. (Loader handle WRITES need no seed — see `runLoaderResult(...).handlePushes`.) |
 
 ### Context — `TestLoaderContext<TEnv>` (what your loader receives)
 
@@ -44,8 +44,8 @@
 | `url`              | `URL`                                                                                     | Request URL.                                                                                                                                         |
 | `originalUrl`      | `URL`                                                                                     | Pre-basename-rewrite URL.                                                                                                                            |
 | `env`              | `TEnv`                                                                                    | Environment bindings (from `opts.env`).                                                                                                              |
-| `get`              | `<T>(contextVar: ContextVar<T>) => T \| undefined` / `<T>(key: string) => T \| undefined` | Read a var seeded via `opts.vars` (by `createVar()` handle or string key).                                                                           |
-| `use`              | `(dep) => ...`                                                                            | Resolve `ctx.use(OtherLoader)`/`ctx.use(SomeHandle)`: handle seeds first, then loader seeds, then the `use` resolver, then the real context `use()`. |
+| `get`              | `<T>(contextVar: ContextVar<T>) => T \| undefined` / `<T>(key: string) => T \| undefined` | Read a var seeded via `opts.vars` — or READ a handle: `ctx.get(handle)` is rendered-gated (throws before the barrier) and returns the `opts.handles` seed. |
+| `use`              | `(dep) => ...`                                                                            | Resolve `ctx.use(OtherLoader)` (loader seeds, then the `use` resolver, then the real context `use()`) — or WRITE a handle: `ctx.use(SomeHandle)` returns the push function (withDefer-wrapped), recording into `runLoaderResult(...).handlePushes`. |
 | `method`           | `string`                                                                                  | HTTP method (from `opts.method`, default `"GET"`).                                                                                                   |
 | `body`             | `unknown`                                                                                 | Request body (from `opts.body`).                                                                                                                     |
 | `formData`         | `FormData \| undefined`                                                                   | Form data (from `opts.formData`).                                                                                                                    |
@@ -58,12 +58,14 @@
 
 The loader data DIRECTLY (no envelope). `T` is the loader's return type.
 
-To assert a loader's EFFECTS — a `Set-Cookie`, a response header, or a
-`throw redirect(...)` (the auth-loader pattern) — use the sibling
-**`runLoaderResult(loader, opts)`** instead. Same options, but it returns an
-envelope: `{ result, thrown, response, cookies, headers, locationState, stateCookieName }`
-(parity with `runInRequestContext`; `result` is the loader's data). `runLoader`
-discards those effects.
+To assert a loader's EFFECTS — a `Set-Cookie`, a response header, a
+`throw redirect(...)` or `notFound()` (loader authority signals), or handle
+writes — use the sibling **`runLoaderResult(loader, opts)`** instead. Same
+options, but it returns an envelope:
+`{ result, thrown, response, cookies, headers, locationState, stateCookieName, handlePushes }`
+(parity with `runInRequestContext`; `result` is the loader's data;
+`handlePushes` records every `ctx.use(SomeHandle)({...})` write in push
+order). `runLoader` discards those effects.
 
 ## Recipe
 
@@ -113,7 +115,7 @@ it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
 ## Caveats
 
 - `ctx.reverse(...)` throws unless you pass `routeMap` (and `routeName` for scoped `.name` resolution). It does NOT fall back to the global route map.
-- `ctx.rendered()` throws by default (the render barrier only exists in a full match); pass `{ rendered: true }` to mock it for post-barrier logic, and `{ handles: [[SomeHandle, data]] }` to seed `ctx.use(SomeHandle)`. `ctx.isAction(...)` is unavailable — cover those at e2e.
+- `ctx.rendered()` throws by default (the render barrier only exists in a full match); pass `{ rendered: true }` to mock it for post-barrier logic, and `{ handles: [[SomeHandle, data]] }` to seed the `ctx.get(SomeHandle)` read. `ctx.isAction(...)` is unavailable — cover those at e2e.
 - Seeded `loaders` (by-reference tuples) are NOT executed — `ctx.use(OtherLoader)` returns the seeded value. The dynamic `use` resolver, by contrast, IS executed (it is a function called to compute the value). Either way the REAL loader body is not run; real loader execution and side-effects are e2e-only. `loaders` is checked before the `use` resolver.
 - A handle imported through the CLIENT build has its body dropped — `runLoader` throws a clear error pointing to the `rangoTestConfig()` preset or the raw body. A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`); only the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules).
 - No `cookies`/`headers` option: seed a cookie by passing a full Request with a Cookie header — `{ request: new Request(url, { headers: { Cookie: "sid=abc" } }) }`. (`search`/`method` are baked onto this request for you.)

@@ -33,14 +33,18 @@ batched.
 
 1. **Handles record data at render time.** The handler pushes to a handle
    (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on
-   the cache miss for `cache()`.
+   the cache miss for `cache()`. (Loader bodies can push handles too — see
+   `/loader` — but a loader push is request-time and is NOT part of the
+   replayed artifact; a manifest handle must be pushed by the code that gets
+   frozen with the shell.)
 2. **Replay on every hit.** Handle data is stored with the Flight payload
    and replayed into the handle store on cache/prerender hits — handler code
    does not re-run, but its pushes do.
 3. **Loaders read after the render barrier.** A DSL loader can
    `await ctx.rendered()` (waits for all non-loader segments to settle —
-   fresh render or replay alike), then `ctx.use(Handle)` returns the
-   **collected** handle data.
+   fresh render or replay alike), then `ctx.get(Handle)` returns the
+   **collected** handle data. (`ctx.use(Handle)` in a loader is the WRITE —
+   it returns the push function; reads live on `ctx.get`.)
 
 Loaders are live by default, so the read happens on every request even when
 the shell is a hit.
@@ -90,7 +94,7 @@ import { RenderedProducts } from "../handles/rendered-products";
 export const PriceLoader = createLoader(async (ctx) => {
   "use server";
   await ctx.rendered();
-  const ids = ctx.use(RenderedProducts);
+  const ids = ctx.get(RenderedProducts);
   return db.pricesFor(ids); // Map<string, number> keyed by product id
 });
 ```
@@ -144,15 +148,20 @@ cache({ ttl: 600, tags: ["products"] }, () => [
   Ids, slugs, slot names, variant keys: yes. Anything derived from
   `cookies()`/`headers()`: no.
 - **`ctx.rendered()` is experimental and DSL-loaders-only.** It throws in
-  fetchable/standalone loader calls that run outside a route render.
+  fetchable/standalone loader calls that run outside a route render, in
+  handler-invoked loaders (a handler already awaiting the loader via
+  `ctx.use()` is a detected deadlock), and in loaders registered with
+  `{ stream: "navigation" }` (the document render awaits the loader before
+  the barrier — a cycle by construction; see `/loader`).
 - **The reading loader serializes after the shell.** `await ctx.rendered()`
   deliberately gives up loader/render parallelism — on a miss the loader
   waits for segment resolution; on a hit (the common case for a cached
   shell) replay is immediate and the wait is negligible. A
   `debugPerformance` waterfall shows this loader after the render bar; for
   this pattern that is the contract, not a regression.
-- **`ctx.use(Handle)` before `await ctx.rendered()` throws** in a loader,
-  with an error saying to await the barrier first.
+- **`ctx.get(handle)` before `await ctx.rendered()` throws** in a loader,
+  with an error saying to await the barrier first. (`ctx.use(Handle)` — the
+  push — is legal for the whole loader body, no barrier required.)
 - **Deferred handle values are resolved before storage** (resolve-by-default),
   so the manifest read always sees plain values, never promises.
 

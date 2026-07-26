@@ -107,6 +107,9 @@ stated, greppable contract.
 | share config across routes              | factory returning a helper array   | /composability          |
 | compose a sub-app / module              | `include()`                        | /route                  |
 | modal / soft navigation                 | `intercept()`                      | /intercept              |
+| route group of client components        | `clientUrls()` in `"use client"`   | /client-urls            |
+| set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader    | /loader                 |
+| guarantee loader output in the SSR HTML | `loader(L, { stream: "navigation" })` | /loader              |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
 | cache the HTML shell, keep loaders live | `ppr` path option                  | /ppr                    |
@@ -243,6 +246,7 @@ Grouped by concern — read when you need to…
 | ------------------------- | -------------------------------------------------------------------------- |
 | `/router-setup`           | Create and configure the RSC router                                        |
 | `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
+| `/client-urls`            | Client-component route groups with `clientUrls()` — no handlers            |
 | `/layout`                 | Layouts that wrap child routes                                             |
 | `/parallel`               | Multi-column layouts and sidebars                                          |
 | `/intercept`              | Modal/slide-over patterns for soft navigation                              |

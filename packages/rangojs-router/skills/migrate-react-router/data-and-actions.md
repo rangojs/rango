@@ -40,9 +40,20 @@ Use it only when you need capabilities beyond what the handler provides:
   to all child routes via `ctx.use(Loader)` or `useLoader(Loader)`
 - **Independent revalidation** — `revalidate()` on a specific loader after actions
 - **Per-loader caching** — `loader(L, () => [cache({ ttl: 60 })])`
+- **RR-loader-shaped authority** — a loader that `throw redirect(...)`s or
+  throws a 404 keeps that shape: Rango loaders throw `redirect()`/`notFound()`
+  too (one caveat: a Rango loader redirect is a client-side navigate on
+  document loads, never an HTTP 302 — pre-stream 302s move to middleware)
+- **`meta({ data })` / `handle` exports** — data-derived page metadata becomes
+  a handle push from the loader body (`ctx.use(Meta)({ title: data.name })`),
+  with `loader(L, { stream: "navigation" })` when it must be in the SSR'd head
 
-If the React Router loader just fetches data for its page component, merge it
-into the handler. See `/loader` for when the live data layer is useful.
+If the React Router loader just fetches data for its page component AND the
+component can become a server component, merge it into the handler. If the
+component stays a client component, port the whole group with `clientUrls()`
+instead — loader, `useLoader` read, and browser-run `revalidate()` keep the RR
+route-module shape (see the "Two target shapes" section in the main skill and
+`/client-urls`). See `/loader` for when the live data layer is useful.
 
 ### Actions
 

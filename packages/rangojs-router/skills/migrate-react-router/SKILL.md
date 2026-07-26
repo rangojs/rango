@@ -59,6 +59,42 @@ React Router v7 has two modes that require different migration paths:
 React Router v6 and Remix v2 follow the same patterns as v7 library mode and
 framework mode respectively.
 
+## Two target shapes: server handlers or clientUrls()
+
+Every RR route lands in one of two Rango shapes — pick per route group, not
+per app (both compose in one `urls()` tree via `include()`):
+
+- **Server handlers** (the default in this guide): the route component becomes
+  a server component, data fetching merges into the handler. This is the shape
+  with the biggest wins — server-first rendering, smaller client bundles — and
+  the right target whenever the component CAN become a server component.
+
+- **`clientUrls()` groups** (`/client-urls`): for route groups whose components
+  are irreducibly hook-heavy client components, this is the mechanical port —
+  the RR route-module shape maps almost 1:1 and nothing changes seat:
+
+  | RR route module                    | clientUrls()                                             |
+  | ---------------------------------- | -------------------------------------------------------- |
+  | component (client, hooks)          | stays a client component — no conversion                 |
+  | `loader` (throws `redirect`/404)   | `createLoader()` — thrown `redirect()`/`notFound()` kept |
+  | `useLoaderData()`                  | `useLoader(Loader)` at the read site, under `<Suspense>` |
+  | `shouldRevalidate` (runs client)   | `revalidate()` predicate — ALSO runs in the browser      |
+  | `meta({ data })`                   | `ctx.use(Meta)` push from the loader body                |
+  | `defer` / `Await`                  | loaders stream; `<Suspense>` above each read             |
+
+  Note the `shouldRevalidate` row: a server-tree `revalidate()` runs on the
+  server, but a `clientUrls()` predicate runs in the browser with
+  client-computable args — the exact RR semantics. A group ported this way can
+  still be re-migrated to server handlers later, route by route.
+
+Start with server handlers; reach for `clientUrls()` when a route group's
+conversion cost is dominated by rewriting interactive components rather than
+by moving data fetching — or when the group is a **high-navigation-speed
+surface** (dashboard, admin panel, settings): browser-local matching gives
+instant optimistic pending, and browser-run predicates hold data across
+tab/param switches, so transitions are the fastest Rango offers. See
+`/client-urls`.
+
 ## Migration Strategy
 
 Work route-by-route, bottom-up. Start with leaf routes, then layouts, then
@@ -79,7 +115,7 @@ import at its call site:
 | `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                    |
 | `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                      |
 | `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()`, `useParams()` from `@rangojs/router/client`         |
-| `useLoaderData`                               | merge the loader into the handler; `useLoader()` only for live client data (see §3)       |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes (see §3) |
 | `useActionData`                               | `useActionState` (standard React, see §3)                                                 |
 | `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                    |
 | `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()`        |

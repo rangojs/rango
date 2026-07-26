@@ -553,10 +553,14 @@ Passthrough entries are logged distinctly:
 Loaders on pre-rendered routes run at request time. They are bundled normally
 and need `cache()` for caching. Do not use build-only APIs in loaders.
 
-### Handle data is frozen
+### Build-time handle data is frozen
 
-Handle values pushed via `ctx.use()` during pre-rendering are baked into the
-Flight payload. They do not update at request time.
+Handle values pushed via `ctx.use()` DURING pre-rendering (handler pushes at
+build) are baked into the Flight payload and do not update at request time.
+Loader pushes are the exception by construction: loaders run live at request
+time (previous section), so a loader-pushed handle (a data-derived Meta title,
+say) is request-time data — delivery follows the loader race model, see
+`/loader` → "Writing Handles from Loaders".
 
 ### Server actions work normally
 

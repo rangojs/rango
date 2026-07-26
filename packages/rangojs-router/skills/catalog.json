@@ -34,6 +34,12 @@
       "path": "skills/caching/SKILL.md"
     },
     {
+      "name": "client-urls",
+      "description": "Define client-component route groups with clientUrls() in a \"use client\" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the stream:\"navigation\" SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a \"use client\" file work.",
+      "argumentHint": "[setup]",
+      "path": "skills/client-urls/SKILL.md"
+    },
+    {
       "name": "cloudflare",
       "description": "Deploy and operate @rangojs/router on Cloudflare Workers with the Cloudflare Vite plugin, typed D1/KV bindings, local migrations, secrets, streaming, preview parity, and built-worker deployment. Use when creating a Cloudflare Rango app, moving a Rango app to Workers, wiring D1 or KV, debugging dev/preview differences, or preparing a Worker deployment.",
       "argumentHint": "",
@@ -131,7 +137,7 @@
     },
     {
       "name": "loader",
-      "description": "Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, or client components need reactive server data.",
+      "description": "Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, client components need reactive server data, a loader should throw notFound()/redirect(), set page meta/breadcrumbs from loader data (handle writes), or loader data must be guaranteed in the SSR'd document (stream:\"navigation\").",
       "argumentHint": "[loader]",
       "path": "skills/loader/SKILL.md"
     },

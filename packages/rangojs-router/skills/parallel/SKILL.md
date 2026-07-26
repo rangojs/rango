@@ -99,7 +99,8 @@ path("/dashboard/:id", (ctx) => {
 ## Setting Handles (Meta, Breadcrumbs)
 
 Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
-push handle data. The data is associated with the **parent** layout or route
+push handle data. (Loader bodies can too — see `/loader` → "Writing Handles
+from Loaders" — which often replaces the UI-less `@meta` slot below.) The data is associated with the **parent** layout or route
 segment, not the parallel segment itself. This is because parallels execute
 after their parent handler and inherit its segment scope.
 
@@ -129,6 +130,15 @@ their handler logic. The layout sets defaults via a title template, and each
 route overrides via its own `@meta` slot. Since child segments push after
 parents and `collectMeta` uses last-wins deduplication, overrides work
 naturally.
+
+> **Loader-derived metadata: push from the loader instead.** This slot's
+> `await ctx.use(ProductLoader)` routes the data through HANDLER consumption —
+> the baked lane under `cache()`/PPR — just to reach a `ctx.use(Meta)` call.
+> The loader can now push `Meta` itself (`/loader` → "Writing Handles from
+> Loaders"), keeping the data on the live lane; add
+> `loader(Def, { stream: "navigation" })` when the meta must be in the SSR'd
+> head. Keep the `@meta` slot for metadata that is NOT loader-derived
+> (templates, static descriptions, structured data with independent inputs).
 
 ```typescript
 // Layout sets defaults

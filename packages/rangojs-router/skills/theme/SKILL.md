@@ -33,16 +33,15 @@ const router = createRouter<Env>({
 });
 ```
 
-## Server (in loaders/middleware)
+## Server (in handlers/middleware)
 
 ```typescript
-import { createLoader } from "@rangojs/router";
 import type { Middleware } from "@rangojs/router";
 
-// In a loader
-export const SettingsLoader = createLoader(async (ctx) => {
+// In a handler
+path("/settings", (ctx) => {
   const currentTheme = ctx.theme; // read from cookie
-  return { theme: currentTheme };
+  return <SettingsPage theme={currentTheme} />;
 });
 
 // In middleware
@@ -52,6 +51,10 @@ export const themeMiddleware: Middleware = async (ctx, next) => {
   await next();
 };
 ```
+
+Theme accessors are handler/middleware-only — the loader context has no
+`ctx.theme`/`ctx.setTheme`. A loader that needs the theme reads the cookie
+directly via `cookies()` (loaders always run fresh, so the read is safe).
 
 ## Client
 

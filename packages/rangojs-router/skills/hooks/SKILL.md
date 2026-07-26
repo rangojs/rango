@@ -28,7 +28,7 @@ the one for your case.
 | Stable router actions (push/replace/refresh/…)     | `useRouter()`               | [`./navigation.md`](./navigation.md)                 |
 | Current URL path & matched segments                | `useSegments()`             | [`./navigation.md`](./navigation.md)                 |
 | Pending state inside a `<Link>`                    | `useLinkStatus()`           | [`./navigation.md`](./navigation.md)                 |
-| Loader data (strict, guaranteed)                   | `useLoader()`               | [`./data.md`](./data.md)                             |
+| Loader data (streams; suspends until it lands)     | `useLoader()`               | [`./data.md`](./data.md)                             |
 | Loader data with on-demand fetch                   | `useFetchLoader()`          | [`./data.md`](./data.md)                             |
 | Refresh multiple loaders across groups             | `useRefreshLoaders()`       | [`./data.md`](./data.md)                             |
 | Accumulated handle data from route segments        | `useHandle()`               | [`./handle-and-actions.md`](./handle-and-actions.md) |

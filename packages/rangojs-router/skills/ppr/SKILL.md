@@ -121,9 +121,9 @@ At capture the pending fetch cannot win the task-quantized quiet window, so
 the boundary postpones — fallback in the frozen prelude, value resumed fresh
 on every HIT. This is the PHYSICS class from the hole doctrine below, and it
 is exactly how an existing Suspense-shaped tree (e.g. migrated from Next.js
-PPR) works with zero restructuring. The e2e proof is
-`e2e/test-app/src/components/ShellPhysicsValue.tsx` — a promise hole living in
-a LAYOUT with no loader registration at all.
+PPR) works with zero restructuring. The e2e proof lives in the router
+repository (not shipped in this package): a promise hole living in a LAYOUT
+with no loader registration at all.
 
 A route WITHOUT the `ppr` option is pure axis 1: no store read, no capture, no
 logs, zero cost. `ppr` is per page route — declaring it on a layout is not
@@ -658,9 +658,19 @@ Three levers, in preference order:
    lane — masked at capture, fresh per serve — at the cost of a fallback in
    the shell.
 
-Head material (Meta) generally cannot be a hole — the head is shell — so its
-promises bake by design; make them cheap with lever 2. `bakeWaitMs` on the
-capture debug event tells you what each capture actually paid.
+Head material (Meta) pushed by HANDLERS cannot be a hole — the head is shell —
+so those promises bake by design; make them cheap with lever 2. `bakeWaitMs`
+on the capture debug event tells you what each capture actually paid. A
+LOADER-pushed Meta is different: loaders are masked at capture, so the push
+happens at request time and applies client-side (`metadata.handlesLate`) — it
+is never in the cached shell's head, by construction.
+
+One flag to know about here: `loader(Def, { stream: "navigation" })` (the
+document-render await, `/loader`) is **inert under PPR** — capture renders
+mask loaders and skip the await, and a shell HIT flushes the stored prelude
+before loaders resolve. Flagging a loader on a `ppr` route does not bake it
+into the shell and does not delay HIT serves; the flag only governs ordinary
+(axis-1) document renders.
 
 ## Execution matrix
 

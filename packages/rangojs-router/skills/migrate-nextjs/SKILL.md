@@ -667,6 +667,34 @@ children in their scope — handlers, loaders, and nested segments.
 | `useSearchParams()`             | `useSearchParams()` from `@rangojs/router/client` |
 | `redirect("/login")` (server)   | `redirect("/login")` from `@rangojs/router`       |
 
+### "Instant navigations" (Link prefetching)
+
+Next.js's instant navigations — `<Link>` auto-prefetch feeding the client
+router cache — map to Rango's prefetch system: per-Link
+`prefetch="viewport" | "hover" | "none"` (or the router-wide `defaultPrefetch`
+option) warms the target's partial RSC payload before the click, and a click
+on a warmed link commits the prefetched payload as a whole — the complete
+page lands instantly, no fetch waterfall. Prefetched entries survive being
+used (they re-arm in place) and expire by `prefetchCacheTTL`; actions and
+`invalidateClientCache()` flush them so a stale payload is never committed.
+
+```tsx
+<Link to="/product/widget" prefetch="viewport">Widget</Link>
+```
+
+Two differences from Next.js worth knowing: the trigger is an explicit choice
+(viewport vs hover vs none) rather than an internal scheduler, and container
+opt-outs exist for whole DOM sections (`data-prefetch-scope="none"`). See
+`/links` → "Prefetch boundaries".
+
+For **dashboard / admin / settings-shaped sections** — high navigation
+frequency inside one layout, mostly tab/param/filter switches — also consider
+porting that route group to `clientUrls()` (`/client-urls`): the definition
+matches in the browser (instant optimistic pending, no server round-trip to
+start a transition) and browser-run `revalidate()` predicates hold data across
+switches that don't invalidate it, which is the fastest transition shape Rango
+has. Server-component routes and `clientUrls()` groups compose in one tree.
+
 ## 7. Server Actions
 
 Server actions work the same way — `"use server"` directive, `useActionState`, form actions. No migration needed for action logic.
@@ -693,6 +721,34 @@ const HomePage: Handler<"home"> = (ctx) => {
   return <div>Home page</div>;
 };
 ```
+
+`generateMetadata({ params })` — DATA-derived, document-blocking metadata —
+maps to a Meta push from the LOADER that owns the data, plus
+`{ stream: "navigation" }` for the blocking-until-in-head part:
+
+```typescript
+// Next.js: export async function generateMetadata({ params }) {
+//   const product = await getProduct(params.slug);
+//   return { title: product.name };
+// }
+
+// Rango: push from the loader; the flag makes the document render await it,
+// so the title is in the SSR'd <head> like generateMetadata guarantees.
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+  const product = await getProduct(ctx.params.slug);
+  ctx.use(Meta)({ title: product.name });
+  return product;
+});
+
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader, { stream: "navigation" }),
+]);
+```
+
+Without the flag the push still applies, but a slow loader's title lands
+post-hydration instead of in the document — see `/loader` → "Writing Handles
+from Loaders" for the delivery race.
 
 Add `<MetaTags />` in the Document component's `<head>`:
 
@@ -780,10 +836,12 @@ See `/theme` for full API including system detection and cookie persistence.
 6. [ ] Migrate layouts to `layout()` with `<Outlet />`
 7. [ ] Convert data fetching to `createLoader()` + `ctx.use()`
 8. [ ] Migrate `middleware.ts` to `router.use()` (auth, guards, logging)
-9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`
+9. [ ] Replace `next/link` with `Link` from `@rangojs/router/client`; keep
+       "instant navigations" via `prefetch="viewport"`/`defaultPrefetch` (§6)
 10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 11. [ ] Migrate API routes to `path.json()` / `path.text()`
 12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
+        (`generateMetadata` → loader push + `{ stream: "navigation" }`)
 13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
 14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the
