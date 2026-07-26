@@ -98,25 +98,25 @@ semantics — several may be mounted, under prefixes and RSC layouts.
 
 ### Supported Surface
 
-| Capability                   | Behavior                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| Module shape                 | `"use client"` module with a default-exported `clientUrls()` value             |
-| `path()` and `layout()`      | Named client component values                                                  |
+| Capability                   | Behavior                                                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Module shape                 | `"use client"` module with a default-exported `clientUrls()` value                                                                              |
+| `path()` and `layout()`      | Named client component values                                                                                                                   |
 | `loader()`                   | Imported server `createLoader()` definition, executed by registered ID — full loader body contract (signals, handle writes, `rendered()` reads) |
-| Non-fetchable loaders        | Supported; the projected route invokes the server definition directly          |
-| Loader delivery options      | `loader(Def, { stream: "navigation" }, use?)` — document renders await the loader before first flush |
-| `revalidate()`               | Client-run per-loader predicate inside a `loader()` use callback; decision crosses on the request header |
-| `intercept()`                | Restricted: dot-local named target, `loader()`/`loading()` use, module-local scoping |
-| `transition()`               | Data-only `TransitionConfig` subset (no `when`)                                |
-| `loading()`                  | Client-owned value available for hydrated optimistic presentation              |
-| Path options                 | `name`, `search`, and `trailingSlash` only                                     |
-| Router registration          | `include()` in the canonical urls() tree; `.routes(def)` = root-include sugar  |
-| Global middleware            | Existing `.use(...)` chain, derived and run by the canonical server route      |
-| Hard request                 | Projected server match, loaders, SSR, and hydration                            |
-| Hydrated different-route nav | Local loading/pending, then canonical partial Flight commit                    |
-| History and Back/Forward     | Existing navigation bridge and canonical history representation                |
-| Type generation              | Global and per-module maps recognize statically legible `clientUrls()` routes  |
-| `useOutlet()`                | Returns `{ content, pending }`; pending is the narrow local-presentation scope |
+| Non-fetchable loaders        | Supported; the projected route invokes the server definition directly                                                                           |
+| Loader delivery options      | `loader(Def, { stream: "navigation" }, use?)` — document renders await the loader before first flush                                            |
+| `revalidate()`               | Client-run per-loader predicate inside a `loader()` use callback; decision crosses on the request header                                        |
+| `intercept()`                | Restricted: dot-local named target, `loader()`/`loading()` use, module-local scoping                                                            |
+| `transition()`               | Data-only `TransitionConfig` subset (no `when`)                                                                                                 |
+| `loading()`                  | Client-owned value available for hydrated optimistic presentation                                                                               |
+| Path options                 | `name`, `search`, and `trailingSlash` only                                                                                                      |
+| Router registration          | `include()` in the canonical urls() tree; `.routes(def)` = root-include sugar                                                                   |
+| Global middleware            | Existing `.use(...)` chain, derived and run by the canonical server route                                                                       |
+| Hard request                 | Projected server match, loaders, SSR, and hydration                                                                                             |
+| Hydrated different-route nav | Local loading/pending, then canonical partial Flight commit                                                                                     |
+| History and Back/Forward     | Existing navigation bridge and canonical history representation                                                                                 |
+| Type generation              | Global and per-module maps recognize statically legible `clientUrls()` routes                                                                   |
+| `useOutlet()`                | Returns `{ content, pending }`; pending is the narrow local-presentation scope                                                                  |
 
 Named means the component value has a non-empty function name. The contract
 does not require consumers to export every path or layout component.

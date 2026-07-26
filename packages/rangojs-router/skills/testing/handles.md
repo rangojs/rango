@@ -17,9 +17,9 @@ A handle's `collect`/accumulator (the `createHandle(collect)` argument that maps
 
 ### runLoader option — `handles` — `src/testing/run-loader.ts`
 
-| Field      | Type                                        | Meaning                                                                                                                                                                                                                |
-| ---------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handles`  | `ReadonlyArray<readonly [Handle, unknown]>` | Seeds the value `ctx.get(SomeHandle)` returns — the POST-collect **ACCUMULATED** value (singular `unknown`), what a loader reads after `await ctx.rendered()`. Matched by handle reference. Pair with `rendered`.      |
+| Field      | Type                                        | Meaning                                                                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handles`  | `ReadonlyArray<readonly [Handle, unknown]>` | Seeds the value `ctx.get(SomeHandle)` returns — the POST-collect **ACCUMULATED** value (singular `unknown`), what a loader reads after `await ctx.rendered()`. Matched by handle reference. Pair with `rendered`.                                                        |
 | `rendered` | `boolean \| (() => void \| Promise<void>)`  | Mocks the `ctx.rendered()` barrier (throws by default). `true` resolves it immediately; a function controls timing/side effects. A `ctx.get(handle)` read before the barrier settles throws, exactly as in production. (`ctx.use(handle)` — the WRITE — is never gated.) |
 
 ### renderRoute option — `handles` — `src/testing/render-route.tsx`

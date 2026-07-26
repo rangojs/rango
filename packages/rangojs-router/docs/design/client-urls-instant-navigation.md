@@ -16,29 +16,29 @@ implementation is also summarized in
 
 ## Status Boundary
 
-| Area                            | Status                                                      |
-| ------------------------------- | ----------------------------------------------------------- |
-| Default `"use client"` module   | Implemented                                                 |
-| `clientUrls()`                  | Implemented from `@rangojs/router/client`                   |
-| `path`, `layout`, `loader`      | Implemented with named client component values              |
-| `loading`                       | Implemented for server rendering and hydrated local display |
-| `include()` mounting            | BASELINE; `.routes(definition)` is root-include sugar       |
-| Server projection               | Implemented for `name`, `search`, and `trailingSlash`       |
-| Hard SSR and hydration          | Implemented                                                 |
-| Local loading + outlet pending  | Implemented after hydration for a different matched route   |
-| Canonical partial Flight        | Implemented and still authoritative                         |
-| Global router middleware        | Implemented through the existing canonical server chain     |
-| Route-local middleware          | Unsupported; future design only                             |
-| Client loader revalidation      | Implemented: browser-run per-loader `revalidate()` predicates, decision header |
-| Loader handle writes / signals  | Implemented via the general loader contract: `ctx.use(Handle)` pushes, thrown `notFound()`/`redirect()`; no `{ data, handles }` resource shape |
-| Loader delivery options         | Implemented: `loader(Def, { stream: "navigation" })` document-render await |
-| Prefix/include mounting         | BASELINE: `include()` in the canonical urls() tree          |
-| Intercept routes                | Implemented, restricted: dot-local named target, loader/loading use only |
-| Parallel routes                 | Unsupported; future design only                             |
-| Transition                      | Implemented, data-only (no `when`)                          |
-| Cache, boundaries               | Unsupported (boundaries deliberately — server tree owns them) |
-| PPR                             | Unsupported                                                 |
-| Dedicated route-data transport  | Not implemented; future optimization idea                   |
+| Area                           | Status                                                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default `"use client"` module  | Implemented                                                                                                                                    |
+| `clientUrls()`                 | Implemented from `@rangojs/router/client`                                                                                                      |
+| `path`, `layout`, `loader`     | Implemented with named client component values                                                                                                 |
+| `loading`                      | Implemented for server rendering and hydrated local display                                                                                    |
+| `include()` mounting           | BASELINE; `.routes(definition)` is root-include sugar                                                                                          |
+| Server projection              | Implemented for `name`, `search`, and `trailingSlash`                                                                                          |
+| Hard SSR and hydration         | Implemented                                                                                                                                    |
+| Local loading + outlet pending | Implemented after hydration for a different matched route                                                                                      |
+| Canonical partial Flight       | Implemented and still authoritative                                                                                                            |
+| Global router middleware       | Implemented through the existing canonical server chain                                                                                        |
+| Route-local middleware         | Unsupported; future design only                                                                                                                |
+| Client loader revalidation     | Implemented: browser-run per-loader `revalidate()` predicates, decision header                                                                 |
+| Loader handle writes / signals | Implemented via the general loader contract: `ctx.use(Handle)` pushes, thrown `notFound()`/`redirect()`; no `{ data, handles }` resource shape |
+| Loader delivery options        | Implemented: `loader(Def, { stream: "navigation" })` document-render await                                                                     |
+| Prefix/include mounting        | BASELINE: `include()` in the canonical urls() tree                                                                                             |
+| Intercept routes               | Implemented, restricted: dot-local named target, loader/loading use only                                                                       |
+| Parallel routes                | Unsupported; future design only                                                                                                                |
+| Transition                     | Implemented, data-only (no `when`)                                                                                                             |
+| Cache, boundaries              | Unsupported (boundaries deliberately — server tree owns them)                                                                                  |
+| PPR                            | Unsupported                                                                                                                                    |
+| Dedicated route-data transport | Not implemented; future optimization idea                                                                                                      |
 
 Composition is not a later phase — it is the baseline mounting model.
 `clientUrls()` participates through `include()`: the include supplies URL and

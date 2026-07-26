@@ -679,7 +679,9 @@ used (they re-arm in place) and expire by `prefetchCacheTTL`; actions and
 `invalidateClientCache()` flush them so a stale payload is never committed.
 
 ```tsx
-<Link to="/product/widget" prefetch="viewport">Widget</Link>
+<Link to="/product/widget" prefetch="viewport">
+  Widget
+</Link>
 ```
 
 Two differences from Next.js worth knowing: the trigger is an explicit choice

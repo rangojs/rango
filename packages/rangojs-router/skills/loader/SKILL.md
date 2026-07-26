@@ -172,23 +172,23 @@ Loaders receive the same context shape as route handlers.
 
 ### Full field surface
 
-| Field          | Type                           | Notes                                                                                                                                                   |
-| -------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `params`       | `TParams`                      | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                     |
-| `routeParams`  | `Record<string, string>`       | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                            |
-| `request`      | `Request`                      | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                     |
-| `url`          | `URL`                          | Parsed request URL.                                                                                                                                     |
-| `pathname`     | `string`                       | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                         |
-| `searchParams` | `URLSearchParams`              | Shortcut for `ctx.url.searchParams`.                                                                                                                    |
-| `search`       | `ResolveSearchSchema<TSearch>` | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                       |
-| `env`          | `TEnv`                         | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                                                                     |
-| `get`          | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                             |
-| `use`          | `(loader \| handle) => T`      | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`. |
-| `rendered`     | `() => Promise<void>`          | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `stream: "navigation"` (cycle; throws). |
-| `method`       | `string`                       | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                   |
-| `body`         | `TBody \| undefined`           | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                          |
-| `formData`     | `FormData \| undefined`        | Present when a fetchable loader is invoked via form submission.                                                                                         |
-| `reverse`      | `ScopedReverseFunction`        | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                  |
+| Field          | Type                            | Notes                                                                                                                                                                                                    |
+| -------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `params`       | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                                      |
+| `routeParams`  | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                             |
+| `request`      | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                                      |
+| `url`          | `URL`                           | Parsed request URL.                                                                                                                                                                                      |
+| `pathname`     | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                          |
+| `searchParams` | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                                     |
+| `search`       | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                                        |
+| `env`          | `TEnv`                          | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                                                                                                                      |
+| `get`          | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                              |
+| `use`          | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                                  |
+| `rendered`     | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `stream: "navigation"` (cycle; throws). |
+| `method`       | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                                    |
+| `body`         | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                           |
+| `formData`     | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                          |
+| `reverse`      | `ScopedReverseFunction`         | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                                                                   |
 
 ### Example
 
@@ -687,10 +687,10 @@ export const ProductLoader = createLoader(async (ctx) => {
 
 Semantics by lane:
 
-| Signal       | Document load                                                                                                    | Client navigation                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `stream: "navigation"` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200     |
-| `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware | Redirect envelope navigates to the target             |
+| Signal       | Document load                                                                                                                                                                                                                                                         | Client navigation                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `stream: "navigation"` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200 |
+| `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware                                                                                                                   | Redirect envelope navigates to the target         |
 
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
@@ -734,7 +734,7 @@ awaiting the loader via `ctx.use()` makes it a detected deadlock).
 
 ## `stream: "navigation"` — Guarantee a Loader in the Document
 
-Streaming means nothing a slow loader produces is *guaranteed* in the SSR'd
+Streaming means nothing a slow loader produces is _guaranteed_ in the SSR'd
 HTML: its section SSRs as the fallback, a late handle push applies
 post-hydration, a late `notFound()` loses the status race. When the loader
 feeds something that must exist in the document — `<head>` meta via a handle,
