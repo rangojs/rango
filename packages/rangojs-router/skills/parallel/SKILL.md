@@ -374,6 +374,17 @@ A `revalidate()` callback may return a hard `boolean`, a soft
 for the full contract — it's the same across `loader()`, `path()`,
 `layout()`, `parallel()`, and `intercept()`.
 
+A route-scoped slot revalidates on ANY params or search change by default —
+including query-only navigations (`?tab=…`) its content doesn't depend on. If
+the slot has no `loading()` of its own, that refresh suspends at the nearest
+boundary above it: the route's `loading()`, replacing the entire route content
+with the route skeleton while one slot refetches. Either scope the slot's
+`revalidate()` (share the route's named contract, as above) or give the slot
+its own `loading()` so the fallback stays local. Don't reach for a bare
+`revalidate(() => false)`: the slot then never refreshes on param changes
+either, and keeps the previous param's content on e.g. a product-to-product
+navigation.
+
 `revalidate()` decides whether to _re_-render a slot, never whether to render
 it the first time. A slot the browser has not rendered yet has nothing cached
 to keep showing, so returning `false` for it would just leave a hole. On that
