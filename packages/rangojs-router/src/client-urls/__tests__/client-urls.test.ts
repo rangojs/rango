@@ -126,6 +126,67 @@ describe("clientUrls", () => {
     });
   });
 
+  it("stores the stream flag from loader(Def, { stream: 'navigation' }, use?)", () => {
+    const PlainLoader = loader("loaders#plain");
+    const FlaggedLoader = loader("loaders#flagged");
+    const FlaggedWithUse = loader("loaders#flagged-use");
+
+    const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
+      path("/mixed", AccountPage, () => [
+        useLoader(PlainLoader),
+        useLoader(FlaggedLoader, { stream: "navigation" }),
+        useLoader(FlaggedWithUse, { stream: "navigation" }, () => [
+          revalidate(() => false),
+        ]),
+      ]),
+    ]);
+
+    const [route] = patterns.routes;
+    expect(route.loaders[0]).toEqual({
+      loader: PlainLoader,
+      revalidate: [],
+    });
+    expect(route.loaders[1]).toMatchObject({
+      loader: FlaggedLoader,
+      stream: "navigation",
+    });
+    expect(route.loaders[2]).toMatchObject({
+      loader: FlaggedWithUse,
+      stream: "navigation",
+    });
+    expect(route.loaders[2].revalidate).toHaveLength(1);
+  });
+
+  it("rejects two use() callbacks and invalid stream values", () => {
+    const AccountLoader = loader("loaders#account");
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, (() => []) as never, () => []),
+        ]),
+      ]),
+    ).toThrow(/two use\(\) callbacks/);
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { stream: "always" } as never),
+        ]),
+      ]),
+    ).toThrow(/stream must be "navigation"/);
+  });
+
+  it("rejects stream: 'navigation' on intercept loaders", () => {
+    const DetailLoader = loader("loaders#detail");
+    expect(() =>
+      clientUrls(({ path, intercept, loader: useLoader }) => [
+        path("/items/:id", AccountPage, { name: "detail" }),
+        intercept("@modal", ".detail", AccountLayout, () => [
+          useLoader(DetailLoader, { stream: "navigation" }),
+        ]),
+      ]),
+    ).toThrow(/intercepts render on client navigations only/);
+  });
+
   it("exposes only the supported helper and record shape", () => {
     expectTypeOf<keyof ClientUrlHelpers>().toEqualTypeOf<
       | "path"
@@ -138,9 +199,9 @@ describe("clientUrls", () => {
     >();
     expectTypeOf<
       Parameters<ClientUrlHelpers["loader"]>["length"]
-    >().toEqualTypeOf<1 | 2>();
+    >().toEqualTypeOf<1 | 2 | 3>();
     expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<
-      "loader" | "revalidate"
+      "loader" | "revalidate" | "stream"
     >();
     expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
       | "id"

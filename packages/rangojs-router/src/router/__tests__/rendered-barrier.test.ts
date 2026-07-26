@@ -160,6 +160,57 @@ describe("rendered barrier", () => {
     });
   });
 
+  describe('rendered() guard: awaitBeforeFlush (stream: "navigation")', () => {
+    it("rejects rendered() from a loader the document render awaits before flush", async () => {
+      // Segment resolution awaits a flagged loader (fresh.ts resolveLoaders),
+      // the barrier awaits segment resolution, rendered() awaits the barrier —
+      // a guaranteed cycle. The guard must fail fast, not hang the render.
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext();
+      mockRequestContext._awaitBeforeFlushLoaderIds = new Set([
+        "flaggedLoader",
+      ]);
+
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const loader = createLoader("flaggedLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return "data";
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      const result = await Promise.allSettled([ctx.use(loader)]);
+      const rejection = result[0] as PromiseRejectedResult;
+      expect(rejection.status).toBe("rejected");
+      expect(rejection.reason.message).toContain("Deadlock");
+      expect(rejection.reason.message).toContain('stream: "navigation"');
+    });
+
+    it("does not trip for an unflagged loader when a DIFFERENT loader is flagged", async () => {
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext();
+      mockRequestContext._awaitBeforeFlushLoaderIds = new Set(["someOtherId"]);
+
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const loader = createLoader("normalLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return "data";
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      const loaderPromise = ctx.use(loader);
+      await Promise.resolve();
+      mockRequestContext._resolveRenderBarrier(["root.layout"]);
+
+      await expect(loaderPromise).resolves.toBe("data");
+    });
+  });
+
   describe("rendered() under streaming (loading())", () => {
     it("waits for streaming handlers to settle, then reads complete handle data", async () => {
       mockInsideLoaderScope = true;

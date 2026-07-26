@@ -148,6 +148,56 @@ describe("client URL server projection", () => {
     expect(isClientUrlPatterns(projection)).toBe(false);
   });
 
+  it("serializes awaitedLoaderIndices and materializes awaitBeforeFlush on SSR entries only", () => {
+    const StreamingLoader = loaderDefinition("loaders#streaming");
+    const FlaggedLoader = loaderDefinition("loaders#flagged");
+    const source = clientUrls(({ path, loader }) => [
+      path("/mixed", AccountPage, { name: "mixed" }, () => [
+        loader(StreamingLoader),
+        loader(FlaggedLoader, { stream: "navigation" }),
+      ]),
+    ]);
+
+    const projection = serializeClientUrlPatterns(source);
+    expect(projection.routes[0]!.awaitedLoaderIndices).toEqual([1]);
+    // Still a JSON-safe artifact — it is baked into generated virtual modules.
+    expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+    const materialized = materializeClientUrlPatterns(
+      clientReference("app.urls#mixed"),
+      projection,
+    );
+    const materializeLoaders = (isSSR: boolean) => {
+      const manifest = new Map<string, EntryData>();
+      RangoContext.run(
+        {
+          manifest,
+          patterns: new Map(),
+          trailingSlash: new Map(),
+          searchSchemas: new Map(),
+          namespace: "test",
+          parent: null,
+          counters: {},
+          isSSR,
+        },
+        () => materialized.handler(),
+      );
+      const entry = manifest.get("mixed");
+      if (!entry || entry.type !== "route") {
+        throw new Error("Expected the projected mixed route");
+      }
+      return entry.loader;
+    };
+
+    const ssrLoaders = materializeLoaders(true);
+    expect(ssrLoaders[0]!.awaitBeforeFlush).toBeUndefined();
+    expect(ssrLoaders[1]!.awaitBeforeFlush).toBe(true);
+
+    // Navigation-lane evaluation never carries the flag — streaming stays on.
+    const navLoaders = materializeLoaders(false);
+    expect(navLoaders[1]!.awaitBeforeFlush).toBeUndefined();
+  });
+
   it("rejects ppr, unsupported options, and missing loader ids", () => {
     const pprOptions = { ppr: true } as unknown as PathOptions;
     expect(() =>

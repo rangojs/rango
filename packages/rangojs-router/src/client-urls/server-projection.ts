@@ -68,6 +68,11 @@ export interface ClientUrlProjectionRoute {
   readonly options: ClientUrlProjectionOptions;
   readonly loaderIds: readonly string[];
   readonly hasLoading: boolean;
+  /** Indices into loaderIds of loaders declared loader(Def, { stream:
+   *  "navigation" }); materialization passes the option through to the server
+   *  loader() so document renders await them before first flush. Absent (=
+   *  none) in projections serialized before stream support. */
+  readonly awaitedLoaderIndices?: readonly number[];
   /** Data-only transition config (no `when` — server-tree only); absent in
    *  projections serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
@@ -186,6 +191,10 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     return loader.$$id;
   });
 
+  const awaitedLoaderIndices = route.loaders
+    .map(({ stream }, index) => (stream === "navigation" ? index : -1))
+    .filter((index) => index >= 0);
+
   const transition = serializeTransition(route);
   return Object.freeze({
     id: route.id,
@@ -194,6 +203,9 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
     options: serializeOptions(route),
     loaderIds: Object.freeze(loaderIds),
     hasLoading: route.loading !== undefined,
+    ...(awaitedLoaderIndices.length > 0
+      ? { awaitedLoaderIndices: Object.freeze(awaitedLoaderIndices) }
+      : {}),
     ...(transition ? { transition } : {}),
   });
 }
@@ -419,10 +431,14 @@ function materializeRouteItems(
             }),
           materializedPathOptions(route),
           () => [
-            ...route.loaderIds.map((id) =>
-              loader(createLoaderStub(id), () => [
-                revalidate(makeClientDecisionRevalidate(id)),
-              ]),
+            ...route.loaderIds.map((id, loaderIndex) =>
+              loader(
+                createLoaderStub(id),
+                route.awaitedLoaderIndices?.includes(loaderIndex)
+                  ? { stream: "navigation" }
+                  : undefined,
+                () => [revalidate(makeClientDecisionRevalidate(id))],
+              ),
             ),
             ...(route.hasLoading
               ? [

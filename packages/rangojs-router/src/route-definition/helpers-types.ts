@@ -5,6 +5,7 @@ import type {
   PartialCacheOptions,
   ErrorBoundaryHandler,
   LoaderDefinition,
+  LoaderOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -309,11 +310,23 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   return <div>{data.name}</div>;
    * }
    * ```
+   * Pass `{ stream: "navigation" }` to await this loader before first flush on
+   * DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders whose
+   * data, handle pushes, or thrown notFound()/redirect() must be in the SSR'd
+   * HTML. Per-loader: a dynamic sibling in the same segment keeps streaming.
+   *
+   * ```typescript
+   * loader(ProductLoader, { stream: "navigation" }, () => [cache()]),
+   * loader(RecommendationsLoader),  // still streams behind loading()
+   * ```
+   *
    * @param loaderDef - Loader created with createLoader()
+   * @param optionsOrUse - Delivery options, or the use() callback when passing none
    * @param use - Optional callback for loader-specific revalidation rules
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | (() => UseItems<LoaderUseItem>),
     use?: () => UseItems<LoaderUseItem>,
   ) => LoaderItem;
   /**

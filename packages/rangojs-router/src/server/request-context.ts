@@ -619,6 +619,17 @@ export interface RequestContext<
   _handlerLoaderDeps?: Set<string>;
 
   /**
+   * @internal Loader IDs ($$id) whose entries carry `awaitBeforeFlush`
+   * (loader(Def, { stream: "navigation" })): segment resolution awaits these
+   * before returning, so the render barrier cannot resolve until they settle.
+   * rendered() checks this set to fail fast — a flagged loader awaiting the
+   * barrier is a guaranteed cycle, not a race. Registered by resolveLoaders
+   * (fresh.ts) before loader kickoff; only ever populated on document renders
+   * (the flag is stamped per-isSSR at DSL evaluation).
+   */
+  _awaitBeforeFlushLoaderIds?: Set<string>;
+
+  /**
    * @internal Cached HandleData snapshot built at barrier resolution time.
    * Avoids rebuilding the snapshot on every loader ctx.use(handle) call.
    */
@@ -765,6 +776,7 @@ export type PublicRequestContext<
   | "_treeHasStreaming"
   | "_renderBarrierWaiters"
   | "_handlerLoaderDeps"
+  | "_awaitBeforeFlushLoaderIds"
   | "_renderBarrierHandleSnapshot"
   | "_renderBarrierGuardClosed"
   | "_reportBackgroundError"
@@ -1384,6 +1396,7 @@ export function wireRenderBarrier(
   ctx._renderBarrierHandleSnapshot = undefined;
   ctx._renderBarrierGuardClosed = undefined;
   ctx._handlerLoaderDeps = undefined;
+  ctx._awaitBeforeFlushLoaderIds = undefined;
   ctx._treeHasStreaming = undefined;
 
   // Lazy allocation: only create the Promise when a loader calls rendered().

@@ -1,5 +1,9 @@
 import type { ComponentType, ReactNode } from "react";
-import type { LoaderDefinition, TransitionConfig } from "../types.js";
+import type {
+  LoaderDefinition,
+  LoaderOptions,
+  TransitionConfig,
+} from "../types.js";
 import type { TrieMatchResult } from "../router/trie-matching.js";
 import type { PathOptions } from "../urls/pattern-types.js";
 import type { SearchSchema } from "../search-params.js";
@@ -79,6 +83,13 @@ export interface ClientUrlLoaderRecord {
   readonly loader: LoaderDefinition<any, any>;
   /** Client-run per-loader revalidation predicates; empty = locked defaults. */
   readonly revalidate: readonly ClientRevalidateFn[];
+  /**
+   * loader(Def, { stream: "navigation" }): document renders await this loader
+   * before first flush (see {@link LoaderOptions}). Projected into the server
+   * tree, where the per-isSSR entry stamping applies — client navigations
+   * stream regardless.
+   */
+  readonly stream?: "navigation";
 }
 
 /**
@@ -126,9 +137,15 @@ export interface ClientUrlHelpers {
    * Attach a projected loader. The optional use callback may contain
    * revalidate() only — a CLIENT-RUN per-loader predicate; its decision (not
    * the function) is sent with the revalidation request.
+   *
+   * Pass `{ stream: "navigation" }` to await this loader before first flush
+   * on DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming.
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | ClientUrlUse,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
   readonly loading: (component: ReactNode) => ClientUrlItem;

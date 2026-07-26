@@ -19,6 +19,7 @@ import {
   type HelperContext,
   type InterceptEntry,
   type InterceptConfig,
+  type LoaderEntry,
 } from "../server/context";
 import { invariant } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -782,7 +783,11 @@ const intercept = (
 /**
  * Loader helper - attaches a loader to the current entry
  */
-const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
+const loader: RouteHelpers<any, any>["loader"] = (
+  loaderDef,
+  optionsOrUse,
+  maybeUse,
+) => {
   const { store, ctx } = requireDslContext(
     "loader() must be called inside urls()",
   );
@@ -792,12 +797,32 @@ const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     invariant(false, "No parent entry available for loader()");
   }
 
+  // loader(Def, use) and loader(Def, options, use) — same options-or-use
+  // disambiguation path() uses, so the long-standing 2-arg form is untouched.
+  const optionsGiven =
+    typeof optionsOrUse === "function" ? undefined : optionsOrUse;
+  const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
+  invariant(
+    !(typeof optionsOrUse === "function" && maybeUse !== undefined),
+    "loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
+  );
+  invariant(
+    optionsGiven?.stream === undefined || optionsGiven.stream === "navigation",
+    `loader() stream must be "navigation" (got ${JSON.stringify(optionsGiven?.stream)}). Omit it to stream on every render.`,
+  );
+
   const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
 
-  // Create loader entry with empty revalidate array
-  const loaderEntry = {
+  // Create loader entry with empty revalidate array. awaitBeforeFlush is
+  // resolved here, at DSL-evaluation time, for the same reason
+  // loading({ ssr: false }) is (below) — per-isSSR entry caching makes the
+  // flag request-mode-correct with no isSSR threading; see LoaderEntry.
+  const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
+    ...(optionsGiven?.stream === "navigation" && ctx.isSSR
+      ? { awaitBeforeFlush: true as const }
+      : {}),
   };
 
   // Merge handler.use defaults (attached to the loader definition) with explicit use

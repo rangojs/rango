@@ -4,16 +4,22 @@ import { Suspense } from "react";
 import {
   clientUrls,
   Link,
+  useHandle,
   useLoader,
   useOutlet,
   useParams,
   useSearchParams,
 } from "@rangojs/router/client";
+import { Meta } from "@/handles/meta.js";
 import {
   ClientShopProductsLoader,
   ClientShopProductLoader,
 } from "@/handlers/shop/loaders/client-shop-products.js";
 import { RelatedProductsLoader } from "@/handlers/shop/loaders/related-products.js";
+import {
+  ClientShopSsrProductLoader,
+  ClientShopSsrSidecarLoader,
+} from "@/handlers/shop/loaders/client-shop-ssr.js";
 import { CartLoader } from "@/handlers/shop/loaders/cart.js";
 import {
   addToCart,
@@ -156,6 +162,103 @@ function ClientShopIndex() {
           data-testid="client-shop-legacy-link"
         >
           Legacy headphones link
+        </Link>
+      </p>
+      <p style={{ color: "#888" }}>
+        {/* stream: "navigation" fixtures: the awaited loader's data/meta/404
+            are deterministic in the SSR'd document; on these client navs the
+            same loader still streams. prefetch="none" keeps the nav-lane
+            streaming path deterministic. */}
+        <Link
+          to="/client-shop/ssr/wireless-headphones"
+          prefetch="none"
+          data-testid="client-shop-ssr-link"
+        >
+          SSR-complete product
+        </Link>
+        {" · "}
+        <Link
+          to="/client-shop/ssr/desk-lamp"
+          prefetch="none"
+          data-testid="client-shop-ssr-link-alt"
+        >
+          SSR-complete product (alt)
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+function SsrAwaitedSkeleton() {
+  return (
+    <div
+      data-testid="client-shop-ssr-awaited-skeleton"
+      style={{ color: "#888" }}
+    >
+      Loading SSR product…
+    </div>
+  );
+}
+
+function SsrSidecarSkeleton() {
+  return (
+    <div
+      data-testid="client-shop-ssr-sidecar-skeleton"
+      style={{ color: "#888" }}
+    >
+      Loading sidecar…
+    </div>
+  );
+}
+
+function SsrAwaitedSection() {
+  const { data: product } = useLoader(ClientShopSsrProductLoader);
+  // Single template child: adjacent JSX text expressions SSR with <!-- -->
+  // separators, and the e2e asserts this exact string in the raw HTML.
+  return (
+    <div data-testid="client-shop-ssr-name">
+      {`${product.name} — $${product.price}`}
+    </div>
+  );
+}
+
+function SsrSidecarSection() {
+  const { data } = useLoader(ClientShopSsrSidecarLoader);
+  return <div data-testid="client-shop-ssr-sidecar">{data.note}</div>;
+}
+
+/**
+ * SSR-visible Meta read: renders the handle value into the markup, so the raw
+ * document HTML shows WHICH channel delivered the loader's push. In the SSR
+ * snapshot (the flagged loader was awaited) the div carries the title text;
+ * a late (handlesLate) push would leave it empty until hydration. TitleUpdater
+ * can't pin this — document.title is set in an effect either way.
+ */
+function SsrMetaEcho() {
+  const meta = useHandle(Meta);
+  return <div data-testid="client-shop-ssr-title">{meta?.title ?? ""}</div>;
+}
+
+/**
+ * stream: "navigation" showcase. The awaited section's loader is flagged, so a
+ * DOCUMENT load carries its data (and its Meta title, and a real 404 for
+ * unknown slugs) in the initial HTML — its skeleton never SSRs. The sidecar
+ * has the same latency but no flag: it SSRs as its skeleton and streams in.
+ * On client navigations both stream behind their boundaries.
+ */
+function ClientShopSsrPage() {
+  return (
+    <div data-testid="client-shop-ssr">
+      <SsrMetaEcho />
+      <Suspense fallback={<SsrAwaitedSkeleton />}>
+        <SsrAwaitedSection />
+      </Suspense>
+      <Suspense fallback={<SsrSidecarSkeleton />}>
+        <SsrSidecarSection />
+      </Suspense>
+      <p style={{ marginTop: "1.5rem" }}>
+        <Link to="/client-shop" data-testid="client-shop-ssr-back">
+          ← Back to products
         </Link>
       </p>
     </div>
@@ -392,6 +495,12 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       // lands in ~100ms and the skeletons take over). A route-level loading()
       // was measured re-flashing during same-route tab navs — the exact
       // pattern this demo exists to retire.
+    ]),
+    path("/ssr/:slug", ClientShopSsrPage, { name: "ssr" }, () => [
+      loader(ClientShopSsrProductLoader, { stream: "navigation" }, () => [
+        revalidate(productData),
+      ]),
+      loader(ClientShopSsrSidecarLoader, () => [revalidate(productData)]),
     ]),
   ]),
 ]);

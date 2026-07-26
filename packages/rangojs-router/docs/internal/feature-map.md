@@ -291,6 +291,18 @@ server projection.
 ### Data Loading
 
 - `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`
+- `loader(Def, { stream: "navigation" }, use?)` — per-loader SSR-completeness
+  opt-in (`LoaderOptions`, exported from the root). Document renders await the
+  flagged loader before segment resolution returns (`LoaderEntry.awaitBeforeFlush`,
+  stamped per-isSSR at DSL-evaluation time via the manifest cache key), so its
+  data, `ctx.use(Handle)` pushes, and a thrown `notFound()`'s 404 status are
+  deterministically in the SSR'd document instead of racing Response
+  construction; unflagged siblings in the same segment keep streaming behind
+  `loading()`. Client navigations still stream (the flag never lands on
+  navigation-lane entries). A flagged loader calling `ctx.rendered()` (or the
+  `ctx.get(handle)` read it gates) fails fast — that wait is a barrier cycle by
+  construction. Shell-capture renders skip the await (LIVE-lane loaders are
+  masked with never-resolving promises).
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

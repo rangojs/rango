@@ -63,6 +63,7 @@ export type {
   LoaderContext,
   LoaderFn,
   FetchableLoaderOptions,
+  LoaderOptions,
   LoadOptions,
   LoaderDefinition,
 } from "./loader-types.js";

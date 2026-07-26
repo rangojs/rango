@@ -564,6 +564,24 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
+        // awaitBeforeFlush cycle: segment resolution awaits this loader
+        // (loader(Def, { stream: "navigation" })), the barrier awaits segment
+        // resolution, and rendered() awaits the barrier — waiting here can
+        // never complete. Fail fast with the cause instead of hanging the
+        // document render. Only document renders populate the set (the flag is
+        // stamped per-isSSR), so the same loader may still use rendered() on
+        // navigation renders.
+        if (reqCtx._awaitBeforeFlushLoaderIds?.has(currentLoaderId)) {
+          throw new Error(
+            `Deadlock: loader "${currentLoaderId}" is registered with ` +
+              `stream: "navigation", so the document render awaits it before ` +
+              `the render barrier resolves — ctx.rendered() (and the ` +
+              `ctx.get(handle) read it gates) can never settle here. Drop ` +
+              `stream: "navigation" on this loader or move the handle read to ` +
+              `a component.`,
+          );
+        }
+
         // Bidirectional deadlock check: if a handler already started
         // awaiting this loader, calling rendered() would deadlock. This is the
         // real cycle guard (it holds for both streaming and non-streaming): the

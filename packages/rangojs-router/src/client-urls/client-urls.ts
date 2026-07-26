@@ -87,6 +87,7 @@ interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
   readonly revalidate: readonly ClientRevalidateFn[];
+  readonly stream?: "navigation";
 }
 
 interface RevalidateItem extends ItemBase {
@@ -285,8 +286,27 @@ function createHelpers(): ClientUrlHelpers {
     });
   }) as ClientUrlHelpers["layout"];
 
-  const loader: ClientUrlHelpers["loader"] = (definition, use) => {
+  const loader: ClientUrlHelpers["loader"] = (
+    definition,
+    optionsOrUse,
+    maybeUse,
+  ) => {
     assertLoaderDefinition(definition);
+    // Same options-or-use disambiguation as the server DSL loader(): the
+    // 2-arg loader(Def, use) form is untouched.
+    if (typeof optionsOrUse === "function" && maybeUse !== undefined) {
+      throw new Error(
+        "clientUrls() loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
+      );
+    }
+    const options =
+      typeof optionsOrUse === "function" ? undefined : optionsOrUse;
+    const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
+    if (options?.stream !== undefined && options.stream !== "navigation") {
+      throw new Error(
+        `clientUrls() loader() stream must be "navigation" (got ${JSON.stringify(options.stream)}). Omit it to stream on every render.`,
+      );
+    }
     const items = use ? runUse(use, "loader use") : [];
     rejectItems(items, new Set(["revalidate"]), "loader");
     return toPublicItem({
@@ -299,6 +319,9 @@ function createHelpers(): ClientUrlHelpers {
             item.type === "revalidate",
         )
         .map((item) => item.fn),
+      ...(options?.stream === "navigation"
+        ? { stream: "navigation" as const }
+        : {}),
     });
   };
 
@@ -401,6 +424,15 @@ function createHelpers(): ClientUrlHelpers {
     assertNamedComponent(component, "intercept");
     const items = use ? runUse(use, "intercept use") : [];
     rejectItems(items, new Set(["loader", "loading"]), "intercept");
+    for (const item of items) {
+      // Intercept loaders run on soft navigations only — a document-render
+      // await can never apply, so accepting the flag would be silently inert.
+      if (item.type === "loader" && item.stream !== undefined) {
+        throw new Error(
+          'clientUrls() intercept() loaders cannot use stream: "navigation" — intercepts render on client navigations only',
+        );
+      }
+    }
     return toPublicItem({
       [ITEM_KIND]: true,
       type: "intercept",
@@ -447,6 +479,7 @@ function applyConfig(
         Object.freeze({
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
+          ...(item.stream ? { stream: item.stream } : {}),
         }),
       );
     } else if (item.type === "loading") {

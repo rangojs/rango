@@ -11,6 +11,7 @@ export const NamedRoutes = {
   "blog.post": "/blog/:slug",
   "clientShop.index": "/client-shop",
   "clientShop.product": "/client-shop/product/:slug",
+  "clientShop.ssr": "/client-shop/ssr/:slug",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
   "dashboard.index": "/dashboard",

@@ -5,6 +5,7 @@ import type {
   Handler,
   HandlerContext,
   LoaderDefinition,
+  LoaderOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   PartialCacheOptions,
@@ -344,10 +345,16 @@ export type PathHelpers<TEnv> = {
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
 
   /**
-   * Attach a data loader to the current route/layout
+   * Attach a data loader to the current route/layout.
+   *
+   * Pass `{ stream: "navigation" }` to await this loader before first flush
+   * on DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming.
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
+    optionsOrUse?: LoaderOptions | (() => LoaderUseItem[]),
     use?: () => LoaderUseItem[],
   ) => LoaderItem;
 
