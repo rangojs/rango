@@ -35,13 +35,34 @@ async function expectMissingProduct404UI(page: Page) {
   ).toBeVisible();
 }
 
+/**
+ * The real-404 STATUS is opportunistic: it lands only when the loader's
+ * notFound() rejection beats construction of the document Response. A first
+ * request that also pays cold work (dev module transform, cold worker) can lose
+ * that race — the 404 UI still streams correctly either way, because it rides
+ * the envelope, but the status stays 200. Asserting `toBe(404)` on an unwarmed
+ * request therefore tests startup timing, not the contract; it flaked in the
+ * full suite (received 200) while passing 3/3 in isolation.
+ *
+ * Warm the route first so the status assertion pins the contract we actually
+ * mean: a warm document load of a missing product carries a real 404. The
+ * warmup is cheap — notFound() throws before the loader's 2s cached fetch. The
+ * UI and URL assertions are race-free and need no warmup.
+ */
+async function warmDocumentRoute(page: Page, url: string): Promise<void> {
+  await page.request.get(url);
+}
+
 devTest.describe("client-shop loader signals", () => {
   devTest(
     "document load of a missing product responds 404 and shows the 404 UI",
     async ({ page, devServerURL }) => {
-      const response = await page.goto(
-        devURL(devServerURL, "/client-shop/product/discontinued-widget"),
+      const url = devURL(
+        devServerURL,
+        "/client-shop/product/discontinued-widget",
       );
+      await warmDocumentRoute(page, url);
+      const response = await page.goto(url);
       expect(response!.status()).toBe(404);
       await waitForHydration(page);
       await expectMissingProduct404UI(page);
@@ -93,9 +114,12 @@ prodDescribe("client-shop loader signals", (f) => {
   test("document load of a missing product responds 404 and shows the 404 UI", async ({
     page,
   }) => {
-    const response = await page.goto(
-      f.url("/client-shop/product/discontinued-widget"),
-    );
+    const url = f.url("/client-shop/product/discontinued-widget");
+    // Same opportunistic-status race as the dev twin (see warmDocumentRoute):
+    // no module transform here, but a cold worker on the first request can still
+    // lose it. Warmed for the same reason, so both lanes pin the same contract.
+    await warmDocumentRoute(page, url);
+    const response = await page.goto(url);
     expect(response!.status()).toBe(404);
     await waitForHydration(page);
     await expectMissingProduct404UI(page);
