@@ -714,6 +714,32 @@ describe("CLI command-level tests", () => {
     expect(content).toContain("api.health");
   });
 
+  it("classifies a clientUrls-only module (no lowercase urls( token)", () => {
+    // "clientUrls(" contains "Urls(" with a CAPITAL U — the classify sniff
+    // used to test only the lowercase server token, so `rango generate` on a
+    // default-exported clientUrls module silently wrote nothing (the writer
+    // itself gates on both spellings; the CLI never reached it).
+    const tempRoot = mkdtempSync(join(tmpdir(), "rango-cli-clienturls-"));
+    commandTempDirs.push(tempRoot);
+    const urlsPath = join(tempRoot, "shop.urls.tsx");
+    writeFileSync(
+      urlsPath,
+      `import { clientUrls } from "@rangojs/router/client";
+const Page = () => null;
+export default clientUrls(({ path }) => [
+  path("/client/:id", Page, { name: "client" }),
+]);
+`,
+    );
+
+    const result = runRango(`generate ${urlsPath} --static`);
+    expect(result.status).toBe(0);
+
+    const genPath = join(tempRoot, "shop.urls.gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+    expect(readFileSync(genPath, "utf-8")).toContain('client: "/client/:id"');
+  });
+
   it("--runtime succeeds for factory router and includes factory routes", () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const routerFile = join(fixtureDir, "router.tsx");

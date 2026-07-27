@@ -37,6 +37,8 @@ vi.mock("react", async () => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
+    useCallback: vi.fn((fn: Function) => fn),
+    useMemo: vi.fn((fn: Function) => fn()),
   };
 });
 
@@ -53,6 +55,12 @@ function createMockEventController(search = "?q=react&page=2") {
   };
 }
 
+function mockCtx(ec: ReturnType<typeof createMockEventController>) {
+  const navigate = vi.fn(() => Promise.resolve());
+  mockedUseContext.mockReturnValue({ eventController: ec, navigate } as any);
+  return { navigate };
+}
+
 describe("useSearchParams", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,29 +73,27 @@ describe("useSearchParams", () => {
   });
 
   /**
-   * SSR-empty-seed contract: unlike usePathname (which seeds FROM ctx),
-   * useSearchParams deliberately seeds with an empty URLSearchParams() on the
-   * initial render even when ctx exists. The server only sends the pathname, so
-   * seeding from anything else would risk a hydration mismatch. The hook syncs
-   * the real query string on mount.
+   * Seed-from-store contract (mirrors usePathname): the initial render reads
+   * the store location — during document SSR that is the LIVE request's
+   * search (seeded via SSRRenderOptions.search), in the browser it is
+   * window.location. Both derive from the same URL, so the hydration renders
+   * agree; the old SSR-empty seed (and its post-hydration flicker) is gone.
    */
-  it("seeds with empty params on initial render even when ctx has search", () => {
+  it("seeds from the store location on the initial render", () => {
     const ec = createMockEventController("?q=react&page=2");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    const result = useSearchParams();
+    const [params] = useSearchParams();
 
-    // Initial render: empty, NOT seeded from ctx's "?q=react&page=2".
-    expect(result.toString()).toBe("");
-    expect(result.get("q")).toBeNull();
+    expect(params.get("q")).toBe("react");
+    expect(params.get("page")).toBe("2");
   });
 
   /**
-   * Mount catch-up: the effect reads location.searchParams and, when the query
-   * differs from the seeded empty value, enqueues setSearchParams with the
-   * real params. Mirrors usePathname's catch-up.
+   * The mount effect must NOT re-enqueue when the seed already matches the
+   * location (prevSearch is initialized from the seed, not "").
    */
-  it("catches up to the real search params in the mount effect", () => {
+  it("does not re-enqueue on mount when the seed matches the location", () => {
     const ec = createMockEventController("?q=react&page=2");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
@@ -96,10 +102,7 @@ describe("useSearchParams", () => {
 
     capturedEffectFn!();
 
-    expect(setSearchParams).toHaveBeenCalledTimes(1);
-    const enqueued = setSearchParams.mock.calls[0][0] as URLSearchParams;
-    expect(enqueued.get("q")).toBe("react");
-    expect(enqueued.get("page")).toBe("2");
+    expect(setSearchParams).not.toHaveBeenCalled();
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });
 
@@ -124,12 +127,10 @@ describe("useSearchParams", () => {
     useSearchParams();
     const setSearchParams = stateSlots[0][1];
 
-    // Mount catch-up reads "?q=a" and enqueues it.
+    // Seed already matches "?q=a" — no mount enqueue.
     capturedEffectFn!();
-    expect(setSearchParams).toHaveBeenCalledTimes(1);
+    expect(setSearchParams).not.toHaveBeenCalled();
     const subscribeCallback = ec.subscribe.mock.calls[0][0];
-
-    setSearchParams.mockClear();
 
     // A change event with the same query must NOT re-enqueue (prevSearch guard).
     subscribeCallback();
@@ -160,16 +161,109 @@ describe("useSearchParams", () => {
     expect(unsub).toHaveBeenCalledOnce();
   });
 
-  it("does not subscribe when context is null (SSR)", () => {
+  it("seeds empty and does not subscribe without a provider", () => {
     mockedUseContext.mockReturnValue(null as any);
 
-    const result = useSearchParams();
+    const [params] = useSearchParams();
     const setSearchParams = stateSlots[0][1];
 
     // Effect runs but bails early because ctx is null.
     capturedEffectFn!();
 
-    expect(result.toString()).toBe("");
+    expect(params.toString()).toBe("");
     expect(setSearchParams).not.toHaveBeenCalled();
+  });
+
+  describe("setter", () => {
+    it("replaces the whole search string and pushes by default", async () => {
+      const ec = createMockEventController("?q=react&page=2");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({ category: "electronics" });
+
+      // Wholesale replace (RR semantics): q/page are gone, not merged.
+      expect(navigate).toHaveBeenCalledWith("/products?category=electronics", {
+        replace: false,
+      });
+    });
+
+    it("functional init merges against params read at CALL time", async () => {
+      const ec = createMockEventController("?q=a");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+
+      // Location changes AFTER render: the functional form must see it.
+      ec.getState.mockReturnValue({
+        location: new URL("http://localhost/products?q=b"),
+      } as any);
+
+      await setSearch((prev) => {
+        expect(prev.get("q")).toBe("b");
+        prev.set("page", "3");
+        return prev;
+      });
+
+      expect(navigate).toHaveBeenCalledWith("/products?q=b&page=3", {
+        replace: false,
+      });
+    });
+
+    it("normalizes record inits: stringifies, appends arrays, skips null/undefined", async () => {
+      const ec = createMockEventController("");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({
+        page: 2,
+        active: true,
+        tag: ["a", "b"],
+        gone: null,
+        alsoGone: undefined,
+      });
+
+      expect(navigate).toHaveBeenCalledWith(
+        "/products?page=2&active=true&tag=a&tag=b",
+        { replace: false },
+      );
+    });
+
+    it("navigates to the bare pathname when the result is empty", async () => {
+      const ec = createMockEventController("?q=react");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch({});
+
+      expect(navigate).toHaveBeenCalledWith("/products", { replace: false });
+    });
+
+    it("forwards replace, scroll, and revalidate options", async () => {
+      const ec = createMockEventController("");
+      const { navigate } = mockCtx(ec);
+
+      const [, setSearch] = useSearchParams();
+      await setSearch("q=x", {
+        replace: true,
+        scroll: false,
+        revalidate: false,
+      });
+
+      expect(navigate).toHaveBeenCalledWith("/products?q=x", {
+        replace: true,
+        scroll: false,
+        revalidate: false,
+      });
+    });
+
+    it("throws when called without NavigationProvider", () => {
+      mockedUseContext.mockReturnValue(null as any);
+
+      const [, setSearch] = useSearchParams();
+      expect(() => setSearch({ q: "x" })).toThrow(
+        "useSearchParams setter must be used within NavigationProvider",
+      );
+    });
   });
 });

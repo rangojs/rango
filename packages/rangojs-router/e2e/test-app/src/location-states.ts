@@ -45,6 +45,23 @@ export interface ActionInfoStateShape {
 export const ActionInfoA = createLocationState<ActionInfoStateShape>();
 export const ActionInfoB = createLocationState<ActionInfoStateShape>();
 
+// Group (clientUrls) location-state slots. Groups have no handlers, so their
+// server write surface for location state is exactly two lanes: action writes
+// (in-place merge on settle) and redirect()-carried state (action or loader
+// redirects). CuFlash is the redirect-delivered flash; CuNote is the
+// non-flash slot an action writes in place.
+export interface CuFlashStateShape {
+  text: string;
+}
+
+export const CuFlash = createLocationState<CuFlashStateShape>({ flash: true });
+
+export interface CuNoteStateShape {
+  value: string;
+}
+
+export const CuNote = createLocationState<CuNoteStateShape>();
+
 // Slot whose declared shape allows an arbitrary `bad` payload. The redirect
 // onError e2e stores a value React Flight cannot serialize (a function) here,
 // so createRedirectFlightResponse's renderToReadableStream errors during real

@@ -129,9 +129,22 @@ export function resolvePprConfig(
  * and lookup makes every shell request a permanent miss.
  */
 export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
+  return `${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
+}
+
+/**
+ * The shell key's search portion (`?`-prefixed sorted search with the
+ * cache.searchParams filter applied, or "") — ALSO the string the capture and
+ * resume SSR renders seed their store location with (SSRRenderOptions.search
+ * / ShellCaptureOptions.search / ShellResumeOptions.search). Search is part
+ * of shell identity, so static-part `useSearchParams` reads render exactly
+ * what the key names; deriving seed and key from this one helper is what
+ * keeps capture, resume, and lookup byte-agreed (drift = replay mismatch or
+ * permanent MISS).
+ */
+export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
   const sorted = sortedSearchString(url.searchParams, filter);
-  const searchSuffix = sorted ? `?${sorted}` : "";
-  return `${url.host}${url.pathname}${searchSuffix}:shell`;
+  return sorted ? `?${sorted}` : "";
 }
 
 /**

@@ -808,7 +808,11 @@ once-per-key warning, since the declared intent cannot be honored).
 commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
 (`${host}${pathname}${sortedSearch}:shell` — host-scoped so multi-tenant shells
-never collide), `isValidShellHit` (reactVersion + buildVersion gates — the
+never collide), `shellSearchSeed` (the key's search portion, ALSO the string
+the capture and resume SSR renders seed their store with — search is part of
+shell identity, so static-part `useSearchParams` reads bake what the key
+names; one shared derivation is what keeps key, capture, and resume
+byte-agreed), `isValidShellHit` (reactVersion + buildVersion gates — the
 postponed blob encodes hole positions against one exact tree, so neither a
 React upgrade nor an app redeploy may resume a stored blob),
 `hasIntactShellPayload` (pre-commit integrity check: an undecodable prelude or

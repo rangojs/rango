@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { wrapLoaderWithErrorHandling } from "../loader-resolution.js";
 import { notFound, DataNotFoundError } from "../../errors.js";
 import { redirect } from "../../route-definition/redirect.js";
+import { createLocationState } from "../../browser/react/location-state-shared.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -149,6 +150,29 @@ describe("redirect() envelopes", () => {
     // convention as metadata.redirect); the client navigates it same-origin.
     expect(result.redirect).toEqual({ to: "https://shop.example/products" });
     expect(result.notFound).toBeUndefined();
+  });
+
+  it("carries redirect(url, { state }) as a resolved record on the envelope", async () => {
+    // The state CANNOT ride payload metadata here: a streaming loader settles
+    // after attachLocationStateIfPresent stamped it (rsc-rendering.ts), so the
+    // envelope marker is the only carrier that reaches the client. It travels
+    // resolved (__rsc_ls_* keys) and LoaderRedirect merges it at the target.
+    const Flash = createLocationState<{ text: string }>({ flash: true });
+    // Key injection is the exposeInternalIds plugin's job; stamp it by hand
+    // here (same convention as location-state-shared.test.ts).
+    (Flash as any).__rsc_ls_key = "__rsc_ls_flashTest";
+    const ctx = makeCtx();
+    const result: any = await runWithRequestContext(ctx, () =>
+      wrap(
+        Promise.reject(
+          redirect("/products", { state: Flash({ text: "moved" }) }),
+        ),
+      ),
+    );
+    expect(result.redirect.to).toBe("https://shop.example/products");
+    expect(result.redirect.state).toEqual({
+      __rsc_ls_flashTest: { text: "moved" },
+    });
   });
 
   it("neutralizes a cross-origin target without the external opt-in", async () => {

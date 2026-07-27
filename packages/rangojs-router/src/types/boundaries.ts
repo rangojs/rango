@@ -86,9 +86,13 @@ export type LoaderDataResult<T = unknown> =
        * Loader threw redirect(...) (a 3xx Response). `to` is resolved through
        * the soft-redirect same-origin rules BEFORE leaving the server
        * (resolveSoftRedirectUrl), so unsafe targets never reach the wire. The
-       * client navigates (replace) when the entry decodes.
+       * client navigates (replace) when the entry decodes. `state` is the
+       * resolved `redirect(url, { state })` record (`__rsc_ls_*` keys) — it
+       * travels on the marker because a streaming loader settles after
+       * payload metadata flushed; the redirect navigation merges it at the
+       * target entry.
        */
-      redirect?: { to: string };
+      redirect?: { to: string; state?: Record<string, unknown> };
     };
 
 export function isLoaderDataResult(value: unknown): value is LoaderDataResult {

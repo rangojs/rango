@@ -63,11 +63,21 @@ async function consumeAsyncGenerator(
  */
 function createSsrEventController(opts: {
   pathname: string;
+  /**
+   * Query string seeding the store location. Live fizz passes the request's
+   * raw search; ppr capture/resume pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied) so the shell renders what its key
+   * names and both passes agree byte-for-byte.
+   */
+  search?: string;
   params?: Record<string, string>;
   handleData?: HandleData;
   matched?: string[];
 }): EventController {
-  const location = new URL(opts.pathname, "http://localhost");
+  const location = new URL(
+    `${opts.pathname}${opts.search ?? ""}`,
+    "http://localhost",
+  );
   let params = opts.params ?? {};
   const rawMatched = opts.matched ?? [];
   const handleState = {
@@ -142,6 +152,16 @@ export interface SsrRootOptions {
    * they postpone below the root.
    */
   onPayloadSettled?: () => void;
+  /**
+   * The query string seeding the SSR store location (`?`-prefixed or
+   * empty), so `useSearchParams`/`useNavigation` carry real values during
+   * document renders. Live fizz passes the request's raw search. The shell
+   * capture and resume passes pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied — search is part of shell identity):
+   * a HIT shares the capture's key, so both passes seed the SAME string and
+   * the resume tree matches the captured tree above the postponed holes.
+   */
+  search?: string;
 }
 
 /**
@@ -162,7 +182,13 @@ export interface SsrRootOptions {
  * re-running the whole segment-tree build unless the promise is memoized.
  */
 export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
-  const { createFromReadableStream, rscStream, nonce, onPayloadSettled } = opts;
+  const {
+    createFromReadableStream,
+    rscStream,
+    nonce,
+    onPayloadSettled,
+    search,
+  } = opts;
 
   let payload: Promise<RscPayload> | undefined;
   let handlesPromise: Promise<HandleData> | undefined;
@@ -211,6 +237,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       store: null as any,
       eventController: createSsrEventController({
         pathname,
+        search,
         params: resolved.metadata?.params,
         handleData,
         matched: resolved.metadata?.matched,

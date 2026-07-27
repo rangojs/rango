@@ -137,81 +137,21 @@ describe("redirect()", () => {
     });
   });
 
-  describe("dev warning", () => {
-    it("warns on full-page SSR request (no _rsc_partial, no action headers)", () => {
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // The full-page-SSR dev warning was removed 2026-07-27: loader-thrown
+  // redirects now DELIVER their state on document loads too (the state rides
+  // the loader-result marker and LoaderRedirect navigates with it after
+  // hydration), so the blanket "will be lost" claim was wrong for that lane.
+  it("never warns on redirect() with state (warning removed)", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-      const ctx = withContext({ url: "https://example.com/" }, () => {
-        redirect("/target", {
-          state: [fakeEntry("flash", { text: "saved" })],
-        });
+    const ctx = withContext({ url: "https://example.com/" }, () => {
+      redirect("/target", {
+        state: [fakeEntry("flash", { text: "saved" })],
       });
-
-      // State is still set even though the warning fires
-      expect(ctx._locationState).toHaveLength(1);
-      expect(spy).toHaveBeenCalledOnce();
-      expect(spy.mock.calls[0][0]).toContain("full-page (SSR) request");
     });
 
-    it("does NOT warn on SPA partial request (_rsc_partial)", () => {
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const ctx = withContext(
-        { url: "https://example.com/?_rsc_partial" },
-        () => {
-          redirect("/target", {
-            state: [fakeEntry("flash", { text: "saved" })],
-          });
-        },
-      );
-
-      expect(ctx._locationState).toHaveLength(1);
-      expect(spy).not.toHaveBeenCalled();
-    });
-
-    it("does NOT warn on server action request (rsc-action header)", () => {
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const ctx = withContext(
-        {
-          url: "https://example.com/",
-          headers: { "rsc-action": "abc123" },
-        },
-        () => {
-          redirect("/target", {
-            state: [fakeEntry("flash", { text: "saved" })],
-          });
-        },
-      );
-
-      expect(ctx._locationState).toHaveLength(1);
-      expect(spy).not.toHaveBeenCalled();
-    });
-
-    it("does NOT warn on server action request (_rsc_action param)", () => {
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      const ctx = withContext(
-        { url: "https://example.com/?_rsc_action=abc123" },
-        () => {
-          redirect("/target", {
-            state: [fakeEntry("flash", { text: "saved" })],
-          });
-        },
-      );
-
-      expect(ctx._locationState).toHaveLength(1);
-      expect(spy).not.toHaveBeenCalled();
-    });
-
-    it("does NOT warn when no state is provided", () => {
-      const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      redirect("/target");
-      redirect("/target", 302);
-
-      expect(spy).not.toHaveBeenCalled();
-    });
+    expect(ctx._locationState).toHaveLength(1);
+    expect(spy).not.toHaveBeenCalled();
   });
 
   describe("basename auto-prefix", () => {

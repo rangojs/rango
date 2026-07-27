@@ -262,6 +262,123 @@ request, a layout run-count DOM stamp), and the suite asserts the header
 advances on a within-group navigation AND on a held-loader tab switch while
 the layout stamp holds.
 
+## Client hooks inside a group
+
+Group components are ordinary client components, so every hook from
+`@rangojs/router/client` is CALLABLE — but the group model changes what some
+of them mean. The working set below is pinned dev+prod by the hook probe
+(`e2e/test-app/src/urls/client-urls.tsx` `ClientUrlsHooksProbe` +
+`e2e/client-urls.test.ts` "hook probe" tests):
+
+- **Core reads** — `useOutlet`, `useLoader`, `useParams`, `useHandle`,
+  `useSearchParams` — first-class (the rest of this doc). `useHandle` is
+  READ-ONLY in groups: handle writes come from loaders
+  (`ctx.use(Meta)({ title })`) — there is no `handle()` DSL item. The
+  built-in handles (`Meta`, `Breadcrumbs`, `Script`) all ride that same
+  lane; their renderers (`MetaTags`, `Scripts`) are document-head
+  components that live in the root layout, not in groups.
+- **`<Outlet>` (the component)** reads the same context as `useOutlet` —
+  inside a group layout it renders the identical `content`. Its named-slot
+  form (`<Outlet name="@x">`) is inert in groups (group outlet providers
+  carry no parallel slots — same reason `ParallelOutlet` is out); its
+  `fallback` prop is a plain Suspense boundary and works as anywhere.
+- **`useMount`** returns the include mount (`/admin` for
+  `include("/admin", …)`); **`usePathname` is ABSOLUTE** — mount included —
+  never the definition-local path the group's patterns matched. Don't
+  compare it against your own `path()` patterns under a non-root mount.
+- **`useHref`** is the correct way to build group-local links:
+  `groupHref("/items/1")` composes the mount wherever the group is mounted.
+  Hand-written absolute `to=` strings also work but hardcode the mount.
+- **`useSearchParams` carries real values during SSR**: the live
+  request's search seeds the SSR store, so search-derived branches SSR
+  correctly and hydration agrees (the browser seeds from its own URL). On
+  ppr routes search is part of SHELL IDENTITY: the key embeds the sorted
+  search and the capture/resume renders seed that same string, so static
+  parts may read search — each query-string variant gets its own shell.
+  Two edges: a param excluded by `cache.searchParams` is absent in shell
+  renders (exclusion declares "does not affect markup"), and `.toString()`
+  renders sorted order while the browser holds the raw URL order.
+  The setter works in groups as anywhere (same-route write, content-hold).
+- **`useNavigation` / `useLinkStatus`** report the CANONICAL navigation
+  (global pending), which fires for group-internal navs too. Caveat: a
+  reader inside content the optimistic layer swaps (a destination WITH
+  `loading()`) unmounts at click time — put status readers in chrome that
+  survives the swap.
+- **`useFetchLoader`** works unchanged: the fetch lane addresses a
+  `createLoader(fn, fetchable: true)` definition by id, with no route or
+  group mechanics involved. It deliberately does NOT consult `revalidate()`
+  predicates — those govern nav/action re-runs of held data; an imperative
+  `load()` is an explicit freshness request.
+- **`useAction`** tracks a group action's lifecycle exactly as outside
+  groups: idle → loading while the action POST is in flight → idle.
+- **Errors**: wrap throw-capable components in the client `ErrorBoundary`
+  (or any React boundary) — the group chrome stays intact. There is no
+  `errorBoundary()` DSL item by design; the server-tree boundary around the
+  mount owns the route-level envelope.
+- **Prefetch tiers** (`prefetch="viewport"` / `"hover"` / `"none"` on
+  `Link`) work inside groups unchanged — the demo's `/client-shop` grid
+  (viewport) and related products (hover) are the pins.
+
+Orthogonal — identical in and out of groups: `useNonce` (SSR-only value),
+`useTheme` and the rest of the `./theme` surface (`ThemeProvider` /
+`ThemeScript` sit above the router tree; groups inherit the context like
+any client component), `invalidateClientCache` (acts on the GLOBAL history
+cache / prefetch map through the registered store — no context or mount
+involved; `keepClientCache` is a server-action directive and a warn-only
+no-op in the browser), and the definition factories (`createLocationState`
+on the browser client entry; `createLoader` / `createHandle` / `isHandle`
+exist only under the react-server condition — define loaders and handles
+in server or shared modules, not browser-only code). `MountContext` is the
+raw context behind `useMount` — an advanced escape hatch; the hook is the
+API. `initBrowserApp` / `Rango` (`./browser`) bootstrap the app above
+everything and are out of group scope entirely.
+
+Not meaningful inside a group (structural, not missing wiring):
+`ParallelOutlet` (groups have no parallel slots), `useSegments` (the whole
+group is one server segment — its answer inside a group does not reflect
+the group's own nesting), `ScrollRestoration` / `useScrollRestoration`
+(module singleton — render once in the root layout; mounting in a group
+tears down stored positions on group unmount), `MetaTags` / `Scripts` /
+`NavigationProvider` (document-head / app-root components).
+
+Programmatic navigation is mount-aware through RELATIVE paths:
+`router.push("cart")` (no leading slash) resolves against the include
+mount, while absolute paths stay app-absolute — the mount is scoped, so
+`push("/x")` is never auto-prefixed. The URL-less router methods are
+mount-independent: `refresh()` refetches the CURRENT route,
+`forward()` is history traversal, and `back()` traverses history with a
+first-entry guard whose fallback lands on the APP root (basename, not the
+mount — consistent with absolute semantics). `useParams` reports the COMMITTED
+match: during the optimistic window (destination `loading()` presenting) it
+still holds the ORIGIN params, like `useSearchParams` — destination params
+arrive with the canonical commit. `useRefreshLoaders` works in groups with
+the same contract as `useFetchLoader` (the refresh lane IS the fetch lane,
+so tagged loaders must be `fetchable: true`; `revalidate()` is deliberately
+not consulted).
+
+`useLocationState` works in groups through three write lanes, none of which
+needs a handler: `<Link state={...}>`, action writes
+(`getRequestContext().setLocationState(...)` inside a server action — the
+value merges into the CURRENT history entry when the action settles, no
+navigation), and redirect-carried state (`redirect(url, { state })` thrown
+from an action or a group loader — the state travels WITH the redirect
+navigation and merges at the target entry). The loader lane deliberately does
+NOT ride payload metadata: a streaming loader settles after the metadata
+flush, so its redirect state rides the loader-result marker and is delivered
+by the redirect nav itself, action-style. There is no commit-coupled
+`ctx.setLocationState`-during-render lane in groups — groups have no
+handlers.
+
+`useReverse` works in groups through its local form: name your group routes
+(`path("/items/:itemId", Item, { name: "item" })`) and the per-module gen
+writer emits a sibling `<module>.gen.ts` route map for the default-exported
+`clientUrls()` module, exactly as for named `urls()` modules. Import that
+map and `useReverse(routes)` resolves names against the include mount
+(`reverse("item", { itemId })` → `<mount>/items/<itemId>`; the `/` index
+collapses to the bare mount). Route names in a group stay LOCAL unless the
+`include()` itself is named — an unnamed include keeps them out of the
+global map entirely.
+
 ## Supported surface
 
 `clientUrls()` supports:

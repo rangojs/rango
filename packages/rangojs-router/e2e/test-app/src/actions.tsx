@@ -12,6 +12,8 @@ import {
 import {
   ActionInfoA,
   ActionInfoB,
+  CuFlash,
+  CuNote,
   FlashMessage,
   NonSerializableState,
 } from "./location-states.js";
@@ -276,6 +278,26 @@ export async function setSlotWithMarker(
   const ctx = getRequestContext();
   ctx.setLocationState(ActionInfoA({ value }));
   ctx.setLocationState(ActionInfoB({ value: marker }));
+}
+
+/**
+ * Group (clientUrls) action writing location state IN PLACE — no redirect.
+ * The action lane merges into the current history entry on settle; this is a
+ * group's only imperative server write path for location state (groups have
+ * no handlers, so ctx.setLocationState is otherwise unreachable from them).
+ */
+export async function setCuNote(value: string): Promise<void> {
+  getRequestContext().setLocationState(CuNote({ value }));
+}
+
+/**
+ * Group action redirecting WITH flash state to a group route (same route,
+ * different search) — the "save, bounce back with a flash" shape.
+ */
+export async function cuSaveAndRedirect(): Promise<void> {
+  throw redirect("/client-urls-e2e/state?saved=1", {
+    state: CuFlash({ text: "cu-action-flash" }),
+  });
 }
 
 /**

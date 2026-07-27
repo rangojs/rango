@@ -26,6 +26,7 @@ import { isDataNotFoundError } from "../errors.js";
 import { isRedirectResponse } from "../response-utils.js";
 import {
   resolveSoftRedirectUrl,
+  getRedirectState,
   isExternalRedirect,
 } from "../redirect-origin.js";
 import {
@@ -232,10 +233,16 @@ export function wrapLoaderWithErrorHandling<T>(
           to,
         });
 
+        // redirect(url, { state }): the resolved state rides the thrown
+        // Response (attachRedirectState), NOT payload metadata — a streaming
+        // loader settles after the metadata flush, so the marker is the only
+        // carrier that reaches the client. LoaderRedirect navigates with it.
+        const redirectState = getRedirectState(error);
+
         return {
           __loaderResult: true,
           ok: false,
-          redirect: { to },
+          redirect: { to, ...(redirectState && { state: redirectState }) },
           error: createErrorInfo(
             new Error(`Loader redirected to ${to}`),
             segmentId,

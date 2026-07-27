@@ -61,7 +61,7 @@ export const ParamsProbe = React.memo(function ParamsProbe() {
 // useSearchParams re-renders only when the committed search string changes.
 export const SearchProbe = React.memo(function SearchProbe() {
   useRenderTracker("search");
-  const sp = useSearchParams();
+  const [sp] = useSearchParams();
   return <span data-testid="probe-search">n:{sp.get("n") ?? "none"}</span>;
 });
 

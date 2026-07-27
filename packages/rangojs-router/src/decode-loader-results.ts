@@ -50,8 +50,13 @@ function signalFallback(result: any): ReactNode | undefined {
     return (result.fallback ?? null) as ReactNode;
   }
   if (result.redirect) {
+    const redirect = result.redirect as {
+      to: string;
+      state?: Record<string, unknown>;
+    };
     return createElement(LoaderRedirect, {
-      to: (result.redirect as { to: string }).to,
+      to: redirect.to,
+      state: redirect.state,
     });
   }
   return undefined;

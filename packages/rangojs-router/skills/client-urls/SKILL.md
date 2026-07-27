@@ -306,6 +306,21 @@ a hard load of the target URL renders the full route.
   kick off in parallel, so awaiting one (`stream: "navigation"`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was
   in the HTML once" as a guarantee — only the flagged loader is guaranteed.
+- **Hook semantics shift inside a group.** `usePathname` is ABSOLUTE (mount
+  included) — never compare it to your own `path()` patterns; build local
+  links with `useHref()` (`groupHref("/items/1")` composes the mount).
+  `useRouter().push("cart")` (RELATIVE,
+  no leading slash) resolves against the mount; `push("/x")` stays
+  app-absolute by design (never auto-prefixed). `useSearchParams` carries REAL
+  values during SSR (live request seeds the SSR store; on ppr routes the
+  capture/resume renders seed the shell key's own sorted search — search is
+  part of shell identity, so static-part reads are legal).
+  `useNavigation`/`useLinkStatus` report the canonical nav, but a reader
+  inside optimistically-swapped content (destination WITH `loading()`)
+  unmounts at click — put status readers in surviving chrome. Errors: wrap
+  throwers in the client `ErrorBoundary`; `useFetchLoader` works unchanged
+  (route-independent lane; `revalidate()` deliberately not consulted).
+  Pinned in the router repo's client-urls hook-probe e2e.
 - **Editing the module in dev:** projections refresh via HMR discovery; if a
   route-shape edit ever serves stale routes, restart dev — and if you are
   developing the router itself, rebuild the router dist before `pnpm dev`

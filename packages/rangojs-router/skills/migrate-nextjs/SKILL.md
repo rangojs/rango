@@ -657,15 +657,15 @@ children in their scope — handlers, loaders, and nested segments.
 
 ## 6. Navigation
 
-| Next.js                         | Rango                                             |
-| ------------------------------- | ------------------------------------------------- |
-| `import Link from "next/link"`  | `import { Link } from "@rangojs/router/client"`   |
-| `<Link href="/about">`          | `<Link to="/about">`                              |
-| `useRouter().push("/about")`    | `useRouter().push("/about")`                      |
-| `useRouter().replace("/about")` | `useRouter().replace("/about")`                   |
-| `usePathname()`                 | `usePathname()` from `@rangojs/router/client`     |
-| `useSearchParams()`             | `useSearchParams()` from `@rangojs/router/client` |
-| `redirect("/login")` (server)   | `redirect("/login")` from `@rangojs/router`       |
+| Next.js                         | Rango                                                                                                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import Link from "next/link"`  | `import { Link } from "@rangojs/router/client"`                                                                                                                                                         |
+| `<Link href="/about">`          | `<Link to="/about">`                                                                                                                                                                                    |
+| `useRouter().push("/about")`    | `useRouter().push("/about")`                                                                                                                                                                            |
+| `useRouter().replace("/about")` | `useRouter().replace("/about")`                                                                                                                                                                         |
+| `usePathname()`                 | `usePathname()` from `@rangojs/router/client`                                                                                                                                                           |
+| `useSearchParams()`             | `useSearchParams()` from `@rangojs/router/client` — returns an RR-style TUPLE, so destructure the reader: `const [searchParams] = useSearchParams()`; the second element is a setter Next does not have |
+| `redirect("/login")` (server)   | `redirect("/login")` from `@rangojs/router`                                                                                                                                                             |
 
 ### "Instant navigations" (Link prefetching)
 

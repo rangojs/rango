@@ -57,6 +57,7 @@ import {
   SHELL_STATUS_HEADER,
   resolvePprConfig,
   buildShellKey,
+  shellSearchSeed,
   isValidShellHit,
   hasIntactShellPayload,
   base64ToBytes,
@@ -153,12 +154,14 @@ function buildNavigationShellKey(
 function createShellCaptureDescriptor(
   ctx: HandlerContext<any>,
   key: string,
+  searchSeed: string,
   pprConfig: ResolvedPprConfig,
   store: SegmentCacheStore<any>,
   navigationOnly?: true,
 ): ShellCaptureDescriptor {
   return {
     key,
+    searchSeed,
     buildVersion: ctx.version,
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
@@ -512,7 +515,13 @@ function* shellServePlan<TEnv>(
   ) {
     return { kind: "pass" };
   }
-  const descriptor = createShellCaptureDescriptor(ctx, key, pprConfig, store);
+  const descriptor = createShellCaptureDescriptor(
+    ctx,
+    key,
+    shellSearchSeed(url, reqCtx._searchParamsFilter),
+    pprConfig,
+    store,
+  );
 
   if (
     cached &&
@@ -994,6 +1003,7 @@ function scheduleNavigationShellCapture<TEnv>(
       ctx,
       partialCaptureKey ??
         buildNavigationShellKey(url, reqCtx._searchParamsFilter),
+      shellSearchSeed(url, reqCtx._searchParamsFilter),
       pprConfig,
       store,
       true,
@@ -1511,6 +1521,9 @@ function serveShellHit(
       ssrModule.resumeShellHTML!(rscStream, {
         postponed: entry.postponed,
         nonce: undefined,
+        // The shell key's own search — identical to the capture seed for
+        // this key, so the resume tree matches the captured tree.
+        search: shellSearchSeed(url, reqCtx._searchParamsFilter),
       }),
     );
   };

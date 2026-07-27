@@ -33,6 +33,7 @@ async function installRecorder(page: Page) {
       busy: string | null;
     }> = [];
     (window as any).__filterRecs = recs;
+    (window as any).__filterRecsActive = true;
     const sample = () => {
       recs.push({
         skeleton: !!document.querySelector(
@@ -103,6 +104,19 @@ async function runFilterHoldSpec(page: Page, base: string) {
   expect(recs.some((r) => r.busy === "true" && r.cards === initialCount)).toBe(
     true,
   );
+
+  // setSearchParams leg: the programmatic clear button navigates the same
+  // route with an empty search (RR wholesale-replace) — the commit holds the
+  // filtered grid exactly like the Link filters did.
+  await installRecorder(page);
+  await page.click('[data-testid="client-shop-filter-clear"]');
+  await expect
+    .poll(async () => allCards.count(), { timeout: 10000 })
+    .toBe(initialCount);
+  expect(new URL(page.url()).search).toBe("");
+  const clearRecs = await readRecorder(page);
+  expect(clearRecs.some((r) => r.skeleton)).toBe(false);
+  expect(clearRecs.some((r) => r.busy === "true")).toBe(true);
 }
 
 devTest.describe("client-shop filters: same-route content-hold", () => {

@@ -379,6 +379,46 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(counter).toHaveText("count: 1");
   });
 
+  // Static-part useSearchParams on a ppr route: search is part of shell
+  // identity — the key embeds the sorted search and the capture/resume
+  // renders seed that SAME string (shellSearchSeed), so the frozen prelude
+  // bakes the key's own search values, distinct query strings get distinct
+  // shells, and a HIT hydrates clean against the browser URL.
+  test("static-part useSearchParams bakes the key's search into its shell; distinct search = distinct shell", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const shoesUrl = f.url("/shell-cache/search-read?filter=shoes");
+    const miss = await page.request.get(shoesUrl, { headers: HTML_HEADERS });
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+    expect(await miss.text()).toContain("filter:shoes");
+
+    await warmToHit(page.request, shoesUrl);
+    // The FROZEN prelude (first flushed bytes, before the live hole) carries
+    // the search-derived markup — the capture render saw the key's search.
+    const { firstChunk, html } = await measureFirstChunk(shoesUrl);
+    expect(firstChunk).toContain("filter:shoes");
+    expect(html).toContain("Live price:");
+
+    // A different query string is a different shell key: a fresh MISS with
+    // its own values — never the shoes shell.
+    const hatsUrl = f.url("/shell-cache/search-read?filter=hats");
+    const hats = await page.request.get(hatsUrl, { headers: HTML_HEADERS });
+    expect(hats.headers()["x-rango-shell"]).toBe("MISS");
+    const hatsHtml = await hats.text();
+    expect(hatsHtml).toContain("filter:hats");
+    expect(hatsHtml).not.toContain("filter:shoes");
+
+    // HIT in a real browser: capture ≡ resume ≡ browser URL — zero hydration
+    // errors while the live hole still resolves.
+    await page.goto(shoesUrl);
+    await waitForHydration(page);
+    await expect(testId(page, "shell-search-probe")).toHaveText("filter:shoes");
+    await expect(testId(page, "shell-price")).toContainText("Live price:");
+  });
+
   // --- Capture data snapshot: shell content drift parity. ---
   //
   // /shell-cache/drift bakes a value from a SHORT-ttl cache() (the "drift"

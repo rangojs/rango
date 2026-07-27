@@ -29,6 +29,7 @@ import {
   ShellBakeSlowLoader,
   ShellBakeHoleLoader,
 } from "./shell-cache.defs.js";
+import { ShellSearchProbe } from "../components/ShellSearchProbe.js";
 import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
@@ -105,6 +106,18 @@ function ShellCacheLayout(ctx: HandlerContext) {
 
 function ShellCachePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Static-part useSearchParams read above the live price hole: the probe's
+// markup freezes into the per-search shell (see ShellSearchProbe).
+function ShellSearchReadPage() {
+  return (
+    <section>
+      <h2 data-testid="shell-searchread-header">Shell search read</h2>
+      <ShellSearchProbe />
+      <ShellCachePrice loader={ShellPriceLoader} />
+    </section>
+  );
 }
 
 // Large SYNCHRONOUS Suspense-wrapped section: fizz outlines any boundary over
@@ -519,6 +532,22 @@ export const shellCachePatterns = urls(
           loader(ShellStreamLoader),
           loading(
             <div data-testid="shell-stream-fallback">Loading stream...</div>,
+          ),
+        ],
+      ),
+      // Static-part useSearchParams read: search is part of shell identity —
+      // the key embeds the sorted search and the capture render seeds that
+      // SAME string — so the probe's markup freezes into the per-search shell
+      // (distinct query strings = distinct shells) and a HIT hydrates clean.
+      // The price reader under loading() stays the live hole.
+      path(
+        "/shell-cache/search-read",
+        ShellSearchReadPage,
+        { name: "shellCacheSearchRead", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellPriceLoader),
+          loading(
+            <div data-testid="shell-searchread-fallback">Loading price...</div>,
           ),
         ],
       ),

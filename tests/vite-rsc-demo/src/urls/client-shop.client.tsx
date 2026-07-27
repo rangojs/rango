@@ -163,7 +163,8 @@ function FilterLink({
 }
 
 function ClientShopIndex() {
-  const category = useSearchParams().get("category");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const category = searchParams.get("category");
 
   return (
     <div data-testid="client-shop-index">
@@ -178,6 +179,18 @@ function ClientShopIndex() {
         {FILTER_CATEGORIES.map((c) => (
           <FilterLink key={c} category={c} active={category === c} />
         ))}
+        {/* Programmatic write: setSearchParams replaces the whole search
+            string (RR semantics) and navigates the same route — the commit
+            holds content exactly like the Link filters. replace:true keeps
+            "clear" from stacking a history entry. */}
+        <button
+          type="button"
+          data-testid="client-shop-filter-clear"
+          onClick={() => void setSearchParams({}, { replace: true })}
+          style={{ padding: "0.4rem 0.9rem", borderRadius: 6 }}
+        >
+          clear
+        </button>
       </nav>
       {/* Inline boundary: the heading paints instantly, the grid fills when
           its loader streams in. */}
@@ -347,7 +360,8 @@ function ProductInfoSkeleton() {
 
 function ClientShopProductInfo() {
   const { data: product } = useLoader(ClientShopProductLoader);
-  const tab = useSearchParams().get("tab") ?? "details";
+  const [searchParams] = useSearchParams();
+  const tab = searchParams.get("tab") ?? "details";
 
   return (
     <article data-testid="client-shop-info">
@@ -457,7 +471,8 @@ function ClientShopRelated() {
 
 function ClientShopProductPage() {
   const { slug } = useParams<{ slug: string }>();
-  const tab = useSearchParams().get("tab") ?? "details";
+  const [searchParams] = useSearchParams();
+  const tab = searchParams.get("tab") ?? "details";
 
   return (
     <div data-testid="client-shop-product">

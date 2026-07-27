@@ -105,6 +105,15 @@ export interface SSRRenderOptions {
    * - `"allReady"` — await `stream.allReady` before returning.
    */
   streamMode?: import("../router/router-options.js").SSRStreamMode;
+
+  /**
+   * The live request's query string (`?`-prefixed or empty). Seeds the SSR
+   * navigation store location so `useSearchParams` carries real values
+   * during document renders. Absent on the build-time prerender pass —
+   * build shells capture bare pathnames and serve search-less requests
+   * only (runtime captures own the search variants, seeded per key).
+   */
+  search?: string;
 }
 
 /**
@@ -347,6 +356,13 @@ interface ShellCaptureOptions {
   quiesce: Promise<void>;
   /** Upper bound on how long to wait for `quiesce`. Default SHELL_CAPTURE_MAX_WAIT_MS. */
   maxWaitMs?: number;
+  /**
+   * The SHELL KEY's search string (`?`-prefixed, sorted, cache.searchParams
+   * filter applied — shellSearchSeed in rsc/shell-serve.ts), seeding the SSR
+   * store so static-part `useSearchParams` reads bake markup consistent with
+   * the shell's own key. MUST equal the resume pass's seed for the same key.
+   */
+  search?: string;
 }
 
 /**
@@ -368,6 +384,13 @@ interface ShellResumeOptions {
   postponed: string | null;
   /** Nonce for CSP. */
   nonce?: string;
+  /**
+   * The SHELL KEY's search string — same derivation as the capture pass
+   * (shellSearchSeed). A HIT shares the capture's key, so seeding the same
+   * string keeps the resume tree identical to the captured tree above the
+   * postponed holes.
+   */
+  search?: string;
 }
 
 /**
@@ -449,7 +472,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, streamMode } = options ?? {};
+    const { nonce, formState, streamMode, search } = options ?? {};
 
     try {
       // Tee the stream:
@@ -461,6 +484,12 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         createFromReadableStream,
         rscStream: rscStream1,
         nonce,
+        // Live fizz seeds the request's RAW search. The shell capture pass
+        // below and its resume twin seed the SHELL KEY's search instead
+        // (sorted, cache.searchParams filter applied — shellSearchSeed):
+        // same key => same seed, so the resume tree matches the captured
+        // tree while static-part search reads render what the key names.
+        search,
       });
 
       // Get bootstrap script content
@@ -562,6 +591,9 @@ export function createShellCaptureHandler<TEnv = unknown>(
         createFromReadableStream,
         rscStream,
         onPayloadSettled: settlePayload,
+        // The shell key's own search: static-part search reads render what
+        // the key names, and the resume pass seeds the identical string.
+        search: opts.search,
       });
 
       // Bootstrap load raced against the deadline. A load that never resolves
@@ -735,7 +767,7 @@ export function createShellResumeHandler<TEnv = unknown>(
     rscStream: ReadableStream<Uint8Array>,
     opts: ShellResumeOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { postponed, nonce } = opts;
+    const { postponed, nonce, search } = opts;
 
     try {
       if (postponed === null) {
@@ -765,6 +797,9 @@ export function createShellResumeHandler<TEnv = unknown>(
         createFromReadableStream,
         rscStream: rscStream1,
         nonce,
+        // Same seed as the capture pass for this key: the resume tree must
+        // match the captured tree above the holes, search reads included.
+        search,
       });
 
       // EAGER injection (resume-only): the stored prelude — a complete document
