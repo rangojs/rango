@@ -271,7 +271,17 @@ of them mean. The working set below is pinned dev+prod by the hook probe
 `e2e/client-urls.test.ts` "hook probe" tests):
 
 - **Core reads** — `useOutlet`, `useLoader`, `useParams`, `useHandle`,
-  `useSearchParams` — first-class (the rest of this doc).
+  `useSearchParams` — first-class (the rest of this doc). `useHandle` is
+  READ-ONLY in groups: handle writes come from loaders
+  (`ctx.use(Meta)({ title })`) — there is no `handle()` DSL item. The
+  built-in handles (`Meta`, `Breadcrumbs`, `Script`) all ride that same
+  lane; their renderers (`MetaTags`, `Scripts`) are document-head
+  components that live in the root layout, not in groups.
+- **`<Outlet>` (the component)** reads the same context as `useOutlet` —
+  inside a group layout it renders the identical `content`. Its named-slot
+  form (`<Outlet name="@x">`) is inert in groups (group outlet providers
+  carry no parallel slots — same reason `ParallelOutlet` is out); its
+  `fallback` prop is a plain Suspense boundary and works as anywhere.
 - **`useMount`** returns the include mount (`/admin` for
   `include("/admin", …)`); **`usePathname` is ABSOLUTE** — mount included —
   never the definition-local path the group's patterns matched. Don't
@@ -299,20 +309,46 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   group mechanics involved. It deliberately does NOT consult `revalidate()`
   predicates — those govern nav/action re-runs of held data; an imperative
   `load()` is an explicit freshness request.
+- **`useAction`** tracks a group action's lifecycle exactly as outside
+  groups: idle → loading while the action POST is in flight → idle.
 - **Errors**: wrap throw-capable components in the client `ErrorBoundary`
   (or any React boundary) — the group chrome stays intact. There is no
   `errorBoundary()` DSL item by design; the server-tree boundary around the
   mount owns the route-level envelope.
+- **Prefetch tiers** (`prefetch="viewport"` / `"hover"` / `"none"` on
+  `Link`) work inside groups unchanged — the demo's `/client-shop` grid
+  (viewport) and related products (hover) are the pins.
+
+Orthogonal — identical in and out of groups: `useNonce` (SSR-only value),
+`useTheme` and the rest of the `./theme` surface (`ThemeProvider` /
+`ThemeScript` sit above the router tree; groups inherit the context like
+any client component), `invalidateClientCache` (acts on the GLOBAL history
+cache / prefetch map through the registered store — no context or mount
+involved; `keepClientCache` is a server-action directive and a warn-only
+no-op in the browser), and the definition factories (`createLocationState`
+on the browser client entry; `createLoader` / `createHandle` / `isHandle`
+exist only under the react-server condition — define loaders and handles
+in server or shared modules, not browser-only code). `MountContext` is the
+raw context behind `useMount` — an advanced escape hatch; the hook is the
+API. `initBrowserApp` / `Rango` (`./browser`) bootstrap the app above
+everything and are out of group scope entirely.
 
 Not meaningful inside a group (structural, not missing wiring):
 `ParallelOutlet` (groups have no parallel slots), `useSegments` (the whole
 group is one server segment — its answer inside a group does not reflect
-the group's own nesting), `ScrollRestoration` (root-only singleton).
+the group's own nesting), `ScrollRestoration` / `useScrollRestoration`
+(module singleton — render once in the root layout; mounting in a group
+tears down stored positions on group unmount), `MetaTags` / `Scripts` /
+`NavigationProvider` (document-head / app-root components).
 
 Programmatic navigation is mount-aware through RELATIVE paths:
 `router.push("cart")` (no leading slash) resolves against the include
 mount, while absolute paths stay app-absolute — the mount is scoped, so
-`push("/x")` is never auto-prefixed. `useParams` reports the COMMITTED
+`push("/x")` is never auto-prefixed. The URL-less router methods are
+mount-independent: `refresh()` refetches the CURRENT route,
+`forward()` is history traversal, and `back()` traverses history with a
+first-entry guard whose fallback lands on the APP root (basename, not the
+mount — consistent with absolute semantics). `useParams` reports the COMMITTED
 match: during the optimistic window (destination `loading()` presenting) it
 still holds the ORIGIN params, like `useSearchParams` — destination params
 arrive with the canonical commit. `useRefreshLoaders` works in groups with

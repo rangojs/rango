@@ -75,45 +75,72 @@ generate` CLI classify bug ("clientUrls(" has a capital U, so the
       the key's own search (`shellSearchSeed`) and static-part reads are
       LEGAL. Pinned by the shell-cache probe, dev+prod, red-proven.
 
-Surface re-audit 2026-07-27 (fourth batch — full export sweep of `.`,
-`./client`, `./client` react-server, `./theme`, `./browser` against this
-doc; maintainer-requested "so we don't miss anything"). New OPEN rows, each
-with its settling action:
+Settled 2026-07-27 (fourth batch — surface re-audit: full export sweep of
+`.`, `./client`, `./client` react-server, `./theme`, `./browser` against
+this doc; maintainer-requested "so we don't miss anything". Every row
+verified in source and stated in `docs/client-urls.md` § "Client hooks
+inside a group"):
 
-- [ ] `Outlet` (the component: `fallback` prop, named-slot form) — only the
-      `useOutlet` HOOK has a row. Settle: state the in-group semantics of
-      rendering `<Outlet>` itself (leaf routes see the server outlet) or
-      fold into the useOutlet row explicitly.
-- [ ] `invalidateClientCache` / `keepClientCache` (client seat, root entry
-      `src/index.ts:245`) — browser cache controls, ZERO review coverage.
-      Settle: confirm they behave identically inside groups (history cache /
-      prefetch map are global) + pin or document.
-- [ ] `useRouter().refresh()` / `back()` / `forward()` — the mount-awareness
-      row settled only push/replace/prefetch. Settle: confirm the three
-      URL-less methods are group-orthogonal; one doc line.
-- [ ] `Script` handle (per-route script descriptor; distinct from the
-      root-level `Scripts` renderer) — no row. Settle: can a group loader
-      push it (`ctx.use(Script)`)? Pin or document alongside the handle
-      write lanes.
-- [ ] `createHandle` / `isHandle` (react-server client seat) + `createLoader`
-      (client seat) + `createLocationState` — definition FACTORIES, only
-      their read/consume hooks have rows. Settle: one confirm row that
-      module-level definitions are placement-agnostic (plugin-keyed ids).
-- [ ] `MountContext` (raw context export) — settle: declare it
-      internal/advanced (useMount is the API) or pin direct consumption.
-- [ ] `ThemeProvider` / `ThemeScript` / `THEME_DEFAULTS` / `THEME_COOKIE` —
-      the useTheme row names only the hook. Settle: extend that row to the
-      full `./theme` surface (provider/script are root-level by design).
-- [ ] `initBrowserApp` / `Rango` (`./browser` entry) — app bootstrap.
-      Settle: declare out of group scope (runs above everything) in one line.
+- [x] `Outlet` (component) — SETTLED, folded into the useOutlet semantics:
+      it reads the SAME OutletContext (`client.tsx:144`), so inside a group
+      layout it renders the identical `content` the hook returns. The
+      named-slot form (`name="@x"`) is INERT in groups — group outlet
+      providers carry no `parallel` (`client-urls/client-root.tsx`), the
+      same structural reason ParallelOutlet is out. The `fallback` prop is
+      a plain Suspense wrapper and works as anywhere.
+- [x] `invalidateClientCache` / `keepClientCache` — CONFIRMED orthogonal by
+      construction: the client seat (`browser/invalidate-client-cache.ts`)
+      reads the module-global registered store
+      (`getRegisteredStore().markCacheAsStaleAndBroadcast()` — the exact
+      server-action-bridge path, already exercised by the action e2e) and
+      the pre-boot fallback flushes the global prefetch map; no context,
+      mount, or route involvement anywhere in the body. `keepClientCache`
+      is a server-action directive — warn-only no-op in the browser.
+- [x] `useRouter().refresh()` / `back()` / `forward()` — CONFIRMED
+      mount-independent (`use-router.ts:88-124`): `refresh()` is
+      `ctx.refresh()` (current-route refetch, no URL argument),
+      `forward()` is bare history traversal, and `back()`'s first-entry
+      fallback navigates `withBasename("/")` — the APP root, deliberately
+      basename-scoped not mount-scoped, consistent with the settled
+      absolute-paths-stay-app-absolute rule.
+- [x] `Script` handle — SETTLED as the third built-in on the already-pinned
+      handle lane: `createHandle(collectScripts, "__rsc_router_script__")`
+      (`handles/script.ts:241`), an ordinary Handle exactly like `Meta` /
+      `Breadcrumbs`. Group loaders push it through the same generic
+      `ctx.use(Handle)` write lane the `client-shop-handles` suite pins for
+      `Meta` (the lane is handle-agnostic — `collectHandleData` never
+      special-cases types); the `Scripts` RENDERER stays a document-head
+      component in the root layout. No separate pin: a per-handle-type pin
+      would re-test the lane, not new semantics.
+- [x] Definition factories — CONFIRMED placement rules, with one
+      asymmetry worth stating: the browser `./client` condition exports
+      ONLY `createLocationState` (`client.tsx:448`); `createLoader` /
+      `createHandle` / `isHandle` exist under the react-server condition
+      (`client.rsc.tsx`) and the root entry — so loader/handle definitions
+      belong in server or SHARED modules (every fixture already does
+      this), while location-state defs may live in browser-only modules.
+      All are module-level, plugin-keyed (expose-internal-ids), and
+      placement-agnostic within those conditions.
+- [x] `MountContext` — DECLARED advanced/escape-hatch: the raw context
+      behind `useMount` (`client.tsx:462`); the hook is the API. Direct
+      consumption is legal (it is exported) but carries no extra contract.
+- [x] `./theme` surface — the useTheme row EXTENDED to the whole entry:
+      `ThemeProvider` / `ThemeScript` are root-level by design (provider
+      above the router tree, FOUC script in the document head — the
+      bundle-hygiene doc already locks this placement), `THEME_DEFAULTS` /
+      `THEME_COOKIE` are inert constants. Groups inherit the context like
+      any client component; nothing group-specific exists to pin.
+- [x] `initBrowserApp` / `Rango` (`./browser`) — DECLARED out of group
+      scope: the app bootstrap (`browser/rsc-router.tsx`) runs above
+      everything the group model touches.
 
-Doc-drift found by the same sweep (sync fixes, no decisions needed):
-client-urls.md's "Client hooks inside a group" section omits identifiers
-this doc claims it states — `MetaTags`/`Scripts`/`NavigationProvider` (row
-says "documented there"), `useScrollRestoration` (only the component is
-named), `useNonce`, `useAction`, `useTheme`, `Breadcrumbs`, the
-prefetch-tier statement — and never states the `useHandle` read-only
-restriction its row pins.
+Doc-drift from the same sweep: SYNCED 2026-07-27 — client-urls.md now
+states the useHandle read-only restriction, the built-in handle set
+(`Meta`/`Breadcrumbs`/`Script` + the `MetaTags`/`Scripts` renderers), the
+`<Outlet>` component semantics, `useAction`, the prefetch-tier statement,
+the orthogonal set (`useNonce`, `./theme`, cache controls, factories,
+`MountContext`, `./browser`), and `useScrollRestoration` +
+`NavigationProvider` in the not-in-groups list.
 
 ## Settled / pinned
 
