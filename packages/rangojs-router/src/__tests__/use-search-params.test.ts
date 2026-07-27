@@ -73,29 +73,27 @@ describe("useSearchParams", () => {
   });
 
   /**
-   * SSR-empty-seed contract: unlike usePathname (which seeds FROM ctx),
-   * useSearchParams deliberately seeds with an empty URLSearchParams() on the
-   * initial render even when ctx exists. The server only sends the pathname, so
-   * seeding from anything else would risk a hydration mismatch. The hook syncs
-   * the real query string on mount.
+   * Seed-from-store contract (mirrors usePathname): the initial render reads
+   * the store location — during document SSR that is the LIVE request's
+   * search (seeded via SSRRenderOptions.search), in the browser it is
+   * window.location. Both derive from the same URL, so the hydration renders
+   * agree; the old SSR-empty seed (and its post-hydration flicker) is gone.
    */
-  it("seeds with empty params on initial render even when ctx has search", () => {
+  it("seeds from the store location on the initial render", () => {
     const ec = createMockEventController("?q=react&page=2");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     const [params] = useSearchParams();
 
-    // Initial render: empty, NOT seeded from ctx's "?q=react&page=2".
-    expect(params.toString()).toBe("");
-    expect(params.get("q")).toBeNull();
+    expect(params.get("q")).toBe("react");
+    expect(params.get("page")).toBe("2");
   });
 
   /**
-   * Mount catch-up: the effect reads location.searchParams and, when the query
-   * differs from the seeded empty value, enqueues setSearchParams with the
-   * real params. Mirrors usePathname's catch-up.
+   * The mount effect must NOT re-enqueue when the seed already matches the
+   * location (prevSearch is initialized from the seed, not "").
    */
-  it("catches up to the real search params in the mount effect", () => {
+  it("does not re-enqueue on mount when the seed matches the location", () => {
     const ec = createMockEventController("?q=react&page=2");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
@@ -104,10 +102,7 @@ describe("useSearchParams", () => {
 
     capturedEffectFn!();
 
-    expect(setSearchParams).toHaveBeenCalledTimes(1);
-    const enqueued = setSearchParams.mock.calls[0][0] as URLSearchParams;
-    expect(enqueued.get("q")).toBe("react");
-    expect(enqueued.get("page")).toBe("2");
+    expect(setSearchParams).not.toHaveBeenCalled();
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });
 
@@ -132,12 +127,10 @@ describe("useSearchParams", () => {
     useSearchParams();
     const setSearchParams = stateSlots[0][1];
 
-    // Mount catch-up reads "?q=a" and enqueues it.
+    // Seed already matches "?q=a" — no mount enqueue.
     capturedEffectFn!();
-    expect(setSearchParams).toHaveBeenCalledTimes(1);
+    expect(setSearchParams).not.toHaveBeenCalled();
     const subscribeCallback = ec.subscribe.mock.calls[0][0];
-
-    setSearchParams.mockClear();
 
     // A change event with the same query must NOT re-enqueue (prevSearch guard).
     subscribeCallback();
@@ -168,7 +161,7 @@ describe("useSearchParams", () => {
     expect(unsub).toHaveBeenCalledOnce();
   });
 
-  it("does not subscribe when context is null (SSR)", () => {
+  it("seeds empty and does not subscribe without a provider", () => {
     mockedUseContext.mockReturnValue(null as any);
 
     const [params] = useSearchParams();

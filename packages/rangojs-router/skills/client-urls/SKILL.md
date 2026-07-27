@@ -310,8 +310,9 @@ a hard load of the target URL renders the full route.
   included) — never compare it to your own `path()` patterns; build local
   links with `useHref()` (`groupHref("/items/1")` composes the mount).
   `useRouter().push("/local")` is mount-blind — compose:
-  `router.push(groupHref("/local"))`. `useSearchParams` is SSR-empty
-  (search-derived branches SSR as their empty state, sync on mount).
+  `router.push(groupHref("/local"))`. `useSearchParams` carries REAL
+  values during SSR (live request seeds the SSR store; ppr static parts
+  are the search-agnostic exception).
   `useNavigation`/`useLinkStatus` report the canonical nav, but a reader
   inside optimistically-swapped content (destination WITH `loading()`)
   unmounts at click — put status readers in surviving chrome. Errors: wrap

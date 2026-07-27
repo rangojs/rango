@@ -63,11 +63,16 @@ async function consumeAsyncGenerator(
  */
 function createSsrEventController(opts: {
   pathname: string;
+  /** Live request query string; absent on capture/resume (search-agnostic). */
+  search?: string;
   params?: Record<string, string>;
   handleData?: HandleData;
   matched?: string[];
 }): EventController {
-  const location = new URL(opts.pathname, "http://localhost");
+  const location = new URL(
+    `${opts.pathname}${opts.search ?? ""}`,
+    "http://localhost",
+  );
   let params = opts.params ?? {};
   const rawMatched = opts.matched ?? [];
   const handleState = {
@@ -142,6 +147,15 @@ export interface SsrRootOptions {
    * they postpone below the root.
    */
   onPayloadSettled?: () => void;
+  /**
+   * The live request's query string (`?`-prefixed or empty). Seeds the SSR
+   * store location so `useSearchParams`/`useNavigation` carry real values
+   * during document renders. Only the live-fizz path passes it: the shell
+   * capture and resume passes must render identical trees above the
+   * postponed holes, so both stay search-agnostic (absent = empty params —
+   * a ppr static part must not derive markup from search).
+   */
+  search?: string;
 }
 
 /**
@@ -162,7 +176,13 @@ export interface SsrRootOptions {
  * re-running the whole segment-tree build unless the promise is memoized.
  */
 export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
-  const { createFromReadableStream, rscStream, nonce, onPayloadSettled } = opts;
+  const {
+    createFromReadableStream,
+    rscStream,
+    nonce,
+    onPayloadSettled,
+    search,
+  } = opts;
 
   let payload: Promise<RscPayload> | undefined;
   let handlesPromise: Promise<HandleData> | undefined;
@@ -211,6 +231,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       store: null as any,
       eventController: createSsrEventController({
         pathname,
+        search,
         params: resolved.metadata?.params,
         handleData,
         matched: resolved.metadata?.matched,

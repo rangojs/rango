@@ -33,7 +33,7 @@ Settled:
 - [x] `useLoader` — pinned
 - [x] `useParams` — pinned (one confirm below)
 - [x] `useHandle` (read) / `Meta` / `Breadcrumbs` — pinned
-- [x] `useSearchParams` (tuple read + setter) — pinned incl. SSR-empty raw-HTML pin
+- [x] `useSearchParams` (tuple read + setter) — pinned incl. SSR REAL-VALUES raw-HTML pin (decision 2026-07-27: the live request seeds the SSR store)
 - [x] `Link` — pinned
 - [x] `useHref` / `href()` — pinned
 - [x] `useMount` — pinned
@@ -56,27 +56,28 @@ Pending:
 - [ ] `useParams` optimistic-window semantics — OPEN, confirm as by-design
 - [ ] `useTheme` under a group — OPEN, confirm orthogonal or pin
 - [ ] Prefetch tiers inside groups — OPEN, promote demo coverage into the router suite or accept demo-only
+- [ ] Search reads in ppr STATIC parts — OPEN, enforce capture-time postpone or accept the documented rule
 
 ## Settled / pinned
 
 The working set. Semantics stated in `docs/client-urls.md` § "Client hooks
 inside a group"; pins named per row.
 
-| Hook                              | The group semantics                                                                                                                                                                                                  | Pinned by                                                                       |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `useOutlet`                       | Group-layout `pending` is ANY in-flight group intent (same-route included); leaf routes read the enclosing SERVER outlet, where `pending` means something else                                                       | `client-urls.test.ts` soft-nav + `client-shop-filters.test.ts` aria-busy        |
-| `useLoader`                       | Reads the group's own projected loaders (stubs by `$$id`); implicit suspension to the inline boundary                                                                                                                | action-reval, transition, stream suites                                         |
-| `useParams`                       | The SERVER route match (materialized `path()` per group route) — agrees with the group's local match because the patterns are identical                                                                              | hard-load + param-nav tests both apps                                           |
-| `useHandle` (read)                | Read-only in groups; writes come from loaders (`ctx.use(Meta)`), no `handle()` DSL item                                                                                                                              | `client-shop-handles.test.ts`                                                   |
-| `useSearchParams`                 | Tuple; reader SSR-EMPTY (server seeds no search — a search-derived branch SSRs empty and syncs on mount, asserted in RAW HTML); setter is a same-route write with the content-hold                                   | hook probe "SSR-empty search, setter write"                                     |
-| `Link`                            | Absolute `to=` only — the mount is hand-composed or built with `useHref`                                                                                                                                             | every clientUrls suite                                                          |
-| `useHref` / `href()`              | THE way to build group-local links; composes the include mount (`groupHref("/")` = trailing-slash bare mount)                                                                                                        | hook probe "useHref composes the include mount"                                 |
-| `useMount`                        | The include mount, load-bearing internally (`ClientUrlsRoot`) and legal in userland                                                                                                                                  | hook probe                                                                      |
-| `usePathname`                     | ABSOLUTE, mount included — never compare against definition-local `path()` patterns                                                                                                                                  | hook probe                                                                      |
-| `useNavigation` / `useLinkStatus` | Fire for group navs from the global pendingUrl. Placement rule: a reader inside optimistically-swapped content (destination WITH `loading()`) unmounts at click — put status readers in chrome that survives         | hook probe "useLinkStatus and useNavigation report a group nav" (request-gated) |
-| `useFetchLoader`                  | Route-independent lane (`createLoader(fn, fetchable: true)`, addressed by id) — works unchanged; `revalidate()` deliberately NOT consulted (imperative `load()` = explicit freshness). Maintainer settled 2026-07-27 | hook probe "useFetchLoader fetches by loader id"                                |
-| `ErrorBoundary`                   | The in-group error affordance (no `errorBoundary()` DSL by design); render throw contained, group chrome intact                                                                                                      | hook probe "plain React ErrorBoundary"                                          |
-| `useNonce`                        | SSR-only value, identical in and out of groups                                                                                                                                                                       | none needed                                                                     |
+| Hook                              | The group semantics                                                                                                                                                                                                                                                                                    | Pinned by                                                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `useOutlet`                       | Group-layout `pending` is ANY in-flight group intent (same-route included); leaf routes read the enclosing SERVER outlet, where `pending` means something else                                                                                                                                         | `client-urls.test.ts` soft-nav + `client-shop-filters.test.ts` aria-busy        |
+| `useLoader`                       | Reads the group's own projected loaders (stubs by `$$id`); implicit suspension to the inline boundary                                                                                                                                                                                                  | action-reval, transition, stream suites                                         |
+| `useParams`                       | The SERVER route match (materialized `path()` per group route) — agrees with the group's local match because the patterns are identical                                                                                                                                                                | hard-load + param-nav tests both apps                                           |
+| `useHandle` (read)                | Read-only in groups; writes come from loaders (`ctx.use(Meta)`), no `handle()` DSL item                                                                                                                                                                                                                | `client-shop-handles.test.ts`                                                   |
+| `useSearchParams`                 | Tuple; reader carries REAL values during document SSR (live request seeds the SSR store via SSRRenderOptions.search; browser seeds from its own URL — hydration agrees; asserted in RAW HTML). Exception: ppr capture/resume stays search-agnostic. Setter is a same-route write with the content-hold | hook probe "SSR search values, setter write"                                    |
+| `Link`                            | Absolute `to=` only — the mount is hand-composed or built with `useHref`                                                                                                                                                                                                                               | every clientUrls suite                                                          |
+| `useHref` / `href()`              | THE way to build group-local links; composes the include mount (`groupHref("/")` = trailing-slash bare mount)                                                                                                                                                                                          | hook probe "useHref composes the include mount"                                 |
+| `useMount`                        | The include mount, load-bearing internally (`ClientUrlsRoot`) and legal in userland                                                                                                                                                                                                                    | hook probe                                                                      |
+| `usePathname`                     | ABSOLUTE, mount included — never compare against definition-local `path()` patterns                                                                                                                                                                                                                    | hook probe                                                                      |
+| `useNavigation` / `useLinkStatus` | Fire for group navs from the global pendingUrl. Placement rule: a reader inside optimistically-swapped content (destination WITH `loading()`) unmounts at click — put status readers in chrome that survives                                                                                           | hook probe "useLinkStatus and useNavigation report a group nav" (request-gated) |
+| `useFetchLoader`                  | Route-independent lane (`createLoader(fn, fetchable: true)`, addressed by id) — works unchanged; `revalidate()` deliberately NOT consulted (imperative `load()` = explicit freshness). Maintainer settled 2026-07-27                                                                                   | hook probe "useFetchLoader fetches by loader id"                                |
+| `ErrorBoundary`                   | The in-group error affordance (no `errorBoundary()` DSL by design); render throw contained, group chrome intact                                                                                                                                                                                        | hook probe "plain React ErrorBoundary"                                          |
+| `useNonce`                        | SSR-only value, identical in and out of groups                                                                                                                                                                                                                                                         | none needed                                                                     |
 
 ## Settled / not in groups
 
@@ -200,6 +201,19 @@ Separate `./theme` entry, provider sits above the router tree, so groups
 inherit it like any client component. Expected orthogonal; unverified.
 Settles with: confirm orthogonal here (no pin needed) or a one-line probe
 assertion if we want it in the matrix.
+
+### Search reads in ppr static parts (enforcement)
+
+With SSR now seeding real search on the live-fizz path, the one
+search-agnostic lane is the ppr shell capture/resume pair — resume requires
+the tree above the holes to match the captured tree, so both render with an
+empty-search store. A ppr STATIC part that derives markup from
+`useSearchParams` therefore renders its empty branch in the shell and
+hydration-mismatches against the browser's real-URL seed. Documented as a
+rule ("read search in a live hole"); NOT yet enforced. Settles with either:
+capture-time postpone on search reads (the Next-style dynamic bailout — the
+read escapes into a hole automatically), or an accepted documented-rule
+status recorded here.
 
 ### Prefetch tiers inside groups
 

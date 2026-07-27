@@ -71,8 +71,12 @@ function normalizeInit(init: SearchParamsInit): URLSearchParams {
  *
  * The first element is a read-only URLSearchParams from the COMMITTED
  * location — it updates when navigation completes, not during a pending
- * navigation. During SSR it is empty (the server only sends the pathname);
- * it syncs from the browser URL on mount.
+ * navigation. During document SSR it carries the LIVE request's search (the
+ * SSR store is seeded from SSRRenderOptions.search), and the browser's
+ * first render seeds from its own store location (window.location) — the
+ * same URL, so hydration matches. The one search-agnostic lane is the ppr
+ * shell capture/resume pair (its store seeds no search — a ppr STATIC part
+ * must not derive markup from search; read it in a live hole instead).
  *
  * The setter REPLACES the whole search string (React Router semantics) and
  * navigates to the current pathname with the new params — a same-route
@@ -102,10 +106,19 @@ function normalizeInit(init: SearchParamsInit): URLSearchParams {
 export function useSearchParams(): [ReadonlyURLSearchParams, SetSearchParams] {
   const ctx = useContext(NavigationStoreContext);
 
+  // Seed from the store location on BOTH sides (mirrors usePathname): the
+  // SSR store carries the live request's search, the browser store carries
+  // window.location — same URL, so the hydration renders agree. No ctx
+  // (no provider) seeds empty.
   const [searchParams, setSearchParamsState] =
-    useState<ReadonlyURLSearchParams>(() => new URLSearchParams());
+    useState<ReadonlyURLSearchParams>(() => {
+      const location = ctx?.eventController.getState().location as
+        | URL
+        | undefined;
+      return new URLSearchParams(location?.searchParams);
+    });
 
-  const prevSearch = useRef("");
+  const prevSearch = useRef(searchParams.toString());
 
   useEffect(() => {
     if (!ctx) return;

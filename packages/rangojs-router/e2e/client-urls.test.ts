@@ -421,23 +421,24 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
-  test("hook probe: mount, absolute pathname, SSR-empty search, setter write", async ({
+  test("hook probe: mount, absolute pathname, SSR search values, setter write", async ({
     page,
     request,
   }) => {
     using _ = expectNoPageError(page);
 
-    // SSR pin: the server seeds NO search, so the SSR'd HTML renders the
-    // empty branch even when the URL carries ?flavor=mint; the hook syncs on
-    // mount. This is the documented caveat, asserted so it cannot drift
-    // silently.
+    // SSR pin: the live request's search seeds the SSR store
+    // (SSRRenderOptions.search → createSsrEventController), so the SSR'd
+    // HTML carries the REAL search-derived branch — no post-hydration flip.
     const response = await request.get(
       f.url("/client-urls-e2e/hooks?flavor=mint"),
       { headers: { accept: "text/html" } },
     );
     expect(response.ok()).toBe(true);
-    expect(await response.text()).toContain("flavor:none");
+    expect(await response.text()).toContain("flavor:mint");
 
+    // Hydration agrees (waitForHydration fails the test on any hydration
+    // error): browser first render seeds from window.location — same URL.
     await page.goto(f.url("/client-urls-e2e/hooks?flavor=mint"));
     await waitForHydration(page);
     await expect(testId(page, "cu-hooks-flavor")).toHaveText("flavor:mint");

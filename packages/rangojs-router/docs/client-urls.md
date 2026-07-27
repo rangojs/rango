@@ -279,9 +279,12 @@ of them mean. The working set below is pinned dev+prod by the hook probe
 - **`useHref`** is the correct way to build group-local links:
   `groupHref("/items/1")` composes the mount wherever the group is mounted.
   Hand-written absolute `to=` strings also work but hardcode the mount.
-- **`useSearchParams` is SSR-empty**: the server seeds no search, so
-  search-derived branches SSR as their empty state and sync on mount. The
-  setter works in groups as anywhere (same-route write, content-hold).
+- **`useSearchParams` carries real values during SSR**: the live
+  request's search seeds the SSR store, so search-derived branches SSR
+  correctly and hydration agrees (the browser seeds from its own URL). The
+  one search-agnostic lane is the ppr shell capture/resume pair — a ppr
+  STATIC part must not derive markup from search (read it in a live hole).
+  The setter works in groups as anywhere (same-route write, content-hold).
 - **`useNavigation` / `useLinkStatus`** report the CANONICAL navigation
   (global pending), which fires for group-internal navs too. Caveat: a
   reader inside content the optimistic layer swaps (a destination WITH

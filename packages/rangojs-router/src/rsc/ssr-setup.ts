@@ -111,7 +111,16 @@ export function createSsrHtmlStage<TEnv>(
     );
     return {
       render: () =>
-        ssrModule.renderHTML(flight.stream, { ...options.render, streamMode }),
+        // search: the LIVE request's query string, threaded out-of-band into
+        // the SSR pass so useSearchParams sees real values during document
+        // renders. Deliberately not payload metadata: cached/prerendered
+        // payloads replay captured metadata, and search is not route
+        // identity — it must always come from the request being served.
+        ssrModule.renderHTML(flight.stream, {
+          ...options.render,
+          streamMode,
+          search: options.url.search,
+        }),
       ...(options.init && { init: options.init }),
     };
   };

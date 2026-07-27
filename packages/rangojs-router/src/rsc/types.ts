@@ -175,6 +175,16 @@ export interface SSRRenderOptions {
    * - `"allReady"` — await `stream.allReady` before returning.
    */
   streamMode?: import("../router/router-options.js").SSRStreamMode;
+
+  /**
+   * The live request's query string (`url.search`, `?`-prefixed or empty).
+   * Seeds the SSR navigation store so `useSearchParams` (and
+   * `useNavigation().location`) carry real values during document renders.
+   * Out-of-band by design — never payload metadata, which cached/prerendered
+   * payloads replay; search is not route identity. The build-time prerender
+   * pass passes none (its output must stay search-agnostic).
+   */
+  search?: string;
 }
 
 /**

@@ -105,6 +105,14 @@ export interface SSRRenderOptions {
    * - `"allReady"` — await `stream.allReady` before returning.
    */
   streamMode?: import("../router/router-options.js").SSRStreamMode;
+
+  /**
+   * The live request's query string (`?`-prefixed or empty). Seeds the SSR
+   * navigation store location so `useSearchParams` carries real values
+   * during document renders. Absent on the build-time prerender pass — its
+   * output must stay search-agnostic.
+   */
+  search?: string;
 }
 
 /**
@@ -449,7 +457,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, streamMode } = options ?? {};
+    const { nonce, formState, streamMode, search } = options ?? {};
 
     try {
       // Tee the stream:
@@ -461,6 +469,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         createFromReadableStream,
         rscStream: rscStream1,
         nonce,
+        // Live-fizz only: the shell capture pass below (and its resume twin)
+        // never receives search — resume requires the tree above the holes
+        // to match the captured tree, so both must stay search-agnostic.
+        search,
       });
 
       // Get bootstrap script content
