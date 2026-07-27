@@ -32,3 +32,17 @@ export const ClientUrlsStampLoader = createLoader(async () => {
   stampCounter += 1;
   return `stamp:${stampCounter}`;
 }, true);
+
+let pulseCounter = 0;
+
+/**
+ * Route-owned loader for the useRefreshLoaders probe: reads tag it with
+ * refreshGroup and refresh("probe") re-runs it. FETCHABLE is required — the
+ * refresh lane is the loader fetch lane (LoaderStore refetch = load()), in
+ * and out of groups alike. Monotonic so a refresh is observable as a CHANGE
+ * (absolute values are shared across requests).
+ */
+export const ClientUrlsPulseLoader = createLoader(async () => {
+  pulseCounter += 1;
+  return `pulse:${pulseCounter}`;
+}, true);

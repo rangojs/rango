@@ -305,12 +305,20 @@ Not meaningful inside a group (structural, not missing wiring):
 group is one server segment — its answer inside a group does not reflect
 the group's own nesting), `ScrollRestoration` (root-only singleton).
 
-Under consideration (not yet supported in groups): a mount-aware
-programmatic navigation (`useRouter().push()` composes basename but NOT the
-include mount — use `router.push(groupHref("/local"))` today), and a
-group-reachable `useLocationState` write path (the server write is
-`ctx.setLocationState`, which needs a handler; only `<Link state>` reaches
-it from a group today).
+Programmatic navigation is mount-aware through RELATIVE paths:
+`router.push("cart")` (no leading slash) resolves against the include
+mount, while absolute paths stay app-absolute — the mount is scoped, so
+`push("/x")` is never auto-prefixed. `useParams` reports the COMMITTED
+match: during the optimistic window (destination `loading()` presenting) it
+still holds the ORIGIN params, like `useSearchParams` — destination params
+arrive with the canonical commit. `useRefreshLoaders` works in groups with
+the same contract as `useFetchLoader` (the refresh lane IS the fetch lane,
+so tagged loaders must be `fetchable: true`; `revalidate()` is deliberately
+not consulted).
+
+Under consideration (not yet supported in groups): a group-reachable
+`useLocationState` write path (the server write is `ctx.setLocationState`,
+which needs a handler; only `<Link state>` reaches it from a group today).
 
 ## Supported surface
 

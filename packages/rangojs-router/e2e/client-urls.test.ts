@@ -541,6 +541,81 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "cu-hooks-stamp")).not.toHaveText(first!);
   });
 
+  test("hook probe: relative router.push resolves against the include mount", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    // push("items/rel-nav") — no leading slash — joins the mount.
+    await testId(page, "cu-hooks-rel-push").click();
+
+    await expect(testId(page, "client-urls-item-param")).toHaveText("rel-nav");
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/items/rel-nav"));
+  });
+
+  test("hook probe: useRefreshLoaders re-runs a group-tagged read", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-hooks-pulse")).toHaveText(/pulse:\d+/);
+    const first = await testId(page, "cu-hooks-pulse").textContent();
+
+    // The refresh GET deliberately bypasses revalidate() decisions — an
+    // explicit refresh is an explicit freshness request (same settlement as
+    // useFetchLoader).
+    await testId(page, "cu-hooks-refresh-pulse").click();
+    await expect(testId(page, "cu-hooks-pulse")).not.toHaveText(first!, {
+      timeout: 5000,
+    });
+  });
+
+  test("hook probe: useAction tracks a group action's lifecycle", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-hooks-action-state")).toHaveText(
+      "action:idle",
+    );
+
+    await using __ = await expectNoReload(page);
+    let releaseRequest!: () => void;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    // Hold only the action POST; every other request flows.
+    await page.route(
+      () => true,
+      async (route) => {
+        if (route.request().method() !== "POST") return route.continue();
+        await requestGate;
+        return route.continue();
+      },
+    );
+    await testId(page, "cu-hooks-run-action").click();
+    try {
+      await expect(testId(page, "cu-hooks-action-state")).toHaveText(
+        "action:loading",
+        { timeout: 2000 },
+      );
+    } finally {
+      releaseRequest();
+    }
+
+    await expect(testId(page, "cu-hooks-action-state")).toHaveText(
+      "action:idle",
+    );
+  });
+
   test("hook probe: a plain React ErrorBoundary is the in-group error affordance", async ({
     page,
   }) => {

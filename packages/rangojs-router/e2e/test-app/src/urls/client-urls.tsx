@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import {
   clientUrls,
   ErrorBoundary,
   Link,
+  useAction,
   useFetchLoader,
   useHref,
   useLinkStatus,
@@ -14,10 +15,14 @@ import {
   useOutlet,
   useParams,
   usePathname,
+  useRefreshLoaders,
+  useRouter,
   useSearchParams,
 } from "@rangojs/router/client";
+import { bumpClientUrlsCounter } from "../actions.jsx";
 import {
   ClientUrlsItemLoader,
+  ClientUrlsPulseLoader,
   ClientUrlsStampLoader,
 } from "./client-urls.loader.js";
 
@@ -85,14 +90,24 @@ function HooksBoom() {
   );
 }
 
+/** Group-tagged read behind its own boundary: useRefreshLoaders("probe")
+ *  re-runs it with a plain refresh GET — deliberately outside the
+ *  revalidate() decision protocol (an explicit refresh wants freshness). */
+function HooksPulse() {
+  const { data } = useLoader(ClientUrlsPulseLoader, { refreshGroup: "probe" });
+  return <div data-testid="cu-hooks-pulse">{data}</div>;
+}
+
 /**
  * Hook coverage probe for the group model: every navigation/url/status hook a
  * group component can legally call, echoed into testids. Pins the semantics
  * the docs promise — useMount is the include mount, usePathname is ABSOLUTE
- * (mount included), useSearchParams is SSR-empty and its setter is a
- * same-route write, useNavigation/useLinkStatus report the canonical nav
- * in-flight, useFetchLoader is route-independent, and a plain React
- * ErrorBoundary is the in-group error affordance.
+ * (mount included), useSearchParams carries the live request's search during
+ * SSR and its setter is a same-route write, useNavigation/useLinkStatus
+ * report the canonical nav in-flight, useFetchLoader/useRefreshLoaders are
+ * refresh lanes outside the revalidate() protocol, useAction tracks a group
+ * action's lifecycle, relative router.push resolves against the mount, and
+ * a plain React ErrorBoundary is the in-group error affordance.
  */
 function ClientUrlsHooksProbe() {
   const mount = useMount();
@@ -101,6 +116,9 @@ function ClientUrlsHooksProbe() {
   const navState = useNavigation((nav) => nav.state);
   const groupHref = useHref();
   const stamp = useFetchLoader(ClientUrlsStampLoader);
+  const refresh = useRefreshLoaders();
+  const bump = useAction(bumpClientUrlsCounter);
+  const router = useRouter();
 
   return (
     <section data-testid="cu-hooks">
@@ -113,6 +131,10 @@ function ClientUrlsHooksProbe() {
       </div>
       <div data-testid="cu-hooks-nav-state">nav:{navState}</div>
       <div data-testid="cu-hooks-stamp">{stamp.data ?? "stamp:none"}</div>
+      <div data-testid="cu-hooks-action-state">action:{bump.state}</div>
+      <Suspense fallback={<div data-testid="cu-hooks-pulse">pulse:…</div>}>
+        <HooksPulse />
+      </Suspense>
 
       <button
         data-testid="cu-hooks-set-flavor"
@@ -125,6 +147,26 @@ function ClientUrlsHooksProbe() {
         onClick={() => void stamp.load({})}
       >
         Fetch stamp
+      </button>
+      <button
+        data-testid="cu-hooks-refresh-pulse"
+        onClick={() => void refresh("probe")}
+      >
+        Refresh pulse
+      </button>
+      <button
+        data-testid="cu-hooks-run-action"
+        onClick={() => void bumpClientUrlsCounter()}
+      >
+        Run action
+      </button>
+      {/* RELATIVE path: no leading slash — resolves against the include
+          mount (absolute paths stay app-absolute, unchanged). */}
+      <button
+        data-testid="cu-hooks-rel-push"
+        onClick={() => void router.push("items/rel-nav")}
+      >
+        Relative push
       </button>
 
       {/* useHref composes the include mount: this href must resolve to
@@ -164,7 +206,7 @@ function ClientUrlsHooksProbe() {
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
     path("/", ClientUrlsIndex),
-    path("/hooks", ClientUrlsHooksProbe),
+    path("/hooks", ClientUrlsHooksProbe, () => [loader(ClientUrlsPulseLoader)]),
     path("/items/:itemId", ClientUrlsItem, () => [
       loader(ClientUrlsItemLoader),
       loading(<ClientUrlsItemLoading />),

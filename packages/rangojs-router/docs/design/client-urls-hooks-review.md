@@ -46,16 +46,19 @@ Settled:
 - [x] `ScrollRestoration` / `MetaTags` / `Scripts` / `NavigationProvider` — root-level, not group APIs (documented)
 - [x] `useNonce` — orthogonal (SSR-only value, no group interaction)
 
+Settled 2026-07-27 (second batch):
+
+- [x] `useRouter().push` mount-awareness — DECIDED + SHIPPED: relative paths resolve against the mount (absolute stays app-absolute, never auto-prefixed); pinned by hook probe "relative router.push resolves against the include mount"
+- [x] `useRefreshLoaders` — pinned ("re-runs a group-tagged read"); the refresh lane IS the fetch lane, so tagged loaders must be `fetchable: true`; `revalidate()` deliberately not consulted (same settlement as `useFetchLoader`)
+- [x] `useAction` lifecycle — pinned ("tracks a group action's lifecycle": idle → loading under a gated POST → idle)
+- [x] `useParams` optimistic-window — CONFIRMED by-design: committed-match model (origin params during the optimistic window, like `useSearchParams`); documented in client-urls.md
+- [x] `useTheme` — CONFIRMED orthogonal: separate `./theme` entry, provider sits above the router tree, groups inherit it like any client component; no pin needed
+- [x] Prefetch tiers inside groups — SETTLED as demo-pinned: `client-shop` exercises `viewport` (grid cards) and `hover` (related) inside the group with the warmed-click PDP path measured; accepted as the pin
+
 Pending:
 
-- [ ] `useRouter().push` mount-awareness — UNDER CONSIDERATION, decision needed
 - [ ] `useLocationState` write path — UNDER CONSIDERATION, decision needed
 - [ ] `useReverse` local form — OPEN, decision needed
-- [ ] `useRefreshLoaders` — OPEN, needs a pin or documented contract
-- [ ] `useAction` lifecycle in groups — OPEN, needs a pin
-- [ ] `useParams` optimistic-window semantics — OPEN, confirm as by-design
-- [ ] `useTheme` under a group — OPEN, confirm orthogonal or pin
-- [ ] Prefetch tiers inside groups — OPEN, promote demo coverage into the router suite or accept demo-only
 - [ ] Search reads in ppr STATIC parts — OPEN, enforce capture-time postpone or accept the documented rule
 
 ## Settled / pinned
@@ -101,34 +104,16 @@ Structural, not missing wiring. Documented in `docs/client-urls.md`.
 
 ## Under consideration (maintainer-flagged 2026-07-27)
 
-### `useRouter().push()` mount-awareness
+### `useRouter().push()` mount-awareness — SETTLED 2026-07-27
 
-Today `withBasename` (`browser/react/use-router.ts`) composes the app
-basename but NOT the include mount, so `push("/items/x")` from inside a
-group mounted at `/shop` navigates to `/items/x` — outside the group,
-silently.
-
-Hard constraint for any fix: **absolute paths must stay app-absolute.**
-Basename can be auto-prefixed because it is app-global — every absolute path
-in the app lives under it. The mount is scoped: the same component can be
-mounted at different prefixes, and absolute paths legitimately target
-OUTSIDE the mount (cross-group links do this today). Auto-prefixing
-`push("/x")` would silently re-target every existing absolute push inside
-mounted subtrees.
-
-Candidate designs:
-
-1. **Relative-path resolution (recommended).** Non-slash paths resolve
-   against the mount: `push("cart")` inside `include("/shop")` →
-   `/shop/cart`; `push("/cart")` stays `/cart`. Additive — non-slash paths
-   are currently undefined behavior. `useRouter` would capture
-   `useMount()`; the returned object stays stable per component.
-2. **Composition only (today's answer, documented).**
-   `router.push(groupHref("/cart"))` — zero new API, already pinned.
-
-Settles when: a decision is recorded here; option 1 additionally needs
-implementation + hook-probe pins (in-group relative push, absolute push
-unchanged) + docs.
+Decision: relative-path resolution (option 1), shipped. `resolveTarget` in
+`browser/react/use-router.ts`: a path starting with a word character (or
+`./`), never a scheme/query/hash form, joins onto `useMount()` and then
+takes the basename pass; push, replace, and prefetch all resolve. Absolute
+paths stay APP-absolute — the hard constraint held: the mount is scoped
+(unlike basename) and absolute pushes legitimately target outside it, so
+they are never auto-prefixed. Pinned by the hook probe ("relative
+router.push resolves against the include mount", dev+prod).
 
 ### `useLocationState` write path in groups
 
@@ -166,41 +151,33 @@ or declare the local form global-map-only for groups and document it.
 Settles with a decision + (if fixed) writer change + typegen test + probe
 pin.
 
-### `useRefreshLoaders`
+### `useRefreshLoaders` — SETTLED 2026-07-27
 
-Issues a plain GET against the current URL to refresh mounted reads by
-group tag. Inside a clientUrls group that GET re-evaluates held loaders
-under SERVER defaults — the client `revalidate()` decision header is not
-attached by this lane. Probably correct (an explicit refresh wants
-freshness, mirroring the `useFetchLoader` settlement), but it is unpinned.
-Settles with: one hook-probe test tagging a group loader with
-`refreshGroup` and asserting the refresh, plus a docs line stating the
-predicate-bypass is deliberate.
+Pinned ("hook probe: useRefreshLoaders re-runs a group-tagged read"). Two
+recorded facts: the refresh lane IS the fetch lane (`LoaderStore` refetch =
+`load()`), so tagged loaders must be `createLoader(fn, fetchable: true)` —
+a non-fetchable member rejects `refreshGroups()` with an AggregateError, in
+and out of groups alike; and `revalidate()` predicates are deliberately not
+consulted (explicit refresh = explicit freshness, the `useFetchLoader`
+settlement applied).
 
-### `useAction` lifecycle inside groups
+### `useAction` lifecycle inside groups — SETTLED 2026-07-27
 
-The action PATH is settled (decisions ride the POST —
-`client-urls.test.ts` action-revalidation test), but no fixture reads
-`useAction` state inside a group, and its `useOptimistic` pinning vs the
-group's transition-wrapped intent `clear()` is unexercised composition.
-Settles with: an action button in the hook probe driven through
-`useAction`, asserting pending state during the gated POST and settled
-state after.
+Pinned ("hook probe: useAction tracks a group action's lifecycle"): idle →
+loading while the action POST is gated → idle after it settles, inside the
+group, both modes.
 
-### `useParams` during the optimistic window
+### `useParams` during the optimistic window — SETTLED 2026-07-27
 
-While a destination `loading()` presents optimistically, the store still
-holds ORIGIN params (`useParams` reads the committed match). Consistent
-with the committed-location model (`useSearchParams` behaves the same), but
-nothing states it. Settles with: confirm as by-design here + one docs
-sentence; or a pin if we want it frozen.
+Confirmed by-design: the committed-match model. During the optimistic
+window `useParams` holds ORIGIN params, like `useSearchParams`;
+destination params arrive with the canonical commit. Stated in
+`docs/client-urls.md`.
 
-### `useTheme` under a group
+### `useTheme` — SETTLED 2026-07-27
 
-Separate `./theme` entry, provider sits above the router tree, so groups
-inherit it like any client component. Expected orthogonal; unverified.
-Settles with: confirm orthogonal here (no pin needed) or a one-line probe
-assertion if we want it in the matrix.
+Confirmed orthogonal: separate `./theme` entry, provider above the router
+tree, groups inherit it like any client component. No pin.
 
 ### Search reads in ppr static parts (enforcement)
 
@@ -215,10 +192,8 @@ capture-time postpone on search reads (the Next-style dynamic bailout — the
 read escapes into a hole automatically), or an accepted documented-rule
 status recorded here.
 
-### Prefetch tiers inside groups
+### Prefetch tiers inside groups — SETTLED 2026-07-27
 
-The router's own clientUrls suites use `prefetch="none"` everywhere; the
-DEMO exercises `viewport` (grid cards) and `hover` (related products)
-inside the group and the instant warmed-click PDP path is measured there
-(`client-shop` suites). Settles with: either accept demo coverage as the
-pin (record that here) or add a prefetch tier to the router-suite probe.
+Demo coverage accepted as the pin: `client-shop` exercises `viewport`
+(grid cards) and `hover` (related products) inside the group; the
+warmed-click PDP path is measured in its suites.
