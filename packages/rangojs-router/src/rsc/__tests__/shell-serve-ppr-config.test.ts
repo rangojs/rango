@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createElement } from "react";
-import { resolvePprConfig } from "../shell-serve.js";
+import {
+  buildShellKey,
+  resolvePprConfig,
+  shellSearchSeed,
+} from "../shell-serve.js";
 import type { EntryData } from "../../server/context.js";
 import { RangoContext } from "../../server/context.js";
 import { loadManifest, clearManifestCache } from "../../router/manifest.js";
@@ -127,6 +131,21 @@ describe("nameless path() keeps ppr on its manifest entry (issue #714)", () => {
           captureTimeout: 9000,
         });
       },
+    );
+  });
+});
+
+describe("shellSearchSeed — the key's search portion IS the render seed", () => {
+  it("sorts params and prefixes with ? (empty search seeds empty)", () => {
+    const url = new URL("https://shop.example/products?b=2&a=1");
+    expect(shellSearchSeed(url)).toBe("?a=1&b=2");
+    expect(shellSearchSeed(new URL("https://shop.example/products"))).toBe("");
+  });
+
+  it("buildShellKey embeds exactly the seed, so key and render can never disagree", () => {
+    const url = new URL("https://shop.example/products?b=2&a=1");
+    expect(buildShellKey(url)).toBe(
+      `shop.example/products${shellSearchSeed(url)}:shell`,
     );
   });
 });

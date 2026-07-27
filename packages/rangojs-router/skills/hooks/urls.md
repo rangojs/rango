@@ -77,9 +77,11 @@ The first element is a `ReadonlyURLSearchParams` (URLSearchParams without
 mutation methods) from the committed location. During document SSR it
 carries the live request's search (seeded into the SSR store), and the
 browser's first render seeds from its own URL — hydration agrees by
-construction. Exception: a ppr STATIC part renders search-agnostic (the
-capture/resume passes seed no search) — read search inside a live hole
-there.
+construction. On ppr routes search is part of shell identity: the shell key
+embeds the sorted search and the capture/resume renders seed that same
+string, so static-part reads are legal and per-shell-correct. Edges: params
+excluded by `cache.searchParams` are absent in shell renders, and
+`.toString()` renders sorted order.
 
 The setter REPLACES the whole search string (React Router semantics) and
 navigates to the current pathname with the new params — a same-route

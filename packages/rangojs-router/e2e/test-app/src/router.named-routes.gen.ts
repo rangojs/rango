@@ -363,6 +363,7 @@ export const NamedRoutes = {
   shellCacheScoped: "/shell-cache/scoped",
   shellCacheScopedCondition: "/shell-cache/scoped-condition",
   shellCacheScopedOptOut: "/shell-cache/scoped-optout",
+  shellCacheSearchRead: "/shell-cache/search-read",
   shellCacheSettled: "/shell-cache/settled",
   shellCacheSlotHole: "/shell-cache/slot-hole",
   shellCacheSlotUse: "/shell-cache/slot-use",

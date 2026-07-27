@@ -281,9 +281,13 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   Hand-written absolute `to=` strings also work but hardcode the mount.
 - **`useSearchParams` carries real values during SSR**: the live
   request's search seeds the SSR store, so search-derived branches SSR
-  correctly and hydration agrees (the browser seeds from its own URL). The
-  one search-agnostic lane is the ppr shell capture/resume pair — a ppr
-  STATIC part must not derive markup from search (read it in a live hole).
+  correctly and hydration agrees (the browser seeds from its own URL). On
+  ppr routes search is part of SHELL IDENTITY: the key embeds the sorted
+  search and the capture/resume renders seed that same string, so static
+  parts may read search — each query-string variant gets its own shell.
+  Two edges: a param excluded by `cache.searchParams` is absent in shell
+  renders (exclusion declares "does not affect markup"), and `.toString()`
+  renders sorted order while the browser holds the raw URL order.
   The setter works in groups as anywhere (same-route write, content-hold).
 - **`useNavigation` / `useLinkStatus`** report the CANONICAL navigation
   (global pending), which fires for group-internal navs too. Caveat: a

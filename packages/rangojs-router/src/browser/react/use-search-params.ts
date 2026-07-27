@@ -74,9 +74,14 @@ function normalizeInit(init: SearchParamsInit): URLSearchParams {
  * navigation. During document SSR it carries the LIVE request's search (the
  * SSR store is seeded from SSRRenderOptions.search), and the browser's
  * first render seeds from its own store location (window.location) — the
- * same URL, so hydration matches. The one search-agnostic lane is the ppr
- * shell capture/resume pair (its store seeds no search — a ppr STATIC part
- * must not derive markup from search; read it in a live hole instead).
+ * same URL, so hydration matches. Ppr capture/resume renders seed the SHELL
+ * KEY's search (sorted, cache.searchParams filter applied — search is part
+ * of shell identity like every other ppr key), so static-part reads bake
+ * markup consistent with the shell's own key. Two edges: a param EXCLUDED
+ * by cache.searchParams is absent in shell renders but present in the
+ * browser (exclusion declares "does not affect markup" — reading one
+ * anyway hydration-mismatches), and toString() renders sorted order while
+ * the browser holds the raw URL order.
  *
  * The setter REPLACES the whole search string (React Router semantics) and
  * navigates to the current pathname with the new params — a same-route

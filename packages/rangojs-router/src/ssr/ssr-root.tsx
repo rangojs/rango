@@ -63,7 +63,12 @@ async function consumeAsyncGenerator(
  */
 function createSsrEventController(opts: {
   pathname: string;
-  /** Live request query string; absent on capture/resume (search-agnostic). */
+  /**
+   * Query string seeding the store location. Live fizz passes the request's
+   * raw search; ppr capture/resume pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied) so the shell renders what its key
+   * names and both passes agree byte-for-byte.
+   */
   search?: string;
   params?: Record<string, string>;
   handleData?: HandleData;
@@ -148,12 +153,13 @@ export interface SsrRootOptions {
    */
   onPayloadSettled?: () => void;
   /**
-   * The live request's query string (`?`-prefixed or empty). Seeds the SSR
-   * store location so `useSearchParams`/`useNavigation` carry real values
-   * during document renders. Only the live-fizz path passes it: the shell
-   * capture and resume passes must render identical trees above the
-   * postponed holes, so both stay search-agnostic (absent = empty params —
-   * a ppr static part must not derive markup from search).
+   * The query string seeding the SSR store location (`?`-prefixed or
+   * empty), so `useSearchParams`/`useNavigation` carry real values during
+   * document renders. Live fizz passes the request's raw search. The shell
+   * capture and resume passes pass the SHELL KEY's search (sorted,
+   * cache.searchParams filter applied — search is part of shell identity):
+   * a HIT shares the capture's key, so both passes seed the SAME string and
+   * the resume tree matches the captured tree above the postponed holes.
    */
   search?: string;
 }

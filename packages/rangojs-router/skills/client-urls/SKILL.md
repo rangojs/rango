@@ -312,8 +312,9 @@ a hard load of the target URL renders the full route.
   `useRouter().push("cart")` (RELATIVE,
   no leading slash) resolves against the mount; `push("/x")` stays
   app-absolute by design (never auto-prefixed). `useSearchParams` carries REAL
-  values during SSR (live request seeds the SSR store; ppr static parts
-  are the search-agnostic exception).
+  values during SSR (live request seeds the SSR store; on ppr routes the
+  capture/resume renders seed the shell key's own sorted search — search is
+  part of shell identity, so static-part reads are legal).
   `useNavigation`/`useLinkStatus` report the canonical nav, but a reader
   inside optimistically-swapped content (destination WITH `loading()`)
   unmounts at click — put status readers in surviving chrome. Errors: wrap

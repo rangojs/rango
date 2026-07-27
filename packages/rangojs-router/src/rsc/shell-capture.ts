@@ -908,6 +908,15 @@ export function gateFlightForCapture(
 export interface ShellCaptureDescriptor {
   key: string;
   /**
+   * The key's search portion (shellSearchSeed: `?`-prefixed sorted search,
+   * cache.searchParams filter applied, or ""). Seeds the capture render's SSR
+   * store so static-part `useSearchParams` reads bake markup consistent with
+   * the shell's own key; the resume pass derives the identical string from
+   * the HIT request. Computed next to the key so the two cannot drift.
+   * Omitted (build-time bare-pathname captures) = search-less, same as "".
+   */
+  searchSeed?: string;
+  /**
    * The RSC handler's build version (HandlerContext.version), stamped into the
    * stored entry as ShellCacheEntry.buildVersion — the serve-side
    * isValidShellHit gate compares it against the running build so a persistent
@@ -1753,6 +1762,9 @@ async function captureAndStoreShell(
         captureShellHTML(gate.stream, {
           quiesce,
           maxWaitMs: capture.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS,
+          // The shell key's own search seeds the capture render's store —
+          // static-part search reads bake what the key names.
+          search: capture.searchSeed,
         }),
       );
     } catch (error) {
