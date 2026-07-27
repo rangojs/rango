@@ -1,6 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
+import type { NavigateOptionsInternal } from "./browser/types.js";
 import { useRouter } from "./browser/react/use-router.js";
 import { validateExternalRedirect } from "./browser/validate-redirect-origin.js";
 import { resolveSameOriginRedirect } from "./redirect-origin.js";
@@ -19,7 +20,21 @@ import { resolveSameOriginRedirect } from "./redirect-origin.js";
  * runs during the server tree build and cannot throw — it plants this element
  * in the errorFallback slot instead).
  */
-export function LoaderRedirect({ to }: { to: string }): ReactNode {
+export function LoaderRedirect({
+  to,
+  state,
+}: {
+  to: string;
+  /**
+   * Resolved `redirect(url, { state })` record off the loader-result marker.
+   * Delivered as the redirect navigation's state (same application path as
+   * the ServerRedirect lane in navigation-bridge.ts: buildHistoryState
+   * spreads the `__rsc_ls_*` keys into the target entry). `_skipCache`
+   * matches that lane — a cached segment commit must not skip the re-render
+   * that lets useLocationState read the fresh entry.
+   */
+  state?: Record<string, unknown>;
+}): ReactNode {
   const router = useRouter();
   useEffect(() => {
     const origin = window.location.origin;
@@ -33,7 +48,9 @@ export function LoaderRedirect({ to }: { to: string }): ReactNode {
     // so it must not log a "blocked" error on its way to the branch below.
     const sameOrigin = resolveSameOriginRedirect(to, origin);
     if (sameOrigin) {
-      void router.replace(sameOrigin);
+      const options: Omit<NavigateOptionsInternal, "replace"> | undefined =
+        state ? { state, _skipCache: true } : undefined;
+      void router.replace(sameOrigin, options);
       return;
     }
     const externalUrl = validateExternalRedirect(to, origin);
@@ -42,6 +59,6 @@ export function LoaderRedirect({ to }: { to: string }): ReactNode {
     }
     // Redirect targets are request-scoped constants; re-running on identity
     // change only (StrictMode double-invoke is idempotent — same target).
-  }, [to, router]);
+  }, [to, state, router]);
   return null;
 }

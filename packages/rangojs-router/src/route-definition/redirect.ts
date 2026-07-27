@@ -1,9 +1,13 @@
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
-import { markExternalRedirect } from "../redirect-origin.js";
+import {
+  attachRedirectState,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit
@@ -119,6 +123,18 @@ export function redirect(
   };
 
   const response = new Response(null, { status, headers });
+
+  // Also brand the Response itself with the resolved state (see
+  // redirect-origin.ts): the request-context write above misses the payload
+  // when a STREAMING loader throws this Response after metadata flushed, so
+  // the loader lane reads the state off the thrown object and ships it on
+  // the redirect marker instead.
+  if (state) {
+    attachRedirectState(
+      response,
+      resolveLocationStateEntries(Array.isArray(state) ? state : [state]),
+    );
+  }
 
   // Mark an explicit off-host redirect with an out-of-band brand so the
   // same-origin guard (rsc/redirect-guard.ts) lets it through. The brand is a

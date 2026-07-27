@@ -49,7 +49,8 @@ export class StreamedLoaderErrorBoundary extends Component<
       if (notFoundFallback !== undefined) return notFoundFallback as ReactNode;
       const redirect = marked[LOADER_REDIRECT];
       if (redirect !== undefined) {
-        return <LoaderRedirect to={(redirect as { to: string }).to} />;
+        const r = redirect as { to: string; state?: Record<string, unknown> };
+        return <LoaderRedirect to={r.to} state={r.state} />;
       }
       const fallback = marked[LOADER_ERROR_FALLBACK];
       if (fallback !== undefined) return fallback as ReactNode;

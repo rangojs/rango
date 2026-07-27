@@ -1,4 +1,5 @@
-import { createLoader } from "@rangojs/router";
+import { createLoader, redirect } from "@rangojs/router";
+import { CuFlash } from "../location-states.js";
 import { getClientUrlsActionCount } from "./client-urls-action.store.js";
 
 export const ClientUrlsItemLoader = createLoader(async (ctx) => {
@@ -18,6 +19,19 @@ export const ClientUrlsCounterLoader = createLoader(async () => {
  */
 export const ClientUrlsSessionLoader = createLoader(async () => {
   return `session:${getClientUrlsActionCount()}`;
+});
+
+/**
+ * Loader-thrown redirect() WITH state. The await forces settlement during
+ * Flight serialization (the streaming lane — metadata already flushed), so
+ * the state cannot ride payload.metadata.locationState: it must travel with
+ * the redirect itself and merge at the target, action-style.
+ */
+export const ClientUrlsLegacyRedirectLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  throw redirect("/client-urls-e2e/state?from=legacy", {
+    state: CuFlash({ text: "cu-loader-flash" }),
+  });
 });
 
 let stampCounter = 0;

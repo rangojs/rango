@@ -616,6 +616,64 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
+  test("hook probe: a group action writes location state in place", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/state"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-state-note")).toHaveText("note:none");
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-state-set-note").click();
+
+    // Action lane: merge into the CURRENT history entry when the response
+    // settles — no navigation, no remount, same URL.
+    await expect(testId(page, "cu-state-note")).toHaveText("note:from-action");
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/state"));
+  });
+
+  test("hook probe: an action redirect delivers flash state into the group", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/state"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-state-flash")).toHaveText("flash:none");
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-state-action-redirect").click();
+
+    // redirect(url, { state }) from an action: the redirect nav carries the
+    // flash into the target entry (same route, new search).
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/state?saved=1"));
+    await expect(testId(page, "cu-state-flash")).toHaveText(
+      "flash:cu-action-flash",
+    );
+  });
+
+  test("hook probe: a loader redirect carries its location state to the target", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/state"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-state-legacy-link").click();
+
+    // /legacy's loader awaits a tick, then throws redirect() with flash
+    // state. The state settles AFTER payload metadata flushed, so it must
+    // travel with the redirect navigation itself and merge at the target.
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/state?from=legacy"));
+    await expect(testId(page, "cu-state-flash")).toHaveText(
+      "flash:cu-loader-flash",
+    );
+  });
+
   test("hook probe: a plain React ErrorBoundary is the in-group error affordance", async ({
     page,
   }) => {

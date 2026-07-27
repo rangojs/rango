@@ -10,6 +10,7 @@ import {
   useHref,
   useLinkStatus,
   useLoader,
+  useLocationState,
   useMount,
   useNavigation,
   useOutlet,
@@ -19,9 +20,15 @@ import {
   useRouter,
   useSearchParams,
 } from "@rangojs/router/client";
-import { bumpClientUrlsCounter } from "../actions.jsx";
+import {
+  bumpClientUrlsCounter,
+  cuSaveAndRedirect,
+  setCuNote,
+} from "../actions.jsx";
+import { CuFlash, CuNote } from "../location-states.js";
 import {
   ClientUrlsItemLoader,
+  ClientUrlsLegacyRedirectLoader,
   ClientUrlsPulseLoader,
   ClientUrlsStampLoader,
 } from "./client-urls.loader.js";
@@ -203,10 +210,67 @@ function ClientUrlsHooksProbe() {
   );
 }
 
+/**
+ * Location-state probe for the group write lanes. Groups have no handlers, so
+ * the server write surface is exactly: action in-place writes (merge on
+ * settle) and redirect()-carried state (action and loader redirects). The
+ * readers render "none" placeholders so a delivery is observable as a change.
+ */
+function ClientUrlsStateProbe() {
+  const flash = useLocationState(CuFlash);
+  const note = useLocationState(CuNote);
+
+  return (
+    <section data-testid="cu-state">
+      <div data-testid="cu-state-flash">
+        {flash ? `flash:${flash.text}` : "flash:none"}
+      </div>
+      <div data-testid="cu-state-note">
+        {note ? `note:${note.value}` : "note:none"}
+      </div>
+      <button
+        data-testid="cu-state-set-note"
+        onClick={() => void setCuNote("from-action")}
+      >
+        Set note
+      </button>
+      <button
+        data-testid="cu-state-action-redirect"
+        onClick={() => void cuSaveAndRedirect()}
+      >
+        Save and redirect
+      </button>
+      {/* prefetch="none": a warmed prefetch would run the redirect-throwing
+          loader ahead of the click and decouple the click from the request
+          under test (production defaults to viewport prefetch). */}
+      <Link
+        to="/client-urls-e2e/legacy"
+        prefetch="none"
+        data-testid="cu-state-legacy-link"
+      >
+        Open legacy
+      </Link>
+    </section>
+  );
+}
+
+function ClientUrlsLegacy() {
+  // Never renders with data — the loader always redirects. The read keeps
+  // the route on the streaming read-site path so the thrown redirect
+  // surfaces through the loader boundary rather than being ignored.
+  useLoader(ClientUrlsLegacyRedirectLoader);
+  return <div data-testid="cu-legacy">legacy</div>;
+}
+
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
     path("/", ClientUrlsIndex),
     path("/hooks", ClientUrlsHooksProbe, () => [loader(ClientUrlsPulseLoader)]),
+    path("/state", ClientUrlsStateProbe),
+    path("/legacy", ClientUrlsLegacy, () => [
+      loader(ClientUrlsLegacyRedirectLoader),
+      loading(<div data-testid="cu-legacy-loading">Loading legacy</div>),
+    ]),
     path("/items/:itemId", ClientUrlsItem, () => [
       loader(ClientUrlsItemLoader),
       loading(<ClientUrlsItemLoading />),

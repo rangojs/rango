@@ -316,9 +316,18 @@ the same contract as `useFetchLoader` (the refresh lane IS the fetch lane,
 so tagged loaders must be `fetchable: true`; `revalidate()` is deliberately
 not consulted).
 
-Under consideration (not yet supported in groups): a group-reachable
-`useLocationState` write path (the server write is `ctx.setLocationState`,
-which needs a handler; only `<Link state>` reaches it from a group today).
+`useLocationState` works in groups through three write lanes, none of which
+needs a handler: `<Link state={...}>`, action writes
+(`getRequestContext().setLocationState(...)` inside a server action — the
+value merges into the CURRENT history entry when the action settles, no
+navigation), and redirect-carried state (`redirect(url, { state })` thrown
+from an action or a group loader — the state travels WITH the redirect
+navigation and merges at the target entry). The loader lane deliberately does
+NOT ride payload metadata: a streaming loader settles after the metadata
+flush, so its redirect state rides the loader-result marker and is delivered
+by the redirect nav itself, action-style. There is no commit-coupled
+`ctx.setLocationState`-during-render lane in groups — groups have no
+handlers.
 
 ## Supported surface
 
