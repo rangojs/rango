@@ -108,6 +108,11 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 ## Design Notes
 
+- [clientUrls × client hooks — settlement review](./design/client-urls-hooks-review.md) -
+  tracking document for the full `@rangojs/router/client` hook surface
+  against the group model: settled/pinned rows, structural non-fits, and
+  the open decisions with candidate designs. The completion rule: every
+  row settles (pin, documented non-support, or recorded decision)
 - [Client URL implementation plan](./design/client-urls-implementation-plan.md) -
   implementation record for the shipped `clientUrls()` slice, plus deferred
   designs for route-local middleware and route-data optimization
