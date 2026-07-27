@@ -150,6 +150,47 @@ test("build test-app", async () => {
     `Prefetch machinery must live in the eager router chunk, found ${prefetchChunks[0]!.base}`,
   ).toBe(true);
 
+  // Eager-closure guard: the boot closure — the hydrateRoot entry plus its
+  // STATIC imports, transitively — must stay bootstrap + runtime + react +
+  // router (the names getManualChunks owns plus the entry itself). App client
+  // components (clientUrls groups included) are client references loaded on
+  // demand via the reference map's dynamic imports; if one ever lands in the
+  // static closure it ships on EVERY page load. Dynamic import() specifiers
+  // are deliberately not followed — lazy is the contract.
+  // Call-site shape, minification-proof: `hydrateRoot(document` direct or
+  // `(0,x.hydrateRoot)(document` after minification. The react chunk defines
+  // hydrateRoot but never calls it on `document`.
+  const bootEntry = clientFiles.find((f) =>
+    /hydrateRoot[^A-Za-z]{0,4}\(document/.test(f.src),
+  );
+  expect(
+    bootEntry,
+    "client bootstrap entry (hydrateRoot) not found",
+  ).toBeTruthy();
+  const byBase = new Map(clientFiles.map((f) => [f.base, f]));
+  const eagerAllowed = /^(index-|rolldown-runtime-|react-|router-)/;
+  const closure = new Set<string>();
+  const queue = [bootEntry!.base];
+  while (queue.length) {
+    const base = queue.pop()!;
+    if (closure.has(base)) continue;
+    closure.add(base);
+    const src = byBase.get(base)?.src ?? "";
+    // Static forms only: `from"./x.js"` and side-effect `import"./x.js"`.
+    // `import("./x.js")` has a paren before the quote and never matches.
+    for (const m of src.matchAll(
+      /(?:\bfrom|\bimport)\s*["']\.\/([^"']+\.js)["']/g,
+    )) {
+      queue.push(m[1]!);
+    }
+  }
+  const eagerOffenders = [...closure].filter((b) => !eagerAllowed.test(b));
+  expect(
+    eagerOffenders,
+    "The eager client closure must stay bootstrap + react + router. " +
+      "A client-reference/app chunk in the static closure ships on every page load.",
+  ).toEqual([]);
+
   // Bundle guard (Bundle Hygiene rule #1): serialized route data (trie +
   // precomputedEntries) lives in exactly ONE chunk, RSC-only, reachable only
   // via dynamic import(). Test-app is single-router, so exactly one data

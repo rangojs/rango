@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 import { useFixture } from "./fixture";
 import {
   expectNoPageError,
@@ -716,4 +718,38 @@ test.describe("clientUrls vertical slice (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
 
   clientUrlsTests(f);
+
+  // No chunk waterfall on a group landing: the SSR'd document must carry an
+  // EXECUTING module script for the built chunk that holds the group's
+  // components (ssr/preinit-client-references.ts upgrades the Flight preinit
+  // to a script tag in build), so the fetch starts with the first HTML bytes
+  // instead of waiting for hydration's dynamic import. Build-artifact
+  // assertion — production-only by nature (dev serves unbundled modules).
+  test("group-route document preloads the chunk carrying the group's components", async ({
+    request,
+  }) => {
+    const assetsDir = path.resolve("./e2e/test-app/dist/client/assets");
+    const chunk = fs
+      .readdirSync(assetsDir)
+      .find(
+        (name) =>
+          name.endsWith(".js") &&
+          fs
+            .readFileSync(path.join(assetsDir, name), "utf-8")
+            .includes("cu-state-flash"),
+      );
+    expect(
+      chunk,
+      "no client chunk contains the group probe marker",
+    ).toBeTruthy();
+
+    const res = await request.get(f.url("/client-urls-e2e/state"), {
+      headers: { Accept: "text/html" },
+    });
+    const html = await res.text();
+    const escaped = chunk!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    expect(html).toMatch(
+      new RegExp(`<script[^>]*src="/assets/${escaped}"[^>]*type="module"`),
+    );
+  });
 });
