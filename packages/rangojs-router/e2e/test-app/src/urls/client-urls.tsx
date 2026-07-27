@@ -17,9 +17,11 @@ import {
   useParams,
   usePathname,
   useRefreshLoaders,
+  useReverse,
   useRouter,
   useSearchParams,
 } from "@rangojs/router/client";
+import { routes as clientUrlsRoutes } from "./client-urls.gen.js";
 import {
   bumpClientUrlsCounter,
   cuSaveAndRedirect,
@@ -126,6 +128,9 @@ function ClientUrlsHooksProbe() {
   const refresh = useRefreshLoaders();
   const bump = useAction(bumpClientUrlsCounter);
   const router = useRouter();
+  // Local (mount-aware) reverse: the module's OWN gen map is the scope;
+  // useMount() prefixes every result, and "/" collapses to the bare mount.
+  const localReverse = useReverse(clientUrlsRoutes);
 
   return (
     <section data-testid="cu-hooks">
@@ -137,6 +142,9 @@ function ClientUrlsHooksProbe() {
         {`flavor:${searchParams.get("flavor") ?? "none"}`}
       </div>
       <div data-testid="cu-hooks-nav-state">nav:{navState}</div>
+      <div data-testid="cu-hooks-reverse">
+        {`reverse:${localReverse("item", { itemId: "rev-1" })}|${localReverse("index")}`}
+      </div>
       <div data-testid="cu-hooks-stamp">{stamp.data ?? "stamp:none"}</div>
       <div data-testid="cu-hooks-action-state">action:{bump.state}</div>
       <Suspense fallback={<div data-testid="cu-hooks-pulse">pulse:…</div>}>
@@ -262,16 +270,22 @@ function ClientUrlsLegacy() {
   return <div data-testid="cu-legacy">legacy</div>;
 }
 
+/**
+ * Route NAMES feed the per-module gen writer (client-urls.gen.ts): the
+ * default-exported clientUrls module gets its sibling route map, which is
+ * what the mount-aware useReverse(routes) local form consumes. The include
+ * in urls.tsx stays UNNAMED, so these names never enter the global map.
+ */
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
-    path("/", ClientUrlsIndex),
+    path("/", ClientUrlsIndex, { name: "index" }),
     path("/hooks", ClientUrlsHooksProbe, () => [loader(ClientUrlsPulseLoader)]),
     path("/state", ClientUrlsStateProbe),
     path("/legacy", ClientUrlsLegacy, () => [
       loader(ClientUrlsLegacyRedirectLoader),
       loading(<div data-testid="cu-legacy-loading">Loading legacy</div>),
     ]),
-    path("/items/:itemId", ClientUrlsItem, () => [
+    path("/items/:itemId", ClientUrlsItem, { name: "item" }, () => [
       loader(ClientUrlsItemLoader),
       loading(<ClientUrlsItemLoading />),
     ]),

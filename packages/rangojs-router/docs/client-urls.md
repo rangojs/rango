@@ -329,6 +329,16 @@ by the redirect nav itself, action-style. There is no commit-coupled
 `ctx.setLocationState`-during-render lane in groups — groups have no
 handlers.
 
+`useReverse` works in groups through its local form: name your group routes
+(`path("/items/:itemId", Item, { name: "item" })`) and the per-module gen
+writer emits a sibling `<module>.gen.ts` route map for the default-exported
+`clientUrls()` module, exactly as for named `urls()` modules. Import that
+map and `useReverse(routes)` resolves names against the include mount
+(`reverse("item", { itemId })` → `<mount>/items/<itemId>`; the `/` index
+collapses to the bare mount). Route names in a group stay LOCAL unless the
+`include()` itself is named — an unnamed include keeps them out of the
+global map entirely.
+
 ## Supported surface
 
 `clientUrls()` supports:

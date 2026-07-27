@@ -144,7 +144,10 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
       if (/\bcreateRouter\s*[<(]/.test(source)) {
         routerFiles.push(filePath);
       }
-      if (source.includes("urls(")) {
+      // Both spellings, matching the writer's own gate: "clientUrls(" does
+      // NOT contain the lowercase "urls(" token (capital U), so a
+      // clientUrls-only module fails the server-token sniff alone.
+      if (source.includes("urls(") || source.includes("clientUrls(")) {
         urlsFiles.push(filePath);
       }
     } catch (err) {
@@ -255,8 +258,9 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
       if (/\bcreateRouter\s*[<(]/.test(source)) {
         routerEntries.push(filePath);
       }
-      // Also generate per-module types for urls files
-      if (source.includes("urls(")) {
+      // Also generate per-module types for urls files. Both spellings — a
+      // clientUrls-only module has no lowercase "urls(" token (capital U).
+      if (source.includes("urls(") || source.includes("clientUrls(")) {
         writePerModuleRouteTypesForFile(filePath);
       }
     } catch {

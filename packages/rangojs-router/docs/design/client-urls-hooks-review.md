@@ -62,10 +62,16 @@ Settled 2026-07-27 (third batch):
       state (action AND loader redirects); loader redirect state now rides
       the loader-result marker (was silently dropped); no dedicated client
       setter added. Pinned by three hook probes, dev+prod.
+- [x] `useReverse` local form — SETTLED: the original row was STALE — the
+      writer already handles default-exported clientUrls modules (unit-pinned
+      in `client-urls-route-types.test.ts`). The real gap was a `rango
+generate` CLI classify bug ("clientUrls(" has a capital U, so the
+      lowercase `urls(` sniff skipped group modules) — fixed, red-proven.
+      Pinned by hook probe "useReverse local form composes the include
+      mount", dev+prod.
 
 Pending:
 
-- [ ] `useReverse` local form — OPEN, decision needed
 - [ ] Search reads in ppr STATIC parts — OPEN, enforce capture-time postpone or accept the documented rule
 
 ## Settled / pinned
@@ -89,6 +95,7 @@ inside a group"; pins named per row.
 | `ErrorBoundary`                   | The in-group error affordance (no `errorBoundary()` DSL by design); render throw contained, group chrome intact                                                                                                                                                                                        | hook probe "plain React ErrorBoundary"                                                             |
 | `useNonce`                        | SSR-only value, identical in and out of groups                                                                                                                                                                                                                                                         | none needed                                                                                        |
 | `useLocationState`                | Reads work anywhere (history.state). Group writes are the in-place lanes: `<Link state>`, action writes (merge on settle), and `redirect(url, { state })` from actions AND group loaders (loader state rides the result marker, delivered with the redirect nav — the metadata lane misses post-flush) | hook probes "writes location state in place", "action redirect", "loader redirect" + envelope unit |
+| `useReverse` (local form)         | Name group routes and the per-module writer emits the sibling gen map for the default-exported module; `useReverse(routes)` composes the include mount, `/` collapses to the bare mount; names stay local under an unnamed include (CLI classify bug fixed — capital U in "clientUrls(")               | hook probe "useReverse local form composes the include mount" + CLI classify test                  |
 
 ## Settled / not in groups
 
@@ -161,19 +168,32 @@ loader-resolution change).
 
 ## Open
 
-### `useReverse` local (mount-aware) form
+### `useReverse` local (mount-aware) form — SETTLED 2026-07-27
 
-The per-module gen writer (`build/route-types/per-module-writer.ts`) keys
-off NAMED `urls`/`clientUrls` variables; every clientUrls fixture and the
-documented shape use `export default clientUrls(...)` — so no
-`client-urls*.gen.ts` is ever emitted and the mount-aware local form has no
-route map to consume. Group route names DO reach the global map when the
-include is named, so global `href()`/`reverse()` work.
+The original row was STALE: the per-module writer already handles
+default-exported clientUrls modules — `writePerModuleRouteTypesForFile`
+falls back to direct named-path extraction when no `const X = urls(...)`
+variable exists, and `buildCombinedRouteMapWithSearch(path, "default")`
+resolves inline default exports; both were unit-pinned in
+`client-urls-route-types.test.ts` before this review. (Guard against this:
+the "Don't overstate findings" rule — the row was written without checking
+those tests.)
 
-Options: teach the writer to emit for default-exported clientUrls modules;
-or declare the local form global-map-only for groups and document it.
-Settles with a decision + (if fixed) writer change + typegen test + probe
-pin.
+The REAL gap was one classify sniff: `rango generate` gated urls files on
+`source.includes("urls(")`, and `"clientUrls("` does not contain that
+token — the U is capital — so the CLI silently skipped clientUrls-only
+modules (the writer's own gate at `per-module-writer.ts:74` checks both
+spellings, which is why direct calls and the vite discovery lane worked;
+`router-discovery.ts` even documents this exact sub-identifier trap).
+Fixed at both bin sites (`src/bin/rango.ts`), red-proven by the spawned-CLI
+test "classifies a clientUrls-only module".
+
+Pinned end-to-end: named routes in the hook-probe fixture emit
+`client-urls.gen.ts`, and `useReverse(routes)` composes the include mount
+("useReverse local form composes the include mount", dev+prod — including
+the `/`-index collapse to the bare mount). Names stay LOCAL under the
+unnamed include: the run confirmed zero drift in any
+`router.named-routes.gen.ts`.
 
 ### `useRefreshLoaders` — SETTLED 2026-07-27
 

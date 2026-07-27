@@ -616,6 +616,22 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
+  test("hook probe: useReverse local form composes the include mount", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+
+    // The module's own client-urls.gen.ts map is the scope; the include
+    // mount prefixes results, and the "/" index collapses to the bare mount
+    // (no trailing slash) — same contract as ctx.reverse(".index").
+    await expect(testId(page, "cu-hooks-reverse")).toHaveText(
+      "reverse:/client-urls-e2e/items/rev-1|/client-urls-e2e",
+    );
+  });
+
   test("hook probe: a group action writes location state in place", async ({
     page,
   }) => {
