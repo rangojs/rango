@@ -262,6 +262,53 @@ request, a layout run-count DOM stamp), and the suite asserts the header
 advances on a within-group navigation AND on a held-loader tab switch while
 the layout stamp holds.
 
+## Client hooks inside a group
+
+Group components are ordinary client components, so every hook from
+`@rangojs/router/client` is CALLABLE — but the group model changes what some
+of them mean. The working set below is pinned dev+prod by the hook probe
+(`e2e/test-app/src/urls/client-urls.tsx` `ClientUrlsHooksProbe` +
+`e2e/client-urls.test.ts` "hook probe" tests):
+
+- **Core reads** — `useOutlet`, `useLoader`, `useParams`, `useHandle`,
+  `useSearchParams` — first-class (the rest of this doc).
+- **`useMount`** returns the include mount (`/admin` for
+  `include("/admin", …)`); **`usePathname` is ABSOLUTE** — mount included —
+  never the definition-local path the group's patterns matched. Don't
+  compare it against your own `path()` patterns under a non-root mount.
+- **`useHref`** is the correct way to build group-local links:
+  `groupHref("/items/1")` composes the mount wherever the group is mounted.
+  Hand-written absolute `to=` strings also work but hardcode the mount.
+- **`useSearchParams` is SSR-empty**: the server seeds no search, so
+  search-derived branches SSR as their empty state and sync on mount. The
+  setter works in groups as anywhere (same-route write, content-hold).
+- **`useNavigation` / `useLinkStatus`** report the CANONICAL navigation
+  (global pending), which fires for group-internal navs too. Caveat: a
+  reader inside content the optimistic layer swaps (a destination WITH
+  `loading()`) unmounts at click time — put status readers in chrome that
+  survives the swap.
+- **`useFetchLoader`** works unchanged: the fetch lane addresses a
+  `createLoader(fn, fetchable: true)` definition by id, with no route or
+  group mechanics involved. It deliberately does NOT consult `revalidate()`
+  predicates — those govern nav/action re-runs of held data; an imperative
+  `load()` is an explicit freshness request.
+- **Errors**: wrap throw-capable components in the client `ErrorBoundary`
+  (or any React boundary) — the group chrome stays intact. There is no
+  `errorBoundary()` DSL item by design; the server-tree boundary around the
+  mount owns the route-level envelope.
+
+Not meaningful inside a group (structural, not missing wiring):
+`ParallelOutlet` (groups have no parallel slots), `useSegments` (the whole
+group is one server segment — its answer inside a group does not reflect
+the group's own nesting), `ScrollRestoration` (root-only singleton).
+
+Under consideration (not yet supported in groups): a mount-aware
+programmatic navigation (`useRouter().push()` composes basename but NOT the
+include mount — use `router.push(groupHref("/local"))` today), and a
+group-reachable `useLocationState` write path (the server write is
+`ctx.setLocationState`, which needs a handler; only `<Link state>` reaches
+it from a group today).
+
 ## Supported surface
 
 `clientUrls()` supports:

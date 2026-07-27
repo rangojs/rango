@@ -420,6 +420,140 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       "false",
     );
   });
+
+  test("hook probe: mount, absolute pathname, SSR-empty search, setter write", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // SSR pin: the server seeds NO search, so the SSR'd HTML renders the
+    // empty branch even when the URL carries ?flavor=mint; the hook syncs on
+    // mount. This is the documented caveat, asserted so it cannot drift
+    // silently.
+    const response = await request.get(
+      f.url("/client-urls-e2e/hooks?flavor=mint"),
+      { headers: { accept: "text/html" } },
+    );
+    expect(response.ok()).toBe(true);
+    expect(await response.text()).toContain("flavor:none");
+
+    await page.goto(f.url("/client-urls-e2e/hooks?flavor=mint"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-hooks-flavor")).toHaveText("flavor:mint");
+
+    // useMount is the include mount; usePathname is ABSOLUTE (mount
+    // included) — group code must not treat it as definition-local.
+    await expect(testId(page, "cu-hooks-mount")).toHaveText(
+      "mount:/client-urls-e2e",
+    );
+    await expect(testId(page, "cu-hooks-pathname")).toHaveText(
+      "pathname:/client-urls-e2e/hooks",
+    );
+
+    // Setter: a same-route write inside the group (wholesale replace).
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-hooks-set-flavor").click();
+    await expect(testId(page, "cu-hooks-flavor")).toHaveText("flavor:mint");
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/hooks?flavor=mint"));
+  });
+
+  test("hook probe: useHref composes the include mount", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-hooks-href-link").click();
+
+    // groupHref("/items/href-nav") resolved under the include mount.
+    await expect(testId(page, "client-urls-item-param")).toHaveText("href-nav");
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/items/href-nav"));
+  });
+
+  test("hook probe: useLinkStatus and useNavigation report a group nav", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-hooks-link-status")).toHaveText("false");
+    await expect(testId(page, "cu-hooks-nav-state")).toHaveText("nav:idle");
+
+    await using __ = await expectNoReload(page);
+    let releaseRequest!: () => void;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequest = resolve;
+    });
+    // URL-predicate matcher: gate exactly the index partial request. The
+    // nav target is groupHref("/") — the TRAILING-SLASH form of the bare
+    // mount — so normalize before comparing (an endsWith on the bare path
+    // silently never matches and the test only passes by racing the fetch).
+    await page.route(
+      (url) => url.pathname.replace(/\/$/, "").endsWith("/client-urls-e2e"),
+      async (route) => {
+        await requestGate;
+        await route.continue();
+      },
+    );
+    await testId(page, "cu-hooks-status-link").click();
+    try {
+      // Both global signals fire for a group-internal nav while the request
+      // is held; the probe stays mounted because the index destination has
+      // no loading() (no optimistic swap).
+      await expect(testId(page, "cu-hooks-link-status")).toHaveText("true", {
+        timeout: 2000,
+      });
+      await expect(testId(page, "cu-hooks-nav-state")).toHaveText(
+        "nav:loading",
+        { timeout: 2000 },
+      );
+    } finally {
+      releaseRequest();
+    }
+
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+    // groupHref("/") composes mount + module index and yields the
+    // trailing-slash form of the bare mount.
+    await expect(page).toHaveURL(f.url(`${INDEX_PATH}/`));
+  });
+
+  test("hook probe: useFetchLoader fetches by loader id from inside the group", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-hooks-stamp")).toHaveText("stamp:none");
+
+    // The fetch lane is route-independent — no group mechanics involved.
+    // revalidate() predicates are deliberately NOT consulted: an imperative
+    // load() is an explicit freshness request.
+    await testId(page, "cu-hooks-fetch-stamp").click();
+    await expect(testId(page, "cu-hooks-stamp")).toHaveText(/stamp:\d+/);
+    const first = await testId(page, "cu-hooks-stamp").textContent();
+
+    await testId(page, "cu-hooks-fetch-stamp").click();
+    await expect(testId(page, "cu-hooks-stamp")).not.toHaveText(first!);
+  });
+
+  test("hook probe: a plain React ErrorBoundary is the in-group error affordance", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/client-urls-e2e/hooks"));
+    await waitForHydration(page);
+
+    await testId(page, "cu-hooks-boom").click();
+
+    // The boundary catches the render throw; the group chrome around it
+    // stays intact (no route-level swap, no navigation).
+    await expect(testId(page, "cu-hooks-error-fallback")).toBeVisible();
+    await expect(testId(page, "client-urls-layout")).toBeVisible();
+    await expect(page).toHaveURL(f.url("/client-urls-e2e/hooks"));
+  });
 }
 
 test.describe("clientUrls vertical slice", () => {
