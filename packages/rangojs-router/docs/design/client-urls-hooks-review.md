@@ -75,7 +75,45 @@ generate` CLI classify bug ("clientUrls(" has a capital U, so the
       the key's own search (`shellSearchSeed`) and static-part reads are
       LEGAL. Pinned by the shell-cache probe, dev+prod, red-proven.
 
-Pending: none — every row is settled.
+Surface re-audit 2026-07-27 (fourth batch — full export sweep of `.`,
+`./client`, `./client` react-server, `./theme`, `./browser` against this
+doc; maintainer-requested "so we don't miss anything"). New OPEN rows, each
+with its settling action:
+
+- [ ] `Outlet` (the component: `fallback` prop, named-slot form) — only the
+      `useOutlet` HOOK has a row. Settle: state the in-group semantics of
+      rendering `<Outlet>` itself (leaf routes see the server outlet) or
+      fold into the useOutlet row explicitly.
+- [ ] `invalidateClientCache` / `keepClientCache` (client seat, root entry
+      `src/index.ts:245`) — browser cache controls, ZERO review coverage.
+      Settle: confirm they behave identically inside groups (history cache /
+      prefetch map are global) + pin or document.
+- [ ] `useRouter().refresh()` / `back()` / `forward()` — the mount-awareness
+      row settled only push/replace/prefetch. Settle: confirm the three
+      URL-less methods are group-orthogonal; one doc line.
+- [ ] `Script` handle (per-route script descriptor; distinct from the
+      root-level `Scripts` renderer) — no row. Settle: can a group loader
+      push it (`ctx.use(Script)`)? Pin or document alongside the handle
+      write lanes.
+- [ ] `createHandle` / `isHandle` (react-server client seat) + `createLoader`
+      (client seat) + `createLocationState` — definition FACTORIES, only
+      their read/consume hooks have rows. Settle: one confirm row that
+      module-level definitions are placement-agnostic (plugin-keyed ids).
+- [ ] `MountContext` (raw context export) — settle: declare it
+      internal/advanced (useMount is the API) or pin direct consumption.
+- [ ] `ThemeProvider` / `ThemeScript` / `THEME_DEFAULTS` / `THEME_COOKIE` —
+      the useTheme row names only the hook. Settle: extend that row to the
+      full `./theme` surface (provider/script are root-level by design).
+- [ ] `initBrowserApp` / `Rango` (`./browser` entry) — app bootstrap.
+      Settle: declare out of group scope (runs above everything) in one line.
+
+Doc-drift found by the same sweep (sync fixes, no decisions needed):
+client-urls.md's "Client hooks inside a group" section omits identifiers
+this doc claims it states — `MetaTags`/`Scripts`/`NavigationProvider` (row
+says "documented there"), `useScrollRestoration` (only the component is
+named), `useNonce`, `useAction`, `useTheme`, `Breadcrumbs`, the
+prefetch-tier statement — and never states the `useHandle` read-only
+restriction its row pins.
 
 ## Settled / pinned
 
