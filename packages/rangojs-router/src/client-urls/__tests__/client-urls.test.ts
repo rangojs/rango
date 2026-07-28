@@ -38,14 +38,40 @@ function loader(id: string): LoaderDefinition<unknown> {
 }
 
 describe("clientUrls", () => {
-  it("rejects unsupported path options at the type boundary", () => {
-    const build = () =>
+  it("accepts the ppr path option and validates its shape", () => {
+    // ppr is a PROJECTED option (performance surface): true and the JSON
+    // PartialPrerenderProps form pass; malformed values fail at DSL time in
+    // the authoring module.
+    expect(() =>
       clientUrls(({ path }) => [
-        // @ts-expect-error ppr is not part of the client projection.
         path("/ppr", HomePage, { ppr: true }),
-      ]);
+        path("/ppr-config", HomePage, {
+          ppr: { ttl: 300, swr: 120, tags: ["shop"] },
+        }),
+      ]),
+    ).not.toThrow();
 
-    expect(build).toBeTypeOf("function");
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/ppr", HomePage, {
+          ppr: { ttl: "300" } as unknown as { ttl: number },
+        }),
+      ]),
+    ).toThrow(/ppr\.ttl must be a finite number/);
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/ppr", HomePage, {
+          ppr: { tags: [""] } as unknown as { tags: string[] },
+        }),
+      ]),
+    ).toThrow(/ppr\.tags must be an array of non-empty strings/);
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/ppr", HomePage, {
+          ppr: { when: () => true } as unknown as { ttl: number },
+        }),
+      ]),
+    ).toThrow(/ppr received unsupported key "when"/);
   });
 
   it("matches root and dynamic routes without executing component values", () => {

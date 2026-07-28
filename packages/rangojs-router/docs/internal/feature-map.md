@@ -192,7 +192,7 @@ opt-out, path-use position only, no `when`), and a client-run per-loader
 browser and its decision rides the `X-Rango-Client-Reval` header, honored by
 synthesized predicates on the materialized loader stubs —
 `client-urls/revalidation-protocol.ts`). It requires named client component
-values and projects only the `name`, `search`, and `trailingSlash` path
+values and projects only the `name`, `search`, `trailingSlash`, and `ppr` path
 options. It mounts through
 `include()` in the canonical `urls()` tree (the composition baseline —
 URL/name prefixes, wrapping RSC layouts, and middleware scope derive from the

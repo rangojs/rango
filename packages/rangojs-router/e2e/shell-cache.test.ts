@@ -419,6 +419,49 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-price")).toContainText("Live price:");
   });
 
+  // Group shell caching: `ppr` is a PROJECTED clientUrls path option — the
+  // materialized server route carries it on its manifest entry, so the
+  // capture/serve lanes engage exactly as for a hand-written ppr page. The
+  // group's static markup (its useSearchParams read included — search is
+  // shell identity) freezes into the prelude; the loader reader under
+  // loading() stays the live hole and advances per request.
+  test("clientUrls group route with ppr: MISS -> HIT, frozen group shell with its search, live loader hole, clean hydration", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/client-urls-e2e/ppr?filter=shoes");
+    const miss = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+    expect(await miss.text()).toContain("filter:shoes");
+
+    await warmToHit(page.request, url);
+
+    // Frozen prelude: group static markup + the key's own search value +
+    // the loading() fallback flush first; the live value lands later in the
+    // same body.
+    const { firstChunk, html } = await measureFirstChunk(url);
+    expect(firstChunk).toContain("group shell static");
+    expect(firstChunk).toContain("filter:shoes");
+    expect(firstChunk).toContain("Loading ppr");
+    expect(firstChunk).not.toContain("live:");
+    expect(html).toMatch(/live:\d+/);
+
+    // Liveness under the frozen shell: the hole advances per request.
+    const seq = (h: string) => Number(h.match(/live:(\d+)/)?.[1]);
+    const again = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(again.headers()["x-rango-shell"]).toBe("HIT");
+    expect(seq(await again.text())).toBeGreaterThan(seq(html)!);
+
+    // Browser HIT: hydrates with zero errors against the frozen prelude and
+    // the group stays live.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "cu-ppr-filter")).toHaveText("filter:shoes");
+    await expect(testId(page, "cu-ppr-value")).toContainText("live:");
+  });
+
   // --- Capture data snapshot: shell content drift parity. ---
   //
   // /shell-cache/drift bakes a value from a SHORT-ttl cache() (the "drift"

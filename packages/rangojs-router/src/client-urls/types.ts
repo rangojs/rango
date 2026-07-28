@@ -28,7 +28,10 @@ export type ClientUrlUse = () => ClientUrlItems;
 export type ClientPathOptions<
   TName extends string = string,
   TSearch extends SearchSchema = SearchSchema,
-> = Pick<PathOptions<TName, TSearch>, "name" | "search" | "trailingSlash">;
+> = Pick<
+  PathOptions<TName, TSearch>,
+  "name" | "search" | "trailingSlash" | "ppr"
+>;
 
 export type ClientPathFn = <
   const TPattern extends string,

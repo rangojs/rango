@@ -34,6 +34,19 @@ export const ClientUrlsLegacyRedirectLoader = createLoader(async () => {
   });
 });
 
+let pprSeq = 0;
+
+/**
+ * Live hole under the group's frozen ppr shell: delayed so the stored
+ * prelude clearly beats it on a HIT; monotonic so per-request liveness is
+ * assertable while the shell above it stays frozen.
+ */
+export const ClientUrlsPprLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  pprSeq += 1;
+  return { seq: pprSeq };
+});
+
 let stampCounter = 0;
 
 /**

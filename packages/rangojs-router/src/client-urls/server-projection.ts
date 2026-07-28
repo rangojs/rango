@@ -7,7 +7,11 @@ import {
   type InterceptSelectorContext,
 } from "../server/context.js";
 import type { LoaderDefinition, TrailingSlashMode } from "../types.js";
-import type { PathOptions, UrlPatterns } from "../urls/pattern-types.js";
+import type {
+  PartialPrerenderProps,
+  PathOptions,
+  UrlPatterns,
+} from "../urls/pattern-types.js";
 import type { PathHelpers } from "../urls/path-helper-types.js";
 import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
@@ -45,6 +49,14 @@ const PROJECTION_OPTIONS = new Set<PropertyKey>([
   "name",
   "search",
   "trailingSlash",
+  "ppr",
+]);
+
+const PPR_NUMBER_KEYS = new Set<PropertyKey>([
+  "ttl",
+  "swr",
+  "captureTimeout",
+  "maxSnapshotBytes",
 ]);
 
 const clientUrlProjections = new Map<string, ClientUrlProjection>();
@@ -59,6 +71,15 @@ export type ClientUrlDefinitionSource = ClientUrlReference | ClientUrlPatterns;
 export interface ClientUrlProjectionOptions {
   readonly search?: Readonly<Record<string, SearchSchemaValue>>;
   readonly trailingSlash?: TrailingSlashMode;
+  /**
+   * The `ppr` path option, JSON-projected. Materialization passes it onto
+   * the group route's server `path()` verbatim, so the manifest entry
+   * carries it and the runtime shell capture/serve lanes engage exactly as
+   * for a hand-written server route (search is part of shell identity —
+   * the capture render seeds the key's own search, so group static parts
+   * may read useSearchParams).
+   */
+  readonly ppr?: true | Readonly<PartialPrerenderProps>;
 }
 
 export interface ClientUrlProjectionRoute {
@@ -138,9 +159,6 @@ function serializeOptions(
   if (!source) return Object.freeze({});
 
   for (const key of Reflect.ownKeys(source)) {
-    if (key === "ppr") {
-      throw projectionError(route, 'path option "ppr" is not supported');
-    }
     if (!PROJECTION_OPTIONS.has(key)) {
       throw projectionError(
         route,
@@ -152,6 +170,7 @@ function serializeOptions(
   const options: {
     search?: Readonly<Record<string, SearchSchemaValue>>;
     trailingSlash?: TrailingSlashMode;
+    ppr?: true | Readonly<PartialPrerenderProps>;
   } = {};
   if (source.search !== undefined) {
     options.search = serializeSearchSchema(route, source.search);
@@ -159,7 +178,70 @@ function serializeOptions(
   if (source.trailingSlash !== undefined) {
     options.trailingSlash = source.trailingSlash;
   }
+  if (source.ppr !== undefined) {
+    options.ppr = serializePpr(route, source.ppr);
+  }
   return Object.freeze(options);
+}
+
+/**
+ * Serialize the `ppr` path option for the projection. The DSL already
+ * validated shape in the authoring module (validateClientPpr in
+ * client-urls.ts); this re-validates independently and re-copies
+ * defensively — the projection must carry only JSON, and the copy keeps a
+ * later mutation of the consumer's options object from leaking into the
+ * frozen projection.
+ */
+function serializePpr(
+  route: ClientUrlRouteRecord,
+  source: unknown,
+): true | Readonly<PartialPrerenderProps> {
+  if (source === true) return true;
+  if (typeof source !== "object" || source === null || Array.isArray(source)) {
+    throw projectionError(
+      route,
+      'path option "ppr" must be true or a PartialPrerenderProps object',
+    );
+  }
+  const out: {
+    ttl?: number;
+    swr?: number;
+    captureTimeout?: number;
+    maxSnapshotBytes?: number;
+    tags?: readonly string[];
+  } = {};
+  for (const key of Reflect.ownKeys(source)) {
+    if (PPR_NUMBER_KEYS.has(key)) {
+      const value = (source as Record<PropertyKey, unknown>)[key];
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw projectionError(
+          route,
+          `path option "ppr.${String(key)}" must be a finite number`,
+        );
+      }
+      out[key as "ttl" | "swr" | "captureTimeout" | "maxSnapshotBytes"] = value;
+      continue;
+    }
+    if (key === "tags") {
+      const tags = (source as { tags: unknown }).tags;
+      if (
+        !Array.isArray(tags) ||
+        tags.some((tag) => typeof tag !== "string" || tag === "")
+      ) {
+        throw projectionError(
+          route,
+          'path option "ppr.tags" must be an array of non-empty strings',
+        );
+      }
+      out.tags = Object.freeze([...tags]);
+      continue;
+    }
+    throw projectionError(
+      route,
+      `path option "ppr.${String(key)}" is not supported`,
+    );
+  }
+  return Object.freeze(out) as Readonly<PartialPrerenderProps>;
 }
 
 function serializeTransition(
@@ -392,6 +474,15 @@ function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
     ...(route.options.search ? { search: { ...route.options.search } } : {}),
     ...(route.options.trailingSlash
       ? { trailingSlash: route.options.trailingSlash }
+      : {}),
+    // ppr rides onto the materialized server path() verbatim: path-helper
+    // stamps it on the manifest entry, so resolvePprConfig classifies the
+    // group route exactly like a hand-written ppr page. Shallow-copy the
+    // object form — path-helper receives a mutable PathOptions.
+    ...(route.options.ppr !== undefined
+      ? {
+          ppr: route.options.ppr === true ? true : { ...route.options.ppr },
+        }
       : {}),
   };
 }

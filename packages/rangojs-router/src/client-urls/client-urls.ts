@@ -31,6 +31,56 @@ const TRANSITION_CONFIG_KEYS = new Set<PropertyKey>([
   "viewTransition",
 ]);
 
+const PPR_NUMBER_KEYS = new Set<PropertyKey>([
+  "ttl",
+  "swr",
+  "captureTimeout",
+  "maxSnapshotBytes",
+]);
+
+/**
+ * DSL-time shape check for the projected `ppr` path option. Mirrors
+ * PartialPrerenderProps but validates by hand: the value must survive the
+ * JSON projection to the server, so only `true` or a plain object of finite
+ * numbers plus a string[] `tags` is legal. The projection serializer
+ * (server-projection.ts) re-validates independently — this copy exists so a
+ * bad value fails in the authoring module with a DSL-shaped message.
+ */
+function validateClientPpr(value: unknown): void {
+  if (value === true) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      "clientUrls() path() ppr must be true or a PartialPrerenderProps object",
+    );
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    if (PPR_NUMBER_KEYS.has(key)) {
+      const n = (value as Record<PropertyKey, unknown>)[key];
+      if (typeof n !== "number" || !Number.isFinite(n)) {
+        throw new Error(
+          `clientUrls() path() ppr.${String(key)} must be a finite number`,
+        );
+      }
+      continue;
+    }
+    if (key === "tags") {
+      const tags = (value as { tags: unknown }).tags;
+      if (
+        !Array.isArray(tags) ||
+        tags.some((tag) => typeof tag !== "string" || tag === "")
+      ) {
+        throw new Error(
+          "clientUrls() path() ppr.tags must be an array of non-empty strings",
+        );
+      }
+      continue;
+    }
+    throw new Error(
+      `clientUrls() path() ppr received unsupported key ${JSON.stringify(String(key))}`,
+    );
+  }
+}
+
 const UNSUPPORTED_HELPERS = new Set([
   "include",
   "parallel",
@@ -248,6 +298,9 @@ function createHelpers(): ClientUrlHelpers {
       throw new Error(
         'clientUrls() path() trailingSlash must be "always", "never", or "ignore"',
       );
+    }
+    if (options?.ppr !== undefined) {
+      validateClientPpr(options.ppr);
     }
 
     const items = use ? runUse(use, "path use") : [];
