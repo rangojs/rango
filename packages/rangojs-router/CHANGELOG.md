@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.8.0 (2026-07-28)
+
+Edge-only ppr: `CFCacheStore` no longer requires a KV namespace for shell
+caching. No breaking API changes; two new store-surface additions
+(`putShell`'s `"uncacheable"` result, `SegmentCacheStore.tagHistoryInert`).
+
+### Highlights
+
+#### Edge-only ppr — KV-less `CFCacheStore` stores shells L1-only ([#819](https://github.com/ivogt/vite-rsc/pull/819))
+
+Previously a `CFCacheStore` without a KV binding silently disabled ppr:
+`getShell`/`putShell` no-oped, the capture scheduler never rendered, and
+every `ppr` route was a permanent `x-rango-shell: MISS`. Now the same
+config captures and serves shells from the per-colo Cache API alone:
+
+```ts
+cache: (env, ctx) => ({
+  store: new CFCacheStore({ ctx }), // no `kv` — shells are per-colo
+}),
+```
+
+First request MISS + background capture, subsequent requests in that colo
+HIT — the stored prelude flushes in the first bytes, `loading()` holes
+stream live. Each colo warms its own shell; that is the edge-only trade
+(no cross-colo KV promotion). `workers.dev`/`pages.dev` previews work too
+(the store keys L1 under its internal fallback host there).
+
+Tag eviction mirrors the data families' purge-mode stance. With
+`tagPurge`, purge-by-tag evicts shell L1 entries (they already carry the
+namespaced `Cache-Tag` tokens) and the per-request memo keeps
+read-your-own-writes; without it, a tagged shell warns once that
+invalidation cannot reach it and expires by ttl+swr. Untagged edge-only
+ppr is warning-free. With KV bound, nothing changes — shells keep the
+durable generation-marker check.
+
+Three KV-less boundaries are hard, not degraded: tagged build-manifest
+shells are declined outright (`SegmentCacheStore.tagHistoryInert` — the
+immutable asset could never be evicted, so the route keeps
+runtime-capture semantics); a tag set whose `Cache-Tag` header overflows
+is acknowledged `"uncacheable"` from `putShell` and the capture scheduler
+backs the key off instead of re-rendering per MISS; and
+`tagInvalidationTtl` is dead config without KV — it no longer caps L1
+retention and its KV-floor validation warning no longer fires.
+
+### Internal
+
+- New dedicated e2e config (`tests/cloudflare-basic/playwright.edge-only.config.ts`)
+  boots the app with the KV binding dropped and pins MISS → capture → HIT,
+  clean HIT hydration, and the tagged build-shell decline, dev + production.
+
 ## 0.7.0 (2026-07-28)
 
 Shell caching comes to clientUrls groups, `stream: "navigation"` loaders
