@@ -5,19 +5,38 @@
  * chunk boundary — decode identically.
  *
  * @vitejs/plugin-rsc/rsc is a virtual module unresolvable in the unit runner;
- * it is mocked only so segment-codec.ts can be imported (streamToString itself
- * uses none of it).
+ * it is mocked so segment-codec.ts can be imported and decoder arguments can be
+ * inspected (streamToString itself uses none of it).
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+
+const {
+  createFromReadableStreamSpy,
+  createTemporaryReferenceSetSpy,
+  temporaryReferences,
+} = vi.hoisted(() => {
+  const temporaryReferences = {};
+  return {
+    createFromReadableStreamSpy: vi.fn(async () => "decoded"),
+    createTemporaryReferenceSetSpy: vi.fn(() => temporaryReferences),
+    temporaryReferences,
+  };
+});
 
 vi.mock("@vitejs/plugin-rsc/rsc", () => ({
   renderToReadableStream: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-  createFromReadableStream: vi.fn(),
+  createTemporaryReferenceSet: createTemporaryReferenceSetSpy,
+  createFromReadableStream: createFromReadableStreamSpy,
 }));
 
-import { streamToString } from "../segment-codec.js";
+import {
+  deserializeResult,
+  deserializeSegments,
+  rscDeserialize,
+  streamToString,
+} from "../segment-codec.js";
+import type { SerializedSegmentData } from "../types.js";
 
 function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   let i = 0;
@@ -57,5 +76,47 @@ describe("streamToString (C3)", () => {
       new TextEncoder().encode("!"),
     ];
     expect(await streamToString(streamOf(chunks))).toBe("€!");
+  });
+});
+
+describe("Flight decoder options", () => {
+  beforeEach(() => {
+    createFromReadableStreamSpy.mockClear();
+    createTemporaryReferenceSetSpy.mockClear();
+  });
+
+  it("preserves server references in rscDeserialize", async () => {
+    await rscDeserialize("encoded-value");
+
+    expect(createFromReadableStreamSpy).toHaveBeenCalledWith(
+      expect.any(ReadableStream),
+      expect.objectContaining({ temporaryReferences }),
+      { preserveServerReferences: true },
+    );
+  });
+
+  it("preserves server references in deserializeResult", async () => {
+    await deserializeResult("encoded-result");
+
+    expect(createFromReadableStreamSpy).toHaveBeenCalledWith(
+      expect.any(ReadableStream),
+      expect.objectContaining({ temporaryReferences }),
+      { preserveServerReferences: true },
+    );
+  });
+
+  it("preserves server references in deserializeSegments", async () => {
+    const segment = {
+      encoded: "encoded-component",
+      metadata: { id: "segment" },
+    } as SerializedSegmentData;
+
+    await deserializeSegments([segment]);
+
+    expect(createFromReadableStreamSpy).toHaveBeenCalledWith(
+      expect.any(ReadableStream),
+      expect.objectContaining({ temporaryReferences }),
+      { preserveServerReferences: true },
+    );
   });
 });

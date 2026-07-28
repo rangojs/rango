@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { exposeActionId } from "../plugins/expose-action-id.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,13 +14,21 @@ function createPlugin() {
   };
 }
 
-// Minimal mock of RSC plugin API with serverReferenceMetaMap
-function mockRscPluginApi(metaMap: Record<string, any> = {}) {
+type ManagerShape = "legacy" | "nested";
+
+// Minimal mock of the released and nested RSC plugin manager shapes
+function mockRscPluginApi(
+  metaMap: Record<string, any> = {},
+  managerShape: ManagerShape = "legacy",
+  name = "rsc:minimal",
+) {
   return {
-    name: "rsc:minimal",
+    name,
     api: {
       manager: {
-        serverReferenceMetaMap: metaMap,
+        ...(managerShape === "nested"
+          ? { serverReferences: { metaMap: new Map(Object.entries(metaMap)) } }
+          : { serverReferenceMetaMap: metaMap }),
         config: {},
       },
     },
@@ -39,9 +47,14 @@ function initDev(root = "/project") {
   return plugin;
 }
 
-function initBuild(root = "/project", metaMap: Record<string, any> = {}) {
+function initBuild(
+  root = "/project",
+  metaMap: Record<string, any> = {},
+  managerShape: ManagerShape = "legacy",
+  pluginName = "rsc:minimal",
+) {
   const plugin = createPlugin();
-  const rscPlugin = mockRscPluginApi(metaMap);
+  const rscPlugin = mockRscPluginApi(metaMap, managerShape, pluginName);
   plugin.configResolved({
     command: "build",
     root,
@@ -52,6 +65,10 @@ function initBuild(root = "/project", metaMap: Record<string, any> = {}) {
 }
 
 describe("exposeActionId", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   // ---- Dev mode: transform ----
 
   describe("dev mode transform", () => {
@@ -223,14 +240,17 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    function initRscBuild() {
+    function initRscBuild(
+      managerShape: ManagerShape = "legacy",
+      pluginName = "rsc:minimal",
+    ) {
       const metaMap: Record<string, any> = {};
       metaMap[actionsFile] = {
         importId: "src/actions.ts",
         referenceKey: "abc123",
         exportNames: ["addTodo", "removeTodo"],
       };
-      return initBuild(tmpDir, metaMap);
+      return initBuild(tmpDir, metaMap, managerShape, pluginName);
     }
 
     it("replaces hash with file path for createServerReference $$id in RSC env", () => {
@@ -245,6 +265,39 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
         /fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
       );
     });
+
+    it("reads server reference metadata from the nested manager map", () => {
+      const plugin = initRscBuild("nested");
+      const code = `const action = createServerReference("abc123#addTodo", callServer);`;
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeDefined();
+      expect(result.code).toMatch(
+        /fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+      );
+    });
+
+    it.each(["legacy", "nested"] as const)(
+      "discovers a renamed plugin with the %s manager shape",
+      (managerShape) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const plugin = initRscBuild(managerShape, "wrapped:rsc-minimal");
+        const code = `const action = createServerReference("abc123#addTodo", callServer);`;
+        const chunk = { fileName: "chunk-rsc.js" };
+        const ctx = { environment: { name: "rsc" } };
+        const result = plugin.renderChunk.call(ctx, code, chunk);
+
+        expect(warn).toHaveBeenCalledWith(
+          '[rango:expose-action-id] RSC plugin found by API structure (name: "wrapped:rsc-minimal"). ' +
+            "Consider updating the name lookup if the plugin was renamed.",
+        );
+        expect(result).toBeDefined();
+        expect(result.code).toMatch(
+          /fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+        );
+      },
+    );
 
     it("wraps registerServerReference with $id (single dollar) in RSC env", () => {
       const plugin = initRscBuild();
@@ -394,6 +447,25 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
   // ---- Plugin lifecycle ----
 
   describe("plugin configuration", () => {
+    it("throws if the RSC manager has no supported metadata shape", () => {
+      const plugin = createPlugin();
+      plugin.configResolved({
+        command: "build",
+        root: "/project",
+        plugins: [
+          {
+            name: "rsc:minimal",
+            api: { manager: { config: {} } },
+          },
+        ],
+      });
+
+      expect(() => plugin.buildStart()).toThrow(
+        "[rango] Unsupported @vitejs/plugin-rsc server reference metadata shape. " +
+          "Expected manager.serverReferences.metaMap or manager.serverReferenceMetaMap.",
+      );
+    });
+
     it("throws if RSC plugin is missing", () => {
       const plugin = createPlugin();
       plugin.configResolved({

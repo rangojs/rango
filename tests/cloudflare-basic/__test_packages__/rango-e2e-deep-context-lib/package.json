@@ -1,0 +1,18 @@
+{
+  "name": "rango-e2e-deep-context-lib",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./context": {
+      "types": "./internal/context.d.ts",
+      "default": "./internal/context.js"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=19"
+  }
+}

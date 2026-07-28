@@ -517,6 +517,11 @@ jobs:
           - project: production
             shard: 2
             shardTotal: 2
+          - project: preload-dev
+            config: playwright.preload.config.ts
+          - project: preload-production
+            config: playwright.preload.config.ts
+            noDeps: true
           # HMR tests run serially (workers=1) to avoid filesystem interference.
           # hmr-routes (route-types-hmr.test.ts) is intentionally absent: it is
           # test.skip(isCI)'d because the file watcher is unreliable on GitHub
@@ -570,6 +575,10 @@ jobs:
           # HOST_ONLY in playwright.config.ts, skips the heavy test-app servers).
           RANGO_E2E_HOST: ${{ matrix.project == 'host' && '1' || '' }}
         run: |
+          CONFIG_FLAG=""
+          if [ -n "${{ matrix.config }}" ]; then
+            CONFIG_FLAG="--config=${{ matrix.config }}"
+          fi
           WORKERS_FLAG=""
           if [ -n "${{ matrix.workers }}" ]; then
             WORKERS_FLAG="--workers=${{ matrix.workers }}"
@@ -578,13 +587,13 @@ jobs:
           # so skip dependency projects (dev, build, warmup) that would
           # re-run hundreds of unrelated tests and blow the timeout.
           NO_DEPS_FLAG=""
-          if [[ "${{ matrix.project }}" == hmr-* ]]; then
+          if [ -n "${{ matrix.noDeps }}" ] || [[ "${{ matrix.project }}" == hmr-* ]]; then
             NO_DEPS_FLAG="--no-deps"
           fi
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG $NO_DEPS_FLAG
+            pnpm --filter @rangojs/router test $CONFIG_FLAG --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG $NO_DEPS_FLAG
           else
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} $WORKERS_FLAG $NO_DEPS_FLAG
+            pnpm --filter @rangojs/router test $CONFIG_FLAG --project=${{ matrix.project }} $WORKERS_FLAG $NO_DEPS_FLAG
           fi
 
       - name: Upload test results
@@ -639,6 +648,11 @@ jobs:
             shard: 2
             shardTotal: 2
             noDeps: true
+          - project: preload-dev
+            config: playwright.preload.config.ts
+          - project: preload-production
+            config: playwright.preload.config.ts
+            noDeps: true
           # HMR runs in its own job: --no-deps (its deps are the full dev +
           # production suites) and workers=1. workers=1 is load-bearing, not
           # cosmetic: hmr.test.ts and hmr-route-mutations.test.ts both git-checkout
@@ -682,6 +696,10 @@ jobs:
         env:
           TEST_DEBUG: "1"
         run: |
+          CONFIG_FLAG=""
+          if [ -n "${{ matrix.config }}" ]; then
+            CONFIG_FLAG="--config=${{ matrix.config }}"
+          fi
           SHARD_FLAG=""
           if [ -n "${{ matrix.shard }}" ]; then
             SHARD_FLAG="--shard=${{ matrix.shard }}/${{ matrix.shardTotal }}"
@@ -697,7 +715,7 @@ jobs:
           if [ -n "${{ matrix.noDeps }}" ]; then
             NO_DEPS_FLAG="--no-deps"
           fi
-          pnpm --filter cloudflare-basic test:e2e --project=${{ matrix.project }} $SHARD_FLAG $WORKERS_FLAG $NO_DEPS_FLAG
+          pnpm --filter cloudflare-basic test:e2e $CONFIG_FLAG --project=${{ matrix.project }} $SHARD_FLAG $WORKERS_FLAG $NO_DEPS_FLAG
 
       - name: Upload test results
         uses: actions/upload-artifact@v6

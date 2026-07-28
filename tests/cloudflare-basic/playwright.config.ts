@@ -82,7 +82,11 @@ export default defineConfig({
         {
           name: "dev",
           grep: /^(?!.*\(production\))/,
-          testIgnore: ["**/hmr*.test.ts", "**/*.setup.ts"],
+          testIgnore: [
+            "**/hmr*.test.ts",
+            "**/head-script-preload.test.ts",
+            "**/*.setup.ts",
+          ],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${DEV_PORT}`,
@@ -91,7 +95,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production\)/,
-          testIgnore: ["**/*.setup.ts"],
+          testIgnore: ["**/head-script-preload.test.ts", "**/*.setup.ts"],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${PREVIEW_PORT}`,
@@ -116,7 +120,11 @@ export default defineConfig({
         {
           name: "dev",
           grep: /^(?!.*\(production\))/,
-          testIgnore: ["**/hmr*.test.ts", "**/*.setup.ts"],
+          testIgnore: [
+            "**/hmr*.test.ts",
+            "**/head-script-preload.test.ts",
+            "**/*.setup.ts",
+          ],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${DEV_PORT}`,
@@ -126,7 +134,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production\)/,
-          testIgnore: ["**/*.setup.ts"],
+          testIgnore: ["**/head-script-preload.test.ts", "**/*.setup.ts"],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${PREVIEW_PORT}`,

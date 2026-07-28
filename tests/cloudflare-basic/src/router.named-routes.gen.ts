@@ -20,6 +20,7 @@ export const NamedRoutes = {
   cachedHandles: "/cached-handles",
   cacheLab: "/cache-lab",
   catchAll: "/*",
+  clientPackageResolution: "/client-package-resolution",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",

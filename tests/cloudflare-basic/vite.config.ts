@@ -9,6 +9,15 @@ import { analyze } from "../../tools/bundle-analyze";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function testHeadScripts(): "preload" | undefined {
+  const value = process.env.RANGO_E2E_HEAD_SCRIPTS;
+  if (!value) return;
+  if (value === "preload") return value;
+  throw new Error(`Invalid RANGO_E2E_HEAD_SCRIPTS value: ${value}`);
+}
+
+const headScripts = testHeadScripts();
+
 // A third-party-style resolver: maps "@parity/*" to ./src/parity/* via a
 // resolveId hook, deliberately WITHOUT a matching resolve.alias entry. Mirrors
 // how vite-tsconfig-paths resolves tsconfig `paths` (issue #500) and asserts
@@ -33,6 +42,7 @@ function parityAliasPlugin(): Plugin {
 }
 
 export default defineConfig({
+  cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite",
   // Inline the render-timeout e2e flag at build/transform time. The worker runs
   // in workerd, whose `process.env` is populated from wrangler vars/bindings —
   // NOT the host process — so a runtime `process.env.RANGO_E2E_RENDER_TIMEOUT`
@@ -68,7 +78,11 @@ export default defineConfig({
     // (consumer === "client"), so it compiles client components only; ssr/rsc
     // are left untouched (matches the upstream example).
     babel({ presets: [reactCompilerPreset()] }),
-    rango({ preset: "cloudflare", buildEnv: "auto" }),
+    rango({
+      preset: "cloudflare",
+      buildEnv: "auto",
+      ...(headScripts ? { headScripts } : {}),
+    }),
     cloudflare({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
