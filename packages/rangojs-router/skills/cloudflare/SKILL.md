@@ -130,9 +130,11 @@ export const router = createRouter<AppBindings>({
 ```
 
 PPR shells use Cache API as the per-colo L1 and KV as the durable cross-colo
-L2; a KV hit promotes the coupled shell envelope back into L1. KV remains
-required for this family. `CFCacheStore` without `kv` can still cache
-segment/response entries in Cache API, but its shell family is inert.
+L2; a KV hit promotes the coupled shell envelope back into L1. KV is optional:
+`CFCacheStore` without `kv` runs the shell family L1-only (edge-only ppr —
+each colo captures and serves its own shell). Tag eviction then needs purge
+mode (`tagPurge`); a tagged shell without either warns once and expires by
+ttl+swr only.
 
 ## Commands
 

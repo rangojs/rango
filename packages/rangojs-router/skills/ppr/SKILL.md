@@ -356,13 +356,17 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   key — no header + a declared `ppr` means look for that warning.
 - On Cloudflare, `CFCacheStore` reads PPR shells from the per-colo Cache API,
   falls through to KV on a miss, and promotes the KV hit back into that colo.
-  WITHOUT a KV namespace its shell family remains inert: every ppr route stays
-  `MISS` forever. The store warns once per isolate — bind KV
-  (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use another store. An
-  inert store also stops captures at the gate: the store declares
-  `shellFamilyInert` and the scheduler skips the background render entirely
-  (`skip-inert-store` on the debug event) instead of burning a full capture per
-  MISS whose write could only no-op.
+  WITHOUT a KV namespace the family runs L1-only (edge-only ppr): every colo
+  captures and serves its own shell from the Cache API. What changes KV-less
+  is tag eviction — with `tagPurge` the purge-by-tag evicts shell L1 entries;
+  without it a TAGGED shell warns once that `updateTag()` cannot reach it
+  (ttl/swr-only freshness). Untagged edge-only ppr is warning-free. Tagged
+  BUILD-manifest shells decline on a KV-less store (`tagHistoryInert` — the
+  immutable asset could never be evicted), and an over-limit tag set is
+  acknowledged `"uncacheable"` so the capture backs off instead of
+  re-rendering per MISS. A custom store can still declare `shellFamilyInert`
+  to stop captures at the gate (`skip-inert-store` on the debug event); the
+  built-in stores never do.
 - Structured capture diagnostics: `createRouter({ debugShellCapture: true })`
   logs one line per capture attempt/skip (outcome, durations, prelude and
   snapshot bytes, backoff state); pass a function to receive each

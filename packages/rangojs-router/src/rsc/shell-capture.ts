@@ -509,9 +509,10 @@ export interface ShellCaptureDebugEvent {
    *   the capture was not attempted
    * - skip-capacity: the isolate capture queue is full; a later request may retry
    * - skip-inert-store: the resolved store's shell family is missing or
-   *   declared inert (SegmentCacheStore.shellFamilyInert — a CFCacheStore
-   *   without a KV namespace); nothing could store the result, so the
-   *   background render was not scheduled at all
+   *   declared inert (SegmentCacheStore.shellFamilyInert — a custom store
+   *   whose backing tier is unavailable; built-in stores never declare it);
+   *   nothing could store the result, so the background render was not
+   *   scheduled at all
    * - skip-queue-timeout: the capture waited past CAPTURE_QUEUE_WAIT_BUDGET_MS
    *   behind other captures and was dropped unrun (no backoff — the route is
    *   not doomed, the isolate was busy; a later request re-probes). Carries
@@ -554,7 +555,7 @@ export interface ShellCaptureDebugEvent {
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
   /** Outcome reported by a store that supports shell-write acknowledgements. */
-  storeWrite?: "stored" | "invalidated";
+  storeWrite?: "stored" | "invalidated" | "uncacheable";
   /** Consecutive failure count in the key's backoff entry, when one exists. */
   backoffFailures?: number;
   /** Ms remaining in the key's backoff window, when one exists. */
@@ -1005,7 +1006,8 @@ export function scheduleShellCapture(
   // serialized queue (a promise-heavy route bakes for seconds per MISS),
   // starving captures that CAN store. Skip scheduling entirely when the
   // resolved store (same defaulting as captureAndStoreShell) has no shell
-  // family or declared it inert (CFCacheStore without a KV namespace).
+  // family or declared it inert (a custom-store escape hatch; built-in
+  // stores never declare it — a KV-less CFCacheStore stores L1-only).
   const scheduledStore = descriptor.store ?? reqCtx._cacheStore;
   if (!scheduledStore?.putShell || scheduledStore.shellFamilyInert) {
     publishCaptureDebugEvent(descriptor, { key, outcome: "skip-inert-store" });
@@ -2025,6 +2027,21 @@ async function captureAndStoreShell(
             "one of the shell's tags was invalidated after this capture generation started, so the store rejected the write. " +
               "If capture code deterministically calls updateTag() on its own shell tag, move that mutation out of the render; " +
               "otherwise every generation is invalidated before it can be served.",
+          );
+          return "refused";
+        }
+        if (storeWrite === "uncacheable") {
+          // The store declared the entry unstorable under its current
+          // configuration — every retry would refuse identically, so back
+          // the key off like any refused capture instead of burning a full
+          // serialized render per MISS. Store-neutral on purpose: the
+          // acknowledging store emits its own diagnostic naming the specific
+          // limit (CFCacheStore warns about the over-limit Cache-Tag set).
+          warnCaptureRefusedOnce(
+            capture.key,
+            "the store cannot cache this shell under its current configuration and acknowledged " +
+              "the write as permanently refusable, so the key is backed off. See the cache store's " +
+              "own warning for the specific limit and remedy.",
           );
           return "refused";
         }

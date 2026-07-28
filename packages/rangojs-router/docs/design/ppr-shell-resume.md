@@ -130,9 +130,10 @@ priority class and the backlog at enqueue ride the `rango.background` span
 (`queue_priority`, `queue_ahead`) and the skip-queue-timeout debug event, so a
 parked capture diagnoses itself. Scheduling also checks write viability first:
 a store without the shell family, or one that declared it inert
-(`SegmentCacheStore.shellFamilyInert` — a KV-less `CFCacheStore`), skips the
-capture at the gate (`skip-inert-store`) instead of burning a background render
-whose write could only no-op.
+(`SegmentCacheStore.shellFamilyInert` — a custom-store escape hatch; the
+built-in stores never declare it, a KV-less `CFCacheStore` stores L1-only),
+skips the capture at the gate (`skip-inert-store`) instead of burning a
+background render whose write could only no-op.
 Each waiter receives a start signal and runs the capture in its own scheduling
 request context. Queue handoff happens before that request's `waitUntil` promise
 settles; resolving first lets workerd retire the context while the isolate lock
@@ -788,7 +789,7 @@ export interface ShellCacheEntry {
 
 supportsPassiveShellReads?: true;
 getShell?(key: string, options?: { claimRevalidation?: boolean }): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null>;
-putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "invalidated" | void>;
+putShell?(key, entry, ttlSeconds?, swrSeconds?, tags?): Promise<"stored" | "invalidated" | "uncacheable" | void>;
 ```
 
 One entry carries both artifacts — the pair is version- and generation-coupled
@@ -1387,21 +1388,45 @@ Worker while sending the exact same shell URL from multiple regions. The flag
 is resolved at Vite build time, so setting it only as a Worker runtime variable
 does not enable the trace.
 
-**Inert shell family.** `CFCacheStore` uses Cache API as the per-colo shell L1
-and KV as the durable cross-colo L2. KV remains required: with no namespace
-bound, `getShell`/`putShell` no-op and every ppr route is a permanent MISS — the
-correctness-first fail-open, previously with zero diagnostics. The store warns
-once per isolate, from inside `getShell`/`putShell` (only ppr routes call them,
-so a KV-less store in a non-PPR app stays silent), naming the fix: bind a KV
-namespace (`new CFCacheStore({ ctx, kv: env.CACHE_KV })`) or use a shell-capable
-store.
+**Edge-only shells (KV-less).** `CFCacheStore` uses Cache API as the per-colo
+shell L1 and KV as the durable cross-colo L2. KV is optional: with no
+namespace bound the family runs L1-only — every colo captures and serves its
+own shell from the Cache API (edge-only ppr; the e2e config is
+`tests/cloudflare-basic/playwright.edge-only.config.ts`). What KV-less mode
+changes is invalidation, mirroring the data families' stance: with `tagPurge`,
+purge-by-tag is the eviction (shell L1 entries already carry the namespaced
+`Cache-Tag` tokens) and the per-request marker memo keeps read-your-own-writes;
+without it, tagged shells have no eviction path until ttl+swr and the store
+warns once per isolate from `putShell` (only ppr routes reach it, so a KV-less
+store in a non-PPR app stays silent). Untagged edge-only ppr is warning-free.
+The capture-resurrection guard weakens accordingly KV-less: same-request races
+are still rejected via the memo, cross-request races are bounded by ttl+swr.
+
+Three KV-less boundaries are hard, not degraded. A tagged BUILD-manifest
+shell is declined outright (`SegmentCacheStore.tagHistoryInert`, read by the
+`shell-build-manifest.ts` gate): the asset is immutable with no ttl of its
+own, purge cannot delete it, and memo-only answers would let it resurrect on
+the next request — so the route keeps runtime-capture semantics, with the
+same once-per-key warning as a store missing `isTagsInvalidatedSince`. A tag
+set whose Cache-Tag header overflows in KV-less purge mode is acknowledged as
+`"uncacheable"` from `putShell` and the capture scheduler backs the key off
+(every retry would refuse identically — without the ack each MISS would burn
+a full serialized capture). And `tagInvalidationTtl` does NOT cap L1
+retention KV-less: the cap exists so entries never outlive their KV markers,
+and with no markers it would just hard-expire shells below their declared
+ttl+swr. One deployment note: `workers.dev`/`pages.dev` requests key the
+Cache API under the store's internal fallback host (`deriveBaseUrl`), so
+edge-only shells work on preview deployments too — purge-by-tag does not
+reach that synthetic zone, so tagged shells there are ttl/swr-bound.
 
 The two CF tiers carry the exact same coupled envelope. A Cache API miss falls
 through to KV and promotes the validated envelope back into that colo. Runtime
 shell L1 entries also carry the store's namespaced `Cache-Tag`s, so purge mode
 evicts them. Unlike ordinary L1 data entries, a surviving shell still checks KV
-generation markers: its `taggedAt` is capture start, and an old capture can land
-after the purge that invalidated it. The marker prevents that resurrection.
+generation markers WHEN KV IS BOUND: its `taggedAt` is capture start, and an
+old capture can land after the purge that invalidated it. The marker prevents
+that resurrection; KV-less, the check degrades to the per-request memo (see
+"Edge-only shells" above).
 
 ## Dead ideas (do not re-propose)
 
@@ -1469,8 +1494,9 @@ are not revived.
 
 - Build-time capture in the prerender pipeline (B segments): SHIPPED as
   producer B (#699), with middleware replay added under `ctx.build === true`.
-- CF Cache-API L1 tier for shell entries: SHIPPED (KV remains the durable L2;
-  shell L1 reads retain the generation-marker check for capture/purge races).
+- CF Cache-API L1 tier for shell entries: SHIPPED (KV is the durable L2 when
+  bound; shell L1 reads retain the generation-marker check for capture/purge
+  races. KV-less the family runs L1-only — edge-only ppr, see above).
 - Vercel BOA `chain` / streaming-lambda serving.
 - Render-recorded shell-tag union for shell entries: SHIPPED in #648 (originally
   scoped out of v1, which had only TTL/SWR + the explicit `ppr.tags` option +

@@ -177,6 +177,44 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     }
   });
 
+  it("declines TAGGED entries on a tagHistoryInert store (memo-only answers would resurrect the immutable asset)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      installManifest({
+        "/pp/inert-history": {
+          entry: entry(),
+          ttl: 300,
+          tags: ["t"],
+          routeName: "pp",
+        },
+        "/pp/untagged": { entry: entry(), ttl: 300, routeName: "pp" },
+      });
+      // The KV-less CFCacheStore shape: the method EXISTS but answers carry
+      // no durable history — "false" here means "cannot know", so a tagged
+      // immutable entry must decline, not serve forever.
+      const inertStore = {
+        isTagsInvalidatedSince: async () => false,
+        tagHistoryInert: true,
+      } as any;
+      expect(
+        await lookupBuildShell(
+          url("/pp/inert-history"),
+          BUILD_VERSION,
+          inertStore,
+        ),
+      ).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("no durable tag history"),
+      );
+      // Untagged entries never consult tag history and still serve.
+      expect(
+        await lookupBuildShell(url("/pp/untagged"), BUILD_VERSION, inertStore),
+      ).not.toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("is inert with no manifest loader and no dev context", async () => {
     expect(
       await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store),

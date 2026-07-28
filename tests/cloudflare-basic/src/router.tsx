@@ -95,7 +95,10 @@ export const router = createRouter<AppBindings>({
     store: new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
       ctx: ctx!, // Always provided in Cloudflare Workers
-      kv: env.KV, // KV L2 for global persistence
+      // Edge-only cache e2e (playwright.edge-only.config.ts): the flag is
+      // define-inlined by vite.config.ts, and dropping KV makes the store
+      // L1-only — ppr shells then capture/serve purely from the Cache API.
+      kv: process.env.RANGO_E2E_EDGE_ONLY_CACHE ? undefined : env.KV,
       // Production can opt into Cloudflare's zone-wide purge-by-tag API. The
       // explicit enable flag prevents local credentials from purging a live
       // zone; without it, dev/e2e retain the KV-marker fallback.
