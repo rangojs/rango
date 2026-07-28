@@ -31,6 +31,8 @@ import { CuFlash, CuNote } from "../location-states.js";
 import {
   ClientUrlsItemLoader,
   ClientUrlsLegacyRedirectLoader,
+  ClientUrlsPprBakedLoader,
+  ClientUrlsPprLoader,
   ClientUrlsPulseLoader,
   ClientUrlsStampLoader,
 } from "./client-urls.loader.js";
@@ -262,6 +264,37 @@ function ClientUrlsStateProbe() {
   );
 }
 
+/**
+ * Ppr'd group route. Everything outside the loading() hole freezes into the
+ * shell — including the useSearchParams read: search is part of shell
+ * identity (the key embeds the sorted search and the capture render seeds
+ * that same string), so the frozen value matches the URL the shell serves.
+ * The loader reader below stays the live hole.
+ */
+function ClientUrlsPprPage() {
+  const [params] = useSearchParams();
+  const { data: baked } = useLoader(ClientUrlsPprBakedLoader);
+  return (
+    <section data-testid="cu-ppr">
+      <div data-testid="cu-ppr-static">group shell static</div>
+      <div data-testid="cu-ppr-filter">
+        {`filter:${params.get("filter") ?? "none"}`}
+      </div>
+      <div data-testid="cu-ppr-baked">{baked.label}</div>
+      <ClientUrlsPprValue />
+    </section>
+  );
+}
+
+function ClientUrlsPprValue() {
+  const { data } = useLoader(ClientUrlsPprLoader);
+  return (
+    <div data-testid="cu-ppr-value" data-seq={data.seq}>
+      {`live:${data.seq}`}
+    </div>
+  );
+}
+
 function ClientUrlsLegacy() {
   // Never renders with data — the loader always redirects. The read keeps
   // the route on the streaming read-site path so the thrown redirect
@@ -281,6 +314,16 @@ export default clientUrls(({ layout, path, loader, loading }) => [
     path("/", ClientUrlsIndex, { name: "index" }),
     path("/hooks", ClientUrlsHooksProbe, () => [loader(ClientUrlsPulseLoader)]),
     path("/state", ClientUrlsStateProbe),
+    // Group shell caching: ppr is a projected path option; the materialized
+    // server route carries it on its manifest entry, so capture/serve run
+    // exactly as for a hand-written ppr page.
+    path("/ppr", ClientUrlsPprPage, { ppr: { ttl: 300, swr: 120 } }, () => [
+      // The flagged loader BAKES at capture (settled return = shell
+      // material); the plain loader stays the live hole under loading().
+      loader(ClientUrlsPprBakedLoader, { stream: "navigation" }),
+      loader(ClientUrlsPprLoader),
+      loading(<div data-testid="cu-ppr-fallback">Loading ppr</div>),
+    ]),
     path("/legacy", ClientUrlsLegacy, () => [
       loader(ClientUrlsLegacyRedirectLoader),
       loading(<div data-testid="cu-legacy-loading">Loading legacy</div>),

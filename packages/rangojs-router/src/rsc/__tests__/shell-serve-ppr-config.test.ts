@@ -9,6 +9,8 @@ import type { EntryData } from "../../server/context.js";
 import { RangoContext } from "../../server/context.js";
 import { loadManifest, clearManifestCache } from "../../router/manifest.js";
 import { urls } from "../../urls.js";
+import { clientUrls } from "../../client-urls/client-urls.js";
+import { clientUrlIncludePatterns } from "../../client-urls/server-projection.js";
 import type { RouteEntry } from "../../types.js";
 
 // resolvePprConfig policy pins (issues #714 / #715): captureTimeout parsing
@@ -129,6 +131,69 @@ describe("nameless path() keeps ppr on its manifest entry (issue #714)", () => {
           swr: 86400,
           tags: undefined,
           captureTimeout: 9000,
+        });
+      },
+    );
+  });
+});
+
+describe("clientUrls group route keeps ppr on its manifest entry", () => {
+  beforeEach(() => {
+    clearManifestCache();
+  });
+
+  // The group round-trip: a clientUrls() path() with the projected `ppr`
+  // option materializes into a server path() whose manifest entry carries
+  // ppr — resolvePprConfig classifies the group route exactly like a
+  // hand-written ppr page, which is what engages the runtime shell
+  // capture/serve lanes for group landings.
+  it("materialized group path() carries ppr through loadManifest to resolvePprConfig", async () => {
+    function GroupPage() {
+      return null;
+    }
+    const patterns = clientUrlIncludePatterns(
+      clientUrls(({ path }) => [
+        path("/ppr", GroupPage, { ppr: { ttl: 300, swr: 120 } }),
+      ]),
+    );
+    const routeKey = "$path__ppr";
+    const entry = {
+      prefix: "/",
+      staticPrefix: "/",
+      routes: { [routeKey]: "/ppr" },
+      handler: patterns.handler,
+      mountIndex: 0,
+    } as unknown as RouteEntry;
+
+    await RangoContext.run(
+      {
+        manifest: new Map(),
+        namespace: "",
+        parent: null,
+        counters: {},
+        patterns: new Map(),
+        patternsByPrefix: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+      } as never,
+      async () => {
+        const manifestEntry = await loadManifest(
+          entry,
+          routeKey,
+          "/ppr",
+          undefined,
+          true,
+        );
+        expect(manifestEntry.type).toBe("route");
+        expect((manifestEntry as { ppr?: unknown }).ppr).toEqual({
+          ttl: 300,
+          swr: 120,
+        });
+        expect(resolvePprConfig(manifestEntry)).toEqual({
+          ttl: 300,
+          swr: 120,
+          tags: undefined,
+          captureTimeout: undefined,
         });
       },
     );

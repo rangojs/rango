@@ -28,7 +28,14 @@ import {
   outlinedRenderCounter,
   ShellBakeSlowLoader,
   ShellBakeHoleLoader,
+  ShellBakedNavLoader,
+  ShellBakedSiblingLoader,
+  ShellBakedOnlyLoader,
 } from "./shell-cache.defs.js";
+import {
+  ShellBakedView,
+  ShellBakedOnlyView,
+} from "../components/ShellBakedView.js";
 import { ShellSearchProbe } from "../components/ShellSearchProbe.js";
 import { SlowMetaView } from "../components/SlowMetaView.js";
 import { ShellBadge } from "../components/ShellBadge.js";
@@ -54,10 +61,12 @@ import { ThemeToggle } from "../components/ThemeToggle.js";
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
 //     structure (the LIVE lane).
-//   BAKE LANE — a loader WITHOUT loading() executes at capture: its settled
-//     container bakes (snapshot-pinned on HITs), nested pending promises hole
-//     at the consumer's own Suspense. /shell-cache/no-hole and the
-//     layout-loader routes exercise it (docs/design/loader-container-bake.md).
+//   BAKE LANE — a loader flagged `stream: "navigation"` executes at capture:
+//     its settled return bakes (snapshot-pinned on HITs), nested pending
+//     promises hole at the consumer's own Suspense. /shell-cache/baked and
+//     /shell-cache/baked-only exercise it; a PLAIN loader without loading()
+//     is live-masked and its boundary-less read REFUSES the capture
+//     (/shell-cache/no-hole). See docs/design/loader-container-bake.md.
 //   PHYSICS — ShellPhysicsValue: a handler-created pending promise (~250ms)
 //     under the consumer's own Suspense. Real I/O cannot win the capture's
 //     task-quantized quiet window, so the boundary postpones — a hole.
@@ -106,6 +115,19 @@ function ShellCacheLayout(ctx: HandlerContext) {
 
 function ShellCachePricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+function ShellBakedPage() {
+  return (
+    <ShellBakedView
+      navLoader={ShellBakedNavLoader}
+      siblingLoader={ShellBakedSiblingLoader}
+    />
+  );
+}
+
+function ShellBakedOnlyPage() {
+  return <ShellBakedOnlyView loader={ShellBakedOnlyLoader} />;
 }
 
 // Static-part useSearchParams read above the live price hole: the probe's
@@ -519,6 +541,31 @@ export const shellCachePatterns = urls(
             <div data-testid="shell-price-fallback">Loading price...</div>,
           ),
         ],
+      ),
+      // stream:"navigation" BAKE lane: the flagged loader executes at
+      // capture and its settled return is SHELL material even though the
+      // route declares loading(); the nested promise in that return and the
+      // unflagged sibling stay live holes at their own boundaries.
+      path(
+        "/shell-cache/baked",
+        ShellBakedPage,
+        { name: "shellCacheBaked", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellBakedNavLoader, { stream: "navigation" }),
+          loader(ShellBakedSiblingLoader),
+          loading(
+            <div data-testid="shell-baked-loading">Loading baked...</div>,
+          ),
+        ],
+      ),
+      // loading() is OPTIONAL when every loader is flagged: nothing masks at
+      // capture, so the shell captures complete instead of the boundary-less
+      // refusal that plain loaders hit.
+      path(
+        "/shell-cache/baked-only",
+        ShellBakedOnlyPage,
+        { name: "shellCacheBakedOnly", ppr: { ttl: 300, swr: 120 } },
+        () => [loader(ShellBakedOnlyLoader, { stream: "navigation" })],
       ),
       // Loader-carried promise WITH loading(): the loading() boundary is the hole.
       // On a HIT the resume streams three layers in one body — cached shell, then

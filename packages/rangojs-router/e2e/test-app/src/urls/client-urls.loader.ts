@@ -34,6 +34,32 @@ export const ClientUrlsLegacyRedirectLoader = createLoader(async () => {
   });
 });
 
+let pprSeq = 0;
+
+/**
+ * Live hole under the group's frozen ppr shell: delayed so the stored
+ * prelude clearly beats it on a HIT; monotonic so per-request liveness is
+ * assertable while the shell above it stays frozen.
+ */
+export const ClientUrlsPprLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  pprSeq += 1;
+  return { seq: pprSeq };
+});
+
+let pprBakedSeq = 0;
+
+/**
+ * stream:"navigation" loader on the group's ppr route: executes at capture
+ * and its settled return is SHELL material — the group analog of the
+ * server-route bake pin. Monotonic so frozen-ness is observable (the seq
+ * must NOT advance across HITs).
+ */
+export const ClientUrlsPprBakedLoader = createLoader(async () => {
+  pprBakedSeq += 1;
+  return { label: `group-baked-${pprBakedSeq}` };
+});
+
 let stampCounter = 0;
 
 /**

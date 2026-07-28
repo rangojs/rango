@@ -42,15 +42,15 @@ export function isShellCaptureActive(
 export { createMaskedLoaderPromise } from "./mask-nested.js";
 
 /**
- * Lane decision for an entry's loaders under PPR (the loading() value decides;
- * docs/design/loader-container-bake.md):
- *
- * - RENDERABLE loading() (the LoaderBoundary Suspense fallback) — the LIVE
- *   lane: masked at capture, guaranteed fresh on every serve. Returns true.
- * - No loading() (absent, or explicitly `false`, incl. `loading(x, { ssr:
- *   false })` under the SSR manifest) — the BAKE lane: the loader executes
- *   during capture, its settled container bakes, nested pending promises hole
- *   at the consumer's own Suspense. Returns false.
+ * Entry-level lane input for an entry's loaders under PPR (the loading()
+ * value; docs/design/loader-container-bake.md). The CAPTURE decision itself
+ * is per LOADER in loader-cache.ts: a `stream: "navigation"`
+ * (awaitBeforeFlush) loader BAKES at capture regardless of this value — the
+ * flag's document promise ("data in the HTML before first flush") maps to
+ * the frozen prelude — while every other loader is LIVE (masked at capture,
+ * fresh on every serve), postponing at loading() or an inline Suspense.
+ * This helper still gates which entries pass a bake segment key for the
+ * legacy loading()-less shape and the HIT-tail seed overlay.
  *
  * Mirrors segment-system's isRenderableLoading so the mask decision and the
  * tree's boundary placement can never disagree.

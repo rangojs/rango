@@ -157,19 +157,40 @@ export function resolveLoaderData<TEnv>(
   //   shell HIT the recorded container is overlaid onto the fresh run so the
   //   payload matches the frozen prelude byte-for-byte.
   if (isShellCaptureActive(reqCtx)) {
-    // EXPERIMENT (streaming useLoader, feat/useloader-suspense): route
-    // loaders are LIVE at capture UNCONDITIONALLY — the loading()-keyed lane
-    // trigger is suspended on this branch. Read-site suspension postpones
-    // each masked stream at the consumer's own Suspense boundary, so holes
-    // no longer require a route-level loading(); baking route data into a
-    // shell is expressed via cache()/"use cache", not by omitting loading().
-    // The former bake-at-capture path (execute + nested-thenable mask +
-    // snapshot pinning via _shellCaptureLoaderRecords, see git history) is
-    // bypassed: with no records registered the serve-side seed overlay is a
-    // no-op and every HIT runs loaders fresh. A masked reader with NO
-    // Suspense above it root-postpones and the capture's <body> sanity gate
-    // refuses the shell (runtime render + eternal-MISS warning), which is
-    // the intended degrade for boundary-less ppr routes.
+    // Capture lane, per LOADER (not per entry):
+    //
+    // - `stream: "navigation"` (awaitBeforeFlush) — the BAKE lane. The flag's
+    //   document promise is "this loader's data is in the HTML before first
+    //   flush"; under ppr the pre-flush HTML IS the frozen prelude, so the
+    //   loader executes at capture and its SETTLED return bakes into the
+    //   shell. Nested-promise SHAPE stays the liveness declaration: nested
+    //   thenables are masked so their subtrees postpone as holes (per-request
+    //   material must be promise-shaped — the #692 cross-session scar). The
+    //   masked container registers on _shellCaptureLoaderRecords: it holds
+    //   the capture gate (bounded by ppr.captureTimeout) and pins into the
+    //   shell snapshot, so a HIT tail replays the baked value and the
+    //   hydration payload matches the frozen prelude byte-for-byte.
+    // - Every other loader — LIVE unconditionally: masked with a
+    //   never-resolving promise, postponed at its boundary (loading() or an
+    //   inline Suspense), streamed fresh per request. A masked reader with NO
+    //   boundary above it root-postpones and the <body> sanity gate refuses
+    //   the shell (eternal-MISS warning) — the degrade for boundary-less ppr
+    //   routes. A route whose loaders are ALL flagged therefore needs no
+    //   loading() at all: nothing masks, the shell captures complete.
+    if (loaderEntry.awaitBeforeFlush && bakeSegmentKey) {
+      const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
+      // Pre-attach a no-op catch: a bake-lane rejection during capture must
+      // surface through the drain's refusal (and the wrapper's error
+      // boundary), never as an unhandled rejection that can kill the worker
+      // before the drain probes this record.
+      containerPromise.catch(() => {});
+      const maskedPromise = containerPromise.then((container: unknown) =>
+        maskNestedContainerThenables(container),
+      );
+      maskedPromise.catch(() => {});
+      reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, maskedPromise);
+      return maskedPromise;
+    }
     return createMaskedLoaderPromise();
   }
 

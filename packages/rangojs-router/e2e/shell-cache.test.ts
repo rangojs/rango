@@ -419,6 +419,147 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-price")).toContainText("Live price:");
   });
 
+  // stream:"navigation" BAKE lane (per-loader capture policy): the flagged
+  // loader executes at capture and its SETTLED return is shell material even
+  // though the route declares loading(); the nested promise in that return
+  // and the unflagged sibling stay live holes at their own boundaries.
+  // Snapshot pinning keeps HIT hydration byte-agreed with the frozen prelude.
+  test("stream:navigation loader bakes into the shell; nested promise and plain sibling stay live", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/baked?probe=bakednav");
+    const miss = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+
+    await warmToHit(page.request, url);
+
+    const { firstChunk, html } = await measureFirstChunk(url);
+    // Prelude: baked title + BOTH live fallbacks; neither live value.
+    expect(firstChunk).toMatch(/baked-nav-\d+/);
+    expect(firstChunk).toContain("nested…");
+    expect(firstChunk).toContain("sibling…");
+    expect(firstChunk).not.toContain("nested-live-");
+    expect(firstChunk).not.toContain("sibling-live-");
+    // Full body: the holes resolved in the same response.
+    expect(html).toMatch(/nested-live-\d+/);
+    expect(html).toMatch(/sibling-live-\d+/);
+
+    // Frozen vs live across HITs: the baked seq must NOT advance; the
+    // nested and sibling seqs must.
+    const grab = (h: string, re: RegExp) => Number(h.match(re)?.[1]);
+    const again = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(again.headers()["x-rango-shell"]).toBe("HIT");
+    const againHtml = await again.text();
+    expect(grab(againHtml, /baked-nav-(\d+)/)).toBe(
+      grab(html, /baked-nav-(\d+)/),
+    );
+    expect(grab(againHtml, /nested-live-(\d+)/)).toBeGreaterThan(
+      grab(html, /nested-live-(\d+)/)!,
+    );
+    expect(grab(againHtml, /sibling-live-(\d+)/)).toBeGreaterThan(
+      grab(html, /sibling-live-(\d+)/)!,
+    );
+
+    // Browser HIT: zero hydration errors — the snapshot-pinned payload
+    // agrees with the frozen prelude.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "shell-baked-title")).toContainText("baked-nav-");
+    await expect(testId(page, "shell-baked-nested")).toContainText(
+      "nested-live-",
+    );
+    await expect(testId(page, "shell-baked-sibling")).toContainText(
+      "sibling-live-",
+    );
+  });
+
+  // loading() is OPTIONAL when every loader is flagged: nothing masks at
+  // capture, so the shell captures COMPLETE instead of the boundary-less
+  // refusal plain loaders hit (the covered-and-locked half of the contract).
+  test("fully-baked route needs no loading(): captures complete, serves frozen, hydrates clean", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/baked-only?probe=bakedonly");
+    const miss = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+
+    // NOT the eternal-MISS refusal: the capture completes and a later GET hits.
+    await warmToHit(page.request, url);
+
+    const { firstChunk } = await measureFirstChunk(url);
+    expect(firstChunk).toMatch(/baked-only-\d+/);
+
+    const grab = (h: string) => Number(h.match(/baked-only-(\d+)/)?.[1]);
+    const first = await (
+      await page.request.get(url, { headers: HTML_HEADERS })
+    ).text();
+    const second = await (
+      await page.request.get(url, { headers: HTML_HEADERS })
+    ).text();
+    expect(grab(second)).toBe(grab(first));
+
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "shell-baked-only")).toContainText("baked-only-");
+  });
+
+  // Group shell caching: `ppr` is a PROJECTED clientUrls path option — the
+  // materialized server route carries it on its manifest entry, so the
+  // capture/serve lanes engage exactly as for a hand-written ppr page. The
+  // group's static markup (its useSearchParams read included — search is
+  // shell identity) freezes into the prelude; the loader reader under
+  // loading() stays the live hole and advances per request.
+  test("clientUrls group route with ppr: MISS -> HIT, frozen group shell with its search, live loader hole, clean hydration", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/client-urls-e2e/ppr?filter=shoes");
+    const miss = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+    expect(await miss.text()).toContain("filter:shoes");
+
+    await warmToHit(page.request, url);
+
+    // Frozen prelude: group static markup + the key's own search value +
+    // the loading() fallback flush first; the live value lands later in the
+    // same body.
+    const { firstChunk, html } = await measureFirstChunk(url);
+    expect(firstChunk).toContain("group shell static");
+    expect(firstChunk).toContain("filter:shoes");
+    // The group's stream:"navigation" loader BAKED: its value is shell
+    // material in the first flushed bytes, frozen across HITs (asserted
+    // below); the plain loader stays the live hole.
+    expect(firstChunk).toMatch(/group-baked-\d+/);
+    expect(firstChunk).toContain("Loading ppr");
+    expect(firstChunk).not.toContain("live:");
+    expect(html).toMatch(/live:\d+/);
+
+    // Liveness under the frozen shell: the hole advances per request while
+    // the baked group value stays frozen.
+    const seq = (h: string) => Number(h.match(/live:(\d+)/)?.[1]);
+    const bakedSeq = (h: string) => Number(h.match(/group-baked-(\d+)/)?.[1]);
+    const again = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(again.headers()["x-rango-shell"]).toBe("HIT");
+    const againHtml = await again.text();
+    expect(seq(againHtml)).toBeGreaterThan(seq(html)!);
+    expect(bakedSeq(againHtml)).toBe(bakedSeq(html));
+
+    // Browser HIT: hydrates with zero errors against the frozen prelude and
+    // the group stays live.
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(testId(page, "cu-ppr-filter")).toHaveText("filter:shoes");
+    await expect(testId(page, "cu-ppr-value")).toContainText("live:");
+  });
+
   // --- Capture data snapshot: shell content drift parity. ---
   //
   // /shell-cache/drift bakes a value from a SHORT-ttl cache() (the "drift"
@@ -668,7 +809,8 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   // snapshot's loader family overlays the recorded container onto the fresh
   // run (the outer label is PINNED at its capture-time seq, byte-parity with
   // the reader's own boundary) — CONTRACT CHANGE (streaming useLoader): route
-  // loaders are LIVE at capture unconditionally; the bake lane for value-slot
+  // loaders are LIVE at capture (except the stream:"navigation" opt-in,
+  // which BAKES — see the baked-route pins above); the bake lane for value-slot
   // loaders is gone. This route's outer read has NO boundary above it, so the
   // masked loader root-postpones the capture and the <body> sanity gate
   // refuses the shell: ppr on a boundary-less route degrades to runtime

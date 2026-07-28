@@ -148,7 +148,13 @@ export async function resolveLoaders<TEnv>(
               loaderEntry,
               ctx,
               ctx.pathname,
-              bakeLane ? segmentId : null,
+              // The bake key rides for flagged loaders too: stream:"navigation"
+              // bakes at capture regardless of the entry's loading() lane
+              // (loader-cache.ts capture branch) and its HIT-tail seed
+              // overlay needs the same key.
+              bakeLane || loaderEntry.awaitBeforeFlush === true
+                ? segmentId
+                : null,
             ),
           ),
           entry,
@@ -191,7 +197,7 @@ export async function resolveLoaders<TEnv>(
           loaderEntry,
           ctx,
           ctx.pathname,
-          bakeLane ? segmentId : null,
+          bakeLane || loaderEntry.awaitBeforeFlush === true ? segmentId : null,
         ),
       ),
       entry,

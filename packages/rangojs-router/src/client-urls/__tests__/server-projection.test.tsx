@@ -198,14 +198,37 @@ describe("client URL server projection", () => {
     expect(navLoaders[1]!.awaitBeforeFlush).toBeUndefined();
   });
 
-  it("rejects ppr, unsupported options, and missing loader ids", () => {
-    const pprOptions = { ppr: true } as unknown as PathOptions;
+  it("projects ppr (true and JSON config), rejects malformed ppr values", () => {
+    // The boolean form projects verbatim.
+    const boolProjection = serializeClientUrlPatterns(
+      clientUrls(({ path }) => [path("/ppr", AccountPage, { ppr: true })]),
+    );
+    expect(boolProjection.routes[0]!.options.ppr).toBe(true);
+
+    // The object form projects as a frozen JSON copy — mutating the source
+    // options after definition must not leak into the projection.
+    const pprConfig = { ttl: 300, swr: 120, tags: ["shop"] };
+    const objProjection = serializeClientUrlPatterns(
+      clientUrls(({ path }) => [path("/ppr", AccountPage, { ppr: pprConfig })]),
+    );
+    const projected = objProjection.routes[0]!.options.ppr;
+    expect(projected).toEqual({ ttl: 300, swr: 120, tags: ["shop"] });
+    expect(projected).not.toBe(pprConfig);
+    expect(Object.isFrozen(projected)).toBe(true);
+    pprConfig.ttl = 1;
+    expect((projected as { ttl: number }).ttl).toBe(300);
+
+    // Non-JSON values fail before a projection exists (DSL validation runs
+    // first; the projection serializer re-validates the same shape).
+    const badPpr = { ppr: { ttl: Infinity } } as unknown as PathOptions;
     expect(() =>
       serializeClientUrlPatterns(
-        clientUrls(({ path }) => [path("/ppr", AccountPage, pprOptions)]),
+        clientUrls(({ path }) => [path("/ppr", AccountPage, badPpr)]),
       ),
-    ).toThrow(/path option "ppr" is not supported/);
+    ).toThrow(/ppr\.ttl"? must be a finite number/);
+  });
 
+  it("rejects unsupported options and missing loader ids", () => {
     const unsupportedOptions = {
       analytics: true,
     } as unknown as PathOptions;

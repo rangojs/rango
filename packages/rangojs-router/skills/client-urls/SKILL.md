@@ -118,15 +118,15 @@ typing work exactly as for server routes (`/typesafety`).
 
 ## Helpers: what exists inside clientUrls()
 
-| Helper         | Notes                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------- |
-| `path()`       | Options are `name`, `search`, `trailingSlash` only (no `ppr`, no response variants)   |
-| `layout()`     | Must contain at least one `path()`                                                    |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { stream: "navigation" }, use?)` — see below      |
-| `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better    |
-| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                    |
-| `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)     |
-| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()` |
+| Helper         | Notes                                                                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see /ppr skill; loader routes need `loading()` or capture refuses); no response variants |
+| `layout()`     | Must contain at least one `path()`                                                                                                                             |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { stream: "navigation" }, use?)` — see below                                                                               |
+| `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better                                                                             |
+| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                             |
+| `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)                                                                              |
+| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                          |
 
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,
 `notFoundBoundary` **throw** — and that is a design position, not a gap.

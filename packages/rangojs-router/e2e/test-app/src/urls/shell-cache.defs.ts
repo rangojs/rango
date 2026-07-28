@@ -38,6 +38,52 @@ export async function getCapStamp(ctx: HandlerContext): Promise<string> {
   return `cap-stamp-${capStampExecutions}`;
 }
 
+// stream:"navigation" BAKE-lane fixtures. The flagged loader executes at
+// capture: its settled top-level return is SHELL material (frozen, snapshot-
+// pinned for HIT parity), while the NESTED promise in the same return stays a
+// live hole (nested-thenable mask — shape is the liveness declaration). The
+// monotonic seqs make frozen-vs-live observable: the baked seq must NOT
+// advance across HITs while the nested/sibling seqs must.
+let bakedNavSeq = 0;
+let bakedNestedSeq = 0;
+
+export interface ShellBakedNavData {
+  title: string;
+  slow: Promise<string>;
+}
+
+export const ShellBakedNavLoader = createLoader(
+  async (): Promise<ShellBakedNavData> => {
+    bakedNavSeq += 1;
+    const nested = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      bakedNestedSeq += 1;
+      return `nested-live-${bakedNestedSeq}`;
+    })();
+    return { title: `baked-nav-${bakedNavSeq}`, slow: nested };
+  },
+);
+
+let bakedSiblingSeq = 0;
+
+/** Plain (unflagged) sibling: live at capture, fresh per request. */
+export const ShellBakedSiblingLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  bakedSiblingSeq += 1;
+  return `sibling-live-${bakedSiblingSeq}`;
+});
+
+let bakedOnlySeq = 0;
+
+/**
+ * The loading()-optional pin: a route whose ONLY loader is flagged needs no
+ * loading() at all — nothing masks at capture, the shell captures complete.
+ */
+export const ShellBakedOnlyLoader = createLoader(async () => {
+  bakedOnlySeq += 1;
+  return `baked-only-${bakedOnlySeq}`;
+});
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.
