@@ -250,7 +250,7 @@ export class RecordingShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void> {
     return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
   }
 
@@ -506,7 +506,7 @@ export class SeededShellStore<
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void> {
     return this.inner.putShell?.(key, entry, ttlSeconds, swrSeconds, tags);
   }
 

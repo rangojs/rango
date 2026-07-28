@@ -188,7 +188,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
    * @returns `invalidated` when a generation marker rejected the write,
-   *   `stored` when acknowledged, or void for stores without acknowledgements.
+   *   `stored` when acknowledged, `uncacheable` when the entry can NEVER be
+   *   stored under the current configuration (every retry would refuse
+   *   identically — the capture scheduler backs the key off instead of
+   *   recapturing per MISS; CFCacheStore returns it for a tag set whose
+   *   Cache-Tag header overflows in KV-less purge mode), or void for stores
+   *   without acknowledgements.
    */
   putShell?(
     key: string,
@@ -196,17 +201,32 @@ export interface SegmentCacheStore<TEnv = unknown> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void>;
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void>;
 
   /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
-   * no-op (CFCacheStore without a KV namespace). scheduleShellCapture skips
-   * captures whose only write target is inert — the background render would be
-   * dead work that still occupies the per-isolate serialized capture queue
-   * (a promise-heavy route bakes for seconds per MISS with nothing stored).
-   * Absent/false means the family, when present, actually stores.
+   * no-op (a custom store whose backing tier is conditionally unavailable).
+   * scheduleShellCapture skips captures whose only write target is inert —
+   * the background render would be dead work that still occupies the
+   * per-isolate serialized capture queue (a promise-heavy route bakes for
+   * seconds per MISS with nothing stored). Absent/false means the family,
+   * when present, actually stores. The built-in stores never declare it:
+   * CFCacheStore is L1-only without KV (edge-only ppr), not inert.
    */
   shellFamilyInert?: boolean;
+
+  /**
+   * Declares isTagsInvalidatedSince present-but-inert: the store implements
+   * the method but has no DURABLE invalidation history behind it (a KV-less
+   * CFCacheStore answers from the per-request memo at best). Runtime shells
+   * tolerate that — purge eviction plus ttl/swr bound their staleness — but
+   * a TAGGED build-manifest shell is immutable with no ttl of its own, so
+   * serving it on such a store would make updateTag() a permanent no-op for
+   * it. The build-shell read-through declines tagged entries on this flag
+   * (same declared-intent-cannot-be-honored doctrine as a store missing the
+   * method entirely). Absent/false means answers are durably backed.
+   */
+  tagHistoryInert?: boolean;
 
   /**
    * Get a cached function result by key.

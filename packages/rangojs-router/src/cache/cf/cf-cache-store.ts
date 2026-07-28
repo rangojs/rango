@@ -145,11 +145,12 @@ const warnedNoKvReadInvalidation = new Set<string>();
 const warnedTagInvalidationTtlFloor = new Set<string>();
 
 /**
- * Stores (by namespace) already warned about the shell family being inert
- * (getShell/putShell no-op without a KV namespace), so a ppr route hitting the
- * silent fail-open warns once per isolate instead of on every request.
+ * Stores (by namespace) already warned that a TAGGED shell was written on a
+ * KV-less store without tagPurge: no markers and no purge means updateTag()
+ * cannot reach the shell (freshness is ttl/swr only). Once per isolate, not
+ * per capture (CFCacheStore is constructed per request).
  */
-const warnedShellFamilyInert = new Set<string>();
+const warnedShellTagsNoEviction = new Set<string>();
 
 /**
  * Stores (by namespace) already warned that tag invalidation is writing KV
@@ -412,8 +413,6 @@ interface KVResponseEnvelope {
 
 export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   readonly supportsPassiveShellReads: true = true;
-  /** True when constructed without KV: the shell family no-ops (see ctor). */
-  readonly shellFamilyInert?: boolean;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -429,6 +428,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly kvReadTimeoutMs: number;
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
   private readonly kv?: KVNamespace;
+  /** True when constructed without KV: no durable tag history (see ctor). */
+  readonly tagHistoryInert?: boolean;
   private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
   private readonly tagPurge?: (cacheTags: string[]) => Promise<void>;
   private readonly tagInvalidationTtl?: number;
@@ -485,11 +486,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
-    // The shell family requires KV (getShell/putShell no-op without it — see
-    // warnShellFamilyInertOnce). Declaring it lets scheduleShellCapture skip
-    // captures whose write could only no-op instead of burning a background
-    // render per MISS that still occupies the serialized capture queue.
-    this.shellFamilyInert = options.kv ? undefined : true;
+    // Without KV, isTagsInvalidatedSince has no durable history — it answers
+    // from the per-request memo at best. Runtime shells tolerate that (purge
+    // eviction + ttl/swr bound the staleness), but an immutable TAGGED
+    // build-manifest shell must not serve on such a store: nothing could ever
+    // evict it (purge cannot delete a build asset), so the manifest gate
+    // declines on this flag (shell-build-manifest.ts).
+    this.tagHistoryInert = options.kv ? undefined : true;
     this.onRevalidateTag = options.onRevalidateTag;
     // tagPurge accepts a ready purge function or a credentials object; the
     // object form is normalized through the built-in zone purge client, which
@@ -506,9 +509,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // marker write throw and break ALL invalidation. Floor it (and warn once);
     // a non-finite/non-positive value falls back to the no-expiry default
     // (markers persist) rather than silently sailing a NaN into expirationTtl.
-    this.tagInvalidationTtl = this.sanitizeTagInvalidationTtl(
-      options.tagInvalidationTtl,
-    );
+    // KV-less the option is dead config — no markers to expire, and the
+    // retention cap it used to imply is KV-conditional (putShell) — so it is
+    // dropped without the KV-floor validation/warning, which would misdirect.
+    this.tagInvalidationTtl = options.kv
+      ? this.sanitizeTagInvalidationTtl(options.tagInvalidationTtl)
+      : undefined;
     // tagCacheTtl gates the L1 marker cache via `> 0`. A non-finite value (NaN
     // from `Number(env.UNSET)`) is not null/undefined, so `?? 0` would let it
     // through and silently disable the cache while reading as "configured".
@@ -1876,38 +1882,73 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   // ============================================================================
-  // Shell Cache Methods (PPR shell resume) — Cache API L1 + KV L2
+  // Shell Cache Methods (PPR shell resume) — Cache API L1 + optional KV L2
   // ============================================================================
   //
-  // KV remains the durable, cross-colo shell tier. Cache API is a per-colo
-  // read-through accelerator: writes populate both tiers, and a valid KV hit
-  // promotes the same coupled envelope into L1. The family still requires KV;
-  // without it, getShell/putShell no-op and PPR fails open to a full HTML render.
+  // With KV it is the durable, cross-colo shell tier: writes populate both
+  // tiers, a valid KV hit promotes the same coupled envelope into L1, and
+  // shell L1 hits deliberately keep the KV generation-marker check even in
+  // purge mode. A shell's taggedAt is its CAPTURE START, not its write time:
+  // an invalidation can purge while an older capture is still running, then
+  // that capture can land after the purge. The marker check rejects that
+  // resurrection.
   //
-  // Shell L1 hits deliberately keep the KV generation-marker check even in
-  // purge mode. A shell's taggedAt is its CAPTURE START, not its write time: an
-  // invalidation can purge while an older capture is still running, then that
-  // capture can land after the purge. The marker check rejects that resurrection.
+  // Without KV the family is L1-only (edge-only ppr): every colo captures and
+  // serves its own shell from the Cache API. Tag eviction then needs purge
+  // mode (tagPurge) — shell L1 entries carry the same namespaced Cache-Tag
+  // tokens as the data families, read-your-own-writes comes from the
+  // per-request marker memo, and the capture resurrection race narrows to
+  // cross-request timing bounded by ttl+swr (the data families' documented
+  // purge-mode stance). KV-less WITHOUT tagPurge still caches: freshness is
+  // ttl/swr only, and a tagged write warns once that invalidation cannot
+  // reach it (see warnShellTagsNoEvictionOnce).
 
   /**
-   * Warn once per isolate that the shell family is inert: getShell/putShell
-   * are ONLY called for routes that declared the `ppr` path option, so firing
-   * here (not in the constructor) scopes the warning to apps that actually
-   * use PPR — a KV-less CFCacheStore is a perfectly fine config otherwise.
-   * Without it, the correctness-first fail-open (issue #651) is invisible:
-   * every ppr route is a permanent MISS with zero diagnostics.
+   * Warn once per isolate that a TAGGED shell landed on a store with no
+   * eviction path for it: no KV (markers) and no tagPurge (purge-by-tag).
+   * The shell still caches and expires by ttl+swr, but updateTag()/
+   * revalidateTag() cannot reach it — silent staleness a consumer who tagged
+   * the route clearly did not intend. Fired from putShell (not the
+   * constructor) so an untagged edge-only ppr config stays warning-free.
    * @internal
    */
-  private warnShellFamilyInertOnce(): void {
+  private warnShellTagsNoEvictionOnce(): void {
     this.warnOncePerNamespace(
-      warnedShellFamilyInert,
-      `[CFCacheStore] a ppr route resolved to this store, but no KV namespace ` +
-        `is configured, so the shell family (getShell/putShell) is a no-op: ` +
-        `every ppr route stays a permanent shell MISS (the page still serves ` +
-        `via a full render). Bind a KV namespace and pass it — ` +
-        `new CFCacheStore({ ctx, kv: env.CACHE_KV }) — or use a shell-capable ` +
-        `store via createRouter({ cache }).`,
+      warnedShellTagsNoEviction,
+      `[CFCacheStore] a ppr shell with tags was stored on a KV-less store ` +
+        `without tagPurge: tag invalidation cannot evict it (no KV markers, ` +
+        `no purge-by-tag), so updateTag()/revalidateTag() will not reach ` +
+        `this shell — it serves until ttl+swr expiry. Configure { kv } for ` +
+        `marker invalidation or { tagPurge } for purge-by-tag eviction; ` +
+        `untagged ppr routes (ttl/swr freshness) are unaffected.`,
     );
+  }
+
+  /**
+   * Generation gate for shell writes and the capture scheduler
+   * (isTagsInvalidatedSince). With KV it is the durable marker cascade.
+   * Without KV there are no markers: in purge mode the per-request memo is
+   * the only signal — a capture racing THIS request's updateTag() is still
+   * rejected (read-your-own-writes), while cross-request races are bounded
+   * by ttl+swr exactly like the data families' purge-mode writes. Without
+   * either, fail open (ttl/swr-only semantics, warned at putShell).
+   * @internal
+   */
+  private async isShellGenerationInvalidated(
+    tags: string[] | undefined,
+    since: number | undefined,
+  ): Promise<boolean> {
+    if (this.kv) return this.isGloballyInvalidated(tags, since);
+    if (!this.tagPurge || !Array.isArray(tags) || tags.length === 0 || !since)
+      return false;
+    const ctx = _getRequestContext();
+    if (!ctx) return false;
+    const memo = getTagMarkerMemo(ctx, this);
+    for (const tag of tags) {
+      const marker = memo.get(tag);
+      if (marker != null && marker >= since) return true;
+    }
+    return false;
   }
 
   /**
@@ -1920,10 +1961,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    if (!this.kv) {
-      this.warnShellFamilyInertOnce();
-      return null;
-    }
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`shell:${key}`);
@@ -2005,10 +2042,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetShell(key);
       }
 
-      // Unlike other L1 families, shells always check the durable generation
-      // marker. See the capture-start/purge race documented above.
+      // Unlike other L1 families, shells with KV always check the durable
+      // generation marker — see the capture-start/purge race documented
+      // above. Without KV there are no markers: L1-only shells adopt the
+      // data families' purge-mode read semantics (a hit that survived the
+      // purge is trusted; the per-request memo masks this request's own
+      // updateTag() writes; entries a purge cannot reach fall back to the
+      // marker check, which fails open KV-less).
       const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const invalidated = await this.isGloballyInvalidated(value.t, value.ta);
+      const invalidated = this.kv
+        ? await this.isGloballyInvalidated(value.t, value.ta)
+        : await this.isL1Invalidated(value.t, value.ta, response.headers);
       const markerMs = INTERNAL_RANGO_DEBUG
         ? Date.now() - markerStartedAt
         : undefined;
@@ -2042,11 +2086,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Store a PPR shell envelope in Cache API and, when its retention meets KV's
-   * 60-second floor, KV. The shared write is registered with waitUntil and
-   * awaited so invalidation rejection can be acknowledged to the capture
-   * scheduler. Short-lived shells remain useful in L1 even though KV rejects
-   * them.
+   * Store a PPR shell envelope in Cache API and, when KV is configured and
+   * the retention meets its 60-second floor, KV. The shared write is
+   * registered with waitUntil and awaited so invalidation rejection can be
+   * acknowledged to the capture scheduler. Short-lived shells remain useful
+   * in L1 even though KV rejects them; a KV-less store is L1-only by design
+   * (edge-only ppr — see the section comment).
    */
   async putShell(
     key: string,
@@ -2054,20 +2099,29 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttlSeconds?: number,
     swrSeconds?: number,
     tags?: string[],
-  ): Promise<"stored" | "invalidated" | void> {
-    // KV remains required for durable generation markers and cross-colo reads.
-    if (!this.kv) {
-      this.warnShellFamilyInertOnce();
-      return;
-    }
+  ): Promise<"stored" | "invalidated" | "uncacheable" | void> {
     if (!this.waitUntil) return;
+    // Same write gate as the data families: in KV-less purge mode an
+    // over-limit tag set has NO eviction path (no tokens, no markers), so the
+    // shell is not cached rather than becoming un-invalidatable. Unlike the
+    // void-returning data puts, this is ACKNOWLEDGED — the capture scheduler
+    // must back the key off (every write would refuse identically), not
+    // treat the capture as stored and re-render on every MISS.
+    if (this.skipUncacheableTagSet(tags)) return "uncacheable";
+    if (!this.kv && !this.tagPurge && Array.isArray(tags) && tags.length > 0) {
+      this.warnShellTagsNoEvictionOnce();
+    }
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
       const totalTtl = ttl + swrWindow;
 
+      // The tagInvalidationTtl cap exists so a tagged entry can never outlive
+      // its KV markers (an expired marker would resurrect it). Without KV
+      // there are no markers to outlive — capping would just hard-expire the
+      // shell below its declared ttl+swr — so the cap is KV-conditional.
       const retentionTtl =
-        tags && tags.length > 0 && this.tagInvalidationTtl
+        tags && tags.length > 0 && this.kv && this.tagInvalidationTtl
           ? Math.min(totalTtl, this.tagInvalidationTtl)
           : totalTtl;
       const now = Date.now();
@@ -2076,14 +2130,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
-      const kvKey = await this.toKVKey(`shell:${key}`);
-      const writeKv = retentionTtl >= KV_MIN_EXPIRATION_TTL;
+      const writeKv = !!this.kv && retentionTtl >= KV_MIN_EXPIRATION_TTL;
+      const kvKey = writeKv ? await this.toKVKey(`shell:${key}`) : null;
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
         if (
           tags &&
           tags.length > 0 &&
-          (await this.isGloballyInvalidated(tags, entry.createdAt))
+          (await this.isShellGenerationInvalidated(tags, entry.createdAt))
         ) {
           this.debugShell(key, "write-invalidated");
           return "invalidated";
@@ -2132,7 +2186,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             }
           })(),
         ];
-        if (writeKv) {
+        if (writeKv && kvKey !== null) {
           writes.push(
             (async () => {
               try {
@@ -3029,13 +3083,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
    * SAME KV markers used by runtime envelopes also evict immutable build shells
    * and captures whose write races updateTag(). Thin public wrapper over the
-   * private envelope check (marker >= since, fail open).
+   * shell generation check (marker >= since, fail open); KV-less it degrades
+   * to the per-request memo in purge mode and to false otherwise — see
+   * isShellGenerationInvalidated.
    */
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
   ): Promise<boolean> {
-    return this.isGloballyInvalidated(tags, sinceMs);
+    return this.isShellGenerationInvalidated(tags, sinceMs);
   }
 
   async invalidateTags(tags: string[]): Promise<void> {

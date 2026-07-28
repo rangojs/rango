@@ -653,6 +653,14 @@ jobs:
           - project: preload-production
             config: playwright.preload.config.ts
             noDeps: true
+          # Edge-only ppr shells: own config (KV-less app store via
+          # RANGO_E2E_EDGE_ONLY_CACHE) — a store-level change the main
+          # config's KV-backed suites must not run under.
+          - project: edge-only-dev
+            config: playwright.edge-only.config.ts
+          - project: edge-only-production
+            config: playwright.edge-only.config.ts
+            noDeps: true
           # HMR runs in its own job: --no-deps (its deps are the full dev +
           # production suites) and workers=1. workers=1 is load-bearing, not
           # cosmetic: hmr.test.ts and hmr-route-mutations.test.ts both git-checkout

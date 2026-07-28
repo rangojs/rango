@@ -54,6 +54,13 @@ export default defineConfig({
     "process.env.RANGO_E2E_RENDER_TIMEOUT": JSON.stringify(
       process.env.RANGO_E2E_RENDER_TIMEOUT ?? "",
     ),
+    // Edge-only cache e2e (playwright.edge-only.config.ts): drops the KV
+    // binding from the app-level CFCacheStore so ppr shells run L1-only
+    // (Cache API). Same inlining rationale as the flag above. Empty string
+    // on a normal build → the store keeps its KV L2.
+    "process.env.RANGO_E2E_EDGE_ONLY_CACHE": JSON.stringify(
+      process.env.RANGO_E2E_EDGE_ONLY_CACHE ?? "",
+    ),
   },
   server: {
     port: 5001,

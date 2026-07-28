@@ -412,6 +412,43 @@ describe("captureAndStoreShell", () => {
     warnSpy.mockRestore();
   });
 
+  it("refuses (backs off) a shell the store declares uncacheable — not a per-MISS recapture loop", async () => {
+    // The CFCacheStore KV-less purge-mode shape: an over-limit tag set can
+    // NEVER store, and every retry would refuse identically — the ack must
+    // route into the refused-capture backoff, not read as "stored". Stubbed
+    // (not MemorySegmentCacheStore) because only CFCacheStore returns it.
+    const putShell = vi.fn(
+      async (): Promise<"stored" | "invalidated" | "uncacheable" | void> =>
+        "uncacheable",
+    );
+    const reqCtx = makeReqCtx();
+    reqCtx._cacheStore = { putShell } as unknown as typeof reqCtx._cacheStore;
+    const stats: Pick<ShellCaptureDebugEvent, "storeWrite"> = {};
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const outcome = await captureAndStoreShell(
+      makeShellSsrModule(),
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      {
+        key: "/uncacheable-tags:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        tags: ["t"],
+      },
+      stats,
+      Date.now(),
+    );
+
+    expect(outcome).toBe("refused");
+    expect(stats.storeWrite).toBe("uncacheable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("cannot cache this shell"),
+    );
+    warnSpy.mockRestore();
+  });
+
   // Identity guard (loader-container-bake): the cookies()/headers() capture
   // guard flags the capture context before throwing, because a throw inside an
   // executing bake-lane loader is swallowed into per-loader error UI. The

@@ -81,7 +81,9 @@ flowchart TD
     eagerly, so its reads do no tag work at all).
 - In **purge mode** (`tagPurge` configured) an ordinary L1 data hit consults
   only the per-request memo — eviction is the purge's job; see "Purge mode"
-  below. KV reads and PPR shell reads always run the full cascade.
+  below. KV reads always run the full cascade; PPR shell reads do too while KV
+  is bound (KV-less, shells adopt the purge-trust read like the data
+  families).
 
 ---
 
@@ -207,13 +209,19 @@ Configure `tagPurge` and the store flips the L1 contract:
   entry a purge cannot reach (written pre-upgrade, or its header omitted for
   the 16 KB overflow above) keeps the full marker check instead of serving
   stale until TTL.
-- **KV L2 and PPR shell reads keep the marker check.** Purge cannot reach KV or
-  a baked build-manifest shell. A runtime shell L1 entry does carry purgeable
-  Cache-Tags, but its generation starts before its eventual write: an old
-  capture can finish after the invalidation purge, so a surviving shell still
-  checks the marker to reject that resurrection. Keep `kv` configured for the
-  shell family; without it, purge mode still supports ordinary L1-only data
-  caching, but PPR shells remain inert.
+- **KV L2 and KV-backed PPR shell reads keep the marker check.** Purge cannot
+  reach KV or a baked build-manifest shell. A runtime shell L1 entry does
+  carry purgeable Cache-Tags, but its generation starts before its eventual
+  write: an old capture can finish after the invalidation purge, so a
+  surviving shell still checks the marker to reject that resurrection — while
+  KV is bound. A KV-less store runs shells L1-only (edge-only ppr): in purge
+  mode they adopt the purge-trust read + per-request memo (same-request
+  captures racing an updateTag are still rejected; cross-request resurrection
+  is bounded by ttl+swr), and without `tagPurge` a TAGGED shell warns once
+  that invalidation cannot reach it (ttl/swr-only freshness). Tagged
+  BUILD-manifest shells are declined outright on a KV-less store
+  (`tagHistoryInert`): the immutable asset has no ttl and purge cannot delete
+  it, so nothing could ever evict it.
 
 What you trade: marker mode gives read-time KV consistency; purge mode's
 cross-request invalidation latency is the purge propagation (Cloudflare quotes

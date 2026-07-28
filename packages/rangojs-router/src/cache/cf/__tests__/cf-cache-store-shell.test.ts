@@ -1,6 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CFCacheStore } from "../cf-cache-store";
 import type { ShellCacheEntry } from "../../types";
+import {
+  createRequestContext,
+  runWithRequestContext,
+} from "../../../server/request-context";
+
+function makeReqCtx() {
+  return createRequestContext({
+    env: {},
+    request: new Request("https://test.internal/"),
+    url: new URL("https://test.internal/"),
+    variables: {},
+  });
+}
 
 // ============================================================================
 // Mock Cache API (L1) + KV (L2)
@@ -250,37 +263,223 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(await store.isTagsInvalidatedSince(["absent"], t0)).toBe(false);
   });
 
-  it("no-ops getShell/putShell when no KV namespace is configured, warning once per isolate", async () => {
+  // ==========================================================================
+  // Edge-only (KV-less) shells: L1 Cache API is a first-class shell tier.
+  // Formerly the family no-oped without KV (permanent MISS + inert flag);
+  // now a KV-less store captures and serves per-colo shells, with tag
+  // eviction following the data families' purge-mode stance.
+  // ==========================================================================
+
+  it("edge-only: round-trips a shell through L1 alone, no KV, no warning", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const inertWarnings = () =>
+    const store = new CFCacheStore({ ctx: mockCtx }); // no kv
+    // The scheduler skip-flag is gone: a KV-less CFCacheStore can always
+    // store shells (Cache API is unconditionally available in workers), so
+    // declaring the family inert would silently disable edge-only ppr.
+    expect(
+      (store as { shellFamilyInert?: boolean }).shellFamilyInert,
+    ).toBeUndefined();
+
+    const entry = shellEntry();
+    expect(await store.putShell("k", entry, 300, 30)).toBe("stored");
+    await drain(mockCtx);
+    expect(mockCache.store.size).toBe(1);
+    expect(mockKV.store.size).toBe(0);
+
+    const hit = await store.getShell("k");
+    expect(hit?.entry).toEqual(entry);
+    expect(hit?.shouldRevalidate).toBe(false);
+    // Untagged edge-only ppr is a fully supported config: nothing to warn.
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("edge-only marker mode: a TAGGED shell caches but warns once that invalidation cannot reach it", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const noEvictionWarnings = () =>
       warnSpy.mock.calls.filter(
         (c) =>
           typeof c[0] === "string" &&
-          c[0].includes("shell family (getShell/putShell) is a no-op"),
+          c[0].includes("tag invalidation cannot evict it"),
       );
+    // Unique namespace: the warn-once sets are module-level per namespace.
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      namespace: "edge-warn",
+    });
 
-    const store = new CFCacheStore({ ctx: mockCtx }); // no kv
-    // Declared, not just warned: scheduleShellCapture reads this flag to skip
-    // captures whose write could only no-op (dead background renders).
-    expect(store.shellFamilyInert).toBe(true);
-    expect(
-      new CFCacheStore({ ctx: mockCtx, kv: mockKV as any }).shellFamilyInert,
-    ).toBeUndefined();
-    await store.putShell("k", shellEntry(), 300, 30);
+    await store.putShell("k", shellEntry(), 300, 30, ["products"]);
     await drain(mockCtx);
+    // Still cached — ttl/swr freshness is the documented KV-less semantics.
+    expect((await store.getShell("k"))?.entry).toBeDefined();
+    expect(noEvictionWarnings()).toHaveLength(1);
+    expect(noEvictionWarnings()[0][0]).toContain("tagPurge");
+
+    // Once per isolate: a second per-request store instance must not re-warn.
+    await new CFCacheStore({
+      ctx: createMockCtx(),
+      namespace: "edge-warn",
+    }).putShell("k2", shellEntry(), 300, 30, ["products"]);
+    expect(noEvictionWarnings()).toHaveLength(1);
+  });
+
+  it("edge-only purge mode: shell L1 entries carry the namespaced Cache-Tag tokens a purge evicts", async () => {
+    const purged: string[][] = [];
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      tagPurge: async (tags) => {
+        purged.push(tags);
+      },
+    });
+    await store.putShell("k", shellEntry(), 300, 30, ["products"]);
+    await drain(mockCtx);
+
+    const stored = [...mockCache.store.values()][0]!;
+    const cacheTag = stored.headers.get("Cache-Tag");
+    expect(cacheTag).toContain("rg:");
+    expect(cacheTag).toContain("products");
+
+    // invalidateTags fires the same purge call that evicts those tokens.
+    await store.invalidateTags(["products"]);
+    expect(purged).toHaveLength(1);
+    expect(purged[0]!.some((t) => t.includes("products"))).toBe(true);
+  });
+
+  it("edge-only purge mode: read-your-own-writes — this request's updateTag masks the surviving L1 hit", async () => {
+    // baseUrl pinned: putShell runs outside a request context and getShell
+    // inside one; without the explicit override they would derive different
+    // key hosts and the reads would be key-space misses, not memo rejections.
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      baseUrl: "https://test.internal/",
+      tagPurge: async () => {},
+    });
+    await store.putShell("k", shellEntry(), 300, 30, ["products"]);
+    await drain(mockCtx);
+
+    await runWithRequestContext(makeReqCtx(), async () => {
+      await store.invalidateTags(["products"]);
+      // The mock purge does not evict, so the entry SURVIVES in L1 — the
+      // per-request memo is what must reject it within this request.
+      expect(await store.getShell("k")).toBeNull();
+    });
+
+    // A fresh request has no memo; a hit that survived the purge is trusted
+    // (the purge itself is the eviction mechanism — data-family semantics).
+    await runWithRequestContext(makeReqCtx(), async () => {
+      expect((await store.getShell("k"))?.entry).toBeDefined();
+    });
+  });
+
+  it("edge-only purge mode: a capture write racing this request's updateTag is rejected", async () => {
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      baseUrl: "https://test.internal/",
+      tagPurge: async () => {},
+    });
+    await runWithRequestContext(makeReqCtx(), async () => {
+      const captureStartedAt = Date.now();
+      await store.invalidateTags(["products"]);
+      expect(
+        await store.putShell(
+          "k",
+          shellEntry({ createdAt: captureStartedAt }),
+          300,
+          30,
+          ["products"],
+        ),
+      ).toBe("invalidated");
+      // The scheduler's gate consults the same memo (KV-less purge mode).
+      expect(
+        await store.isTagsInvalidatedSince(["products"], captureStartedAt),
+      ).toBe(true);
+    });
+    // Outside the invalidating request there is no signal (fail open,
+    // cross-request races are bounded by ttl+swr like the data families).
+    expect(await store.isTagsInvalidatedSince(["products"], Date.now())).toBe(
+      false,
+    );
+  });
+
+  it("edge-only purge mode: an over-limit tag set makes the shell uncacheable, not un-invalidatable", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manyTags = Array.from(
+      { length: 100 },
+      (_, i) => `t${i}-${"x".repeat(200)}`,
+    );
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      namespace: "edge-overflow",
+      tagPurge: async () => {},
+    });
+    // ACKNOWLEDGED as uncacheable (not silent void): every retry would refuse
+    // identically, so the capture scheduler must back the key off instead of
+    // re-rendering a discarded capture on every MISS.
+    expect(await store.putShell("k", shellEntry(), 300, 30, manyTags)).toBe(
+      "uncacheable",
+    );
+    await drain(mockCtx);
+    expect(mockCache.store.size).toBe(0);
     expect(await store.getShell("k")).toBeNull();
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(
+      /NOT cached/,
+    );
+  });
 
-    // The silent fail-open is loud exactly once (issue #651): getShell/
-    // putShell only run for ppr routes, so this names the permanent-MISS
-    // shape and the fix without spamming every request.
-    expect(inertWarnings()).toHaveLength(1);
-    expect(inertWarnings()[0][0]).toContain("kv: env.CACHE_KV");
+  it("edge-only: declares tagHistoryInert so tagged BUILD shells decline (runtime shells unaffected)", async () => {
+    // Without KV, isTagsInvalidatedSince answers carry no durable history —
+    // the build-shell manifest gate reads this flag and declines tagged
+    // immutable entries (nothing could ever evict them). KV-backed stores
+    // stay durably answerable.
+    expect(new CFCacheStore({ ctx: mockCtx }).tagHistoryInert).toBe(true);
+    expect(
+      new CFCacheStore({ ctx: mockCtx, kv: mockKV as any }).tagHistoryInert,
+    ).toBeUndefined();
+  });
 
-    // Once per ISOLATE, not per instance: CFCacheStore is constructed per
-    // request, so a second no-KV store must not re-warn.
-    const store2 = new CFCacheStore({ ctx: createMockCtx() });
-    expect(await store2.getShell("k")).toBeNull();
-    expect(inertWarnings()).toHaveLength(1);
+  it("edge-only: tagInvalidationTtl does NOT cap L1 retention (no markers to outlive)", async () => {
+    // With KV the cap keeps a tagged entry from outliving its markers; with
+    // no KV there are no markers, and capping would hard-expire the shell
+    // below its declared ttl+swr.
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      namespace: "edge-retention",
+      tagPurge: async () => {},
+      tagInvalidationTtl: 60,
+    });
+    await store.putShell("k", shellEntry(), 300, 300, ["products"]);
+    await drain(mockCtx);
+
+    // Past the 60s tagInvalidationTtl, inside the 600s ttl+swr window: the
+    // entry must still serve (stale after 300s, so revalidation flags at most).
+    vi.setSystemTime(Date.now() + 70_000);
+    expect((await store.getShell("k"))?.entry).toBeDefined();
+    vi.setSystemTime(Date.now() + 540_000); // 610s total — past ttl+swr
+    expect(await store.getShell("k")).toBeNull();
+  });
+
+  it("edge-only: tagInvalidationTtl is dead config without KV — no KV-floor validation warning", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Below KV's 60s expirationTtl floor: with KV this warns and floors (it
+    // sizes MARKER expiry); without KV there are no markers and no retention
+    // cap, so validating it would misdirect the consumer to a KV concern.
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      namespace: "edge-dead-ttl",
+      tagInvalidationTtl: 30,
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // Contrast: the same value WITH KV keeps the floor warning.
+    new CFCacheStore({
+      ctx: mockCtx,
+      namespace: "edge-dead-ttl-kv",
+      kv: mockKV as any,
+      tagInvalidationTtl: 30,
+    });
+    expect(warnSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+      "expirationTtl floor",
+    );
+    void store;
   });
 
   it("stores short-lived shells in L1 while skipping KV below its 60s floor", async () => {

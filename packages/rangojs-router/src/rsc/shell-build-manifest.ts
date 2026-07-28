@@ -306,20 +306,27 @@ export async function lookupBuildShell(
     const entry = record.entry;
     if (record.tags && record.tags.length > 0) {
       const check = store.isTagsInvalidatedSince;
-      if (typeof check !== "function") {
+      if (typeof check !== "function" || store.tagHistoryInert) {
         // A tagged build entry on a store that cannot answer "was this tag
         // invalidated since the build" must not serve: updateTag() could
-        // never evict it. Declared intent that cannot be honored deserves a
+        // never evict it. That covers a store missing the method AND one
+        // whose answers have no durable history behind them
+        // (SegmentCacheStore.tagHistoryInert — a KV-less CFCacheStore's
+        // memo-only answers would let the immutable asset resurrect on the
+        // next request). Declared intent that cannot be honored deserves a
         // diagnostic; the route keeps runtime-capture semantics.
         const key = buildShellManifestKey(url.pathname);
         if (!warnedTagCheckUnsupported.has(key)) {
           warnedTagCheckUnsupported.add(key);
           console.warn(
             `[rango] Build-time shell for "${url.pathname}" carries cache tags, but ` +
-              "the app cache store does not implement isTagsInvalidatedSince(), so " +
-              "updateTag() could not evict it. The entry is not served; the route " +
-              "keeps runtime shell capture. Use MemorySegmentCacheStore, CFCacheStore, " +
-              "or VercelCacheStore (or add the method to your custom store).",
+              "the app cache store cannot answer tag-invalidation history durably " +
+              (typeof check !== "function"
+                ? "(isTagsInvalidatedSince() is not implemented), "
+                : "(no durable tag history — a CFCacheStore without a KV namespace), ") +
+              "so updateTag() could not evict it. The entry is not served; the route " +
+              "keeps runtime shell capture. Use MemorySegmentCacheStore, a KV-backed " +
+              "CFCacheStore, or VercelCacheStore (or add the method to your custom store).",
           );
         }
         return null;
