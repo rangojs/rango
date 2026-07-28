@@ -1,5 +1,91 @@
 # Changelog
 
+## 0.7.0 (2026-07-28)
+
+Shell caching comes to clientUrls groups, `stream: "navigation"` loaders
+become shell material under ppr, and the dev-mode client-reference dedup
+gets exports-map precision. No breaking API changes; one behavioral change
+for `stream: "navigation"` loaders on ppr routes (below).
+
+### Highlights
+
+#### `ppr` on clientUrls group routes ([#817](https://github.com/ivogt/vite-rsc/pull/817))
+
+Group routes can now declare shell caching exactly like server pages:
+
+```tsx
+"use client";
+export default clientUrls(({ path, loader, loading }) => [
+  path("/", ShopFront, { ppr: { ttl: 300, swr: 120 } }, () => [
+    loader(FeaturedLoader),
+    loading(<GridSkeleton />),
+  ]),
+]);
+```
+
+The option projects through the group's JSON projection onto the
+materialized server route, so the whole runtime engages unchanged: the
+group's static markup freezes into a per-URL shell — its `useSearchParams`
+read included, since search is part of shell identity — `loading()`
+subtrees stay the live holes, and a HIT flushes the stored prelude in the
+first bytes and hydrates with zero errors. The navigation axis works too:
+soft navigations into a warmed group route serve the stored navigation
+payload (`x-rango-ppr-replay: HIT`) and viewport prefetches enqueue
+navigation-only captures.
+
+#### `stream: "navigation"` loaders bake into the shell ([#817](https://github.com/ivogt/vite-rsc/pull/817))
+
+The flag's document promise — data, handle pushes, and status in the HTML
+before first flush — previously degraded silently under ppr: the loader
+was masked like any live loader and its data arrived in the resume stream,
+never the prelude. The capture lane is now per loader: a flagged loader
+executes at capture and its SETTLED return is shell material (frozen for
+the shell's lifetime, snapshot-pinned so HIT hydration agrees
+byte-for-byte), while nested promises in the return stay live holes —
+promise shape is the liveness declaration — and unflagged siblings stay
+fully dynamic. `loading()` becomes optional when every loader on a route
+is flagged: nothing masks, so the shell captures complete.
+
+This is a behavioral change if you already use `stream: "navigation"` on a
+ppr route: the loader's settled data is now frozen per shell lifetime
+(govern freshness with `ppr.ttl`/`swr`/`tags`) instead of streaming fresh
+into the resume. Express per-request material as a nested promise or move
+it to an unflagged loader.
+
+#### Exports-map-precise client-reference dedup in dev ([#816](https://github.com/ivogt/vite-rsc/pull/816))
+
+Deep third-party `"use client"` imports (`lib/context`, not re-exported
+from the package root) lost their symbols in dev — the dedup rewrote the
+module to the bare package root. It now resolves the module's precise
+public subpath through the package's `exports` map (star patterns
+included, every candidate verified by resolving back to the same file),
+falling back to the documented root-barrel behavior only when no public
+subpath maps. Context identity dedupes correctly for non-barrel packages.
+
+### Fixes
+
+- `Static()` / `Prerender()` handler values inside `clientUrls()` are
+  rejected with a targeted message naming the wrapper and pointing at the
+  `ppr` path option — build-time handlers are server-DSL surface and
+  cannot mount in a client group ([#818](https://github.com/ivogt/vite-rsc/pull/818)).
+- `expose-action-id` adopts plugin-rsc's public `getPluginApi` and
+  tolerates both server-reference manager shapes, failing loudly if
+  neither matches ([#816](https://github.com/ivogt/vite-rsc/pull/816)).
+
+### Dependencies
+
+- `@vitejs/plugin-rsc` `^0.5.31` (carries the pluggable server-function
+  registration API), react/react-dom peers to `19.2.8`
+  ([#816](https://github.com/ivogt/vite-rsc/pull/816)).
+
+### Internal
+
+- New e2e surfaces: head-script `preload` mode (dedicated config, both
+  apps) and deep client-package resolution, dev + production.
+- The clientUrls group DSL scope is settled: shell caching is the `ppr`
+  option and the `stream: "navigation"` bake lane; build-time
+  prerendering stays with the server tree around the include.
+
 ## 0.6.0 (2026-07-28)
 
 This release ships three large pieces: client route groups (`clientUrls()`),
