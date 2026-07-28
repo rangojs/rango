@@ -31,6 +31,7 @@ import { CuFlash, CuNote } from "../location-states.js";
 import {
   ClientUrlsItemLoader,
   ClientUrlsLegacyRedirectLoader,
+  ClientUrlsPprBakedLoader,
   ClientUrlsPprLoader,
   ClientUrlsPulseLoader,
   ClientUrlsStampLoader,
@@ -272,12 +273,14 @@ function ClientUrlsStateProbe() {
  */
 function ClientUrlsPprPage() {
   const [params] = useSearchParams();
+  const { data: baked } = useLoader(ClientUrlsPprBakedLoader);
   return (
     <section data-testid="cu-ppr">
       <div data-testid="cu-ppr-static">group shell static</div>
       <div data-testid="cu-ppr-filter">
         {`filter:${params.get("filter") ?? "none"}`}
       </div>
+      <div data-testid="cu-ppr-baked">{baked.label}</div>
       <ClientUrlsPprValue />
     </section>
   );
@@ -315,6 +318,9 @@ export default clientUrls(({ layout, path, loader, loading }) => [
     // server route carries it on its manifest entry, so capture/serve run
     // exactly as for a hand-written ppr page.
     path("/ppr", ClientUrlsPprPage, { ppr: { ttl: 300, swr: 120 } }, () => [
+      // The flagged loader BAKES at capture (settled return = shell
+      // material); the plain loader stays the live hole under loading().
+      loader(ClientUrlsPprBakedLoader, { stream: "navigation" }),
       loader(ClientUrlsPprLoader),
       loading(<div data-testid="cu-ppr-fallback">Loading ppr</div>),
     ]),

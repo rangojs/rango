@@ -144,7 +144,10 @@ export interface ClientUrlHelpers {
    * Pass `{ stream: "navigation" }` to await this loader before first flush
    * on DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders
    * whose data, handle pushes, or thrown notFound()/redirect() must be in the
-   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming.
+   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming. Under a
+   * `ppr` group route the flag BAKES: the loader executes at shell capture
+   * and its settled return freezes into the shell (nested promises stay
+   * live holes).
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,

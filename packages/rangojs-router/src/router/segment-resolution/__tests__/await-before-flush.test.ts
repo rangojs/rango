@@ -130,16 +130,28 @@ describe("resolveLoaders awaitBeforeFlush", () => {
     expect(mockRequestCtx._awaitBeforeFlushLoaderIds).toBeUndefined();
   });
 
-  it("skips the await during shell capture (masked loaders would hang it)", async () => {
+  it("capture: flagged loader BAKES (executes + registers its record) without blocking resolution; unflagged stays masked", async () => {
     mockRequestCtx._shellCaptureRun = true;
-    // Flagged AND masked: resolveLoaderData's capture gate never runs the fn.
+    mockRequestCtx._shellCaptureLoaderRecords = new Map();
+    // Flagged: executes at capture (the bake lane — its settled return is
+    // shell material; the capture GATE holds for the record, so resolution
+    // itself must not await it). Unflagged sibling: masked, never runs.
     const flagged = createMockLoader("flagged#L", new Promise(() => {}));
-    const entry = createEntry([loaderEntry(flagged, true)]);
+    const plain = createMockLoader("plain#L", new Promise(() => {}));
+    const entry = createEntry([loaderEntry(flagged, true), loaderEntry(plain)]);
 
     const resolution = resolveLoaders(entry, createMockCtx(), true, deps);
 
     expect(await settlesWithin(resolution, 30)).toBe(true);
-    expect(flagged).not.toHaveBeenCalled();
+    expect(flagged).toHaveBeenCalledTimes(1);
+    expect(plain).not.toHaveBeenCalled();
+    // The masked-container record registered under the loader's segment key —
+    // this is what holds the capture gate and pins the shell snapshot.
+    expect([...mockRequestCtx._shellCaptureLoaderRecords.keys()]).toEqual([
+      "R0D0.flagged#L",
+    ]);
+    // The pre-flush await machinery stays off during capture (the gate hold
+    // replaces it); the rendered() cycle-guard set is not populated.
     expect(mockRequestCtx._awaitBeforeFlushLoaderIds).toBeUndefined();
   });
 });

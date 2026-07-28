@@ -1,5 +1,20 @@
 # Loader container bake: one promise doctrine for handlers, handles, AND loaders
 
+ADDENDUM 2026-07-28 — the bake lane's TRIGGER is now the per-loader
+`stream: "navigation"` flag (`loader(Def, { stream: "navigation" })`), not
+the entry's missing loading(). #813 (streaming useLoader) retired the
+loading()-less trigger — plain loaders are LIVE at capture on every entry
+shape, and a boundary-less masked read refuses the capture. The flag's
+document promise ("this loader's data is in the HTML before first flush")
+maps to the frozen prelude under ppr, so flagged loaders re-engage the
+UNCHANGED machinery below: execute at capture, nested-thenable mask (shape
+is liveness), `_shellCaptureLoaderRecords` registration (capture gate hold,
+bounded by `ppr.captureTimeout`), snapshot pinning, HIT-tail seed overlay
+(pin-first when hole-free). A route whose loaders are ALL flagged needs no
+loading() and captures a complete shell. Pinned by the "stream:navigation
+loader bakes into the shell", "fully-baked route needs no loading()", and
+group-ppr baked-value probes (shell-cache.test.ts, dev+prod).
+
 Status: IMPLEMENTED (same branch). The former trap tests flipped red->green as
 planned; the bake-lane contract is e2e-pinned in both the test-app suite and
 the cloudflare-basic twin (real KV envelope round-trip), dev + production.

@@ -240,7 +240,9 @@ export async function resolveLoadersWithRevalidation<TEnv>(
             loaderEntry,
             ctx,
             ctx.pathname,
-            bakeLane ? segmentId : null,
+            bakeLane || loaderEntry.awaitBeforeFlush === true
+              ? segmentId
+              : null,
           ),
         ),
         entry,

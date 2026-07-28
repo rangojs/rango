@@ -47,6 +47,19 @@ export const ClientUrlsPprLoader = createLoader(async () => {
   return { seq: pprSeq };
 });
 
+let pprBakedSeq = 0;
+
+/**
+ * stream:"navigation" loader on the group's ppr route: executes at capture
+ * and its settled return is SHELL material — the group analog of the
+ * server-route bake pin. Monotonic so frozen-ness is observable (the seq
+ * must NOT advance across HITs).
+ */
+export const ClientUrlsPprBakedLoader = createLoader(async () => {
+  pprBakedSeq += 1;
+  return { label: `group-baked-${pprBakedSeq}` };
+});
+
 let stampCounter = 0;
 
 /**
