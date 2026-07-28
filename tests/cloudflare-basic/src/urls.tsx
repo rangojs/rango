@@ -37,6 +37,10 @@ import { AboutPage } from "./pages/about.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
 import {
+  ClientPackageResolutionLayout,
+  ClientPackageResolutionPage,
+} from "./pages/client-package-resolution.js";
+import {
   PprShellLayout,
   PprShellPricePage,
   PprShellStreamPage,
@@ -537,6 +541,11 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        layout(ClientPackageResolutionLayout, () => [
+          path("/client-package-resolution", ClientPackageResolutionPage, {
+            name: "clientPackageResolution",
+          }),
+        ]),
         // Mixed example: an ordinary RSC layout wrapping a clientUrls()
         // group mounted through include() — the layout is a Server Component;
         // the pages keep browser-local matching and optimistic presentation.

@@ -6,6 +6,15 @@ import devtoolsJson from "vite-plugin-devtools-json";
 import { analyze } from "../../../../tools/bundle-analyze";
 import { productionDefines } from "../../../../tools/vite-define";
 
+function testHeadScripts(): "preload" | undefined {
+  const value = process.env.RANGO_E2E_HEAD_SCRIPTS;
+  if (!value) return;
+  if (value === "preload") return value;
+  throw new Error(`Invalid RANGO_E2E_HEAD_SCRIPTS value: ${value}`);
+}
+
+const headScripts = testHeadScripts();
+
 // A third-party-style resolver: maps the "@parity/*" specifier to ./src/parity/*
 // via a resolveId hook, deliberately WITHOUT a matching resolve.alias entry.
 // This mirrors how vite-tsconfig-paths resolves tsconfig `paths` (issue #500)
@@ -35,7 +44,7 @@ export default defineConfig(({ command }) => ({
   plugins: [
     parityAliasPlugin(),
     react(),
-    rango(),
+    rango(headScripts ? { headScripts } : undefined),
     devtoolsJson(),
     poke(),
     ...analyze(),

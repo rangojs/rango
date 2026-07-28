@@ -17,7 +17,7 @@ render and every upstream read it needs.
 React 19.2 shipped Partial Pre-rendering in **stable**: `prerender` from
 `react-dom/static` returns `{ prelude, postponed }` when aborted mid-suspense,
 and `resume` from `react-dom/server` continues that exact render, emitting only
-the postponed holes. The repo's pinned react/react-dom/vendored RSD (19.2.6)
+the postponed holes. The repo's pinned react/react-dom/vendored RSD (19.2.8)
 all carry the full surface — verified by runtime probe, not just export lists.
 
 So: cache the rendered HTML **prelude** plus the postponed state, serve those

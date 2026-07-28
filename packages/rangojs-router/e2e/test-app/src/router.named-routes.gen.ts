@@ -85,6 +85,7 @@ export const NamedRoutes = {
   "clientIntercept.detail": "/client-urls-intercept/detail/:itemId",
   "clientIntercept.index": "/client-urls-intercept",
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",
+  "clientPackageResolution.clientPackageResolutionIndex": "/client-package-resolution",
   "clientTransition.item": "/client-urls-transition/items/:itemId",
   "clientTransition.plain": "/client-urls-transition/plain/:itemId",
   "colocatedFr.index": "/colocated-fr",

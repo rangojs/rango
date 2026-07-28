@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test:e2e": "playwright test",
+    "test:e2e:preload": "playwright test --config=playwright.preload.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:hmr-local": "playwright test --project=hmr --no-deps --workers=1",
     "test:unit": "vitest run",
@@ -20,6 +21,7 @@
   "dependencies": {
     "@rangojs/router": "workspace:*",
     "@shared/docs": "workspace:*",
+    "rango-e2e-deep-context-lib": "file:__test_packages__/rango-e2e-deep-context-lib",
     "react": "catalog:",
     "react-dom": "catalog:",
     "spin-delay": "^2.0.1"
