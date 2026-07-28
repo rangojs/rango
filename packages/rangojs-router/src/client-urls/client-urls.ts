@@ -223,6 +223,31 @@ function assertNamedComponent(
   component: unknown,
   helper: "path" | "layout" | "intercept",
 ): asserts component is ComponentType {
+  // Build-time handler wrappers get a TARGETED rejection ahead of the generic
+  // shape check: their handler code cannot live in a "use client" bundle and
+  // their render runs at build, so accepting one could only fail later and
+  // further from the mistake. Brand strings checked directly — importing
+  // static-handler.ts/prerender.ts here would pull server modules into the
+  // client graph for an error message.
+  const brand =
+    component !== null &&
+    (typeof component === "object" || typeof component === "function")
+      ? (component as { __brand?: unknown }).__brand
+      : undefined;
+  if (
+    brand === "staticHandler" ||
+    brand === "prerenderHandler" ||
+    brand === "prerenderPassthrough"
+  ) {
+    const wrapper = brand === "staticHandler" ? "Static()" : "Prerender()";
+    throw new Error(
+      `clientUrls() ${helper}() received a ${wrapper} handler. Build-time ` +
+        "handlers are server-DSL surface and cannot mount inside a client " +
+        "group — routes in a group render client components. For shell " +
+        "caching of a group route use the `ppr` path option; build-time " +
+        "prerendering belongs to the server tree around the include.",
+    );
+  }
   if (typeof component !== "function" || component.name.trim() === "") {
     throw new Error(
       `clientUrls() ${helper}() expects a named client component value`,

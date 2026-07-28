@@ -478,7 +478,11 @@ component is a client component, and a streamed loader rejection throws to
 the boundary above its `useLoader` read.) Every helper rejection and the
 option-level rejections (`intercept`, `parallel`, `revalidate`, and any
 other non-projected `PathOptions` key) are pinned by tests; `ppr` PROJECTS
-(see Supported surface).
+(see Supported surface). `Static()`/`Prerender()` handler VALUES are also
+rejected with a targeted message: build-time handlers are server-DSL
+surface — their code cannot live in a "use client" bundle and their render
+runs at build. Shell caching of a group route is the `ppr` path option;
+build-time prerendering belongs to the server tree around the include.
 
 Composition limits around a client include, locked explicitly:
 

@@ -8,6 +8,9 @@ import {
   type ClientUrlRouteRecord,
 } from "../client-urls.js";
 import type { LoaderDefinition } from "../../types.js";
+import type { ComponentType } from "react";
+import { Static } from "../../static-handler.js";
+import { Prerender } from "../../prerender.js";
 
 function HomePage(): null {
   return null;
@@ -38,6 +41,37 @@ function loader(id: string): LoaderDefinition<unknown> {
 }
 
 describe("clientUrls", () => {
+  it("rejects Static()/Prerender() handler values with a targeted message", () => {
+    // Real definitions, not hand-built brands: the rejection must hold for
+    // exactly what the server DSL produces.
+    const staticDef = Static(() => null);
+    const prerenderDef = Prerender(() => null);
+
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/static", staticDef as unknown as ComponentType),
+      ]),
+    ).toThrow(/path\(\) received a Static\(\) handler/);
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/prerender", prerenderDef as unknown as ComponentType),
+      ]),
+    ).toThrow(/path\(\) received a Prerender\(\) handler/);
+    expect(() =>
+      clientUrls(({ layout, path }) => [
+        layout(staticDef as unknown as ComponentType, () => [
+          path("/x", HomePage),
+        ]),
+      ]),
+    ).toThrow(/layout\(\) received a Static\(\) handler/);
+    // The message points at the supported alternative.
+    expect(() =>
+      clientUrls(({ path }) => [
+        path("/static", staticDef as unknown as ComponentType),
+      ]),
+    ).toThrow(/`ppr` path option/);
+  });
+
   it("accepts the ppr path option and validates its shape", () => {
     // ppr is a PROJECTED option (performance surface): true and the JSON
     // PartialPrerenderProps form pass; malformed values fail at DSL time in
