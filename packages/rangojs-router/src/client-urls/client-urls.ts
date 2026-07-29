@@ -137,7 +137,7 @@ interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
   readonly revalidate: readonly ClientRevalidateFn[];
-  readonly stream?: "navigation";
+  readonly ssr?: false;
 }
 
 interface RevalidateItem extends ItemBase {
@@ -380,9 +380,14 @@ function createHelpers(): ClientUrlHelpers {
     const options =
       typeof optionsOrUse === "function" ? undefined : optionsOrUse;
     const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
-    if (options?.stream !== undefined && options.stream !== "navigation") {
+    if ((options as { stream?: unknown } | undefined)?.stream !== undefined) {
       throw new Error(
-        `clientUrls() loader() stream must be "navigation" (got ${JSON.stringify(options.stream)}). Omit it to stream on every render.`,
+        "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+      );
+    }
+    if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
+      throw new Error(
+        `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
       );
     }
     const items = use ? runUse(use, "loader use") : [];
@@ -397,9 +402,7 @@ function createHelpers(): ClientUrlHelpers {
             item.type === "revalidate",
         )
         .map((item) => item.fn),
-      ...(options?.stream === "navigation"
-        ? { stream: "navigation" as const }
-        : {}),
+      ...(options?.ssr === false ? { ssr: false as const } : {}),
     });
   };
 
@@ -505,9 +508,9 @@ function createHelpers(): ClientUrlHelpers {
     for (const item of items) {
       // Intercept loaders run on soft navigations only — a document-render
       // await can never apply, so accepting the flag would be silently inert.
-      if (item.type === "loader" && item.stream !== undefined) {
+      if (item.type === "loader" && item.ssr !== undefined) {
         throw new Error(
-          'clientUrls() intercept() loaders cannot use stream: "navigation" — intercepts render on client navigations only',
+          "clientUrls() intercept() loaders cannot use ssr: false — intercepts render on client navigations only",
         );
       }
     }
@@ -557,7 +560,7 @@ function applyConfig(
         Object.freeze({
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
-          ...(item.stream ? { stream: item.stream } : {}),
+          ...(item.ssr === false ? { ssr: false as const } : {}),
         }),
       );
     } else if (item.type === "loading") {

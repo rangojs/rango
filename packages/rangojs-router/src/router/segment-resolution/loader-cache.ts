@@ -159,7 +159,7 @@ export function resolveLoaderData<TEnv>(
   if (isShellCaptureActive(reqCtx)) {
     // Capture lane, per LOADER (not per entry):
     //
-    // - `stream: "navigation"` (awaitBeforeFlush) — the BAKE lane. The flag's
+    // - `ssr: false` (awaitBeforeFlush) — the BAKE lane. The flag's
     //   document promise is "this loader's data is in the HTML before first
     //   flush"; under ppr the pre-flush HTML IS the frozen prelude, so the
     //   loader executes at capture and its SETTLED return bakes into the

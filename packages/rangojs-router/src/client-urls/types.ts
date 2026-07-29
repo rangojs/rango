@@ -87,12 +87,12 @@ export interface ClientUrlLoaderRecord {
   /** Client-run per-loader revalidation predicates; empty = locked defaults. */
   readonly revalidate: readonly ClientRevalidateFn[];
   /**
-   * loader(Def, { stream: "navigation" }): document renders await this loader
-   * before first flush (see {@link LoaderOptions}). Projected into the server
-   * tree, where the per-isSSR entry stamping applies — client navigations
-   * stream regardless.
+   * loader(Def, { ssr: false }): document renders await this loader before
+   * first flush (see {@link LoaderOptions}). Projected into the server tree,
+   * where the per-isSSR entry stamping applies — client navigations stream
+   * regardless.
    */
-  readonly stream?: "navigation";
+  readonly ssr?: false;
 }
 
 /**
@@ -141,13 +141,14 @@ export interface ClientUrlHelpers {
    * revalidate() only — a CLIENT-RUN per-loader predicate; its decision (not
    * the function) is sent with the revalidation request.
    *
-   * Pass `{ stream: "navigation" }` to await this loader before first flush
-   * on DOCUMENT requests (see {@link LoaderOptions}) — the opt-in for loaders
-   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
-   * SSR'd HTML. Per-loader: a dynamic sibling keeps streaming. Under a
-   * `ppr` group route the flag BAKES: the loader executes at shell capture
-   * and its settled return freezes into the shell (nested promises stay
-   * live holes).
+   * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
+   * false }) — to await this loader before first flush on DOCUMENT requests
+   * (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
+   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * Per-loader: a streaming sibling keeps streaming. Under a `ppr` group
+   * route the flag BAKES: the loader executes at shell capture and its
+   * settled return freezes into the shell (nested promises stay live
+   * holes).
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,

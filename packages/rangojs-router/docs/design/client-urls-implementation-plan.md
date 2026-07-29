@@ -12,7 +12,7 @@ initial gate, the slice has also shipped: client-run per-loader
 `revalidate()`, restricted `intercept()`, data-only `transition()`, loader
 authority signals and handle writes (the general loader contract),
 implicitly-suspending `useLoader`, and
-`loader(Def, { stream: "navigation" })`.
+`loader(Def, { ssr: false })`.
 
 The consumer contract is documented in [Client URL Routes](../client-urls.md).
 When this plan and the guide differ, the guide and current source are the shipped
@@ -37,7 +37,7 @@ and the public `renderRoute({ outletPending })` seam.
 
 That initial gate did not cover the surface shipped since — client-run
 `revalidate()`, restricted `intercept()`, data-only `transition()`, loader
-signals/handle writes, and `stream: "navigation"` each landed with their own
+signals/handle writes, and `ssr: false` each landed with their own
 dev+production e2e (see [Client URL Routes](../client-urls.md) for the pinned
 suites). Still not shipped: route-local middleware, a dedicated route-data
 transport, parallel routes, boundaries (deliberately — the server tree around
@@ -104,7 +104,7 @@ semantics — several may be mounted, under prefixes and RSC layouts.
 | `path()` and `layout()`      | Named client component values                                                                                                                   |
 | `loader()`                   | Imported server `createLoader()` definition, executed by registered ID — full loader body contract (signals, handle writes, `rendered()` reads) |
 | Non-fetchable loaders        | Supported; the projected route invokes the server definition directly                                                                           |
-| Loader delivery options      | `loader(Def, { stream: "navigation" }, use?)` — document renders await the loader before first flush                                            |
+| Loader delivery options      | `loader(Def, { ssr: false }, use?)` — document renders await the loader before first flush                                                      |
 | `revalidate()`               | Client-run per-loader predicate inside a `loader()` use callback; decision crosses on the request header                                        |
 | `intercept()`                | Restricted: dot-local named target, `loader()`/`loading()` use, module-local scoping                                                            |
 | `transition()`               | Data-only `TransitionConfig` subset (no `when`)                                                                                                 |

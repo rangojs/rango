@@ -3,7 +3,7 @@ import { products } from "@/handlers/shop/data.js";
 import { Meta } from "@/handles/meta.js";
 
 /**
- * Fixtures for loader(Def, { stream: "navigation" }) — the SSR-completeness
+ * Fixtures for loader(Def, { ssr: false }) — the SSR-completeness
  * opt-in. Everything here lands AFTER a deliberate delay, so WITHOUT the flag
  * none of it could deterministically make the document: the Meta push would
  * lose the handler barrier (streaming via handlesLate, applied post-hydration),

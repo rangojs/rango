@@ -621,7 +621,7 @@ boundaries, compose server-side via `ctx.use(OtherLoader)`, and carry
 route-level authority: they can throw `notFound()`/`redirect()`, WRITE handles
 (`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the data's
 producer), read handle data after the render settles (`ctx.get(handle)` behind
-`await ctx.rendered()`), and opt into `loader(Def, { stream: "navigation" })`
+`await ctx.rendered()`), and opt into `loader(Def, { ssr: false })`
 so a document render awaits them before first flush (deterministic SSR'd data,
 meta, and 404 status). Reads happen through `useLoader` in a client component
 (including its SSR pass) or `useFetchLoader` for standalone client fetches. "Fetchable" loaders are callable
@@ -691,7 +691,7 @@ that no loader-before-render has:
   read by many segments, composed via `ctx.use`, or exposed as a fetchable endpoint;
 - it **streams as a hole, not a gate** — concurrent, Suspense-resolved under
   `loading()`, so the shell never blocks on it (and gating is a deliberate
-  per-loader opt-in — `{ stream: "navigation" }` awaits ONE loader on document
+  per-loader opt-in — `{ ssr: false }` awaits ONE loader on document
   renders while the rest keep streaming — not the model's default);
 - it is **client-addressable and refreshable** independent of navigation (`key`,
   `refreshGroup`, `useRefreshLoaders`), behaving like a built-in, server-defined

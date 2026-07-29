@@ -106,7 +106,7 @@ during navigation.
 > settles before the handler barrier. A push that lands after a slow fetch
 > arrives post-hydration — and for an inline/ordered script the frozen set
 > means it is silently dropped. If a loader must contribute an inline script
-> to the document, register it `loader(Def, { stream: "navigation" })` so the
+> to the document, register it `loader(Def, { ssr: false })` so the
 > document render awaits the push; otherwise push from a handler (or use an
 > `async` config, which stays reactive).
 

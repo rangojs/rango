@@ -726,7 +726,7 @@ const HomePage: Handler<"home"> = (ctx) => {
 
 `generateMetadata({ params })` — DATA-derived, document-blocking metadata —
 maps to a Meta push from the LOADER that owns the data, plus
-`{ stream: "navigation" }` for the blocking-until-in-head part:
+`{ ssr: false }` for the blocking-until-in-head part:
 
 ```typescript
 // Next.js: export async function generateMetadata({ params }) {
@@ -744,7 +744,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { stream: "navigation" }),
+  loader(ProductLoader, { ssr: false }),
 ]);
 ```
 
@@ -843,7 +843,7 @@ See `/theme` for full API including system detection and cookie persistence.
 10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 11. [ ] Migrate API routes to `path.json()` / `path.text()`
 12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
-        (`generateMetadata` → loader push + `{ stream: "navigation" }`)
+        (`generateMetadata` → loader push + `{ ssr: false }`)
 13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
 14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the

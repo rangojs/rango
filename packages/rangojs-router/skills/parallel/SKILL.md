@@ -136,7 +136,7 @@ naturally.
 > the baked lane under `cache()`/PPR — just to reach a `ctx.use(Meta)` call.
 > The loader can now push `Meta` itself (`/loader` → "Writing Handles from
 > Loaders"), keeping the data on the live lane; add
-> `loader(Def, { stream: "navigation" })` when the meta must be in the SSR'd
+> `loader(Def, { ssr: false })` when the meta must be in the SSR'd
 > head. Keep the `@meta` slot for metadata that is NOT loader-derived
 > (templates, static descriptions, structured data with independent inputs).
 

@@ -16,7 +16,7 @@ function SiblingValue({ loader }: { loader: LoaderDefinition<string> }) {
 }
 
 /**
- * stream:"navigation" bake pin. The flagged loader's read settles at capture
+ * ssr:false bake pin. The flagged loader's read settles at capture
  * (bake lane), so `title` renders as SHELL material. The nested promise and
  * the plain sibling read each sit under their OWN Suspense — a masked reader
  * must never share the baked material's nearest boundary, or the whole

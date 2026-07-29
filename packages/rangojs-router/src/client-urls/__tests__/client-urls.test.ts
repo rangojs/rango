@@ -186,7 +186,7 @@ describe("clientUrls", () => {
     });
   });
 
-  it("stores the stream flag from loader(Def, { stream: 'navigation' }, use?)", () => {
+  it("stores the ssr flag from loader(Def, { ssr: false }, use?)", () => {
     const PlainLoader = loader("loaders#plain");
     const FlaggedLoader = loader("loaders#flagged");
     const FlaggedWithUse = loader("loaders#flagged-use");
@@ -194,8 +194,8 @@ describe("clientUrls", () => {
     const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
       path("/mixed", AccountPage, () => [
         useLoader(PlainLoader),
-        useLoader(FlaggedLoader, { stream: "navigation" }),
-        useLoader(FlaggedWithUse, { stream: "navigation" }, () => [
+        useLoader(FlaggedLoader, { ssr: false }),
+        useLoader(FlaggedWithUse, { ssr: false }, () => [
           revalidate(() => false),
         ]),
       ]),
@@ -208,16 +208,16 @@ describe("clientUrls", () => {
     });
     expect(route.loaders[1]).toMatchObject({
       loader: FlaggedLoader,
-      stream: "navigation",
+      ssr: false,
     });
     expect(route.loaders[2]).toMatchObject({
       loader: FlaggedWithUse,
-      stream: "navigation",
+      ssr: false,
     });
     expect(route.loaders[2].revalidate).toHaveLength(1);
   });
 
-  it("rejects two use() callbacks and invalid stream values", () => {
+  it("rejects two use() callbacks, invalid ssr values, and the removed stream option", () => {
     const AccountLoader = loader("loaders#account");
     expect(() =>
       clientUrls(({ path, loader: useLoader }) => [
@@ -229,19 +229,26 @@ describe("clientUrls", () => {
     expect(() =>
       clientUrls(({ path, loader: useLoader }) => [
         path("/x", AccountPage, () => [
-          useLoader(AccountLoader, { stream: "always" } as never),
+          useLoader(AccountLoader, { ssr: "never" } as never),
         ]),
       ]),
-    ).toThrow(/stream must be "navigation"/);
+    ).toThrow(/ssr must be a boolean/);
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { stream: "navigation" } as never),
+        ]),
+      ]),
+    ).toThrow(/stream was replaced.*ssr: false/);
   });
 
-  it("rejects stream: 'navigation' on intercept loaders", () => {
+  it("rejects ssr: false on intercept loaders", () => {
     const DetailLoader = loader("loaders#detail");
     expect(() =>
       clientUrls(({ path, intercept, loader: useLoader }) => [
         path("/items/:id", AccountPage, { name: "detail" }),
         intercept("@modal", ".detail", AccountLayout, () => [
-          useLoader(DetailLoader, { stream: "navigation" }),
+          useLoader(DetailLoader, { ssr: false }),
         ]),
       ]),
     ).toThrow(/intercepts render on client navigations only/);
@@ -261,7 +268,7 @@ describe("clientUrls", () => {
       Parameters<ClientUrlHelpers["loader"]>["length"]
     >().toEqualTypeOf<1 | 2 | 3>();
     expectTypeOf<keyof ClientUrlLoaderRecord>().toEqualTypeOf<
-      "loader" | "revalidate" | "stream"
+      "loader" | "revalidate" | "ssr"
     >();
     expectTypeOf<keyof ClientUrlRouteRecord>().toEqualTypeOf<
       | "id"

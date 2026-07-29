@@ -75,7 +75,7 @@ export type LoaderContext<
    * later ones stream to the client and apply post-hydration (document lane)
    * or progressively (navigation/action lanes). To guarantee a loader's
    * handles are in the SSR'd document, register it as
-   * `loader(Def, { stream: "navigation" })` so the document render awaits it
+   * `loader(Def, { ssr: false })` so the document render awaits it
    * (see {@link LoaderOptions}).
    *
    * @example
@@ -174,29 +174,31 @@ export type LoaderFn<
 > = (ctx: LoaderContext<TParams, TEnv>) => Promise<T> | T;
 
 /**
- * Delivery mode for a DSL-registered loader: `loader(Def, { stream })`.
+ * SSR delivery for a DSL-registered loader: `loader(Def, { ssr })`.
  *
- * Default (omitted): the loader streams on every render. Its data, its
- * `ctx.use(Handle)` pushes, and any `notFound()`/`redirect()` it throws may land
- * AFTER the document Response is constructed, so none of them are guaranteed to
- * be in the SSR'd HTML.
+ * Default (omitted / `true`): the loader streams on every render. Its data,
+ * its `ctx.use(Handle)` pushes, and any `notFound()`/`redirect()` it throws
+ * may land AFTER the document Response is constructed, so none of them are
+ * guaranteed to be in the SSR'd HTML.
  *
- * `"navigation"` narrows streaming to client navigations only: on a DOCUMENT
- * request the loader is awaited before first flush. `useLoader` still suspends,
- * but on an already-settled promise, so no fallback paints. This is the
- * SSR-completeness opt-in — the name is about WHERE streaming still applies, not
- * about disabling it. Choose it when the loader feeds something that must exist
- * in the document: `<head>` meta via a handle, or a real 404 status (an awaited
- * `notFound()` deterministically precedes Response construction, where the
- * streamed default only wins that race opportunistically). It does NOT change
- * PPR capture behavior: capture renders mask loaders and skip this await.
+ * `ssr: false` turns SSR streaming off for this loader — the same knob
+ * `loading(fallback, { ssr: false })` is for the fallback: on a DOCUMENT
+ * request the loader is awaited before first flush, so no fallback paints for
+ * it (`useLoader` still suspends, but on an already-settled promise). Client
+ * navigations keep streaming it. This is the SSR-completeness opt-in. Choose
+ * it when the loader feeds something that must exist in the document:
+ * `<head>` meta via a handle, or a real 404 status (an awaited `notFound()`
+ * deterministically precedes Response construction, where the streamed
+ * default only wins that race opportunistically). Under ppr it is also the
+ * BAKE lane: the loader executes at shell capture and its settled return is
+ * shell material (nested promises stay live holes) — see the ppr docs.
  *
- * Scoped per LOADER, not per segment: a baked loader alongside a deliberately
- * dynamic sibling awaits only itself, and the sibling keeps streaming behind its
- * `loading()`/Suspense boundary.
+ * Scoped per LOADER, not per segment: an `ssr: false` loader alongside a
+ * deliberately streaming sibling awaits only itself, and the sibling keeps
+ * streaming behind its `loading()`/Suspense boundary.
  */
 export type LoaderOptions = {
-  stream?: "navigation";
+  ssr?: boolean;
 };
 
 /**

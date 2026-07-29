@@ -61,7 +61,7 @@ import { ThemeToggle } from "../components/ThemeToggle.js";
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
 //     structure (the LIVE lane).
-//   BAKE LANE — a loader flagged `stream: "navigation"` executes at capture:
+//   BAKE LANE — a loader flagged `ssr: false` executes at capture:
 //     its settled return bakes (snapshot-pinned on HITs), nested pending
 //     promises hole at the consumer's own Suspense. /shell-cache/baked and
 //     /shell-cache/baked-only exercise it; a PLAIN loader without loading()
@@ -542,7 +542,7 @@ export const shellCachePatterns = urls(
           ),
         ],
       ),
-      // stream:"navigation" BAKE lane: the flagged loader executes at
+      // ssr:false BAKE lane: the flagged loader executes at
       // capture and its settled return is SHELL material even though the
       // route declares loading(); the nested promise in that return and the
       // unflagged sibling stay live holes at their own boundaries.
@@ -551,7 +551,7 @@ export const shellCachePatterns = urls(
         ShellBakedPage,
         { name: "shellCacheBaked", ppr: { ttl: 300, swr: 120 } },
         () => [
-          loader(ShellBakedNavLoader, { stream: "navigation" }),
+          loader(ShellBakedNavLoader, { ssr: false }),
           loader(ShellBakedSiblingLoader),
           loading(
             <div data-testid="shell-baked-loading">Loading baked...</div>,
@@ -565,7 +565,7 @@ export const shellCachePatterns = urls(
         "/shell-cache/baked-only",
         ShellBakedOnlyPage,
         { name: "shellCacheBakedOnly", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(ShellBakedOnlyLoader, { stream: "navigation" })],
+        () => [loader(ShellBakedOnlyLoader, { ssr: false })],
       ),
       // Loader-carried promise WITH loading(): the loading() boundary is the hole.
       // On a HIT the resume streams three layers in one body — cached shell, then

@@ -120,7 +120,7 @@ If you are evaluating Rango against other frameworks, start with the comparison.
   design background for `"use client"` + `clientUrls()` route groups. Browser
   matching, canonical partial-Flight navigation, client-run revalidation,
   restricted intercepts, transitions, loader signals/handle writes, and
-  `stream: "navigation"` are shipped; route-local middleware, parallels,
+  `ssr: false` are shipped; route-local middleware, parallels,
   boundaries, caching, PPR, and the dedicated route-data transport remain
   future design
 - [Render stage driver](./design/render-stage-driver.md) - the migration from

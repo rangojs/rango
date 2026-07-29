@@ -375,7 +375,7 @@ Handler and no-match cases set HTTP 404 status. A LOADER-thrown `notFound()`
 on a document load always streams the resolved not-found UI, but the 404
 STATUS is opportunistic — real only when the rejection settles before the
 document Response is constructed (loaders stream). Register the loader as
-`loader(Def, { stream: "navigation" })` to make the 404 status deterministic;
+`loader(Def, { ssr: false })` to make the 404 status deterministic;
 on client navigations the 404 UI swaps in with the URL preserved (payload
 stays 200 — the client owns presentation there). See `/loader` → "Loader
 Authority".

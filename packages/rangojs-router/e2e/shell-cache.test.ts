@@ -419,12 +419,12 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-price")).toContainText("Live price:");
   });
 
-  // stream:"navigation" BAKE lane (per-loader capture policy): the flagged
+  // ssr:false BAKE lane (per-loader capture policy): the flagged
   // loader executes at capture and its SETTLED return is shell material even
   // though the route declares loading(); the nested promise in that return
   // and the unflagged sibling stay live holes at their own boundaries.
   // Snapshot pinning keeps HIT hydration byte-agreed with the frozen prelude.
-  test("stream:navigation loader bakes into the shell; nested promise and plain sibling stay live", async ({
+  test("ssr:false loader bakes into the shell; nested promise and plain sibling stay live", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -534,7 +534,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     const { firstChunk, html } = await measureFirstChunk(url);
     expect(firstChunk).toContain("group shell static");
     expect(firstChunk).toContain("filter:shoes");
-    // The group's stream:"navigation" loader BAKED: its value is shell
+    // The group's ssr:false loader BAKED: its value is shell
     // material in the first flushed bytes, frozen across HITs (asserted
     // below); the plain loader stays the live hole.
     expect(firstChunk).toMatch(/group-baked-\d+/);
@@ -809,7 +809,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   // snapshot's loader family overlays the recorded container onto the fresh
   // run (the outer label is PINNED at its capture-time seq, byte-parity with
   // the reader's own boundary) — CONTRACT CHANGE (streaming useLoader): route
-  // loaders are LIVE at capture (except the stream:"navigation" opt-in,
+  // loaders are LIVE at capture (except the ssr:false opt-in,
   // which BAKES — see the baked-route pins above); the bake lane for value-slot
   // loaders is gone. This route's outer read has NO boundary above it, so the
   // masked loader root-postpones the capture and the <body> sanity gate

@@ -89,10 +89,10 @@ export interface ClientUrlProjectionRoute {
   readonly options: ClientUrlProjectionOptions;
   readonly loaderIds: readonly string[];
   readonly hasLoading: boolean;
-  /** Indices into loaderIds of loaders declared loader(Def, { stream:
-   *  "navigation" }); materialization passes the option through to the server
-   *  loader() so document renders await them before first flush. Absent (=
-   *  none) in projections serialized before stream support. */
+  /** Indices into loaderIds of loaders declared loader(Def, { ssr: false });
+   *  materialization passes the option through to the server loader() so
+   *  document renders await them before first flush. Absent (= none) in
+   *  projections serialized before the option existed. */
   readonly awaitedLoaderIndices?: readonly number[];
   /** Data-only transition config (no `when` — server-tree only); absent in
    *  projections serialized before transition support. */
@@ -274,7 +274,7 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
   });
 
   const awaitedLoaderIndices = route.loaders
-    .map(({ stream }, index) => (stream === "navigation" ? index : -1))
+    .map(({ ssr }, index) => (ssr === false ? index : -1))
     .filter((index) => index >= 0);
 
   const transition = serializeTransition(route);
@@ -526,7 +526,7 @@ function materializeRouteItems(
               loader(
                 createLoaderStub(id),
                 route.awaitedLoaderIndices?.includes(loaderIndex)
-                  ? { stream: "navigation" }
+                  ? { ssr: false }
                   : undefined,
                 () => [revalidate(makeClientDecisionRevalidate(id))],
               ),

@@ -1,7 +1,7 @@
 # Loader container bake: one promise doctrine for handlers, handles, AND loaders
 
 ADDENDUM 2026-07-28 — the bake lane's TRIGGER is now the per-loader
-`stream: "navigation"` flag (`loader(Def, { stream: "navigation" })`), not
+`ssr: false` flag (`loader(Def, { ssr: false })`), not
 the entry's missing loading(). #813 (streaming useLoader) retired the
 loading()-less trigger — plain loaders are LIVE at capture on every entry
 shape, and a boundary-less masked read refuses the capture. The flag's

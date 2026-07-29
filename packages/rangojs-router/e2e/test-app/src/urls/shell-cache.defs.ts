@@ -38,7 +38,7 @@ export async function getCapStamp(ctx: HandlerContext): Promise<string> {
   return `cap-stamp-${capStampExecutions}`;
 }
 
-// stream:"navigation" BAKE-lane fixtures. The flagged loader executes at
+// ssr:false BAKE-lane fixtures. The flagged loader executes at
 // capture: its settled top-level return is SHELL material (frozen, snapshot-
 // pinned for HIT parity), while the NESTED promise in the same return stays a
 // live hole (nested-thenable mask — shape is the liveness declaration). The

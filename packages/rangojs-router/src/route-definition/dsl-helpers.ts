@@ -807,8 +807,12 @@ const loader: RouteHelpers<any, any>["loader"] = (
     "loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
   );
   invariant(
-    optionsGiven?.stream === undefined || optionsGiven.stream === "navigation",
-    `loader() stream must be "navigation" (got ${JSON.stringify(optionsGiven?.stream)}). Omit it to stream on every render.`,
+    (optionsGiven as { stream?: unknown } | undefined)?.stream === undefined,
+    "loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+  );
+  invariant(
+    optionsGiven?.ssr === undefined || typeof optionsGiven.ssr === "boolean",
+    `loader() ssr must be a boolean (got ${JSON.stringify(optionsGiven?.ssr)}). Omit it (or pass true) to stream on every render.`,
   );
 
   const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
@@ -820,7 +824,7 @@ const loader: RouteHelpers<any, any>["loader"] = (
   const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
-    ...(optionsGiven?.stream === "navigation" && ctx.isSSR
+    ...(optionsGiven?.ssr === false && ctx.isSSR
       ? { awaitBeforeFlush: true as const }
       : {}),
   };

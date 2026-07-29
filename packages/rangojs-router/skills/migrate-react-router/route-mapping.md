@@ -135,7 +135,7 @@ The loader-shaped variant is equally valid — and closer to the RR module when
 the loader carried authority. A `createLoader()` body can throw `notFound()`
 for the missing product AND push the data-derived meta itself
 (`ctx.use(Meta)({ title: product.name })`); register it with
-`loader(ProductLoader, { stream: "navigation" })` when the 404 status and
+`loader(ProductLoader, { ssr: false })` when the 404 status and
 title must be in the document deterministically. See `/loader` → "Loader
 Authority" and "Writing Handles from Loaders". (One RR habit that does NOT
 carry over: a loader `throw redirect()` is a client-side navigate on document

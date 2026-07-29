@@ -82,7 +82,7 @@ Two pushes from one segment accumulate in push order (`Shop › product`).
 Delivery follows the loader race model: a push that beats the handler barrier
 is in the SSR'd document; a push after a slow fetch streams and applies
 client-side (`useHandle` re-renders when it lands). To guarantee document
-delivery, register the loader as `loader(Def, { stream: "navigation" })` —
+delivery, register the loader as `loader(Def, { ssr: false })` —
 see `/loader` → "Writing Handles from Loaders".
 
 ## Async Content
@@ -170,7 +170,7 @@ swap in — no blank, no pending entry. If the slot times out to `else: null`/
 undefined, the entry is simply dropped. Use `.defer()` only when even
 `label`/`href` are unknown at handler time AND the producer is a component,
 not a loader — a loader-produced crumb pushes directly from the loader body
-(add `{ stream: "navigation" }` if it must be in the SSR'd document), and if
+(add `{ ssr: false }` if it must be in the SSR'd document), and if
 you know `label`/`href` and only the `content` is async, push a concrete item
 with a `Promise` `content` field instead (the `content` field is a nested
 promise you resolve with `use()` in your component; no `.defer()` needed).
