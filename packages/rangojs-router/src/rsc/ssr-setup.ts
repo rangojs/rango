@@ -120,6 +120,10 @@ export function createSsrHtmlStage<TEnv>(
           ...options.render,
           streamMode,
           search: options.url.search,
+          // origin: same out-of-band channel — seeds the SSR store location
+          // so origin-dependent markup (Link's data-external) agrees with the
+          // browser's window.location across hydration.
+          origin: options.url.origin,
         }),
       ...(options.init && { init: options.init }),
     };

@@ -187,6 +187,7 @@ export const NamedRoutes = {
   keyRefreshParams: "/key-refresh-params",
   keyRefreshRegistered: "/key-refresh-registered",
   keyRefreshShared: "/key-refresh-shared",
+  "linkBehavior.externalOrigin": "/link-behavior/external-origin",
   "linkBehavior.index": "/link-behavior",
   loaderComposition: "/loader-composition",
   "loaderCookie.actionSetsCookie": "/loader-cookie/action-sets-cookie",

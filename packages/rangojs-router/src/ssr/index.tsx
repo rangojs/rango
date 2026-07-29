@@ -114,6 +114,14 @@ export interface SSRRenderOptions {
    * only (runtime captures own the search variants, seeded per key).
    */
   search?: string;
+
+  /**
+   * The live request's origin, seeding the SSR store location so
+   * origin-dependent markup (Link's data-external) agrees with the
+   * browser's window.location across hydration. Absent on the build-time
+   * prerender pass (host-agnostic bare captures).
+   */
+  origin?: string;
 }
 
 /**
@@ -363,6 +371,13 @@ interface ShellCaptureOptions {
    * the shell's own key. MUST equal the resume pass's seed for the same key.
    */
   search?: string;
+  /**
+   * The capture request's origin. Shell keys are host-scoped, so the resume
+   * pass's request agrees modulo protocol drift; seeding it keeps
+   * origin-dependent static markup (Link's data-external) identical across
+   * capture, resume, and browser hydration.
+   */
+  origin?: string;
 }
 
 /**
@@ -391,6 +406,8 @@ interface ShellResumeOptions {
    * postponed holes.
    */
   search?: string;
+  /** The HIT request's origin — same host as the capture's (key-scoped). */
+  origin?: string;
 }
 
 /**
@@ -472,7 +489,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, streamMode, search } = options ?? {};
+    const { nonce, formState, streamMode, search, origin } = options ?? {};
 
     try {
       // Tee the stream:
@@ -490,6 +507,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // same key => same seed, so the resume tree matches the captured
         // tree while static-part search reads render what the key names.
         search,
+        origin,
       });
 
       // Get bootstrap script content
@@ -594,6 +612,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
         // The shell key's own search: static-part search reads render what
         // the key names, and the resume pass seeds the identical string.
         search: opts.search,
+        origin: opts.origin,
       });
 
       // Bootstrap load raced against the deadline. A load that never resolves
@@ -767,7 +786,7 @@ export function createShellResumeHandler<TEnv = unknown>(
     rscStream: ReadableStream<Uint8Array>,
     opts: ShellResumeOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { postponed, nonce, search } = opts;
+    const { postponed, nonce, search, origin } = opts;
 
     try {
       if (postponed === null) {
@@ -800,6 +819,7 @@ export function createShellResumeHandler<TEnv = unknown>(
         // Same seed as the capture pass for this key: the resume tree must
         // match the captured tree above the holes, search reads included.
         search,
+        origin,
       });
 
       // EAGER injection (resume-only): the stored prelude — a complete document

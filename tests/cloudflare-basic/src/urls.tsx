@@ -34,6 +34,7 @@ import { CacheLabPage } from "./pages/cache-lab.js";
 import { CACHE_LAB_TAGS } from "./cache-lab-contract.js";
 import { CacheLabPulseLoader } from "./cache-lab-data.js";
 import { AboutPage } from "./pages/about.js";
+import { LinkExternalOriginPage } from "./pages/link-external-origin.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
 import {
@@ -394,6 +395,10 @@ export const urlpatterns = urls(
       }),
       { name: "testNegotiateJson" },
     ),
+    // data-external SSR/browser agreement (pages/link-external-origin.tsx).
+    path("/test/link-external-origin", LinkExternalOriginPage, {
+      name: "testLinkExternalOrigin",
+    }),
     path("/test/negotiate", () => <div>HTML version</div>, {
       name: "testNegotiate",
     }),

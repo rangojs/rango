@@ -918,6 +918,15 @@ export interface ShellCaptureDescriptor {
    */
   searchSeed?: string;
   /**
+   * The scheduling request's origin, seeding the capture render's SSR store
+   * location. Shell keys are host-scoped, so the resume pass's request
+   * agrees modulo protocol drift; the seed keeps origin-dependent static
+   * markup (Link's data-external) identical across capture, resume, and
+   * browser hydration. Omitted (build-time host-agnostic captures) falls
+   * back to the internal host.
+   */
+  originSeed?: string;
+  /**
    * The RSC handler's build version (HandlerContext.version), stamped into the
    * stored entry as ShellCacheEntry.buildVersion — the serve-side
    * isValidShellHit gate compares it against the running build so a persistent
@@ -1767,6 +1776,7 @@ async function captureAndStoreShell(
           // The shell key's own search seeds the capture render's store —
           // static-part search reads bake what the key names.
           search: capture.searchSeed,
+          origin: capture.originSeed,
         }),
       );
     } catch (error) {
