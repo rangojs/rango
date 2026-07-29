@@ -154,7 +154,7 @@ describe("client URL server projection", () => {
     const source = clientUrls(({ path, loader }) => [
       path("/mixed", AccountPage, { name: "mixed" }, () => [
         loader(StreamingLoader),
-        loader(FlaggedLoader, { stream: "navigation" }),
+        loader(FlaggedLoader, { ssr: false }),
       ]),
     ]);
 

@@ -1,5 +1,5 @@
 /**
- * awaitBeforeFlush (loader(Def, { stream: "navigation" })) in resolveLoaders.
+ * awaitBeforeFlush (loader(Def, { ssr: false })) in resolveLoaders.
  *
  * Document renders await flagged loaders before segment resolution returns:
  * the render barrier (and Response construction behind it) cannot happen

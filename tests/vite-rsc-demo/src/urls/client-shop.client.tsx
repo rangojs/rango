@@ -219,7 +219,7 @@ function ClientShopIndex() {
         </Link>
       </p>
       <p style={{ color: "#888" }}>
-        {/* stream: "navigation" fixtures: the awaited loader's data/meta/404
+        {/* ssr: false fixtures: the awaited loader's data/meta/404
             are deterministic in the SSR'd document; on these client navs the
             same loader still streams. prefetch="none" keeps the nav-lane
             streaming path deterministic. */}
@@ -294,7 +294,7 @@ function SsrMetaEcho() {
 }
 
 /**
- * stream: "navigation" showcase. The awaited section's loader is flagged, so a
+ * ssr: false showcase. The awaited section's loader is flagged, so a
  * DOCUMENT load carries its data (and its Meta title, and a real 404 for
  * unknown slugs) in the initial HTML — its skeleton never SSRs. The sidecar
  * has the same latency but no flag: it SSRs as its skeleton and streams in.
@@ -564,7 +564,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       // navs — inline boundaries remain the finer-grained choice here.
     ]),
     path("/ssr/:slug", ClientShopSsrPage, { name: "ssr" }, () => [
-      loader(ClientShopSsrProductLoader, { stream: "navigation" }, () => [
+      loader(ClientShopSsrProductLoader, { ssr: false }, () => [
         revalidate(productData),
       ]),
       loader(ClientShopSsrSidecarLoader, () => [revalidate(productData)]),

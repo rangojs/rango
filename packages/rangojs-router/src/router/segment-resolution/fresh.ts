@@ -104,7 +104,7 @@ export async function resolveLoaders<TEnv>(
   const errorContext = buildLoaderErrorContext(ctx);
 
   if (emitStreaming) {
-    // awaitBeforeFlush (loader(Def, { stream: "navigation" })): document
+    // awaitBeforeFlush (loader(Def, { ssr: false })): document
     // renders await these loaders before returning, so their data is settled,
     // their handle pushes beat the barrier snapshot, and a thrown notFound()'s
     // status write deterministically precedes Response construction. The ids
@@ -148,7 +148,7 @@ export async function resolveLoaders<TEnv>(
               loaderEntry,
               ctx,
               ctx.pathname,
-              // The bake key rides for flagged loaders too: stream:"navigation"
+              // The bake key rides for flagged loaders too: ssr:false
               // bakes at capture regardless of the entry's loading() lane
               // (loader-cache.ts capture branch) and its HIT-tail seed
               // overlay needs the same key.

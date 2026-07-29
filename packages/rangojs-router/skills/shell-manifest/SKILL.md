@@ -151,7 +151,7 @@ cache({ ttl: 600, tags: ["products"] }, () => [
   fetchable/standalone loader calls that run outside a route render, in
   handler-invoked loaders (a handler already awaiting the loader via
   `ctx.use()` is a detected deadlock), and in loaders registered with
-  `{ stream: "navigation" }` (the document render awaits the loader before
+  `{ ssr: false }` (the document render awaits the loader before
   the barrier — a cycle by construction; see `/loader`).
 - **The reading loader serializes after the shell.** `await ctx.rendered()`
   deliberately gives up loader/render parallelism — on a miss the loader

@@ -4,7 +4,7 @@ Status: the `clientUrls()` slice is shipped and converging — browser matching,
 canonical partial-Flight navigation, client-run per-loader `revalidate()`,
 restricted `intercept()`, data-only `transition()`, loader authority signals
 and handle writes, implicitly-suspending `useLoader`, and
-`loader(Def, { stream: "navigation" })`. This document is design background:
+`loader(Def, { ssr: false })`. This document is design background:
 it records what the initial POC proved, what the shipped slice does, and which
 ideas remain optional future work. Sections below marked "since shipped" are
 kept as the historical design record; the current contract is
@@ -31,7 +31,7 @@ implementation is also summarized in
 | Route-local middleware         | Unsupported; future design only                                                                                                                |
 | Client loader revalidation     | Implemented: browser-run per-loader `revalidate()` predicates, decision header                                                                 |
 | Loader handle writes / signals | Implemented via the general loader contract: `ctx.use(Handle)` pushes, thrown `notFound()`/`redirect()`; no `{ data, handles }` resource shape |
-| Loader delivery options        | Implemented: `loader(Def, { stream: "navigation" })` document-render await                                                                     |
+| Loader delivery options        | Implemented: `loader(Def, { ssr: false })` document-render await                                                                               |
 | Prefix/include mounting        | BASELINE: `include()` in the canonical urls() tree                                                                                             |
 | Intercept routes               | Implemented, restricted: dot-local named target, loader/loading use only                                                                       |
 | Parallel routes                | Unsupported; future design only                                                                                                                |
@@ -292,7 +292,7 @@ the GENERAL handle contract (`ctx.use(Handle)` pushes with handler parity,
 delivery by the barrier race model, `ctx.get(handle)` reads behind
 `await ctx.rendered()`), so a projected client-urls loader pushes meta and
 breadcrumbs like any DSL loader, and
-`loader(Def, { stream: "navigation" })` makes document delivery
+`loader(Def, { ssr: false })` makes document delivery
 deterministic. The open questions below were resolved by that framing —
 pushes attribute to the loader's owning segment, and no second ownership
 lifetime exists. Fetchable loaders invoked outside a route render still have

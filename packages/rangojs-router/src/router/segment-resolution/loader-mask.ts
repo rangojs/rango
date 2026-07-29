@@ -44,7 +44,7 @@ export { createMaskedLoaderPromise } from "./mask-nested.js";
 /**
  * Entry-level lane input for an entry's loaders under PPR (the loading()
  * value; docs/design/loader-container-bake.md). The CAPTURE decision itself
- * is per LOADER in loader-cache.ts: a `stream: "navigation"`
+ * is per LOADER in loader-cache.ts: an `ssr: false`
  * (awaitBeforeFlush) loader BAKES at capture regardless of this value — the
  * flag's document promise ("data in the HTML before first flush") maps to
  * the frozen prelude — while every other loader is LIVE (masked at capture,

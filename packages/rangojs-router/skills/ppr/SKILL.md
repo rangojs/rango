@@ -669,7 +669,7 @@ LOADER-pushed Meta is different: loaders are masked at capture, so the push
 happens at request time and applies client-side (`metadata.handlesLate`) — it
 is never in the cached shell's head, by construction.
 
-One flag to know about here: `loader(Def, { stream: "navigation" })` (the
+One flag to know about here: `loader(Def, { ssr: false })` (the
 document-render await, `/loader`) is **inert under PPR** — capture renders
 mask loaders and skip the await, and a shell HIT flushes the stored prelude
 before loaders resolve. Flagging a loader on a `ppr` route does not bake it

@@ -1,6 +1,6 @@
 ---
 name: client-urls
-description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the stream:"navigation" SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
+description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, client-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
 argument-hint: "[setup]"
 ---
 
@@ -122,7 +122,7 @@ typing work exactly as for server routes (`/typesafety`).
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see /ppr skill; loader routes need `loading()` or capture refuses); no response variants |
 | `layout()`     | Must contain at least one `path()`                                                                                                                             |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { stream: "navigation" }, use?)` — see below                                                                               |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                         |
 | `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better                                                                             |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                             |
 | `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)                                                                              |
@@ -214,7 +214,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 On a document load, `notFound()` streams the resolved not-found UI in the
 envelope and _opportunistically_ sets a real 404 status — the status write only
 wins if the rejection settles before the document Response is constructed (a
-fast, pre-fetch existence check usually wins; see `stream: "navigation"` below
+fast, pre-fetch existence check usually wins; see `ssr: false` below
 for the deterministic version). On navigations the 404 UI swaps in with the
 URL preserved. A loader `redirect()` is always a client-side navigate — there
 is no document-lane 302 from loaders; pre-stream redirect authority belongs to
@@ -228,7 +228,7 @@ ride the SSR handle snapshot; later ones stream and apply post-hydration
 (document loads) or progressively (navigations). See `/loader` for the full
 contract.
 
-## `stream: "navigation"` — the SSR-completeness opt-in
+## `ssr: false` — the SSR-completeness opt-in
 
 By default every loader streams on every render, so nothing a slow loader
 produces is _guaranteed_ to be in the SSR'd HTML — data SSRs as the Suspense
@@ -238,12 +238,13 @@ document — `<head>` meta via a handle, or a real 404 status — flag it:
 
 ```ts
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { stream: "navigation" }, () => [revalidate(productData)]),
+  loader(ProductLoader, { ssr: false }, () => [revalidate(productData)]),
   loader(RelatedLoader),   // untouched: still streams behind its boundary
 ]),
 ```
 
-The name says WHERE streaming still applies, not that it is disabled: document
+The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off
+for this loader, so nothing of it is left to stream in the document: document
 renders await this loader before first flush (data settled — no fallback
 paints; handle pushes beat the barrier snapshot; a thrown `notFound()` is a
 deterministic real 404, no warm-up race); client navigations stream exactly as
@@ -303,7 +304,7 @@ a hard load of the target URL renders the full route.
   `<Suspense>` above each `useLoader` read is still the finer-grained tool
   when different reads on one route should wait independently.
 - **Two parallel loaders with equal latency look "SSR'd" together.** Loaders
-  kick off in parallel, so awaiting one (`stream: "navigation"`) gives
+  kick off in parallel, so awaiting one (`ssr: false`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was
   in the HTML once" as a guarantee — only the flagged loader is guaranteed.
 - **Hook semantics shift inside a group.** `usePathname` is ABSOLUTE (mount
@@ -332,7 +333,7 @@ The router repository (not shipped in this package) carries a canonical
 consumer at `tests/vite-rsc-demo/src/urls/client-shop.client.tsx`: layout +
 index + product routes, param-sensitive predicates, action-scoped cart
 revalidation, loader-thrown `notFound()`/`redirect()`, loader-written
-Meta/Breadcrumbs, viewport prefetch on cards, and the `stream: "navigation"`
+Meta/Breadcrumbs, viewport prefetch on cards, and the `ssr: false`
 fixtures — with e2e suites next to it pinning each contract in dev and
 production. The sections above are self-contained; the app is corroboration,
 not required reading.

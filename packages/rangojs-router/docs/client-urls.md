@@ -397,7 +397,7 @@ global map entirely.
   group's static markup (its `useSearchParams` read included — search is
   shell identity, so the frozen value matches the URL the shell serves),
   and `loading()` subtrees stay the live holes. Per-loader capture
-  policy: a `loader(Def, { stream: "navigation" })` BAKES — it executes at
+  policy: a `loader(Def, { ssr: false })` BAKES — it executes at
   capture and its settled return is shell material (frozen for the shell's
   lifetime, snapshot-pinned so HIT hydration agrees; nested promises in
   the return stay live holes), while every other loader is live and needs
@@ -408,7 +408,7 @@ global map entirely.
   the full loader body contract: thrown `notFound()`/`redirect()` authority
   signals, handle writes (`ctx.use(Meta)({ title })`, handler parity), and
   `ctx.get(handle)` reads behind `await ctx.rendered()`;
-- per-loader delivery options: `loader(Def, { stream: "navigation" }, use?)`;
+- per-loader delivery options: `loader(Def, { ssr: false }, use?)`;
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
   navigation, with implicitly-suspending `useLoader` reads (a pending first
   read suspends to its `<Suspense>` boundary while the loader streams).
@@ -449,12 +449,12 @@ fresher, never bypasses middleware or authorization. Pinned dev+prod in
 while a sibling with `isAction ? false : defaultShouldRevalidate` keeps its
 held value in the same commit.
 
-`loader(Def, { stream: "navigation" }, use?)` is the SSR-completeness opt-in.
+`loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader
 produces is guaranteed to be in the SSR'd HTML — its section SSRs as the
 Suspense fallback, a late handle push applies post-hydration, and a
 loader-thrown `notFound()` only wins a real 404 status opportunistically.
-With `stream: "navigation"`, DOCUMENT renders await that loader before first
+With `ssr: false`, DOCUMENT renders await that loader before first
 flush: its data is settled at first paint, its handle pushes ride the SSR
 handle snapshot, and a thrown `notFound()` deterministically precedes
 Response construction. Client navigations stream unchanged — the name says

@@ -572,7 +572,7 @@ function createLoaderExecutor<TEnv>(
         }
 
         // awaitBeforeFlush cycle: segment resolution awaits this loader
-        // (loader(Def, { stream: "navigation" })), the barrier awaits segment
+        // (loader(Def, { ssr: false })), the barrier awaits segment
         // resolution, and rendered() awaits the barrier — waiting here can
         // never complete. Fail fast with the cause instead of hanging the
         // document render. Only document renders populate the set (the flag is
@@ -581,10 +581,10 @@ function createLoaderExecutor<TEnv>(
         if (reqCtx._awaitBeforeFlushLoaderIds?.has(currentLoaderId)) {
           throw new Error(
             `Deadlock: loader "${currentLoaderId}" is registered with ` +
-              `stream: "navigation", so the document render awaits it before ` +
+              `ssr: false, so the document render awaits it before ` +
               `the render barrier resolves — ctx.rendered() (and the ` +
               `ctx.get(handle) read it gates) can never settle here. Drop ` +
-              `stream: "navigation" on this loader or move the handle read to ` +
+              `ssr: false on this loader or move the handle read to ` +
               `a component.`,
           );
         }

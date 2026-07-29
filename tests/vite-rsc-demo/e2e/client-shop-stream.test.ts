@@ -3,7 +3,7 @@ import { test as devTest, devURL } from "./dev-fixture";
 import { waitForHydration, prodDescribe } from "./helper";
 
 /**
- * loader(Def, { stream: "navigation" }) — the SSR-completeness opt-in, pinned
+ * loader(Def, { ssr: false }) — the SSR-completeness opt-in, pinned
  * on /client-shop/ssr/:slug. The fixture delays are staggered
  * (client-shop-ssr.ts: awaited 400ms, sidecar 1400ms — parallel kickoff means
  * an equal-delay sidecar would coincidentally settle by flush time and SSR its
@@ -50,7 +50,7 @@ function expectSsrCompleteDocument(body: string) {
   expect(body).toContain("streamed sidecar data");
 }
 
-devTest.describe("client-shop stream: navigation", () => {
+devTest.describe("client-shop loader ssr:false", () => {
   devTest(
     "document load carries the awaited loader's data and title; the sidecar streams",
     async ({ page, devServerURL }) => {
@@ -102,7 +102,7 @@ devTest.describe("client-shop stream: navigation", () => {
   );
 });
 
-prodDescribe("client-shop stream: navigation", (f) => {
+prodDescribe("client-shop loader ssr:false", (f) => {
   test("document load carries the awaited loader's data and title; the sidecar streams", async ({
     page,
   }) => {

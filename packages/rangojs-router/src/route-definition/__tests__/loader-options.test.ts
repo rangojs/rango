@@ -1,5 +1,5 @@
 /**
- * loader() delivery options: loader(Def, { stream: "navigation" }, use?).
+ * loader() delivery options: loader(Def, { ssr: false }, use?).
  *
  * The 2-arg loader(Def, use) form and the 3-arg options form share one
  * options-or-use disambiguation (typeof check, like path()'s configOrUse).
@@ -75,7 +75,7 @@ describe("loader() options disambiguation", () => {
     const parent = parentEntry();
     const use = vi.fn(() => []);
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { stream: "navigation" }, use);
+      loader(testLoaderDef(), { ssr: false }, use);
     });
     expect(use).toHaveBeenCalledTimes(1);
     expect(parent.loader).toHaveLength(1);
@@ -90,13 +90,22 @@ describe("loader() options disambiguation", () => {
     ).toThrow(/two use\(\) callbacks/);
   });
 
-  it("throws on an invalid stream value (JS consumers)", () => {
+  it("throws on an invalid ssr value (JS consumers)", () => {
     const parent = parentEntry();
     expect(() =>
       withDslStore(parent, true, () => {
-        loader(testLoaderDef(), { stream: "always" } as never);
+        loader(testLoaderDef(), { ssr: "never" } as never);
       }),
-    ).toThrow(/stream must be "navigation"/);
+    ).toThrow(/ssr must be a boolean/);
+  });
+
+  it("rejects the removed stream option with a pointer to ssr: false", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, true, () => {
+        loader(testLoaderDef(), { stream: "navigation" } as never);
+      }),
+    ).toThrow(/stream was replaced.*ssr: false/);
   });
 });
 
@@ -104,15 +113,23 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
   it("stamps awaitBeforeFlush on an SSR evaluation", () => {
     const parent = parentEntry();
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { stream: "navigation" });
+      loader(testLoaderDef(), { ssr: false });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBe(true);
+  });
+
+  it("ssr: true is the explicit default — no stamp", () => {
+    const parent = parentEntry();
+    withDslStore(parent, true, () => {
+      loader(testLoaderDef(), { ssr: true });
+    });
+    expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
 
   it("does NOT stamp on a non-SSR (navigation-lane) evaluation", () => {
     const parent = parentEntry();
     withDslStore(parent, false, () => {
-      loader(testLoaderDef(), { stream: "navigation" });
+      loader(testLoaderDef(), { ssr: false });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
@@ -120,7 +137,7 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
   it("does NOT stamp when isSSR is absent from the DSL context", () => {
     const parent = parentEntry();
     withDslStore(parent, undefined, () => {
-      loader(testLoaderDef(), { stream: "navigation" });
+      loader(testLoaderDef(), { ssr: false });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
