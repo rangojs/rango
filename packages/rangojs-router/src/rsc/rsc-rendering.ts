@@ -155,6 +155,7 @@ function createShellCaptureDescriptor(
   ctx: HandlerContext<any>,
   key: string,
   searchSeed: string,
+  originSeed: string,
   pprConfig: ResolvedPprConfig,
   store: SegmentCacheStore<any>,
   navigationOnly?: true,
@@ -162,6 +163,11 @@ function createShellCaptureDescriptor(
   return {
     key,
     searchSeed,
+    // Derived from the same request URL as the key (the callers compute
+    // both next to each other, so they cannot drift): seeding the origin
+    // keeps origin-dependent static markup (Link's data-external)
+    // identical across capture, resume, and browser hydration.
+    originSeed,
     buildVersion: ctx.version,
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
@@ -519,6 +525,7 @@ function* shellServePlan<TEnv>(
     ctx,
     key,
     shellSearchSeed(url, reqCtx._searchParamsFilter),
+    url.origin,
     pprConfig,
     store,
   );
@@ -1004,6 +1011,7 @@ function scheduleNavigationShellCapture<TEnv>(
       partialCaptureKey ??
         buildNavigationShellKey(url, reqCtx._searchParamsFilter),
       shellSearchSeed(url, reqCtx._searchParamsFilter),
+      url.origin,
       pprConfig,
       store,
       true,
@@ -1524,6 +1532,8 @@ function serveShellHit(
         // The shell key's own search — identical to the capture seed for
         // this key, so the resume tree matches the captured tree.
         search: shellSearchSeed(url, reqCtx._searchParamsFilter),
+        // The HIT request's origin — same host as the capture's (key-scoped).
+        origin: url.origin,
       }),
     );
   };

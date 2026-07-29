@@ -187,6 +187,12 @@ export interface SSRRenderOptions {
    * search; see ShellCaptureOptions.search in the SSR entry).
    */
   search?: string;
+  /**
+   * The live request's origin (`url.origin`), seeding the SSR store
+   * location so origin-dependent markup (Link's data-external) agrees with
+   * the browser across hydration. Absent on host-agnostic build captures.
+   */
+  origin?: string;
 }
 
 /**
@@ -208,7 +214,12 @@ export interface SSRModule {
    */
   captureShellHTML?: (
     rscStream: ReadableStream<Uint8Array>,
-    options: { quiesce: Promise<void>; maxWaitMs?: number; search?: string },
+    options: {
+      quiesce: Promise<void>;
+      maxWaitMs?: number;
+      search?: string;
+      origin?: string;
+    },
   ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
 
   /**
@@ -221,7 +232,12 @@ export interface SSRModule {
    */
   resumeShellHTML?: (
     rscStream: ReadableStream<Uint8Array>,
-    options: { postponed: string | null; nonce?: string; search?: string },
+    options: {
+      postponed: string | null;
+      nonce?: string;
+      search?: string;
+      origin?: string;
+    },
   ) => Promise<ReadableStream<Uint8Array>>;
 }
 

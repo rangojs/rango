@@ -70,13 +70,22 @@ function createSsrEventController(opts: {
    * names and both passes agree byte-for-byte.
    */
   search?: string;
+  /**
+   * Origin seeding the store location. Live fizz passes the request's real
+   * origin so origin-dependent markup (Link's data-external compares link
+   * origins against it) agrees with the browser's window.location; ppr
+   * capture/resume pass their request's origin (shell keys are host-scoped,
+   * so the two agree modulo protocol drift). Absent (build-time bare
+   * captures, tests) falls back to the historical internal host.
+   */
+  origin?: string;
   params?: Record<string, string>;
   handleData?: HandleData;
   matched?: string[];
 }): EventController {
   const location = new URL(
     `${opts.pathname}${opts.search ?? ""}`,
-    "http://localhost",
+    opts.origin ?? "http://localhost",
   );
   let params = opts.params ?? {};
   const rawMatched = opts.matched ?? [];
@@ -162,6 +171,11 @@ export interface SsrRootOptions {
    * the resume tree matches the captured tree above the postponed holes.
    */
   search?: string;
+  /**
+   * Origin seeding the SSR store location (see createSsrEventController):
+   * live fizz passes the request's origin; capture/resume pass theirs.
+   */
+  origin?: string;
 }
 
 /**
@@ -188,6 +202,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     nonce,
     onPayloadSettled,
     search,
+    origin,
   } = opts;
 
   let payload: Promise<RscPayload> | undefined;
@@ -238,6 +253,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
       eventController: createSsrEventController({
         pathname,
         search,
+        origin,
         params: resolved.metadata?.params,
         handleData,
         matched: resolved.metadata?.matched,

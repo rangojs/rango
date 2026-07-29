@@ -167,17 +167,28 @@ export interface LinkProps extends Omit<
 }
 
 /**
- * Check if URL is external (different origin)
+ * Check if URL is external (different origin). `origin` is resolved by the
+ * component from the navigation store location so SSR and browser agree —
+ * reading window here made every absolute-URL Link a hydration mismatch:
+ * on the server the ReferenceError was swallowed by the malformed-URL catch
+ * and the SSR HTML never carried data-external, then the browser evaluated
+ * the same link as external.
  */
-function isExternalUrl(href: string): boolean {
+function isExternalUrl(href: string, origin: string | undefined): boolean {
   // Protocol-relative URLs
   if (href.startsWith("//")) return true;
 
   // Absolute URLs
   if (href.startsWith("http://") || href.startsWith("https://")) {
+    // No known origin (no provider and no window): treat as internal — the
+    // pre-fix behavior for that configuration, and stable across hydration
+    // because both sides resolve the same store origin when a provider
+    // exists (the real-app case).
+    if (!origin) return false;
     try {
-      return new URL(href).origin !== window.location.origin;
+      return new URL(href).origin !== origin;
     } catch {
+      // Genuinely malformed absolute URL.
       return false;
     }
   }
@@ -225,7 +236,19 @@ export const Link: ForwardRefExoticComponent<
   ref,
 ) {
   const ctx = useContext(NavigationStoreContext);
-  const isExternal = isExternalUrl(to);
+  // Origin from the store location — the same both-sides source
+  // useSearchParams seeds from (SSR: the live request's URL; browser:
+  // window.location), so data-external agrees across hydration. Origin is
+  // immutable per document, so the inline getState() read cannot tear.
+  // window is the provider-less browser fallback (tests, portals outside
+  // the app root); provider-less SSR has no origin and keeps links internal.
+  const storeLocation = ctx?.eventController.getState().location as
+    | URL
+    | undefined;
+  const origin =
+    storeLocation?.origin ??
+    (typeof window !== "undefined" ? window.location.origin : undefined);
+  const isExternal = isExternalUrl(to, origin);
 
   // Auto-prefix with basename for app-local paths.
   // Skip if external, already prefixed, or not a root-relative path.
