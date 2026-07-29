@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.9.0 (2026-07-29)
+
+One breaking change — the loader SSR-completeness opt-in is renamed to the
+knob the API already had — and an SSR correctness fix for absolute-URL
+`<Link>`s.
+
+### Breaking: `loader(Def, { ssr: false })` replaces `stream: "navigation"` ([#820](https://github.com/ivogt/vite-rsc/pull/820))
+
+```tsx
+// before
+loader(ProductLoader, { stream: "navigation" }),
+// after
+loader(ProductLoader, { ssr: false }),
+```
+
+Migration is a grep: `stream: "navigation"` → `ssr: false`. Passing the
+removed option throws a targeted error naming the replacement, on both DSL
+surfaces (`urls()` and `clientUrls()`).
+
+Semantics are unchanged — this is one vocabulary, not new behavior:
+`ssr: false` on a loader means the same thing it has always meant on
+`loading(fallback, { ssr: false })`, read from the other end. The flagged
+loader is awaited before first flush on document requests (its data, handle
+pushes, and a thrown `notFound()`'s 404 status are deterministically in the
+SSR'd HTML; no fallback paints for it), client navigations keep streaming it
+behind the fallback, scoping stays per-loader, and under `ppr` it remains
+the bake lane. `ssr: true` is accepted as the explicit default. Serialized
+clientUrls projections are unaffected (the wire format did not change).
+
+### Fixed: absolute-URL `<Link>`s hydrate cleanly; external links are external from the first byte ([#821](https://github.com/ivogt/vite-rsc/pull/821))
+
+`Link` classified absolute URLs against `window.location.origin`; on the
+server the `ReferenceError` was silently swallowed, so SSR HTML never
+carried `data-external` and every absolute-URL `<Link>` was a hydration
+mismatch — genuinely external links (CMS navs pointing at another site)
+only became hard navigations after the client patched the attribute in.
+
+The server now classifies against the request origin, threaded into the
+SSR navigation store through the same channels as the search seeding —
+document renders, ppr shell capture, and resume all agree with what the
+browser will conclude. No consumer changes; deployments behind proxies
+should forward `Host`/proto correctly (the same requirement redirects
+already have). Build-time prerendered shells remain host-agnostic:
+absolute links in their static parts keep the internal classification.
+
 ## 0.8.0 (2026-07-28)
 
 Edge-only ppr: `CFCacheStore` no longer requires a KV namespace for shell
