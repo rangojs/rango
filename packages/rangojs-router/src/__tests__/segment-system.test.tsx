@@ -273,6 +273,71 @@ describe("segment-system", () => {
         });
       });
 
+      it("delivers { ssr: false } loaders as SETTLED values in loaderStreams; unflagged siblings keep the promise", async () => {
+        // The SSR-completeness contract must hold by construction, not by the
+        // read site's use() winning a Flight-chunk scheduling race: a flagged
+        // segment's stream entry is the awaited result (decoded synchronously
+        // at the read site), the sibling stays a pending promise, and the
+        // flagged id rides awaitedLoaderIds for the dev diagnostic.
+        const pendingSibling = new Promise(() => {});
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "R0D1.plain",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        const streams = outlets[0].props.loaderStreams;
+        expect(streams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(streams["flagged-loader"]).not.toBeInstanceOf(Promise);
+        expect(streams["plain-loader"]).toBe(pendingSibling);
+        expect(outlets[0].props.awaitedLoaderIds).toEqual(["flagged-loader"]);
+      });
+
+      it("delivers { ssr: false } loaders as SETTLED values through the LoaderBoundary streams too", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route", loading: "Loading..." }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const boundaries = collectByType(tree, MockLoaderBoundary);
+        expect(boundaries).toHaveLength(1);
+        expect(boundaries[0].props.loaderStreams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(boundaries[0].props.awaitedLoaderIds).toEqual([
+          "flagged-loader",
+        ]);
+      });
+
       it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {
         // popstate / stale-revalidation / fully-prefetched commits must stay
         // whole: the awaited lane still provides DECODED loaderData and no

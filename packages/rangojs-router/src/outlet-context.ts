@@ -18,6 +18,14 @@ export interface OutletContextValue {
    * the resolved `loaderData` record.
    */
   loaderStreams?: Record<string, unknown>;
+  /**
+   * Loader $$ids on this segment that the document render awaited before
+   * first flush (loader(Def, { ssr: false })). Dev-diagnostic input only:
+   * useLoader uses it to warn when a read still suspends during SSR on a
+   * render that awaited flagged loaders (ssr-suspension-warning.ts). Absent
+   * on capture renders and lanes without flagged loaders.
+   */
+  awaitedLoaderIds?: readonly string[];
   parent?: OutletContextValue | null;
   /** Loading component for Suspense fallback (from segment's loading() definition) */
   loading?: ReactNode;

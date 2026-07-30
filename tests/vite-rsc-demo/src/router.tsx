@@ -155,7 +155,14 @@ const router = createRouter<AppEnv>({
   ),
   // Auto-generate a per-request CSP nonce, applied to React's bootstrap scripts
   // and consumable by userland head scripts (GTM) via useNonce().
-  nonce: () => true,
+  // Scoped OFF (false -> no nonce for the request) for the ppr shell fixture
+  // routes: a shell is shared per host+URL, so the router refuses to capture
+  // one while a per-request nonce is active (baking one visitor's nonce would
+  // break CSP for every other visitor). Those routes trade the CSP header for
+  // shell caching — cspMiddleware already no-ops when no nonce is set. Every
+  // other route keeps the nonce and the enforcing CSP.
+  nonce: (request) =>
+    !new URL(request.url).pathname.startsWith("/client-shop/ppr/"),
 })
   .use(appTimer)
   .use(cspMiddleware)

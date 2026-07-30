@@ -165,8 +165,26 @@ import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
+import {
+  MirrorSessionLoader,
+  MirrorBasketLoader,
+  MirrorVehicleLoader,
+} from "./loaders/chrome-mirror.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
+
+/** Consumer-mirror template layout: server component between the chrome-loader
+ *  layout and the clientUrls include, reading params from getRequestContext —
+ *  the CategoryTemplate shape from the consumer app. */
+function MirrorTemplateLayout(): ReactNode {
+  const params: Record<string, string | undefined> = getRequestContext().params;
+  if (params.slug === undefined) return <Outlet />;
+  return (
+    <>
+      <Outlet />
+    </>
+  );
+}
 
 // Server Component layout for the mixed clientUrls() example — stays RSC while
 // its included pages are client components with local matching.
@@ -561,7 +579,14 @@ export const urlpatterns = urls(
         ]),
         // Pure client group: the whole subtree is clientUrls(), mounted in the
         // SAME canonical urls() tree (no separate router, no worker dispatch).
-        include("/__client-urls", pureClientUrls),
+        layout(<MirrorTemplateLayout />, () => [
+          // Consumer-mirror chrome loaders: unflagged, streaming above the
+          // group while a route's { ssr: false } loader is awaited.
+          loader(MirrorSessionLoader),
+          loader(MirrorBasketLoader),
+          loader(MirrorVehicleLoader),
+          include("/__client-urls", pureClientUrls),
+        ]),
         // Streaming useLoader demo: no-loading() route streams per-loader;
         // /gated contrasts the loading() boundary; /ppr pins live holes.
         include("/suspense-demo", suspenseDemoPatterns, {

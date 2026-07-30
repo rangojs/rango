@@ -276,12 +276,16 @@ export interface HandlerCacheConfig {
 
 /**
  * Nonce provider function type.
- * Can return a nonce string, or true to auto-generate one.
+ * Return a nonce string to use verbatim, `true` to auto-generate one, or
+ * `false` (or an empty string) to serve THIS request without a nonce — the
+ * per-request opt-out for apps that nonce globally but declare `ppr` on some
+ * routes: a shell is shared per host+URL and can never bake a per-request
+ * nonce, so a ppr route only captures when its requests opt out here.
  */
 export type NonceProvider<TEnv = unknown> = (
   request: Request,
   env: TEnv,
-) => string | true | Promise<string | true>;
+) => string | boolean | Promise<string | boolean>;
 
 /**
  * Options for creating an RSC handler

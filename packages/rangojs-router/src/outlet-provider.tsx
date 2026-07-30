@@ -13,6 +13,7 @@ export function OutletProvider({
   segment,
   loaderData,
   loaderStreams,
+  awaitedLoaderIds,
   pending = false,
   children,
 }: {
@@ -21,6 +22,7 @@ export function OutletProvider({
   segment?: ResolvedSegment;
   loaderData?: Record<string, any>;
   loaderStreams?: Record<string, unknown>;
+  awaitedLoaderIds?: readonly string[];
   pending?: boolean;
   children: ReactNode;
 }): ReactNode {
@@ -34,6 +36,7 @@ export function OutletProvider({
       segment,
       loaderData,
       loaderStreams,
+      awaitedLoaderIds,
       pending,
       parent: parentContext,
       loading: segment?.loading,
@@ -44,6 +47,7 @@ export function OutletProvider({
       segment,
       loaderData,
       loaderStreams,
+      awaitedLoaderIds,
       pending,
       parentContext,
     ],

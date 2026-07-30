@@ -477,6 +477,7 @@ export async function renderSegments(
       // microtask suspension is what makes SSR emit the loading() fallback
       // for content-suspending routes (segment-loader-promise.ts).
       let boundaryLoaderStreams: Record<string, unknown> | undefined;
+      let boundaryAwaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData = await loaderDataPromise;
@@ -489,7 +490,18 @@ export async function renderSegments(
       } else if (loaderEntries.length > 0) {
         boundaryLoaderStreams = {};
         for (const l of loaderEntries) {
-          boundaryLoaderStreams[l.loaderId!] = l.loaderData;
+          // { ssr: false } loaders were awaited before flush (fresh.ts), so
+          // deliver the SETTLED result, not the settled promise: the read
+          // site decodes synchronously instead of use()ing a Flight chunk
+          // whose fulfilled-at-read-time status is a scheduling race the
+          // SSR-completeness contract must not depend on. Unflagged siblings
+          // keep the promise (deliberate streaming).
+          boundaryLoaderStreams[l.loaderId!] = l.awaitBeforeFlush
+            ? await l.loaderData
+            : l.loaderData;
+          if (l.awaitBeforeFlush) {
+            (boundaryAwaitedLoaderIds ??= []).push(l.loaderId!);
+          }
         }
         if (segDebug) {
           segDebugLog(
@@ -503,6 +515,7 @@ export async function renderSegments(
         loaderDataPromise: boundaryLoaderData,
         loaderIds,
         loaderStreams: boundaryLoaderStreams,
+        awaitedLoaderIds: boundaryAwaitedLoaderIds,
         fallback: loading,
         outletKey: key,
         outletContent,
@@ -537,6 +550,7 @@ export async function renderSegments(
       let loaderData: Record<string, any> = {};
       let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
+      let awaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const layoutAwaitStart = segDebug ? performance.now() : 0;
         const resolvedData = await buildLoaderPromise(layoutLoaders);
@@ -562,7 +576,14 @@ export async function renderSegments(
       } else if (layoutLoaders.length > 0) {
         loaderStreams = {};
         for (const l of layoutLoaders) {
-          loaderStreams[l.loaderId!] = l.loaderData;
+          // Same settled-value delivery for { ssr: false } as the
+          // LoaderBoundary branch above — see that comment.
+          loaderStreams[l.loaderId!] = l.awaitBeforeFlush
+            ? await l.loaderData
+            : l.loaderData;
+          if (l.awaitBeforeFlush) {
+            (awaitedLoaderIds ??= []).push(l.loaderId!);
+          }
         }
         if (segDebug) {
           segDebugLog(
@@ -630,6 +651,7 @@ export async function renderSegments(
         parallel: node.parallel,
         loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
         loaderStreams,
+        awaitedLoaderIds,
         pending: outletPending,
         children: errorFallback ?? nodeContent,
       });

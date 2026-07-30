@@ -112,13 +112,21 @@ export async function resolveLoaders<TEnv>(
     // the set to fail fast on the barrier cycle (segment resolution awaits the
     // loader, the barrier awaits segment resolution, rendered() awaits the
     // barrier), and the loader body can call rendered() before the await below
-    // is reached. Skipped during shell capture: LIVE-lane loaders are masked
-    // with never-resolving promises there (loader-mask.ts) and would hang.
+    // is reached.
+    //
+    // Shell-capture renders await too — deliberately. Flagged loaders BAKE at
+    // capture (they execute for real; loader-mask masks only LIVE-lane
+    // loaders, so nothing here can hang that would not already hold the
+    // capture gate, which awaits the same records). Skipping the await
+    // (pre-#822 behavior) let the capture's render-barrier snapshot resolve
+    // before the bake settled, so the loader's handle pushes missed the
+    // captured HTML: every HIT then served the pre-push <head> (default
+    // <title>/meta, crawler-visible) even though the stored handles row
+    // carried the value and hydration corrected it (scar tissue:
+    // vite-rsc-demo /client-shop/ppr title).
     const awaitedIndices: number[] = [];
-    if (!isShellCaptureActive()) {
-      for (let i = 0; i < loaderEntries.length; i++) {
-        if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
-      }
+    for (let i = 0; i < loaderEntries.length; i++) {
+      if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
     }
     if (awaitedIndices.length > 0) {
       const reqCtx = _getRequestContext();
@@ -142,6 +150,12 @@ export async function resolveLoaders<TEnv>(
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
+        // Stamped on document AND capture renders (both collect
+        // awaitedIndices): segment-system's value-delivery await and the dev
+        // SSR-suspension diagnostic both key off it.
+        ...(awaitedIndices.includes(i)
+          ? { awaitBeforeFlush: true as const }
+          : {}),
         loaderData: deps.wrapLoaderPromise(
           runInsideLoaderScope(() =>
             resolveLoaderData(

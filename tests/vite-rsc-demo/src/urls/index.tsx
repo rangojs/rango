@@ -1,4 +1,10 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, getRequestContext } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import {
+  DemoSessionLoader,
+  DemoBasketLoader,
+  DemoVehicleLoader,
+} from "../handlers/shop/loaders/chrome-fixture.js";
 import { GtmBootstrap } from "../handles/gtm.js";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
@@ -26,6 +32,22 @@ import { refreshDemoPatterns } from "./refresh-demo.js";
 import { gtmDemoPatterns } from "./gtm.js";
 
 /**
+ * Consumer-app CategoryTemplate mirror: a server layout between the chrome
+ * layout and the clientUrls include. Reads params from getRequestContext (a
+ * JSX-mounted layout takes no props) and conditionally frames the outlet —
+ * the exact shape the source app uses for its Contentful template slots.
+ */
+function DemoCategoryTemplate() {
+  const params: Record<string, string | undefined> = getRequestContext().params;
+  if (params.slug === undefined) return <Outlet />;
+  return (
+    <>
+      <Outlet />
+    </>
+  );
+}
+
+/**
  * URL patterns - Django-style routing API
  *
  * Routes are organized into separate modules and composed using include().
@@ -33,7 +55,7 @@ import { gtmDemoPatterns } from "./gtm.js";
  * The include() helper adds URL prefix and optional name prefix.
  */
 export const urlpatterns = urls(
-  ({ path, include, parallel, layout, middleware }) => [
+  ({ path, include, parallel, layout, middleware, loader }) => [
     // The GTM bootstrap and the default document title are pushed by UI-less parallel
     // slots (@gtm, @meta), not a layout handler. There is NO inner layout: RootLayout
     // (the createRouter `document`) already wraps every route in <html><body>, so a
@@ -91,7 +113,17 @@ export const urlpatterns = urls(
     // handler holds across within-group navigations (client-shop-guards e2e).
     layout(ClientShopOuterLayout, () => [
       middleware(clientShopGuardMiddleware),
-      include("/client-shop", clientShopUrls, { name: "clientShop" }),
+      // Consumer-app chrome mirror: unflagged loaders stream at the layout
+      // level while the route's { ssr: false } loader is awaited.
+      loader(DemoSessionLoader),
+      loader(DemoBasketLoader),
+      loader(DemoVehicleLoader),
+      // Server template layout between the chrome and the clientUrls include,
+      // reading params from getRequestContext — the consumer CategoryTemplate
+      // shape (conditional slots around the outlet).
+      layout(<DemoCategoryTemplate />, () => [
+        include("/client-shop", clientShopUrls, { name: "clientShop" }),
+      ]),
     ]),
     include("/magazine", magazinePatterns, { name: "magazine" }),
     include("/composition", compositionPatterns, { name: "composition" }),
