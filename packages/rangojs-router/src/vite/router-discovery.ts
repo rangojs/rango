@@ -1707,6 +1707,8 @@ export function createRouterDiscoveryPlugin(
           if (expectedEpoch === undefined) return;
           void (async () => {
             const deadline = Date.now() + 15_000;
+            let reloadBackoffMs = 100;
+            let nextReloadAt = Date.now() + reloadBackoffMs;
             do {
               if (devServerClosed || expectedEpoch !== s.devDiscoveryEpoch) {
                 return;
@@ -1732,10 +1734,18 @@ export function createRouterDiscoveryPlugin(
                   publishDevDiscoveryReady(expectedEpoch);
                   return;
                 }
+                await response.body?.cancel().catch(() => {});
                 // A response without the expected epoch proves an older worker
                 // evaluation won the race after the initial invalidation. Clear
-                // that completed evaluation and retry the reload.
-                reloadWorkerd();
+                // that completed evaluation and retry the reload. Back off the
+                // retries: reloading faster than workerd can evaluate prevents
+                // convergence and retains overlapping module generations.
+                const now = Date.now();
+                if (now >= nextReloadAt) {
+                  reloadWorkerd();
+                  reloadBackoffMs = Math.min(reloadBackoffMs * 2, 1_000);
+                  nextReloadAt = now + reloadBackoffMs;
+                }
               } catch {}
             } while (Date.now() < deadline);
 
@@ -1949,26 +1959,25 @@ export function createRouterDiscoveryPlugin(
             // the entry + router sources so the import re-creates the routers
             // against the refreshed projection (installed by the pre-entry
             // refresh in discover-routers.ts).
-            if (isUseClient && hasClientUrls) {
-              const rscGraph = (server.environments as any)?.rsc?.moduleGraph;
+            const mainRscEnv = (server.environments as any)?.rsc;
+            if (isUseClient && hasClientUrls && mainRscEnv?.runner) {
+              const rscGraph = mainRscEnv.moduleGraph;
               if (rscGraph?.getModulesByFile) {
                 // Importers must be invalidated too: the virtual RSC entry
                 // holds a live `import { router }` binding, and re-evaluating
                 // router.tsx alone leaves that binding on the OLD instance —
                 // the request pipeline would keep serving the stale mount.
-                // Same blast radius as a server urls edit (Vite's own
-                // file-change invalidation propagates upward identically).
-                const invalidateWithImporters = (
-                  mod: any,
-                  seen: Set<any>,
-                ): void => {
-                  if (!mod || seen.has(mod)) return;
-                  seen.add(mod);
-                  rscGraph.invalidateModule(mod);
-                  for (const importer of mod.importers ?? []) {
-                    invalidateWithImporters(importer, seen);
-                  }
-                };
+                // Vite's invalidateModule already walks importers. Share its
+                // seen set across roots instead of recursively starting a new
+                // traversal at every importer (quadratic on a large graph).
+                // Vite's walk skips HMR-accepting importers and soft-invalidates
+                // static ones (vs the old unconditional hard walk) — safe here:
+                // the entry and every router source are invalidated directly as
+                // roots, and ancestors get the exact treatment Vite's own
+                // file-change propagation applies on a server urls edit.
+                // Cloudflare has no local runner and skips this block: its temp
+                // discovery graph and workerd graph are invalidated wholesale
+                // by refreshRuntimeDiscovery() after this watcher event.
                 const routerSourceFiles = new Set<string>();
                 if (s.resolvedEntryPath) {
                   routerSourceFiles.add(resolve(s.resolvedEntryPath));
@@ -1991,7 +2000,7 @@ export function createRouterDiscoveryPlugin(
                     continue;
                   }
                   for (const mod of mods) {
-                    invalidateWithImporters(mod, seen);
+                    rscGraph.invalidateModule(mod, seen);
                   }
                 }
                 debugDiscovery?.(
