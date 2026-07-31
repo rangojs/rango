@@ -108,4 +108,26 @@ describe("Cloudflare dev discovery probe", () => {
       globals.__RANGO_DEV_DISCOVERY_EPOCH = previousEpoch;
     }
   });
+
+  it("reports its actual epoch without rendering when the probe expects a newer generation", async () => {
+    const globals = globalThis as typeof globalThis & {
+      __RANGO_DEV_DISCOVERY_EPOCH?: unknown;
+    };
+    const previousEpoch = globals.__RANGO_DEV_DISCOVERY_EPOCH;
+    globals.__RANGO_DEV_DISCOVERY_EPOCH = 23;
+
+    try {
+      const router = createRouter({ id: "stale-dev-discovery-probe" });
+      const response = await router.fetch(
+        new Request("http://localhost/", {
+          headers: { [DEV_DISCOVERY_PROBE_HEADER]: "24" },
+        }),
+      );
+
+      expect(response.headers.get(DEV_DISCOVERY_EPOCH_HEADER)).toBe("23");
+      expect(await response.text()).toBe("");
+    } finally {
+      globals.__RANGO_DEV_DISCOVERY_EPOCH = previousEpoch;
+    }
+  });
 });

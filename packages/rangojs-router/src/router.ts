@@ -1167,11 +1167,16 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+        const requestedDiscoveryEpoch = request.headers.get(
+          DEV_DISCOVERY_PROBE_HEADER,
+        );
         if (
           devDiscoveryEpoch !== undefined &&
-          request.headers.get(DEV_DISCOVERY_PROBE_HEADER) ===
-            String(devDiscoveryEpoch)
+          requestedDiscoveryEpoch !== null
         ) {
+          // A stale generation must still answer as a probe. Rendering the app
+          // on an epoch mismatch makes the readiness loop overlap full renders
+          // with workerd reloads and can exhaust the dev server heap.
           return new Response(null, {
             headers: {
               [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),

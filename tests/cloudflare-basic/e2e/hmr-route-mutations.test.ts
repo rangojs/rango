@@ -61,11 +61,17 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
   function urlsPath() {
     return path.join(f.root, "src/urls.tsx");
   }
+  function clientUrlsPath() {
+    return path.join(f.root, "src/client-urls/urls.tsx");
+  }
   function genPath() {
     return path.join(f.root, "src/router.named-routes.gen.ts");
   }
   function readUrls() {
     return fs.readFileSync(urlsPath(), "utf-8");
+  }
+  function readClientUrls() {
+    return fs.readFileSync(clientUrlsPath(), "utf-8");
   }
   function readGen() {
     return fs.readFileSync(genPath(), "utf-8");
@@ -88,7 +94,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
   // so the marker check would never match.
   async function expectServed(
     route: string,
-    marker: "about-page" | "catch-all-page",
+    marker: "about-page" | "catch-all-page" | "client-urls-detail",
   ) {
     await expect
       .poll(
@@ -149,6 +155,7 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
 
   test.afterEach(async () => {
     if (originalContents.size === 0) return;
+    const restoredClientUrls = originalContents.has(clientUrlsPath());
     const entries = [...originalContents];
     originalContents.clear();
     for (const [filePath, content] of entries) {
@@ -171,6 +178,9 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
         .toContain('about: "/about"');
     }
     await expectServed("/about", "about-page");
+    if (restoredClientUrls) {
+      await expectServed("/__client-urls/restored", "client-urls-detail");
+    }
   });
 
   // Force the gen file back to its committed baseline on suite exit, even if
@@ -196,6 +206,44 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     await expectGen('hmrWarmup: "/hmr-warmup"', true);
     writeFileBumpMtime(urlsPath(), content);
     await expectGen("hmrWarmup", false);
+  });
+
+  // Convergence guard only: this fixture is far smaller than the app that
+  // exhausted the heap, so it stays green even without the reload bounding.
+  // The bounded-work pins are the stale-probe unit test
+  // (src/__tests__/static-id-fallback.test.ts) and dev-discovery-probe.test.ts.
+  test("repeated clientUrls route-shape edits converge without restarting workerd", async () => {
+    const original = readClientUrls();
+    const oldPattern = 'path("/:slug", ClientUrlsDetail';
+    const newPattern = 'path("/entry/:slug", ClientUrlsDetail';
+    expect(original).toContain(oldPattern);
+    recordOriginal(clientUrlsPath());
+
+    try {
+      for (let cycle = 0; cycle < 2; cycle++) {
+        writeFileBumpMtime(
+          clientUrlsPath(),
+          original.replace(oldPattern, newPattern),
+        );
+        await expectServed(
+          `/__client-urls/entry/hmr-${cycle}`,
+          "client-urls-detail",
+        );
+        await expectServed(`/__client-urls/hmr-${cycle}`, "catch-all-page");
+
+        writeFileBumpMtime(clientUrlsPath(), original);
+        await expectServed(`/__client-urls/hmr-${cycle}`, "client-urls-detail");
+        await expectServed(
+          `/__client-urls/entry/hmr-${cycle}`,
+          "catch-all-page",
+        );
+      }
+    } finally {
+      writeFileBumpMtime(clientUrlsPath(), original);
+    }
+
+    await expectServed("/__client-urls/restored", "client-urls-detail");
+    originalContents.delete(clientUrlsPath());
   });
 
   test("regenerates types and serves a newly added route", async () => {
