@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.1 (2026-08-03)
+
+Dev-only patch: Cloudflare dev no longer amplifies `clientUrls()`
+route-shape edits into unbounded reload work. No API changes.
+
+### Fixed: bounded HMR reload work for `clientUrls()` edits in Cloudflare dev ([#822](https://github.com/ivogt/vite-rsc/pull/822))
+
+Editing a `clientUrls()` module's route shape in Cloudflare dev could drive
+the dev server into runaway work — a large pilot app reached the V8 heap
+limit and the Vite process died. Three paths were unbounded and are now
+closed:
+
+- A router generation probed for a newer discovery epoch rendered the full
+  app per probe (every 25 ms). Any probed generation now answers with an
+  empty response carrying its actual epoch.
+- Repeat workerd reloads fired on every mismatched probe. They now use
+  100 ms – 1 s exponential backoff, and stale probe response bodies are
+  cancelled instead of buffered.
+- The clientUrls importer invalidation restarted a full graph traversal at
+  every importer (quadratic on large graphs) and ran redundantly on
+  Cloudflare, whose rediscovery already invalidates wholesale. It now
+  shares one traversal set and runs only where a local module runner
+  exists.
+
+Production builds are untouched — the probe header is inert there, now
+pinned by e2e in both modes — and the Node dev path keeps its existing
+invalidation behavior.
+
 ## 0.9.0 (2026-07-29)
 
 One breaking change — the loader SSR-completeness opt-in is renamed to the
