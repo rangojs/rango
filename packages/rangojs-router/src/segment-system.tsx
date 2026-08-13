@@ -624,19 +624,29 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          if (forceAwait || isAction) {
+          // Parallel slots must NOT take the loaderStreams path.
+          // LoaderResolver skips use(aggregate) when streams are set, so
+          // the already-rendered slot handler commits immediately. That
+          // bakes a live-lane hole into the shell (semantic-matrix PPR3 /
+          // shell-cache slot-use: masked loaderData is what pins
+          // "srv badge pending...") and, on reuse, leaves a stale stream
+          // map that ignores the post-action aggregate (mini @cart).
+          // Flagged (ssr:false) delivery still holds: when every owned
+          // loader paid the pre-flush await, settle the aggregate so
+          // LoaderResolver decodes the array without a Flight-chunk use().
+          const settleParallelAggregate =
+            forceAwait ||
+            isAction ||
+            ownedLoaders.every((l) => l.awaitBeforeFlush === true);
+          if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
             p.loaderDataPromise =
               aggregated instanceof Promise ? await aggregated : aggregated;
-            // Reused cached parallel segments still carry the document
-            // stream map. LoaderResolver short-circuits on loaderStreams
-            // and would ignore this fresh aggregate (mini @cart after
-            // addToCart stayed at 0).
             p.loaderStreams = undefined;
             p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr:false)`,
                 {
                   loaderIds: p.loaderIds,
                   ms: Math.round(performance.now() - parallelAwaitStart),
@@ -645,11 +655,11 @@ export async function renderSegments(
             }
           } else {
             p.loaderDataPromise = aggregated;
-            ({ streams: p.loaderStreams, awaitedIds: p.awaitedLoaderIds } =
-              await buildLoaderStreams(ownedLoaders));
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
                 { loaderIds: p.loaderIds },
               );
             }

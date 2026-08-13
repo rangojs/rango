@@ -179,9 +179,10 @@ export interface ResolvedSegment {
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
   /**
-   * Per-loader UNDECODED results for a parallel-owned stream map.
+   * Per-loader UNDECODED results for a layout/route stream map.
    * Flagged (ssr:false) entries are settled values; unflagged siblings
-   * stay promises. Fed to LoaderBoundary by renderSlotContent.
+   * stay promises. Parallel slots do not use this channel — they pin
+   * loading() / live-lane holes via use(loaderDataPromise).
    */
   loaderStreams?: Record<string, unknown>;
   /** $$ids of loaders this segment awaited before flush. Dev diagnostic. */
