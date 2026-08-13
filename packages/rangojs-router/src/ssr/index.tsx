@@ -1,5 +1,5 @@
 import React from "react";
-import { createSsrRootComponent } from "./ssr-root.js";
+import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
@@ -26,6 +26,7 @@ interface RenderToReadableStreamOptions {
   bootstrapModules?: string[];
   nonce?: string;
   formState?: unknown;
+  progressiveChunkSize?: number;
 }
 
 /**
@@ -43,6 +44,7 @@ interface PrerenderOptions {
   bootstrapScriptContent?: string;
   bootstrapModules?: string[];
   onError?: (error: unknown) => void;
+  progressiveChunkSize?: number;
 }
 
 /**
@@ -167,6 +169,23 @@ export interface SSRDependencies<TEnv = unknown> {
    * state on upgrade (the generated entry always passes an explicit value).
    */
   headScripts?: HeadScriptsOption;
+
+  /**
+   * Fizz `progressiveChunkSize`, forwarded verbatim to renderToReadableStream
+   * (live SSR) and prerender (shell capture); resume() inherits the capture
+   * value from the postponed state. The generated virtual SSR entry threads
+   * the `rango({ progressiveChunkSize })` plugin option here (canonical docs
+   * on `RangoBaseOptions.progressiveChunkSize` in vite/plugin-types.ts).
+   *
+   * When UNSET, createSSRHandler auto-raises to Number.MAX_SAFE_INTEGER for
+   * document renders whose matched chain has a `loader(Def, { ssr: false })`
+   * entry (payload segments carry `awaitBeforeFlush`): the loader was awaited
+   * before first flush precisely so its content ships in-place, and React
+   * 19.2's Fizz would otherwise move any completed boundary over ~500 bytes
+   * to an end-of-stream `<div hidden>` + $RC reveal once the shell saturates
+   * the default 12800 budget. An explicit value disables the auto-raise.
+   */
+  progressiveChunkSize?: number;
 
   /**
    * prerender from react-dom/static.edge. Optional; required only by
@@ -497,9 +516,21 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
       const [rscStream1, rscStream2] = rscStream.tee();
 
+      // Deserialization starts here (not lazily on SsrRoot's first render) so
+      // the auto-raise below can read payload metadata before the fizz call.
+      // The parallel no-op catch keeps a payload rejection off the
+      // unhandledRejection path if fizz errors before consuming the promise;
+      // SsrRoot's React.use() on the SAME promise still observes the rejection.
+      const payload = deserializeSsrPayload(
+        createFromReadableStream,
+        rscStream1,
+      );
+      payload.catch(() => {});
+
       const SsrRoot = createSsrRootComponent({
         createFromReadableStream,
         rscStream: rscStream1,
+        payload,
         nonce,
         // Live fizz seeds the request's RAW search. The shell capture pass
         // below and its resume twin seed the SHELL KEY's search instead
@@ -513,6 +544,18 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Get bootstrap script content
       const bootstrapScriptContent = await loadBootstrapScriptContent();
 
+      // ssr:false auto-raise (see SSRDependencies.progressiveChunkSize).
+      // Awaiting the payload here is latency-neutral: fizz cannot emit even
+      // <html> until this same promise settles. A rejection lands in the
+      // catch below — the same reportRenderError path a shell error takes.
+      let progressiveChunkSize = deps.progressiveChunkSize;
+      if (progressiveChunkSize === undefined) {
+        const resolved = await payload;
+        if (resolved.metadata?.segments?.some((s) => s.awaitBeforeFlush)) {
+          progressiveChunkSize = Number.MAX_SAFE_INTEGER;
+        }
+      }
+
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
       // Pass nonce for CSP if provided. runWithPreinitNonce makes the same
@@ -523,6 +566,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
           formState,
           nonce,
+          ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
         }),
       );
 
@@ -646,6 +690,14 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
         ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+        // Explicit option only — the ssr:false auto-raise is live-SSR scoped
+        // (RangoBaseOptions.progressiveChunkSize documents the contract); the
+        // capture handler starts prerender without deserializing the payload,
+        // so segment metadata is not read here. The captured value rides the
+        // postponed state into every later resume().
+        ...(deps.progressiveChunkSize !== undefined && {
+          progressiveChunkSize: deps.progressiveChunkSize,
+        }),
         // Abort is how capture WORKS: once the shell is quiet we abort() to
         // freeze the prelude and let the still-pending holes postpone. React
         // reports the abort reason for each pending boundary through onError.

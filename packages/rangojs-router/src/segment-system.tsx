@@ -180,6 +180,30 @@ function wrapDefaultOutletContent(
 }
 
 /**
+ * Per-loader stream map for read-site suspension. { ssr: false } loaders were
+ * awaited before flush (fresh.ts), so deliver the SETTLED result, not the
+ * settled promise: the read site decodes synchronously instead of use()ing a
+ * Flight chunk whose fulfilled-at-read-time status is a scheduling race the
+ * SSR-completeness contract must not depend on. Unflagged siblings keep the
+ * promise (deliberate streaming). Flagged ids are collected as input for the
+ * dev SSR-suspension diagnostic (ssr-suspension-warning.ts).
+ */
+async function buildLoaderStreams(loaders: ResolvedSegment[]): Promise<{
+  streams: Record<string, unknown>;
+  awaitedIds: string[] | undefined;
+}> {
+  const streams: Record<string, unknown> = {};
+  let awaitedIds: string[] | undefined;
+  for (const l of loaders) {
+    streams[l.loaderId!] = l.awaitBeforeFlush
+      ? await l.loaderData
+      : l.loaderData;
+    if (l.awaitBeforeFlush) (awaitedIds ??= []).push(l.loaderId!);
+  }
+  return { streams, awaitedIds };
+}
+
+/**
  * Render segments into a React tree with proper layout nesting
  *
  * Layouts nest using OutletProvider; a layout receives the inner content via
@@ -488,21 +512,10 @@ export async function renderSegments(
           });
         }
       } else if (loaderEntries.length > 0) {
-        boundaryLoaderStreams = {};
-        for (const l of loaderEntries) {
-          // { ssr: false } loaders were awaited before flush (fresh.ts), so
-          // deliver the SETTLED result, not the settled promise: the read
-          // site decodes synchronously instead of use()ing a Flight chunk
-          // whose fulfilled-at-read-time status is a scheduling race the
-          // SSR-completeness contract must not depend on. Unflagged siblings
-          // keep the promise (deliberate streaming).
-          boundaryLoaderStreams[l.loaderId!] = l.awaitBeforeFlush
-            ? await l.loaderData
-            : l.loaderData;
-          if (l.awaitBeforeFlush) {
-            (boundaryAwaitedLoaderIds ??= []).push(l.loaderId!);
-          }
-        }
+        ({
+          streams: boundaryLoaderStreams,
+          awaitedIds: boundaryAwaitedLoaderIds,
+        } = await buildLoaderStreams(loaderEntries));
         if (segDebug) {
           segDebugLog(
             `segment ${id}: per-loader streams via LoaderBoundary (read-site suspense)`,
@@ -574,17 +587,8 @@ export async function renderSegments(
           }
         }
       } else if (layoutLoaders.length > 0) {
-        loaderStreams = {};
-        for (const l of layoutLoaders) {
-          // Same settled-value delivery for { ssr: false } as the
-          // LoaderBoundary branch above — see that comment.
-          loaderStreams[l.loaderId!] = l.awaitBeforeFlush
-            ? await l.loaderData
-            : l.loaderData;
-          if (l.awaitBeforeFlush) {
-            (awaitedLoaderIds ??= []).push(l.loaderId!);
-          }
-        }
+        ({ streams: loaderStreams, awaitedIds: awaitedLoaderIds } =
+          await buildLoaderStreams(layoutLoaders));
         if (segDebug) {
           segDebugLog(
             `segment ${id}: layout loaders streaming to read sites (no loading())`,

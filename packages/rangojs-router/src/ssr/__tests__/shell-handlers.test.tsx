@@ -300,6 +300,27 @@ describe("createShellCaptureHandler", () => {
     expect(Date.now() - start).toBeLessThan(2000);
   });
 
+  it("forwards an explicit progressiveChunkSize to prerender", async () => {
+    const spy = vi.fn(prerender);
+    const deps = makeDeps({
+      prerender: spy as any,
+      progressiveChunkSize: 4096,
+    });
+    await captureShell(deps, "pcs-shell");
+    expect(spy).toHaveBeenCalled();
+    expect((spy.mock.calls[0]![1] as any).progressiveChunkSize).toBe(4096);
+  });
+
+  it("omits progressiveChunkSize from prerender options when unset", async () => {
+    const spy = vi.fn(prerender);
+    const deps = makeDeps({ prerender: spy as any });
+    await captureShell(deps, "pcs-default-shell");
+    expect(spy).toHaveBeenCalled();
+    expect("progressiveChunkSize" in (spy.mock.calls[0]![1] as any)).toBe(
+      false,
+    );
+  });
+
   it("propagates a hard prerender rejection instead of returning null", async () => {
     const boom = new Error("prerender exploded");
     const deps = makeDeps({

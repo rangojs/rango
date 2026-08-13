@@ -462,6 +462,33 @@ function SsrMetaEcho() {
   return <div data-testid="client-shop-ssr-title">{meta?.title ?? ""}</div>;
 }
 
+function SsrInlineGridSkeleton() {
+  return (
+    <div data-testid="client-shop-ssr-inline-grid-skeleton">Loading grid…</div>
+  );
+}
+
+/* PLP-shaped block off the flagged loader, sized past BOTH Fizz outlining
+ * gates on its own: >500 bytes (the hardcoded isEligibleForOutlining floor)
+ * and >12800 bytes (the progressiveChunkSize default), so `flushedByteSize +
+ * boundary.byteSize > progressiveChunkSize` holds regardless of shell size or
+ * mode. Pins the ssr:false auto-raise: without it Fizz moves this COMPLETED
+ * boundary to an end-of-stream <div hidden> + $RC reveal; with it the tiles
+ * are in-place in the raw document (the smaller sections above stay under the
+ * 500-byte floor and inline regardless). */
+function SsrInlineGrid() {
+  const { data: product } = useLoader(ClientShopSsrProductLoader);
+  return (
+    <ul data-testid="client-shop-ssr-inline-grid">
+      {Array.from({ length: 140 }, (_, i) => (
+        <li key={i} data-testid={`client-shop-ssr-inline-tile-${i}`}>
+          {product.name} tile {i} — in-place row above the outlining threshold
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
  * ssr: false showcase. The awaited section's loader is flagged, so a
  * DOCUMENT load carries its data (and its Meta title, and a real 404 for
@@ -479,6 +506,9 @@ function ClientShopSsrPage() {
       <Suspense fallback={<SsrComplexSkeleton />}>
         <SsrComplexSection />
       </Suspense>
+      <Suspense fallback={<SsrInlineGridSkeleton />}>
+        <SsrInlineGrid />
+      </Suspense>
       <SsrCategoryProbeContained />
       {/* The consumer app's final reduction: literal object, zero loader
           involvement, pure-HTML children — nothing here can suspend. */}
@@ -490,7 +520,6 @@ function ClientShopSsrPage() {
               {
                 id: "1",
                 name: "literal-probe",
-                url: "/x",
                 thumbnailUrl: null,
                 productsCount: 1,
                 showCategoryOnPLP: true,

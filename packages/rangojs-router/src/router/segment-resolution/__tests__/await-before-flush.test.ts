@@ -5,8 +5,9 @@
  * the render barrier (and Response construction behind it) cannot happen
  * until they settle, which is what makes their data, handle pushes, and
  * thrown-notFound status deterministic in the SSR'd document. Unflagged
- * siblings keep streaming. Shell-capture renders skip the await — loaders are
- * masked with never-resolving promises there.
+ * siblings keep streaming. Shell-capture renders await too — flagged loaders
+ * BAKE at capture (only unflagged LIVE-lane loaders are masked), so their
+ * handle pushes land in the captured HTML.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { EntryData, LoaderEntry } from "../../../server/context";

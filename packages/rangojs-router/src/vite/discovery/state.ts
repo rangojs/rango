@@ -45,6 +45,12 @@ export interface PluginOptions {
    * capture endpoint with the app's configured head-script strategy.
    */
   headScripts?: import("../plugin-types.js").HeadScriptsOption;
+  /**
+   * rango({ progressiveChunkSize }) — threaded alongside headScripts so the
+   * temp server's virtual SSR entry bakes the app's configured Fizz outlining
+   * budget into its capture/render handlers.
+   */
+  progressiveChunkSize?: number;
 }
 
 export interface PrecomputedEntry {

@@ -67,6 +67,21 @@ function expectSsrCompleteDocument(body: string) {
   expect(body).toContain("client-shop-ssr-catbuttons");
   expect(body).toContain("Sub One");
   expect(body).not.toContain("CategoriesButtons");
+  // Outlining pin (the ssr:false progressiveChunkSize auto-raise): the
+  // 140-tile grid off the flagged loader exceeds BOTH Fizz outlining gates
+  // (>500-byte eligibility floor, >12800 progressiveChunkSize default), so
+  // without the auto-raise Fizz renders its skeleton in-place and moves the
+  // completed tiles to an end-of-stream <div hidden> + $RC reveal — presence
+  // checks can't see the difference, position can. In-place means: the grid
+  // sits BEFORE any hidden div (the streaming sidecar's is expected and
+  // stays), and the skeleton never renders.
+  expect(body).not.toContain("client-shop-ssr-inline-grid-skeleton");
+  const gridAt = body.indexOf('data-testid="client-shop-ssr-inline-grid"');
+  expect(gridAt).toBeGreaterThan(-1);
+  const firstHiddenAt = body.indexOf("<div hidden");
+  if (firstHiddenAt !== -1) {
+    expect(gridAt).toBeLessThan(firstHiddenAt);
+  }
 }
 
 devTest.describe("client-shop loader ssr:false", () => {

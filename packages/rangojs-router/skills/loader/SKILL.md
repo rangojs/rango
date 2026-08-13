@@ -757,6 +757,18 @@ Response construction (real 404, no warm-up race). Client navigations stream
 exactly as before. Scoped per LOADER: the flagged loader awaits only itself;
 siblings keep streaming.
 
+Delivery is in-place, not merely in-document. React's Fizz outlines any
+COMPLETED Suspense boundary over ~500 bytes to an end-of-stream
+`<div hidden>` + `$RC()` reveal once the shell saturates its 12800-byte
+`progressiveChunkSize` budget — the bytes are in the HTML, but not at their
+document position, and a consumer that doesn't execute scripts never sees
+them revealed. When the matched chain has a flagged loader, the document
+render raises the budget to `MAX_SAFE_INTEGER` automatically, so the awaited
+content renders where it belongs. Pin the budget yourself (in either
+direction) with `rango({ progressiveChunkSize })` in the Vite config — an
+explicit value disables the auto-raise. Boundaries hoisting stylesheets
+still outline; their reveal must wait for the CSS.
+
 The costs and constraints:
 
 - Every document load pays the flagged loader's latency before first byte.
@@ -766,8 +778,11 @@ The costs and constraints:
   document render awaits the loader before the render barrier resolves, so
   that wait is a cycle by construction; it throws a deadlock error naming the
   fix.
-- PPR capture renders mask loaders and skip the await — the flag does not
-  bake anything into a shell (`/ppr`).
+- PPR capture is the BAKE lane for flagged loaders (`/ppr`): the capture
+  render awaits them too, and the settled result — handle pushes included —
+  freezes into the stored shell. Unflagged loaders stay masked as live
+  holes. The `progressiveChunkSize` auto-raise is live-document only;
+  captured shells outline per the explicit option or React's default.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful. `LoaderOptions` is exported from the

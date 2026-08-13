@@ -92,6 +92,22 @@ function MirrorResults(): ReactNode {
       <Suspense fallback={"|List|"}>
         <div data-testid="mirror-list">{data.marker} — list content</div>
       </Suspense>
+      {/* Sized past BOTH Fizz outlining gates on its own (>500-byte
+          eligibility floor, >12800 progressiveChunkSize default), so
+          `flushedByteSize + boundary.byteSize > progressiveChunkSize` holds
+          regardless of shell size or mode. Pins the ssr:false auto-raise on
+          workerd: without it Fizz renders the skeleton in-place and moves the
+          COMPLETED rows to an end-of-stream <div hidden> + $RC reveal. */}
+      <Suspense fallback={<div data-testid="mirror-inline-grid-skeleton" />}>
+        <ul data-testid="mirror-inline-grid">
+          {Array.from({ length: 140 }, (_, i) => (
+            <li key={i} data-testid={`mirror-inline-tile-${i}`}>
+              {data.marker} tile {i} — in-place row above the outlining
+              threshold
+            </li>
+          ))}
+        </ul>
+      </Suspense>
     </div>
   );
 }

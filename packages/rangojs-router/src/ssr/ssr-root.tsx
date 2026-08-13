@@ -140,6 +140,37 @@ function createSsrEventController(opts: {
 }
 
 /**
+ * Deserialize the Flight stream branch into the payload SsrRoot renders,
+ * fragment expansion included. Factored out of SsrRoot so createSSRHandler can
+ * create the promise BEFORE fizz starts and read metadata that must influence
+ * the fizz call itself (the ssr:false progressiveChunkSize auto-raise) —
+ * awaiting it there is latency-neutral because fizz cannot emit even <html>
+ * until this same promise settles.
+ */
+export function deserializeSsrPayload(
+  createFromReadableStream: CreateFromReadableStream,
+  rscStream: ReadableStream<Uint8Array>,
+): Promise<RscPayload> {
+  // Shell-HIT tails carry replayed segments as VERBATIM stored fragments
+  // (segment-fragments.ts, issue #700); expand them through this
+  // environment's deserializer before anything reads the segments. Every
+  // other payload (full render, capture, actions) has no envelopes and
+  // pays one field scan.
+  // Promise.resolve() adoption is load-bearing: some wirings (the build
+  // temp server's vendored Flight client) return a THENABLE Chunk whose
+  // .then returns undefined — chaining on it directly yields undefined.
+  return Promise.resolve(createFromReadableStream<RscPayload>(rscStream)).then(
+    async (resolvedPayload) => {
+      await expandSegmentFragments(
+        resolvedPayload.metadata?.segments,
+        createFromReadableStream,
+      );
+      return resolvedPayload;
+    },
+  );
+}
+
+/**
  * Options for {@link createSsrRootComponent}.
  */
 export interface SsrRootOptions {
@@ -147,6 +178,13 @@ export interface SsrRootOptions {
   createFromReadableStream: CreateFromReadableStream;
   /** The Flight stream branch to deserialize into the SSR VDOM. */
   rscStream: ReadableStream<Uint8Array>;
+  /**
+   * Pre-created payload promise (deserializeSsrPayload over the SAME
+   * rscStream). When present SsrRoot adopts it instead of deserializing
+   * lazily on first render — the stream can only be consumed once, so the
+   * caller that already started deserialization MUST pass the promise in.
+   */
+  payload?: Promise<RscPayload>;
   /** Nonce for CSP; propagated to NonceContext. */
   nonce?: string;
   /**
@@ -205,33 +243,23 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     origin,
   } = opts;
 
-  let payload: Promise<RscPayload> | undefined;
+  // onPayloadSettled fires AFTER fragment expansion (inside
+  // deserializeSsrPayload): the capture's fizz-readiness gate must include
+  // fragment module loads.
+  const adoptPayload = (p: Promise<RscPayload>): Promise<RscPayload> => {
+    if (onPayloadSettled) p.then(onPayloadSettled, onPayloadSettled);
+    return p;
+  };
+  let payload: Promise<RscPayload> | undefined =
+    opts.payload && adoptPayload(opts.payload);
   let handlesPromise: Promise<HandleData> | undefined;
   let ssrContextValue: NavigationStoreContextValue | undefined;
   let rootPromise: Promise<React.ReactNode> | undefined;
 
   return function SsrRoot() {
-    if (payload === undefined) {
-      // Shell-HIT tails carry replayed segments as VERBATIM stored fragments
-      // (segment-fragments.ts, issue #700); expand them through this
-      // environment's deserializer before anything reads the segments. Every
-      // other payload (full render, capture, actions) has no envelopes and
-      // pays one field scan. onPayloadSettled fires AFTER expansion: the
-      // capture's fizz-readiness gate must include fragment module loads.
-      // Promise.resolve() adoption is load-bearing: some wirings (the build
-      // temp server's vendored Flight client) return a THENABLE Chunk whose
-      // .then returns undefined — chaining on it directly yields undefined.
-      payload = Promise.resolve(
-        createFromReadableStream<RscPayload>(rscStream),
-      ).then(async (resolvedPayload) => {
-        await expandSegmentFragments(
-          resolvedPayload.metadata?.segments,
-          createFromReadableStream,
-        );
-        return resolvedPayload;
-      });
-      if (onPayloadSettled) payload.then(onPayloadSettled, onPayloadSettled);
-    }
+    payload ??= adoptPayload(
+      deserializeSsrPayload(createFromReadableStream, rscStream),
+    );
     const resolved = React.use(payload);
 
     const themeConfig = resolved.metadata?.themeConfig ?? null;

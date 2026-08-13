@@ -160,6 +160,34 @@ interface RangoBaseOptions {
   headScripts?: HeadScriptsOption;
 
   /**
+   * React Fizz `progressiveChunkSize`, forwarded to the document renders the
+   * generated SSR entry performs: renderToReadableStream (live SSR) and
+   * prerender (PPR shell capture); resume() inherits the capture value from
+   * the stored postponed state.
+   *
+   * Controls COMPLETED-boundary outlining. Once the shell exceeds this budget
+   * (React's default is 12800 bytes — any real document), Fizz moves every
+   * completed Suspense boundary over ~500 bytes out of its document position
+   * to an end-of-stream `<div hidden>` + `$RC()` script reveal. Raise it (e.g.
+   * `Number.MAX_SAFE_INTEGER`) to keep completed content inline: in-place for
+   * non-executing HTML consumers, no reveal step. Boundaries with suspensey
+   * content (hoisted stylesheets) still outline — their reveal must wait for
+   * the CSS. Trade-off: inline content delays later shell bytes behind it,
+   * which is why React outlines by default.
+   *
+   * When UNSET, document renders whose matched chain has a
+   * `loader(Def, { ssr: false })` entry auto-raise to MAX_SAFE_INTEGER — the
+   * loader was awaited before first flush precisely so its content ships
+   * in-place, and outlining the boundary it feeds would defeat that. Setting
+   * an explicit value disables the auto-raise. The auto-raise is live-SSR
+   * only; captured shells use the explicit value or React's default.
+   *
+   * Apps with a custom SSR entry set this per-handler via
+   * `SSRDependencies.progressiveChunkSize`.
+   */
+  progressiveChunkSize?: number;
+
+  /**
    * Filter which files route discovery scans, by glob. Paths are matched
    * root-relative (e.g. `src/routes/**`). `include` restricts discovery to
    * matching files; `exclude` removes matches (the defaults cover tests, dist,

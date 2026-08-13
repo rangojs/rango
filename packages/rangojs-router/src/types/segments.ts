@@ -167,11 +167,11 @@ export interface ResolvedSegment {
   _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
   /**
-   * True when this loader was awaited before first flush on a document render
-   * (loader(Def, { ssr: false })). Stamped by resolveLoaders (fresh.ts) on the
-   * document lane only — never during shell capture, where live loaders are
-   * deliberately masked and would false-positive the SSR suspension warning
-   * this field feeds (ssr-suspension-warning.ts).
+   * True when this loader was awaited before first flush
+   * (loader(Def, { ssr: false })). Stamped by resolveLoaders (fresh.ts) on
+   * document AND shell-capture renders — capture bakes flagged loaders and
+   * awaits the same lane. Feeds segment-system's settled-value delivery and
+   * the dev SSR suspension warning (ssr-suspension-warning.ts).
    */
   awaitBeforeFlush?: true;
   parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback

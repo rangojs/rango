@@ -56,6 +56,7 @@ initializeApp().catch(console.error);
  */
 export function getVirtualEntrySSR(
   headScripts: HeadScriptsOption = "preinit",
+  progressiveChunkSize?: number,
 ): string {
   const preinit = headScripts !== "preload";
   // The preload variant drops exactly three preinit-only lines, all built
@@ -73,6 +74,14 @@ installClientReferencePreinit(setOnClientReference);
 `
     : "";
   const hs = JSON.stringify(headScripts);
+  // Emitted into all three handlers: live SSR and shell capture consume it
+  // directly; the resume handler receives it for dep-shape uniformity (resume()
+  // itself inherits the capture value from the postponed state). Number
+  // serialization is exact for every finite number incl. MAX_SAFE_INTEGER.
+  const pcs =
+    progressiveChunkSize !== undefined
+      ? `\n  progressiveChunkSize: ${JSON.stringify(progressiveChunkSize)},`
+      : "";
   return `
 import {
   ${depsImportNames}
@@ -90,7 +99,7 @@ export const renderHTML = createSSRHandler({
   createFromReadableStream,
   renderToReadableStream,
   injectRSCPayload,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -101,7 +110,7 @@ export const captureShellHTML = createShellCaptureHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -112,7 +121,7 @@ export const resumeShellHTML = createShellResumeHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });

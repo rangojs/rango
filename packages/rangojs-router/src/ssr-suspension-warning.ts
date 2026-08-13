@@ -12,9 +12,10 @@
  *
  * Fires at most once per loader id per process, only during the SSR pass
  * (`window` undefined), only in dev, and only when the render actually awaited
- * flagged loaders (`awaitedLoaderIds` is stamped by segment resolution on the
- * document lane and deliberately NOT during shell capture, where live loaders
- * are masked with never-resolving promises and every read suspends by design).
+ * flagged loaders (`awaitedLoaderIds`, stamped by segment resolution on
+ * document AND shell-capture renders — capture awaits the same flagged lane;
+ * its masked live-lane reads suspend by design and dedupe against the live
+ * render's warnings through the once-per-id set).
  */
 
 const warned = new Set<string>();

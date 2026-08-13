@@ -150,10 +150,10 @@ export async function resolveLoaders<TEnv>(
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
-        // Stamped on document AND capture renders (both collect
-        // awaitedIndices): segment-system's value-delivery await and the dev
-        // SSR-suspension diagnostic both key off it.
-        ...(awaitedIndices.includes(i)
+        // Stamped on document AND capture renders: segment-system's
+        // value-delivery await and the dev SSR-suspension diagnostic both
+        // key off it.
+        ...(loaderEntry.awaitBeforeFlush === true
           ? { awaitBeforeFlush: true as const }
           : {}),
         loaderData: deps.wrapLoaderPromise(

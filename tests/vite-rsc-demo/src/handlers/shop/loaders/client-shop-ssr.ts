@@ -22,7 +22,6 @@ export const SSR_SIDECAR_DELAY_MS = 1400;
 export interface SsrSubcategory {
   id: string;
   name: string;
-  url: string;
   thumbnailUrl: string | null;
   productsCount: number | null;
   showCategoryOnPLP: boolean;
@@ -74,7 +73,6 @@ export const ClientShopSsrProductLoader = createLoader(
           {
             id: "sub-1",
             name: "Sub One",
-            url: "/client-shop",
             thumbnailUrl: null,
             productsCount: 3,
             showCategoryOnPLP: true,
@@ -82,7 +80,6 @@ export const ClientShopSsrProductLoader = createLoader(
           {
             id: "sub-2",
             name: "Sub Two",
-            url: "/client-shop",
             thumbnailUrl: "/vite.svg",
             productsCount: null,
             showCategoryOnPLP: true,
@@ -90,7 +87,6 @@ export const ClientShopSsrProductLoader = createLoader(
           {
             id: "sub-3",
             name: "Hidden Sub",
-            url: "/client-shop",
             thumbnailUrl: null,
             productsCount: 0,
             showCategoryOnPLP: false,
