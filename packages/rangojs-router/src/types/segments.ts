@@ -166,10 +166,27 @@ export interface ResolvedSegment {
   loaderId?: string; // For loaders: the loader $$id identifier
   _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
+  /**
+   * True when this loader was awaited before first flush
+   * (loader(Def, { ssr: false })). Stamped by resolveLoaders (fresh.ts) on
+   * document AND shell-capture renders — capture bakes flagged loaders and
+   * awaits the same lane. Feeds segment-system's settled-value delivery and
+   * the dev SSR suspension warning (ssr-suspension-warning.ts).
+   */
+  awaitBeforeFlush?: true;
   parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
+  /**
+   * Per-loader UNDECODED results for a layout/route stream map.
+   * Flagged (ssr:false) entries are settled values; unflagged siblings
+   * stay promises. Parallel slots do not use this channel — they pin
+   * loading() / live-lane holes via use(loaderDataPromise).
+   */
+  loaderStreams?: Record<string, unknown>;
+  /** $$ids of loaders this segment awaited before flush. Dev diagnostic. */
+  awaitedLoaderIds?: string[];
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields

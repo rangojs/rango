@@ -85,6 +85,7 @@ export default defineConfig({
           testIgnore: [
             "**/hmr*.test.ts",
             "**/head-script-preload.test.ts",
+            "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -95,7 +96,11 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production\)/,
-          testIgnore: ["**/head-script-preload.test.ts", "**/*.setup.ts"],
+          testIgnore: [
+            "**/head-script-preload.test.ts",
+            "**/edge-only-ppr.test.ts",
+            "**/*.setup.ts",
+          ],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${PREVIEW_PORT}`,
@@ -123,6 +128,7 @@ export default defineConfig({
           testIgnore: [
             "**/hmr*.test.ts",
             "**/head-script-preload.test.ts",
+            "**/edge-only-ppr.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -134,7 +140,11 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production\)/,
-          testIgnore: ["**/head-script-preload.test.ts", "**/*.setup.ts"],
+          testIgnore: [
+            "**/head-script-preload.test.ts",
+            "**/edge-only-ppr.test.ts",
+            "**/*.setup.ts",
+          ],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${PREVIEW_PORT}`,

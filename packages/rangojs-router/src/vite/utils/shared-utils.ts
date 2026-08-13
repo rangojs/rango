@@ -110,7 +110,10 @@ export function normalizeHostRouterEntry(
 export function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
   routerPathRef?: { path?: string; kind?: "router" | "host" },
-  options?: { headScripts?: HeadScriptsOption },
+  options?: {
+    headScripts?: HeadScriptsOption;
+    progressiveChunkSize?: number;
+  },
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -119,7 +122,10 @@ export function createVirtualEntriesPlugin(
     virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
   }
   if (entries.ssr === VIRTUAL_IDS.ssr) {
-    virtualModules[VIRTUAL_IDS.ssr] = getVirtualEntrySSR(options?.headScripts);
+    virtualModules[VIRTUAL_IDS.ssr] = getVirtualEntrySSR(
+      options?.headScripts,
+      options?.progressiveChunkSize,
+    );
   }
 
   // RSC entry is resolved lazily in load() because routerPath may be

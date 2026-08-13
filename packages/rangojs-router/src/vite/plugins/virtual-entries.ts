@@ -48,6 +48,18 @@ async function initializeApp() {
 initializeApp().catch(console.error);
 `.trim();
 
+function emitProgressiveChunkSize(value: number): string {
+  if (value === Number.POSITIVE_INFINITY) {
+    return "Number.POSITIVE_INFINITY";
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `rango({ progressiveChunkSize }) must be a finite number or Infinity, received ${String(value)}`,
+    );
+  }
+  return JSON.stringify(value);
+}
+
 /**
  * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
  * option: "preinit" (default) installs the client-reference preinit hook and
@@ -56,6 +68,7 @@ initializeApp().catch(console.error);
  */
 export function getVirtualEntrySSR(
   headScripts: HeadScriptsOption = "preinit",
+  progressiveChunkSize?: number,
 ): string {
   const preinit = headScripts !== "preload";
   // The preload variant drops exactly three preinit-only lines, all built
@@ -73,6 +86,16 @@ installClientReferencePreinit(setOnClientReference);
 `
     : "";
   const hs = JSON.stringify(headScripts);
+  // Emitted into all three handlers: live SSR and shell capture consume it
+  // directly; the resume handler receives it for dep-shape uniformity (resume()
+  // itself inherits the capture value from the postponed state). Finite numbers
+  // stringify exactly (incl. MAX_SAFE_INTEGER). Infinity is emitted as
+  // Number.POSITIVE_INFINITY — JSON.stringify(Infinity) is null, which React
+  // would treat as "no budget" rather than "never outline".
+  const pcs =
+    progressiveChunkSize !== undefined
+      ? `\n  progressiveChunkSize: ${emitProgressiveChunkSize(progressiveChunkSize)},`
+      : "";
   return `
 import {
   ${depsImportNames}
@@ -90,7 +113,7 @@ export const renderHTML = createSSRHandler({
   createFromReadableStream,
   renderToReadableStream,
   injectRSCPayload,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -101,7 +124,7 @@ export const captureShellHTML = createShellCaptureHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });
@@ -112,7 +135,7 @@ export const resumeShellHTML = createShellResumeHandler({
   injectRSCPayload,
   prerender,
   resume,
-  headScripts: ${hs},
+  headScripts: ${hs},${pcs}
   loadBootstrapScriptContent: () =>
     import.meta.viteRsc.loadBootstrapScriptContent("index"),
 });

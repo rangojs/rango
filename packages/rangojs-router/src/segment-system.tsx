@@ -180,6 +180,30 @@ function wrapDefaultOutletContent(
 }
 
 /**
+ * Per-loader stream map for read-site suspension. { ssr: false } loaders were
+ * awaited before flush (fresh.ts), so deliver the SETTLED result, not the
+ * settled promise: the read site decodes synchronously instead of use()ing a
+ * Flight chunk whose fulfilled-at-read-time status is a scheduling race the
+ * SSR-completeness contract must not depend on. Unflagged siblings keep the
+ * promise (deliberate streaming). Flagged ids are collected as input for the
+ * dev SSR-suspension diagnostic (ssr-suspension-warning.ts).
+ */
+async function buildLoaderStreams(loaders: ResolvedSegment[]): Promise<{
+  streams: Record<string, unknown>;
+  awaitedIds: string[] | undefined;
+}> {
+  const streams: Record<string, unknown> = {};
+  let awaitedIds: string[] | undefined;
+  for (const l of loaders) {
+    streams[l.loaderId!] = l.awaitBeforeFlush
+      ? await l.loaderData
+      : l.loaderData;
+    if (l.awaitBeforeFlush) (awaitedIds ??= []).push(l.loaderId!);
+  }
+  return { streams, awaitedIds };
+}
+
+/**
  * Render segments into a React tree with proper layout nesting
  *
  * Layouts nest using OutletProvider; a layout receives the inner content via
@@ -477,6 +501,7 @@ export async function renderSegments(
       // microtask suspension is what makes SSR emit the loading() fallback
       // for content-suspending routes (segment-loader-promise.ts).
       let boundaryLoaderStreams: Record<string, unknown> | undefined;
+      let boundaryAwaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData = await loaderDataPromise;
@@ -487,10 +512,10 @@ export async function renderSegments(
           });
         }
       } else if (loaderEntries.length > 0) {
-        boundaryLoaderStreams = {};
-        for (const l of loaderEntries) {
-          boundaryLoaderStreams[l.loaderId!] = l.loaderData;
-        }
+        ({
+          streams: boundaryLoaderStreams,
+          awaitedIds: boundaryAwaitedLoaderIds,
+        } = await buildLoaderStreams(loaderEntries));
         if (segDebug) {
           segDebugLog(
             `segment ${id}: per-loader streams via LoaderBoundary (read-site suspense)`,
@@ -503,6 +528,7 @@ export async function renderSegments(
         loaderDataPromise: boundaryLoaderData,
         loaderIds,
         loaderStreams: boundaryLoaderStreams,
+        awaitedLoaderIds: boundaryAwaitedLoaderIds,
         fallback: loading,
         outletKey: key,
         outletContent,
@@ -537,6 +563,7 @@ export async function renderSegments(
       let loaderData: Record<string, any> = {};
       let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
+      let awaitedLoaderIds: string[] | undefined;
       if (forceAwait || isAction) {
         const layoutAwaitStart = segDebug ? performance.now() : 0;
         const resolvedData = await buildLoaderPromise(layoutLoaders);
@@ -560,10 +587,8 @@ export async function renderSegments(
           }
         }
       } else if (layoutLoaders.length > 0) {
-        loaderStreams = {};
-        for (const l of layoutLoaders) {
-          loaderStreams[l.loaderId!] = l.loaderData;
-        }
+        ({ streams: loaderStreams, awaitedIds: awaitedLoaderIds } =
+          await buildLoaderStreams(layoutLoaders));
         if (segDebug) {
           segDebugLog(
             `segment ${id}: layout loaders streaming to read sites (no loading())`,
@@ -599,12 +624,29 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+          // Parallel slots must NOT take the loaderStreams path.
+          // LoaderResolver skips use(aggregate) when streams are set, so
+          // the already-rendered slot handler commits immediately. That
+          // bakes a live-lane hole into the shell (semantic-matrix PPR3 /
+          // shell-cache slot-use: masked loaderData is what pins
+          // "srv badge pending...") and, on reuse, leaves a stale stream
+          // map that ignores the post-action aggregate (mini @cart).
+          // Flagged (ssr:false) delivery still holds: when every owned
+          // loader paid the pre-flush await, settle the aggregate so
+          // LoaderResolver decodes the array without a Flight-chunk use().
+          const settleParallelAggregate =
+            forceAwait ||
+            isAction ||
+            ownedLoaders.every((l) => l.awaitBeforeFlush === true);
+          if (settleParallelAggregate) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
-            p.loaderDataPromise = await aggregated;
+            p.loaderDataPromise =
+              aggregated instanceof Promise ? await aggregated : aggregated;
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr:false)`,
                 {
                   loaderIds: p.loaderIds,
                   ms: Math.round(performance.now() - parallelAwaitStart),
@@ -613,9 +655,11 @@ export async function renderSegments(
             }
           } else {
             p.loaderDataPromise = aggregated;
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,
+                `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
                 { loaderIds: p.loaderIds },
               );
             }
@@ -630,6 +674,7 @@ export async function renderSegments(
         parallel: node.parallel,
         loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
         loaderStreams,
+        awaitedLoaderIds,
         pending: outletPending,
         children: errorFallback ?? nodeContent,
       });

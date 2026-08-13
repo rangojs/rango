@@ -269,6 +269,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     plugins.push(
       createVirtualEntriesPlugin(finalEntries, undefined, {
         headScripts: resolvedOptions.headScripts,
+        progressiveChunkSize: resolvedOptions.progressiveChunkSize,
       }),
     );
     plugins.push(performanceTracksPlugin());
@@ -519,6 +520,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     plugins.push(
       createVirtualEntriesPlugin(finalEntries, routerRef, {
         headScripts: resolvedOptions.headScripts,
+        progressiveChunkSize: resolvedOptions.progressiveChunkSize,
       }),
     );
     plugins.push(performanceTracksPlugin());
@@ -585,6 +587,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       discovery: options?.discovery,
       clientChunkCtx,
       headScripts: resolvedOptions.headScripts,
+      progressiveChunkSize: resolvedOptions.progressiveChunkSize,
     }),
   );
 

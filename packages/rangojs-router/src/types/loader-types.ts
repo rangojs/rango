@@ -195,7 +195,11 @@ export type LoaderFn<
  *
  * Scoped per LOADER, not per segment: an `ssr: false` loader alongside a
  * deliberately streaming sibling awaits only itself, and the sibling keeps
- * streaming behind its `loading()`/Suspense boundary.
+ * streaming behind its `loading()`/Suspense boundary. Watch the scoping when
+ * the boundary must be SSR-complete: ONE unflagged read under it still
+ * suspends the whole boundary, which then streams as its fallback — looking
+ * exactly like the flag not working. In dev the router warns at the read
+ * site naming the unflagged loader (ssr-suspension-warning.ts).
  */
 export type LoaderOptions = {
   ssr?: boolean;

@@ -273,6 +273,71 @@ describe("segment-system", () => {
         });
       });
 
+      it("delivers { ssr: false } loaders as SETTLED values in loaderStreams; unflagged siblings keep the promise", async () => {
+        // The SSR-completeness contract must hold by construction, not by the
+        // read site's use() winning a Flight-chunk scheduling race: a flagged
+        // segment's stream entry is the awaited result (decoded synchronously
+        // at the read site), the sibling stays a pending promise, and the
+        // flagged id rides awaitedLoaderIds for the dev diagnostic.
+        const pendingSibling = new Promise(() => {});
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "R0D1.plain",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        const streams = outlets[0].props.loaderStreams;
+        expect(streams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(streams["flagged-loader"]).not.toBeInstanceOf(Promise);
+        expect(streams["plain-loader"]).toBe(pendingSibling);
+        expect(outlets[0].props.awaitedLoaderIds).toEqual(["flagged-loader"]);
+      });
+
+      it("delivers { ssr: false } loaders as SETTLED values through the LoaderBoundary streams too", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route", loading: "Loading..." }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+
+        const boundaries = collectByType(tree, MockLoaderBoundary);
+        expect(boundaries).toHaveLength(1);
+        expect(boundaries[0].props.loaderStreams["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(boundaries[0].props.awaitedLoaderIds).toEqual([
+          "flagged-loader",
+        ]);
+      });
+
       it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {
         // popstate / stale-revalidation / fully-prefetched commits must stay
         // whole: the awaited lane still provides DECODED loaderData and no
@@ -1301,6 +1366,126 @@ describe("segment-system", () => {
         resolveLoader({ sidebar: true });
         await firstPromise;
       });
+
+      it("does not attach loaderStreams to a parallel slot — mixed flagged/unflagged stays on the aggregate promise", async () => {
+        const pendingSibling = new Promise(() => {});
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.flagged",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "L0D1.plain",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const parallel = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+        // Streams would skip use(aggregate) and bake the slot handler
+        // (PPR3 live-lane hole). The pending sibling keeps the aggregate
+        // a Promise so LoaderBoundary still suspends.
+        expect(parallel.loaderStreams).toBeUndefined();
+        expect(parallel.awaitedLoaderIds).toBeUndefined();
+        expect(parallel.loaderDataPromise).toBeInstanceOf(Promise);
+      });
+
+      it("settles an all-flagged parallel slot into a decoded aggregate (no streams)", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.flagged",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const parallel = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+        expect(parallel.loaderStreams).toBeUndefined();
+        expect(Array.isArray(parallel.loaderDataPromise)).toBe(true);
+        expect(parallel.loaderDataPromise).toEqual([
+          { ok: true, data: "settled" },
+        ]);
+      });
+
+      it.each([{ isAction: true }, { forceAwait: true }])(
+        "clears stale parallel loaderStreams when %j so the aggregate is used",
+        async (opts) => {
+          const loadingSkeleton = createElement("div", null, "Loading cart");
+          const segments: ResolvedSegment[] = [
+            seg({ id: "L0", type: "layout" }),
+            seg({
+              id: "L0.@cart",
+              namespace: "parallel.cart",
+              type: "parallel",
+              slot: "@cart",
+              loading: loadingSkeleton,
+              loaderStreams: {
+                "cart-loader": { ok: true, data: { count: 0 } },
+              },
+              awaitedLoaderIds: ["cart-loader"],
+            }),
+            seg({
+              id: "L0D0.cart",
+              namespace: "parallel.cart",
+              type: "loader",
+              loaderId: "cart-loader",
+              loaderData: Promise.resolve({ ok: true, data: { count: 1 } }),
+            }),
+            seg({ id: "L0R0", type: "route" }),
+          ];
+
+          const result = await renderSegments(segments, opts);
+          const tree = toTreeNode(result);
+          const outlets = collectByType(tree, MockOutletProvider);
+          const layoutOutlet = outlets.find(
+            (o) => o.props.segment.id === "L0",
+          )!;
+          const slot = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+          expect(slot.loaderStreams).toBeUndefined();
+          expect(slot.awaitedLoaderIds).toBeUndefined();
+          expect(Array.isArray(slot.loaderDataPromise)).toBe(true);
+        },
+      );
     });
 
     describe("layout/route loader memoization", () => {

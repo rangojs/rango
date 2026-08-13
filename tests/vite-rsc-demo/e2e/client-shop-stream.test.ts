@@ -37,6 +37,13 @@ function expectSsrCompleteDocument(body: string) {
   // Awaited loader: data in the SSR'd HTML, skeleton never rendered.
   expect(body).toContain("Wireless Headphones — $99.99");
   expect(body).not.toContain("client-shop-ssr-awaited-skeleton");
+  // The awaited push reaches the SSR'd <head> <title> itself (router Meta →
+  // MetaTags; collectMeta title dedup replaces the root default) — the tab
+  // title is correct with no JS, not just after TitleUpdater's effect.
+  expect(body).toMatch(
+    /<title[^>]*>Wireless Headphones — SSR complete<\/title>/,
+  );
+  expect(body).not.toMatch(/<title[^>]*>RSC Router Demo<\/title>/);
   // Handle push rode the SSR snapshot: the page's SsrMetaEcho div carries the
   // value IN the markup (a late handlesLate push would leave it empty until
   // hydration; the Flight copy of the string sits escaped inside script tags,
@@ -48,6 +55,33 @@ function expectSsrCompleteDocument(body: string) {
   // (and its data arrives later in the same stream).
   expect(body).toContain("client-shop-ssr-sidecar-skeleton");
   expect(body).toContain("streamed sidecar data");
+  // Element-heavy read site (nested divs + <Link>s off the same flagged
+  // loader): SSR-completeness must not degrade with subtree complexity —
+  // its skeleton never SSRs and the link markup is in the visible document.
+  expect(body).not.toContain("client-shop-ssr-complex-skeleton");
+  expect(body).toContain("client-shop-ssr-breadcrumbs");
+  expect(body).toContain("View product page — $99.99");
+  // Consumer-app repro shape (read above the boundary, nested category data
+  // through props, bare-string fallback): renders complete, fallback never
+  // emitted.
+  expect(body).toContain("client-shop-ssr-catbuttons");
+  expect(body).toContain("Sub One");
+  expect(body).not.toContain("CategoriesButtons");
+  // Outlining pin (the ssr:false progressiveChunkSize auto-raise): the
+  // 140-tile grid off the flagged loader exceeds BOTH Fizz outlining gates
+  // (>500-byte eligibility floor, >12800 progressiveChunkSize default), so
+  // without the auto-raise Fizz renders its skeleton in-place and moves the
+  // completed tiles to an end-of-stream <div hidden> + $RC reveal — presence
+  // checks can't see the difference, position can. In-place means: the grid
+  // sits BEFORE any hidden div (the streaming sidecar's is expected and
+  // stays), and the skeleton never renders.
+  expect(body).not.toContain("client-shop-ssr-inline-grid-skeleton");
+  const gridAt = body.indexOf('data-testid="client-shop-ssr-inline-grid"');
+  expect(gridAt).toBeGreaterThan(-1);
+  const firstHiddenAt = body.indexOf("<div hidden");
+  if (firstHiddenAt !== -1) {
+    expect(gridAt).toBeLessThan(firstHiddenAt);
+  }
 }
 
 devTest.describe("client-shop loader ssr:false", () => {

@@ -80,6 +80,33 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(page).toHaveURL(f.url("/__client-urls"));
   });
 
+  test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({
+    request,
+  }) => {
+    // The route's loader is flagged { ssr: false }, so the document render is
+    // awaited and the grid boundary COMPLETES by first flush. The grid is
+    // sized past both Fizz outlining gates (see the fixture comment), so
+    // without the progressiveChunkSize auto-raise Fizz emits its skeleton
+    // in-place and moves the rows to an end-of-stream <div hidden> + $RC
+    // reveal — presence checks can't see the difference, position can. The
+    // unflagged chrome loaders above still stream, so hidden divs legitimately
+    // exist later in the body.
+    const response = await request.get(
+      f.url("/__client-urls/mirror/awaited-slug"),
+      { headers: { accept: "text/html" } },
+    );
+    const html = await response.text();
+    expect(response.ok()).toBe(true);
+    expect(html).toContain("mirror-awaited-data");
+    expect(html).not.toContain("mirror-inline-grid-skeleton");
+    const gridAt = html.indexOf('data-testid="mirror-inline-grid"');
+    expect(gridAt).toBeGreaterThan(-1);
+    const firstHiddenAt = html.indexOf("<div hidden");
+    if (firstHiddenAt !== -1) {
+      expect(gridAt).toBeLessThan(firstHiddenAt);
+    }
+  });
+
   test("main navigation reaches pure client routes and RSC layouts with client pages", async ({
     page,
     request,

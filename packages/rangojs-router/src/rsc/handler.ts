@@ -45,7 +45,7 @@ import {
   handleResponseRoute,
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
-import { generateNonce, nonce as nonceToken } from "./nonce.js";
+import { nonce as nonceToken, resolveProviderNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
@@ -456,12 +456,12 @@ export function createRSCHandler<
       }
     }
 
-    // Resolve nonce if provider is set
+    // Resolve nonce if provider is set. false/"" normalize to undefined —
+    // the per-request opt-out (resolveProviderNonce).
     const nonceStart = performance.now();
     let nonce: string | undefined;
     if (nonceProvider) {
-      const result = await nonceProvider(request, env);
-      nonce = result === true ? generateNonce() : result;
+      nonce = resolveProviderNonce(await nonceProvider(request, env));
     }
     const nonceDur = performance.now() - nonceStart;
 

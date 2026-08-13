@@ -45,7 +45,10 @@ import {
   maskNestedContainerThenables,
   type MaskReport,
 } from "../router/segment-resolution/mask-nested.js";
-import { isInsideLoaderScope } from "../server/context.js";
+import {
+  getCurrentLoaderBodyId,
+  isInsideLoaderScope,
+} from "../server/context.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type {
   ShellCacheEntry,
@@ -1503,6 +1506,15 @@ export function deriveShellCaptureContext(
   //    applied ONLY at the captureHandles cache-write call site — every other
   //    getDataForSegment consumer (the render-barrier snapshot, prerender)
   //    sees every push.
+  //    EXCEPTION — bake-lane { ssr: false } loaders: they execute at capture
+  //    and never re-run on a HIT, so neither exclusion rationale applies. The
+  //    capture awaits them (fresh.ts), their pushes are in the captured HTML
+  //    (<head> title/meta, useHandle echoes), and the stored snapshot MUST
+  //    carry the same values or HIT hydration mismatches against its own
+  //    prelude (server text present, client handle empty). Only their
+  //    settled, thenable-free pushes qualify — a deferred (thenable) push or
+  //    one with masked nested promises keeps the exclusion so the handle
+  //    encode cannot stall on a never-resolving mask.
   const handleLiveness = {
     holes: false,
     pendingPushes: 0,
@@ -1518,11 +1530,13 @@ export function deriveShellCaptureContext(
     const pushedInLoaderScope = isInsideLoaderScope();
     // Single walk: the mask reports whether it masked any nested thenable
     // (the liveness declaration) while building the capture copy.
+    let maskedNestedThenable = false;
     const maskWithLiveness = (v: unknown): unknown => {
       const report: MaskReport = { thenable: false };
       const masked = maskNestedContainerThenables(v, undefined, report);
-      if (!pushedInLoaderScope && report.thenable) {
-        handleLiveness.holes = true;
+      if (report.thenable) {
+        maskedNestedThenable = true;
+        if (!pushedInLoaderScope) handleLiveness.holes = true;
       }
       return masked;
     };
@@ -1534,11 +1548,30 @@ export function deriveShellCaptureContext(
         value.then(settle, settle);
       }
       masked = value.then(maskWithLiveness);
+      // Deferred (thenable) loader pushes always keep the exclusion — the
+      // bake-lane carve-out below is for settled values only.
+      if (pushedInLoaderScope) {
+        loaderScopedPushValues.add(masked as object);
+      }
     } else {
       masked = maskWithLiveness(value);
-    }
-    if (pushedInLoaderScope && typeof masked === "object" && masked !== null) {
-      loaderScopedPushValues.add(masked);
+      if (
+        pushedInLoaderScope &&
+        typeof masked === "object" &&
+        masked !== null
+      ) {
+        // Bake-lane { ssr: false } loader pushes are shell material (see the
+        // funnel comment above): keep them IN the stored snapshot when
+        // settled and thenable-free; everything else stays excluded.
+        const bodyLoaderId = getCurrentLoaderBodyId();
+        const baked =
+          bodyLoaderId !== undefined &&
+          !maskedNestedThenable &&
+          derivedCtx._awaitBeforeFlushLoaderIds?.has(bodyLoaderId) === true;
+        if (!baked) {
+          loaderScopedPushValues.add(masked);
+        }
+      }
     }
     rawCapturePush(handleName, segmentId, masked);
   };

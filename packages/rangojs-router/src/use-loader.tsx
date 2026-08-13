@@ -15,6 +15,7 @@ import {
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import { loaderStore, type LoaderEntry } from "./loader-store.js";
 import { decodeLoaderEntry } from "./decode-loader-results.js";
+import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
 function isShareableGet(options: LoadOptions | undefined): boolean {
@@ -64,10 +65,17 @@ function lookupLoaderStreams(
 function extractContentLoaderData(
   node: ReactNode,
   loaderId: string,
+  awaitedAcc?: string[],
 ): LoaderLookup {
   if (!isValidElement(node)) return NOT_FOUND;
   const props = node.props as Record<string, any> | undefined;
   if (!props) return NOT_FOUND;
+
+  // Collect BEFORE the lookups so ids on the element that owns the stream
+  // entry count for the SSR suspension diagnostic.
+  if (awaitedAcc && Array.isArray(props.awaitedLoaderIds)) {
+    awaitedAcc.push(...props.awaitedLoaderIds);
+  }
 
   // Direct OutletProvider with loaderData
   if (props.loaderData && loaderId in props.loaderData) {
@@ -93,7 +101,9 @@ function extractContentLoaderData(
     }
   }
 
-  if (props.children) return extractContentLoaderData(props.children, loaderId);
+  if (props.children) {
+    return extractContentLoaderData(props.children, loaderId, awaitedAcc);
+  }
   return NOT_FOUND;
 }
 
@@ -136,9 +146,14 @@ function useLoaderInternal<T>(
     contextData: T | undefined;
     hasContextData: boolean;
     pendingStream?: Promise<unknown>;
+    /** { ssr: false } loader ids seen on the chain up to (and including) the
+     *  level that owned the read — input for the dev SSR suspension warning. */
+    awaitedLoaderIds?: string[];
   } => {
+    const awaited: string[] = [];
     let current: OutletContextValue | null | undefined = context;
     while (current) {
+      if (current.awaitedLoaderIds) awaited.push(...current.awaitedLoaderIds);
       if (current.loaderData && loader.$$id in current.loaderData) {
         return {
           contextData: current.loaderData[loader.$$id] as T,
@@ -152,6 +167,7 @@ function useLoaderInternal<T>(
             contextData: undefined,
             hasContextData: true,
             pendingStream: streamed.stream,
+            awaitedLoaderIds: awaited,
           };
         }
         return { contextData: streamed.value as T, hasContextData: true };
@@ -159,6 +175,7 @@ function useLoaderInternal<T>(
       const contentData = extractContentLoaderData(
         current.content,
         loader.$$id,
+        awaited,
       );
       if (contentData !== NOT_FOUND) {
         if ("stream" in contentData) {
@@ -166,6 +183,7 @@ function useLoaderInternal<T>(
             contextData: undefined,
             hasContextData: true,
             pendingStream: contentData.stream,
+            awaitedLoaderIds: awaited,
           };
         }
         return { contextData: contentData.value as T, hasContextData: true };
@@ -184,6 +202,11 @@ function useLoaderInternal<T>(
   const { hasContextData } = walk;
   let contextData = walk.contextData;
   if (walk.pendingStream) {
+    warnAwaitedSsrSuspension(
+      loader.$$id,
+      walk.awaitedLoaderIds,
+      walk.pendingStream,
+    );
     contextData = decodeLoaderEntry(use(walk.pendingStream)) as T;
   }
 

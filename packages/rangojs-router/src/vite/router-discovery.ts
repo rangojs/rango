@@ -265,7 +265,10 @@ async function createTempRscServer(
               },
               load(id: string) {
                 return id === "\0rango-temp-real-ssr-entry"
-                  ? getVirtualEntrySSR(state.opts?.headScripts)
+                  ? getVirtualEntrySSR(
+                      state.opts?.headScripts,
+                      state.opts?.progressiveChunkSize,
+                    )
                   : null;
               },
             } satisfies import("vite").Plugin,

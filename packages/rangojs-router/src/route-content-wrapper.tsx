@@ -129,6 +129,9 @@ export interface LoaderBoundaryProps {
    * the children; useLoader suspends per loader at the read site.
    */
   loaderStreams?: Record<string, unknown>;
+  /** Dev-diagnostic input for the SSR suspension warning — see
+   *  OutletContextValue.awaitedLoaderIds. Rides the streams lane only. */
+  awaitedLoaderIds?: readonly string[];
   fallback?: ReactNode;
   outletKey: string;
   outletContent: ReactNode;
@@ -141,6 +144,7 @@ export function LoaderBoundary({
   loaderDataPromise,
   loaderIds,
   loaderStreams,
+  awaitedLoaderIds,
   fallback,
   outletKey,
   outletContent,
@@ -154,6 +158,7 @@ export function LoaderBoundary({
         loaderDataPromise={loaderDataPromise}
         loaderIds={loaderIds}
         loaderStreams={loaderStreams}
+        awaitedLoaderIds={awaitedLoaderIds}
         outletKey={outletKey}
         outletContent={outletContent}
         segment={segment}
@@ -187,6 +192,7 @@ function LoaderResolver({
   loaderDataPromise,
   loaderIds,
   loaderStreams,
+  awaitedLoaderIds,
   outletKey,
   outletContent,
   segment,
@@ -201,6 +207,7 @@ function LoaderResolver({
         segment={segment}
         parallel={parallel}
         loaderStreams={loaderStreams}
+        awaitedLoaderIds={awaitedLoaderIds}
       >
         {children}
       </OutletProvider>
