@@ -624,9 +624,16 @@ export async function renderSegments(
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+          if (forceAwait || isAction) {
             const parallelAwaitStart = segDebug ? performance.now() : 0;
-            p.loaderDataPromise = await aggregated;
+            p.loaderDataPromise =
+              aggregated instanceof Promise ? await aggregated : aggregated;
+            // Reused cached parallel segments still carry the document
+            // stream map. LoaderResolver short-circuits on loaderStreams
+            // and would ignore this fresh aggregate (mini @cart after
+            // addToCart stayed at 0).
+            p.loaderStreams = undefined;
+            p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
                 `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action)`,

@@ -27,6 +27,35 @@ describe("merge-segment-loaders", () => {
     await expect(merged.loaderDataPromise).resolves.toEqual([1, 20, 3]);
   });
 
+  it("drops cached loaderStreams so they cannot mask the merged aggregate", async () => {
+    const fromCache = {
+      id: "seg.@cart",
+      component: "cached-component",
+      loaderIds: ["cart", "other"],
+      loaderDataPromise: Promise.resolve([{ count: 0 }, { other: true }]),
+      loaderStreams: {
+        cart: { ok: true, data: { count: 0 } },
+        other: { ok: true, data: { other: true } },
+      },
+      awaitedLoaderIds: ["cart"],
+    } as any;
+    const fromServer = {
+      id: "seg.@cart",
+      component: "server-component",
+      loaderIds: ["cart"],
+      loaderDataPromise: Promise.resolve([{ count: 1 }]),
+    } as any;
+
+    const merged = mergeSegmentLoaders(fromServer, fromCache);
+
+    expect(merged.loaderStreams).toBeUndefined();
+    expect(merged.awaitedLoaderIds).toBeUndefined();
+    await expect(merged.loaderDataPromise).resolves.toEqual([
+      { count: 1 },
+      { other: true },
+    ]);
+  });
+
   it("detects when loader merge is required", () => {
     const fromCache = {
       loaderIds: ["a", "b"],

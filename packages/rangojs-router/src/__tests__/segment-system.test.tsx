@@ -1413,6 +1413,47 @@ describe("segment-system", () => {
         expect(parallel.loaderStreams!["plain-loader"]).toBe(pendingSibling);
         expect(parallel.awaitedLoaderIds).toEqual(["flagged-loader"]);
       });
+
+      it.each([{ isAction: true }, { forceAwait: true }])(
+        "clears stale parallel loaderStreams when %j so the aggregate is used",
+        async (opts) => {
+          const loadingSkeleton = createElement("div", null, "Loading cart");
+          const segments: ResolvedSegment[] = [
+            seg({ id: "L0", type: "layout" }),
+            seg({
+              id: "L0.@cart",
+              namespace: "parallel.cart",
+              type: "parallel",
+              slot: "@cart",
+              loading: loadingSkeleton,
+              loaderStreams: {
+                "cart-loader": { ok: true, data: { count: 0 } },
+              },
+              awaitedLoaderIds: ["cart-loader"],
+            }),
+            seg({
+              id: "L0D0.cart",
+              namespace: "parallel.cart",
+              type: "loader",
+              loaderId: "cart-loader",
+              loaderData: Promise.resolve({ ok: true, data: { count: 1 } }),
+            }),
+            seg({ id: "L0R0", type: "route" }),
+          ];
+
+          const result = await renderSegments(segments, opts);
+          const tree = toTreeNode(result);
+          const outlets = collectByType(tree, MockOutletProvider);
+          const layoutOutlet = outlets.find(
+            (o) => o.props.segment.id === "L0",
+          )!;
+          const slot = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+          expect(slot.loaderStreams).toBeUndefined();
+          expect(slot.awaitedLoaderIds).toBeUndefined();
+          expect(Array.isArray(slot.loaderDataPromise)).toBe(true);
+        },
+      );
     });
 
     describe("layout/route loader memoization", () => {
