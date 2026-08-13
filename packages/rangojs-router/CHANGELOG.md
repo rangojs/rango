@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.10.0 (2026-08-13)
+
+`loader(Def, { ssr: false })` now delivers its settled value in place on
+document renders — the content sits at its document position, and handle
+pushes land in the captured shell. A new `rango({ progressiveChunkSize })`
+option controls Fizz outlining; unset, a matched flagged loader auto-raises
+the budget so React does not park the awaited markup in a trailing
+`<div hidden>` + `$RC()` reveal.
+
+### Added: in-place delivery for `{ ssr: false }` loaders ([#823](https://github.com/ivogt/vite-rsc/pull/823))
+
+Document renders await flagged loaders before first flush and hand
+`useLoader` the settled result, not a fulfilled Flight thenable. Unflagged
+siblings keep streaming. Shell capture bakes the same lane so title/meta
+handle pushes are in the stored prelude, not only after hydration.
+
+```tsx
+path("/products/:category", ProductList, () => [
+  loader(ProductListLoader, { ssr: false }), // in the SSR HTML, in place
+  loader(RecommendationsLoader),             // still streams
+]),
+```
+
+`loading(false)` routes get the same stamp after their pre-flush await.
+Parallel slots that own `loading()` stay on the aggregate (that is what
+pins the fallback); an all-flagged slot still settles to a decoded array.
+
+### Added: `rango({ progressiveChunkSize })` and ssr:false auto-raise ([#823](https://github.com/ivogt/vite-rsc/pull/823))
+
+The generated SSR entry forwards React Fizz's completed-boundary outlining
+budget to live `renderToReadableStream` and PPR `prerender`. Resume
+inherits the capture value from postponed state.
+
+When the option is unset and the matched chain has a flagged loader,
+`createSSRHandler` auto-raises to `Number.MAX_SAFE_INTEGER` so completed
+content stays inline. An explicit value disables the auto-raise. Capture
+never auto-raises. `Infinity` emits as `Number.POSITIVE_INFINITY` (JSON
+cannot serialize it).
+
+```ts
+// vite.config.ts — pin the budget (also disables auto-raise)
+rango({ progressiveChunkSize: Number.MAX_SAFE_INTEGER });
+```
+
+Custom SSR entries set `createSSRHandler({ progressiveChunkSize })` /
+`createShellCaptureHandler({ progressiveChunkSize })` the same way.
+
+No migration. Existing `{ ssr: false }` routes pick up in-place delivery
+with no config; set the option only to pin or opt out of the auto-raise.
+
 ## 0.9.1 (2026-08-03)
 
 Dev-only patch: Cloudflare dev no longer amplifies `clientUrls()`
