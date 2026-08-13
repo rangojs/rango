@@ -638,6 +638,8 @@ export async function renderSegments(
             }
           } else {
             p.loaderDataPromise = aggregated;
+            ({ streams: p.loaderStreams, awaitedIds: p.awaitedLoaderIds } =
+              await buildLoaderStreams(ownedLoaders));
             if (segDebug) {
               segDebugLog(
                 `segment ${id}: parallel ${p.id} loaders streaming (suspense)`,

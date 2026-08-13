@@ -178,6 +178,14 @@ export interface ResolvedSegment {
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
+  /**
+   * Per-loader UNDECODED results for a parallel-owned stream map.
+   * Flagged (ssr:false) entries are settled values; unflagged siblings
+   * stay promises. Fed to LoaderBoundary by renderSlotContent.
+   */
+  loaderStreams?: Record<string, unknown>;
+  /** $$ids of loaders this segment awaited before flush. Dev diagnostic. */
+  awaitedLoaderIds?: string[];
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields

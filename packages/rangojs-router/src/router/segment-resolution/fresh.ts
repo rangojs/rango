@@ -11,6 +11,7 @@ import {
   getParallelEntries,
   getParallelSlotEntries,
   type EntryData,
+  type LoaderEntry,
 } from "../../server/context";
 import type {
   HandlerContext,
@@ -44,6 +45,37 @@ import {
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
+
+/**
+ * Register flagged loader $$ids on the request context and return their
+ * indices. Must run BEFORE kickoff: rendered() checks the set to fail
+ * fast on the barrier cycle (resolution awaits the loader, the barrier
+ * awaits resolution).
+ */
+function registerAwaitBeforeFlushIds(loaderEntries: LoaderEntry[]): number[] {
+  const awaitedIndices: number[] = [];
+  for (let i = 0; i < loaderEntries.length; i++) {
+    if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
+  }
+  if (awaitedIndices.length > 0) {
+    const reqCtx = _getRequestContext();
+    if (reqCtx) {
+      reqCtx._awaitBeforeFlushLoaderIds ??= new Set();
+      for (const i of awaitedIndices) {
+        reqCtx._awaitBeforeFlushLoaderIds.add(loaderEntries[i]!.loader.$$id);
+      }
+    }
+  }
+  return awaitedIndices;
+}
+
+function stampAwaitBeforeFlush(
+  loaderEntry: LoaderEntry,
+): { awaitBeforeFlush: true } | Record<string, never> {
+  return loaderEntry.awaitBeforeFlush === true
+    ? { awaitBeforeFlush: true as const }
+    : {};
+}
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -114,29 +146,10 @@ export async function resolveLoaders<TEnv>(
     // barrier), and the loader body can call rendered() before the await below
     // is reached.
     //
-    // Shell-capture renders await too — deliberately. Flagged loaders BAKE at
-    // capture (they execute for real; loader-mask masks only LIVE-lane
-    // loaders, so nothing here can hang that would not already hold the
-    // capture gate, which awaits the same records). Skipping the await
-    // (pre-#822 behavior) let the capture's render-barrier snapshot resolve
-    // before the bake settled, so the loader's handle pushes missed the
-    // captured HTML: every HIT then served the pre-push <head> (default
-    // <title>/meta, crawler-visible) even though the stored handles row
-    // carried the value and hydration corrected it (scar tissue:
-    // vite-rsc-demo /client-shop/ppr title).
-    const awaitedIndices: number[] = [];
-    for (let i = 0; i < loaderEntries.length; i++) {
-      if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
-    }
-    if (awaitedIndices.length > 0) {
-      const reqCtx = _getRequestContext();
-      if (reqCtx) {
-        reqCtx._awaitBeforeFlushLoaderIds ??= new Set();
-        for (const i of awaitedIndices) {
-          reqCtx._awaitBeforeFlushLoaderIds.add(loaderEntries[i]!.loader.$$id);
-        }
-      }
-    }
+    // Shell-capture renders await too: flagged loaders BAKE at capture
+    // (loader-mask masks only LIVE-lane loaders). Capture must await them so
+    // bake-lane handle pushes land in the prelude.
+    const awaitedIndices = registerAwaitBeforeFlushIds(loaderEntries);
 
     // Streaming loaders: promises kick off now, settle during RSC serialization.
     const segments = loaderEntries.map((loaderEntry, i) => {
@@ -153,9 +166,7 @@ export async function resolveLoaders<TEnv>(
         // Stamped on document AND capture renders: segment-system's
         // value-delivery await and the dev SSR-suspension diagnostic both
         // key off it.
-        ...(loaderEntry.awaitBeforeFlush === true
-          ? { awaitBeforeFlush: true as const }
-          : {}),
+        ...stampAwaitBeforeFlush(loaderEntry),
         loaderData: deps.wrapLoaderPromise(
           runInsideLoaderScope(() =>
             resolveLoaderData(
@@ -202,6 +213,11 @@ export async function resolveLoaders<TEnv>(
   // collapsing the whole entry and discarding successful sibling data, and
   // (2) leave the other in-flight raw promises without a .catch, producing
   // unhandled rejections. Mirrors the loading path and intercept-resolution.
+  //
+  // Flagged loaders still get awaitBeforeFlush stamped: auto-raise and
+  // settled-value delivery key off the field, and this path already paid
+  // the pre-flush await.
+  registerAwaitBeforeFlushIds(loaderEntries);
   const pendingLoaderData = loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
@@ -238,6 +254,7 @@ export async function resolveLoaders<TEnv>(
       component: null,
       params: ctx.params,
       loaderId: loader.$$id,
+      ...stampAwaitBeforeFlush(loaderEntry),
       loaderData: pending.wrapped,
       belongsToRoute,
     };

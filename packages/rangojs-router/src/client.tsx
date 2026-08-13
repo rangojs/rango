@@ -49,6 +49,8 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
     <LoaderBoundary
       loaderDataPromise={segment.loaderDataPromise!}
       loaderIds={segment.loaderIds!}
+      loaderStreams={segment.loaderStreams}
+      awaitedLoaderIds={segment.awaitedLoaderIds}
       fallback={segment.loading}
       outletKey={segment.id + "-loader"}
       outletContent={null}

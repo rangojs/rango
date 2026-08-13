@@ -1366,6 +1366,53 @@ describe("segment-system", () => {
         resolveLoader({ sidebar: true });
         await firstPromise;
       });
+
+      it("delivers a flagged parallel-owned loader as a settled stream; unflagged sibling stays a promise", async () => {
+        const pendingSibling = new Promise(() => {});
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.flagged",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({ ok: true, data: "settled" }),
+          }),
+          seg({
+            id: "L0D1.plain",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "plain-loader",
+            loaderData: pendingSibling,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const parallel = layoutOutlet.props.parallel[0] as ResolvedSegment;
+
+        expect(parallel.loaderStreams!["flagged-loader"]).toEqual({
+          ok: true,
+          data: "settled",
+        });
+        expect(parallel.loaderStreams!["flagged-loader"]).not.toBeInstanceOf(
+          Promise,
+        );
+        expect(parallel.loaderStreams!["plain-loader"]).toBe(pendingSibling);
+        expect(parallel.awaitedLoaderIds).toEqual(["flagged-loader"]);
+      });
     });
 
     describe("layout/route loader memoization", () => {

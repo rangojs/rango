@@ -311,7 +311,9 @@ server projection.
   completed boundary over 500 bytes to an end-of-stream `<div hidden>` + `$RC`
   reveal once the shell saturates the 12800-byte default
   (`createSSRHandler`, reading `ResolvedSegment.awaitBeforeFlush` off the
-  payload).
+  payload). The stamp and settled-value delivery also apply to
+  `loading(false)` entries and parallel-owned loaders — both already paid
+  the pre-flush await and must not re-suspend at the read site.
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

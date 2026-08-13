@@ -57,6 +57,22 @@ describe("getVirtualEntrySSR headScripts wiring", () => {
     await expect(parseAstAsync(entry)).resolves.toBeTruthy();
   });
 
+  it("emits Number.POSITIVE_INFINITY rather than JSON null", async () => {
+    const entry = getVirtualEntrySSR("preinit", Infinity);
+    expect(entry).toContain("progressiveChunkSize: Number.POSITIVE_INFINITY,");
+    expect(entry).not.toContain("progressiveChunkSize: null");
+    await expect(parseAstAsync(entry)).resolves.toBeTruthy();
+  });
+
+  it("rejects NaN and -Infinity", () => {
+    expect(() => getVirtualEntrySSR("preinit", NaN)).toThrow(
+      /finite number or Infinity/,
+    );
+    expect(() => getVirtualEntrySSR("preinit", -Infinity)).toThrow(
+      /finite number or Infinity/,
+    );
+  });
+
   it("both generated variants parse as valid modules", async () => {
     // The preload variant is compiled by no in-repo app (every fixture runs
     // the default), so a splice error confined to it would otherwise ship

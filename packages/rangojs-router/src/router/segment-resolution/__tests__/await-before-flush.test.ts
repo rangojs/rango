@@ -122,6 +122,23 @@ describe("resolveLoaders awaitBeforeFlush", () => {
     expect(segments[1]!.awaitBeforeFlush).toBeUndefined();
   });
 
+  it("stamps awaitBeforeFlush on the loading-disabled return for flagged loaders", async () => {
+    const flagged = createMockLoader("flagged#L");
+    const sibling = createMockLoader("sibling#L");
+    const entry = {
+      ...createEntry([loaderEntry(flagged, true), loaderEntry(sibling)]),
+      loading: false,
+    };
+
+    const segments = await resolveLoaders(entry, createMockCtx(), true, deps);
+
+    expect(segments[0]!.awaitBeforeFlush).toBe(true);
+    expect(segments[1]!.awaitBeforeFlush).toBeUndefined();
+    expect([...mockRequestCtx._awaitBeforeFlushLoaderIds]).toEqual([
+      "flagged#L",
+    ]);
+  });
+
   it("capture: stamps awaitBeforeFlush too (segment-system value delivery + diagnostics key off it)", async () => {
     mockRequestCtx._shellCaptureRun = true;
     mockRequestCtx._shellCaptureLoaderRecords = new Map();
@@ -159,12 +176,9 @@ describe("resolveLoaders awaitBeforeFlush", () => {
   it("capture: flagged loader BAKES and resolution awaits the bake; unflagged stays masked", async () => {
     mockRequestCtx._shellCaptureRun = true;
     mockRequestCtx._shellCaptureLoaderRecords = new Map();
-    // Flagged: executes at capture (the bake lane — its settled return is
-    // shell material) and resolution HOLDS on it, so the capture's barrier
-    // snapshot resolves AFTER the loader's handle pushes — they are captured
-    // HTML material (the pre-#822 early return let the snapshot beat them:
-    // every HIT served the pre-push <head>). Unflagged sibling: masked,
-    // never runs.
+    // Flagged: executes at capture (bake lane) and resolution HOLDS on it
+    // so bake-lane handle pushes beat the capture barrier. Unflagged
+    // sibling is masked and never runs.
     let resolveFlagged!: (v: unknown) => void;
     const flagged = createMockLoader(
       "flagged#L",

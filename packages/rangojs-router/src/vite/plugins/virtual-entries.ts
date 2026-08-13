@@ -48,6 +48,18 @@ async function initializeApp() {
 initializeApp().catch(console.error);
 `.trim();
 
+function emitProgressiveChunkSize(value: number): string {
+  if (value === Number.POSITIVE_INFINITY) {
+    return "Number.POSITIVE_INFINITY";
+  }
+  if (!Number.isFinite(value)) {
+    throw new Error(
+      `rango({ progressiveChunkSize }) must be a finite number or Infinity, received ${String(value)}`,
+    );
+  }
+  return JSON.stringify(value);
+}
+
 /**
  * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
  * option: "preinit" (default) installs the client-reference preinit hook and
@@ -76,11 +88,13 @@ installClientReferencePreinit(setOnClientReference);
   const hs = JSON.stringify(headScripts);
   // Emitted into all three handlers: live SSR and shell capture consume it
   // directly; the resume handler receives it for dep-shape uniformity (resume()
-  // itself inherits the capture value from the postponed state). Number
-  // serialization is exact for every finite number incl. MAX_SAFE_INTEGER.
+  // itself inherits the capture value from the postponed state). Finite numbers
+  // stringify exactly (incl. MAX_SAFE_INTEGER). Infinity is emitted as
+  // Number.POSITIVE_INFINITY — JSON.stringify(Infinity) is null, which React
+  // would treat as "no budget" rather than "never outline".
   const pcs =
     progressiveChunkSize !== undefined
-      ? `\n  progressiveChunkSize: ${JSON.stringify(progressiveChunkSize)},`
+      ? `\n  progressiveChunkSize: ${emitProgressiveChunkSize(progressiveChunkSize)},`
       : "";
   return `
 import {
