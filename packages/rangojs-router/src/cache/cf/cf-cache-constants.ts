@@ -86,7 +86,7 @@ export const MAX_REVALIDATION_INTERVAL = 30;
  * This is the default; override per store via
  * `CFCacheStoreOptions.edgeLookupTimeoutMs` (<= 0 disables the budget).
  *
- * 25ms, raised from 10: production Workers logs (autobarn pilot) showed the
+ * 25ms, raised from 10: Workers logs (production pilot) showed the
  * 10ms budget firing frequently on cold colos where the first Cache API touch
  * is slow but healthy — each false positive downgrades a warm L1 HIT to an
  * L2/render round trip that costs far more than the 15ms of extra patience.

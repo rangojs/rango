@@ -2581,7 +2581,7 @@ describe("refused-capture backoff policy", () => {
   });
 });
 
-// Wedge containment (autobarn pilot outage): a capture whose render never
+// Wedge containment (production pilot incident): a capture whose render never
 // settles must not strand the stampede guard or the capture queue. Two layers,
 // both pinned here: the task hard cap (raceTaskHardCap around runShellCapture)
 // bounds a live-context wedge — SHELL_CAPTURE_MAX_WAIT_MS arms only AFTER the

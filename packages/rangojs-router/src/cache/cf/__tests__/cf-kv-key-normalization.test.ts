@@ -1,5 +1,5 @@
 /**
- * KV key-length normalization (autobarn pilot finding #1).
+ * KV key-length normalization (production pilot finding #1).
  *
  * Cloudflare KV rejects keys over 512 UTF-8 bytes with
  * `414 ... exceeds key length limit of 512`. "use cache" item keys embed

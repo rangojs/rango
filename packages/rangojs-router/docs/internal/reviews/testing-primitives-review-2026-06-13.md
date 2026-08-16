@@ -57,7 +57,7 @@ Plus **T8** [medium/api] — `createTestRequestContext().ctx.reverse` now typed 
 
 - **[medium/docs]** Prose docs truncated at line 957; cannot verify if all recent additions (buildRunSnapshot, telemetry re-exports, renderHandler details) are covered — `docs/testing.md:957`
 - **[low/correctness]** Document production safety of allowServerInTest gate — `src/component-utils.ts:80`
-- **[low/correctness]** collectHandleData has bare process.env.NODE_ENV access in browser-exported function — `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/handle.ts:170`
+- **[low/correctness]** collectHandleData has bare process.env.NODE_ENV access in browser-exported function — `packages/rangojs-router/src/handle.ts:170`
 - **[low/docs]** Caveat explicitly states `test.alias` + `test.server.deps.inline` placement, but this is misleading to consumers — `skills/testing/setup.md:113`
 - **[low/docs]** Missing documentation: testPattern does not validate patterns — `src/host/testing.ts`
 - **[low/docs]** Telemetry type re-exports not documented in SKILL.md intro — `skills/testing/SKILL.md:34`
@@ -84,12 +84,12 @@ Notable decisions:
 The production-safety sweep confirmed every test-runner gate is correct — a real
 dev/build still throws; relaxations fire only under `isUnderTestRunner()` (`process.env.VITEST`):
 
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/prerender.ts:392` — Prerender has correct test-runner gate with runtime fallback
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/runtime-env.ts:17` — isUnderTestRunner() correctly uses optional chaining for process.env access
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/handle.ts:114` — createHandle has correct test-runner gate with safe error path
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/loader.ts:57` — createLoader (client stub) has correct test-runner gate
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/static-handler.ts:110` — Static has correct test-runner gate with runtime fallback
-- `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/component-utils.ts:80` — assertClientComponent correctly gates allowServerInTest relaxation on isUnderTestRunner()
+- `packages/rangojs-router/src/prerender.ts:392` — Prerender has correct test-runner gate with runtime fallback
+- `packages/rangojs-router/src/runtime-env.ts:17` — isUnderTestRunner() correctly uses optional chaining for process.env access
+- `packages/rangojs-router/src/handle.ts:114` — createHandle has correct test-runner gate with safe error path
+- `packages/rangojs-router/src/loader.ts:57` — createLoader (client stub) has correct test-runner gate
+- `packages/rangojs-router/src/static-handler.ts:110` — Static has correct test-runner gate with runtime fallback
+- `packages/rangojs-router/src/component-utils.ts:80` — assertClientComponent correctly gates allowServerInTest relaxation on isUnderTestRunner()
 
 ## Deferred follow-up
 
@@ -113,8 +113,8 @@ dev/build still throws; relaxations fire only under `isUnderTestRunner()` (`proc
 - **[test]** E2E test suite does NOT use parityDescribe; 111/112 tests use manual dev/(production) titling — `packages/rangojs-router/e2e/*.test.ts (112 files)`
 - **[docs]** Feature-map exports listing omits buildRunSnapshot and misses new Flight + Flight-Tree operations — `docs/internal/feature-map.md:40`
 - **[docs]** Sub-files list is incomplete: missing setup.md reference and misses render-handler.md section heading — `skills/testing/SKILL.md:104-116`
-- **[correctness]** createLoader (RSC/server) has correct test-runner gate with runtime fallback — `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/loader.rsc.ts:69`
-- **[correctness]** segment-structure-assert has bare process.env.NODE_ENV (dev-only warning, folded) — `/Users/ivotodorov/Development/vite-rsc/packages/rangojs-router/src/browser/segment-structure-assert.ts:44`
+- **[correctness]** createLoader (RSC/server) has correct test-runner gate with runtime fallback — `packages/rangojs-router/src/loader.rsc.ts:69`
+- **[correctness]** segment-structure-assert has bare process.env.NODE_ENV (dev-only warning, folded) — `packages/rangojs-router/src/browser/segment-structure-assert.ts:44`
 - **[simplify]** Duplicate toRequest() implementations across files — `src/testing/internal/context.ts:36-46, src/testing/render-handler.ts:162-171, src/testing/dispatch.ts:149-152, src/testing/run-loader.ts:184-202`
 - **[simplify]** Similar context option mapping patterns (buildLoaderCtxOpts vs inline ctxOpts) — `src/testing/run-loader.ts:257-277, src/testing/run-middleware.ts:149-161`
 
