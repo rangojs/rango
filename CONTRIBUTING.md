@@ -101,13 +101,13 @@ a file — the feature may already have an owning module.
 
 ## CI on pull requests
 
-Lint, format, typecheck, and unit tests run on every non-draft PR, including
-forks.
+GitHub Actions jobs run only for branches on this repository. A pull request
+from a fork skips the entire CI graph — that is intentional. Open the PR from
+a branch on `rangojs/rango`, or wait for a maintainer to pull the branch here
+after reviewing any `.github/workflows/` diffs.
 
-Playwright e2e, bundle guards, and `pkg.pr.new` preview publishes run only for
-same-repository branches. On a fork PR, a maintainer adds the `ci:e2e` label
-to opt into that matrix. Do not expect a green e2e check on the first fork
-push.
+Playwright e2e, bundle guards, and `pkg.pr.new` still require a non-draft
+same-repo PR (or the `ci:e2e` label on an otherwise-gated run).
 
 ## Pull request shape
 

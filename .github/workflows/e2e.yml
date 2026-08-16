@@ -17,7 +17,13 @@ jobs:
   # On push to main, wait 2 minutes before starting CI. Combined with
   # cancel-in-progress, a follow-up push within the window cancels this
   # run so only the latest commit gets a full suite. Instant for PRs.
+  #
+  # Fork PRs skip this job, which skips the rest of the graph (`needs:
+  # [debounce]`). `pull_request` from a fork does not receive repo secrets,
+  # but it does run the caller's workflow YAML. Review forks locally, or
+  # push the branch to this repo after reviewing workflow-file diffs.
   debounce:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
