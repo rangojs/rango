@@ -82,4 +82,4 @@ For a large type-only suite, collect recipe-1/2 assertions in `*.test-d.ts` file
 
 - `/typesafety`, `/links` — the DSL this tests
 - Siblings: `./client-components.md`, `./loader.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Type-level tests — make misuse fail to compile"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Type-level tests — make misuse fail to compile"

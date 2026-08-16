@@ -88,4 +88,4 @@ it("snapshots the normalized payload", async () => {
 
 - `/route` — the DSL this tests
 - Siblings: `./setup.md`, `./server-tree.md`, `./render-handler.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "renderToFlightString — real async Server Components"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "renderToFlightString — real async Server Components"

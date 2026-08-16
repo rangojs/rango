@@ -4,13 +4,14 @@ A code-first, type-safe React Server Components router. Django-inspired:
 routes are expressed in one visible tree, URLs are built from names, and
 everything past the core is opt-in.
 
-> **Experimental:** This package is under active development. APIs may change
-> between releases. Install with `@experimental` tag.
+> **Experimental:** APIs may change between releases. npm `latest` is the
+> current 0.x line. The `experimental` tag tracks `main` between tagged
+> releases.
 
 This page is a tour: it builds one small shop and meets the entire core API
 along the way — about six primitives. Everything else is opt-in and linked at
 the end. For the design rationale behind these APIs, read
-[Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md); this page shows how it feels, that page
+[Why Rango](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/why-rango.md); this page shows how it feels, that page
 argues why it's right.
 
 ## Start a new app
@@ -170,7 +171,7 @@ per group — while matching stays an `O(path length)` prefix trie, identical
 in dev and production. None of this is assumed: the trie is benchmarked
 in-repo against multi-thousand-route manifests, and the lazy guarantees are
 pinned by run-count tests (see
-[matching & lazy discovery](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md)).
+[matching & lazy discovery](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md)).
 Grow the tree without watching the boot time.
 
 That's a working site. Everything below adds to this app.
@@ -466,19 +467,19 @@ npx rango generate src/             # recursive scan
 
 ### Examples
 
-- [`e2e/mini`](https://github.com/ivogt/vite-rsc/tree/main/packages/rangojs-router/e2e/mini) — single-file demo app
-- [`cloudflare-basic`](https://github.com/ivogt/vite-rsc/tree/main/tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
-- [`cloudflare-multi-router`](https://github.com/ivogt/vite-rsc/tree/main/examples/cloudflare-multi-router) — multi-app host routing
-- [`vercel-basic`](https://github.com/ivogt/vite-rsc/tree/main/examples/vercel-basic) — Vercel deployment with `preset: "vercel"`, `VercelCacheStore`, and OTel tracing
-- [`vercel-multi-router`](https://github.com/ivogt/vite-rsc/tree/main/examples/vercel-multi-router) — multi-app host routing on Vercel (single function, routed by Host header)
+- [`e2e/mini`](https://github.com/rangojs/rango/tree/main/packages/rangojs-router/e2e/mini) — single-file demo app
+- [`cloudflare-basic`](https://github.com/rangojs/rango/tree/main/tests/cloudflare-basic) — Cloudflare Workers with caching, loaders, theme, and pre-rendering
+- [`cloudflare-multi-router`](https://github.com/rangojs/rango/tree/main/examples/cloudflare-multi-router) — multi-app host routing
+- [`vercel-basic`](https://github.com/rangojs/rango/tree/main/examples/vercel-basic) — Vercel deployment with `preset: "vercel"`, `VercelCacheStore`, and OTel tracing
+- [`vercel-multi-router`](https://github.com/rangojs/rango/tree/main/examples/vercel-multi-router) — multi-app host routing on Vercel (single function, routed by Host header)
 
 ### Going deeper
 
-- [Why Rango](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/why-rango.md) — the design rationale, claim by claim
+- [Why Rango](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/why-rango.md) — the design rationale, claim by claim
 - [Framework comparison](./skills/comparison/references/framework-comparison.md) — Rango vs Next.js App Router, TanStack Start, and Waku, capability by capability
-- [Docs index](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/README.md) — architecture, caching, prerender, testing
-- [Execution model](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/internal/execution-model.md) — the runtime contract
+- [Docs index](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/README.md) — architecture, caching, prerender, testing
+- [Execution model](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/internal/execution-model.md) — the runtime contract
 
 ## License
 
-MIT
+[MIT](./LICENSE)

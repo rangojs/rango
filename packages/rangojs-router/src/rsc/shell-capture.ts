@@ -381,7 +381,7 @@ function warnNullCaptureOnce(key: string): void {
       "a <Suspense> above the consuming component.\n" +
       'See the /ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md), "The hole ' +
       'doctrine" and "The layout-with-loaders playbook", or the design docs: ' +
-      "https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/design/ppr-shell-resume.md",
+      "https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/design/ppr-shell-resume.md",
   );
 }
 

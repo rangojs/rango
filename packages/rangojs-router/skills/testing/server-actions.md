@@ -104,4 +104,4 @@ it("asserts the client-cache directives an action issued", async () => {
 
 - `/server-actions` — the DSL this tests
 - Siblings: `./render-handler.md`, `./middleware.md`, `./loader.md`, `./bindings.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "runInRequestContext — the handler / server-action test primitive"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "runInRequestContext — the handler / server-action test primitive"

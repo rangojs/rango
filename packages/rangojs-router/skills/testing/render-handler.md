@@ -119,4 +119,4 @@ it("asserts the client-cache directives", async () => {
 
 - `/route` — the DSL this tests
 - Siblings: [`./server-tree.md`](./server-tree.md), [`./server-actions.md`](./server-actions.md), [`./setup.md`](./setup.md), [`./loader.md`](./loader.md)
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "renderHandler — run a real route handler and assert its RSC"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "renderHandler — run a real route handler and assert its RSC"

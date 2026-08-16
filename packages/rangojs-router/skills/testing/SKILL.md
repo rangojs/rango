@@ -32,7 +32,7 @@ index.rsc.ts` alias are all in [`./setup.md`](./setup.md). Read it before writin
 > [`./bindings.md`](./bindings.md).
 
 For the long-form prose guide (setup walkthrough + migration), see
-[`docs/testing.md`](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md)
+[`docs/testing.md`](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md)
 (the `docs/` directory is not shipped in the published package, so this is an
 absolute link).
 

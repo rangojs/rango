@@ -122,4 +122,4 @@ A `submit` intent does NOT replay against a snapshot of the server — it submit
 
 - `/hooks`, `/view-transitions` — the DSL this tests
 - Siblings: [`./cache-prerender.md`](./cache-prerender.md), [`./client-components.md`](./client-components.md)
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "E2E with dev/prod and PE parity" (and "Running a subset locally")
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "E2E with dev/prod and PE parity" (and "Running a subset locally")

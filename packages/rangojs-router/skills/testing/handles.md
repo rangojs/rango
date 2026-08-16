@@ -150,4 +150,4 @@ it("renders the seeded trail (seed the INPUT pushes, the collect runs)", async (
 
 - `/handler-use`, `/breadcrumbs` — the DSL this tests
 - Siblings: `./loader.md`, `./client-components.md`, `./render-handler.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Testing a handle's collect/accumulator"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Testing a handle's collect/accumulator"

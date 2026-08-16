@@ -92,4 +92,4 @@ describe("api routes via dispatch", () => {
 
 - `/response-routes`, `/mime-routes` — the DSL this tests
 - Siblings: `./middleware.md`, `./setup.md`, `./cache-prerender.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "dispatch — request to Response" (the `rangoTestConfig` preset stubs `@vitejs/plugin-rsc/rsc`, so no per-file `vi.mock` is needed)
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "dispatch — request to Response" (the `rangoTestConfig` preset stubs `@vitejs/plugin-rsc/rsc`, so no per-file `vi.mock` is needed)

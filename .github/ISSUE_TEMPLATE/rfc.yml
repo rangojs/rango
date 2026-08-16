@@ -1,0 +1,40 @@
+name: RFC
+description: Propose a consumer-visible API or semantic change before writing a large PR.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open this before a large change. Unsolicited architecture rewrites will not be merged. See [CONTRIBUTING.md](https://github.com/rangojs/rango/blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can a consumer not express, or what existing contract surprises them.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: The API or semantic change, as a consumer would write it. Same snippet shape for before and after.
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Semantics
+      description: Return vs throw, dev vs prod, JS vs PE, cache vs live. Include cases you are deliberately not changing.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have read CONTRIBUTING.md and the definition of done.
+          required: true
+        - label: This is not a drive-by refactor or formatting change.
+          required: true

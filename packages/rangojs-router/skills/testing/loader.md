@@ -127,4 +127,4 @@ it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
 
 - `/loader` — the DSL this tests
 - Siblings: `./handles.md`, `./reverse-and-types.md`, `./bindings.md`, `./server-actions.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Loaders — the raw body or a registered createLoader"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Loaders — the raw body or a registered createLoader"

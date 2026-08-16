@@ -150,7 +150,7 @@ The treemap shows nested boxes; box area = uncompressed size. Hover for gzip/bro
 
 ## Reporting Rango regressions
 
-If a finding looks like a `@rangojs/router` regression (the framework is shipping more than it should, not your app), open an issue at the [@rangojs/router GitHub](https://github.com/ivogt/vite-rsc/issues) and include:
+If a finding looks like a `@rangojs/router` regression (the framework is shipping more than it should, not your app), open an issue at the [@rangojs/router GitHub](https://github.com/rangojs/rango/issues) and include:
 
 - The output of `client.html` / `rsc.html` (screenshots or the JSON `data = {...}` block from the HTML).
 - The `@rangojs/router` version (`pnpm why @rangojs/router`).

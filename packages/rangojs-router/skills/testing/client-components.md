@@ -128,4 +128,4 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
 
 - `/hooks` — the DSL this tests
 - Siblings: `./handles.md`, `./reverse-and-types.md`, `./render-handler.md`, `./e2e-parity.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Reverse and components" (and the "Catch: streaming `use(promise)` Suspense content" subsection)
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Reverse and components" (and the "Catch: streaming `use(promise)` Suspense content" subsection)
