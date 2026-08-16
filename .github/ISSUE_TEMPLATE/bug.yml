@@ -1,0 +1,67 @@
+name: Bug
+description: Something shipped does not match the documented or tested contract.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security reports go to [SECURITY.md](https://github.com/ivogt/vite-rsc/blob/main/SECURITY.md), not here.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: One or two sentences. What did you write, what did you see, what did you expect.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal route tree, request, and commands. A failing test is better than a description.
+      placeholder: |
+        ```tsx
+        export const urlpatterns = urls(({ path }) => [
+          path("/", Home, { name: "home" }),
+        ]);
+        ```
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Dev
+        - Production
+        - Both
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: "@rangojs/router version"
+      placeholder: "0.10.0 or 0.0.0-experimental.…"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Node, React, Vite, and adapter (cloudflare / vercel / node) if relevant.
+      placeholder: "Node 24, React 19.2, Vite 8, preset cloudflare"
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This is not a security report (those go through SECURITY.md).
+          required: true
+        - label: I searched existing issues for a duplicate.
+          required: true

@@ -25,6 +25,50 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: sleep 120
 
+  # Fork PRs skip Playwright, bundle-guards, and the e2e matrix unless a
+  # maintainer adds the `ci:e2e` label. Same-repo PRs, schedule, and
+  # workflow_dispatch keep today's behavior. Push to main still runs smoke
+  # (and bundle-guards) but not the full Playwright matrix.
+  e2e-gate:
+    needs: [debounce]
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      run_playwright: ${{ steps.decide.outputs.run_playwright }}
+      run_e2e: ${{ steps.decide.outputs.run_e2e }}
+      run_bundle: ${{ steps.decide.outputs.run_bundle }}
+    steps:
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          run_playwright=false
+          run_e2e=false
+          run_bundle=false
+          trusted=false
+          if [ "$EVENT" = "pull_request" ] && [ "$DRAFT" != "true" ]; then
+            if [ "$HEAD_REPO" = "$REPO" ]; then
+              trusted=true
+            elif echo ",$LABELS," | grep -q ",ci:e2e,"; then
+              trusted=true
+            fi
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "schedule" ] || [ "$trusted" = "true" ]; then
+            run_e2e=true
+          fi
+          if [ "$EVENT" = "push" ] || [ "$run_e2e" = "true" ]; then
+            run_playwright=true
+            run_bundle=true
+          fi
+          echo "run_playwright=$run_playwright" >> "$GITHUB_OUTPUT"
+          echo "run_e2e=$run_e2e" >> "$GITHUB_OUTPUT"
+          echo "run_bundle=$run_bundle" >> "$GITHUB_OUTPUT"
+          echo "e2e-gate playwright=$run_playwright e2e=$run_e2e bundle=$run_bundle event=$EVENT trusted=$trusted"
+
   lint:
     needs: [debounce]
     runs-on: ubuntu-latest
@@ -93,7 +137,8 @@ jobs:
   # tools/check-bundle-guards.mjs, (2) the client router chunk gzip ratchet,
   # (3) the stress-demo eager routes-manifest ceiling.
   bundle-guards:
-    needs: [debounce]
+    needs: [debounce, e2e-gate]
+    if: needs.e2e-gate.outputs.run_bundle == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -120,7 +165,8 @@ jobs:
         run: pnpm check:bundle-guards
 
   install-playwright:
-    needs: [debounce]
+    needs: [debounce, e2e-gate]
+    if: needs.e2e-gate.outputs.run_playwright == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -213,11 +259,8 @@ jobs:
         run: pnpm run test:unit:rsc
 
   vite-rsc-demo-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -282,10 +325,8 @@ jobs:
   # e2e fan-out for no correctness benefit. Trade-off: a broken commit now
   # launches all e2e shards instead of being short-circuited by smoke.
   smoke-e2e:
-    needs: [install-playwright]
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.draft == false
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_playwright == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -333,10 +374,8 @@ jobs:
   # headers, asserting each sub-app renders and an unmatched host returns 404
   # through the generated host entry. Pure Node (no Playwright).
   vercel-smoke:
-    needs: [debounce]
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.draft == false
+    needs: [debounce, e2e-gate]
+    if: needs.e2e-gate.outputs.run_playwright == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -361,11 +400,8 @@ jobs:
         run: pnpm --filter rangojs-vercel-multi-router smoke
 
   vercel-basic-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -423,11 +459,8 @@ jobs:
   # .vercel/output. The deploy-shape bundling of the same output is covered
   # by vercel-smoke above.
   vercel-multi-router-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -474,11 +507,8 @@ jobs:
           retention-days: 7
 
   rangojs-router-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     # 30 (was 20): the 5-way dev split fixed the runner-OOM, but the shard that
     # draws the timing-sensitive dev tests (handle-breadcrumbs late-push +
@@ -605,11 +635,8 @@ jobs:
           retention-days: 7
 
   cloudflare-basic-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     # 20 (unchanged, was a single un-sharded job): the suite grew from ~7.1m
     # (Jun 20) to ~11.6m (Jul 4) running the ENTIRE dev -> production -> hmr
@@ -734,11 +761,8 @@ jobs:
           retention-days: 7
 
   cloudflare-multi-router-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -785,11 +809,8 @@ jobs:
           retention-days: 7
 
   react-experimental-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -834,11 +855,8 @@ jobs:
           retention-days: 7
 
   no-typescript-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -883,11 +901,8 @@ jobs:
           retention-days: 7
 
   cloudflare-stress-demo-e2e:
-    needs: [install-playwright]
-    if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'schedule'
+    needs: [install-playwright, e2e-gate]
+    if: needs.e2e-gate.outputs.run_e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

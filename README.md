@@ -6,7 +6,9 @@ A code-first, type-safe React Server Components router
 
 ## Stability
 
-> **Experimental:** This package is published as `0.0.0-experimental.*` and is under active development. APIs may change between releases. Install with the `@experimental` tag:
+> **Experimental:** APIs may change between releases. npm `latest` is the
+> current 0.x line. The `experimental` tag tracks `main` between tagged
+> releases:
 >
 > ```bash
 > npm install @rangojs/router@experimental
@@ -204,6 +206,11 @@ This produces structured output for server-side and client-side router operation
 - [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
 - [TypeScript](https://www.typescriptlang.org/)
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Security reports go through
+[SECURITY.md](./SECURITY.md), not the public issue tracker.
+
 ## License
 
-MIT
+[MIT](./LICENSE)

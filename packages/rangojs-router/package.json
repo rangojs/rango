@@ -32,7 +32,8 @@
     "dist",
     "skills",
     "AGENTS.md",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "type": "module",
   "exports": {

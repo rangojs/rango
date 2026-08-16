@@ -4,8 +4,9 @@ A code-first, type-safe React Server Components router. Django-inspired:
 routes are expressed in one visible tree, URLs are built from names, and
 everything past the core is opt-in.
 
-> **Experimental:** This package is under active development. APIs may change
-> between releases. Install with `@experimental` tag.
+> **Experimental:** APIs may change between releases. npm `latest` is the
+> current 0.x line. The `experimental` tag tracks `main` between tagged
+> releases.
 
 This page is a tour: it builds one small shop and meets the entire core API
 along the way — about six primitives. Everything else is opt-in and linked at
@@ -481,4 +482,4 @@ npx rango generate src/             # recursive scan
 
 ## License
 
-MIT
+[MIT](./LICENSE)
