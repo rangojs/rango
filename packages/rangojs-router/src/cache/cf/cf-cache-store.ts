@@ -2383,7 +2383,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * this, kv.put/get reject with `414 ... exceeds key length limit of 512`
    * and the entry silently never reaches L2 (observed in production for
    * "use cache" items whose serialized args — e.g. a CMS query object — blow
-   * the cap; autobarn pilot). Keys are opaque storage identifiers, so
+   * the cap; production pilot). Keys are opaque storage identifiers, so
    * normalization is semantics-preserving as long as distinct logical keys
    * stay distinct: colliding requires an identical 400-byte prefix AND a
    * 128-bit SHA-256 collision. Deterministic, so every family's read, write,

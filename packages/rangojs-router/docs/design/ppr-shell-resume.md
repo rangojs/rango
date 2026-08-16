@@ -253,7 +253,7 @@ captureShellHTML({ maxWaitMs })`, so it bounds BOTH the fizz prerender and
   `src/rsc/shell-capture-constants.ts`.
 - **Wedge containment.** The budget arms inside `captureShellHTML` — AFTER
   the capture's `router.match()`, so a handler wedged on a never-settling
-  upstream await used to leave the task with no deadline at all (autobarn
+  upstream await used to leave the task with no deadline at all (production
   pilot: a 30s+ tarpitting fetch). Two layers now bound it:
   `SHELL_CAPTURE_TASK_HARD_CAP_MS` (25s) races the whole task — on expiry the
   task settles through the normal error path (backoff + report) and releases

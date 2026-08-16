@@ -229,7 +229,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
     expect(mockRestoreHandles).toHaveBeenCalled();
   });
 
-  // Wedged-leader guard (autobarn pilot outage): a leader that never settles —
+  // Wedged-leader guard (production pilot incident): a leader that never settles —
   // e.g. registered by a background shell capture whose workerd context was
   // killed while its upstream fetch tarpitted — must not hang followers
   // forever. Followers trust an in-flight entry only for the leader trust

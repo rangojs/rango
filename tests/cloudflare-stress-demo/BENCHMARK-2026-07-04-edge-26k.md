@@ -16,7 +16,7 @@ questions at all.
 
 ## Methodology
 
-`npx wrangler deploy && npx tsx bench/run.ts --url https://cloudflare-stress-demo.devcorner.workers.dev --runs 3 --duration 3`
+`npx wrangler deploy && npx tsx bench/run.ts --url https://cloudflare-stress-demo.example.workers.dev --runs 3 --duration 3`
 immediately after deploy: one sequential first-hit pass per include prefix
 (n=1, genuinely cold), then validation, warmup, 3 interleaved autocannon
 rounds x 16 scenarios, Server-Timing collection. Client-observed latency;

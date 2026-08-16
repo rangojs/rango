@@ -66,9 +66,9 @@ Total: 26,363 named routes (`e2e/named-routes.test.ts` pins the floor).
 Bench routes return JSON with timing and `matchStats`:
 
 ```bash
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first | jq .
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/last | jq .
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/site/en/bench/last | jq .
+curl -s https://cloudflare-stress-demo.example.workers.dev/bench/first | jq .
+curl -s https://cloudflare-stress-demo.example.workers.dev/api/bench/last | jq .
+curl -s https://cloudflare-stress-demo.example.workers.dev/site/en/bench/last | jq .
 ```
 
 **Reading `matchStats`**: all named routes resolve via the trie, so

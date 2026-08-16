@@ -1,6 +1,7 @@
 {
   "name": "rango-e2e-deep-context-lib",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "exports": {
     ".": {

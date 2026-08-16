@@ -30,7 +30,7 @@ export const SHELL_CAPTURE_MAX_WAIT_MS = 15_000;
  * Hard cap on one capture TASK — runShellCapture end to end (both attempts +
  * the in-place retry delay). SHELL_CAPTURE_MAX_WAIT_MS arms only inside
  * captureShellHTML, AFTER the capture's router.match(); a handler wedged on a
- * never-settling upstream await (autobarn pilot: a 30s+ tarpitting fetch)
+ * never-settling upstream await (production pilot: a 30s+ tarpitting fetch)
  * wedges the task with no deadline in force. The task's settle path releases
  * the per-key stampede guard and the serialized capture-queue slot, so an
  * unbounded task strands BOTH for the isolate's lifetime.

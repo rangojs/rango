@@ -146,10 +146,10 @@ cd examples/cloudflare-stress-demo
 pnpm build && pnpm wrangler deploy
 
 # Test cold start
-curl -w "@curl-format.txt" -s https://cloudflare-stress-demo.devcorner.workers.dev/bench/first
+curl -w "@curl-format.txt" -s https://cloudflare-stress-demo.example.workers.dev/bench/first
 
 # Check manifest loaded
-curl -s https://cloudflare-stress-demo.devcorner.workers.dev/api/bench/first | jq .matchStats
+curl -s https://cloudflare-stress-demo.example.workers.dev/api/bench/first | jq .matchStats
 ```
 
 ---

@@ -1049,7 +1049,7 @@ export function scheduleShellCapture(
       // Hard-capped: SHELL_CAPTURE_MAX_WAIT_MS arms only inside
       // captureShellHTML, AFTER the capture's router.match() — a handler
       // wedged on a never-settling upstream await has no deadline in force
-      // and would strand the stampede guard and the queue slot (autobarn
+      // and would strand the stampede guard and the queue slot (production
       // pilot). The cap rejects, riding the existing catch: backoff +
       // reportCacheError + token-guarded release. The abandoned attempt keeps
       // running until its context dies; nothing awaits it.

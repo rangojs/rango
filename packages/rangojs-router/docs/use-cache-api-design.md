@@ -241,8 +241,8 @@ leader's envelope and serve it as a synthetic hit, and the store write stays
 exactly once. The entry lives in an isolate-global map and is cleared when the
 leader settles (a rejected leader propagates, and waiters retry fresh).
 
-A leader that never settles must not hang followers (scar tissue, autobarn
-pilot outage): a background shell capture's render became leader, awaited a
+A leader that never settles must not hang followers (scar tissue, production
+pilot incident): a background shell capture's render became leader, awaited a
 tarpitting upstream fetch, and workerd killed the capture's `waitUntil` context
 -- orphaning the leader promise as permanently pending, its entry never
 cleared. Every later document render calling the same cached function (an
