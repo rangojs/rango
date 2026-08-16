@@ -125,4 +125,4 @@ it("asserts the server-rendered host content", async () => {
 
 - `/route` — the DSL this tests
 - Siblings: `./flight.md`, `./render-handler.md`, `./setup.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "renderServerTree — serialize then deserialize to an inspectable tree" (and the "findElements / textContent" subsection)
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "renderServerTree — serialize then deserialize to an inspectable tree" (and the "findElements / textContent" subsection)

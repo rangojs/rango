@@ -120,4 +120,4 @@ Scripts:
 
 - (cross-cutting)
 - Siblings: `./flight.md`, `./server-tree.md`, `./render-handler.md`, `./response-routes.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Setup" (and the subsections "Resolving @rangojs/router in a unit test — use the preset" and "Two vitest projects")
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Setup" (and the subsections "Resolving @rangojs/router in a unit test — use the preset" and "Two vitest projects")

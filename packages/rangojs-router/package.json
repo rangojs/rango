@@ -9,15 +9,15 @@
     "rsc",
     "vite"
   ],
-  "homepage": "https://github.com/ivogt/vite-rsc#readme",
+  "homepage": "https://github.com/rangojs/rango#readme",
   "bugs": {
-    "url": "https://github.com/ivogt/vite-rsc/issues"
+    "url": "https://github.com/rangojs/rango/issues"
   },
   "license": "MIT",
   "author": "Ivo Todorov",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ivogt/vite-rsc.git",
+    "url": "git+https://github.com/rangojs/rango.git",
     "directory": "packages/rangojs-router"
   },
   "bin": {

@@ -96,4 +96,4 @@ Pass an array to run several in order. Cookies set inside middleware via the sta
 
 - `/middleware` — the DSL this tests
 - Siblings: `./response-routes.md`, `./server-actions.md`, `./loader.md`, `./bindings.md`
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Middleware"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Middleware"

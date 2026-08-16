@@ -292,7 +292,7 @@ export const router = createRouter({ document: Document })
   .routes(urlpatterns);
 ```
 
-Client definitions follow normal include semantics: mount several, nest them under RSC layouts, scope middleware to their prefix. It supports named client components with `path()`, `layout()`, `loader()`, and `loading()`; only the `name`, `search`, and `trailingSlash` path options project to the canonical server tree. The browser match may present loading after hydration, but global middleware, loaders, redirects, history, and the committed route remain owned by the ordinary server partial Flight response. See the [client URL guide](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/client-urls.md) for the full example and limitations.
+Client definitions follow normal include semantics: mount several, nest them under RSC layouts, scope middleware to their prefix. It supports named client components with `path()`, `layout()`, `loader()`, and `loading()`; only the `name`, `search`, and `trailingSlash` path options project to the canonical server tree. The browser match may present loading after hydration, but global middleware, loaders, redirects, history, and the committed route remain owned by the ordinary server partial Flight response. See the [client URL guide](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/client-urls.md) for the full example and limitations.
 
 On Cloudflare Workers, pass bindings and `ExecutionContext` through explicitly instead:
 

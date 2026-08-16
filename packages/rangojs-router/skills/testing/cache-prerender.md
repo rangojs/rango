@@ -169,4 +169,4 @@ expect(await store.getShell(key)).not.toBeNull();
 
 - `/caching`, `/prerender`, `/use-cache`, `/ppr` — the DSL this tests
 - Siblings: [`./e2e-parity.md`](./e2e-parity.md), [`./response-routes.md`](./response-routes.md)
-- Long-form prose: [docs/testing.md](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md) — section "Cache, SWR, and prerender"
+- Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Cache, SWR, and prerender"

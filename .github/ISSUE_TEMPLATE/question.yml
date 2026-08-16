@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         For a contract mismatch, use the Bug template. For a new API, use RFC.
-        Security reports go to [SECURITY.md](https://github.com/ivogt/vite-rsc/blob/main/SECURITY.md).
+        Security reports go to [SECURITY.md](https://github.com/rangojs/rango/blob/main/SECURITY.md).
   - type: textarea
     id: question
     attributes:
