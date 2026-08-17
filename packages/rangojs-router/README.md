@@ -4,9 +4,9 @@ A code-first, type-safe React Server Components router. Django-inspired:
 routes are expressed in one visible tree, URLs are built from names, and
 everything past the core is opt-in.
 
-> **Experimental:** APIs may change between releases. npm `latest` is the
-> current 0.x line. The `experimental` tag tracks `main` between tagged
-> releases.
+> **Pre-1.0:** Rango follows semver 0.x — breaking changes land in minor
+> releases and are noted in the changelog. npm `latest` is the current 0.x
+> release; the `experimental` tag tracks `main` between tagged releases.
 
 This page is a tour: it builds one small shop and meets the entire core API
 along the way — about six primitives. Everything else is opt-in and linked at
@@ -25,7 +25,8 @@ pnpm create rango my-app
 
 Select a deployment target with `--template basic`, `--template cloudflare`, or
 `--template vercel`. The templates include streaming RSC, typed routes, Server
-Actions, Tailwind CSS, and production deployment configuration. For a plain
+Actions, Tailwind CSS, and production deployment configuration; the scaffolder
+installs the latest `@rangojs/router` release. For a plain
 JavaScript Node app, add `--template basic --js`. With npm, run
 `npm create rango@latest my-app`. The scaffolder currently requires Node.js 24
 or newer.
@@ -35,7 +36,7 @@ or newer.
 If you are adding Rango to an existing Vite RSC project:
 
 ```bash
-npm install @rangojs/router@experimental react @vitejs/plugin-rsc
+npm install @rangojs/router@latest react @vitejs/plugin-rsc
 ```
 
 ```ts

@@ -6,13 +6,18 @@ A code-first, type-safe React Server Components router
 
 ## Stability
 
-> **Experimental:** APIs may change between releases. npm `latest` is the
-> current 0.x line. The `experimental` tag tracks `main` between tagged
-> releases:
+> **Pre-1.0:** Rango follows semver 0.x — breaking changes land in minor
+> releases and are noted in the
+> [changelog](packages/rangojs-router/CHANGELOG.md). Install the current
+> release:
 >
 > ```bash
-> npm install @rangojs/router@experimental
+> npm install @rangojs/router@latest
 > ```
+>
+> Or scaffold a complete app with [`create-rango`](#create-an-app), which
+> installs the latest release. The `experimental` tag tracks `main` between
+> tagged releases.
 
 ## Why Rango?
 
@@ -105,7 +110,8 @@ pnpm create rango my-app --template basic --js  # Node, JavaScript
 ```
 
 Each template is a complete streaming RSC app with routes, Server Actions, and
-production build/deployment configuration already wired. Use
+production build/deployment configuration already wired; the scaffolder
+installs the latest `@rangojs/router` release. Use
 `npm create rango@latest my-app` if you prefer npm. The scaffolder currently
 requires Node.js 24 or newer.
 
