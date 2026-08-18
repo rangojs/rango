@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-08-18)
 
-### Breaking: clientUrls `revalidate()` gets the callable `isAction()` matcher
+Client `revalidate()` now receives the same callable `isAction(...refs)`
+matcher as the server predicate. This is a breaking type/shape change: the
+old boolean truthiness check stays compiling but always takes the "is an
+action" branch.
+
+### Breaking: clientUrls `revalidate()` gets the callable `isAction()` matcher ([#834](https://github.com/rangojs/rango/pull/834))
 
 `ClientRevalidateArgs.isAction` changed from a **boolean** to the same
 callable `isAction(...refs)` matcher the server predicate receives. The old
