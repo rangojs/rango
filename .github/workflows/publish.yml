@@ -1,15 +1,26 @@
-name: Publish Experimental
+name: Publish
 
+# npm auth is trusted publishing (OIDC) bound to this workflow file —
+# renaming publish.yml breaks it until the npm-side config is updated.
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description:
+          "experimental: 0.0.0-experimental.N.<sha> under the experimental
+          tag. latest: the committed package.json version under latest —
+          land the chore(release) version bump on main first."
+        type: choice
+        options: [experimental, latest]
+        default: experimental
+        required: true
 
 concurrency:
-  group: publish-experimental
+  group: publish
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -37,6 +48,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Compute next version
+        if: inputs.channel == 'experimental'
         id: version
         run: |
           CURRENT=$(npm view @rangojs/router@experimental version 2>/dev/null || echo "0.0.0-experimental.0")
@@ -53,13 +65,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Set version and publish
+      - name: Set version and publish (experimental)
+        if: inputs.channel == 'experimental'
         working-directory: packages/rangojs-router
         run: |
           node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
           pnpm publish --tag experimental --provenance --no-git-checks
 
+      # Publishes the version already committed in package.json; the tag
+      # comes from publishConfig.tag (latest). Fails on a re-publish of an
+      # existing version, so the release bump must land first.
+      - name: Publish latest
+        if: inputs.channel == 'latest'
+        working-directory: packages/rangojs-router
+        run: pnpm publish --provenance --no-git-checks
+
       - name: Comment on merged PR
+        if: inputs.channel == 'experimental'
         run: |
           PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --state merged --json number --jq '.[0].number')
           if [ -n "$PR_NUMBER" ]; then
