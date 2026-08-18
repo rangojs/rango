@@ -38,6 +38,7 @@ export type {
   RevalidateParams,
   ShouldRevalidateFn,
   ActionRef,
+  IsActionFn,
   RouteKeys,
   ExtractRouteParams,
   HandlersForRouteMap,

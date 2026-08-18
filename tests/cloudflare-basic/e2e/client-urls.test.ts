@@ -3,6 +3,7 @@ import { useFixture, type Fixture } from "./fixture";
 import {
   expectNoPageError,
   expectNoReload,
+  getNumericContent,
   testId,
   waitForHydration,
 } from "./helper";
@@ -78,6 +79,35 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "client-urls-index")).toBeVisible();
     await expect(testId(page, "client-urls-pending")).toHaveText("false");
     await expect(page).toHaveURL(f.url("/__client-urls"));
+  });
+
+  test("client revalidate() isAction() matches a target action and a namespace import", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readTarget = (): Promise<number> =>
+      getNumericContent(testId(page, "cu-is-action-target-runs"));
+    const readNs = (): Promise<number> =>
+      getNumericContent(testId(page, "cu-is-action-ns-runs"));
+
+    const initialTarget = await readTarget();
+    const initialNs = await readNs();
+
+    await testId(page, "cu-is-action-target").click();
+    await expect.poll(readTarget).toBeGreaterThan(initialTarget);
+    await expect.poll(readNs).toBeGreaterThan(initialNs);
+    const afterTarget = await readTarget();
+    const afterTargetNs = await readNs();
+
+    await testId(page, "cu-is-action-decoy").click();
+    await expect.poll(readNs).toBeGreaterThan(afterTargetNs);
+    await expect(testId(page, "cu-is-action-target-runs")).toHaveText(
+      String(afterTarget),
+    );
   });
 
   test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({

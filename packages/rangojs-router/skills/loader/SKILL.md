@@ -359,6 +359,7 @@ loader(CartLoader, () => [
 ]);
 revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
 ```
 
 `isAction()` is a method on the revalidate predicate's **context argument** —

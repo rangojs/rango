@@ -45,6 +45,7 @@ export type {
   RevalidateParams,
   Revalidate,
   ActionRef,
+  IsActionFn,
   RouteKeys,
   // Loader types
   LoaderDefinition,

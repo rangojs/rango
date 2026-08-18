@@ -5,6 +5,7 @@ import { useFixture } from "./fixture";
 import {
   expectNoPageError,
   expectNoReload,
+  getNumericContent,
   testId,
   waitForHydration,
 } from "./helper";
@@ -276,6 +277,40 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     // opted out of action revalidation — same route, same commit, held data.
     await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
     await expect(testId(page, "ca-parent-count")).toHaveText(`parent:${count}`);
+  });
+
+  test("client revalidate() isAction() matches a target action and a namespace import", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Client-run isAction() is the same matcher as the server predicate:
+    // isAction(target) re-runs only the target-gated loader; isAction(* as
+    // Actions) re-runs on any export of that module (target + decoy). The
+    // bump action lives in a different module and matches neither.
+    await page.goto(f.url("/client-urls-action"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readTarget = (): Promise<number> =>
+      getNumericContent(testId(page, "ca-is-action-target-runs"));
+    const readNs = (): Promise<number> =>
+      getNumericContent(testId(page, "ca-is-action-ns-runs"));
+
+    const initialTarget = await readTarget();
+    const initialNs = await readNs();
+
+    await testId(page, "ca-is-action-target").click();
+    await expect.poll(readTarget).toBeGreaterThan(initialTarget);
+    await expect.poll(readNs).toBeGreaterThan(initialNs);
+    const afterTarget = await readTarget();
+    const afterTargetNs = await readNs();
+
+    await testId(page, "ca-is-action-decoy").click();
+    await expect.poll(readNs).toBeGreaterThan(afterTargetNs);
+    await expect(testId(page, "ca-is-action-target-runs")).toHaveText(
+      String(afterTarget),
+    );
   });
 
   test("client revalidate() decisions transport on same-route param navs, not only actions", async ({

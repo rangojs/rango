@@ -8,8 +8,15 @@ import {
   useParams,
 } from "@rangojs/router/client";
 import { bumpClientUrlsCounter } from "../actions.jsx";
+import * as ClientUrlsIsActions from "./client-urls-is-action.actions.js";
+import {
+  clientUrlsDecoyAction,
+  clientUrlsTargetAction,
+} from "./client-urls-is-action.actions.js";
 import {
   ClientUrlsCounterLoader,
+  ClientUrlsIsActionNsLoader,
+  ClientUrlsIsActionTargetLoader,
   ClientUrlsItemLoader,
   ClientUrlsSessionLoader,
 } from "./client-urls.loader.js";
@@ -41,16 +48,32 @@ function ActionClientLayout() {
 function ActionClientIndex() {
   const { data } = useLoader(ClientUrlsCounterLoader);
   const { data: session } = useLoader(ClientUrlsSessionLoader);
+  const { data: target } = useLoader(ClientUrlsIsActionTargetLoader);
+  const { data: ns } = useLoader(ClientUrlsIsActionNsLoader);
 
   return (
     <div data-testid="ca-index">
       <span data-testid="ca-loader">{data}</span>
       <span data-testid="ca-session">{session}</span>
+      <span data-testid="ca-is-action-target-runs">{target.runs}</span>
+      <span data-testid="ca-is-action-ns-runs">{ns.runs}</span>
       <button
         data-testid="ca-bump"
         onClick={() => void bumpClientUrlsCounter()}
       >
         Bump counter
+      </button>
+      <button
+        data-testid="ca-is-action-target"
+        onClick={() => void clientUrlsTargetAction()}
+      >
+        Target action
+      </button>
+      <button
+        data-testid="ca-is-action-decoy"
+        onClick={() => void clientUrlsDecoyAction()}
+      >
+        Decoy action
       </button>
     </div>
   );
@@ -91,6 +114,16 @@ export default clientUrls(({ layout, path, loader, revalidate }) => [
     // Session pattern: load once, never revalidate — the decision transports
     // on BOTH request kinds (the action POST and same-route param-nav GETs).
     loader(ClientUrlsSessionLoader, () => [revalidate(() => false)]),
+    // Rename-safe identity: re-run only when the imported target action
+    // fired. A decoy (or the bump action) hard-falses and holds.
+    loader(ClientUrlsIsActionTargetLoader, () => [
+      revalidate(({ isAction }) => isAction(clientUrlsTargetAction)),
+    ]),
+    // Namespace form: `import * as Actions` matches any export of that
+    // module — target AND decoy, but not bump (different module).
+    loader(ClientUrlsIsActionNsLoader, () => [
+      revalidate(({ isAction }) => isAction(ClientUrlsIsActions)),
+    ]),
     path("/", ActionClientIndex, { name: "index" }),
     path("/items/:itemId", ActionClientItem, { name: "item" }, () => [
       loader(ClientUrlsItemLoader),

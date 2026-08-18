@@ -204,6 +204,7 @@ import * as CartActions from "./actions/cart";
 revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
 revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
 ```
 
 `ctx.isAction()` (only available on the revalidate predicate's context) returns a

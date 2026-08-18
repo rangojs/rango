@@ -122,6 +122,7 @@ import {
 } from "@rangojs/router";
 import type {
   ActionRef,
+  IsActionFn,
   OTelTracer,
   OTelActiveSpanTracer,
   OTelTracingOptions,
@@ -133,6 +134,7 @@ void redirect;
 void urls;
 void createConsoleSink;
 type _ActionRef = ActionRef;
+type _IsActionFn = IsActionFn;
 
 // Pin the server-only observability export surface the docs/JSDoc promise:
 // the tracing slot (createOTelTracing) and the event sink (createOTelSink)
@@ -237,6 +239,7 @@ import {
   runLoader,
   runLoaderResult,
   runTransitionWhen,
+  runClientRevalidate,
   dispatch,
   assertCacheStatus,
   assertCacheDecision,
@@ -252,6 +255,7 @@ import type {
   RunLoaderResult,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
+  RunClientRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -270,6 +274,7 @@ type _TelemetryTypesReachable = [
   RunLoaderResult<unknown>,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
+  RunClientRevalidateOptions,
   CacheDecisionEvent,
   CacheSegmentSignal,
   CacheSegmentStatus,
@@ -282,6 +287,7 @@ void runMiddleware;
 void runLoader;
 void runLoaderResult;
 void runTransitionWhen;
+void runClientRevalidate;
 void dispatch;
 void rangoTestConfig;
 void rangoTestAliases;

@@ -437,17 +437,21 @@ boundary: it EXECUTES IN THE BROWSER before the partial or action request,
 with a client-computable subset of the server args (`currentUrl`, `nextUrl`,
 `currentParams`, `nextParams`, `defaultShouldRevalidate`, `stale`,
 `isAction`, `actionId`), and only its DECISION crosses — an
-`X-Rango-Client-Reval` header carrying skip/force loader ids. On the server,
-every materialized loader stub has a synthesized per-loader `revalidate()`
-that honors a decision addressed to its id and otherwise applies the locked
-default; requests that carry no decisions (no-JS, PE, prefetch, document
-loads) always get the defaults, and decisions can only address client-urls
-stubs — server-tree loaders never see the header. Trust model: same class as
-`_rsc_segments` — a decision only makes the client's own view staler or
-fresher, never bypasses middleware or authorization. Pinned dev+prod in
-`e2e/client-urls.test.ts`: after an action, one loader of the group refreshes
-while a sibling with `isAction ? false : defaultShouldRevalidate` keeps its
-held value in the same commit.
+`X-Rango-Client-Reval` header carrying skip/force loader ids. `isAction` is
+the same callable matcher as on the server (`isAction()`, `isAction(fn)`,
+`isAction(import * as Actions)`, `isAction({ a, b })`) — not a boolean —
+and matches against `actionId` via the action stub's `$id ?? $$id`
+(hashed `$$id` in production browsers — not a file-path substring). On the server, every materialized loader stub has a
+synthesized per-loader `revalidate()` that honors a decision addressed to
+its id and otherwise applies the locked default; requests that carry no
+decisions (no-JS, PE, prefetch, document loads) always get the defaults,
+and decisions can only address client-urls stubs — server-tree loaders
+never see the header. Trust model: same class as `_rsc_segments` — a
+decision only makes the client's own view staler or fresher, never bypasses
+middleware or authorization. Pinned dev+prod in `e2e/client-urls.test.ts`:
+after an action, one loader of the group refreshes while a sibling with
+`isAction() ? false : defaultShouldRevalidate` keeps its held value in the
+same commit; `isAction(target)` vs `isAction(* as Actions)` pin identity.
 
 `loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader

@@ -91,7 +91,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
             nextParams,
             defaultShouldRevalidate,
           }) => {
-            if (isAction) return false;
+            if (isAction()) return false;
             return currentParams.slug !== nextParams.slug
               ? defaultShouldRevalidate
               : false;
@@ -184,14 +184,36 @@ only its _decision_ crosses the wire with the navigation request. Requests that
 carry no decisions (no-JS, progressive enhancement, prefetch, document loads)
 follow the locked server defaults.
 
+`isAction` is the same callable matcher as the server predicate, not a
+boolean. Action identity is `actionId`, whose FORM differs per environment:
+file-path `$id` (`path#export`) in the RSC env, hashed `$$id` in the
+browser — which is why the matcher (resolving an imported reference's
+`$id ?? $$id`) is the supported surface and a file-path substring on
+`actionId` is not:
+
+```ts
+import { addToCart, removeFromCart } from "./actions/cart";
+import * as CartActions from "./actions/cart";
+
+revalidate(({ isAction }) => isAction()); // any action
+revalidate(({ isAction }) => isAction(addToCart)); // one action
+revalidate(({ isAction }) => isAction(addToCart, removeFromCart)); // several
+revalidate(({ isAction }) => isAction(CartActions)); // import * as
+revalidate(({ isAction }) => isAction({ addToCart, removeFromCart })); // object
+```
+
+Bare `isAction()` is "is this an action at all?". `actionId` stays as the
+string escape hatch. Return `isAction(refs) || undefined` to defer to the
+locked default on a non-match (same idiom as the server).
+
 Two scars worth copying:
 
 - A blunt `() => false` keeps serving the OLD product on product→product
   navigations (same route, new param). Make predicates param-sensitive:
   return `defaultShouldRevalidate` when the identifying param changed.
-- One action, per-loader outcomes: a cart badge loader revalidates on actions
-  (`isAction ? defaultShouldRevalidate : false`) while product/related loaders
-  hold — three freshness outcomes in a single commit, decided per loader.
+- One action, per-loader outcomes: a cart badge loader revalidates on cart
+  actions (`isAction(CartActions)`) while product/related loaders hold —
+  three freshness outcomes in a single commit, decided per loader.
 
 ## Loaders are full citizens: signals and handles
 

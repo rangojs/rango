@@ -101,7 +101,7 @@ export type UpdateMode =
     }
   | { type: "leave-intercept"; interceptSourceUrl?: string }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
-  | { type: "action"; interceptSourceUrl?: string };
+  | { type: "action"; interceptSourceUrl?: string; actionId?: string };
 
 /**
  * Type for the fetchPartialUpdate function
@@ -200,7 +200,16 @@ export function createPartialUpdater(
       clientRevalidation = collectClientRevalidationDecisions({
         currentUrl: new URL(previousUrl, window.location.origin),
         nextUrl: new URL(url, window.location.origin),
-        isAction: false,
+        // This partial fetch is a GET the server evaluates WITHOUT
+        // actionContext (navigation defaults) even when it is an
+        // action-triggered refetch — so the decision baseline is never the
+        // action default here. Predicates still see isAction()/actionId
+        // truthfully for matching.
+        actionRequest: false,
+        isAction: mode.type === "action",
+        ...(mode.type === "action" && mode.actionId !== undefined
+          ? { actionId: mode.actionId }
+          : {}),
         stale: mode.type === "stale-revalidation",
       });
     } catch {

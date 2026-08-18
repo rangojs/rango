@@ -100,6 +100,7 @@ import {
   runLoader,
   runLoaderResult,
   runTransitionWhen,
+  runClientRevalidate,
   dispatch,
   createTestRequestContext,
   runInRequestContext,
@@ -144,6 +145,7 @@ void createSSRHandler;
 void runLoader;
 void runLoaderResult;
 void runTransitionWhen;
+void runClientRevalidate;
 void rangoTestAliases;
 void rangoTestConfig;
 void createTestRequestContext;

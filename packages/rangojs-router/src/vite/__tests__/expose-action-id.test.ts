@@ -72,15 +72,20 @@ describe("exposeActionId", () => {
   // ---- Dev mode: transform ----
 
   describe("dev mode transform", () => {
-    it("wraps createServerReference to attach $$id via IIFE", () => {
+    it("wraps createServerReference to attach $$id and an own bind via IIFE", () => {
       const plugin = initDev();
       const code = `const action = createServerReference("src/actions.ts#addTodo", callServer);`;
       const result = plugin.transform.call({}, code, "/project/src/client.tsx");
       expect(result).toBeDefined();
-      // Should wrap in IIFE that attaches $$id and returns fn
+      // Should wrap in IIFE that attaches $$id, installs the metadata-carrying
+      // own bind (guarded: never overrides an existing own bind), and returns fn
       expect(result.code).toMatch(
-        /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo";\s*return fn;\s*\}\)/,
+        /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo";\s*if\s*\(!Object\.prototype\.hasOwnProperty\.call\(fn,\s*"bind"\)\)\s*fn\.bind\s*=\s*__rangoActionBind;\s*return fn;\s*\}\)/,
       );
+      // The helper is prepended exactly once per transformed module
+      expect(
+        result.code.match(/var __rangoActionBind = function/g),
+      ).toHaveLength(1);
       // The original createServerReference call should still be invoked
       expect(result.code).toMatch(
         /createServerReference\("src\/actions\.ts#addTodo"/,

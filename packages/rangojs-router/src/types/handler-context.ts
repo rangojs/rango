@@ -541,8 +541,10 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
 /**
  * A reference to a server action, used by `isAction()` in a revalidate predicate.
  *
- * Either a directly imported action (`import { addToCart }`) or a namespace
- * import of an action module (`import * as CartActions`). Matching resolves the
+ * Either a directly imported action (`import { addToCart }`), a namespace
+ * import of an action module (`import * as CartActions`), an object
+ * literal of actions (`{ addToCart, removeFromCart }`), or a grouped
+ * namespace (`{ Cart: CartActions, Order: OrderActions }`). Matching resolves the
  * action's build-injected id (`path#export`) — the same identity the router uses
  * for `actionId` — so a renamed or moved action breaks at compile time instead
  * of silently failing to match.
@@ -550,6 +552,9 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
 export type ActionRef =
   | ((...args: never[]) => unknown)
   | Record<string, unknown>;
+
+/** The `isAction()` matcher passed to server and client `revalidate()` predicates. */
+export type IsActionFn = (...actions: ActionRef[]) => boolean;
 
 /**
  * Revalidation function called during client-side navigation to decide whether
@@ -643,8 +648,10 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   /**
    * Typed, rename-safe action matching. Returns `true` when the action that
    * triggered this revalidation is one of the given references — or, for a
-   * namespace import (`import * as CartActions`), any export of that module —
-   * and `false` otherwise (including plain navigation with no action).
+   * namespace import (`import * as CartActions`), object literal
+   * (`{ addToCart, removeFromCart }`), or grouped namespaces
+   * (`{ Cart: CartActions }`), any of those exports — and `false`
+   * otherwise (including plain navigation with no action).
    *
    * Called with NO arguments it answers "is this request an action at all?":
    * `true` for any action, `false` on plain navigation. Use the bare form when
@@ -668,9 +675,10 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
    * revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
    * revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any in the module
+   * revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
    * ```
    */
-  isAction: (...actions: ActionRef[]) => boolean;
+  isAction: IsActionFn;
   /** URL where the action was executed (the page the user was on when they triggered the action). */
   actionUrl?: URL;
   /** Return value from the action execution. Can be used to conditionally revalidate based on the action's outcome. */

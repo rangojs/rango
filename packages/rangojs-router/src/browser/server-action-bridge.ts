@@ -145,6 +145,7 @@ export function createServerActionBridge(
   async function refetchRoute(opts?: {
     segments?: string[];
     interceptSourceUrl?: string | null;
+    actionId?: string;
   }): Promise<void> {
     const src = opts?.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
@@ -167,6 +168,7 @@ export function createServerActionBridge(
         {
           type: "action" as const,
           ...(src ? { interceptSourceUrl: src } : {}),
+          ...(opts?.actionId !== undefined ? { actionId: opts.actionId } : {}),
         },
       );
     } finally {
@@ -309,6 +311,9 @@ export function createServerActionBridge(
         clientRevalidation = collectClientRevalidationDecisions({
           currentUrl: actionPageUrl,
           nextUrl: actionPageUrl,
+          // Decisions ride the action POST itself — the server evaluates it
+          // with actionContext, so the locked default is the action default.
+          actionRequest: true,
           isAction: true,
           actionId: id,
           stale: false,
@@ -707,7 +712,7 @@ export function createServerActionBridge(
             // Invalidation is deferred to finalizeAction(); here we only trigger
             // the revalidation refetch of the new route (suppressed on keep).
             if (!scenario.onInterceptRoute && !keepCache) {
-              refetchRoute().catch((error) => {
+              refetchRoute({ actionId: id }).catch((error) => {
                 if (isBackgroundSuppressible(error)) return;
                 console.error(
                   "[Browser] Background revalidation failed:",
@@ -724,6 +729,7 @@ export function createServerActionBridge(
           if (!keepCache) {
             await refetchRoute({
               interceptSourceUrl: store.getInterceptSourceUrl(),
+              actionId: id,
             });
           }
           break;
@@ -737,7 +743,7 @@ export function createServerActionBridge(
           // resolving last must discharge a directive-free sibling's repair.
           // See the keep row in docs/design/rango-state-cookie.md (the all-keep
           // edge, and the benign re-mark-stale-after-refetch end-state delta).
-          await refetchRoute({ interceptSourceUrl });
+          await refetchRoute({ interceptSourceUrl, actionId: id });
           break;
         }
 
@@ -759,6 +765,7 @@ export function createServerActionBridge(
           await refetchRoute({
             segments: segmentsToSend,
             interceptSourceUrl,
+            actionId: id,
           });
           break;
         }

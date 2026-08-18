@@ -9,6 +9,7 @@ import {
   useOutlet,
   useParams,
   useSearchParams,
+  type ClientRevalidateArgs,
 } from "@rangojs/router/client";
 import { Meta } from "@/handles/meta.js";
 import {
@@ -21,6 +22,7 @@ import {
   ClientShopSsrSidecarLoader,
 } from "@/handlers/shop/loaders/client-shop-ssr.js";
 import { CartLoader } from "@/handlers/shop/loaders/cart.js";
+import * as ShopActions from "@/handlers/shop/actions/shop.actions.js";
 import {
   addToCart,
   addToCartWithResult,
@@ -849,13 +851,11 @@ function productData({
   currentParams,
   nextParams,
   defaultShouldRevalidate,
-}: {
-  isAction: boolean;
-  currentParams: Record<string, string>;
-  nextParams: Record<string, string>;
-  defaultShouldRevalidate: boolean;
-}) {
-  if (isAction) return false;
+}: Pick<
+  ClientRevalidateArgs,
+  "isAction" | "currentParams" | "nextParams" | "defaultShouldRevalidate"
+>) {
+  if (isAction()) return false;
   return currentParams.slug !== nextParams.slug
     ? defaultShouldRevalidate
     : false;
@@ -868,9 +868,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
     // freshness outcomes in a single commit — cart refreshes, product and
     // related hold.
     loader(CartLoader, () => [
-      revalidate(({ isAction, defaultShouldRevalidate }) =>
-        isAction ? defaultShouldRevalidate : false,
-      ),
+      revalidate(({ isAction }) => isAction(ShopActions)),
     ]),
     path("/", ClientShopIndex, { name: "index" }, () => [
       // The list is search-driven (category filters): a search change must
@@ -879,7 +877,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       loader(ClientShopProductsLoader, () => [
         revalidate(
           ({ isAction, currentUrl, nextUrl, defaultShouldRevalidate }) =>
-            !isAction && currentUrl.search !== nextUrl.search
+            !isAction() && currentUrl.search !== nextUrl.search
               ? defaultShouldRevalidate
               : false,
         ),

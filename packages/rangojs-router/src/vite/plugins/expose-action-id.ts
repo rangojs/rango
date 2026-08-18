@@ -92,6 +92,27 @@ function isUseServerModule(filePath: string): boolean {
   }
 }
 
+/**
+ * Per-reference own `bind` injected next to `$$id`. React's client.browser
+ * build carries no server-reference metadata across `.bind()` (the
+ * edge/node/server builds install an own `bind` on each reference that
+ * does), so `isAction(boundStub)` would silently miss in the browser only.
+ * Installing the same per-reference own `bind` here — scoped to the stubs
+ * this plugin already wraps, guarded to never override an existing own
+ * `bind` — closes that without mutating the global Function.prototype
+ * (which would re-wrap once per Vite environment/HMR pass and break
+ * native-function detection for co-loaded code). The helper re-installs
+ * itself on the bound result so chained binds keep the metadata too.
+ */
+export const ACTION_BIND_HELPER_NAME: string = "__rangoActionBind";
+export const ACTION_BIND_HELPER_SOURCE: string = `var ${ACTION_BIND_HELPER_NAME} = function () {
+  var bound = Function.prototype.bind.apply(this, arguments);
+  if (typeof this.$id === "string") bound.$id = this.$id;
+  if (typeof this.$$id === "string") bound.$$id = this.$$id;
+  bound.bind = ${ACTION_BIND_HELPER_NAME};
+  return bound;
+};`;
+
 function applyServerReferenceWrapping(
   code: string,
   s: MagicString,
@@ -126,8 +147,15 @@ function applyServerReferenceWrapping(
       }
     }
 
-    const replacement = `(function(fn) { fn.$$id = ${finalIdArg}; return fn; })(${fnCall}(${idArg}${rest}))`;
+    const replacement =
+      `(function(fn) { fn.$$id = ${finalIdArg}; ` +
+      `if (!Object.prototype.hasOwnProperty.call(fn, "bind")) fn.bind = ${ACTION_BIND_HELPER_NAME}; ` +
+      `return fn; })(${fnCall}(${idArg}${rest}))`;
     s.overwrite(start, end, replacement);
+  }
+
+  if (hasChanges) {
+    s.prepend(`${ACTION_BIND_HELPER_SOURCE}\n`);
   }
 
   return hasChanges;
