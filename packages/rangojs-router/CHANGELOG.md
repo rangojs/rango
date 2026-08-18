@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.1 (2026-08-18)
+
+Metadata and docs refresh for the public repository — no code changes
+(source diffs since 0.10.0 are comment-only).
+
+### Changed: package metadata and npm README ([#824](https://github.com/rangojs/rango/pull/824), [#830](https://github.com/rangojs/rango/pull/830))
+
+- The published tarball now includes the MIT `LICENSE` file; 0.10.0
+  declared MIT but shipped no license text.
+- `repository`, `homepage`, and `bugs` point at
+  <https://github.com/rangojs/rango> instead of the pre-transfer
+  private repository path.
+- The README frames stability as pre-1.0 semver 0.x and recommends
+  `npm install @rangojs/router@latest`; the `experimental` dist-tag is
+  documented as the way to track `main` between tagged releases.
+
 ## 0.10.0 (2026-08-13)
 
 `loader(Def, { ssr: false })` now delivers its settled value in place on
