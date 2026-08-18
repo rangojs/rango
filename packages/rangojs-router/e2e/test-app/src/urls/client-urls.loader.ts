@@ -21,6 +21,20 @@ export const ClientUrlsSessionLoader = createLoader(async () => {
   return `session:${getClientUrlsActionCount()}`;
 });
 
+// clientUrls isAction() identity probes: module-level run counters so the
+// test can tell whether the loader re-ran. Target-gated vs namespace-gated.
+let clientUrlsIsActionTargetRuns = 0;
+export const ClientUrlsIsActionTargetLoader = createLoader(async () => {
+  clientUrlsIsActionTargetRuns += 1;
+  return { runs: clientUrlsIsActionTargetRuns };
+});
+
+let clientUrlsIsActionNsRuns = 0;
+export const ClientUrlsIsActionNsLoader = createLoader(async () => {
+  clientUrlsIsActionNsRuns += 1;
+  return { runs: clientUrlsIsActionNsRuns };
+});
+
 /**
  * Loader-thrown redirect() WITH state. The await forces settlement during
  * Flight serialization (the streaming lane — metadata already flushed), so

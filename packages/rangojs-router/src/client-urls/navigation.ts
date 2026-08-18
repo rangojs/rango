@@ -1,8 +1,13 @@
 "use client";
 
 import { startTransition } from "react";
+import { makeIsAction } from "../router/is-action.js";
+import {
+  lockedClientDefault,
+  runClientRevalidateChain,
+} from "./revalidate-chain.js";
 import { encodeClientRevalidationDecisions } from "./revalidation-protocol.js";
-import type { ClientRevalidateArgs, ClientUrlPatterns } from "./types.js";
+import type { ClientUrlPatterns } from "./types.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
@@ -156,6 +161,17 @@ export function beginClientUrlNavigation(
 export function collectClientRevalidationDecisions(options: {
   currentUrl: URL;
   nextUrl: URL;
+  /**
+   * True only when the decisions ride the action POST itself — the one
+   * request the server evaluates with actionContext (locked default true).
+   * Action-triggered refetch GETs (partial-update terminals) pass false:
+   * the server gives those navigation defaults, and the delta gate below
+   * must diff against the default the SERVER will use, or a force decision
+   * on the refetch would be silently swallowed as "equals default".
+   */
+  actionRequest: boolean;
+  /** Action TRUTH for the predicates' isAction() matcher; may be true on
+   * refetch GETs where actionRequest is false. */
   isAction: boolean;
   actionId?: string;
   stale: boolean;
@@ -163,7 +179,8 @@ export function collectClientRevalidationDecisions(options: {
   const group = activeGroup;
   if (!group) return null;
 
-  const { currentUrl, nextUrl, isAction, actionId, stale } = options;
+  const { currentUrl, nextUrl, actionRequest, isAction, actionId, stale } =
+    options;
   const currentLocal = stripMountPrefix(currentUrl.pathname, group.mount);
   if (currentLocal === null) return null;
   const currentMatch = group.definition.match(currentLocal);
@@ -178,52 +195,33 @@ export function collectClientRevalidationDecisions(options: {
     nextLocal === null ? null : group.definition.match(nextLocal);
   const nextParams = nextMatch?.params ?? {};
 
-  // Locked default, mirrored client-side: actions re-run route-owned loaders;
-  // navigations re-run them when params or search changed.
-  const paramsEqual = (
-    a: Record<string, string>,
-    b: Record<string, string>,
-  ): boolean => {
-    const aKeys = Object.keys(a);
-    return (
-      aKeys.length === Object.keys(b).length &&
-      aKeys.every((key) => a[key] === b[key])
-    );
-  };
-  const defaultShouldRevalidate = isAction
-    ? true
-    : !paramsEqual(currentMatch.params, nextParams) ||
-      currentUrl.search !== nextUrl.search;
+  const defaultShouldRevalidate = lockedClientDefault({
+    actionRequest,
+    currentParams: currentMatch.params,
+    nextParams,
+    currentUrl,
+    nextUrl,
+  });
 
+  const baseArgs = {
+    currentUrl,
+    nextUrl,
+    currentParams: currentMatch.params,
+    nextParams,
+    stale,
+    isAction: makeIsAction(actionId, isAction),
+    ...(actionId !== undefined ? { actionId } : {}),
+  };
   const skip: string[] = [];
   const force: string[] = [];
   for (const { loader, revalidate } of record.loaders) {
     if (revalidate.length === 0) continue;
-    const args: ClientRevalidateArgs = {
-      currentUrl,
-      nextUrl,
-      currentParams: currentMatch.params,
-      nextParams,
+    const decision = runClientRevalidateChain(
+      revalidate,
+      baseArgs,
       defaultShouldRevalidate,
-      stale,
-      isAction,
-      ...(actionId !== undefined ? { actionId } : {}),
-    };
-    // Same iteration contract as the server: every predicate runs, the last
-    // boolean verdict wins. A throwing predicate fails open to the default
-    // (mirrors evaluateRevalidation's fail-open).
-    let decision = defaultShouldRevalidate;
-    for (const fn of revalidate) {
-      try {
-        const verdict = fn(args);
-        if (typeof verdict === "boolean") decision = verdict;
-      } catch (error) {
-        console.error(
-          `[@rangojs/router] clientUrls revalidate() threw for loader "${loader.$$id}"; using default decision:`,
-          error,
-        );
-      }
-    }
+      `loader "${loader.$$id}"`,
+    );
     if (decision === defaultShouldRevalidate) continue;
     (decision ? force : skip).push(loader.$$id);
   }

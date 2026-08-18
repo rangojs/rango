@@ -468,7 +468,7 @@ describe("client revalidation decisions", () => {
       path("/items/:itemId", Page, { name: "item" }, () => [
         loader(SessionLoader, () => [
           revalidate(({ isAction, defaultShouldRevalidate }) =>
-            isAction ? false : defaultShouldRevalidate,
+            isAction() ? false : defaultShouldRevalidate,
           ),
         ]),
         loader(ItemLoader),
@@ -480,6 +480,7 @@ describe("client revalidation decisions", () => {
     const action = collectClientRevalidationDecisions({
       currentUrl: new URL("http://localhost/shop/items/a"),
       nextUrl: new URL("http://localhost/shop/items/a"),
+      actionRequest: true,
       isAction: true,
       actionId: "actions#bump",
       stale: false,
@@ -494,6 +495,7 @@ describe("client revalidation decisions", () => {
     const paramNav = collectClientRevalidationDecisions({
       currentUrl: new URL("http://localhost/shop/items/a"),
       nextUrl: new URL("http://localhost/shop/items/b"),
+      actionRequest: false,
       isAction: false,
       stale: false,
     });
@@ -515,6 +517,7 @@ describe("client revalidation decisions", () => {
     const decisions = collectClientRevalidationDecisions({
       currentUrl: new URL("http://localhost/"),
       nextUrl: new URL("http://localhost/"),
+      actionRequest: false,
       isAction: false,
       stale: true,
     });
@@ -529,6 +532,7 @@ describe("client revalidation decisions", () => {
       collectClientRevalidationDecisions({
         currentUrl: new URL("http://localhost/anywhere"),
         nextUrl: new URL("http://localhost/anywhere"),
+        actionRequest: true,
         isAction: true,
         stale: false,
       }),
@@ -544,6 +548,7 @@ describe("client revalidation decisions", () => {
       collectClientRevalidationDecisions({
         currentUrl: new URL("http://localhost/elsewhere"),
         nextUrl: new URL("http://localhost/shop"),
+        actionRequest: false,
         isAction: false,
         stale: false,
       }),
@@ -567,10 +572,81 @@ describe("client revalidation decisions", () => {
       collectClientRevalidationDecisions({
         currentUrl: new URL("http://localhost/"),
         nextUrl: new URL("http://localhost/"),
+        actionRequest: true,
         isAction: true,
         stale: false,
       }),
     ).toBeNull();
+  });
+
+  it("wires makeIsAction into predicates so a matching ref can skip", () => {
+    const ACTION_ID = "src/actions/cart.ts#addToCart";
+    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction }) => !isAction(addToCart)),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    expect(
+      decodeClientRevalidationDecisions(
+        collectClientRevalidationDecisions({
+          currentUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/"),
+          actionRequest: true,
+          isAction: true,
+          actionId: ACTION_ID,
+          stale: false,
+        }),
+      ),
+    ).toEqual({ skip: ["loaders#session"], force: [] });
+    expect(
+      collectClientRevalidationDecisions({
+        currentUrl: new URL("http://localhost/"),
+        nextUrl: new URL("http://localhost/"),
+        actionRequest: true,
+        isAction: true,
+        actionId: "src/actions/other.ts#x",
+        stale: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("action-triggered refetch GET: nav-default baseline, isAction() still true", () => {
+    // The refetch after an action is a GET the server evaluates WITHOUT
+    // actionContext (default false on a same-URL request). A predicate
+    // forcing on the matching action must therefore be ENCODED as force —
+    // with an action-default baseline (true) it would compare equal to the
+    // default and be silently dropped (server-action-bridge consolidation
+    // terminal, partial-update.ts).
+    const ACTION_ID = "src/actions/cart.ts#addToCart";
+    const addToCart = Object.assign(() => {}, { $id: ACTION_ID });
+    const definition = clientUrls(({ path, loader, revalidate }) => [
+      path("/", Page, { name: "index" }, () => [
+        loader(SessionLoader, () => [
+          revalidate(({ isAction }) =>
+            isAction(addToCart) ? true : undefined,
+          ),
+        ]),
+      ]),
+    ]);
+    registerClientUrlGroup(definition, "/", "", () => {});
+
+    expect(
+      decodeClientRevalidationDecisions(
+        collectClientRevalidationDecisions({
+          currentUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/"),
+          actionRequest: false,
+          isAction: true,
+          actionId: ACTION_ID,
+          stale: false,
+        }),
+      ),
+    ).toEqual({ skip: [], force: ["loaders#session"] });
   });
 });
 

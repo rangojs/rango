@@ -26,7 +26,7 @@
  *   condition and would throw if pulled into this barrel.
  *
  * Layers:
- * - Unit:        runMiddleware, runLoader
+ * - Unit:        runMiddleware, runLoader, runClientRevalidate
  * - Integration: dispatch (request -> Response)
  * - Cross-cut:   assertCacheStatus, assertShellStatus, assertGeneratedRoutesMatch
  * - Component:   see @rangojs/router/testing/dom (renderRoute)
@@ -52,6 +52,9 @@ export type {
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
 } from "./run-transition-when.js";
+
+export { runClientRevalidate } from "./run-client-revalidate.js";
+export type { RunClientRevalidateOptions } from "./run-client-revalidate.js";
 
 export { dispatch } from "./dispatch.js";
 export type { DispatchOptions } from "./dispatch.js";

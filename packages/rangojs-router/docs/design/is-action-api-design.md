@@ -79,7 +79,8 @@ Semantics:
   `ctx.isAction(CartActions)` where `import * as CartActions` → `true` if
   `actionId` is any export of that module. Typed equivalent of
   `includes("cart.ts#")`, covering both "this action" and "any action in this
-  file" without strings.
+  file" without strings. An object literal of the same shape —
+  `isAction({ addToCart, removeFromCart })` — is the same match.
 
 ### Before / after
 
@@ -130,10 +131,15 @@ Primitive (`ctx.isAction`) for control; combinator (`onAction`) for the 90% path
    is assignable.
 3. **Resolution:** the predicate argument object built in `evaluateRevalidation`
    (`src/router/revalidation.ts`) gets `isAction: makeIsAction(actionContext?.actionId)`.
-4. **Helpers (`src/router/revalidation.ts`):** `resolveActionRefId(ref)` reads
+   `clientUrls()` predicates receive the same helper
+   (`src/client-urls/navigation.ts`) — they run in the browser, so matching
+   compares the action stub's hashed `$$id` to the `rsc-action` id. A boolean
+   `isAction` on the client was a leftover; it is the callable matcher.
+4. **Helpers (`src/router/is-action.ts`):** `resolveActionRefId(ref)` reads
    `ref.$id ?? ref.$$id`; `makeIsAction(currentId)` returns the variadic closure,
-   matching a single reference or any export of a namespace import, and `false`
-   when there is no action.
+   matching a single reference, any export of a namespace import, or an object
+   literal of actions (`{ addToCart, removeFromCart }`), and `false` when there
+   is no action.
 
 ## Resolved questions
 
@@ -157,12 +163,17 @@ Primitive (`ctx.isAction`) for control; combinator (`onAction`) for the 90% path
 
 Per repo policy, e2e covers **both dev and production**:
 
-- Unit (`src/router/__tests__/revalidation-isaction.test.ts`): single match,
-  variadic, namespace form, `$$id` fallback, `$id`-over-`$$id` precedence,
-  plain-navigation `false`, no-match `false`, and an unresolvable reference.
-- e2e (`e2e/is-action.test.ts`, dev + production): the target action re-runs a
-  loader gated by `revalidate(({ isAction }) => isAction(target))`; the decoy
-  action does not.
+- Unit (`src/router/__tests__/revalidation-isaction.test.ts`,
+  `src/router/__tests__/is-action.test.ts`, client wiring in
+  `src/client-urls/__tests__/client-root.test.tsx`): single match, variadic,
+  namespace / object-literal form, `$$id` fallback, `$id`-over-`$$id`
+  precedence, plain-navigation `false`, no-match `false`, and an unresolvable
+  reference.
+- e2e (`e2e/is-action.test.ts` + `e2e/client-urls.test.ts`, dev + production):
+  the target action re-runs a loader gated by
+  `revalidate(({ isAction }) => isAction(target))`; the decoy action does not.
+  The clientUrls suite also pins `isAction(* as Actions)` against the same
+  pair.
 
 ## Net
 

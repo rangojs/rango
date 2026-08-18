@@ -9,7 +9,13 @@ import {
   useOutlet,
   useParams,
 } from "@rangojs/router/client";
-import { ClientUrlsDetailLoader } from "./loader.js";
+import * as ClientUrlsIsActions from "./actions.js";
+import { clientUrlsDecoyAction, clientUrlsTargetAction } from "./actions.js";
+import {
+  ClientUrlsDetailLoader,
+  ClientUrlsIsActionNsLoader,
+  ClientUrlsIsActionTargetLoader,
+} from "./loader.js";
 import { MirrorPlpLoader } from "../loaders/chrome-mirror.js";
 
 /* Consumer-app repro (workerd variant): pure-HTML CategoryButton tree fed by
@@ -135,9 +141,26 @@ function ClientUrlsLayout(): ReactNode {
 }
 
 function ClientUrlsIndex(): ReactNode {
+  const { data: target } = useLoader(ClientUrlsIsActionTargetLoader);
+  const { data: ns } = useLoader(ClientUrlsIsActionNsLoader);
+
   return (
     <section data-testid="client-urls-index">
       <h2>Client URLs index</h2>
+      <span data-testid="cu-is-action-target-runs">{target.runs}</span>
+      <span data-testid="cu-is-action-ns-runs">{ns.runs}</span>
+      <button
+        data-testid="cu-is-action-target"
+        onClick={() => void clientUrlsTargetAction()}
+      >
+        Target
+      </button>
+      <button
+        data-testid="cu-is-action-decoy"
+        onClick={() => void clientUrlsDecoyAction()}
+      >
+        Decoy
+      </button>
       <Link
         to="/__client-urls/deterministic-slug"
         prefetch="none"
@@ -177,9 +200,16 @@ function ClientUrlsLoading(): ReactNode {
   );
 }
 
-export default clientUrls(({ layout, path, loader, loading }) => [
+export default clientUrls(({ layout, path, loader, loading, revalidate }) => [
   layout(ClientUrlsLayout, () => [
-    path("/", ClientUrlsIndex),
+    path("/", ClientUrlsIndex, () => [
+      loader(ClientUrlsIsActionTargetLoader, () => [
+        revalidate(({ isAction }) => isAction(clientUrlsTargetAction)),
+      ]),
+      loader(ClientUrlsIsActionNsLoader, () => [
+        revalidate(({ isAction }) => isAction(ClientUrlsIsActions)),
+      ]),
+    ]),
     path("/:slug", ClientUrlsDetail, () => [
       loader(ClientUrlsDetailLoader),
       loading(<ClientUrlsLoading />),

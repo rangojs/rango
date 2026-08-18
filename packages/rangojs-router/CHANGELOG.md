@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: clientUrls `revalidate()` gets the callable `isAction()` matcher
+
+`ClientRevalidateArgs.isAction` changed from a **boolean** to the same
+callable `isAction(...refs)` matcher the server predicate receives. The old
+truthiness idiom keeps compiling but silently inverts — a function is always
+truthy — so audit any predicate written against the boolean form:
+
+```ts
+// before — boolean (now always truthy, silently returns false):
+isAction ? false : defaultShouldRevalidate;
+// after — call the matcher:
+isAction() ? false : defaultShouldRevalidate;
+```
+
+Client predicate chains now also mirror the server's semantics exactly: a
+boolean is a hard decision that short-circuits the chain, and a
+`{ defaultShouldRevalidate }` verdict threads into later predicates.
+
 ## 0.10.1 (2026-08-18)
 
 Metadata and docs refresh for the public repository — no code changes

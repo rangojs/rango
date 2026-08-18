@@ -134,3 +134,14 @@ export async function expectNoReload(page: Page) {
     },
   };
 }
+
+/** Extract the first integer from an element's text ("run 42" -> 42; null -> 0). */
+export function parseNumber(text: string | null | undefined): number {
+  return parseInt(text?.match(/\d+/)?.[0] || "0", 10);
+}
+
+/** Read the numeric value from an element's text content. */
+export async function getNumericContent(locator: Locator): Promise<number> {
+  const text = await locator.textContent();
+  return parseNumber(text);
+}

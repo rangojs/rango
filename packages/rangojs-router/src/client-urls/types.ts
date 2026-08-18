@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 import type {
+  IsActionFn,
   LoaderDefinition,
   LoaderOptions,
   TransitionConfig,
@@ -54,7 +55,8 @@ export type ClientLayoutFn = <const TItems extends ClientUrlItems>(
  * subset of the server ShouldRevalidateFn args — the predicate RUNS IN THE
  * BROWSER (it is declared in a "use client" module and never crosses the
  * projection boundary); only its decision is sent to the server. There is no
- * `context` — no server handler context exists where this executes.
+ * `context` — no server handler context exists where this executes. `isAction`
+ * is the same callable matcher as on the server, not a boolean.
  */
 export interface ClientRevalidateArgs {
   /** Full URL of the page being navigated away from (current location). */
@@ -66,21 +68,46 @@ export interface ClientRevalidateArgs {
   /** Route params for the navigation target (definition-local match). */
   readonly nextParams: Record<string, string>;
   /**
-   * The locked default decision for this loader, computed client-side with
-   * the same rules the server would apply: `true` on actions and when
-   * params/search changed, `false` otherwise. Return it for default behavior
-   * plus your own conditions.
+   * The current default decision for this loader, computed client-side with
+   * the same rules the server applies to the request the decisions ride on:
+   * `true` when they ride the action POST itself, otherwise `true` when
+   * params/search changed. (An action-triggered refetch GET gets navigation
+   * defaults — matching the server — even though `isAction()` is true.)
+   * Earlier predicates' `{ defaultShouldRevalidate }` verdicts thread into
+   * this value, exactly like the server chain. Return it for default
+   * behavior plus your own conditions.
    */
   readonly defaultShouldRevalidate: boolean;
   /** True when this is a stale history-entry background revalidation. */
   readonly stale: boolean;
-  /** True when revalidation is triggered by a server action. */
-  readonly isAction: boolean;
-  /** The triggering server action's id, when isAction. */
+  /**
+   * Same {@link IsActionFn} the server `revalidate()` predicate receives.
+   * In the browser the match is against the action stub's hashed `$$id`
+   * (the id the action request carries) — not the RSC file-path `$id`.
+   */
+  readonly isAction: IsActionFn;
+  /**
+   * The triggering server action's id, when this is an action. In the
+   * browser this is the hashed `hash#export` form (`$$id`), not the RSC
+   * file-path `src/...#export`. Prefer `isAction(ref)` — a substring of
+   * `path#export` will not match here in production.
+   */
   readonly actionId?: string;
 }
 
-export type ClientRevalidateFn = (args: ClientRevalidateArgs) => boolean;
+/**
+ * Client-run per-loader predicate, with the same chain semantics as the
+ * server's `revalidate()` (src/router/revalidation.ts): a boolean is a HARD
+ * decision that short-circuits the rest of the chain; a
+ * `{ defaultShouldRevalidate }` object updates the running suggestion, which
+ * later predicates receive as their `defaultShouldRevalidate`; `void` /
+ * `null` / `undefined` defers to the current suggestion — so
+ * `isAction(CartActions) || undefined` defers to the locked default.
+ * Predicates must be synchronous; the object form requires a boolean value.
+ */
+export type ClientRevalidateFn = (
+  args: ClientRevalidateArgs,
+) => boolean | { defaultShouldRevalidate: boolean } | null | void;
 
 export interface ClientUrlLoaderRecord {
   readonly loader: LoaderDefinition<any, any>;
@@ -158,10 +185,11 @@ export interface ClientUrlHelpers {
   readonly loading: (component: ReactNode) => ClientUrlItem;
   /**
    * Per-loader revalidation predicate, valid inside a loader() use callback
-   * only. Runs IN THE BROWSER with client-computable args; return true to
-   * re-run the loader, false to keep held data. Absent predicates (and
-   * requests that carry no decisions: no-JS, PE, prefetch, document loads)
-   * follow the locked server defaults.
+   * only. Runs IN THE BROWSER with client-computable args (including the
+   * callable `isAction(...refs)` matcher); return true to re-run the loader,
+   * false to keep held data. Absent predicates (and requests that carry no
+   * decisions: no-JS, PE, prefetch, document loads) follow the locked server
+   * defaults.
    */
   readonly revalidate: (fn: ClientRevalidateFn) => ClientUrlItem;
   /**

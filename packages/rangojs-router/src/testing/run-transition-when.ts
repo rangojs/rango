@@ -35,9 +35,7 @@ import type { OnErrorCallback } from "../types/error-types.js";
 import type { EntryData } from "../server/context.js";
 import { evaluatePprTransitionWhen } from "../router/transition-when.js";
 import { invokeOnError } from "../router/error-handling.js";
-
-const toURL = (v: string | URL, base: URL): URL =>
-  typeof v === "string" ? new URL(v, base.origin) : v;
+import { toURL } from "./to-url.js";
 
 /**
  * Options for runTransitionWhen. All navigation/action fields are optional and

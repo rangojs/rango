@@ -20,6 +20,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { gateTransitions } from "./transition-gate.js";
 import type { RscPayload } from "./types.js";
@@ -302,10 +303,7 @@ export async function executeServerAction<TEnv>(
   }
 
   // Build continuation for the revalidation phase
-  const actionMeta = loadedAction as
-    | { $id?: string; $$id?: string }
-    | undefined;
-  const resolvedActionId = actionMeta?.$id ?? actionMeta?.$$id ?? actionId;
+  const resolvedActionId = resolveActionRefId(loadedAction) ?? actionId;
 
   return {
     returnValue,
