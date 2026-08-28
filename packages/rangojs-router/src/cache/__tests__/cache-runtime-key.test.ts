@@ -18,10 +18,14 @@ import { describe, it, expect, vi } from "vitest";
 
 // @vitejs/plugin-rsc/rsc is a virtual module, not resolvable in vitest. The
 // key-derivation tests do not invoke encodeReply, but the import must resolve.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn(),
-  createClientTemporaryReferenceSet: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn(),
+    createClientTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { replyToCacheKey } from "../cache-runtime.js";
 

@@ -17,6 +17,7 @@
  */
 
 import type { Plugin } from "vite";
+import type { ModuleExportMeta } from "@vitejs/plugin-rsc/transforms";
 import path from "node:path";
 import MagicString from "magic-string";
 import { normalizePath, hashId } from "./expose-id-utils.js";
@@ -89,6 +90,13 @@ export function useCacheTransform(): Plugin {
           return;
         }
 
+        // plugin-rsc 0.5.34 `matchDirective` does `stmt.directive.match(...)`
+        // after `"directive" in node`. Vite/oxc parseAst now emits
+        // `directive: null` on ordinary ExpressionStatements, so a file that
+        // mixes a `"use cache"` function with a sibling handler whose first
+        // statement is an expression throws and the wrap is dropped.
+        stripNullDirectiveFields(ast);
+
         const filePath = normalizePath(path.relative(projectRoot, id));
         const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
 
@@ -101,6 +109,7 @@ export function useCacheTransform(): Plugin {
             isBuild,
             isLayoutOrTemplate,
             transformWrapExport,
+            hasDirective,
           );
         }
 
@@ -131,6 +140,7 @@ function transformFileLevelUseCache(
   isBuild: boolean,
   isLayoutOrTemplate: boolean,
   transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
+  hasDirective: (typeof import("@vitejs/plugin-rsc/transforms"))["hasDirective"],
 ) {
   const unconfirmedExports: string[] = [];
 
@@ -140,8 +150,18 @@ function transformFileLevelUseCache(
       return `__rango_registerCachedFunction(${value}, ${JSON.stringify(funcId)}, "default")`;
     },
     rejectNonAsyncFunction: false,
-    filter: (name: string, meta: { isFunction?: boolean }) => {
+    filter: (name: string, meta: ModuleExportMeta) => {
       if (name === "default" && isLayoutOrTemplate) return false;
+      // plugin-rsc 0.5.34 hoists mixed inline `"use server"` out of a
+      // file-level `"use cache"` module as `$$hoist_*` exports and rebinds the
+      // original name to `registerServerReference($$hoist_*, ...)`. Both are
+      // server references, not cached functions. The directive check covers
+      // the pre-hoist shape (this plugin seeing the source first).
+      if (name.startsWith("$$hoist_")) return false;
+      if (isHoistedServerReferenceRebind(meta.valueNode)) return false;
+      if (functionHasUseServerDirective(meta.valueNode, hasDirective)) {
+        return false;
+      }
       // isFunction is boolean | undefined: true = confirmed function, false =
       // confirmed non-function, undefined = cannot tell statically (e.g. a
       // factory/HOF initializer `const x = makeCached(fn)`). Deliberate policy:
@@ -248,6 +268,50 @@ function transformFunctionLevelUseCache(
     // Transform failed (e.g., syntax not supported), skip
     return;
   }
+}
+
+function stripNullDirectiveFields(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  if (rec.type === "ExpressionStatement" && typeof rec.directive !== "string") {
+    delete rec.directive;
+  }
+  for (const value of Object.values(rec)) {
+    if (Array.isArray(value)) {
+      for (const item of value) stripNullDirectiveFields(item);
+    } else if (value && typeof value === "object" && "type" in value) {
+      stripNullDirectiveFields(value);
+    }
+  }
+}
+
+function isHoistedServerReferenceRebind(
+  valueNode: ModuleExportMeta["valueNode"],
+): boolean {
+  if (!valueNode || valueNode.type !== "CallExpression") return false;
+  const first = valueNode.arguments[0];
+  return (
+    first !== undefined &&
+    first.type === "Identifier" &&
+    first.name.startsWith("$$hoist_")
+  );
+}
+
+function functionHasUseServerDirective(
+  valueNode: ModuleExportMeta["valueNode"],
+  hasDirective: (typeof import("@vitejs/plugin-rsc/transforms"))["hasDirective"],
+): boolean {
+  if (!valueNode || !("body" in valueNode)) return false;
+  const { body } = valueNode;
+  if (!body || Array.isArray(body) || body.type !== "BlockStatement") {
+    return false;
+  }
+  // plugin-rsc types valueNode with plain estree nodes but hasDirective with
+  // its oxc-flavored AST; the flavors differ only in position/extra fields.
+  return hasDirective(
+    body.body as Parameters<typeof hasDirective>[0],
+    "use server",
+  );
 }
 
 function findFileLevelDirective(

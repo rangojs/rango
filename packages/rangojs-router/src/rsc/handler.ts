@@ -16,7 +16,7 @@ import {
   _getRequestContext,
   createRequestContext,
 } from "../server/request-context.js";
-import * as rscDeps from "@vitejs/plugin-rsc/rsc";
+import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
   CreateRSCHandlerOptions,
@@ -137,7 +137,7 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
  * @example With custom deps (advanced)
  * ```tsx
  * import { createRSCHandler } from "@rangojs/router/rsc";
- * import * as rsc from "@vitejs/plugin-rsc/rsc";
+ * import * as rsc from "@vitejs/plugin-rsc/rsc/server";
  * import { router } from "./router.js";
  *
  * export default createRSCHandler({
@@ -176,7 +176,7 @@ export function createRSCHandler<
   // stores not covered by the app-level ctx._cacheStore.
   const explicitTaggedStores = new Set<SegmentCacheStore>();
 
-  // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
+  // Use provided deps or default to @vitejs/plugin-rsc/rsc/server exports
   const deps = options.deps ?? rscDeps;
   const {
     renderToReadableStream,

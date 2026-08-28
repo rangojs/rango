@@ -9,18 +9,20 @@ to Node streams should read this first.
 ## The constraint
 
 - **SSR / HTML layer** pins `react-dom/server.edge`:
-  `src/vite/plugins/virtual-entries.ts:41` (the SSR virtual entry). The renderer
-  is injected as a dep into the generic `createSSRHandler` (`src/ssr/index.tsx`),
-  which only ever calls `renderToReadableStream`, `.allReady`, and `.pipeThrough`
-  (`src/ssr/index.tsx:344`, `:354`, `:358`) — all Web Streams APIs.
-- **Flight / RSC layer** uses `@vitejs/plugin-rsc/rsc` (re-exported via
+  `src/vite/plugins/virtual-entries.ts:109` (the generated SSR entry). The
+  renderer is injected as a dep into the generic `createSSRHandler`
+  (`src/ssr/index.tsx`), which only ever calls `renderToReadableStream`,
+  `.allReady`, and `.pipeThrough` (`src/ssr/index.tsx:657`, `:669`, `:673`) —
+  all Web Streams APIs.
+- **Flight / RSC layer** uses `@vitejs/plugin-rsc/rsc/server` (re-exported via
   `src/deps/rsc.ts`), whose `renderToReadableStream` comes from the vendored
-  `react-server-dom-webpack/server.edge`. Call site: `src/rsc/rsc-rendering.ts:197`.
+  `react-server-dom-webpack/server.edge`. Call site: `src/rsc/render-pipeline.ts:158`
+  (via `ctx.renderToReadableStream`, wired in `src/rsc/handler.ts`).
 - Both stream bodies are handed to `new Response(...)` as a Web `ReadableStream`
-  via `createResponseWithMergedHeaders` (`src/rsc/helpers.ts:117`); RSC-only
-  responses return the raw Web `rscStream` (`src/rsc/rsc-rendering.ts:240`), HTML
-  responses return `htmlStream` after `pipeThrough(injectRSCPayload(...))`
-  (`src/ssr/index.tsx:359`).
+  via `createResponseWithMergedHeaders` (`src/rsc/helpers.ts:131`). RSC-only
+  responses wrap the Flight stream (`src/rsc/render-pipeline.ts:249`); HTML
+  responses wrap the stream after `pipeThrough(injectRSCPayload(...))`
+  (`src/ssr/index.tsx:673`).
 
 `react-dom@19.x` `./server.edge` exports **only** `renderToReadableStream`.
 `./server.node` exports **both** `renderToPipeableStream` _and_

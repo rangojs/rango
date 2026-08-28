@@ -74,19 +74,20 @@ package's Node 24 engine floor. `VercelPresetOptions.runtime` can override it.
 
 These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
 
-| Export                               | Description                                                                                |
-| ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries |
-| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                                             |
-| `./internal/deps/browser`            | Browser runtime dependency bridge                                                          |
-| `./internal/deps/ssr`                | SSR runtime dependency bridge (`createFromReadableStream`, `setOnClientReference`)         |
-| `./internal/deps/rsc`                | RSC runtime dependency bridge                                                              |
-| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                       |
-| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                       |
-| `./internal/rsc-handler`             | RSC handler internals                                                                      |
-| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                              |
-| `./cache-runtime`                    | Cache runtime dependencies                                                                 |
-| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                         |
+| Export                               | Description                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries              |
+| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                                                          |
+| `./internal/deps/browser`            | Browser runtime dependency bridge                                                                       |
+| `./internal/deps/ssr`                | SSR runtime dependency bridge (`createFromReadableStream`, `setOnClientReference`, `getClientEntryUrl`) |
+| `./internal/deps/rsc`                | RSC server-protocol dependency bridge (`@vitejs/plugin-rsc/rsc/server`)                                 |
+| `./internal/deps/rsc-client`         | RSC client-protocol dependency bridge (`@vitejs/plugin-rsc/rsc/client`)                                 |
+| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                                    |
+| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                                    |
+| `./internal/rsc-handler`             | RSC handler internals                                                                                   |
+| `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                                           |
+| `./cache-runtime`                    | Cache runtime dependencies                                                                              |
+| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                                      |
 
 ### CLI
 

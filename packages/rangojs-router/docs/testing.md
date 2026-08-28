@@ -207,7 +207,8 @@ export default defineConfig({
 `rangoTestConfig()` returns the resolve `alias` entries AND
 `server.deps.inline: [/@rangojs[/\\]router/]`, spread together into `test`. The
 aliases point the bare `@rangojs/router` at its real impls and stub the
-build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` virtuals — so
+build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc`
+(`/rsc/server`, `/rsc/client`) virtuals — so
 you do **not** need a per-file `vi.mock("@vitejs/plugin-rsc/rsc")`.
 
 The `deps.inline` half is mandatory for an installed (node_modules) consumer:

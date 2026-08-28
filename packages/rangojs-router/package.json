@@ -88,6 +88,11 @@
       "react-server": "./src/deps/rsc.ts",
       "default": "./src/deps/rsc.ts"
     },
+    "./internal/deps/rsc-client": {
+      "types": "./dist/types/deps/rsc-client.d.ts",
+      "react-server": "./src/deps/rsc-client.ts",
+      "default": "./src/deps/rsc-client.ts"
+    },
     "./internal/deps/html-stream-client": {
       "types": "./dist/types/deps/html-stream-client.d.ts",
       "default": "./src/deps/html-stream-client.ts"
@@ -193,7 +198,7 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.31",
+    "@vitejs/plugin-rsc": "^0.5.34",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.4",
@@ -226,7 +231,7 @@
     "@playwright/test": "^1.49.1",
     "@testing-library/react": ">=16",
     "@vercel/functions": "^3.0.0",
-    "@vitejs/plugin-rsc": "^0.5.31",
+    "@vitejs/plugin-rsc": "^0.5.34",
     "react": ">=19.2.8 <20",
     "react-dom": ">=19.2.8 <20",
     "vite": "^8.0.16",

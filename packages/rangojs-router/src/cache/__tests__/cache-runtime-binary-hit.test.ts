@@ -20,22 +20,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // encodeReply emits FormData for a typed-array/Blob arg (per-call random
 // boundary). Reproduce that shape so replyToCacheKey's binary branch runs.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn(async (args: unknown[]) => {
-    const fd = new FormData();
-    args.forEach((arg, i) => {
-      if (arg instanceof Uint8Array) {
-        fd.append(String(i), new Blob([arg.slice()], { type: "" }));
-      } else if (arg instanceof Blob) {
-        fd.append(String(i), arg);
-      } else {
-        fd.append(String(i), JSON.stringify(arg));
-      }
-    });
-    return fd;
-  }),
-  createClientTemporaryReferenceSet: vi.fn(() => new Set()),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn(async (args: unknown[]) => {
+      const fd = new FormData();
+      args.forEach((arg, i) => {
+        if (arg instanceof Uint8Array) {
+          fd.append(String(i), new Blob([arg.slice()], { type: "" }));
+        } else if (arg instanceof Blob) {
+          fd.append(String(i), arg);
+        } else {
+          fd.append(String(i), JSON.stringify(arg));
+        }
+      });
+      return fd;
+    }),
+    createClientTemporaryReferenceSet: vi.fn(() => new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Identity codec — the value round-trips through the store unchanged.
 vi.mock("../segment-codec.js", () => ({

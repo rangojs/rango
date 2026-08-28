@@ -103,11 +103,11 @@ export interface RscPayload {
 export type ReactFormState = unknown;
 
 /**
- * RSC dependencies from @vitejs/plugin-rsc/rsc
+ * RSC dependencies from @vitejs/plugin-rsc/rsc/server
  */
 export interface RSCDependencies {
   /**
-   * renderToReadableStream from @vitejs/plugin-rsc/rsc
+   * renderToReadableStream from @vitejs/plugin-rsc/rsc/server
    */
   renderToReadableStream: <T>(
     payload: T,
@@ -118,7 +118,7 @@ export interface RSCDependencies {
   ) => ReadableStream<Uint8Array>;
 
   /**
-   * decodeReply from @vitejs/plugin-rsc/rsc
+   * decodeReply from @vitejs/plugin-rsc/rsc/server
    */
   decodeReply: (
     body: FormData | string,
@@ -126,23 +126,23 @@ export interface RSCDependencies {
   ) => Promise<unknown[]>;
 
   /**
-   * createTemporaryReferenceSet from @vitejs/plugin-rsc/rsc
+   * createTemporaryReferenceSet from @vitejs/plugin-rsc/rsc/server
    */
   createTemporaryReferenceSet: () => unknown;
 
   /**
-   * loadServerAction from @vitejs/plugin-rsc/rsc
+   * loadServerAction from @vitejs/plugin-rsc/rsc/server
    */
   loadServerAction: (actionId: string) => Promise<Function>;
 
   /**
-   * decodeAction from @vitejs/plugin-rsc/rsc
+   * decodeAction from @vitejs/plugin-rsc/rsc/server
    * Decodes a FormData into a bound action function (for useActionState forms)
    */
   decodeAction: (body: FormData) => Promise<() => Promise<unknown>>;
 
   /**
-   * decodeFormState from @vitejs/plugin-rsc/rsc
+   * decodeFormState from @vitejs/plugin-rsc/rsc/server
    * Decodes the action result into a ReactFormState for useActionState progressive enhancement
    */
   decodeFormState: (
@@ -300,8 +300,8 @@ export interface CreateRSCHandlerOptions<
   router: RangoInternal<TEnv, TRoutes>;
 
   /**
-   * RSC dependencies from @vitejs/plugin-rsc/rsc.
-   * Defaults to the exports from @vitejs/plugin-rsc/rsc.
+   * RSC dependencies from @vitejs/plugin-rsc/rsc/server.
+   * Defaults to the exports from @vitejs/plugin-rsc/rsc/server.
    */
   deps?: RSCDependencies;
 

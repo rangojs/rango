@@ -6,85 +6,49 @@
  *   import "./handler-test-mocks.js";
  *   import { createRSCHandler } from "../handler.js";
  *
- * vi.mock is NOT hoisted outside a test file, so registration here relies on
- * this module evaluating before the mocked modules load — which ESM import
- * order guarantees as long as this import statement comes first. Mock paths
- * resolve relative to THIS file, so it must stay in src/rsc/__tests__/.
+ * Mock paths resolve relative to THIS file, so it must stay in
+ * src/rsc/__tests__/. Factory bodies live in handler-mock-factories.ts and are
+ * pulled via dynamic import INSIDE each factory: vitest hoists these vi.mock
+ * calls above this module's own imports, so referencing a static import in the
+ * factory argument would hit its binding before initialization.
  *
- * The same preamble exists inline (pre-dating this module) in
- * handler-metrics.test.ts, handler-telemetry-events.test.ts,
- * handler-ssr-kickoff.test.ts, redirect-flight-onerror.test.ts, and
- * handler-notfound-payload.test.ts — migrate them here when touched.
+ * A file that needs a DIFFERENT factory for any of these ids (or needs one of
+ * them left unmocked) must NOT import this preamble — it registers only the
+ * shared factories it wants, individually, with the same dynamic-import
+ * pattern; see handler-telemetry-events.test.ts.
  */
 import { vi } from "vitest";
 
-// Mock route-map-builder so manifest is always available.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
-
-// Mock @vitejs/plugin-rsc/rsc with minimal stubs
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: () => new ReadableStream(),
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
-
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-// Mock dependencies used by classifyRequest → resolveRoute
-vi.mock("../../router/manifest.js", () => ({
-  loadManifest: vi.fn(async () => ({
-    type: "route",
-    shortCode: "R0",
-    parent: null,
-    handler: vi.fn(),
-    responseType: "json",
-  })),
-  clearManifestCache: vi.fn(),
-}));
-
-vi.mock("../../router/middleware.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../router/middleware.js")>();
-  return {
-    ...actual,
-    collectRouteMiddleware: vi.fn(() => []),
-  };
-});
-
-vi.mock("../../cache/cache-scope.js", () => ({
-  createCacheScope: vi.fn(() => null),
-}));
-
-// handleResponseRoute returns a simple response for response-route tests
-vi.mock("../response-route-handler.js", () => ({
-  handleResponseRoute: vi.fn(
-    async () => new Response("response-route", { status: 200 }),
-  ),
-}));
-
-vi.mock("../../router/telemetry.js", () => ({
-  resolveSink: () => null,
-  safeEmit: vi.fn(),
-  getRequestId: () => "test-req-id",
-}));
-
-vi.mock("../../router/router-context.js", () => ({
-  getRouterContext: () => null,
-}));
+vi.mock("../../route-map-builder.js", async () =>
+  (await import("./handler-mock-factories.js")).routeMapBuilderMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/server", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/client", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("../nonce.js", async () =>
+  (await import("./handler-mock-factories.js")).nonceMock(),
+);
+vi.mock("../manifest-init.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestInitMock(),
+);
+vi.mock("../../router/manifest.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestMock(),
+);
+vi.mock("../../router/middleware.js", async (importOriginal) =>
+  (await import("./handler-mock-factories.js")).middlewareMock(importOriginal),
+);
+vi.mock("../../cache/cache-scope.js", async () =>
+  (await import("./handler-mock-factories.js")).cacheScopeMock(),
+);
+vi.mock("../response-route-handler.js", async () =>
+  (await import("./handler-mock-factories.js")).responseRouteMock(),
+);
+vi.mock("../../router/telemetry.js", async () =>
+  (await import("./handler-mock-factories.js")).telemetryMock(),
+);
+vi.mock("../../router/router-context.js", async () =>
+  (await import("./handler-mock-factories.js")).routerContextMock(),
+);

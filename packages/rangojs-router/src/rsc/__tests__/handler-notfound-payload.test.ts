@@ -12,45 +12,40 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // Capture the payload passed to renderToReadableStream so we can inspect the
 // not-found payload metadata. The actual stream contents are irrelevant here.
 const renderToReadableStreamSpy = vi.fn();
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: (payload: unknown) => {
-    renderToReadableStreamSpy(payload);
-    return new ReadableStream();
-  },
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    renderToReadableStream: (payload: unknown) => {
+      renderToReadableStreamSpy(payload);
+      return new ReadableStream();
+    },
+    decodeReply: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(() => new Set()),
+    loadServerAction: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createFromReadableStream: vi.fn(),
+    encodeReply: vi.fn(),
+    createClientTemporaryReferenceSet: vi.fn(() => ({})),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
-// Manifest is always "available" so the handler does not short-circuit.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
-
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-vi.mock("../../router/telemetry.js", () => ({
-  resolveSink: () => null,
-  safeEmit: vi.fn(),
-}));
-
-vi.mock("../../router/router-context.js", () => ({
-  getRouterContext: () => null,
-}));
+vi.mock("../../route-map-builder.js", async () =>
+  (await import("./handler-mock-factories.js")).routeMapBuilderMock(),
+);
+vi.mock("../nonce.js", async () =>
+  (await import("./handler-mock-factories.js")).nonceMock(),
+);
+vi.mock("../manifest-init.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestInitMock(),
+);
+vi.mock("../../router/telemetry.js", async () =>
+  (await import("./handler-mock-factories.js")).telemetryMock(),
+);
+vi.mock("../../router/router-context.js", async () =>
+  (await import("./handler-mock-factories.js")).routerContextMock(),
+);
 
 import { createRSCHandler } from "../handler.js";
 import { RouteNotFoundError } from "../../errors.js";

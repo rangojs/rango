@@ -154,10 +154,20 @@ export interface SSRDependencies<TEnv = unknown> {
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
-   * Function to load bootstrap script content
-   * Typically: () => import.meta.viteRsc.loadBootstrapScriptContent("index")
+   * Function to load bootstrap script content.
+   * Required unless `getClientEntryUrl` is provided with `headScripts: "preinit"`.
+   * Custom SSR entries typically: `() => import.meta.viteRsc.loadBootstrapScriptContent("index")`
+   * (deprecated in `@vitejs/plugin-rsc` 0.5.33 in favor of `getClientEntryUrl`).
    */
-  loadBootstrapScriptContent: () => Promise<string>;
+  loadBootstrapScriptContent?: () => Promise<string>;
+
+  /**
+   * Client entry URL from `@vitejs/plugin-rsc/ssr` `getClientEntryUrl()`.
+   * Preferred when `headScripts` is `"preinit"`: Fizz receives `bootstrapModules`
+   * without the deprecated `loadBootstrapScriptContent` round-trip. Custom SSR
+   * entries can omit this and keep the inline bootstrap path.
+   */
+  getClientEntryUrl?: () => string;
 
   /**
    * Document script strategy; the generated virtual SSR entry threads the
@@ -438,36 +448,105 @@ interface ShellResumeOptions {
 const BOOTSTRAP_IMPORT_ONLY_RE =
   /^\s*import\(\s*(["'])([^"'\\]+)\1\s*\)\s*;?\s*$/;
 
+const MISSING_BOOTSTRAP_MSG =
+  "[ssr] Missing bootstrap dependency: provide loadBootstrapScriptContent(), " +
+  'or getClientEntryUrl with headScripts: "preinit".';
+
 /**
- * Prefer bootstrapModules over the inline import() bootstrap. When the content
- * is exactly `import("<entry-url>")`, hand Fizz the URL instead: React then
- * emits a `<link rel="modulepreload" fetchpriority="low">` hint in the head
- * plus the executing `<script type="module" src async>` at end of shell — the
- * entry fetch starts with the first flushed bytes instead of when the parser
- * reaches an opaque inline script that only reveals the URL once executed.
- * Fizz stamps the request nonce on both tags (the inline form needed that
- * too), and under PPR both land in the stored prelude; on resume React has
- * already cleared the bootstrap fields from the postponed state, so nothing
- * re-emits.
+ * Construction-time guard for {@link resolveBootstrap}: a handler whose deps
+ * can never produce a bootstrap must fail at startup, not 500 per request.
+ * getClientEntryUrl only counts under an explicit `headScripts: "preinit"` —
+ * any other headScripts keeps the inline path, so its presence alone is a
+ * misconfiguration worth flagging rather than silently ignoring.
  */
-function resolveBootstrapOptions(
-  content: string,
-  headScripts: SSRDependencies["headScripts"],
-): Pick<
+function assertBootstrapDeps(deps: SSRDependencies): void {
+  const preinit = deps.headScripts === "preinit";
+  if (deps.getClientEntryUrl && !preinit) {
+    console.warn(
+      '[ssr] getClientEntryUrl is ignored without headScripts: "preinit"; ' +
+        "the inline loadBootstrapScriptContent path is used instead.",
+    );
+  }
+  if (
+    !(preinit && deps.getClientEntryUrl) &&
+    !deps.loadBootstrapScriptContent
+  ) {
+    throw new Error(MISSING_BOOTSTRAP_MSG);
+  }
+}
+
+type BootstrapOptions = Pick<
   RenderToReadableStreamOptions,
   "bootstrapScriptContent" | "bootstrapModules"
-> {
-  // Explicit opt-in only: undefined (a custom SSR entry that predates the
-  // option, which also never installed the preinit hook) keeps the inline
-  // bootstrap byte-for-byte — converting by default would break CSPs that
-  // allowlist the known inline import() via a script hash.
-  if (headScripts !== "preinit") {
-    return { bootstrapScriptContent: content };
+>;
+
+/**
+ * Resolve Fizz's bootstrap options from the deps.
+ *
+ * Prefer bootstrapModules over the inline import() bootstrap: with
+ * `headScripts: "preinit"`, getClientEntryUrl() (sync — nothing to race)
+ * short-circuits to bootstrapModules, and inline content that is exactly
+ * `import("<entry-url>")` converts to the URL. React then emits a
+ * `<link rel="modulepreload" fetchpriority="low">` hint in the head plus the
+ * executing `<script type="module" src async>` at end of shell — the entry
+ * fetch starts with the first flushed bytes instead of when the parser reaches
+ * an opaque inline script that only reveals the URL once executed. Fizz stamps
+ * the request nonce on both tags, and under PPR both land in the stored
+ * prelude; on resume React has already cleared the bootstrap fields from the
+ * postponed state, so nothing re-emits. The conversion is an explicit opt-in:
+ * undefined headScripts (a custom SSR entry that predates the option, which
+ * also never installed the preinit hook) keeps the inline bootstrap
+ * byte-for-byte — converting by default would break CSPs that allowlist the
+ * known inline import() via a script hash.
+ *
+ * With `deadline` (shell capture), the inline load races it: a load that never
+ * resolves within the deadline is the same bounded no-shell degrade as a shell
+ * that never goes quiet — resolves `null`, the caller's degrade sentinel
+ * (disjoint from the load's string). A load that REJECTS is a genuine error
+ * and still propagates. The no-op catch keeps a late rejection off the
+ * unhandledRejection path when the deadline already won; a rejection that
+ * lands first still propagates out.
+ */
+async function resolveBootstrap(
+  deps: SSRDependencies,
+): Promise<BootstrapOptions>;
+async function resolveBootstrap(
+  deps: SSRDependencies,
+  deadline: Promise<void>,
+): Promise<BootstrapOptions | null>;
+async function resolveBootstrap(
+  deps: SSRDependencies,
+  deadline?: Promise<void>,
+): Promise<BootstrapOptions | null> {
+  const preinit = deps.headScripts === "preinit";
+  if (preinit) {
+    // Truthy on purpose, and the ONLY predicate on the URL: an empty string is
+    // an unusable entry URL and falls through to the inline path.
+    const url = deps.getClientEntryUrl?.();
+    if (url) {
+      return { bootstrapModules: [url] };
+    }
   }
-  const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
-  return match
-    ? { bootstrapModules: [match[2]!] }
-    : { bootstrapScriptContent: content };
+  if (!deps.loadBootstrapScriptContent) {
+    throw new Error(MISSING_BOOTSTRAP_MSG);
+  }
+  let content: string;
+  if (deadline) {
+    const load = deps.loadBootstrapScriptContent();
+    load.catch(() => {});
+    const raced = await Promise.race([load, deadline.then(() => null)]);
+    if (raced === null) return null;
+    content = raced;
+  } else {
+    content = await deps.loadBootstrapScriptContent();
+  }
+  if (preinit) {
+    const match = BOOTSTRAP_IMPORT_ONLY_RE.exec(content);
+    return match
+      ? { bootstrapModules: [match[2]!] }
+      : { bootstrapScriptContent: content };
+  }
+  return { bootstrapScriptContent: content };
 }
 
 /**
@@ -476,10 +555,24 @@ function resolveBootstrapOptions(
  * @example
  * ```tsx
  * import { createSSRHandler } from "@rangojs/router/ssr";
- * import { createFromReadableStream } from "@rangojs/router/internal/deps/ssr";
+ * import {
+ *   createFromReadableStream,
+ *   getClientEntryUrl,
+ * } from "@rangojs/router/internal/deps/ssr";
  * import { renderToReadableStream } from "react-dom/server.edge";
  * import { injectRSCPayload } from "@rangojs/router/internal/deps/html-stream-server";
  *
+ * export const renderHTML = createSSRHandler({
+ *   createFromReadableStream,
+ *   renderToReadableStream,
+ *   injectRSCPayload,
+ *   getClientEntryUrl,
+ *   headScripts: "preinit", // getClientEntryUrl is only used under "preinit"
+ * });
+ * ```
+ *
+ * Custom SSR entries that still use the deprecated bootstrap helper:
+ * ```tsx
  * export const renderHTML = createSSRHandler({
  *   createFromReadableStream,
  *   renderToReadableStream,
@@ -494,9 +587,9 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     createFromReadableStream,
     renderToReadableStream,
     injectRSCPayload,
-    loadBootstrapScriptContent,
     onError,
   } = deps;
+  assertBootstrapDeps(deps);
 
   /**
    * Render RSC stream to HTML stream
@@ -541,8 +634,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         origin,
       });
 
-      // Get bootstrap script content
-      const bootstrapScriptContent = await loadBootstrapScriptContent();
+      const bootstrap = await resolveBootstrap(deps);
 
       // ssr:false auto-raise (see SSRDependencies.progressiveChunkSize).
       // Awaiting the payload here is latency-neutral: fizz cannot emit even
@@ -563,7 +655,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // isolate-global, the nonce per request).
       const htmlStream = await runWithPreinitNonce(nonce, () =>
         renderToReadableStream(<SsrRoot />, {
-          ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+          ...bootstrap,
           formState,
           nonce,
           ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
@@ -600,8 +692,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 export function createShellCaptureHandler<TEnv = unknown>(
   deps: SSRDependencies<TEnv>,
 ) {
-  const { createFromReadableStream, loadBootstrapScriptContent, prerender } =
-    deps;
+  const { createFromReadableStream, prerender } = deps;
   const onError = deps.onError;
 
   if (!prerender) {
@@ -610,6 +701,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
         "PPR shell capture requires the prerender export; wire it in the SSR virtual entry.",
     );
   }
+  assertBootstrapDeps(deps);
 
   /**
    * Prerender the shell and return the stored artifacts, or null when the
@@ -659,21 +751,10 @@ export function createShellCaptureHandler<TEnv = unknown>(
         origin: opts.origin,
       });
 
-      // Bootstrap load raced against the deadline. A load that never resolves
-      // within maxWaitMs is the same bounded no-shell degrade as a shell that
-      // never goes quiet: return null, do not hang. A load that REJECTS is a
-      // genuine error and still propagates (it is not the deadline). `null` is
-      // the deadline sentinel — disjoint from the load's `Promise<string>`, so
-      // the race narrows to `string | null` with no wrapper. The no-op catch
-      // keeps a late rejection off the unhandledRejection path when the deadline
-      // already won; a rejection that lands first still propagates out.
-      const load = loadBootstrapScriptContent();
-      load.catch(() => {});
-      const bootstrapScriptContent = await Promise.race([
-        load,
-        deadline.promise.then(() => null),
-      ]);
-      if (bootstrapScriptContent === null) {
+      // Bootstrap resolution raced against the deadline (see resolveBootstrap):
+      // null means the deadline won — the bounded no-shell degrade.
+      const bootstrap = await resolveBootstrap(deps, deadline.promise);
+      if (bootstrap === null) {
         return null;
       }
 
@@ -689,7 +770,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const abortReason = { rangoShellCaptureAbort: true };
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
-        ...resolveBootstrapOptions(bootstrapScriptContent, deps.headScripts),
+        ...bootstrap,
         // Explicit option only — the ssr:false auto-raise is live-SSR scoped
         // (RangoBaseOptions.progressiveChunkSize documents the contract); the
         // capture handler starts prerender without deserializing the payload,

@@ -11,7 +11,7 @@ packages:
 
 catalog:
   "@vitejs/plugin-react": ^6.0.0
-  "@vitejs/plugin-rsc": ^0.5.31
+  "@vitejs/plugin-rsc": ^0.5.34
   react: ^19.2.8
   react-dom: ^19.2.8
   "@types/react": ^19.2.7
@@ -66,9 +66,9 @@ minimumReleaseAge: 1440
 # cooldown window. The exact override above keeps installs from following a
 # freshly moved dist-tag.
 minimumReleaseAgeExclude:
-  # Reviewed releases: 0.5.30 (cache-hit server-reference preservation),
-  # 0.5.31 (#1310 pluggable server-function registration — the claims API).
-  - "@vitejs/plugin-rsc@0.5.31"
+  # Reviewed releases: 0.5.34 (getClientEntryUrl, split /rsc/server+/rsc/client,
+  # mixed use-cache/use-server directives, transform hoist metadata).
+  - "@vitejs/plugin-rsc@0.5.34"
   - react
   - react-dom
   - react-is

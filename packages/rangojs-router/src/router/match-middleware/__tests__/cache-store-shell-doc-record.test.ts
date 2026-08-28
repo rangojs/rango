@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 // needs a Flight runtime vitest lacks. Same JSON-based stand-in as
 // cache-scope.test.ts, mocked at the virtual-module seam so every importer
 // (cache-scope AND handle-snapshot) sees it.
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   return {
@@ -29,7 +29,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return JSON.parse(result + decoder.decode());
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { withCacheStore } from "../cache-store.js";
 import { runWithRouterContext } from "../../router-context.js";
