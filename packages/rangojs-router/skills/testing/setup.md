@@ -14,11 +14,11 @@ Real machinery: Vite transpiles `@rangojs/router`'s shipped TS source and resolv
 
 ### Functions
 
-| Function                    | Returns                                   | Use                                                                                                                                                                                                         |
-| --------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rangoTestConfig(opts?)`    | `{ alias, server: { deps: { inline } } }` | Recommended. Spread into the node/DOM project's `test` block. Bundles the resolve aliases AND `server.deps.inline`.                                                                                         |
-| `rangoTestAliases(opts?)`   | `TestAlias[]` (`{ find, replacement }[]`) | Lower-level. The bare `@rangojs/router` -> `index.rsc.ts` alias plus the `:version` / `@vitejs/plugin-rsc/rsc` stubs (and CF stubs under `preset:"cloudflare"`). Used in the rsc project's `resolve.alias`. |
-| `rangoUseClientTransform()` | a Vite plugin (`{ name, transform }`)     | Add to the rsc project `plugins`. Applies the `"use client"` transform so `renderServerTree` auto-discovers client islands from the server tree's imports.                                                  |
+| Function                    | Returns                                   | Use                                                                                                                                                                                                                                        |
+| --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rangoTestConfig(opts?)`    | `{ alias, server: { deps: { inline } } }` | Recommended. Spread into the node/DOM project's `test` block. Bundles the resolve aliases AND `server.deps.inline`.                                                                                                                        |
+| `rangoTestAliases(opts?)`   | `TestAlias[]` (`{ find, replacement }[]`) | Lower-level. The bare `@rangojs/router` -> `index.rsc.ts` alias plus the `:version` / `@vitejs/plugin-rsc/rsc` (`/rsc/server`, `/rsc/client`) stubs (and CF stubs under `preset:"cloudflare"`). Used in the rsc project's `resolve.alias`. |
+| `rangoUseClientTransform()` | a Vite plugin (`{ name, transform }`)     | Add to the rsc project `plugins`. Applies the `"use client"` transform so `renderServerTree` auto-discovers client islands from the server tree's imports.                                                                                 |
 
 ### Returns — `RangoTestConfig` (from `rangoTestConfig`)
 
@@ -112,7 +112,7 @@ Scripts:
 - The rsc project needs BOTH `resolve.conditions: ["react-server"]` AND the bare `@rangojs/router` -> `index.rsc.ts` alias from `rangoTestAliases({ preset })`. `resolve.conditions` alone is not reliably applied to bare-package export resolution; without the alias a handler/component reading `getRequestContext()` / `cookies()` resolves the throwing out-of-react-server stub (symptom: `renderHandler` returns `tree: undefined`). `renderToFlightString` / `renderServerTree` now self-diagnose this exact misconfiguration — they reject with an actionable message naming `rangoTestAliases`, rather than surfacing the opaque stub error.
 - `NODE_ENV` must be `"production"` in the rsc project. Dev `NODE_ENV` crashes the bare worker (jsxDEV owner-stack machinery uninitialized) and emits volatile debug rows that defeat stable Flight snapshots.
 - The forked rsc worker (`pool: "forks"`) must force the condition via `execArgv: ["--conditions=react-server"]`, or React throws "the react-server condition must be enabled".
-- The `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` virtuals must be stubbed; the preset does it. A bare router import without stubbing throws.
+- The `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` (`/rsc/server`, `/rsc/client`) virtuals must be stubbed; the preset does it. A bare router import without stubbing throws.
 - The rango fragment goes under `test` (`test.alias` + `test.server.deps.inline`, both returned by `rangoTestConfig`), NOT under top-level `resolve`.
 - Wire `rangoUseClientTransform()` into the rsc project `plugins` so islands auto-discover from the server tree imports (see `./server-tree.md`); without it, register islands explicitly with `clientComponents`.
 

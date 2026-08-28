@@ -19,7 +19,7 @@
 import {
   encodeReply,
   createClientTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/rsc";
+} from "../deps/rsc-client.js";
 import {
   getRequestContext,
   runWithRequestContext,

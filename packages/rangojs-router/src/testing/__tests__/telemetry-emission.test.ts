@@ -5,15 +5,19 @@ import { describe, it, expect } from "vitest";
 // node/vitest. dispatch() itself never renders RSC, so a stub is sufficient
 // (same recipe as dispatch.test.ts).
 import { vi } from "vitest";
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
+function pluginRscMock() {
+  return {
+    createFromReadableStream: vi.fn(),
+    renderToReadableStream: vi.fn(),
+    loadServerAction: vi.fn(),
+    decodeReply: vi.fn(),
+    decodeAction: vi.fn(),
+    decodeFormState: vi.fn(),
+    createTemporaryReferenceSet: vi.fn(),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { dispatch } from "../dispatch.js";
 import { createRouter } from "../../router.js";

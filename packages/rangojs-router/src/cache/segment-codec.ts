@@ -15,8 +15,8 @@ import { segmentFragment } from "../segment-fragments.js";
 import {
   renderToReadableStream,
   createTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/rsc";
-import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
+} from "../deps/rsc.js";
+import { createFromReadableStream } from "../deps/rsc-client.js";
 
 // Preserve embedded server references on a cache/prerender HIT so they
 // re-serialize to the client instead of resolving to a raw function React

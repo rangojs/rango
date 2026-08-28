@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Dependencies
+
+- `@vitejs/plugin-rsc` `^0.5.34`. Generated SSR entries use
+  `getClientEntryUrl()` for `headScripts: "preinit"` instead of the
+  deprecated `loadBootstrapScriptContent`. RSC runtime imports split onto
+  `@vitejs/plugin-rsc/rsc/server` and `/rsc/client`. File-level `"use cache"`
+  leaves mixed `"use server"` exports for plugin-rsc — both the hoisted
+  `$$hoist_*` helpers and the `registerServerReference` rebinds of the
+  original export names.
+- 0.5.34 is a hard floor: `@vitejs/plugin-rsc` is a singleton peer, and pnpm
+  resolves an in-range older install (0.5.31-0.5.33) with only a warning —
+  such an install then fails module linking at boot (`/rsc/server`,
+  `/rsc/client`, and `ssr`'s `getClientEntryUrl` do not exist there). Upgrade
+  the peer together with the router.
+- `SSRDependencies.loadBootstrapScriptContent` is now optional (a
+  `headScripts: "preinit"` entry uses `getClientEntryUrl` instead);
+  `createSSRHandler`/`createShellCaptureHandler` throw at construction when
+  neither bootstrap dependency is usable, instead of per-request.
+
 ## 0.11.0 (2026-08-18)
 
 Client `revalidate()` now receives the same callable `isAction(...refs)`

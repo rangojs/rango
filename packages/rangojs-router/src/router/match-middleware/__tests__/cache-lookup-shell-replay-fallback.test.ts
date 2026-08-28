@@ -23,7 +23,7 @@ vi.mock("../../../prerender/store.js", () => ({
 // lookupRoute deserializes cached segments through segment-codec; same
 // JSON-based Flight stand-in as cache-scope.test.ts, mocked at the
 // virtual-module seam.
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   return {
@@ -48,7 +48,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return JSON.parse(result + decoder.decode());
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { withCacheLookup } from "../cache-lookup.js";
 import { runWithRouterContext } from "../../router-context.js";

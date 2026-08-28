@@ -160,6 +160,14 @@ describe("createShellCaptureHandler", () => {
     ).toThrow(/prerender/);
   });
 
+  it("throws at creation when neither bootstrap dep is usable", () => {
+    expect(() =>
+      createShellCaptureHandler(
+        makeDeps({ loadBootstrapScriptContent: undefined }),
+      ),
+    ).toThrow(/Missing bootstrap dependency/);
+  });
+
   it("(a) returns a prelude with shell + fallback + bootstrap, not the hole; postponed round-trips", async () => {
     const result = await captureShell(makeDeps(), "cap");
     expect(result).not.toBeNull();

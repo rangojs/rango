@@ -18,12 +18,16 @@ import { NOCACHE_SYMBOL } from "../taint.js";
 
 // encodeReply serializes args so JSON-safe args still exercise the wrapper; the
 // fast-path key builder handles them without calling this in practice.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn((args: unknown[]) =>
-    Promise.resolve(JSON.stringify(args)),
-  ),
-  createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn((args: unknown[]) =>
+      Promise.resolve(JSON.stringify(args)),
+    ),
+    createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({

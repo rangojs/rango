@@ -63,18 +63,20 @@ function emitProgressiveChunkSize(value: number): string {
 /**
  * Generate the virtual SSR entry. `headScripts` mirrors the rango() plugin
  * option: "preinit" (default) installs the client-reference preinit hook and
- * lets the SSR handlers convert the bootstrap to `bootstrapModules`;
- * "preload" omits the hook and pins the handlers to the hint-only strategy.
+ * threads `getClientEntryUrl` so Fizz emits `bootstrapModules`;
+ * "preload" omits the hook and uses the deprecated inline
+ * `loadBootstrapScriptContent` bootstrap.
  */
 export function getVirtualEntrySSR(
   headScripts: HeadScriptsOption = "preinit",
   progressiveChunkSize?: number,
 ): string {
   const preinit = headScripts !== "preload";
-  // The preload variant drops exactly three preinit-only lines, all built
-  // here so the template below stays a single unconditional shape.
+  // The preload variant drops the preinit-only imports/install and swaps the
+  // bootstrap dep, all built here so the template below stays a single
+  // unconditional shape.
   const depsImportNames = preinit
-    ? "createFromReadableStream,\n  setOnClientReference,"
+    ? "createFromReadableStream,\n  setOnClientReference,\n  getClientEntryUrl,"
     : "createFromReadableStream,";
   const ssrImportNames = preinit ? "\n  installClientReferencePreinit," : "";
   const install = preinit
@@ -85,6 +87,10 @@ export function getVirtualEntrySSR(
 installClientReferencePreinit(setOnClientReference);
 `
     : "";
+  const bootstrapDep = preinit
+    ? "getClientEntryUrl,"
+    : `loadBootstrapScriptContent: () =>
+    import.meta.viteRsc.loadBootstrapScriptContent("index"),`;
   const hs = JSON.stringify(headScripts);
   // Emitted into all three handlers: live SSR and shell capture consume it
   // directly; the resume handler receives it for dep-shape uniformity (resume()
@@ -114,8 +120,7 @@ export const renderHTML = createSSRHandler({
   renderToReadableStream,
   injectRSCPayload,
   headScripts: ${hs},${pcs}
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  ${bootstrapDep}
 });
 
 export const captureShellHTML = createShellCaptureHandler({
@@ -125,8 +130,7 @@ export const captureShellHTML = createShellCaptureHandler({
   prerender,
   resume,
   headScripts: ${hs},${pcs}
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  ${bootstrapDep}
 });
 
 export const resumeShellHTML = createShellResumeHandler({
@@ -136,8 +140,7 @@ export const resumeShellHTML = createShellResumeHandler({
   prerender,
   resume,
   headScripts: ${hs},${pcs}
-  loadBootstrapScriptContent: () =>
-    import.meta.viteRsc.loadBootstrapScriptContent("index"),
+  ${bootstrapDep}
 });
 `.trim();
 }

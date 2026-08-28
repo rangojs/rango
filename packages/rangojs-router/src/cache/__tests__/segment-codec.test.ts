@@ -24,11 +24,15 @@ const {
   };
 });
 
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: vi.fn(),
-  createTemporaryReferenceSet: createTemporaryReferenceSetSpy,
-  createFromReadableStream: createFromReadableStreamSpy,
-}));
+function pluginRscMock() {
+  return {
+    renderToReadableStream: vi.fn(),
+    createTemporaryReferenceSet: createTemporaryReferenceSetSpy,
+    createFromReadableStream: createFromReadableStreamSpy,
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import {
   deserializeResult,

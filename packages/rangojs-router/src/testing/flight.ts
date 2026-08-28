@@ -7,14 +7,15 @@
  * the same react-server-dom serializer the router uses at runtime. It runs in
  * plain node (no Vite, no browser), but ONLY under the `react-server` export
  * condition. The serializer is the VENDORED build shipped with
- * @vitejs/plugin-rsc — the public `@vitejs/plugin-rsc/rsc` entry top-level
- * imports Vite virtual modules and is not usable outside a Vite build.
+ * @vitejs/plugin-rsc — the public `@vitejs/plugin-rsc/rsc/server` entry
+ * top-level imports Vite virtual modules and is not usable outside a Vite
+ * build.
  *
  * Run the example/tests for this module via the dedicated rsc vitest project
  * (vitest.rsc.config.ts), which forces `--conditions=react-server` on the
  * worker. The main vitest project must NOT use that condition (it would flip
  * React to the no-hooks server build and break the ~50 tests that mock
- * @vitejs/plugin-rsc/rsc).
+ * @vitejs/plugin-rsc/rsc/server).
  *
  * Scope / limitations (v1):
  * - Server-only / leaf trees. A tree containing a CLIENT component emits an

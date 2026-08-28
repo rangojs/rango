@@ -18,12 +18,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { cookies, headers } from "../../server/cookie-store.js";
 
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn((args: unknown[]) =>
-    Promise.resolve(JSON.stringify(args)),
-  ),
-  createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
-}));
+// cache-runtime.ts imports both @vitejs/plugin-rsc/rsc/server and /rsc/client.
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn((args: unknown[]) =>
+      Promise.resolve(JSON.stringify(args)),
+    ),
+    createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({

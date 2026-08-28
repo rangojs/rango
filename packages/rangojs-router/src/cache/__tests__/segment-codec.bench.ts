@@ -3,7 +3,7 @@ import type { ResolvedSegment } from "../../types.js";
 
 // Mock the RSC module with lightweight JSON-based encode/decode
 // so the benchmark measures parallelization overhead, not RSC runtime cost.
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -33,7 +33,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return JSON.parse(result);
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 const { serializeSegments, deserializeSegments } =
   await import("../segment-codec.js");

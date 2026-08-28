@@ -21,10 +21,14 @@ import { compileSearchParamsFilter } from "../search-params-filter.js";
 const encodeReply = vi.fn(async (args: unknown[], _opts?: unknown) =>
   JSON.stringify(args),
 );
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: (args: unknown[], opts: unknown) => encodeReply(args, opts),
-  createClientTemporaryReferenceSet: vi.fn(() => new Set()),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: (args: unknown[], opts: unknown) => encodeReply(args, opts),
+    createClientTemporaryReferenceSet: vi.fn(() => new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 vi.mock("../segment-codec.js", () => ({
   serializeResult: vi.fn(async (v: any) => JSON.stringify(v)),

@@ -100,4 +100,109 @@ describe("use-cache-transform: file-level non-function exports", () => {
 
     expect(result).toBeUndefined();
   });
+
+  it("skips inline 'use server' exports in a file-level 'use cache' module", async () => {
+    const plugin = initPlugin();
+
+    const code = `"use cache";
+export async function getData() { return 42; }
+export async function save() {
+  "use server";
+  return "saved";
+}
+`;
+
+    const result = await plugin.transform.call(
+      { environment: rscEnv },
+      code,
+      "/project/src/mixed.ts",
+    );
+
+    expect(result).toBeDefined();
+    expect(result.code).toContain("__rango_registerCachedFunction");
+    expect(result.code).toMatch(/__rango_registerCachedFunction\(\s*getData/);
+    expect(result.code).not.toMatch(/__rango_registerCachedFunction\(\s*save/);
+  });
+
+  it("skips the registerServerReference rebind plugin-rsc leaves for a hoisted 'use server' export", async () => {
+    // In the real RSC pipeline plugin-rsc's use-server transform (normal
+    // enforce) runs BEFORE this plugin (enforce: "post"), so the mixed module
+    // arrives post-hoist: the inline "use server" body becomes a $$hoist_*
+    // export and the original name is rebound to a registerServerReference
+    // call expression. Run the real transform to pin that shape.
+    const { parseAstAsync } = await import("vite");
+    const { transformServerActionServer } =
+      await import("@vitejs/plugin-rsc/transforms");
+    const src = `"use cache";
+export async function getData() { return 42; }
+export async function save() {
+  "use server";
+  return "saved";
+}
+`;
+    const ast = await parseAstAsync(src);
+    const hoistResult = transformServerActionServer(src, ast, {
+      runtime: (value: string, name: string) =>
+        `$$ReactServer.registerServerReference(${value}, "testRef", ${JSON.stringify(name)})`,
+      rejectNonAsyncFunction: true,
+    });
+    expect(hoistResult.output.hasChanged()).toBe(true);
+    const hoisted = hoistResult.output.toString();
+    expect(hoisted).toContain("$$hoist_0_save");
+
+    const plugin = initPlugin();
+    const result = await plugin.transform.call(
+      { environment: rscEnv, warn: () => {} },
+      hoisted,
+      "/project/src/mixed-post-hoist.ts",
+    );
+
+    expect(result).toBeDefined();
+    const wraps = result.code.match(/__rango_registerCachedFunction\(/g) ?? [];
+    expect(wraps).toHaveLength(1);
+    expect(result.code).toMatch(/__rango_registerCachedFunction\(\s*getData/);
+  });
+
+  it("hoists inline 'use cache' inside a file-level 'use server' module", async () => {
+    const plugin = initPlugin();
+
+    const code = `"use server";
+export async function save() { return "saved"; }
+export async function getCached() {
+  "use cache";
+  return 42;
+}
+`;
+
+    const result = await plugin.transform.call(
+      { environment: rscEnv, warn: () => {} },
+      code,
+      "/project/src/server-mixed.ts",
+    );
+
+    expect(result).toBeDefined();
+    expect(result.code).toContain("__rango_registerCachedFunction");
+    expect(result.code).toContain("use cache");
+  });
+
+  it("hoists an inline 'use cache' method", async () => {
+    const plugin = initPlugin();
+
+    const code = `export const api = {
+  async getData() {
+    "use cache";
+    return 42;
+  }
+};
+`;
+
+    const result = await plugin.transform.call(
+      { environment: rscEnv, warn: () => {} },
+      code,
+      "/project/src/methods.ts",
+    );
+
+    expect(result).toBeDefined();
+    expect(result.code).toContain("__rango_registerCachedFunction");
+  });
 });

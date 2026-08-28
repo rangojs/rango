@@ -14,12 +14,16 @@ import { NOCACHE_SYMBOL } from "../taint.js";
 
 // Mock @vitejs/plugin-rsc/rsc (virtual module, not resolvable in vitest)
 // encodeReply serializes args so different inputs produce different cache keys.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn((args: unknown[]) =>
-    Promise.resolve(JSON.stringify(args)),
-  ),
-  createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
-}));
+function pluginRscMock() {
+  return {
+    encodeReply: vi.fn((args: unknown[]) =>
+      Promise.resolve(JSON.stringify(args)),
+    ),
+    createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
+  };
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Mock request context. runWithRequestContext is exercised by the background
 // revalidation path (it re-establishes the request-context ALS so the cached

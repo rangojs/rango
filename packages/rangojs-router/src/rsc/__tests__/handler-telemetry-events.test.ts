@@ -13,61 +13,32 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-// Mock route-map-builder so manifest is always available.
-vi.mock("../../route-map-builder.js", () => ({
-  hasCachedManifest: () => true,
-  waitForManifestReady: () => null,
-  getRouterManifest: () => ({ home: "/" }),
-  getRouterTrie: () => null,
-  getGlobalRouteMap: () => ({ home: "/" }),
-  isRouteRootScoped: () => false,
-}));
-
-// Mock @vitejs/plugin-rsc/rsc with minimal stubs
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  renderToReadableStream: () => new ReadableStream(),
-  decodeReply: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(() => new Set()),
-  loadServerAction: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-}));
-
-vi.mock("../nonce.js", () => ({
-  generateNonce: () => undefined,
-  nonce: Symbol("nonce"),
-}));
-
-vi.mock("../manifest-init.js", () => ({
-  buildRouterTrieFromUrlpatterns: vi.fn(),
-}));
-
-// Mock dependencies used by classifyRequest → resolveRoute. loadManifest
-// defaults to a response route (responseType: "json") for case A; case B
-// overrides it per-call with mockResolvedValueOnce to a plain render route.
-vi.mock("../../router/manifest.js", () => ({
-  loadManifest: vi.fn(async () => ({
-    type: "route",
-    shortCode: "R0",
-    parent: null,
-    handler: vi.fn(),
-    responseType: "json",
-  })),
-  clearManifestCache: vi.fn(),
-}));
-
-vi.mock("../../router/middleware.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../router/middleware.js")>();
-  return {
-    ...actual,
-    collectRouteMiddleware: vi.fn(() => []),
-  };
-});
-
-vi.mock("../../cache/cache-scope.js", () => ({
-  createCacheScope: vi.fn(() => null),
-}));
+vi.mock("../../route-map-builder.js", async () =>
+  (await import("./handler-mock-factories.js")).routeMapBuilderMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/server", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/client", async () =>
+  (await import("./handler-mock-factories.js")).pluginRscMock(),
+);
+vi.mock("../nonce.js", async () =>
+  (await import("./handler-mock-factories.js")).nonceMock(),
+);
+vi.mock("../manifest-init.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestInitMock(),
+);
+// loadManifest defaults to a response route (responseType: "json") for case A;
+// case B overrides it per-call with mockResolvedValueOnce to a render route.
+vi.mock("../../router/manifest.js", async () =>
+  (await import("./handler-mock-factories.js")).manifestMock(),
+);
+vi.mock("../../router/middleware.js", async (importOriginal) =>
+  (await import("./handler-mock-factories.js")).middlewareMock(importOriginal),
+);
+vi.mock("../../cache/cache-scope.js", async () =>
+  (await import("./handler-mock-factories.js")).cacheScopeMock(),
+);
 
 // Never resolves — forces the render-start timeout to fire in case A.
 vi.mock("../response-route-handler.js", () => ({

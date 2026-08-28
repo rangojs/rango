@@ -150,6 +150,68 @@ describe("bootstrapModules conversion (resolveBootstrapOptions)", () => {
     );
     expect(opts.bootstrapModules).toBeUndefined();
   });
+
+  it("prefers getClientEntryUrl over loadBootstrapScriptContent on preinit", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps(
+      'import("/assets/index-abc123.js")',
+    );
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+      bootstrapScriptContent?: string;
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/from-url.js"]);
+    expect(opts.bootstrapScriptContent).toBeUndefined();
+    expect(deps.loadBootstrapScriptContent).not.toHaveBeenCalled();
+  });
+
+  it("preinit + getClientEntryUrl alone renders without loadBootstrapScriptContent", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps("");
+    delete deps.loadBootstrapScriptContent;
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/from-url.js"]);
+  });
+
+  it("an empty getClientEntryUrl() falls through to the inline bootstrap", async () => {
+    const { deps, renderToReadableStream } = renderSpyDeps(
+      'import("/assets/index-abc123.js")',
+    );
+    deps.headScripts = "preinit";
+    deps.getClientEntryUrl = () => "";
+    await createSSRHandler(deps)(createMockRscStream());
+    const opts = renderToReadableStream.mock.calls[0]![1] as {
+      bootstrapModules?: string[];
+      bootstrapScriptContent?: string;
+    };
+    expect(opts.bootstrapModules).toEqual(["/assets/index-abc123.js"]);
+    expect(deps.loadBootstrapScriptContent).toHaveBeenCalled();
+  });
+
+  it("throws at construction when neither bootstrap dep is usable", () => {
+    const { deps } = renderSpyDeps("");
+    delete deps.loadBootstrapScriptContent;
+    expect(() => createSSRHandler(deps)).toThrow(
+      /Missing bootstrap dependency/,
+    );
+    // getClientEntryUrl without preinit cannot substitute for the inline dep;
+    // its presence is warned about, not silently ignored.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.getClientEntryUrl = () => "/assets/from-url.js";
+    expect(() => createSSRHandler(deps)).toThrow(
+      /Missing bootstrap dependency/,
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("getClientEntryUrl is ignored"),
+    );
+    warnSpy.mockRestore();
+  });
 });
 
 describe("installClientReferencePreinit (real fizz render)", () => {

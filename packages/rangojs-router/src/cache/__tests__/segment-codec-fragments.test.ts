@@ -23,7 +23,9 @@ import {
   expandSegmentFragments,
 } from "../../segment-fragments.js";
 
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+// The module under test imports from both @vitejs/plugin-rsc/rsc/server and
+// /rsc/client.
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   return {
@@ -49,7 +51,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return JSON.parse(result);
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 const { serializeSegments, deserializeSegments, fragmentSegments } =
   await import("../segment-codec.js");

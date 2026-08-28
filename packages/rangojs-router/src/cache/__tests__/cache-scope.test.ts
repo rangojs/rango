@@ -7,7 +7,9 @@ import type { SerializedSegmentData } from "../types.js";
 // require a full React Server Components runtime which is not available in vitest.
 // We replace them with simple JSON-based encode/decode so we can test the
 // serialize/deserialize logic without the RSC dependency.
-vi.mock("@vitejs/plugin-rsc/rsc", () => {
+// The module under test imports from both @vitejs/plugin-rsc/rsc/server and
+// /rsc/client.
+function pluginRscMock() {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -46,7 +48,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
       return JSON.parse(result);
     },
   };
-});
+}
+vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
+vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Import AFTER mocks are registered so vitest applies them.
 const { serializeSegments, deserializeSegments, serializeResult } =
@@ -256,7 +260,7 @@ describe("serializeSegments / deserializeSegments", () => {
 
   describe("sentinel handling must bypass rscDeserialize", () => {
     it('should NOT call createFromReadableStream when encodedLoading is "null"', async () => {
-      const rscModule = await import("@vitejs/plugin-rsc/rsc");
+      const rscModule = await import("@vitejs/plugin-rsc/rsc/client");
       const createSpy = vi.fn(rscModule.createFromReadableStream);
 
       // Temporarily replace the module's export

@@ -23,12 +23,16 @@ describe("getVirtualEntrySSR headScripts wiring", () => {
       "installClientReferencePreinit(setOnClientReference)",
     );
     expect(entry).toContain('headScripts: "preinit"');
+    expect(entry).toContain("getClientEntryUrl");
+    expect(entry).not.toContain("loadBootstrapScriptContent");
   });
 
   it('"preload" omits the hook and pins the handlers to the hint strategy', () => {
     const entry = getVirtualEntrySSR("preload");
     expect(entry).not.toContain("installClientReferencePreinit");
     expect(entry).not.toContain("setOnClientReference");
+    expect(entry).not.toContain("getClientEntryUrl");
+    expect(entry).toContain("loadBootstrapScriptContent");
     expect(entry).toContain('headScripts: "preload"');
   });
 

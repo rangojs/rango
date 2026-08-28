@@ -5,7 +5,8 @@
  * vendored react-server-dom serializer, which requires the `react-server`
  * export condition. That condition flips React to its server build (no client
  * hooks), so it MUST live in its own project — the main vitest.config.ts must
- * NOT set it, or the ~50 tests that mock @vitejs/plugin-rsc/rsc would break.
+ * NOT set it, or the ~50 tests that mock @vitejs/plugin-rsc/rsc/server
+ * (and /rsc/client) would break.
  *
  * Run with:
  *   pnpm exec vitest run --config vitest.rsc.config.ts

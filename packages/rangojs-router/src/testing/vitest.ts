@@ -18,7 +18,8 @@
  *   `@rangojs/router` specifier to its react-server entry (real impls) while
  *   leaving React as the client build — which is exactly what this helper does.
  * - The build-only `@rangojs/router:version` virtual and `@vitejs/plugin-rsc/rsc`
- *   (whose real body imports unresolvable Vite virtuals) are stubbed.
+ *   plus `/rsc/server`, `/rsc/client` (whose real body imports unresolvable
+ *   Vite virtuals) are stubbed.
  * - Cloudflare apps additionally import the `cloudflare:workers` /
  *   `cloudflare:email` runtime virtuals; pass `{ preset: "cloudflare" }` to stub them.
  *
@@ -126,7 +127,7 @@ export function rangoTestAliases(
       replacement: here("src/testing/vitest-stubs/version.ts"),
     },
     {
-      find: /^@vitejs\/plugin-rsc\/rsc$/,
+      find: /^@vitejs\/plugin-rsc\/rsc(\/(server|client))?$/,
       replacement: here("src/testing/vitest-stubs/plugin-rsc.ts"),
     },
   ];
