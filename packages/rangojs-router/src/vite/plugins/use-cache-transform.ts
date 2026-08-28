@@ -90,6 +90,13 @@ export function useCacheTransform(): Plugin {
           return;
         }
 
+        // plugin-rsc 0.5.34 `matchDirective` does `stmt.directive.match(...)`
+        // after `"directive" in node`. Vite/oxc parseAst now emits
+        // `directive: null` on ordinary ExpressionStatements, so a file that
+        // mixes a `"use cache"` function with a sibling handler whose first
+        // statement is an expression throws and the wrap is dropped.
+        stripNullDirectiveFields(ast);
+
         const filePath = normalizePath(path.relative(projectRoot, id));
         const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
 
@@ -260,6 +267,21 @@ function transformFunctionLevelUseCache(
   } catch {
     // Transform failed (e.g., syntax not supported), skip
     return;
+  }
+}
+
+function stripNullDirectiveFields(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  const rec = node as Record<string, unknown>;
+  if (rec.type === "ExpressionStatement" && typeof rec.directive !== "string") {
+    delete rec.directive;
+  }
+  for (const value of Object.values(rec)) {
+    if (Array.isArray(value)) {
+      for (const item of value) stripNullDirectiveFields(item);
+    } else if (value && typeof value === "object" && "type" in value) {
+      stripNullDirectiveFields(value);
+    }
   }
 }
 

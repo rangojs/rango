@@ -185,6 +185,32 @@ export async function getCached() {
     expect(result.code).toContain("use cache");
   });
 
+  it("hoists inline 'use cache' next to a sibling function that starts with an expression", async () => {
+    // plugin-rsc 0.5.34 matchDirective throws on `directive: null` (Vite/oxc
+    // parseAst) when walking a sibling handler after a successful hoist.
+    const plugin = initPlugin();
+
+    const code = `async function getTaggedItem(id) {
+  "use cache";
+  return { ts: Date.now(), id };
+}
+export async function other(ctx) {
+  await Promise.resolve();
+  return getTaggedItem(ctx.id);
+}
+`;
+
+    const result = await plugin.transform.call(
+      { environment: rscEnv, warn: () => {} },
+      code,
+      "/project/src/cache-tag-like.ts",
+    );
+
+    expect(result).toBeDefined();
+    expect(result.code).toContain("__rango_registerCachedFunction");
+    expect(result.code).toContain("$$hoist_0_getTaggedItem");
+  });
+
   it("hoists an inline 'use cache' method", async () => {
     const plugin = initPlugin();
 

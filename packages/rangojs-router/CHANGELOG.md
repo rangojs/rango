@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- Inline `"use cache"` hoist against `@vitejs/plugin-rsc` 0.5.34: strip
+  `directive: null` fields Vite/oxc now emit on ordinary
+  ExpressionStatements before calling `transformHoistInlineDirective`.
+  0.5.34's `matchDirective` does `stmt.directive.match(...)` after
+  `"directive" in node`, so a file that mixes a cached function with a
+  sibling handler whose first statement is an expression threw and the
+  wrap was dropped (cache-tag / inline-handler e2e never hit).
+
 ### Dependencies
 
 - `@vitejs/plugin-rsc` `^0.5.34`. Generated SSR entries use
