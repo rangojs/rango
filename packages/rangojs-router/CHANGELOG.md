@@ -1,35 +1,41 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 (2026-08-28)
 
-### Fixed
+Adopts `@vitejs/plugin-rsc` 0.5.34 (`getClientEntryUrl`, split `/rsc/server`
+and `/rsc/client` runtimes) and restores file-level `"use cache"` wrap when
+Vite/oxc emit `directive: null` on a sibling handler. 0.5.34 is a hard floor
+— upgrade the peer with the router.
 
-- Inline `"use cache"` hoist against `@vitejs/plugin-rsc` 0.5.34: strip
-  `directive: null` fields Vite/oxc now emit on ordinary
-  ExpressionStatements before calling `transformHoistInlineDirective`.
-  0.5.34's `matchDirective` does `stmt.directive.match(...)` after
-  `"directive" in node`, so a file that mixes a cached function with a
-  sibling handler whose first statement is an expression threw and the
-  wrap was dropped (cache-tag / inline-handler e2e never hit).
+### Fixed: hoist `"use cache"` when sibling handlers have `directive: null` ([#836](https://github.com/rangojs/rango/pull/836))
 
-### Dependencies
+Inline `"use cache"` hoist against `@vitejs/plugin-rsc` 0.5.34: strip
+`directive: null` fields Vite/oxc now emit on ordinary ExpressionStatements
+before calling `transformHoistInlineDirective`. 0.5.34's `matchDirective`
+does `stmt.directive.match(...)` after `"directive" in node`, so a file that
+mixes a cached function with a sibling handler whose first statement is an
+expression threw and the wrap was dropped (cache-tag / inline-handler e2e
+never hit).
 
-- `@vitejs/plugin-rsc` `^0.5.34`. Generated SSR entries use
-  `getClientEntryUrl()` for `headScripts: "preinit"` instead of the
-  deprecated `loadBootstrapScriptContent`. RSC runtime imports split onto
-  `@vitejs/plugin-rsc/rsc/server` and `/rsc/client`. File-level `"use cache"`
-  leaves mixed `"use server"` exports for plugin-rsc — both the hoisted
-  `$$hoist_*` helpers and the `registerServerReference` rebinds of the
-  original export names.
-- 0.5.34 is a hard floor: `@vitejs/plugin-rsc` is a singleton peer, and pnpm
-  resolves an in-range older install (0.5.31-0.5.33) with only a warning —
-  such an install then fails module linking at boot (`/rsc/server`,
-  `/rsc/client`, and `ssr`'s `getClientEntryUrl` do not exist there). Upgrade
-  the peer together with the router.
-- `SSRDependencies.loadBootstrapScriptContent` is now optional (a
-  `headScripts: "preinit"` entry uses `getClientEntryUrl` instead);
-  `createSSRHandler`/`createShellCaptureHandler` throw at construction when
-  neither bootstrap dependency is usable, instead of per-request.
+### Dependencies: `@vitejs/plugin-rsc` `^0.5.34` ([#836](https://github.com/rangojs/rango/pull/836))
+
+Generated SSR entries use `getClientEntryUrl()` for `headScripts: "preinit"`
+instead of the deprecated `loadBootstrapScriptContent`. RSC runtime imports
+split onto `@vitejs/plugin-rsc/rsc/server` and `/rsc/client`. File-level
+`"use cache"` leaves mixed `"use server"` exports for plugin-rsc — both the
+hoisted `$$hoist_*` helpers and the `registerServerReference` rebinds of the
+original export names.
+
+0.5.34 is a hard floor: `@vitejs/plugin-rsc` is a singleton peer, and pnpm
+resolves an in-range older install (0.5.31-0.5.33) with only a warning —
+such an install then fails module linking at boot (`/rsc/server`,
+`/rsc/client`, and `ssr`'s `getClientEntryUrl` do not exist there). Upgrade
+the peer together with the router.
+
+`SSRDependencies.loadBootstrapScriptContent` is now optional (a
+`headScripts: "preinit"` entry uses `getClientEntryUrl` instead);
+`createSSRHandler`/`createShellCaptureHandler` throw at construction when
+neither bootstrap dependency is usable, instead of per-request.
 
 ## 0.11.0 (2026-08-18)
 
