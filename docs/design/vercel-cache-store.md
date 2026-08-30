@@ -433,8 +433,9 @@ Shipped:
   runs once after all environments build, unlike `closeBundle` which fires
   per-env and twice for ssr). `RangoVercelOptions` / `VercelPresetOptions` are
   exported from `@rangojs/router/vite`. `srvx` is a router dependency;
-  `@vercel/functions` is an optional peer; esbuild is resolved from the app's
-  Vite install (no new heavy router dep).
+  `@vercel/functions` is an optional peer; the launcher is bundled with
+  rolldown (a production dependency of Vite 8, resolved through the app's
+  vite install — no esbuild, no new router dep).
 - **`examples/vercel-basic`**: a Rango app on `preset: "vercel"`;
   `scripts/smoke.mjs` serves the assembled function over `node:http` and asserts
   rendering + static serving + a segment-cache hit, without deploying.
