@@ -28,9 +28,11 @@
  *      type:module in scope the deployed (isolated) function loads them as
  *      CommonJS and fails on the first `import`.
  *
- * The launcher is bundled with srvx (the Web->Node streaming bridge, a
- * @rangojs/router dependency) and @vercel/functions (resolved from the app)
- * inlined, keeping the RSC bundle a runtime-relative external.
+ * The launcher is bundled with rolldown (Vite 8's bundler — a production
+ * dependency of `vite`, resolved through the app's vite install) so a
+ * standalone consumer does not need `esbuild`. srvx (the Web->Node streaming
+ * bridge, a @rangojs/router dependency) and @vercel/functions (resolved from
+ * the app) are inlined; the RSC bundle stays a runtime-relative external.
  *
  * Timing: this runs in the `buildApp` hook (order "post"), which fires once
  * after every environment has built, so dist/{client,rsc,ssr} all exist.
@@ -52,19 +54,30 @@ import type {
   VercelPresetOptions,
 } from "../plugin-types.js";
 
-// Minimal structural types for the esbuild API we use, resolved dynamically from
-// the app so @rangojs/router does not depend on esbuild's type package.
-interface EsbuildPluginBuild {
-  onResolve(
-    options: { filter: RegExp },
-    callback: () => { path: string; external: boolean },
-  ): void;
+// Minimal structural types for the rolldown API we use. Resolved dynamically
+// from the app's vite install so @rangojs/router does not depend on rolldown's
+// type package (same stance the previous esbuild path took).
+interface RolldownResolveResult {
+  id: string;
+  external?: boolean;
 }
-type EsbuildBuild = (options: Record<string, unknown>) => Promise<unknown>;
-interface EsbuildModule {
-  build?: EsbuildBuild;
-  default?: { build?: EsbuildBuild };
+interface RolldownBundle {
+  write: (output: {
+    file: string;
+    format: string;
+    exports: string;
+    codeSplitting?: boolean;
+  }) => Promise<unknown>;
+  close: () => Promise<void>;
 }
+interface RolldownModule {
+  rolldown?: (options: Record<string, unknown>) => Promise<RolldownBundle>;
+  default?: {
+    rolldown?: (options: Record<string, unknown>) => Promise<RolldownBundle>;
+  };
+}
+
+const VIRTUAL_LAUNCHER_ID = "\0rango-vercel-launcher";
 
 const LAUNCHER_SOURCE = `import { toNodeHandler } from "srvx/node";
 import { waitUntil } from "@vercel/functions";
@@ -85,6 +98,122 @@ const fetchHandler = (request) =>
 
 export default toNodeHandler(fetchHandler);
 `;
+
+/**
+ * Resolve rolldown through the app's vite install (rolldown is a production
+ * dependency of Vite 8, unlike esbuild which is only an optional peer). Fall
+ * back to the app root, then the plugin's own vite, so a hoisted or
+ * workspace copy still works. Issue #785: the previous "esbuild ships with
+ * Vite" path broke standalone consumers on Vite 8.
+ */
+export function resolveRolldownPath(root: string): string {
+  const appRequire = createRequire(join(root, "package.json"));
+  const rangoRequire = createRequire(import.meta.url);
+  const attempts: Array<() => string> = [
+    () => createRequire(appRequire.resolve("vite")).resolve("rolldown"),
+    () => appRequire.resolve("rolldown"),
+    () => createRequire(rangoRequire.resolve("vite")).resolve("rolldown"),
+    () => rangoRequire.resolve("rolldown"),
+  ];
+  for (const attempt of attempts) {
+    try {
+      return attempt();
+    } catch {
+      // Intentionally empty: try the next resolver.
+    }
+  }
+  throw new Error(
+    '[rango] preset "vercel" requires "rolldown" to bundle the function launcher. Vite 8 depends on it; reinstall dependencies.',
+  );
+}
+
+/**
+ * Bundle the Node launcher into `funcDir/index.mjs`: srvx + @vercel/functions
+ * inlined, `./rsc/index.js` left as a runtime-relative external.
+ */
+export async function bundleVercelLauncher(opts: {
+  root: string;
+  funcDir: string;
+  srvxNodePath: string;
+}): Promise<void> {
+  const { root, funcDir, srvxNodePath } = opts;
+  const appRequire = createRequire(join(root, "package.json"));
+  let vercelFunctionsPath: string;
+  try {
+    vercelFunctionsPath = appRequire.resolve("@vercel/functions");
+  } catch {
+    throw new Error(
+      '[rango] preset "vercel": could not resolve "@vercel/functions". Add it to your app dependencies (it also backs VercelCacheStore).',
+    );
+  }
+  let rolldownModule: RolldownModule;
+  try {
+    rolldownModule = (await import(
+      pathToFileURL(resolveRolldownPath(root)).href
+    )) as RolldownModule;
+  } catch {
+    throw new Error(
+      '[rango] preset "vercel" requires "rolldown" to bundle the function launcher. Vite 8 depends on it; reinstall dependencies.',
+    );
+  }
+  const rolldownFn =
+    rolldownModule.rolldown ?? rolldownModule.default?.rolldown;
+  if (typeof rolldownFn !== "function") {
+    throw new Error('[rango] preset "vercel": could not load rolldown().');
+  }
+
+  let bundle: RolldownBundle | undefined;
+  try {
+    bundle = await rolldownFn({
+      input: VIRTUAL_LAUNCHER_ID,
+      cwd: root,
+      platform: "node",
+      logLevel: "silent",
+      resolve: {
+        alias: {
+          "srvx/node": srvxNodePath,
+          "@vercel/functions": vercelFunctionsPath,
+        },
+      },
+      plugins: [
+        {
+          name: "rango-vercel-launcher",
+          resolveId(id: string): string | RolldownResolveResult | null {
+            if (id === VIRTUAL_LAUNCHER_ID) return VIRTUAL_LAUNCHER_ID;
+            if (id === "./rsc/index.js") {
+              return { id: "./rsc/index.js", external: true };
+            }
+            return null;
+          },
+          load(id: string): string | null {
+            if (id === VIRTUAL_LAUNCHER_ID) return LAUNCHER_SOURCE;
+            return null;
+          },
+        },
+      ],
+    });
+    await bundle.write({
+      file: join(funcDir, "index.mjs"),
+      format: "esm",
+      exports: "default",
+      // @vercel/functions (and srvx) may contain dynamic import(); the
+      // launcher must stay a single index.mjs — Vercel's handler field
+      // points at that one file.
+      codeSplitting: false,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/@vercel\/functions/.test(message)) {
+      throw new Error(
+        '[rango] preset "vercel": could not resolve "@vercel/functions". Add it to your app dependencies (it also backs VercelCacheStore).\n' +
+          message,
+      );
+    }
+    throw error;
+  } finally {
+    await bundle?.close();
+  }
+}
 
 /**
  * Reject a non-Node runtime for the vercel preset. The preset only emits a Node
@@ -237,7 +366,8 @@ async function assemble(
 
   // 3. Bundle the Node launcher. srvx (a @rangojs/router dependency) is aliased
   //    to its resolved path; @vercel/functions resolves from the app; the RSC
-  //    server bundle stays a runtime-relative external.
+  //    server bundle stays a runtime-relative external. Rolldown (Vite 8's
+  //    bundler) is resolved through the app's vite install — #785.
   const rangoRequire = createRequire(import.meta.url);
   let srvxNodePath: string;
   try {
@@ -247,79 +377,7 @@ async function assemble(
       '[rango] preset "vercel" requires "srvx" (a dependency of @rangojs/router). Reinstall dependencies.',
     );
   }
-
-  // esbuild ships with Vite, so we never add it as a @rangojs/router dependency.
-  // It is a DIRECT dependency of Vite but only a TRANSITIVE one from the app's
-  // view, so under strict pnpm it is NOT resolvable from the app root. Resolve it
-  // through Vite's module location (Vite is a direct app dependency, and esbuild
-  // is a direct dependency of Vite). Minimal structural types avoid coupling to
-  // esbuild's type package at compile time.
-  const appRequire = createRequire(join(root, "package.json"));
-  const resolveEsbuildPath = (): string => {
-    try {
-      const viteRequire = createRequire(appRequire.resolve("vite"));
-      return viteRequire.resolve("esbuild");
-    } catch {
-      // Intentionally empty: fall through to the app/rango fallbacks below.
-    }
-    try {
-      return appRequire.resolve("esbuild");
-    } catch {
-      // Intentionally empty: last resort is @rangojs/router's own resolver.
-    }
-    return rangoRequire.resolve("esbuild");
-  };
-  let esbuildModule: EsbuildModule;
-  try {
-    esbuildModule = (await import(
-      pathToFileURL(resolveEsbuildPath()).href
-    )) as EsbuildModule;
-  } catch {
-    throw new Error(
-      '[rango] preset "vercel" requires "esbuild" to bundle the function launcher. It ships with Vite; reinstall dependencies (or add esbuild to your app dependencies).',
-    );
-  }
-  const esbuildBuild = esbuildModule.build ?? esbuildModule.default?.build;
-  if (typeof esbuildBuild !== "function") {
-    throw new Error('[rango] preset "vercel": could not load esbuild.build.');
-  }
-
-  try {
-    await esbuildBuild({
-      stdin: {
-        contents: LAUNCHER_SOURCE,
-        resolveDir: root,
-        sourcefile: "func-entry.mjs",
-        loader: "js",
-      },
-      outfile: join(funcDir, "index.mjs"),
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      target: "node18",
-      alias: { "srvx/node": srvxNodePath },
-      plugins: [
-        {
-          name: "external-rsc-entry",
-          setup(b: EsbuildPluginBuild) {
-            b.onResolve({ filter: /^\.\/rsc\/index\.js$/ }, () => ({
-              path: "./rsc/index.js",
-              external: true,
-            }));
-          },
-        },
-      ],
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/@vercel\/functions/.test(message)) {
-      throw new Error(
-        '[rango] preset "vercel": could not resolve "@vercel/functions". Add it to your app dependencies (it also backs VercelCacheStore).\n' +
-          message,
-      );
-    }
-    throw error;
-  }
+  await bundleVercelLauncher({ root, funcDir, srvxNodePath });
 
   // 3b. Mark the function as ESM. The rsc/ssr bundles are .js ESM files with no
   //     package.json in scope on the deployed function (it is isolated at

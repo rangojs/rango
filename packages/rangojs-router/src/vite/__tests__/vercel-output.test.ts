@@ -1,10 +1,24 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   assertVercelNodeRuntime,
   assertValidVercelFunctionName,
   buildVercelVcConfig,
   buildVercelOutputConfig,
+  bundleVercelLauncher,
+  resolveRolldownPath,
 } from "../plugins/vercel-output.js";
+
+const testRequire = createRequire(import.meta.url);
 
 describe("assertVercelNodeRuntime", () => {
   it("accepts an omitted runtime (defaults to nodejs)", () => {
@@ -118,5 +132,85 @@ describe("buildVercelOutputConfig", () => {
       { handle: "filesystem" },
       { src: "/(.*)", dest: "/index" },
     ]);
+  });
+});
+
+describe("bundleVercelLauncher (issue #785)", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "rango-vercel-launcher-"));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function writeFakeVercelFunctions(): void {
+    const pkg = join(root, "node_modules", "@vercel", "functions");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({
+        name: "@vercel/functions",
+        type: "module",
+        exports: { ".": "./index.js" },
+      }),
+    );
+    writeFileSync(
+      join(pkg, "index.js"),
+      "export function waitUntil(p) { return p; }\n",
+    );
+  }
+
+  it("resolves rolldown through Vite even when the app does not depend on esbuild", () => {
+    const path = resolveRolldownPath(root);
+    expect(path).toMatch(/rolldown/);
+    expect(path).not.toMatch(/esbuild/);
+  });
+
+  it("inlines srvx and @vercel/functions and leaves ./rsc/index.js external", async () => {
+    writeFakeVercelFunctions();
+    const funcDir = join(root, ".vercel", "output", "functions", "index.func");
+    mkdirSync(funcDir, { recursive: true });
+    await bundleVercelLauncher({
+      root,
+      funcDir,
+      srvxNodePath: testRequire.resolve("srvx/node"),
+    });
+    const out = readFileSync(join(funcDir, "index.mjs"), "utf8");
+    expect(out).toMatch(/from\s*["']\.\/rsc\/index\.js["']/);
+    expect(out).not.toMatch(/from\s*["']@vercel\/functions["']/);
+    expect(out).not.toMatch(/\besbuild\b/);
+    expect(out).toMatch(/waitUntil/);
+    expect(out).toMatch(/toNodeHandler/);
+  });
+
+  it("rewrites a missing @vercel/functions resolve into a rango error", async () => {
+    // A broken local package shadows any hoisted copy so this is not a
+    // walk-up false negative under vitest (cwd is the router package).
+    const pkg = join(root, "node_modules", "@vercel", "functions");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(
+      join(pkg, "package.json"),
+      JSON.stringify({
+        name: "@vercel/functions",
+        type: "module",
+        exports: { ".": "./missing.js" },
+      }),
+    );
+    const funcDir = join(root, ".vercel", "output", "functions", "index.func");
+    mkdirSync(funcDir, { recursive: true });
+    await expect(
+      bundleVercelLauncher({
+        root,
+        funcDir,
+        srvxNodePath: testRequire.resolve("srvx/node"),
+      }),
+    ).rejects.toThrow(/could not resolve "@vercel\/functions"/);
   });
 });

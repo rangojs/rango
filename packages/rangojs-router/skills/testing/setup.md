@@ -114,7 +114,7 @@ Scripts:
 - The forked rsc worker (`pool: "forks"`) must force the condition via `execArgv: ["--conditions=react-server"]`, or React throws "the react-server condition must be enabled".
 - The `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` (`/rsc/server`, `/rsc/client`) virtuals must be stubbed; the preset does it. A bare router import without stubbing throws.
 - The rango fragment goes under `test` (`test.alias` + `test.server.deps.inline`, both returned by `rangoTestConfig`), NOT under top-level `resolve`.
-- Wire `rangoUseClientTransform()` into the rsc project `plugins` so islands auto-discover from the server tree imports (see `./server-tree.md`); without it, register islands explicitly with `clientComponents`.
+- Wire `rangoUseClientTransform()` into the rsc project `plugins` so islands auto-discover from the server tree imports (see `./server-tree.md`); without it, register islands explicitly with `clientComponents`. The transform's `registerClientReference` import is resolved from `@rangojs/router`'s `@vitejs/plugin-rsc` — the consumer does not need a direct plugin-rsc dependency.
 
 ## See also
 

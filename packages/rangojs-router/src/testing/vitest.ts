@@ -76,7 +76,8 @@
  *   a focused include, or use e2e.
  */
 
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** A single Vite/Vitest resolve alias entry. Structurally a Vite `Alias`. */
 export interface TestAlias {
@@ -109,6 +110,32 @@ function here(relativeFromRoot: string): string {
 }
 
 /**
+ * Spec `rangoUseClientTransform` injects into `"use client"` modules. A
+ * consumer app does not depend on `@vitejs/plugin-rsc`, so the bare specifier
+ * is unresolvable from their `"use client"` files (cloudflare-basic
+ * `server-tree.rsc-test.tsx` on plugin-rsc 0.5.34). Resolve it from THIS
+ * module — `@rangojs/router` does depend on plugin-rsc — and alias / inject
+ * the absolute path.
+ */
+const RSD_SERVER_EDGE_SPEC: string =
+  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
+
+const requireFromHere: ReturnType<typeof createRequire> = createRequire(
+  import.meta.url,
+);
+
+function resolveFromRouter(spec: string): string | undefined {
+  try {
+    return requireFromHere.resolve(spec);
+  } catch {
+    return undefined;
+  }
+}
+
+const rsdServerEdgePath: string | undefined =
+  resolveFromRouter(RSD_SERVER_EDGE_SPEC);
+
+/**
  * Build the `resolve.alias` entries a consumer's node/DOM Vitest project needs to
  * import a real @rangojs/router app's router/loaders/middleware. Spread into a
  * Vitest config: `resolve: { alias: rangoTestAliases(...) }` (concat your own
@@ -131,6 +158,12 @@ export function rangoTestAliases(
       replacement: here("src/testing/vitest-stubs/plugin-rsc.ts"),
     },
   ];
+  if (rsdServerEdgePath) {
+    aliases.push({
+      find: RSD_SERVER_EDGE_SPEC,
+      replacement: rsdServerEdgePath,
+    });
+  }
 
   if (opts.preset === "cloudflare") {
     aliases.push(
@@ -292,10 +325,13 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
       });
       if (!result) return undefined;
       const { output } = result;
-      // The vendored server serializer is the one renderToFlightString uses;
-      // resolvable here under the react-server condition.
+      // Absolute file URL, not the bare specifier: the consumer's "use client"
+      // module cannot resolve @vitejs/plugin-rsc (it is a router dependency).
+      const rsdHref = rsdServerEdgePath
+        ? pathToFileURL(rsdServerEdgePath).href
+        : RSD_SERVER_EDGE_SPEC;
       output.prepend(
-        `import * as $$RangoRSD from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";\n`,
+        `import * as $$RangoRSD from ${JSON.stringify(rsdHref)};\n`,
       );
       return {
         code: output.toString(),

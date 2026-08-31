@@ -306,7 +306,9 @@ export default defineConfig({
   // Applies the "use client" transform so renderServerTree resolves client
   // islands from a server tree's own imports — no clientComponents to pass.
   // Server components are untouched (renderToFlightString of leaf trees is
-  // unaffected). Omit it only if you don't use renderServerTree.
+  // unaffected). Omit it only if you don't use renderServerTree. The
+  // injected registerClientReference import is resolved from this package's
+  // @vitejs/plugin-rsc — the consumer does not need a direct plugin-rsc dep.
   plugins: [rangoUseClientTransform()],
   resolve: {
     conditions: ["react-server"],
