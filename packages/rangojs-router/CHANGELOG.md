@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.1 (2026-08-31)
+
+Standalone Vite 8 consumers can assemble the Vercel function launcher without
+esbuild, and consumer Flight tests that import `"use client"` islands no
+longer need a direct `@vitejs/plugin-rsc` dependency.
+
+### Fixed: bundle the vercel function launcher with rolldown ([#838](https://github.com/rangojs/rango/pull/838))
+
+Vite 8 no longer ships esbuild, so a standalone `preset: "vercel"` consumer
+failed at assemble with "esbuild ships with Vite". The launcher is now
+bundled with rolldown (a production dependency of Vite 8), resolved through
+the app's vite install. `srvx` and `@vercel/functions` stay inlined;
+`./rsc/index.js` stays a runtime-relative external.
+
+### Fixed: resolve plugin-rsc vendor from the router in rangoUseClientTransform ([#838](https://github.com/rangojs/rango/pull/838))
+
+`rangoUseClientTransform()` injected
+`@vitejs/plugin-rsc/vendor/react-server-dom/server.edge` into consumer
+`"use client"` modules. Consumer apps do not depend on plugin-rsc, so
+`renderServerTree` of an island failed to load. The vendor file is now
+resolved from `@rangojs/router` and injected as a file URL.
+
 ## 0.12.0 (2026-08-28)
 
 Adopts `@vitejs/plugin-rsc` 0.5.34 (`getClientEntryUrl`, split `/rsc/server`
