@@ -115,7 +115,7 @@ Why: suites bucket dev vs production by grepping describe titles — `production
 
 - webServer-build suites (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<fragment>"` — the webServer still builds/serves.
 - Setup-project-build suites (vite-rsc-demo, no-typescript): `pnpm build` in the app first, then `--no-deps`.
-- Match stable title fragments, not `file:line` — react-compiler apps report babel-transformed line numbers in `--list`.
+- Match stable title fragments, not `file:line` — react-compiler apps report compiler-transformed line numbers in `--list`.
 
 ## Userland test coverage
 

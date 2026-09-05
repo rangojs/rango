@@ -1852,7 +1852,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/guides/prerender"
   },
   {
-    "description": "Enable React Compiler the vite-rsc way — a separate Babel plugin after react() and before the RSC plugin, compiling client components only.",
+    "description": "Enable React Compiler with plugin-react's native `compiler` option — one flag, client components only, no Babel.",
     "filePath": "/content/docs/rango/guides/react-compiler.mdx",
     "slug": "rango/guides/react-compiler",
     "title": "React Compiler",
@@ -1901,6 +1901,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "step-3-verify-the-compiler-actually-ran",
         "text": "Step 3: Verify the compiler actually ran"
+      },
+      {
+        "depth": 2,
+        "id": "babel-fallback",
+        "text": "Babel fallback"
       },
       {
         "depth": 2,

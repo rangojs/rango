@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Docs: React Compiler via plugin-react 6.1's native `compiler` option
+
+The documented React Compiler wiring is now `react({ compiler: true })` on
+`@vitejs/plugin-react` 6.1 with its optional peer `oxc-transform-react`, in
+place of the Babel pair (`@rolldown/plugin-babel` + `reactCompilerPreset()`).
+The `react-compiler` skill and the docs guide cover the native option: the
+client-only contract (`consumer !== "server"`), `logDiagnostics`, and the
+version coupling between `oxc-transform-react` and plugin-react's peer range
+(pin the range plugin-react declares; a newer binding fails npm's resolver).
+The Babel wiring stays documented as a fallback. No router code changed;
+Rango's compiler apps (e2e-basic, vite-rsc-demo, cloudflare-basic) run the
+native option in dev and production e2e.
+
 ## 0.12.1 (2026-08-31)
 
 Standalone Vite 8 consumers can assemble the Vercel function launcher without

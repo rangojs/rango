@@ -76,9 +76,10 @@ If you are evaluating Rango against other frameworks, start with the comparison.
 
 ## Build Integrations
 
-- [React Compiler](./react-compiler.md) - opt-in wiring via `@rolldown/plugin-babel`
-  - `reactCompilerPreset()` for both the default and `cloudflare` presets, plus how
-    it interacts with build-time prerender
+- [React Compiler](./react-compiler.md) - opt-in via plugin-react 6.1's native
+  `compiler` option (oxc-transform-react)
+  - client-only contract, options, the prerender interaction, and the Babel
+    fallback wiring
 - [Client chunking](./client-chunking.md) - how the browser bundle splits across
   routes / `include()` / host apps, and the `clientChunks` option for per-route
   splitting to shrink a route's client bundle

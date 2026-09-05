@@ -1,45 +1,49 @@
 ---
 name: react-compiler
-description: Enable the React Compiler in a Rango app the @vitejs/plugin-rsc way — a separate @rolldown/plugin-babel running reactCompilerPreset(), ordered after react() and before the plugin that supplies @vitejs/plugin-rsc. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, or is unsure why server components aren't being compiled.
+description: Enable the React Compiler in a Rango app with @vitejs/plugin-react 6.1's native `compiler` option (oxc-transform-react) — one flag, client components only, no Babel. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, sees an unmet-peer / ERESOLVE on oxc-transform-react, or is unsure why server components aren't being compiled.
 argument-hint:
 ---
 
 # React Compiler
 
-React Compiler is **opt-in** in Rango. The plugin pipeline is fully compatible —
-you just add one more plugin. The catch on a current Rango stack (Vite 8 +
-`@vitejs/plugin-react` v6) is that **v6 dropped its internal Babel for oxc**, so
-the way the React docs and most blog posts show it — `react({ babel: { plugins:
-[...] } })` — silently does nothing. The compiler has to be its own top-level
-plugin.
+React Compiler is **opt-in** in Rango, and it is one option on the plugin you
+already have: `@vitejs/plugin-react` 6.1 ships a native React Compiler behind
+`react({ compiler: true })`, backed by
+[`oxc-transform-react`](https://www.npmjs.com/package/oxc-transform-react),
+Oxc's Rust port of the compiler. No Babel, no extra plugin, no ordering rules.
+Upstream marks the option experimental; the previous Babel wiring still works
+and is kept below as the [fallback](#babel-fallback).
 
 ## The shape (read first)
 
-- The compiler is a **Babel** plugin, run via
-  [`@rolldown/plugin-babel`](https://www.npmjs.com/package/@rolldown/plugin-babel)
-  with `reactCompilerPreset()` from `@vitejs/plugin-react`.
-- **Ordering is load-bearing:** put `babel(...)` **after `react()`** and
-  **before the plugin that supplies `@vitejs/plugin-rsc`**. In a default Rango
-  app that plugin is `rango()` itself; in a Cloudflare app it is
-  `@cloudflare/vite-plugin`.
-- **It is client-only.** `reactCompilerPreset()` gates itself to the client
-  environment. Server/RSC components are not compiled, and that is the upstream
-  example's behavior — not a Rango limitation. See
+- **One option:** `react({ compiler: true })`. Needs `@vitejs/plugin-react` 6.1+
+  and its optional peer `oxc-transform-react`.
+- **It is client-only.** plugin-react runs the compiler only in environments
+  whose `consumer` is not `"server"`. Server/RSC components are not compiled,
+  and that is plugin-react's contract — not a Rango limitation. See
   [What gets compiled](#what-gets-compiled-client-only).
-- **Rango's build-time prerender is unaffected.** You do not need to do anything
-  special. See [Prerender](#interaction-with-build-time-prerender).
+- **It owns JSX and Fast Refresh too.** With `compiler` on, plugin-react hands
+  TypeScript, JSX and Fast Refresh to the same native pass and disables Vite's
+  built-in refresh injection. Nothing to configure, and dev line numbers still
+  point at your source.
+- **Rango's build-time prerender is unaffected.** See
+  [Prerender](#interaction-with-build-time-prerender).
 
 ## Step 1: Install
 
 ```bash
-pnpm add -D @rolldown/plugin-babel @babel/core babel-plugin-react-compiler
-# TypeScript users also want the Babel core types:
-pnpm add -D @types/babel__core
+pnpm add -D oxc-transform-react@^0.145.0
 ```
 
+Take the range from `@vitejs/plugin-react`'s `peerDependencies` (`^0.145.0` for
+6.1.x) rather than npm's latest. `oxc-transform-react` cuts a new minor every
+couple of weeks and plugin-react widens its range in its own releases, so a newer
+binding shows up as an unmet-peer warning under pnpm and an `ERESOLVE` error
+under npm (vitejs/vite-plugin-react#1437). Bump both together.
+
 React 19 ships `react/compiler-runtime` in-tree, so there is **no** extra runtime
-to install and **no** `target` option to set. Only pass `target: '17' | '18'` to
-`reactCompilerPreset()` if you are on an older React.
+to install and **no** `target` option to set. Only pass `target: '17' | '18'` if
+you are on an older React.
 
 ## Step 2: Wire it in
 
@@ -48,16 +52,11 @@ to install and **no** `target` option to set. Only pass `target: '17' | '18'` to
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import babel from "@rolldown/plugin-babel";
+import react from "@vitejs/plugin-react";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    babel({ presets: [reactCompilerPreset()] }),
-    rango(), // supplies @vitejs/plugin-rsc
-  ],
+  plugins: [react({ compiler: true }), rango()],
 });
 ```
 
@@ -66,29 +65,29 @@ export default defineConfig({
 ```ts
 // vite.config.ts
 import { cloudflare } from "@cloudflare/vite-plugin";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import babel from "@rolldown/plugin-babel";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
   plugins: [
-    react(),
-    babel({ presets: [reactCompilerPreset()] }),
+    react({ compiler: true }),
     rango({ preset: "cloudflare" }),
     cloudflare({
       /* ... */
-    }), // supplies @vitejs/plugin-rsc
+    }),
   ],
 });
 ```
 
+Both layouts keep `react()` ahead of `rango()` / `cloudflare()`, which is what
+Rango's own e2e apps run.
+
 ## What gets compiled (client-only)
 
-`reactCompilerPreset()` carries
-`rolldown.applyToEnvironmentHook: (env) => env.config.consumer === "client"`, so
-even though the babel plugin is top-level, the transform runs **only in the
-`client` environment**:
+plugin-react's `vite:react-compiler` transform runs in every environment, but
+passes `reactCompiler: false` whenever `environment.config.consumer === "server"`.
+Server environments only get the TypeScript/JSX pass:
 
 | Environment | `consumer` | Compiled? |
 | ----------- | ---------- | --------- |
@@ -96,43 +95,53 @@ even though the babel plugin is top-level, the transform runs **only in the
 | ssr         | `server`   | No        |
 | rsc         | `server`   | No        |
 
-This matches the upstream `@vitejs/plugin-rsc` example. If you genuinely need to
-compile **server** components, you would have to invoke
-`babel-plugin-react-compiler` yourself without the preset's
-`applyToEnvironmentHook` — that is outside what the example does and is not
+If you genuinely need to compile **server** components, the native option cannot
+do it; you would have to run `babel-plugin-react-compiler` yourself. That is not
 covered here.
 
 ## Options
 
-`reactCompilerPreset()` forwards to `babel-plugin-react-compiler`:
+`compiler` takes `true` or the React Compiler configuration plus one plugin-level
+flag:
 
-| Option                          | Effect                                                                                 |
-| ------------------------------- | -------------------------------------------------------------------------------------- |
-| `compilationMode: 'annotation'` | Compile only components marked with the `"use memo"` directive, not every eligible one |
-| `target: '17' \| '18'`          | Emit `react-compiler-runtime` calls for React < 19. Omit on React 19+.                 |
+| Option                          | Effect                                                                                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compilationMode: 'annotation'` | Compile only components marked with the `"use memo"` directive, not every eligible one                                                         |
+| `target: '17' \| '18'`          | Emit `react-compiler-runtime` calls for React < 19. Omit on React 19+.                                                                         |
+| `logDiagnostics: true`          | Log recoverable compiler diagnostics (why a component was skipped) through Vite. Default `false`. Fatal diagnostics always fail the transform. |
+
+`logDiagnostics` can only relay what the binding reports. `oxc-transform-react`
+0.145.x, the range plugin-react 6.1 declares, reports bail-out reasons. 0.148.0
+dropped them (oxc-project/oxc#26318), so the flag goes silent once plugin-react's
+peer range moves past it; 0.146 and 0.147 still report but need a later
+plugin-react. Callback-valued Babel
+options (`logger`, function-valued `sources`) do not exist on the native path;
+`sources` takes an array of filename substrings.
 
 ## Interaction with build-time prerender
 
 Nothing to configure. Rango's discovery/prerender step runs a throwaway temp Vite
 server (`createTempRscServer`) that forwards only your **resolution** plugins
-(`resolveId` / `load`). A pure transform plugin like `@rolldown/plugin-babel` is
-intentionally **not** forwarded — and that is correct: the temp runner only
-produces **data** (serialized Flight payloads + the route manifest), not shipped
-code, and React Compiler is a memoization-only transform that does not change
-rendered output. Your shipped client bundle still gets compiled, because the
-babel plugin lives in your app's top-level plugin array alongside `react()`.
+(`resolveId` / `load`) and denies every `vite:*` plugin, so `vite:react-compiler`
+never runs there. That is correct: the temp runner only produces **data**
+(serialized Flight payloads + the route manifest), not shipped code, and React
+Compiler is a memoization-only transform that does not change rendered output.
+Your shipped client bundle is compiled by the `react({ compiler: true })` in your
+app's own plugin array.
 
 ## Step 3: Verify the compiler actually ran
 
-A compiled module imports the cache allocator from `react/compiler-runtime` and
+The native compiler emits the same shape as `babel-plugin-react-compiler`. A
+compiled module imports the cache allocator from `react/compiler-runtime` and
 calls `_c(n)`. Those two appear in **every** compiled module, so they are the
-reliable per-module signal in dev:
+reliable per-module signal in dev, and a compiled module also carries Fast
+Refresh's `$RefreshReg$(...)` registration:
 
 ```bash
 pnpm dev
 # fetch any client component module straight from Vite and look for the markers:
 curl -s "http://localhost:5173/src/components/SomeClientComponent.tsx" \
-  | grep -E "compiler-runtime|_c\("
+  | grep -E "compiler-runtime|_c\(|\\\$RefreshReg\\\$\("
 ```
 
 For a production build, grep the built client bundle for the compiler's
@@ -150,19 +159,48 @@ also defines that symbol once with a single `=` assignment, so count comparisons
 not the bare string.) Run the same grep over `dist/rsc` / `dist/ssr` and you
 should find **none** — that is the client-only contract.
 
+Output is not byte-identical to Babel's: the port tracks React's experimental
+compiler channel, so a handful of components memoize a different number of
+values, and comments inside a compiled function body are dropped. Neither changes
+rendered output.
+
+## Babel fallback
+
+On `@vitejs/plugin-react` < 6.1, or if you need a Babel-only compiler option, the
+previous wiring still works: a top-level
+[`@rolldown/plugin-babel`](https://www.npmjs.com/package/@rolldown/plugin-babel)
+running `reactCompilerPreset()` from `@vitejs/plugin-react`, placed **after
+`react()`** and **before the plugin that supplies `@vitejs/plugin-rsc`**. The
+preset gates itself to `consumer === "client"`, so the client-only contract is
+the same. Do not combine it with `compiler: true`.
+
+```bash
+pnpm add -D @rolldown/plugin-babel @babel/core babel-plugin-react-compiler @types/babel__core
+```
+
+```ts
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
+
+// plugins: [react(), babel({ presets: [reactCompilerPreset()] }), rango()]
+```
+
 ## Troubleshooting
 
-| Symptom                                                               | Cause / fix                                                                                                                                 |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Nothing is compiled; no `compiler-runtime` import anywhere            | You used `react({ babel: { plugins: [...] } })`. plugin-react v6 has no internal Babel — add `@rolldown/plugin-babel` as its own plugin.    |
-| Client compiled, but server/RSC components are not                    | Expected. `reactCompilerPreset()` is client-only (see the table). Not a bug.                                                                |
-| `Cannot find module 'babel-plugin-react-compiler'` (or `@babel/core`) | Install the peer deps from Step 1; they are not bundled by `reactCompilerPreset()`.                                                         |
-| Build pulls in `react-compiler-runtime`                               | You set `target: '17'`/`'18'` on React 19. Drop `target` — React 19 ships `react/compiler-runtime` in-tree.                                 |
-| Output looks compiled but a component misbehaves                      | The component likely breaks the Rules of React. Fix the component, or scope the compiler with `compilationMode: 'annotation'` while you do. |
+| Symptom                                                                       | Cause / fix                                                                                                                                                                                             |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `React Compiler requires the optional oxc-transform-react package` on startup | Install it (Step 1). plugin-react checks in its `config` hook, so the error is immediate.                                                                                                               |
+| Nothing is compiled; no `compiler-runtime` import anywhere                    | You used `react({ babel: { plugins: [...] } })`. plugin-react v6 has no internal Babel — use `react({ compiler: true })`.                                                                               |
+| pnpm warns `unmet peer oxc-transform-react`, npm fails with `ERESOLVE`        | The binding is newer than plugin-react's peer range. Pin the range plugin-react declares.                                                                                                               |
+| Client compiled, but server/RSC components are not                            | Expected. The option is client-only (see the table). Not a bug.                                                                                                                                         |
+| `logDiagnostics: true` prints nothing                                         | You are on `oxc-transform-react` 0.148.0 or later, which dropped recoverable diagnostics. On plugin-react 6.1.x stay on 0.145.x; 0.146 and 0.147 also report, but need a later plugin-react peer range. |
+| Build pulls in `react-compiler-runtime`                                       | You set `target: '17'`/`'18'` on React 19. Drop `target` — React 19 ships `react/compiler-runtime` in-tree.                                                                                             |
+| Output looks compiled but a component misbehaves                              | The component likely breaks the Rules of React. Fix the component, or scope the compiler with `compilationMode: 'annotation'` while you do.                                                             |
 
 ## Reference
 
 A worked, tested wiring (dev + production e2e markers, incl. the client-only
-contract) lives in the `@rangojs/router` repository — not shipped in this
-package: `docs/react-compiler.md` and the `react-compiler.test.ts` files under
-`e2e/e2e-basic`, `tests/cloudflare-basic`, and `tests/vite-rsc-demo`.
+contract and the Fast Refresh check) lives in the `@rangojs/router` repository —
+not shipped in this package: `docs/react-compiler.md` and the
+`react-compiler.test.ts` files under `e2e/e2e-basic`, `tests/cloudflare-basic`,
+and `tests/vite-rsc-demo`.

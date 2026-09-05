@@ -197,7 +197,7 @@
     },
     {
       "name": "react-compiler",
-      "description": "Enable the React Compiler in a Rango app the @vitejs/plugin-rsc way — a separate @rolldown/plugin-babel running reactCompilerPreset(), ordered after react() and before the plugin that supplies @vitejs/plugin-rsc. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, or is unsure why server components aren't being compiled.",
+      "description": "Enable the React Compiler in a Rango app with @vitejs/plugin-react 6.1's native `compiler` option (oxc-transform-react) — one flag, client components only, no Babel. Use when a consumer wants to turn React Compiler on, hits the dead plugin-react v6 `react({ babel })` path, sees an unmet-peer / ERESOLVE on oxc-transform-react, or is unsure why server components aren't being compiled.",
       "argumentHint": "",
       "path": "skills/react-compiler/SKILL.md"
     },
