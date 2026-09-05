@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.12.2 (2026-09-05)
 
-### Docs: React Compiler via plugin-react 6.1's native `compiler` option
+React Compiler is now documented and tested through `@vitejs/plugin-react`
+6.1's native `compiler` option. The `react-compiler` skill shipped in this
+package describes the one-flag setup and keeps the Babel wiring as a fallback.
+No runtime changes.
+
+### Docs: React Compiler via plugin-react 6.1's native `compiler` option ([#840](https://github.com/rangojs/rango/pull/840))
 
 The documented React Compiler wiring is now `react({ compiler: true })` on
 `@vitejs/plugin-react` 6.1 with its optional peer `oxc-transform-react`, in
