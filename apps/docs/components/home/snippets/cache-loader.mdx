@@ -1,0 +1,7 @@
+```tsx
+cache({ ttl: 600 }, () => [
+  path("/products", ProductsPage, { name: "products" }, () => [
+    loader(StockLoader), // never cached: re-runs on every hit
+  ]),
+]);
+```

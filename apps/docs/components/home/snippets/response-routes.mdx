@@ -1,0 +1,15 @@
+```tsx
+path("/products/:id", ProductPage, { name: "product" }),
+path.json(
+  "/products/:id",
+  (ctx) => db.getProduct(ctx.params.id),
+  { name: "productJson" },
+),
+
+// inferred from the handler: no codegen,
+// no schema duplication
+type Product = RouteResponse<
+  typeof urlpatterns,
+  "productJson"
+>;
+```

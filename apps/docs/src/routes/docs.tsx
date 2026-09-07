@@ -46,7 +46,7 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
   if (!page) return notFound();
 
   const meta = ctx.use(Meta);
-  meta({ title: `${page.title} — Vercel Shop Docs` });
+  meta({ title: `${page.title} — Rango Docs` });
   if (page.description)
     meta({ content: page.description, name: "description" });
 
