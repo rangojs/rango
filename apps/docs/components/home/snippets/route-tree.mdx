@@ -1,0 +1,15 @@
+```tsx
+export const urlpatterns = urls(
+  ({ path, layout, loader, loading, cache, revalidate }) => [
+    layout(<ShopLayout />, () => [
+      loader(CartLoader, () => [
+        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      ]),
+      path("/shop/:slug", ProductPage, { name: "product" }, () => [
+        loader(ProductLoader, () => [cache({ ttl: 60 })]),
+        loading(<ProductSkeleton />),
+      ]),
+    ]),
+  ],
+);
+```
