@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.12.3 (2026-09-10)
 
-### Dependencies: React 19.3 in the workspace catalog
+Docs-and-skill release for React 19.3, with no runtime change: the shipped
+`view-transitions` skill now says the `<ViewTransition>` layer works on stable
+React 19.3+ (it is feature-detected, so 0.12.2 already activates it there), and
+documents the transient duplicate host during a transition commit and the
+doubled hydration effects in dev StrictMode that come with 19.3.
+
+### Dependencies: React 19.3 in the workspace catalog ([#842](https://github.com/rangojs/rango/pull/842))
 
 `react` / `react-dom` move to `^19.3.0` for every app in this repo. The router's
 peer range stays `>=19.2.8 <20`, so consumers on 19.2.8 are unaffected; 19.3
