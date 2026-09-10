@@ -30,7 +30,7 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
     remounting it, so the previous content stays visible during the
     startTransition commit that `shouldStartViewTransition` already applies to
     transition routes (`src/browser/partial-update.ts`) instead of flashing the
-    loading skeleton. On experimental React the persistent `<ViewTransition>`
+    loading skeleton. On React 19.3+ the persistent `<ViewTransition>`
     then animates the same-route swap (morph) rather than exit/enter. Without a
     transition scope the route keeps the param and remounts on param change (the
     default).

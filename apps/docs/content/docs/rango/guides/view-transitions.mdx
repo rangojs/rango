@@ -11,15 +11,15 @@ You want navigations to animate instead of flashing loading skeletons. `transiti
 `transition()` does two independent things:
 
 1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the precondition for any view-transition animation. Works on **all** React versions.
-2. **`<ViewTransition>` (the animation).** On experimental React, Rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades or morphs. This is the only part that needs experimental React; on stable React it's a no-op while the `startTransition` driving still applies.
+2. **`<ViewTransition>` (the animation).** On React 19.3+ (or an experimental build), Rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades or morphs. This is the only part that needs 19.3+; Rango feature-detects it, and on React 19.2 it's a no-op while the `startTransition` driving still applies.
 
 A view transition cannot exist outside a `startTransition` — React never activates `<ViewTransition>` otherwise. So once you reach for `transition()`, the only real choice is:
 
-| What you want                          | Config                                              | Effect                                                                                                 |
-| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                     |
-| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                      |
-| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (experimental React; on stable it degrades to the `startTransition`-only row) |
+| What you want                          | Config                                              | Effect                                                                                                        |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                            |
+| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                             |
+| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (React 19.3+ or experimental; on 19.2 it degrades to the `startTransition`-only row) |
 
 `createRouter({ viewTransition: "auto" | false })` sets the app-wide default for the third row; a per-segment `viewTransition` wins.
 
@@ -173,6 +173,17 @@ A predicate that throws is reported to `router.onError` (phase `"rendering"`) an
 
 - **Same-route content-holds need the transition present on the first render.** Source fields are `undefined` on the initial full load; a gate that returns `false` there drops the transition before the route mounts, and every later same-route param nav remounts (skeleton flash) regardless of what the gate decides then. Write source gates to hold when there is no source — `({ currentParams }) => currentParams?.tab !== "raw"` rather than `=== "details"`.
 - **Prefetch and cache freeze the gate.** A prefetched navigation decides at prefetch time, and a `cache()`/prerender hit replays the stored transition without re-running the predicate. If your gate must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
+
+## Testing a transition() route
+
+On React 19.3+ a transition commit briefly keeps the exiting `<ViewTransition>` host in the DOM next to the entering one (hidden, carrying React's `vt-*` attributes) for a few hundred milliseconds. A strict Playwright locator on a test id that exists in both the old and the new view (same route with different params, or a hard load followed by a revalidation commit) resolves to two elements during that window. Target the entering host, which is appended after the exiting one:
+
+```ts
+const featurePage = page.getByTestId("feature-page").last();
+await expect(featurePage).toBeVisible();
+```
+
+Waiting for `toHaveCount(1)` first is not enough: the count passes through 1 before the second host is inserted.
 
 ## Recommendations
 

@@ -41,7 +41,7 @@ So Rango treats tree structure as a hard guarantee: SSR, client navigation, and 
 
 By default, a route segment's identity includes its params. Navigating from `/product/1` to `/product/2` remounts the route subtree: state resets and the `loading()` skeleton shows again. That is the intended default — a different product is a different page.
 
-Declaring `transition()` on a layout or route in the matched chain changes this. The route and the layouts that belong to it drop params from their identity, so navigating between two param values of the same route **reconciles** the existing subtree instead of remounting it. The previous content stays visible while the new render commits — no skeleton flash — and on experimental React the persistent `<ViewTransition>` animates the same-route swap as a morph rather than an exit/enter pair.
+Declaring `transition()` on a layout or route in the matched chain changes this. The route and the layouts that belong to it drop params from their identity, so navigating between two param values of the same route **reconciles** the existing subtree instead of remounting it. The previous content stays visible while the new render commits — no skeleton flash — and on React 19.3+ the persistent `<ViewTransition>` animates the same-route swap as a morph rather than an exit/enter pair.
 
 Two details worth knowing:
 

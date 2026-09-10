@@ -133,8 +133,14 @@ function describeLocationState(mode: "dev" | "build") {
 
       // Go back again should be on home
       await page.goBack();
-      await expect(testId(page, "feature-page")).toBeVisible();
-      await expect(testId(page, "feature-title")).toHaveText(
+      // The feature route declares transition(), so on React 19.3+ the
+      // <ViewTransition> keeps the exiting feature page mounted (hidden, with
+      // vt-* attributes) for a few hundred ms while the entering one commits.
+      // Both carry this test id, and the entering instance is appended after
+      // the exiting one, so target the last match instead of the strict single.
+      const featurePage = testId(page, "feature-page").last();
+      await expect(featurePage).toBeVisible();
+      await expect(featurePage.getByTestId("feature-title")).toHaveText(
         "Server Components",
       );
     });
@@ -158,15 +164,20 @@ function describeLocationState(mode: "dev" | "build") {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
+      // The feature route declares transition(): on React 19.3+ a transition
+      // commit briefly keeps the exiting <ViewTransition> host mounted next to
+      // the entering one (same test id), so target the last (entering) match.
+      const featurePage = () => testId(page, "feature-page").last();
+
       // Navigate with state
       await testId(page, "feature-link-server-components").click();
-      await expect(testId(page, "feature-page")).toBeVisible({ timeout: 5000 });
+      await expect(featurePage()).toBeVisible({ timeout: 5000 });
       expect(hydrationErrors).toEqual([]);
 
       // Direct navigation without state
       await page.goto(f.url("/features/streaming"));
       await waitForHydration(page);
-      await expect(testId(page, "feature-page")).toBeVisible({ timeout: 5000 });
+      await expect(featurePage()).toBeVisible({ timeout: 5000 });
       expect(hydrationErrors).toEqual([]);
     });
   });

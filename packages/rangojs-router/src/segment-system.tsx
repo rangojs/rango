@@ -40,8 +40,9 @@ function segDebugLog(msg: string, details?: Record<string, unknown>): void {
   console.log(prefix);
 }
 
-// ViewTransition is only available in React experimental.
-// Access via namespace import to avoid compile-time errors on stable React.
+// ViewTransition ships in React 19.3+ (and experimental builds); older stable
+// releases lack it. Feature-detect via the namespace import so the router
+// compiles against any supported React and degrades to a no-op boundary.
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
 
@@ -435,7 +436,7 @@ export async function renderSegments(
       nodeContent = registerLazyRef(resolvedComponent);
     }
 
-    // Wrap with <ViewTransition> if transition config exists (React experimental only).
+    // Wrap with <ViewTransition> if transition config exists (React 19.3+ / experimental).
     // An empty config ({}) creates a bare <ViewTransition> boundary that participates
     // in transitions without adding custom animation classes. Named element-level
     // <ViewTransition> components inside (with name/share props) morph independently

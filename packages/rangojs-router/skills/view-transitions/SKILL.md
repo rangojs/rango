@@ -9,9 +9,9 @@ argument-hint: [layout|route|parallel|intercept]
 `transition()` opts a route (or group of routes) into transition-driven navigation. It does two things, and you choose how far to go:
 
 1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the **precondition** for any view-transition animation. Works on **all** React versions.
-2. **`<ViewTransition>` (the animation, layered on top).** On experimental React, rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades/morphs. This is the only part that needs experimental React; pass `viewTransition: false` to keep #1 without it (and place your own `<ViewTransition>` where you want it).
+2. **`<ViewTransition>` (the animation, layered on top).** On React 19.3+ (or an experimental build), rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades/morphs. This is the only part that needs 19.3+; pass `viewTransition: false` to keep #1 without it (and place your own `<ViewTransition>` where you want it).
 
-> The `<ViewTransition>` layer requires React experimental (the build that exports `<ViewTransition>` / `addTransitionType`). On stable React that layer is a no-op — but the `startTransition` driving (content hold) still applies.
+> The `<ViewTransition>` layer requires a React that exports `<ViewTransition>` / `addTransitionType`: stable 19.3+ or an experimental build. Rango feature-detects it; on React 19.2 that layer is a no-op — but the `startTransition` driving (content hold) still applies.
 
 ## Purpose: `startTransition` vs `<ViewTransition>`
 
@@ -24,11 +24,11 @@ These are two **independent** mechanisms. `startTransition` controls _fallbacks_
 
 The bottom-left cell is the key constraint: a view transition cannot exist without a `startTransition`. So once you reach for `transition()`, the only real choice is _startTransition_ vs _startTransition + ViewTransition_:
 
-| What you want                          | Config                                              | Effect                                                                                                 |
-| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                     |
-| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                      |
-| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (experimental React; on stable it degrades to the `startTransition`-only row) |
+| What you want                          | Config                                              | Effect                                                                                                        |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                            |
+| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                             |
+| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (React 19.3+ or experimental; on 19.2 it degrades to the `startTransition`-only row) |
 
 `createRouter({ viewTransition: "auto" \| false })` sets the app-wide default for the third row; a per-segment `viewTransition` wins. See [Opting out of the router boundary](#opting-out-of-the-router-boundary-place-your-own-viewtransition) for the full opt-out story.
 
@@ -321,6 +321,24 @@ On stable React the "VT" column is always a no-op (there is no `<ViewTransition>
 | global `viewTransition: false`, route `transition()` | none             | yes                                         | fires alone                        |
 
 > On **stable** React there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
+
+## Testing a transition() route
+
+On React 19.3+ a transition commit briefly keeps the exiting `<ViewTransition>`
+host in the DOM next to the entering one (hidden, carrying React's `vt-*`
+attributes) for a few hundred milliseconds. A strict Playwright locator on a
+test id that exists in both the old and the new view (same route, different
+params; a hard load followed by a revalidation commit) resolves to two elements
+during that window. Target the entering host, which is appended after the
+exiting one:
+
+```ts
+const page$ = page.getByTestId("feature-page").last();
+await expect(page$).toBeVisible();
+```
+
+Waiting for `toHaveCount(1)` first is not enough: the count passes through 1
+before the second host is inserted.
 
 ## Recommendations
 
