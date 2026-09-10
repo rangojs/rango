@@ -16,7 +16,8 @@ import {
  * /swr-product/2) reconciles the route subtree instead of remounting it, and
  * the startTransition wrap that shouldStartViewTransition already applies to
  * transition routes keeps the previous content on screen while the new loader
- * resolves — no skeleton flash. This works on stable React (no ViewTransition).
+ * resolves — no skeleton flash. This works with or without a <ViewTransition>
+ * (React 19.3+ exports it; the hold does not depend on it).
  *
  * A route WITHOUT transition() remounts on param change and shows its skeleton
  * (the default; covered by the plain-product case below). SEARCH-only changes
@@ -119,8 +120,8 @@ function describeSameRouteNav(label: string, mode: "dev" | "build") {
       using _ = expectNoPageError(page);
 
       // The boundary opt-out keeps the startTransition driving + content-hold;
-      // only the router-placed <ViewTransition> is suppressed (a no-op on
-      // stable React). So this route holds exactly like transition({}).
+      // only the router-placed <ViewTransition> is suppressed. So this route
+      // holds exactly like transition({}).
       await page.goto(f.url("/swr-product-vtoff/1"));
       await waitForHydration(page);
       await expect(testId(page, "swr-product-vtoff-name")).toHaveText(

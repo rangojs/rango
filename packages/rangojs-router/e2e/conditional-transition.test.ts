@@ -150,10 +150,10 @@ function conditionalTransitionTests(mode: "dev" | "build") {
     // pinned through the public type in src/testing/__tests__/transition-when.test.ts.
     // There is intentionally no browser assertion for it here: an action
     // revalidation holds the route's content by default (stale-while-revalidate),
-    // so dropping the transition produces no observable skeleton, and on stable
-    // React the <ViewTransition> animation is a no-op. The action fields gate the
-    // animation, not a content-hold, so the only end-to-end coverage that adds
-    // signal is the unit test.
+    // so dropping the transition produces no observable skeleton, and the
+    // <ViewTransition> animation leaves no DOM trace to assert on. The action
+    // fields gate the animation, not a content-hold, so the only end-to-end
+    // coverage that adds signal is the unit test.
   });
 }
 

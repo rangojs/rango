@@ -424,7 +424,7 @@ hold — its remaining delta over the same-route default above is PARAM navs:
 the config drops the param from the segment key, so `/items/one → /items/two`
 reconciles and holds instead of remounting into its skeleton (pinned dev+prod
 in `e2e/client-urls.test.ts` against a transition-less twin) — and, on
-experimental React, the router's ViewTransition boundary with those classes.
+React 19.3+, the router's ViewTransition boundary with those classes.
 `startTransition` itself needs no opt-in here: the local presentation already
 wraps its swaps, and the canonical commit is transition-driven once the
 config is present.
