@@ -170,12 +170,13 @@ function defineStabilitySuite(opts: SuiteOpts) {
   });
 }
 
-// Dev: StrictMode on by default -> hydration render runs twice; a client remount
-// runs effects twice.
+// Dev: StrictMode on by default -> hydration render runs twice, hydration
+// effects run twice (React 19.3+, react#35961), and a client remount runs
+// effects twice.
 defineStabilitySuite({
   mode: "dev",
   mountRenders: 2,
-  mountCommits: 1,
+  mountCommits: 2,
   remountCommits: 2,
 });
 

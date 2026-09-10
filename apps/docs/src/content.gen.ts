@@ -2294,6 +2294,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "testing-a-transition-route",
+        "text": "Testing a transition() route"
+      },
+      {
+        "depth": 2,
         "id": "recommendations",
         "text": "Recommendations"
       }

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Dependencies: React 19.3 in the workspace catalog
+
+`react` / `react-dom` move to `^19.3.0` for every app in this repo. The router's
+peer range stays `>=19.2.8 <20`, so consumers on 19.2.8 are unaffected; 19.3
+is now what the e2e suites run against. Two things change on React 19.3
+itself, both feature-detected rather than gated on the version:
+
+- `transition()` now wraps segment content in React's `<ViewTransition>` on
+  stable React, because 19.3 exports `ViewTransition` / `addTransitionType`.
+  On 19.2 that layer is still a no-op and only the `startTransition` content
+  hold applies. The view-transitions guide, skill, and internal docs no longer
+  say the animation layer needs an experimental build. Tests that assert on
+  a `transition()` route with strict Playwright locators can now hit the
+  transient duplicate host during a transition commit; both docs gained a
+  testing note and `tests/cloudflare-basic/e2e/location-state.test.ts` shows
+  the fix.
+- In development with StrictMode on (the default), hydration effects now run
+  twice as well as the render (React 19.3 double-invokes effects during
+  hydration, react#35961). The `hook-render-stability` e2e contract is updated
+  from one hydration commit to two; production and `strictMode: false` are
+  unchanged.
+
 ## 0.12.2 (2026-09-05)
 
 React Compiler is now documented and tested through `@vitejs/plugin-react`
