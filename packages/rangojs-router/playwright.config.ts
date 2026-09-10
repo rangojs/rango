@@ -161,6 +161,7 @@ export default defineConfig({
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -168,6 +169,7 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -175,6 +177,7 @@ export default defineConfig({
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -182,6 +185,7 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -189,6 +193,7 @@ export default defineConfig({
           testMatch: "**/client-urls-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           // Mutates the clientUrls fixture source; isolated server, but keep
           // it out of the parallel dev window like the other HMR suites.
           dependencies: ["dev"],
@@ -198,6 +203,10 @@ export default defineConfig({
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          // Both intercept-hmr files rewrite intercept-hmr-config.ts; a second
+          // worker running the sibling file flips the guard mid-test (CI already
+          // runs the HMR projects with --workers=1).
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -205,6 +214,7 @@ export default defineConfig({
           testMatch: "**/basename-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           // Basename HMR modifies router.tsx to add basename: "/app",
           // which triggers route rediscovery and rewrites the gen file.
           // Must run after dev tests to avoid contaminating parallel tests.
@@ -318,6 +328,7 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           // HMR tests modify route files in the shared test-app directory.
           // The dev server's Vite watcher picks up these changes, invalidating
           // modules and busting the in-memory cache — causing cache tests to fail.
@@ -329,6 +340,7 @@ export default defineConfig({
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev", "hmr-client"],
         },
         {
@@ -338,6 +350,7 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev", "hmr-loader"],
         },
         {
@@ -347,6 +360,10 @@ export default defineConfig({
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          // Both intercept-hmr files rewrite intercept-hmr-config.ts; a second
+          // worker running the sibling file flips the guard mid-test (CI already
+          // runs the HMR projects with --workers=1).
+          workers: 1,
           dependencies: ["dev", "hmr-routes"],
         },
         {
@@ -358,6 +375,7 @@ export default defineConfig({
           testMatch: "**/basename-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
@@ -368,6 +386,7 @@ export default defineConfig({
           testMatch: "**/client-urls-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev", "hmr-basename"],
         },
         {
@@ -376,6 +395,7 @@ export default defineConfig({
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          workers: 1,
           dependencies: ["dev"],
         },
         {
