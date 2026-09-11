@@ -36,14 +36,14 @@ function NavNode({ depth, node }: { depth: number; node: TreeNode }) {
   return (
     <li>
       <details className="group" open>
-        <summary className="flex cursor-pointer list-none items-center justify-between py-1 text-gray-900 transition-colors hover:text-gray-1000 [&::-webkit-details-marker]:hidden">
+        <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between rounded-lg px-2 text-gray-900 transition-colors hover:text-gray-1000 [&::-webkit-details-marker]:hidden">
           <span className={depth === 0 ? "font-medium text-gray-1000" : ""}>
             {node.title}
           </span>
           <ChevronRight className="size-3.5 text-gray-700 transition-transform group-open:rotate-90" />
         </summary>
         {node.children ? (
-          <ul className="mt-1 ml-1 space-y-1 border-l border-gray-alpha-400 pl-3">
+          <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-alpha-400 pl-2">
             {node.children.map((child, index) => (
               <NavNode
                 depth={depth + 1}
@@ -61,7 +61,7 @@ function NavNode({ depth, node }: { depth: number; node: TreeNode }) {
 /** The pages tree itself; also rendered inside the mobile drawer. */
 export function DocsNavTree() {
   return (
-    <ul className="space-y-1">
+    <ul className="space-y-0.5">
       {pageTree.map((node, index) => (
         <NavNode
           depth={0}

@@ -2,6 +2,8 @@ import { type BuildContext, Meta, notFound, Prerender } from "@rangojs/router";
 import { Link, ParallelOutlet } from "@rangojs/router/client";
 
 import { DocsMobileNav } from "@/components/docs-mobile-nav";
+import { DocsToc } from "@/components/docs-toc";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { getPage, pages, pageTree, type TreeNode } from "../content";
 import { DocsNavTree } from "../docs-sidebar";
@@ -63,14 +65,18 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
       : undefined;
 
   return (
-    <div className="flex w-full gap-10 px-6 py-10">
+    <div className="flex w-full gap-10 px-6">
       <aside className="hidden w-60 shrink-0 lg:block">
-        <nav className="sticky top-10 text-sm">
-          <ParallelOutlet name="@docsNav" />
-        </nav>
+        <div className="sticky top-14 h-[calc(100svh-3.5rem)]">
+          <ScrollArea overscrollContain scrollFade>
+            <nav className="py-10 pe-3 text-sm">
+              <ParallelOutlet name="@docsNav" />
+            </nav>
+          </ScrollArea>
+        </div>
       </aside>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 py-10">
         <div className="mb-6 lg:hidden">
           <DocsMobileNav>
             <DocsNavTree />
@@ -109,25 +115,11 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
       </div>
 
       <aside className="hidden w-56 shrink-0 xl:block">
-        <div className="sticky top-10 text-sm">
+        <div className="sticky top-14 max-h-[calc(100svh-3.5rem)] overflow-y-auto py-10 text-sm">
           {page.toc.length > 0 ? (
             <nav>
               <p className="mb-3 font-medium text-gray-900">On this page</p>
-              <ul className="space-y-2">
-                {page.toc.map((entry) => (
-                  <li
-                    key={entry.id}
-                    style={{ paddingLeft: (entry.depth - 2) * 12 }}
-                  >
-                    <a
-                      className="text-gray-800 transition-colors hover:text-gray-1000"
-                      href={`#${entry.id}`}
-                    >
-                      {entry.text}
-                    </a>
-                  </li>
-                ))}
-              </ul>
+              <DocsToc toc={page.toc} />
             </nav>
           ) : null}
           <div
