@@ -78,7 +78,11 @@ The `/collections/[handle]` route resolves collection metadata (title, descripti
 
 Products within a collection are fetched via `getCollectionProducts()`, which accepts Shopify `ProductFilter[]` for server-side filtering by variant options, price, vendor, type, tags, and metafields.
 
-> **Note:** Filters are driven entirely by Shopify's `ProductFilter` type. Adding custom filter logic (e.g., filtering by a metafield) requires modifying the GraphQL query in `lib/shopify/operations/products.ts`.
+<Note>
+  Filters are driven entirely by Shopify's `ProductFilter` type. Adding custom
+  filter logic (e.g., filtering by a metafield) requires modifying the GraphQL
+  query in `lib/shopify/operations/products.ts`.
+</Note>
 
 ## Search page
 

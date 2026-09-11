@@ -4,6 +4,7 @@ import { DocsNav } from "./docs-sidebar";
 import { DocsIndexPage, DocsPage } from "./routes/docs";
 import { HomePage } from "./routes/home";
 import { agents, llms, mcp, robots, rss, sitemap } from "./routes/machine";
+import { searchIndex } from "./routes/search-index";
 import { RootLayout } from "./routes/root-layout";
 
 // Every page is static shared content, so serve each from a cached PPR shell.
@@ -31,4 +32,5 @@ export const urlpatterns = urls(({ layout, parallel, path }) => [
   path.any("/rss.xml", rss, { name: "rss" }),
   path.text("/agents.md", agents, { name: "agents" }),
   path.json("/.well-known/mcp.json", mcp, { name: "mcp" }),
+  path.json("/search-index.json", searchIndex, { name: "searchIndex" }),
 ]);

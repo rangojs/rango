@@ -6,7 +6,10 @@ type: guide
 
 <CartBrowser />
 
-> **Note:** The cart ID is stored in a `shopify_cartId` cookie with a 7-day expiry. Sessions longer than 7 days start a fresh cart.
+<Note>
+  The cart ID is stored in a `shopify_cartId` cookie with a 7-day expiry.
+  Sessions longer than 7 days start a fresh cart.
+</Note>
 
 The cart system spans the entire storefront, not just the cart page. A React Context provider wraps the app in `layout.tsx`, giving every component access to cart state. Mutations flow through server actions that call Shopify's GraphQL API, while optimistic updates keep the UI responsive during network round-trips.
 

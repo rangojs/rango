@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./styles/geist-theme.css";
+@import "./styles/ui-tokens.css";
 @import "./styles/home.css";
 @plugin "@tailwindcss/typography";
 

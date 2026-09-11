@@ -31,7 +31,11 @@ with the real origin.
 - `src/routes/` — home, docs, and machine-readable (llms.txt / markdown
   negotiation) route handlers.
 - `lib/site.ts` — site name, titles, base-URL resolution (branding lives here).
-- `components/` — home-page sections, docs chrome, and shadcn/ui primitives.
+- `components/` — home-page sections, docs chrome, and `components/ui/`
+  primitives. The primitives follow shadcn conventions on Base UI; most are
+  vendored from the coss.com/ui registry (MIT) with only import paths changed,
+  so `pnpm dlx shadcn@latest add @coss/<name>` drops in siblings. The search
+  palette reads `/search-index.json` (a `path.json` route) on first open.
 
 ## Notes
 

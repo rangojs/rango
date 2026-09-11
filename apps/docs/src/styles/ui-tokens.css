@@ -1,0 +1,43 @@
+/*
+ * Semantic UI tokens (the shadcn/coss vocabulary: background, foreground,
+ * muted, popover, ring, ...) mapped onto the Geist palette so the shared
+ * primitives in components/ui render consistently on every page. The Geist
+ * `--ds-*` variables already switch under `.dark` (geist-theme.css), so most
+ * tokens need one definition; only the literal status colors get a dark
+ * variant.
+ */
+
+:root {
+  --background: var(--ds-background-100);
+  --foreground: var(--ds-gray-1000);
+  --card: var(--ds-background-100);
+  --card-foreground: var(--ds-gray-1000);
+  --popover: var(--ds-background-100);
+  --popover-foreground: var(--ds-gray-1000);
+  --primary: var(--ds-gray-1000);
+  --primary-foreground: var(--ds-background-100);
+  --secondary: var(--ds-gray-alpha-200);
+  --secondary-foreground: var(--ds-gray-1000);
+  --muted: var(--ds-gray-alpha-200);
+  --muted-foreground: var(--ds-gray-900);
+  --accent: var(--ds-gray-alpha-200);
+  --accent-foreground: var(--ds-gray-1000);
+  --destructive: var(--ds-red-800);
+  --destructive-foreground: var(--ds-red-900);
+  --info: var(--ds-blue-700);
+  --info-foreground: var(--ds-blue-900);
+  --success: oklch(0.58 0.15 150);
+  --success-foreground: oklch(0.42 0.13 150);
+  --warning: oklch(0.72 0.16 70);
+  --warning-foreground: oklch(0.5 0.13 60);
+  --border: var(--ds-gray-alpha-400);
+  --input: var(--ds-gray-alpha-500);
+  --ring: var(--ds-gray-600);
+}
+
+.dark {
+  --success: oklch(0.72 0.15 150);
+  --success-foreground: oklch(0.82 0.13 150);
+  --warning: oklch(0.8 0.15 75);
+  --warning-foreground: oklch(0.88 0.12 80);
+}

@@ -1,6 +1,9 @@
+"use client";
+
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Slot as SlotPrimitive } from "radix-ui";
-import * as React from "react";
+import type * as React from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -13,7 +16,10 @@ const buttonVariants = cva(
         destructive: "bg-red-800 text-background-100 hover:bg-red-800/90",
         secondary:
           "bg-background-100 text-gray-1000 shadow-[0_0_0_1px_var(--ds-gray-400)] hover:bg-gray-100",
+        outline:
+          "border border-gray-alpha-400 bg-background-100 text-gray-1000 hover:bg-gray-100",
         tertiary: "text-gray-1000 hover:bg-gray-alpha-200",
+        ghost: "text-gray-1000 hover:bg-gray-alpha-200",
         link: "text-gray-1000 underline-offset-4 hover:underline",
       },
       size: {
@@ -32,25 +38,29 @@ const buttonVariants = cva(
   },
 );
 
+export interface ButtonProps extends useRender.ComponentProps<"button"> {
+  variant?: VariantProps<typeof buttonVariants>["variant"];
+  size?: VariantProps<typeof buttonVariants>["size"];
+}
+
+// `render` swaps the rendered element (e.g. `render={<Link to="/docs" />}`)
+// while keeping the button styling; this replaces the Radix `asChild` slot.
 function Button({
   className,
   variant,
   size,
-  asChild = false,
+  render,
   ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-  }) {
-  const Comp = asChild ? SlotPrimitive.Slot : "button";
-
-  return (
-    <Comp
-      data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
-  );
+}: ButtonProps): React.ReactElement {
+  const defaultProps = {
+    className: cn(buttonVariants({ variant, size, className })),
+    "data-slot": "button",
+  };
+  return useRender({
+    defaultTagName: "button",
+    props: mergeProps<"button">(defaultProps, props),
+    render,
+  });
 }
 
 export { Button, buttonVariants };

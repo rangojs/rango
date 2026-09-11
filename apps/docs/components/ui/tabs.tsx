@@ -1,82 +1,118 @@
 "use client";
 
-import { Tabs as TabsPrimitive } from "radix-ui";
-import { createContext, use } from "react";
-import type * as React from "react";
-
+import { Tabs as TabsPrimitive } from "@base-ui/react/tabs";
+import * as React from "react";
+import {
+  type SegmentedControlSize,
+  segmentedControlItemLayoutClassName,
+  segmentedControlItemSizeClassNames,
+} from "@/lib/segmented-control";
 import { cn } from "@/lib/utils";
 
 type TabsVariant = "default" | "underline";
+type TabsSize = SegmentedControlSize;
 
-const TabsVariantContext = createContext<TabsVariant>("default");
+const TabsListContext: React.Context<TabsSize> =
+  React.createContext<TabsSize>("default");
 
-function Tabs({
+export function Tabs({
   className,
-  variant = "default",
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.Root> & {
-  variant?: TabsVariant;
-}) {
+}: TabsPrimitive.Root.Props): React.ReactElement {
   return (
-    <TabsVariantContext value={variant}>
-      <TabsPrimitive.Root
-        data-slot="tabs"
-        className={cn("flex flex-col gap-2", className)}
-        {...props}
-      />
-    </TabsVariantContext>
+    <TabsPrimitive.Root
+      className={cn(
+        "flex flex-col gap-2 data-[orientation=vertical]:flex-row",
+        className,
+      )}
+      data-slot="tabs"
+      {...props}
+    />
   );
 }
 
-function TabsList({
+export function TabsList({
+  variant = "default",
+  size = "default",
   className,
+  children,
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.List>) {
-  const variant = use(TabsVariantContext);
+}: TabsPrimitive.List.Props & {
+  size?: TabsSize;
+  variant?: TabsVariant;
+}): React.ReactElement {
   return (
     <TabsPrimitive.List
+      className={cn(
+        "relative z-0 flex w-fit items-center justify-center gap-x-0.5 text-muted-foreground",
+        "data-[orientation=vertical]:flex-col",
+        variant === "default"
+          ? "rounded-lg bg-muted p-0.5 text-muted-foreground/72"
+          : "data-[orientation=vertical]:px-1 data-[orientation=horizontal]:py-1 *:data-[slot=tabs-tab]:hover:bg-accent",
+        className,
+      )}
+      data-size={size}
       data-slot="tabs-list"
+      {...props}
+    >
+      <TabsListContext.Provider value={size}>
+        {children}
+      </TabsListContext.Provider>
+      <TabsPrimitive.Indicator
+        className={cn(
+          "absolute bottom-0 left-0 h-(--active-tab-height) w-(--active-tab-width) translate-x-(--active-tab-left) -translate-y-(--active-tab-bottom) transition-[width,translate] duration-200 ease-in-out",
+          variant === "underline"
+            ? "z-10 bg-primary data-[orientation=horizontal]:h-0.5 data-[orientation=vertical]:w-0.5 data-[orientation=vertical]:-translate-x-px data-[orientation=horizontal]:translate-y-px"
+            : "-z-1 rounded-md bg-background shadow-sm/5 dark:bg-input",
+        )}
+        data-slot="tab-indicator"
+      />
+    </TabsPrimitive.List>
+  );
+}
+
+export function TabsTab({
+  className,
+  size,
+  ...props
+}: TabsPrimitive.Tab.Props & {
+  size?: TabsSize;
+}): React.ReactElement {
+  const contextSize: TabsSize = React.useContext(TabsListContext);
+  const resolvedSize: TabsSize = size ?? contextSize;
+
+  return (
+    <TabsPrimitive.Tab
       className={cn(
-        variant === "underline"
-          ? "inline-flex items-baseline gap-6 shadow-[inset_0_-1px_0_var(--ds-gray-200)]"
-          : "bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]",
+        "relative flex shrink-0 grow cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-transparent font-medium text-base outline-none transition-[color,background-color,box-shadow] hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring data-disabled:pointer-events-none data-[orientation=vertical]:w-full data-[orientation=vertical]:justify-start data-active:text-foreground data-disabled:opacity-64 sm:text-sm",
+        segmentedControlItemLayoutClassName,
+        segmentedControlItemSizeClassNames[resolvedSize],
         className,
       )}
+      data-size={resolvedSize}
+      data-slot="tabs-tab"
       {...props}
     />
   );
 }
 
-function TabsTrigger({
+export function TabsPanel({
   className,
   ...props
-}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
-  const variant = use(TabsVariantContext);
+}: TabsPrimitive.Panel.Props): React.ReactElement {
   return (
-    <TabsPrimitive.Trigger
-      data-slot="tabs-trigger"
-      className={cn(
-        variant === "underline"
-          ? "text-gray-900 data-[state=active]:text-gray-1000 inline-flex items-baseline justify-center px-0.5 py-3.5 mb-0 text-sm whitespace-nowrap border-b-2 border-transparent data-[state=active]:border-gray-1000 transition-colors hover:text-gray-1000 disabled:pointer-events-none disabled:opacity-50"
-          : "data-[state=active]:bg-background dark:data-[state=active]:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 text-foreground dark:text-muted-foreground inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-1.5 rounded-md border border-transparent px-2 py-1 text-sm font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:ring-[3px] focus-visible:outline-1 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-function TabsContent({
-  className,
-  ...props
-}: React.ComponentProps<typeof TabsPrimitive.Content>) {
-  return (
-    <TabsPrimitive.Content
-      data-slot="tabs-content"
+    <TabsPrimitive.Panel
       className={cn("flex-1 outline-none", className)}
+      data-slot="tabs-content"
       {...props}
     />
   );
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent };
+export {
+  TabsPrimitive,
+  TabsTab as TabsTrigger,
+  TabsPanel as TabsContent,
+  type TabsSize,
+  type TabsVariant,
+};

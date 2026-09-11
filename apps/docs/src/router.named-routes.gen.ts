@@ -8,6 +8,7 @@ export const NamedRoutes = {
   mcp: "/.well-known/mcp.json",
   robots: "/robots.txt",
   rss: "/rss.xml",
+  searchIndex: "/search-index.json",
   sitemap: "/sitemap.xml",
 } as const;
 

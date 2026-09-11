@@ -1,15 +1,10 @@
 /*
- * Homepage-only styles.
- *
- * The marketing homepage (app/[lang]/(home)) and its components were built
- * against shadcn-style design tokens. Those tokens are defined here, scoped
- * to the `.shop-home` wrapper rendered by the home layout, so they don't
- * leak into the docs UI.
+ * Homepage styles: the shadcn-style token utilities used by the homepage
+ * sections (values live in ui-tokens.css) and the marketing heading scale.
  */
 
 @theme inline {
-  /* shadcn-style token mappings. The underlying vars are only defined within
-   * `.shop-home`, so these utilities only resolve on the homepage. */
+  /* shadcn-style token utilities; the variables are defined in ui-tokens.css. */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -28,44 +23,14 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-}
-
-.shop-home {
-  --background: oklch(1 0 0);
-  --foreground: var(--ds-gray-1000);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: var(--ds-gray-900);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-}
-
-.dark .shop-home {
-  --background: oklch(0.145 0 0);
-  --foreground: var(--ds-gray-1000);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --font-heading: var(--font-ui-sans);
 }
 
 /* Homepage heading scale */

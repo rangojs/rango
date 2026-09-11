@@ -2,6 +2,7 @@ import { Link } from "@rangojs/router/client";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
 
 import { Pre } from "@/components/code-block";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   CacheHitDemo,
   LoaderLanesDemo,
@@ -76,6 +77,63 @@ export function Card({
   );
 }
 
+/**
+ * Callouts for MDX content. Server-safe (no client JS); the icon is inline
+ * SVG because lucide-react icons render only in "use client" modules here.
+ */
+function Callout({
+  variant,
+  title,
+  children,
+}: {
+  variant: "info" | "success" | "warning";
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <Alert className="not-prose my-6" variant={variant}>
+      <svg
+        aria-hidden="true"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        viewBox="0 0 24 24"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4M12 8h.01" />
+      </svg>
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
+  );
+}
+
+export function Note({ children }: { children?: ReactNode }) {
+  return (
+    <Callout title="Note" variant="info">
+      {children}
+    </Callout>
+  );
+}
+
+export function Tip({ children }: { children?: ReactNode }) {
+  return (
+    <Callout title="Tip" variant="success">
+      {children}
+    </Callout>
+  );
+}
+
+export function Warning({ children }: { children?: ReactNode }) {
+  return (
+    <Callout title="Warning" variant="warning">
+      {children}
+    </Callout>
+  );
+}
+
 export function Cards({ children }: { children?: ReactNode }) {
   return <div className="not-prose grid gap-3 sm:grid-cols-2">{children}</div>;
 }
@@ -92,9 +150,12 @@ export const mdxComponents = {
   MetaLayersDemo,
   MiddlewareOnionDemo,
   NegotiationDemo,
+  Note,
   PDPBrowser,
   PLPBrowser,
   pre: Pre,
+  Tip,
   TreeToPageDemo,
   TwoTabsDemo,
+  Warning,
 } as const;

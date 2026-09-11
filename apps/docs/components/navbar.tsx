@@ -2,8 +2,9 @@
 
 import { Link } from "@rangojs/router/client";
 import { useTheme } from "@rangojs/router/theme";
-import { ArrowUpRight, MoonIcon, SearchIcon, SunIcon } from "lucide-react";
+import { ArrowUpRight, MoonIcon, SunIcon } from "lucide-react";
 
+import { DocsSearch } from "@/components/docs-search";
 import { Logo } from "@/components/logo";
 
 const NAV = [
@@ -61,19 +62,9 @@ export function Navbar() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Search + Ask AI are visual placeholders — the Orama search and AI
-              chat features are deferred; the shells keep navbar parity. */}
-          <button
-            className="hidden items-center gap-2 rounded-md border border-gray-alpha-400 bg-background-200 py-1.5 pr-2 pl-3 text-sm text-gray-700 transition-colors hover:border-gray-alpha-500 sm:flex"
-            title="Search — coming soon"
-            type="button"
-          >
-            <SearchIcon className="size-3.5" />
-            <span className="pr-8">Search…</span>
-            <kbd className="rounded border border-gray-alpha-400 bg-background-100 px-1.5 py-0.5 text-[11px] text-gray-700">
-              ⌘K
-            </kbd>
-          </button>
+          <DocsSearch />
+          {/* Ask AI is a visual placeholder — the AI chat feature is deferred;
+              the shell keeps navbar parity. */}
           <button
             className="hidden rounded-md border border-gray-alpha-400 px-3 py-1.5 text-sm font-medium text-gray-1000 transition-colors hover:bg-gray-100 sm:block"
             title="Ask AI — coming soon"

@@ -360,7 +360,12 @@ createRouter(/* ... */)
   .routes(urlpatterns);
 ```
 
-> **Note:** Product variant selection stays on Shopify's standard `?variant=` query parameter. `text/markdown` content negotiation is already handled by `markdownNegotiationMiddleware` (which dispatches to the `/md/*` handlers) — no separate rewrite config is required.
+<Note>
+  Product variant selection stays on Shopify's standard `?variant=` query
+  parameter. `text/markdown` content negotiation is already handled by
+  `markdownNegotiationMiddleware` (which dispatches to the `/md/*` handlers) —
+  no separate rewrite config is required.
+</Note>
 
 ---
 

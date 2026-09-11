@@ -1,7 +1,10 @@
 import { type BuildContext, Meta, notFound, Prerender } from "@rangojs/router";
 import { Link, ParallelOutlet } from "@rangojs/router/client";
 
+import { DocsMobileNav } from "@/components/docs-mobile-nav";
+
 import { getPage, pages, pageTree, type TreeNode } from "../content";
+import { DocsNavTree } from "../docs-sidebar";
 import { mdxComponents } from "../mdx-components";
 
 // Base for the "Edit this page" link (repo + branch that holds the content).
@@ -68,6 +71,11 @@ async function renderDocsPage(ctx: BuildContext<{ "*"?: string }>) {
       </aside>
 
       <div className="min-w-0 flex-1">
+        <div className="mb-6 lg:hidden">
+          <DocsMobileNav>
+            <DocsNavTree />
+          </DocsMobileNav>
+        </div>
         <article className="prose prose-gray mx-auto w-full max-w-5xl dark:prose-invert">
           <h1 className="mb-2">{page.title}</h1>
           {page.description ? (

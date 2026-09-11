@@ -127,15 +127,18 @@ export function HomeContent() {
         title={homeTitle}
       >
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <Button asChild className="h-12 w-fit rounded-full px-5">
-            <Link href="/docs/rango/getting-started">Get started</Link>
+          <Button
+            className="h-12 w-fit rounded-full px-5"
+            render={<Link href="/docs/rango/getting-started" />}
+          >
+            Get started
           </Button>
           <Button
-            asChild
             className="h-12 w-fit rounded-full px-5"
+            render={<Link href="/docs" />}
             variant="secondary"
           >
-            <Link href="/docs">Read the docs</Link>
+            Read the docs
           </Button>
         </div>
         <div className="flex justify-center pt-4">

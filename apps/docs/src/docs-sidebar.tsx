@@ -58,20 +58,25 @@ function NavNode({ depth, node }: { depth: number; node: TreeNode }) {
   );
 }
 
+/** The pages tree itself; also rendered inside the mobile drawer. */
+export function DocsNavTree() {
+  return (
+    <ul className="space-y-1">
+      {pageTree.map((node, index) => (
+        <NavNode
+          depth={0}
+          key={node.url ?? `${node.title}-${index}`}
+          node={node}
+        />
+      ))}
+    </ul>
+  );
+}
+
 /**
  * The left-hand pages nav as a Static segment: the tree is identical for
  * every docs page (always-open groups, live-pathname highlight), so it is
  * rendered once at build time and shared — mounted via the `@docsNav`
  * parallel slot on the docs routes.
  */
-export const DocsNav = Static(() => (
-  <ul className="space-y-1">
-    {pageTree.map((node, index) => (
-      <NavNode
-        depth={0}
-        key={node.url ?? `${node.title}-${index}`}
-        node={node}
-      />
-    ))}
-  </ul>
-));
+export const DocsNav = Static(() => <DocsNavTree />);
