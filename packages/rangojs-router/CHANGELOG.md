@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.12.4 (2026-09-11)
+
+Bug-fix release: the async `include()` form now mounts a `clientUrls()` module
+directly, so a server `urls()` wrapper module is no longer needed to code-split
+a client route group.
+
+### Fix: async `include()` resolves a `clientUrls()` module directly ([#848](https://github.com/rangojs/rango/pull/848))
+
+`include("/portal", () => import("./portal.client.js"), { name: "portal" })`
+rejected a module whose default export is a `clientUrls()` definition
+("include() provider ... must resolve to a urls() value") at the first request
+into the prefix and at build-time discovery, while the eager
+`include("/portal", portalUrls)` form and static route-type generation both
+accepted it. The provider resolver now adapts a `clientUrls()` source (the
+definition object, or its server-side client reference) through the same
+adapter the eager mount uses, and route names infer through the thunk. No
+startup saving comes with the async form for a client group — a `"use client"`
+module is only a reference stub in the RSC graph — so pick whichever keeps
+your mounts uniform. The nested caveat is unchanged: a client group mounted
+inside an async `urls()` module still needs explicit names on every segment.
+
+- Covered by runtime, build-time, and public-testing-primitive unit tests, dev +
+  production e2e in the test-app and cloudflare-basic, and a local HMR test that
+  adds and removes routes in the async-mounted module.
+- The cloudflare-basic router-chunk bundle ratchet is re-baselined from 43 KB to
+  44 KB: main measured 44031B against the 44032B limit, and this change adds
+  5 B of client-reference registration-order noise, no runtime.
+
 ## 0.12.3 (2026-09-10)
 
 Docs-and-skill release for React 19.3, with no runtime change: the shipped
