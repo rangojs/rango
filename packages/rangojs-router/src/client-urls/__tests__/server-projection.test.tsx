@@ -918,4 +918,31 @@ describe("client URL server projection", () => {
       "/account/:accountId",
     );
   });
+
+  it("resolves an async include() whose module default is the clientUrls() client reference", async () => {
+    const source = clientUrls(({ path, loader }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/:accountId", AccountPage, { name: "detail" }, () => [
+        loader(loaderDefinition("loaders#account")),
+      ]),
+    ]);
+    const reference = clientReference("portal.client#default");
+    setClientUrlProjection(reference, serializeClientUrlPatterns(source));
+
+    // `() => import("./portal.client")` on the server: a module namespace whose
+    // `default` is the client reference — no urls() wrapper module between the
+    // include and the group. resolveIncludeModule must adapt the reference
+    // BEFORE duck-typing `.handler` (a real reference Proxy throws on that read).
+    const serverTree = urls(({ include }) => [
+      include(
+        "/portal",
+        async () => ({ default: reference as unknown as typeof source }),
+        { name: "portal" },
+      ),
+    ]);
+
+    const manifest = await generateManifestFull(serverTree);
+    expect(manifest.routeManifest["portal.index"]).toBe("/portal");
+    expect(manifest.routeManifest["portal.detail"]).toBe("/portal/:accountId");
+  });
 });

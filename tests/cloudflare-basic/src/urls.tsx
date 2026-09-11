@@ -577,6 +577,12 @@ export const urlpatterns = urls(
             name: "mixedClient",
           }),
         ]),
+        // The SAME clientUrls() module mounted through an async include with
+        // no server urls() wrapper: `() => import()` resolves to the module's
+        // client reference, adapted like the eager mount above.
+        include("/mixed-client-async", () => import("./mixed-client/urls.js"), {
+          name: "mixedClientAsync",
+        }),
         // Pure client group: the whole subtree is clientUrls(), mounted in the
         // SAME canonical urls() tree (no separate router, no worker dispatch).
         layout(<MirrorTemplateLayout />, () => [

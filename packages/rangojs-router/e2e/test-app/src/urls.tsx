@@ -853,6 +853,13 @@ export const urlpatterns = urls(
         () => import("./urls/client-urls-async-named.js"),
         { name: "asyncClient" },
       ),
+      // Async include resolving DIRECTLY to a clientUrls() module (no server
+      // urls() wrapper) — see docs/internal/async-includes.md.
+      include(
+        "/client-urls-async-direct",
+        () => import("./urls/client-urls-async-direct.js"),
+        { name: "asyncClientDirect" },
+      ),
 
       // Intercept over a clientUrls TARGET: the shared layout declares the
       // modal intercept by the client route's canonical name. Origins:

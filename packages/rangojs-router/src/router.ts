@@ -3,10 +3,7 @@ import { createCacheScope } from "./cache/cache-scope.js";
 import { resolveCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
-import {
-  isClientUrlPatterns,
-  isClientUrlReference,
-} from "./client-urls/server-projection.js";
+import { isClientUrlSource } from "./client-urls/server-projection.js";
 import type { ClientUrlPatterns } from "./client-urls/types.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
@@ -784,10 +781,7 @@ export function createRouter<TEnv = any>(
       // same lazy include materialization, so no ordering, one-definition, or
       // deferral rules exist. Prefixing, wrapping RSC layouts, and middleware
       // scope still come from mounting through include() in urls() yourself.
-      if (
-        isClientUrlPatterns(patternsOrBuilder) ||
-        isClientUrlReference(patternsOrBuilder)
-      ) {
+      if (isClientUrlSource(patternsOrBuilder)) {
         const clientSource = patternsOrBuilder as ClientUrlPatterns;
         patternsOrBuilder = urls(({ include }) => [
           include("/", clientSource, { name: "" }),

@@ -112,6 +112,10 @@ import shopUrls from "./shop.client.js";
 include("/shop", shopUrls, { name: "shop" });
 ```
 
+The async form works without a server wrapper module too:
+`include("/shop", () => import("./shop.client.js"), { name: "shop" })` — same
+behavior, no startup win, uniform with code-split server groups.
+
 Route names compose through the include (`shop.index`, `shop.product`) and
 flow into the generated route map, so `href`/`reverse` and `Handler<"...">`
 typing work exactly as for server routes (`/typesafety`).

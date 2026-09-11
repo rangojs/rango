@@ -14,6 +14,8 @@ export const NamedRoutes = {
   "asyncClient.nested.detail": "/client-urls-async/nested/detail/:itemId",
   "asyncClient.nested.index": "/client-urls-async/nested",
   "asyncClient.nested.item": "/client-urls-async/nested/items/:itemId",
+  "asyncClientDirect.index": "/client-urls-async-direct",
+  "asyncClientDirect.item": "/client-urls-async-direct/items/:itemId",
   "authBoundary.apiProtected": "/auth-boundary/api/protected",
   "authBoundary.globalProtected": "/auth-boundary/global-protected",
   "authBoundary.index": "/auth-boundary",

@@ -25,6 +25,7 @@ import {
 } from "../generated-routes.js";
 import { createRouter } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
+import { clientUrls } from "../../client-urls/client-urls.js";
 
 // Public-path coverage for async `include(prefix, () => import("./routes"))`,
 // exercised through the real createRouter() wiring + dispatch() (not the
@@ -215,5 +216,43 @@ describe("async include() via generated-routes drift primitives", () => {
     await expect(
       assertGeneratedRoutesMatch(routerWithAsyncInclude(), GENERATED),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("async include() of a clientUrls() module via the public testing primitives", () => {
+  it("expands the group's named routes through the real router wiring", async () => {
+    const ClientPage = () => null;
+    const portal = clientUrls(({ path }) => [
+      path("/", ClientPage, { name: "index" }),
+      path("/items/:itemId", ClientPage, { name: "item" }),
+    ]);
+    // `() => import("./portal.client")` stand-in: the module default IS the
+    // clientUrls() definition (the object here; the client reference in the
+    // RSC graph) — no server urls() wrapper module.
+    const provider = vi.fn(async () => ({ default: portal }));
+
+    const router = createRouter<{}>({}).routes(
+      urls(({ path, include }) => [
+        path.json("/", () => ({ root: true }), { name: "home" }),
+        include("/portal", provider, { name: "portal" }),
+      ]),
+    ) as any;
+    expect(provider).not.toHaveBeenCalled();
+
+    // Force-expands the lazy include through router.findMatch — the path a
+    // first request takes — then compares the runtime route map.
+    await assertGeneratedRoutesMatch(router, {
+      home: "/",
+      "portal.index": "/portal",
+      "portal.item": "/portal/items/:itemId",
+    });
+    expect(provider).toHaveBeenCalledTimes(1);
+
+    // Group routes are RSC component routes, which dispatch() refuses to render
+    // — the refusal names the MATCHED route, so the request resolved through
+    // the async client mount rather than 404ing.
+    await expect(
+      dispatch(router, { request: "/portal/items/42" }),
+    ).rejects.toThrow(/does not render RSC routes/);
   });
 });

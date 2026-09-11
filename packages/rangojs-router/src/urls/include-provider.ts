@@ -1,14 +1,23 @@
 import type { UrlPatterns } from "./pattern-types.js";
+import type { ClientUrlPatterns } from "../client-urls/types.js";
+import {
+  clientUrlIncludePatterns,
+  isClientUrlSource,
+} from "../client-urls/server-projection.js";
 
 /**
  * What an async `include()` provider may resolve to: a `urls()` value directly,
  * or a module namespace whose `default` export is a `urls()` value (the shape
  * produced by `() => import("./routes")` when the route module does
- * `export default urls(...)`).
+ * `export default urls(...)`). A `clientUrls()` module resolves the same way
+ * (`() => import("./shop.client")`); on the server its `default` is the client
+ * reference, adapted exactly as the eager `include(prefix, clientUrlsDefault)`
+ * form.
  */
 export type IncludeModule<TEnv = any> =
   | UrlPatterns<TEnv>
-  | { default: UrlPatterns<TEnv> };
+  | ClientUrlPatterns
+  | { default: UrlPatterns<TEnv> | ClientUrlPatterns };
 
 /**
  * An async/lazy include provider: a thunk returning a `urls()` value (or a
@@ -37,8 +46,18 @@ function isUrlPatterns(value: unknown): value is UrlPatterns {
 }
 
 /**
+ * A `urls()` value as is; a `clientUrls()` source through the same adapter the
+ * eager include() path applies (ordering: see isClientUrlSource).
+ */
+function toUrlPatterns(value: unknown): UrlPatterns | undefined {
+  if (isClientUrlSource(value)) return clientUrlIncludePatterns(value);
+  return isUrlPatterns(value) ? value : undefined;
+}
+
+/**
  * Normalize an async provider's resolved value to a `UrlPatterns`. Accepts a
- * `urls()` value directly or a module whose `default` export is one.
+ * `urls()`/`clientUrls()` value directly or a module whose `default` export is
+ * one.
  */
 export function resolveIncludeModule<TEnv = any>(
   mod: IncludeModule<TEnv>,
@@ -53,8 +72,8 @@ export function resolveIncludeModule<TEnv = any>(
   // 404s with a misleading error). A bare `() => urls(...)` provider (no
   // module) has no `default`, so it still resolves via the mod-as-value branch.
   const def = (mod as { default?: unknown })?.default;
-  if (isUrlPatterns(def)) return def as UrlPatterns<TEnv>;
-  if (isUrlPatterns(mod)) return mod as UrlPatterns<TEnv>;
+  const resolved = toUrlPatterns(def) ?? toUrlPatterns(mod);
+  if (resolved) return resolved as UrlPatterns<TEnv>;
   // The common failure is a module namespace whose `default` is missing or not a
   // urls() value (e.g. only named exports); `typeof` alone says "object" and
   // hides that, so name the keys present. "provider" (not "async provider") —
@@ -65,7 +84,7 @@ export function resolveIncludeModule<TEnv = any>(
       : typeof mod;
   throw new Error(
     `[@rangojs/router] include() provider${id ? ` for "${id}"` : ""} must ` +
-      `resolve to a urls() value — either returned directly or as the module's ` +
-      `\`default\` export (e.g. \`export default urls(...)\`). Got ${got}.`,
+      `resolve to a urls() or clientUrls() value — either returned directly or ` +
+      `as the module's \`default\` export (e.g. \`export default urls(...)\`). Got ${got}.`,
   );
 }

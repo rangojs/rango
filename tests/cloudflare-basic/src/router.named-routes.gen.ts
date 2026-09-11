@@ -52,6 +52,8 @@ export const NamedRoutes = {
   localeInfo: "/:locale(en|fr)/info",
   "mixedClient.detail": "/mixed-client-routes/:slug",
   "mixedClient.index": "/mixed-client-routes",
+  "mixedClientAsync.detail": "/mixed-client-async/:slug",
+  "mixedClientAsync.index": "/mixed-client-async",
   orphanFetch: "/orphan-fetch",
   "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
   "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",

@@ -360,6 +360,19 @@ export function isClientUrlReference(
 }
 
 /**
+ * A clientUrls() definition object or, on the server, its client reference.
+ * Run this BEFORE any duck-typing of the value (`typeof === "function"`,
+ * `.handler` reads): a client reference is a callable Proxy that throws on
+ * unknown property reads, so a later shape check would either invoke it as a
+ * thunk or surface React's "cannot dot into a client module" error.
+ */
+export function isClientUrlSource(
+  value: unknown,
+): value is ClientUrlDefinitionSource {
+  return isClientUrlPatterns(value) || isClientUrlReference(value);
+}
+
+/**
  * Strip vite's HMR timestamp query from a module id. After an HMR update of
  * a clientUrls module, the RSC graph re-imports it under
  * `<path>?t=<timestamp>#default`, so the include's client reference carries a
