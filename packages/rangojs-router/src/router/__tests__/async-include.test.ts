@@ -8,6 +8,7 @@ import { createFindMatch } from "../find-match.js";
 import { resolveIncludeModule } from "../../urls/include-provider.js";
 import { buildRouterTrieFromUrlpatterns } from "../../rsc/manifest-init.js";
 import { getRouterPrecomputedEntries } from "../../route-map-builder.js";
+import { clientUrls } from "../../client-urls/client-urls.js";
 
 // Proves async `include(prefix, () => import("./routes"))` end to end via the
 // same functions the router calls: evaluateLazyEntry (match-time runtime) and
@@ -132,6 +133,28 @@ describe("async include() — () => import() route modules", () => {
     const result = evaluateLazyEntry(entry, depsFor(entry));
     expect(result).toBeUndefined();
     expect(entry.routes).toHaveProperty("e.y");
+  });
+
+  // `() => import("./portal.client")` whose module default IS the clientUrls()
+  // definition (the object here; the client reference in the RSC graph): the
+  // provider path adapts it like the eager include(prefix, clientUrlsDefault)
+  // form instead of rejecting it as "not a urls() value".
+  it("resolves an async provider whose module default is a clientUrls() definition", async () => {
+    const ClientPage = () => null;
+    const group = clientUrls(({ path }) => [
+      path("/", ClientPage, { name: "index" }),
+      path("/items/:itemId", ClientPage, { name: "item" }),
+    ]);
+    const provider = vi.fn(async () => ({ default: group }));
+    const entry = lazyEntry("/portal", "portal", provider);
+
+    await evaluateLazyEntry(entry, depsFor(entry));
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(entry.routes).toMatchObject({
+      "portal.index": "/portal",
+      "portal.item": "/portal/items/:itemId",
+    });
   });
 
   // Discovery: build/dev discovery awaits the provider so the split route group's

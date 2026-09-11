@@ -145,6 +145,11 @@
     "reason": "HMR / Vite serve-only; no production preview counterpart"
   },
   {
+    "base": "client-urls-hmr-async",
+    "file": "packages/rangojs-router/e2e/client-urls-hmr-async.test.ts",
+    "reason": "HMR / Vite serve-only; no production preview counterpart"
+  },
+  {
     "base": "route-types-hmr",
     "file": "packages/rangojs-router/e2e/route-types-hmr.test.ts",
     "reason": "HMR / Vite serve-only; no production preview counterpart"

@@ -120,6 +120,36 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ci-index")).toBeVisible();
   });
 
+  test("async include() resolves a module whose default export IS the clientUrls() definition", async ({
+    page,
+    request,
+  }) => {
+    // No server urls() wrapper module: `() => import("./x.client")` resolves
+    // to the client reference and mounts like the eager include() form
+    // (urls/client-urls-async-direct.tsx). SSR, hydration, and a soft nav
+    // inside the group all go through the async-resolved mount.
+    const response = await request.get(
+      f.url("/client-urls-async-direct/items/beta"),
+      { headers: { accept: "text/html" } },
+    );
+    expect(response.ok()).toBe(true);
+    const html = await response.text();
+    expect(html).toContain('data-testid="cad-item"');
+    expect(html).toContain("client-urls-async-direct:beta");
+
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-async-direct"));
+    await waitForHydration(page);
+    await expect(testId(page, "cad-index")).toBeVisible();
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cad-item-link").click();
+    await expect(testId(page, "cad-item")).toHaveText(
+      "client-urls-async-direct:beta",
+    );
+    await expect(page).toHaveURL(f.url("/client-urls-async-direct/items/beta"));
+  });
+
   test("intercept targets a client route from a server-page origin", async ({
     page,
   }) => {

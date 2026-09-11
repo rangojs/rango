@@ -160,7 +160,9 @@ export type TextResponsePathFn<TEnv> = <
 /**
  * What an async include() provider resolves to. Route types (`TRoutes`) are
  * inferred from the resolved `urls()` value so `href()` and named routes stay
- * type-safe through a code-split module (`() => import("./routes")`).
+ * type-safe through a code-split module (`() => import("./routes")`). A
+ * clientUrls() module's default export types as ClientUrlPatterns, so
+ * `() => import("./shop.client")` infers the group's names the same way.
  */
 type IncludeResolved<
   TEnv,
@@ -168,7 +170,12 @@ type IncludeResolved<
   TResponses extends Record<string, unknown>,
 > =
   | UrlPatterns<TEnv, TRoutes, TResponses>
-  | { default: UrlPatterns<TEnv, TRoutes, TResponses> };
+  | ClientUrlPatterns<TRoutes>
+  | {
+      default:
+        | UrlPatterns<TEnv, TRoutes, TResponses>
+        | ClientUrlPatterns<TRoutes>;
+    };
 
 /** include() argument: an eager `urls()` value or an async provider thunk. */
 export type IncludeArg<

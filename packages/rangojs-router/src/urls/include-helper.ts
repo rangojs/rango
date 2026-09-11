@@ -13,8 +13,7 @@ import type { IncludeProvider } from "./include-provider.js";
 import type { IncludeFn } from "./path-helper-types.js";
 import {
   clientUrlIncludePatterns,
-  isClientUrlPatterns,
-  isClientUrlReference,
+  isClientUrlSource,
 } from "../client-urls/server-projection.js";
 import type { ClientUrlPatterns } from "../client-urls/types.js";
 
@@ -77,14 +76,11 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   ): IncludeItem => {
     const { ctx } = requireDslContext("include() must be called inside urls()");
 
-    // clientUrls() sources mount through include() like any urls() module.
-    // Detect them FIRST: a client REFERENCE is a callable proxy, so the
-    // downstream provider check (`typeof === "function"`) would otherwise
-    // invoke it as an async include thunk. The substituted handler defers
-    // materialization to evaluation time, when the discovery-installed
-    // projection is available; the include machinery then applies URL and
-    // route-name prefixes exactly as for server modules.
-    if (isClientUrlPatterns(patterns) || isClientUrlReference(patterns)) {
+    // clientUrls() sources mount like any urls() module: the adapter defers
+    // materialization to evaluation time (projection installed by then) and
+    // the include machinery applies URL/name prefixes as for server modules.
+    // Ordering: see isClientUrlSource.
+    if (isClientUrlSource(patterns)) {
       patterns = clientUrlIncludePatterns(patterns) as UrlPatterns<TEnv>;
     }
 

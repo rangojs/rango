@@ -185,6 +185,37 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "nav")).toBeVisible();
     await expect(page).toHaveURL(f.url("/"));
   });
+
+  test("async include() mounts a clientUrls module directly (no server wrapper)", async ({
+    page,
+    request,
+  }) => {
+    // urls.tsx mounts mixed-client/urls.js a second time through
+    // `include("/mixed-client-async", () => import("./mixed-client/urls.js"))`.
+    // The provider resolves to the module's client reference; the group must
+    // SSR, hydrate, and serve its projected loader under the async mount.
+    const response = await request.get(f.url("/mixed-client-async"), {
+      headers: { accept: "text/html" },
+    });
+    expect(response.ok()).toBe(true);
+    expect(await response.text()).toContain('data-testid="mixed-client-index"');
+
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/mixed-client-async"));
+    await waitForHydration(page);
+    await expect(testId(page, "mixed-client-index")).toBeVisible();
+    await testId(page, "mixed-client-counter").click();
+    await expect(testId(page, "mixed-client-counter")).toHaveText(
+      "Client count: 1",
+    );
+
+    await page.goto(f.url("/mixed-client-async/example"));
+    await waitForHydration(page);
+    await expect(testId(page, "mixed-client-param")).toHaveText("example");
+    await expect(testId(page, "mixed-client-loader")).toHaveText(
+      "Cloudflare server loader: example",
+    );
+  });
 }
 
 test.describe("clientUrls", () => {

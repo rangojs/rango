@@ -121,6 +121,12 @@ export const urlpatterns = urls(({ include, layout }) => [
 ]);
 ```
 
+The async include form takes the module directly too — `include("/catalog",
+() => import("./catalog.client-urls.js"), { name: "catalog" })` — no server
+`urls()` wrapper module needed, and route names infer through the thunk. It
+buys no startup saving (a `"use client"` module is only a reference stub in
+the RSC graph); use it when you want one mount shape across all groups.
+
 ```tsx
 // src/router.tsx
 import { createRouter } from "@rangojs/router";

@@ -17,7 +17,12 @@ The async form is a `() => import(...)` provider (or, forward-compatibly, any
 `() => UrlPatterns | { default: UrlPatterns } | Promise<...>`). The convention
 for the split module is `export default urls(...)`; `resolveIncludeModule`
 (`src/urls/include-provider.ts`) accepts either the `urls()` value returned
-directly or as the module's `default`.
+directly or as the module's `default`. A `clientUrls()` module resolves the
+same way (`() => import("./shop.client")`): its server-side `default` is the
+client reference, which the resolver adapts through `clientUrlIncludePatterns`
+BEFORE the `.handler` duck-type — a client reference is a Proxy that throws on
+unknown property reads, so the order is load-bearing (same as `include()`'s
+eager path).
 
 ## Why this exists
 
