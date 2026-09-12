@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.13.0 (2026-09-12)
+
+Client route groups are instant by default: a cross-route navigation inside a
+`clientUrls()` group now renders the destination component before the server
+responds. `loading()` becomes the optional route-level boundary around that
+render instead of the only way to present anything early. Minor bump: the DSL
+is unchanged, but the runtime contract for `useLoader` and the route hooks
+inside a group changes.
+
+### Breaking: `clientUrls()` renders the destination optimistically by default ([#850](https://github.com/rangojs/rango/pull/850))
+
+Before, an in-group navigation showed the destination's `loading()` if it had
+one and otherwise kept the origin page on screen with `useOutlet().pending`
+until the canonical response committed. Now the destination component
+renders at once, in a transition lane:
+
+- `useLoader()` on a destination loader suspends until the canonical commit
+  instead of throwing "not found in context". It suspends into the route's
+  `loading()` when declared, into the nearest inline `<Suspense>` inside the
+  component otherwise, and a destination with no boundary at all keeps the
+  origin visible exactly as before (React holds the previous content in the
+  transition lane).
+- `useParams`, `usePathname`, and `useSearchParams` inside the rendered
+  destination describe the destination (the local match's params, the target
+  pathname and search). Outside the optimistic branch — chrome above the
+  group, the URL bar, history, `useNavigation`, `useLinkStatus` — they keep
+  the committed location until the server confirms; a redirect or error
+  discards the branch and its values.
+- The canonical commit after an optimistic presentation is tagged with a
+  dedicated transition type that router `<ViewTransition>` boundaries map to
+  `none`, so a `transition()` route animates once, at the click, not again
+  when the identical content commits.
+- The optimistically rendered instance is replaced by the committed segment
+  when the response lands: local state entered during the window does not
+  survive and effects run once per instance. A group-stable segment that
+  keeps the instance alive is the documented follow-up.
+
+Unchanged: hard loads still await middleware and `loader(Def, { ssr: false })`;
+same-route param and search navigations keep held data and the `transition()`
+hold; fully prefetched clicks commit from cache; intercept targets decline
+local presentation; middleware and loader redirects or errors replace the
+optimistic branch. There is no per-route opt-out: a route whose shell must
+not render before authorization belongs in `urls()`.
+
+Placement rule: a `useLinkStatus` or `useNavigation` reader inside content
+the optimistic layer swaps unmounts at click; keep such readers in chrome
+that survives the swap. Design and rationale:
+`docs/design/client-urls-optimistic-destination.md`.
+
 ## 0.12.4 (2026-09-11)
 
 Bug-fix release: the async `include()` form now mounts a `clientUrls()` module
