@@ -81,6 +81,13 @@ function ClientUrlsItem() {
   );
 }
 
+/** Loader read with no boundary: the optimistic destination render suspends
+ *  and the origin stays visible until the canonical commit. */
+function ClientUrlsHeld() {
+  const { data } = useLoader(ClientUrlsItemLoader);
+  return <div data-testid="cu-held">{data}</div>;
+}
+
 function ClientUrlsItemLoading() {
   return <div data-testid="client-urls-item-loading">Loading item</div>;
 }
@@ -196,12 +203,14 @@ function ClientUrlsHooksProbe() {
         Open item via useHref
       </Link>
 
-      {/* Status probe target: the INDEX has no loading(), so the optimistic
-          layer keeps THIS route rendered during the nav — the badge below
-          survives to report pending. (A destination WITH loading() swaps the
-          probe out optimistically and unmounts any in-link reader.) */}
+      {/* Status probe target: /held reads its loader with NO boundary, so the
+          optimistic render suspends and the transition lane keeps THIS route
+          rendered during the nav — the badge below survives to report
+          pending. (A destination that presents — loading(), inline Suspense,
+          or nothing to suspend on — swaps the probe out at click and
+          unmounts any in-link reader.) */}
       <Link
-        to={groupHref("/")}
+        to={groupHref("/held")}
         prefetch="none"
         data-testid="cu-hooks-status-link"
       >
@@ -313,6 +322,9 @@ export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ClientUrlsLayout, () => [
     path("/", ClientUrlsIndex, { name: "index" }),
     path("/hooks", ClientUrlsHooksProbe, () => [loader(ClientUrlsPulseLoader)]),
+    path("/held", ClientUrlsHeld, { name: "held" }, () => [
+      loader(ClientUrlsItemLoader),
+    ]),
     path("/state", ClientUrlsStateProbe),
     // Group shell caching: ppr is a projected path option; the materialized
     // server route carries it on its manifest entry, so capture/serve run

@@ -1,3 +1,4 @@
+import { withOptimisticCommitNone } from "../browser/optimistic-commit.js";
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
@@ -811,8 +812,8 @@ describe("segment-system", () => {
           // VT lives in the layout's `content` channel (what <Outlet /> renders),
           // not its `children` channel (the layout component itself).
           expect(findVTIn(layoutOutlet.props.content)).not.toBeNull();
-          expect(findVTIn(layoutOutlet.props.content)?.props.default).toBe(
-            "fade",
+          expect(findVTIn(layoutOutlet.props.content)?.props.default).toEqual(
+            withOptimisticCommitNone("fade"),
           );
           expect(findVTIn(layoutOutlet.props.children)).toBeNull();
         } finally {
@@ -866,9 +867,9 @@ describe("segment-system", () => {
           expect(toTreeNode(normalOuterOutlet.props.content)?.type).toBe(
             MockOutletProvider,
           );
-          expect(findVTIn(normalInnerOutlet.props.content)?.props.default).toBe(
-            "outer-fade",
-          );
+          expect(
+            findVTIn(normalInnerOutlet.props.content)?.props.default,
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
 
           const interceptResult = await renderSegmentsFresh(
             [outer, inner, route],
@@ -888,7 +889,7 @@ describe("segment-system", () => {
           );
           expect(
             findVTIn(interceptInnerOutlet.props.content)?.props.default,
-          ).toBe("outer-fade");
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
         } finally {
           vi.doUnmock("react");
           vi.resetModules();
@@ -957,10 +958,10 @@ describe("segment-system", () => {
 
           expect(
             findVTIn(beforeAction.inner.props.content)?.props.default,
-          ).toBe("outer-fade");
-          expect(findVTIn(afterAction.inner.props.content)?.props.default).toBe(
-            "outer-fade",
-          );
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
+          expect(
+            findVTIn(afterAction.inner.props.content)?.props.default,
+          ).toEqual(withOptimisticCommitNone("outer-fade"));
 
           expect(beforeAction.inner.props.parallel).toHaveLength(1);
           expect(afterAction.inner.props.parallel).toHaveLength(1);
@@ -1014,8 +1015,8 @@ describe("segment-system", () => {
 
           // Route has no outlet content; the VT wraps nodeContent (children).
           expect(findVTIn(routeOutlet.props.children)).not.toBeNull();
-          expect(findVTIn(routeOutlet.props.children)?.props.default).toBe(
-            "fade",
+          expect(findVTIn(routeOutlet.props.children)?.props.default).toEqual(
+            withOptimisticCommitNone("fade"),
           );
         } finally {
           vi.doUnmock("react");

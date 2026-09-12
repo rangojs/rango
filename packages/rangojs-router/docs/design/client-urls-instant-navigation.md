@@ -164,6 +164,10 @@ loaders into browser loader RPCs.
 
 ## Implemented Loading and Pending Scope
 
+Superseded by [client-urls-optimistic-destination.md](./client-urls-optimistic-destination.md):
+the destination component now renders immediately and `loading()` is its
+boundary. Kept as the historical record of the first shipped scope.
+
 When a local match selects a different client route record:
 
 - a destination `loading()` value is rendered immediately;

@@ -46,9 +46,19 @@ vi.mock("react", async () => {
 });
 
 import { useContext } from "react";
+import { NavigationStoreContext } from "../browser/react/context.js";
 import { useParams } from "../browser/react/use-params.js";
 
 const mockedUseContext = vi.mocked(useContext);
+
+// The hook reads two contexts: the navigation store and the clientUrls
+// optimistic-location override (null outside an optimistic branch). Resolve
+// by context identity so the stub does not hand the store to both reads.
+function mockNavigationContext(value: unknown): void {
+  mockedUseContext.mockImplementation((ctx: unknown) =>
+    ctx === NavigationStoreContext ? value : null,
+  );
+}
 
 function createMockEventController() {
   const params = { productId: "123", slug: "test-item" };
@@ -75,7 +85,7 @@ describe("useParams", () => {
 
   it("returns full params from event controller on initial render", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     const result = useParams();
     const setValue = stateSlots[0][1];
@@ -92,7 +102,7 @@ describe("useParams", () => {
 
   it("applies selector on initial render", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     const result = useParams((p) => p.productId);
     const setValue = stateSlots[0][1];
@@ -106,7 +116,7 @@ describe("useParams", () => {
 
   it("subscribes to event controller with empty dependency array", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     useParams();
 
@@ -120,7 +130,7 @@ describe("useParams", () => {
     const unsub = vi.fn();
     const ec = createMockEventController();
     ec.subscribe.mockReturnValue(unsub);
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     useParams();
 
@@ -131,7 +141,7 @@ describe("useParams", () => {
   });
 
   it("does not subscribe when context is null (SSR)", () => {
-    mockedUseContext.mockReturnValue(null);
+    mockNavigationContext(null);
 
     const result = useParams();
 
@@ -143,7 +153,7 @@ describe("useParams", () => {
 
   it("selector ref prevents re-subscription on identity change", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     useParams((p) => p.productId);
 
@@ -160,7 +170,7 @@ describe("useParams", () => {
 
   it("subscription callback uses latest selector via ref", () => {
     const ec = createMockEventController();
-    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+    mockNavigationContext({ eventController: ec } as any);
 
     // First render picks productId
     useParams((p) => p.productId);

@@ -165,6 +165,7 @@ import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
+import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import {
   MirrorSessionLoader,
   MirrorBasketLoader,
@@ -188,6 +189,15 @@ function MirrorTemplateLayout(): ReactNode {
 
 // Server Component layout for the mixed clientUrls() example — stays RSC while
 // its included pages are client components with local matching.
+function ClientUrlsSlowParent(): ReactNode {
+  return (
+    <section data-testid="cus-parent">
+      <SlowChrome />
+      <Outlet />
+    </section>
+  );
+}
+
 function MixedRscLayout(): ReactNode {
   return (
     <section data-testid="mixed-rsc-layout">
@@ -576,6 +586,22 @@ export const urlpatterns = urls(
           include("/mixed-client-routes", mixedClientUrls, {
             name: "mixedClient",
           }),
+        ]),
+        // Group behind a 5s middleware: pins optimistic presentation vs the
+        // gated canonical request (e2e/client-urls-slow.test.ts). The landing
+        // route sits OUTSIDE the middleware so the loader redirect is not
+        // gated twice.
+        path(
+          "/client-urls-slow-landing",
+          () => <div data-testid="cus-landing">landed</div>,
+          { name: "clientSlowLanding" },
+        ),
+        layout(<ClientUrlsSlowParent />, () => [
+          middleware(async (_ctx, next) => {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await next();
+          }),
+          include("/client-urls-slow", slowClientUrls, { name: "clientSlow" }),
         ]),
         // The SAME clientUrls() module mounted through an async include with
         // no server urls() wrapper: `() => import()` resolves to the module's

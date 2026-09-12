@@ -1,6 +1,7 @@
 import * as React from "react";
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./outlet-provider.js";
+import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
@@ -145,6 +146,20 @@ function createViewTransitionBoundary(
   const { viewTransition: _viewTransition, ...vtProps } = transition;
   return createElement(ReactViewTransition, {
     ...vtProps,
+    // The commit after an optimistic clientUrls() presentation repaints the
+    // same pixels; it must not animate a second time (browser/optimistic-commit.ts).
+    // `default` always carries the mapping; an unset direction already falls
+    // through to it, so only set directions need their own merge.
+    ...(vtProps.enter !== undefined && {
+      enter: withOptimisticCommitNone(vtProps.enter),
+    }),
+    ...(vtProps.exit !== undefined && {
+      exit: withOptimisticCommitNone(vtProps.exit),
+    }),
+    ...(vtProps.update !== undefined && {
+      update: withOptimisticCommitNone(vtProps.update),
+    }),
+    default: withOptimisticCommitNone(vtProps.default),
     children,
   });
 }

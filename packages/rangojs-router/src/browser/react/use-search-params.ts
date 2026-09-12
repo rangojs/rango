@@ -10,6 +10,7 @@ import {
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import type { ReadonlyURLSearchParams } from "../types.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 
 /**
  * Accepted shapes for the setter: a full replacement for the search string.
@@ -110,6 +111,7 @@ function normalizeInit(init: SearchParamsInit): URLSearchParams {
  */
 export function useSearchParams(): [ReadonlyURLSearchParams, SetSearchParams] {
   const ctx = useContext(NavigationStoreContext);
+  const optimistic = useContext(OptimisticLocationContext);
 
   // Seed from the store location on BOTH sides (mirrors usePathname): the
   // SSR store carries the live request's search, the browser store carries
@@ -167,8 +169,17 @@ export function useSearchParams(): [ReadonlyURLSearchParams, SetSearchParams] {
     });
   }, []);
 
+  // Inside an optimistically rendered clientUrls() destination the read side
+  // is THAT route's search (see OptimisticLocationContext); the setter keeps
+  // navigating from the committed location.
+  const optimisticSearch = optimistic?.search;
   return useMemo(
-    () => [searchParams, setSearchParams],
-    [searchParams, setSearchParams],
+    () => [
+      optimisticSearch === undefined
+        ? searchParams
+        : new URLSearchParams(optimisticSearch),
+      setSearchParams,
+    ],
+    [searchParams, setSearchParams, optimisticSearch],
   );
 }

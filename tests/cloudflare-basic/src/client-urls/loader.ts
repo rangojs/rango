@@ -1,4 +1,4 @@
-import { createLoader } from "@rangojs/router";
+import { createLoader, redirect } from "@rangojs/router";
 
 let isActionTargetRuns = 0;
 export const ClientUrlsIsActionTargetLoader = createLoader(async () => {
@@ -18,3 +18,11 @@ export const ClientUrlsDetailLoader = createLoader(
     return { slug: ctx.params.slug ?? "missing-slug" };
   },
 );
+
+/** Instant data behind the 5s group middleware (slow.tsx). */
+export const ClientUrlsSlowLoader = createLoader(async () => "slow-data");
+
+/** Loader redirect out of the slow group; the middleware gates it too. */
+export const ClientUrlsSlowRedirectLoader = createLoader(async () => {
+  throw redirect("/client-urls-slow-landing");
+});
