@@ -156,11 +156,26 @@ projection, so a broken mounting surfaces as a clear error at evaluation time.
 
 ## Navigation authority
 
-After hydration, a navigation to a different matching client route can render
-its `loading()` value before the network response arrives. A wrapping client URL
-layout sees `useOutlet().pending === true` for that optimistic branch. Without a
-destination `loading()`, the current branch remains visible with its outlet marked
-pending.
+After hydration, a navigation to a different matching client route renders the
+destination's component before the network response arrives — that is the
+point of a client route group. Its `useLoader()` reads have no data yet and
+suspend: into the route's `loading()` if declared (it is the route-level
+boundary around the optimistic render), else into the nearest inline
+`<Suspense>` inside the component. A destination that suspends with no
+boundary at all keeps the current branch visible until the response commits
+(the swap renders in a transition lane, so React holds the previous content).
+A wrapping client URL layout sees `useOutlet().pending === true` for the
+optimistic branch in every case.
+
+Inside that branch, `useParams`, `usePathname`, and `useSearchParams` describe
+the destination (the local match's params, the target pathname and search).
+Everything outside it — chrome above the group, the URL bar, history,
+`useNavigation`, `useLinkStatus` — keeps the committed location until the
+canonical response commits; a redirect or error discards the branch and its
+values with it. The optimistically rendered instance is replaced by the
+committed segment when the response lands: local state entered during the
+window does not survive, and effects run once per instance. Design and
+rationale: `docs/design/client-urls-optimistic-destination.md`.
 
 The local result cannot authorize the request, run or skip middleware, execute a
 loader, commit history, or override a redirect or error from the server. The
@@ -168,7 +183,7 @@ existing navigation bridge still sends the canonical partial Flight request;
 middleware scoped over the include prefix and projected loaders run on the
 server, and the response remains authoritative.
 
-`pending` is deliberately narrow in this release:
+`pending` is deliberately narrow:
 
 - it is `false` during SSR and before the client URL registry mounts after
   hydration;

@@ -415,9 +415,10 @@ parallel/intercept routes, cache, transitions, boundaries, and PPR are not
 available INSIDE `clientUrls()`. See the
 [client URL guide](./client-urls.md) for the complete limits.
 
-The immediate loading branch can appear before global auth middleware completes.
-It must not reveal protected data or sensitive route state; if the shell itself
-is sensitive, do not use optimistic loading for that destination.
+The destination renders before global auth middleware completes. It has no
+data (every loader read suspends), so it cannot reveal protected data; it does
+reveal the destination's shell. A route whose shell is itself sensitive belongs
+in `urls()`, not in a client route group.
 
 ## Semantics are a contract, not folklore
 

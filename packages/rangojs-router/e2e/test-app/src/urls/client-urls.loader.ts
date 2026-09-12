@@ -100,3 +100,11 @@ export const ClientUrlsPulseLoader = createLoader(async () => {
   pulseCounter += 1;
   return `pulse:${pulseCounter}`;
 }, true);
+
+/** Instant data behind the 5s group middleware (client-urls-slow.tsx). */
+export const ClientUrlsSlowLoader = createLoader(async () => "slow-data");
+
+/** Loader redirect out of the slow group; the middleware gates it too. */
+export const ClientUrlsSlowRedirectLoader = createLoader(async () => {
+  throw redirect("/client-urls-slow-landing");
+});

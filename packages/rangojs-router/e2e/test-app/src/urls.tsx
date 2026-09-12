@@ -122,6 +122,7 @@ import clientUrlPatterns from "./urls/client-urls.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -160,6 +161,15 @@ function TxBlockShell(): React.ReactNode {
  * revalidate(): after the action, the loader shows the new count while this
  * value stays pre-action (locked `action:parent-chain-skip` default).
  */
+function ClientUrlsSlowParent(): React.ReactNode {
+  return (
+    <section data-testid="cus-parent">
+      <SlowChrome />
+      <Outlet />
+    </section>
+  );
+}
+
 function ClientUrlsActionParent(): React.ReactNode {
   return (
     <section>
@@ -853,6 +863,23 @@ export const urlpatterns = urls(
         () => import("./urls/client-urls-async-named.js"),
         { name: "asyncClient" },
       ),
+      // Group behind a 5s middleware: pins optimistic presentation vs the
+      // gated canonical request (client-urls-slow.test.ts). The landing route
+      // sits OUTSIDE the middleware so the loader redirect is not gated twice.
+      path(
+        "/client-urls-slow-landing",
+        () => <div data-testid="cus-landing">landed</div>,
+        { name: "clientSlowLanding" },
+      ),
+      layout(ClientUrlsSlowParent, () => [
+        middleware(async (_ctx, next) => {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await next();
+        }),
+        include("/client-urls-slow", clientUrlsSlowPatterns, {
+          name: "clientSlow",
+        }),
+      ]),
       // Async include resolving DIRECTLY to a clientUrls() module (no server
       // urls() wrapper) — see docs/internal/async-includes.md.
       include(

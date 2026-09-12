@@ -30,6 +30,7 @@ import {
   validateExternalRedirect,
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
+import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -98,6 +99,13 @@ export type UpdateMode =
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
+      /**
+       * The bridge already presented an optimistic clientUrls() destination
+       * for this navigation: transition-lane commits add
+       * OPTIMISTIC_COMMIT_TRANSITION_TYPE so router <ViewTransition>
+       * boundaries do not animate the identical repaint.
+       */
+      optimisticPresented?: boolean;
     }
   | { type: "leave-intercept"; interceptSourceUrl?: string }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
@@ -555,6 +563,8 @@ export function createPartialUpdater(
       debugLog("[partial-update] updating document");
 
       const hasTransition = shouldStartViewTransition(reconciled.segments);
+      const optimisticPresented =
+        mode.type === "navigate" && mode.optimisticPresented === true;
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
       // segment still carries a transition after the server-side when-gate, and
       // whether the commit will be held in a startTransition. If `withTransition`
@@ -594,6 +604,9 @@ export function createPartialUpdater(
         startTransition(() => {
           if (addTransitionType) {
             addTransitionType("navigation");
+            if (optimisticPresented) {
+              addTransitionType(OPTIMISTIC_COMMIT_TRANSITION_TYPE);
+            }
           }
           onUpdate({
             root: newTree,
@@ -622,6 +635,9 @@ export function createPartialUpdater(
         // first. Boundaries newly mounted by this nav still reveal their
         // fallbacks (React shows new boundaries inside transitions).
         startTransition(() => {
+          if (optimisticPresented && addTransitionType) {
+            addTransitionType(OPTIMISTIC_COMMIT_TRANSITION_TYPE);
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,

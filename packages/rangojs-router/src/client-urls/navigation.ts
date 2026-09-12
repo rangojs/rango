@@ -11,6 +11,11 @@ import type { ClientUrlPatterns } from "./types.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
+  /** Destination params from the local trie match (definition-local). */
+  readonly params: Readonly<Record<string, string>>;
+  /** Absolute destination pathname (mount included) and search ("?..." or ""). */
+  readonly pathname: string;
+  readonly search: string;
 }
 
 interface ActiveClientUrlGroup {
@@ -112,7 +117,12 @@ export function beginClientUrlNavigation(
     if (activeInterceptTargets.has(canonicalName)) return null;
   }
 
-  const intent: ClientUrlNavigationIntent = { routeId: match.routeKey };
+  const intent: ClientUrlNavigationIntent = {
+    routeId: match.routeKey,
+    params: match.params,
+    pathname: targetUrl.pathname,
+    search: targetUrl.search,
+  };
   group.intent = intent;
   group.setIntent(intent);
 

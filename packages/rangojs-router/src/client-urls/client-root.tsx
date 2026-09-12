@@ -3,7 +3,10 @@
 import {
   createElement,
   Fragment,
+  Suspense,
+  useDeferredValue,
   useEffect,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -14,11 +17,17 @@ import {
   registerClientUrlGroup,
   type ClientUrlNavigationIntent,
 } from "./navigation.js";
+import {
+  OptimisticLocationContext,
+  type OptimisticLocation,
+} from "./optimistic-location.js";
 import type {
   ClientUrlInterceptRecord,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
 } from "./types.js";
+
+const PENDING_FOREVER: Promise<never> = new Promise<never>(() => {});
 
 function findRoute(
   definition: ClientUrlPatterns,
@@ -120,29 +129,61 @@ export function ClientUrlsRoot({
     [definition, mount, namePrefix],
   );
 
-  const pendingRoute =
-    intent && intent.routeId !== routeId
-      ? findRoute(definition, intent.routeId)
-      : null;
-  // Presence must mirror the projection's hasLoading (`loading !== undefined`
-  // in server-projection.ts): a falsy-but-valid node like loading("") is still
-  // a configured destination loading state, not an absent one.
-  const hasPendingLoading =
-    pendingRoute !== null && pendingRoute.loading !== undefined;
-  const route = hasPendingLoading
-    ? pendingRoute
-    : findRoute(definition, routeId);
-  // ANY in-flight group navigation is pending — including same-route navs
-  // (intent.routeId === routeId). For the search-only shape (filters, tabs)
-  // the canonical commit is HELD in a transition (isSameStructureNav in
-  // partial-update.ts) with no content swap to signal progress — this flag
-  // is the only affordance. The urgent setIntent at nav start flips it
-  // immediately; the transition-wrapped clear() entangles with the held
-  // commit, so pending drops exactly when the data lands.
+  // Optimistic destination (design: docs/design/client-urls-optimistic-destination.md).
+  // `intent` is set urgently at navigation start so `pending` flips at once
+  // for chrome; the CONTENT swap keys off the deferred value so it renders in
+  // a transition lane: a destination that suspends with no boundary of its
+  // own keeps the previous content visible (React's transition hold — the
+  // pre-existing contract for routes without loading()), one with loading()
+  // or inline <Suspense> at its reads presents immediately. Same-route intents
+  // never swap: held data + transition() own that case.
   const pending = intent !== null;
-  let content: ReactNode = hasPendingLoading
-    ? pendingRoute.loading
-    : createElement(route.component, { key: route.id });
+  const presented = useDeferredValue(intent);
+  const optimisticRoute =
+    presented && presented.routeId !== routeId
+      ? findRoute(definition, presented.routeId)
+      : null;
+  const route = optimisticRoute ?? findRoute(definition, routeId);
+
+  // Pending entries for the destination's loaders: useLoader use()s a Promise
+  // found in `loaderStreams` (the streaming-loader lane), so a read suspends
+  // instead of throwing "not found in context". Nothing resolves them — the
+  // canonical commit mounts the destination's own segment with real data and
+  // unmounts this branch — so one shared promise serves every loader.
+  // Memoized on the intent: use() needs a stable identity across replays.
+  const optimistic = useMemo<{
+    streams: Record<string, Promise<never>>;
+    location: OptimisticLocation;
+  } | null>(
+    () =>
+      optimisticRoute && presented
+        ? {
+            streams: Object.fromEntries(
+              optimisticRoute.loaders.map((record) => [
+                record.loader.$$id,
+                PENDING_FOREVER,
+              ]),
+            ),
+            location: {
+              params: presented.params,
+              pathname: presented.pathname,
+              search: presented.search,
+            },
+          }
+        : null,
+    [optimisticRoute, presented],
+  );
+
+  let content: ReactNode = createElement(route.component, { key: route.id });
+  if (optimisticRoute && optimisticRoute.loading !== undefined) {
+    // loading() is the route-level boundary around the optimistic render;
+    // presence mirrors the projection's hasLoading (a falsy-but-valid node
+    // like loading("") is still a configured fallback).
+    content = createElement(Suspense, {
+      fallback: optimisticRoute.loading,
+      children: content,
+    });
+  }
 
   for (let index = route.layouts.length - 1; index >= 0; index--) {
     const layoutKey = `${route.id}-layout-${index}`;
@@ -151,6 +192,18 @@ export function ClientUrlsRoot({
       content,
       pending,
       children: createElement(route.layouts[index], { key: layoutKey }),
+    });
+  }
+
+  if (optimistic) {
+    content = createElement(OutletProvider, {
+      content: null,
+      loaderStreams: optimistic.streams,
+      pending,
+      children: createElement(OptimisticLocationContext.Provider, {
+        value: optimistic.location,
+        children: content,
+      }),
     });
   }
 

@@ -8,6 +8,9 @@ import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
+import { useParams } from "../../browser/react/use-params.js";
+import { usePathname } from "../../browser/react/use-pathname.js";
+import { useSearchParams } from "../../browser/react/use-search-params.js";
 import {
   ClientUrlsGroupLayout,
   ClientUrlsInterceptLoading,
@@ -31,6 +34,19 @@ afterEach(() => {
 });
 
 describe("ClientUrlsRoot", () => {
+  // Shared by the optimistic-destination tests below.
+  const AccountLoader = {
+    __brand: "loader",
+    $$id: "loaders/account#AccountLoader",
+  } as LoaderDefinition<{ name: string }>;
+  function AppLayout(): ReactNode {
+    const outlet = useOutlet();
+    return <main data-pending={String(outlet.pending)}>{outlet.content}</main>;
+  }
+  function HomePage(): ReactNode {
+    return <p>Home</p>;
+  }
+
   it("renders nested layout outlets while retaining outer loader context", () => {
     const AccountLoader = {
       __brand: "loader",
@@ -111,25 +127,20 @@ describe("ClientUrlsRoot", () => {
   });
 
   it("renders destination loading and scopes pending to its layouts", async () => {
-    function AppLayout(): ReactNode {
-      const outlet = useOutlet();
-      return (
-        <main data-pending={String(outlet.pending)}>{outlet.content}</main>
-      );
-    }
-
-    function HomePage(): ReactNode {
-      return <p>Home</p>;
-    }
-
+    // Reads a destination loader: no data exists before the canonical
+    // response, so the read suspends into the route's loading() boundary.
     function AccountPage(): ReactNode {
-      return <p>Account</p>;
+      const { data } = useLoader(AccountLoader);
+      return <p>Account {data.name}</p>;
     }
 
-    const definition = clientUrls(({ layout, path, loading }) => [
+    const definition = clientUrls(({ layout, path, loader, loading }) => [
       layout(AppLayout, () => [
         path("/", HomePage),
-        path("/account", AccountPage, () => [loading(<p>Loading account</p>)]),
+        path("/account", AccountPage, () => [
+          loader(AccountLoader),
+          loading(<p>Loading account</p>),
+        ]),
       ]),
     ]);
     const result = render(
@@ -157,6 +168,111 @@ describe("ClientUrlsRoot", () => {
     expect(result.getByText("Home")).toBeDefined();
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "false",
+    );
+  });
+
+  it("renders the destination component immediately when nothing suspends", async () => {
+    function AccountPage(): ReactNode {
+      return <p>Account</p>;
+    }
+
+    // No loading(), no loader read: the destination component IS the
+    // immediate presentation. Home is gone before any response.
+    const definition = clientUrls(({ layout, path }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByText("Account")).toBeDefined();
+    expect(result.queryByText("Home")).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+
+    await act(async () => presentation?.clear());
+    expect(result.getByText("Home")).toBeDefined();
+  });
+
+  it("holds the current content when the destination suspends with no boundary", async () => {
+    function AccountPage(): ReactNode {
+      const { data } = useLoader(AccountLoader);
+      return <p>Account {data.name}</p>;
+    }
+
+    // The optimistic swap renders in a transition lane: a suspended
+    // destination with no loading() and no inline boundary keeps the current
+    // content visible (the pre-existing contract), pending still flips.
+    const definition = clientUrls(({ layout, path, loader }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage, () => [loader(AccountLoader)]),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByText("Home")).toBeDefined();
+    expect(result.queryByText(/Account/)).toBeNull();
+    expect(result.container.querySelector("main")?.dataset.pending).toBe(
+      "true",
+    );
+  });
+
+  it("scopes route hooks to the optimistic branch", async () => {
+    function ItemPage(): ReactNode {
+      const params = useParams<{ itemId: string }>();
+      const pathname = usePathname();
+      const [search] = useSearchParams();
+      return (
+        <p data-testid="item">
+          {params.itemId}|{pathname}|{search.get("tab")}
+        </p>
+      );
+    }
+
+    // Inside the optimistically rendered destination the route hooks
+    // describe THAT route (local match params, absolute pathname, search);
+    // outside it they keep the committed location (no store here: defaults).
+    const definition = clientUrls(({ path }) => [
+      path("/", HomePage),
+      path("/items/:itemId", ItemPage),
+    ]);
+    const result = render(
+      <MountContextProvider value="/shop">
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </MountContextProvider>,
+    );
+    const abort = new AbortController();
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/shop/items/42?tab=specs"),
+        abort.signal,
+      );
+    });
+
+    expect(result.getByTestId("item").textContent).toBe(
+      "42|/shop/items/42|specs",
     );
   });
 
@@ -254,7 +370,7 @@ describe("ClientUrlsRoot", () => {
     );
 
     // Inside the mount, the local pathname "/espresso" matches the detail
-    // route and presents its loading state.
+    // route and presents it.
     const presentation: {
       current: ReturnType<typeof beginClientUrlNavigation>;
     } = { current: null };
@@ -265,7 +381,8 @@ describe("ClientUrlsRoot", () => {
       );
     });
     expect(presentation.current?.routeId).toBe("client-route-1");
-    expect(result.getByText("Loading detail")).toBeDefined();
+    // Nothing in DetailPage suspends, so the component itself presents.
+    expect(result.getByText("Detail")).toBeDefined();
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "true",
     );

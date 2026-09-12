@@ -3,6 +3,7 @@
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 
 const EMPTY_PARAMS: Record<string, string> = Object.freeze({});
 
@@ -10,7 +11,9 @@ const EMPTY_PARAMS: Record<string, string> = Object.freeze({});
  * Hook to access the current route params.
  *
  * Returns the merged route params from the matched route.
- * Updates when navigation completes, not during pending navigation.
+ * Updates when navigation completes, not during pending navigation — except
+ * inside an optimistically rendered clientUrls() destination, where it
+ * reports THAT route's params (see OptimisticLocationContext).
  *
  * @example
  * ```tsx
@@ -43,6 +46,7 @@ export function useParams<T>(
   selector?: (params: Record<string, string | undefined>) => T,
 ): T | Record<string, string | undefined> {
   const ctx = useContext(NavigationStoreContext);
+  const optimistic = useContext(OptimisticLocationContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {
     const params = ctx ? ctx.eventController.getParams() : EMPTY_PARAMS;
@@ -71,5 +75,8 @@ export function useParams<T>(
     return ctx.eventController.subscribe(update);
   }, []);
 
+  if (optimistic) {
+    return selector ? selector(optimistic.params) : optimistic.params;
+  }
   return value;
 }

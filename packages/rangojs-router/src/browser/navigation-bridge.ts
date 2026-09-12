@@ -365,15 +365,18 @@ export function createNavigationBridge(
             scroll: options?.scroll,
             state: resolvedState,
           }),
-          hasUsableCache
-            ? {
+          isLeavingIntercept
+            ? { type: "leave-intercept" as const }
+            : {
                 type: "navigate" as const,
-                targetCacheSegments: cachedSegments,
-                targetCacheHandleData: cachedHandleData,
-              }
-            : isLeavingIntercept
-              ? { type: "leave-intercept" as const }
-              : undefined,
+                ...(hasUsableCache
+                  ? {
+                      targetCacheSegments: cachedSegments,
+                      targetCacheHandleData: cachedHandleData,
+                    }
+                  : {}),
+                optimisticPresented: clientUrlPresentation !== null,
+              },
         );
       } catch (error) {
         // Server-side redirect with location state: the current transaction's

@@ -555,12 +555,9 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     const requestGate = new Promise<void>((resolve) => {
       releaseRequest = resolve;
     });
-    // URL-predicate matcher: gate exactly the index partial request. The
-    // nav target is groupHref("/") — the TRAILING-SLASH form of the bare
-    // mount — so normalize before comparing (an endsWith on the bare path
-    // silently never matches and the test only passes by racing the fetch).
+    // URL-predicate matcher: gate exactly the /held partial request.
     await page.route(
-      (url) => url.pathname.replace(/\/$/, "").endsWith("/client-urls-e2e"),
+      (url) => url.pathname.endsWith("/client-urls-e2e/held"),
       async (route) => {
         await requestGate;
         await route.continue();
@@ -569,8 +566,8 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await testId(page, "cu-hooks-status-link").click();
     try {
       // Both global signals fire for a group-internal nav while the request
-      // is held; the probe stays mounted because the index destination has
-      // no loading() (no optimistic swap).
+      // is held; the probe stays mounted because /held suspends with no
+      // boundary, so the optimistic render holds the origin content.
       await expect(testId(page, "cu-hooks-link-status")).toHaveText("true", {
         timeout: 2000,
       });
@@ -582,10 +579,8 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       releaseRequest();
     }
 
-    await expect(testId(page, "client-urls-index")).toBeVisible();
-    // groupHref("/") composes mount + module index and yields the
-    // trailing-slash form of the bare mount.
-    await expect(page).toHaveURL(f.url(`${INDEX_PATH}/`));
+    await expect(testId(page, "cu-held")).toBeVisible();
+    await expect(page).toHaveURL(f.url(`${INDEX_PATH}/held`));
   });
 
   test("hook probe: useFetchLoader fetches by loader id from inside the group", async ({

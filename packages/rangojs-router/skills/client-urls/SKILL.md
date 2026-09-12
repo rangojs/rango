@@ -17,8 +17,9 @@ latency. `clientUrls()` makes that shape unrepresentable.
 This is the fastest-transition shape Rango has, and the natural fit for
 dashboard / admin / settings-style apps — high navigation frequency inside one
 layout, mostly tab/param/filter switches. Three things compound: the
-definition also matches in the browser, so a soft navigation presents
-optimistic pending UI immediately (`useOutlet().pending`) with no server
+definition also matches in the browser, so a soft navigation renders the
+destination component immediately (loader reads suspend into `loading()` or
+an inline `<Suspense>`; `useOutlet().pending` flips for chrome) with no server
 round-trip to start; browser-run `revalidate()` predicates HOLD data across
 navigations that don't invalidate it (a tab switch re-runs nothing — only the
 decision crosses the wire); and any read that does refresh streams behind its
@@ -127,7 +128,7 @@ typing work exactly as for server routes (`/typesafety`).
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see /ppr skill; loader routes need `loading()` or capture refuses); no response variants |
 | `layout()`     | Must contain at least one `path()`                                                                                                                             |
 | `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                         |
-| `loading()`    | Route/layout-level pending UI; inline `<Suspense>` at read sites is usually better                                                                             |
+| `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait          |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                             |
 | `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)                                                                              |
 | `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                          |
