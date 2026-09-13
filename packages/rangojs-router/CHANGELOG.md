@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.14.0 (2026-09-13)
+
+The instance a client route group renders optimistically now survives the
+canonical commit: state entered while the server is still responding is kept,
+effects run once, and same-route param navigations inside a group hold the
+previous content until the new data lands. Minor bump for the changed
+same-route behavior; no DSL change.
+
+### Breaking: group-stable segment for `clientUrls()` ([#852](https://github.com/rangojs/rango/pull/852))
+
+0.13.0 rendered the destination of an in-group navigation before the server
+responded, but the canonical commit still mounted the destination as a new
+segment, so the instance the user was already interacting with was replaced.
+Every route of one group mount now shares a segment key, the group's routes
+get one wrapper shape, and `ClientUrlsRoot` renders the same wrapper chain in
+both states, so the commit reconciles into the same position.
+
+- Text typed into a field during the wait survives the commit; the
+  destination's mount effect runs once instead of twice.
+- Same-route param navigations inside a group (`/items/1` -> `/items/2`) now
+  hold the previous content until the new data lands instead of remounting
+  with a fresh skeleton. `transition()` in a group configures the
+  view-transition animation; it no longer changes whether content is held.
+  Server routes outside a group keep the param-bearing key and the
+  `transition()` opt-in.
+- A navigation that presented optimistically commits in the transition lane,
+  so a read that still suspends holds the presented content instead of
+  flashing a fallback.
+- `loading()` on a group route is now the `Suspense` boundary inside the
+  client root rather than a segment-level `LoaderBoundary`; the fallback and
+  the reads are the same. Server-side semantics are untouched: `loading()`
+  still masks loaders for PPR shell capture and drives SSR.
+- The streamed loader error boundary resets its caught marker when the route
+  or params change. As a surviving instance it kept rendering a loader
+  redirect for the previous route; a redirect, `notFound()`, or error fallback
+  caught for one route no longer leaks into the next.
+
+Hard loads, prefetch, intercept targets, redirects, and errors are unchanged.
+Design and mechanics: `docs/design/client-urls-optimistic-destination.md`.
+
 ## 0.13.0 (2026-09-12)
 
 Client route groups are instant by default: a cross-route navigation inside a
