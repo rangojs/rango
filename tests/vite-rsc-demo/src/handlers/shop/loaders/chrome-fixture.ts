@@ -11,19 +11,16 @@ import { createLoader } from "@rangojs/router";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const DemoSessionLoader = createLoader(async () => {
-  "use server";
   await sleep(400);
   return { user: "guest" };
 });
 
 export const DemoBasketLoader = createLoader(async () => {
-  "use server";
   await sleep(800);
   return { items: 2 };
 });
 
 export const DemoVehicleLoader = createLoader(async () => {
-  "use server";
   await sleep(1200);
   return { rego: null as string | null };
 });

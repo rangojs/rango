@@ -154,7 +154,6 @@ of serializing after it, and client components read them with `useLoader()`:
 
 ```tsx
 export const StockLoader = createLoader(async (ctx) => {
-  "use server";
   return ctx.env.DB.stockFor(ctx.params.slug);
 });
 
@@ -203,7 +202,6 @@ exactly when the client asks for it, and cacheable with the same opt-in:
 
 ```tsx
 export const ReviewsPanel = createLoader(async (ctx) => {
-  "use server";
   const reviews = await db.reviewsFor(ctx.params.slug);
   return <ReviewList reviews={reviews} />; // RSC, streamed to the client
 }, true);
@@ -291,7 +289,6 @@ export const ProductList = Prerender(
 
 // loaders/prices.ts — one batched query for exactly the rendered products
 export const PriceLoader = createLoader(async (ctx) => {
-  "use server";
   await ctx.rendered();
   const ids = ctx.use(ProductsOnPage);
   return db.pricesFor(ids);

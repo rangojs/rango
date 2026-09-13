@@ -119,6 +119,8 @@ import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
+import clientUrlsVarsPatterns from "./urls/client-urls-vars.js";
+import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
@@ -856,6 +858,12 @@ export const urlpatterns = urls(
       // clientUrls() group: browser-local presentation routes mounted through
       // include() like any urls() module — the canonical composition model.
       include("/client-urls-e2e", clientUrlPatterns),
+      // Route middleware vars (createVar token + string key) must reach a
+      // group loader on the document and partial lanes; the fetch lane is
+      // pinned separately (e2e/client-urls.test.ts "middleware vars").
+      middleware(clientUrlsVarsMiddleware, () => [
+        include("/client-urls-vars", clientUrlsVarsPatterns),
+      ]),
       // Async include + clientUrls: supported when the include chain and the
       // client routes are NAMED (see urls/client-urls-async-named.ts).
       include(

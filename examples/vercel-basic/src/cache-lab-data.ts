@@ -15,8 +15,6 @@ const CACHE_LAB_MISS_DELAY_MS = 450;
 const CACHE_LAB_PULSE_DELAY_MS = 650;
 
 export const CacheLabPulseLoader = createLoader(async () => {
-  "use server";
-
   return {
     generatedAt: new Promise<string>((resolve) =>
       setTimeout(

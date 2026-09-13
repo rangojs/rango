@@ -20,7 +20,6 @@ The loader can then read handles via `ctx.use(handle)`.
 
 ```ts
 const PricesLoader = createLoader(async (ctx) => {
-  "use server";
   await ctx.rendered();
   const products = ctx.use(Products); // reads handle data
   return pricing.getLive(products.map((p) => p.id));

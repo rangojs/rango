@@ -54,9 +54,10 @@ Consequences you will hit:
   `path("/x", <HomePage />)` and not an inline arrow — the projection stores a
   component reference, and an anonymous value throws
   (`clientUrls() path() expects a named client component value`).
-- **Loaders must be `createLoader()` definitions** whose bodies are
-  `"use server"` — they execute on the server, addressed by id; the client
-  module only imports the definition object.
+- **Loaders must be `createLoader()` definitions.** They execute on the
+  server, addressed by id; the client module only imports the definition
+  object. Do NOT put a `"use server"` directive in the body — it is not
+  needed, and the build rejects it (see `/loader` → "Creating a Loader").
 - **Everything in the definition must be JSON-projectable.** That is why the
   unsupported helpers below are rejected rather than silently dropped.
 
@@ -230,7 +231,6 @@ is server code either way.
 
 ```ts
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   const moved = LEGACY_SLUGS[ctx.params.slug];
   if (moved) throw redirect(`/shop/product/${moved}`);
   if (!(await exists(ctx.params.slug))) notFound(`No "${ctx.params.slug}"`);

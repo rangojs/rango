@@ -67,7 +67,6 @@ consumption, `clientUrls()` groups) still build trails:
 
 ```typescript
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   const product = await getProduct(ctx.params.slug);
 
   const pushCrumb = ctx.use(Breadcrumbs);

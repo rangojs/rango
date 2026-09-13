@@ -593,7 +593,6 @@ export function RSCContentDisplay() {
 export const RSCContentLoader = createLoader(
   "loaders-demo-rsc-content",
   async (ctx) => {
-    "use server";
     const style = ctx.params.style;
 
     // Return server-rendered JSX

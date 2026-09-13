@@ -13,6 +13,7 @@ export interface AppBindings {
 // Middleware-injected variables
 export interface AppVariables {
   requestId?: string;
+  cuVarsUserStr?: string;
 }
 
 // Module augmentation for global type inference

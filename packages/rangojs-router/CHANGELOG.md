@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Loader bodies must not carry `"use server"`
+
+The Vite plugin now rejects an inline `"use server"` directive inside a
+`createLoader()` callback, in dev and build:
+
+```
+[rango] createLoader() body at src/catalog.loader.ts:3 carries a "use server" directive. ...
+```
+
+The directive never meant "server only". It tells the RSC toolchain to hoist
+the body and register it as a client-callable server reference, so every
+loader written that way was also reachable as an action through
+`?_rsc_action=<id>` with caller-supplied arguments. Loader bodies already run
+only on the server, addressed by id, so the directive did nothing useful.
+Every example in the docs, skills, and in-repo apps used to carry it; all of
+them are updated. Migration is deleting that one line per loader. For a
+build-time guarantee that a module never reaches the client graph, use
+`import "server-only"`.
+
+Two related contracts are now pinned by dev and production e2e in both the
+test-app and cloudflare-basic (`client-urls-vars` fixtures): route
+`middleware()` variables set with `ctx.set()` (a `createVar()` token or a
+string key) are visible to `clientUrls()` group loaders on document loads and
+partial navigations; and the `_rsc_loader` fetch lane (`useFetchLoader()`,
+`load()`, `useRefreshLoaders()`) runs only global `router.use()` middleware
+plus the loader's own `{ middleware }` list, never the route chain, so
+`createLoader(fn, true)` sees none of those variables. The loader skill now
+says so next to the `true` example.
+
 ## 0.14.0 (2026-09-13)
 
 The instance a client route group renders optimistically now survives the

@@ -19,8 +19,6 @@ export type Product = {
  * Type-safe: ctx.params.slug is typed as string
  */
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   const { slug } = ctx.params;
   // 2 second delay to demonstrate loading skeleton
   await new Promise((resolve) => setTimeout(resolve, 2000));

@@ -81,8 +81,6 @@ The cart count belongs in `ShopLayout`, so every shop page shows it. That is a r
 import { cookies, createLoader } from "@rangojs/router";
 
 export const CartLoader = createLoader(async (ctx) => {
-  "use server";
-
   const raw = cookies().get("cart")?.value;
   let items: string[] = [];
   try {

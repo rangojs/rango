@@ -42,7 +42,6 @@ export interface ClientShopSsrProduct {
 
 export const ClientShopSsrProductLoader = createLoader(
   async (ctx): Promise<ClientShopSsrProduct> => {
-    "use server";
     const slug = ctx.params.slug;
 
     await new Promise((resolve) => setTimeout(resolve, SSR_AWAITED_DELAY_MS));
@@ -104,7 +103,6 @@ export const ClientShopSsrProductLoader = createLoader(
  */
 export const ClientShopSsrSidecarLoader = createLoader(
   async (): Promise<{ note: string }> => {
-    "use server";
     await new Promise((resolve) => setTimeout(resolve, SSR_SIDECAR_DELAY_MS));
     return { note: "streamed sidecar data" };
   },

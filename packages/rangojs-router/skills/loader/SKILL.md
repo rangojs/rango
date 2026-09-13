@@ -24,8 +24,6 @@ flow is _action mutates → loader re-reads → UI updates_.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   const product = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE slug = ?",
   )
@@ -35,6 +33,15 @@ export const ProductLoader = createLoader(async (ctx) => {
   return { product };
 });
 ```
+
+Loader bodies already run only on the server — never add a `"use server"`
+directive inside the callback. `"use server"` means "expose this function to
+the client as a callable server reference", not "server only": the directive
+would hoist the body into a registered server reference that anyone can invoke
+through the action endpoint with caller-supplied arguments. The Vite plugin
+rejects it at transform time (`createLoader() body at <file>:<line> carries a
+"use server" directive`). For a build-time guarantee that a module never
+reaches the client graph, use `import "server-only"` instead.
 
 ### Supported export patterns
 
@@ -194,8 +201,6 @@ Loaders receive the same context shape as route handlers.
 
 ```typescript
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   // URL params (may include client-provided overrides for fetchable loaders)
   const { slug } = ctx.params;
 
@@ -242,8 +247,6 @@ or resource scoping:
 
 ```typescript
 export const OrderLoader = createLoader(async (ctx) => {
-  "use server";
-
   // Use routeParams for auth checks — client cannot spoof the URL-matched ID
   const { orderId } = ctx.routeParams;
   const user = ctx.get("user");
@@ -674,7 +677,6 @@ signal instead of re-checking existence at each read site:
 import { createLoader, notFound, redirect } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   const moved = LEGACY_SLUGS[ctx.params.slug];
   if (moved) throw redirect(`/shop/product/${moved}`);
 
@@ -708,7 +710,6 @@ where the data lives:
 import { Meta, Breadcrumbs } from "./handles";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   const product = await getProduct(ctx.params.slug);
 
   ctx.use(Meta)({ title: `${product.name} — Shop` });
@@ -799,8 +800,6 @@ via `useFetchLoader()` and `load()`:
 import { createLoader } from "@rangojs/router";
 
 export const SearchLoader = createLoader(async (ctx) => {
-  "use server";
-
   const query = ctx.params.query ?? "";
   const results = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE name LIKE ?",
@@ -811,6 +810,13 @@ export const SearchLoader = createLoader(async (ctx) => {
   return { results: results.results ?? [] };
 }, true); // true = fetchable
 ```
+
+`true` attaches an EMPTY middleware list, and the fetch lane never runs route
+`middleware()` (see `/middleware` → "Request flow"). A fetchable loader that
+reads a var set by route middleware (`ctx.get(CurrentUser)`) therefore sees
+`undefined` on `useFetchLoader()` / `load()` / `useRefreshLoaders()` unless it
+passes that middleware itself: `createLoader(fn, { middleware: [loadSession,
+requireAuth] })` (next section).
 
 > **No registration needed — and no worker-entry import.** A fetchable loader
 > does not have to be registered with `loader()` in the route DSL, and it does
@@ -835,8 +841,6 @@ import { rateLimitMiddleware } from "../middleware/rate-limit";
 
 export const ProtectedLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     const user = ctx.get("user");
     return { orders: await db.orders.list(user.id) };
   },
@@ -846,6 +850,12 @@ export const ProtectedLoader = createLoader(
 
 The middleware uses the same `MiddlewareFn` signature as route/app middleware,
 so you can reuse existing middleware functions directly.
+
+A `redirect()` thrown by per-loader middleware becomes a real 3xx on the fetch
+lane, so the browser's `fetch` follows it and `useFetchLoader()` receives the
+login page's HTML instead of loader data. Reserve redirects for document and
+navigation requests; on the fetch lane return a 401 (or a structured error
+payload) and let the caller decide.
 
 Fetchable loaders support both GET and POST (PUT, PATCH, DELETE) from the client.
 The `load()` function auto-detects the body type:
@@ -860,8 +870,6 @@ includes additional fields depending on the body type:
 
 ```typescript
 export const MutationLoader = createLoader(async (ctx) => {
-  "use server";
-
   // JSON body — available as ctx.body (parsed object)
   const data = ctx.body as { name: string; email: string };
 
@@ -883,8 +891,6 @@ export const MutationLoader = createLoader(async (ctx) => {
 import { createLoader } from "@rangojs/router";
 
 export const FileUploadLoader = createLoader(async (ctx) => {
-  "use server";
-
   const file = ctx.formData?.get("file") as File | null;
   if (file && file.size > 0) {
     // Save to R2, D1, etc.
@@ -911,8 +917,6 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
-
   const product = await ctx.env.DB
     .prepare("SELECT * FROM products WHERE slug = ?")
     .bind(ctx.params.slug)
@@ -926,8 +930,6 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 export const CartLoader = createLoader(async (ctx) => {
-  "use server";
-
   const user = ctx.get("user");
   if (!user) return { cart: null };
 

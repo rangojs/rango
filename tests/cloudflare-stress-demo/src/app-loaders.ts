@@ -8,7 +8,6 @@ import { createLoader } from "@rangojs/router";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export const AppShellLoader = createLoader(async (_ctx) => {
-  "use server";
   await sleep(4);
   return {
     nav: ["dashboard", "cached", "feedback"],
@@ -17,7 +16,6 @@ export const AppShellLoader = createLoader(async (_ctx) => {
 });
 
 export const StatsLoader = createLoader(async (ctx) => {
-  "use server";
   await sleep(6);
   return {
     section: String(ctx.params.section ?? ""),
@@ -27,7 +25,6 @@ export const StatsLoader = createLoader(async (ctx) => {
 });
 
 export const ActivityLoader = createLoader(async (_ctx) => {
-  "use server";
   await sleep(3);
   return {
     events: Array.from({ length: 10 }, (_, i) => ({

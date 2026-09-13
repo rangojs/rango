@@ -737,7 +737,6 @@ maps to a Meta push from the LOADER that owns the data, plus
 // Rango: push from the loader; the flag makes the document render await it,
 // so the title is in the SSR'd <head> like generateMetadata guarantees.
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   const product = await getProduct(ctx.params.slug);
   ctx.use(Meta)({ title: product.name });
   return product;
