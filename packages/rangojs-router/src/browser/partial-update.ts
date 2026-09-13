@@ -614,7 +614,7 @@ export function createPartialUpdater(
             scroll: scrollPayload,
           });
         });
-      } else if (fullyPrefetched || isSameStructureNav) {
+      } else if (fullyPrefetched || isSameStructureNav || optimisticPresented) {
         // Content-hold commit, two triggers. Fully-prefetched nav: the payload
         // is fully resolved (forceAwait above), so the transition commits
         // synchronously — no fallback flash. Same-structure nav: the re-run
@@ -633,7 +633,10 @@ export function createPartialUpdater(
         // instead of revealing that boundary's fallback; its render happens
         // pre-commit inside the transition, so userland effects cannot run
         // first. Boundaries newly mounted by this nav still reveal their
-        // fallbacks (React shows new boundaries inside transitions).
+        // fallbacks (React shows new boundaries inside transitions). An
+        // optimistic clientUrls() presentation commits here too: the group
+        // segment reconciles in place (clientGroup key), so a read that still
+        // suspends must hold the presented content, not flash a fallback.
         startTransition(() => {
           if (optimisticPresented && addTransitionType) {
             addTransitionType(OPTIMISTIC_COMMIT_TRANSITION_TYPE);

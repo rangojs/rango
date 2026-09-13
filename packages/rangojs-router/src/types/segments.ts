@@ -193,6 +193,9 @@ export interface ResolvedSegment {
   notFoundInfo?: NotFoundInfo; // For notFound segments: the not found information
   // Mount path from include() scope, used for MountContext.Provider wrapping
   mountPath?: string;
+  /** clientUrls() group key (the include mount), shared by every route
+   *  segment of one group; see the group-route branch in segment-system.tsx. */
+  clientGroup?: string;
   /**
    * @internal Server-side marker: true when the segment's handler actually ran
    * this request (not skipped via the revalidate cache path). Used by

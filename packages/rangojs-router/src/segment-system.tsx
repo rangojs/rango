@@ -350,6 +350,13 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
+    // clientUrls() group routes: ONE React key and ONE wrapper shape per group
+    // mount (no LoaderBoundary/RouteContentWrapper — ClientUrlsRoot renders
+    // loading() itself), so an in-group navigation reconciles the mounted
+    // ClientUrlsRoot: the optimistic destination keeps its instance across the
+    // commit and same-route param navs hold instead of remounting. The
+    // server-side loading value still drives PPR masking and SSR.
+    const clientGroup = node.segment.clientGroup;
     const segNodeStart = segDebug ? performance.now() : 0;
 
     // Param-agnostic keys are opt-in via the transition() DSL (see
@@ -385,7 +392,10 @@ export async function renderSegments(
             .map(([k, v]) => `${k}=${v}`)
             .join(",")
         : "";
-    const key = paramStr ? `${id}-${paramStr}` : id;
+    // Route identity the per-route remount used to provide; group routes key
+    // by the group instead and pass it to the error boundary as its resetKey.
+    const idParamsKey = paramStr ? `${id}-${paramStr}` : id;
+    const key = clientGroup ? `cg:${clientGroup}` : idParamsKey;
 
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
@@ -403,7 +413,7 @@ export async function renderSegments(
     }
 
     let nodeContent: ReactNode = null;
-    if (isRenderableLoading(loading)) {
+    if (!clientGroup && isRenderableLoading(loading)) {
       // forceAwait (popstate, stale-revalidation, fully-prefetched nav) renders a
       // loading() route with the route content ALREADY resolved, so its
       // RouteContentWrapper Suspender does not suspend for a microtask and flash
@@ -499,13 +509,14 @@ export async function renderSegments(
     // escaping to app boundaries. Wrapped UNCONDITIONALLY on loader presence
     // — streams and forceAwait lanes must produce the same tree shape or
     // lane changes remount the subtree (docs/tree-structure.md).
-    if (loaderEntries.length > 0) {
+    if (loaderEntries.length > 0 || clientGroup) {
       nodeContent = createElement(StreamedLoaderErrorBoundary, {
+        resetKey: idParamsKey,
         children: nodeContent,
       });
     }
 
-    if (loading !== undefined && loading !== null) {
+    if (!clientGroup && loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       let boundaryLoaderData: Promise<any[]> | any[] = loaderDataPromise;
       // SPIKE (streaming useLoader): per-loader streams for the boundary's

@@ -172,10 +172,10 @@ the destination (the local match's params, the target pathname and search).
 Everything outside it — chrome above the group, the URL bar, history,
 `useNavigation`, `useLinkStatus` — keeps the committed location until the
 canonical response commits; a redirect or error discards the branch and its
-values with it. The optimistically rendered instance is replaced by the
-committed segment when the response lands: local state entered during the
-window does not survive, and effects run once per instance. Design and
-rationale: `docs/design/client-urls-optimistic-destination.md`.
+values with it. A group's route segments share one React key, so the
+optimistically rendered instance is the one the canonical response commits
+into: local state entered during the window survives and effects run once.
+Design and rationale: `docs/design/client-urls-optimistic-destination.md`.
 
 The local result cannot authorize the request, run or skip middleware, execute a
 loader, commit history, or override a redirect or error from the server. The
@@ -216,20 +216,22 @@ wait; the pending flag and the fresh content land in one commit.
 
 Two boundaries, both deliberate:
 
-- **Param navigations without `transition()` are unchanged.** A param change
-  remounts the route subtree (the param rides the segment key —
-  `segment-system.tsx`), and a freshly mounted boundary reveals its fallback
-  even inside a transition: fresh skeleton, fresh component state.
-  `transition()` remains the opt-in that drops the param from the key and
-  extends the hold to param navs.
-- **Cross-route navigations are unchanged.** Mounting new segments commits
-  urgently, so destination fallbacks stream in like a first load and the
-  click has immediate visible feedback.
+- **Param navigations hold too, inside a group.** A group's route segments
+  are keyed by the group, not by route id + params (`segment-system.tsx`,
+  `ResolvedSegment.clientGroup`), so a same-route param nav reconciles the
+  mounted instance and the same-structure commit holds its content until the
+  new data lands. `transition()` in a group configures the view-transition
+  animation; it is not what produces the hold. Server routes outside a group
+  keep the param-bearing key: a param change remounts the subtree with a
+  fresh skeleton unless the route declares `transition()`.
+- **Cross-route navigations present the destination at once** (see
+  "Navigation authority") and commit in the transition lane, so the presented
+  content is held while any read that still suspends resolves.
 
 Pinned dev+prod in `tests/vite-rsc-demo/e2e/client-shop-filters.test.ts`
-(hold + pending on a filter nav); the param-nav remount default and the
-`transition()` opt-in stay pinned in `e2e/same-route-nav.test.ts` and
-`e2e/client-urls.test.ts`.
+(hold + pending on a filter nav) and `e2e/client-urls.test.ts` (param-nav
+hold with and without `transition()`); the server-route remount default stays
+pinned in `e2e/same-route-nav.test.ts`.
 
 ## Outer layouts and middleware across group navigations
 

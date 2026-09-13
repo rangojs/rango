@@ -215,6 +215,7 @@ export async function serializeSegments(
           loaderIds: segment.loaderIds,
           transition: segment.transition,
           mountPath: segment.mountPath,
+          clientGroup: segment.clientGroup,
         },
       };
     }),

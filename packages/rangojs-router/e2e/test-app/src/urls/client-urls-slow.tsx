@@ -67,6 +67,9 @@ function SlowB() {
       <h2>Page B</h2>
       <p data-testid="cus-b-param">{tag}</p>
       <p data-testid="cus-b-pathname">{usePathname()}</p>
+      {/* Local state typed during the optimistic window must survive the
+          canonical commit (group-keyed segment keeps this instance). */}
+      <input data-testid="cus-b-input" defaultValue="" />
       <Suspense fallback={<p data-testid="cus-b-skeleton">loading data</p>}>
         <SlowData testId="cus-b-loader" />
       </Suspense>

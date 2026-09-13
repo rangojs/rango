@@ -130,7 +130,7 @@ typing work exactly as for server routes (`/typesafety`).
 | `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                         |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait          |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                             |
-| `transition()` | Data-only ViewTransition config — no `when` (that is a server-executed predicate)                                                                              |
+| `transition()` | Data-only ViewTransition animation config — no `when`; same-route navs in a group already hold previous content without it                                     |
 | `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                          |
 
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,

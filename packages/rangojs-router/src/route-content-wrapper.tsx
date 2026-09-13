@@ -32,13 +32,34 @@ import { LoaderRedirect } from "./loader-redirect.js";
  * Errors without any marker rethrow to the app's own boundaries.
  */
 export class StreamedLoaderErrorBoundary extends Component<
-  { children: ReactNode },
-  { error: unknown }
+  { children: ReactNode; resetKey?: string },
+  { error: unknown; resetKey?: string }
 > {
-  state: { error: unknown } = { error: null };
+  state: { error: unknown; resetKey?: string } = {
+    error: null,
+    resetKey: this.props.resetKey,
+  };
 
   static getDerivedStateFromError(error: unknown): { error: unknown } {
     return { error };
+  }
+
+  /**
+   * A caught marker (redirect, notFound, error fallback) belongs to ONE route
+   * + params. Group-keyed segments (ResolvedSegment.clientGroup) keep this
+   * instance alive across in-group navigations, so the error must clear when
+   * the route or params change — otherwise a redirect caught for /legacy
+   * keeps rendering LoaderRedirect for /state. `resetKey` is the segment's
+   * id-params identity, the cadence the per-route remount used to provide.
+   */
+  static getDerivedStateFromProps(
+    props: { resetKey?: string },
+    state: { error: unknown; resetKey?: string },
+  ): { error: unknown; resetKey?: string } | null {
+    if (props.resetKey !== state.resetKey) {
+      return { error: null, resetKey: props.resetKey };
+    }
+    return null;
   }
 
   render(): ReactNode {

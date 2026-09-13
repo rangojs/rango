@@ -174,13 +174,17 @@ export function ClientUrlsRoot({
     [optimisticRoute, presented],
   );
 
+  // The wrapper chain below is IDENTICAL in the optimistic and the canonical
+  // render (only prop values change): together with the group-keyed segment
+  // (segment-system.tsx, ResolvedSegment.clientGroup) that is what lets the
+  // destination instance survive the canonical commit.
   let content: ReactNode = createElement(route.component, { key: route.id });
-  if (optimisticRoute && optimisticRoute.loading !== undefined) {
-    // loading() is the route-level boundary around the optimistic render;
-    // presence mirrors the projection's hasLoading (a falsy-but-valid node
-    // like loading("") is still a configured fallback).
+  if (route.loading !== undefined) {
+    // loading() is the route-level boundary for group routes (segment-system
+    // places no LoaderBoundary around them); presence mirrors the
+    // projection's hasLoading (loading("") is still a configured fallback).
     content = createElement(Suspense, {
-      fallback: optimisticRoute.loading,
+      fallback: route.loading,
       children: content,
     });
   }
@@ -195,19 +199,15 @@ export function ClientUrlsRoot({
     });
   }
 
-  if (optimistic) {
-    content = createElement(OutletProvider, {
-      content: null,
-      loaderStreams: optimistic.streams,
-      pending,
-      children: createElement(OptimisticLocationContext.Provider, {
-        value: optimistic.location,
-        children: content,
-      }),
-    });
-  }
-
-  return content;
+  return createElement(OutletProvider, {
+    content: null,
+    loaderStreams: optimistic?.streams,
+    pending,
+    children: createElement(OptimisticLocationContext.Provider, {
+      value: optimistic?.location ?? null,
+      children: content,
+    }),
+  });
 }
 
 export function ClientUrlsLoading({

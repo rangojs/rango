@@ -388,7 +388,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
-  test("client-declared transition() holds same-route param navs; the plain twin re-streams", async ({
+  test("same-route param navs hold previous content in a group, with or without transition()", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -415,8 +415,11 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       ).toBe(false);
     }
 
-    // Control: the twin route WITHOUT transition() re-streams its skeleton on
-    // the same navigation shape, proving the observable discriminates.
+    // The twin WITHOUT transition() holds as well: group route segments are
+    // keyed by the group (not id + params), so a same-route param nav
+    // reconciles the mounted instance and the same-structure transition
+    // commit keeps its content until the new data lands. transition() in a
+    // group is the view-transition animation opt-in, not the hold.
     await page.goto(f.url("/client-urls-transition/plain/one"));
     await waitForHydration(page);
     await expect(testId(page, "ct-plain-loader")).toHaveText(
@@ -432,8 +435,8 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       );
       expect(
         await readFlash(page),
-        "the transition-less twin must re-stream the loading() skeleton",
-      ).toBe(true);
+        "the transition-less twin holds too (group-keyed segment)",
+      ).toBe(false);
     }
   });
 

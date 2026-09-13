@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
-import { type ReactNode } from "react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Outlet, useOutlet } from "../../client.js";
 import { MountContextProvider } from "../../browser/react/mount-context.js";
 import { OutletProvider } from "../../outlet-provider.js";
@@ -237,6 +237,60 @@ describe("ClientUrlsRoot", () => {
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "true",
     );
+  });
+
+  it("keeps the optimistic instance across the canonical commit", async () => {
+    let accountMounts = 0;
+    function AccountPage(): ReactNode {
+      const [text, setText] = useState("");
+      useEffect(() => {
+        accountMounts += 1;
+      }, []);
+      return (
+        <input
+          data-testid="account-input"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+        />
+      );
+    }
+    const definition = clientUrls(({ layout, path }) => [
+      layout(AppLayout, () => [
+        path("/", HomePage),
+        path("/account", AccountPage),
+      ]),
+    ]);
+    const result = render(
+      <ClientUrlsRoot definition={definition} routeId="client-route-0" />,
+    );
+    const abort = new AbortController();
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL("http://localhost/account"),
+        abort.signal,
+      );
+    });
+    const input = result.getByTestId("account-input") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "typed while pending" } });
+    });
+    expect(input.value).toBe("typed while pending");
+
+    // Canonical commit: the group-keyed segment reconciles the same
+    // ClientUrlsRoot with the destination's routeId; the presentation clears.
+    // The wrapper chain is identical in both states, so the instance — and
+    // the state typed during the window — survives.
+    await act(async () => {
+      result.rerender(
+        <ClientUrlsRoot definition={definition} routeId="client-route-1" />,
+      );
+      presentation?.clear();
+    });
+    expect(
+      (result.getByTestId("account-input") as HTMLInputElement).value,
+    ).toBe("typed while pending");
+    expect(accountMounts).toBe(1);
   });
 
   it("scopes route hooks to the optimistic branch", async () => {

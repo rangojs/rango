@@ -47,10 +47,16 @@ function clientUrlsSlowTests(f: ReturnType<typeof useFixture>): void {
       "/client-urls-slow",
     );
     await expect(page).toHaveURL(f.url("/client-urls-slow"));
+    // State entered during the window rides through the commit: the group
+    // segment reconciles in place, so this input instance is not remounted.
+    await testId(page, "cus-b-input").fill("typed during the wait");
 
     await expect(testId(page, "cus-b-loader")).toHaveText("slow-data", {
       timeout: GATED_TIMEOUT,
     });
+    await expect(testId(page, "cus-b-input")).toHaveValue(
+      "typed during the wait",
+    );
     const dataAt = Date.now() - start;
     await expect(page).toHaveURL(f.url("/client-urls-slow/b/first"));
     await expect(testId(page, "cus-chrome-pathname")).toHaveText(

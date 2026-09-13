@@ -112,6 +112,9 @@ export interface PathOptions<
   trailingSlash?: TrailingSlashMode;
   /** Response type marker (set by path.json(), etc.) */
   [RESPONSE_TYPE]?: string;
+  /** @internal clientUrls() group key stamped by server-projection.ts; see
+   *  ResolvedSegment.clientGroup. */
+  clientGroup?: string;
 }
 
 /**
