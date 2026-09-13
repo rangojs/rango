@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 (2026-09-13)
 
 ### Loader bodies must not carry `"use server"`
 
