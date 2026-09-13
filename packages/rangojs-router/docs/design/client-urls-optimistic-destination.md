@@ -1,6 +1,6 @@
 # Client URL Groups: Optimistic Destination by Default
 
-Status: design, not shipped. Successor to the "Implemented Loading and Pending
+Status: shipped in 0.13.0 (phase one, PR #850) and the group-stable segment (phase two, below). Successor to the "Implemented Loading and Pending
 Scope" section of [client-urls-instant-navigation.md](./client-urls-instant-navigation.md),
 which records the shipped contract this design replaces. Public contract today:
 [Client URL Routes](../client-urls.md).
@@ -44,16 +44,16 @@ Decisions taken with the maintainer (2026-09-12):
 
 ## What the browser shows, before and after
 
-| Navigation inside a group                                      | Today                                                                      | With this design                                                                  |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Cross-route, destination declares `loading()`                  | destination `loading()`                                                    | destination component; `loading()` is its Suspense fallback while a read suspends |
-| Cross-route, destination has inline `<Suspense>` at read sites | current page held, `pending=true`                                          | destination chrome at once, skeletons at the reads                                |
-| Cross-route, destination has no boundary of any kind           | current page held, `pending=true`                                          | current page held, `pending=true` (unchanged; see "Graceful degradation")         |
-| Same-route param/search nav                                    | current content held, `pending=true`, `transition()` opt-in for param navs | unchanged                                                                         |
-| Fully prefetched click                                         | commits from cache with no fallback frame                                  | unchanged; the optimistic branch is replaced by the commit in the same beat       |
-| Middleware or loader redirect / error                          | optimistic branch discarded at commit                                      | unchanged                                                                         |
-| Intercept target                                               | local presentation declined                                                | unchanged                                                                         |
-| Hard load                                                      | shell after middleware and `ssr:false` loaders                             | unchanged                                                                         |
+| Navigation inside a group                                      | Today                                                                      | With this design                                                                    |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Cross-route, destination declares `loading()`                  | destination `loading()`                                                    | destination component; `loading()` is its Suspense fallback while a read suspends   |
+| Cross-route, destination has inline `<Suspense>` at read sites | current page held, `pending=true`                                          | destination chrome at once, skeletons at the reads                                  |
+| Cross-route, destination has no boundary of any kind           | current page held, `pending=true`                                          | current page held, `pending=true` (unchanged; see "Graceful degradation")           |
+| Same-route param/search nav                                    | current content held, `pending=true`, `transition()` opt-in for param navs | held for every group route: the group-keyed segment reconciles in place (phase two) |
+| Fully prefetched click                                         | commits from cache with no fallback frame                                  | unchanged; the optimistic branch is replaced by the commit in the same beat         |
+| Middleware or loader redirect / error                          | optimistic branch discarded at commit                                      | unchanged                                                                           |
+| Intercept target                                               | local presentation declined                                                | unchanged                                                                           |
+| Hard load                                                      | shell after middleware and `ssr:false` loaders                             | unchanged                                                                           |
 
 The same-route row is deliberately untouched: held data and `revalidate()`
 predicates already keep that case content-stable, and re-rendering the
@@ -120,23 +120,45 @@ The clear path is unchanged: `clear()` already runs inside `startTransition`
 so the optimistic presentation entangles with the held canonical commit
 (`src/client-urls/navigation.ts`, comment above `clear`).
 
-### 4. Commit: the branch is replaced, not resolved
+### 4. Commit: the group-keyed segment reconciles in place (phase two)
 
-Each projected route is its own server segment (`server-projection.ts:525-562`
-builds one `path()` per record), so `/b` and `/c` have different segment ids
-and a cross-route commit mounts the destination's segment and unmounts the
-origin's (`src/browser/partial-update.ts:512-515`, `631-641`). The optimistic
-branch lives under the origin's `ClientUrlsRoot`, so at commit the
-optimistically rendered component instance is unmounted and a fresh instance
-mounts under the canonical segment.
+Each projected route is still its own server segment
+(`server-projection.ts` builds one `path()` per record), but every route of
+one group mount carries the same `clientGroup` key — the include's URL prefix,
+stamped through `PathOptions.clientGroup` (internal) onto the entry
+(`urls/path-helper.ts`), the resolved segment (`segment-resolution/fresh.ts`,
+`revalidation.ts`), and the segment cache codec. `renderSegments` keys those
+segments by `cg:<group>` instead of `id-params` and gives them one wrapper
+shape (an `OutletProvider` with a `StreamedLoaderErrorBoundary`, never a
+`LoaderBoundary` or `RouteContentWrapper`; `loading()` is the `Suspense`
+inside `ClientUrlsRoot`). `ClientUrlsRoot` itself renders an identical wrapper
+chain in the optimistic and the canonical state, only prop values change.
 
-Consequences, stated plainly:
+So at commit React reconciles the destination's segment into the position the
+origin's segment held, the same `ClientUrlsRoot` instance receives the new
+`routeId`, and the optimistically rendered component keeps its instance: local
+state entered during the window survives, effects run once. The commit rides
+the transition lane (`partial-update.ts`, `optimisticPresented`), so a read
+that still suspends holds the presented content instead of flashing a
+fallback.
 
-- Local state entered into the destination during the window is lost at
-  commit. Effects in the destination run twice, once per instance.
-- This is not a regression against today, where the window shows a skeleton
-  and the component mounts once at commit. It is a limitation of this phase.
-  The follow-up below removes it.
+Scar from building this: anything that used to be reset by the per-route
+remount now has to reset on its own. `StreamedLoaderErrorBoundary` is a class
+component holding the caught marker (redirect, notFound, error fallback); as
+a surviving instance it kept rendering `LoaderRedirect` for `/legacy` after
+the redirect had already landed on `/state`, so the target never rendered
+(also the vite-rsc-demo "moved product redirects" flakes). It now takes a
+`resetKey` (`id-params`, the old remount cadence) and clears the marker in
+`getDerivedStateFromProps` when it changes. Audit the same way before adding
+any other stateful wrapper to the group route chain.
+
+Consequence beyond the optimistic case: same-route param navigations inside a
+group reconcile too (the key is param-agnostic by construction, since
+different routes have different params), and the same-structure transition
+commit holds the previous content until the new data lands. `transition()` in
+a group is therefore the view-transition animation opt-in, not the hold.
+Server-side semantics are untouched: `loading()` still drives PPR masking and
+SSR, only the client tree shape for group routes changed.
 
 ### 5. Security boundary, reworded
 
@@ -243,20 +265,14 @@ Semantic matrix: no row changes; middleware scope, handler-first ordering, and
 PE/JS parity are about the server chain and hard loads, which this leaves
 alone.
 
-## Follow-up: a group-stable segment
+## Phase two: group-stable segment (shipped)
 
-To keep the optimistically rendered instance alive across the commit, the
-component has to live in a tree position that survives the segment swap. The
-natural place is a group-level layout segment: the include mount becomes a
-synthetic layout that owns the group's rendering, and the per-route segments
-carry only loaders and the matched `routeId`. `ClientUrlsGroupLayout`
-(`src/client-urls/client-root.tsx`) already exists for the intercept-wrapped
-shape and is the seed. The hard part is that `useLoader` resolves through the
-route segment's providers, which sit inside the outlet content; hoisting the
-component above them means the group layout must also be the loader provider
-for the active route. That is a change to segment rendering and merging and
-falls under `docs/tree-structure.md`; it is out of scope for phase one and
-tracked here so the remount limitation has a named exit.
+Mechanics 4 above. Unit pins: `segment-system.test.tsx` "keys clientUrls()
+group routes by the group and gives them one wrapper shape";
+`client-root.test.tsx` "keeps the optimistic instance across the canonical
+commit". E2e: the slow-middleware suites type into B during the window and
+assert the value after the commit; the transition suite's plain twin now holds
+as well.
 
 ## Non-goals
 

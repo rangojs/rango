@@ -154,6 +154,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       handler: wrappedHandler,
       pattern: prefixedPattern,
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+      ...(options?.clientGroup ? { clientGroup: options.clientGroup } : {}),
       ...(isPassthroughHandler(handler)
         ? {
             isPrerender: true as const,

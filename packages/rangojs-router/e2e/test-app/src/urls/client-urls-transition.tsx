@@ -10,11 +10,10 @@ import {
 import { ClientUrlsItemLoader } from "./client-urls.loader.js";
 
 /**
- * clientUrls() group pinning the data-only transition() projection. The hold
- * is observed on a SAME-route param nav (one -> two), which re-suspends the
- * existing boundary: with transition() the previous content is held — no
- * loading() skeleton flash; the /plain twin without transition() re-streams
- * the skeleton. Same observable as e2e/conditional-transition.test.ts, driven
+ * clientUrls() group pinning the data-only transition() projection on a
+ * SAME-route param nav (one -> two). Group route segments are keyed by the
+ * group, so BOTH twins hold previous content (no skeleton flash); transition()
+ * adds the view-transition animation config on top. Same observable as e2e/conditional-transition.test.ts, driven
  * here through the client-declared config.
  */
 

@@ -69,6 +69,8 @@ export type EntryPropCommon = {
   cache?: EntryCacheConfig;
   /** URL prefix from include() scope, used for MountContext on client */
   mountPath?: string;
+  /** clientUrls() group key (PathOptions.clientGroup); route entries only. */
+  clientGroup?: string;
 };
 
 /**

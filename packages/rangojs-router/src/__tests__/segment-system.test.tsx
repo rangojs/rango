@@ -247,6 +247,46 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(1);
       });
 
+      it("keys clientUrls() group routes by the group and gives them one wrapper shape", async () => {
+        // Two routes of one group: different ids, params, and loading()
+        // presence — same React key (group) and same wrapper chain, so an
+        // in-group navigation reconciles instead of remounting.
+        const findOutletElement = (node: ReactNode): ReactElement | null => {
+          if (!node || typeof node !== "object") return null;
+          const el = node as ReactElement;
+          if (el.type === MockOutletProvider) return el;
+          const props = el.props as Record<string, unknown>;
+          for (const child of [
+            props.children,
+            props.content,
+            props.outletContent,
+          ]) {
+            const found = findOutletElement(child as ReactNode);
+            if (found) return found;
+          }
+          return null;
+        };
+        const withLoading = seg({
+          id: "R0",
+          type: "route",
+          clientGroup: "/shop",
+          params: { id: "1" },
+          loading: createElement("p", null, "Loading"),
+        });
+        const plain = seg({ id: "R1", type: "route", clientGroup: "/shop" });
+
+        for (const segment of [withLoading, plain]) {
+          const result = await renderSegments([segment]);
+          const tree = toTreeNode(result);
+          expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
+          expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(0);
+          expect(
+            collectByType(tree, MockStreamedLoaderErrorBoundary),
+          ).toHaveLength(1);
+          expect(findOutletElement(result)?.key).toBe("cg:/shop");
+        }
+      });
+
       it("streams per-loader entries through OutletProvider.loaderStreams when loaders exist but no loading", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),

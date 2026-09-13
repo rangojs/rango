@@ -468,6 +468,7 @@ export async function resolveSegment<TEnv>(
       ),
       params,
       belongsToRoute: true,
+      ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     });
   } else {

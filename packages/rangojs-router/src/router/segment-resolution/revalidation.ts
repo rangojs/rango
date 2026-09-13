@@ -907,6 +907,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     ),
     params,
     belongsToRoute,
+    ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
     ...(entry.type === "layout" || entry.type === "cache"
       ? { layoutName: entry.id }
       : {}),

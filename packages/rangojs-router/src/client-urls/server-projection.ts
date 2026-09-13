@@ -481,8 +481,12 @@ function createLoaderStub(id: string): LoaderDefinition<unknown> {
   };
 }
 
-function materializedPathOptions(route: ClientUrlProjectionRoute): PathOptions {
+function materializedPathOptions(
+  route: ClientUrlProjectionRoute,
+  clientGroup: string,
+): PathOptions {
   return {
+    clientGroup,
     ...(route.name === null ? {} : { name: route.name }),
     ...(route.options.search ? { search: { ...route.options.search } } : {}),
     ...(route.options.trailingSlash
@@ -517,6 +521,9 @@ function materializeRouteItems(
   // route-name prefix is available here. ClientUrlsRoot needs it to compose
   // canonical names for intercept-target coordination in the browser.
   const namePrefix = getNamePrefix();
+  // One key per group MOUNT (the include's URL prefix): renderSegments keys
+  // every route segment of the group by it (ResolvedSegment.clientGroup).
+  const clientGroup = getUrlPrefix() || "/";
 
   // Helper calls attach to the CURRENT ctx.parent as they execute, so these
   // builders must run where the items belong: at the module top level for the
@@ -533,7 +540,7 @@ function materializeRouteItems(
               routeId: route.id,
               namePrefix,
             }),
-          materializedPathOptions(route),
+          materializedPathOptions(route, clientGroup),
           () => [
             ...route.loaderIds.map((id, loaderIndex) =>
               loader(
