@@ -13,8 +13,6 @@ export type ProductCartData = {
  * are in the cart. Useful for displaying "X in cart" in product modals.
  */
 export const ProductCartLoader = createLoader(async (ctx) => {
-  "use server";
-
   const { slug } = ctx.params;
   console.log(`[ProductCartLoader] Loading cart quantity for ${slug}...`);
 

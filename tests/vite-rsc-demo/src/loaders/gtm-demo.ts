@@ -17,7 +17,6 @@ export interface GtmDemoItem {
  * component (useLoader) can import it without a circular dependency.
  */
 export const GtmDemoLoader = createLoader(async () => {
-  "use server";
   return {
     item_id: "demo-widget",
     item_name: "Demo Widget",

@@ -14,7 +14,6 @@ export type Order = {
  * Used in account section to display order history.
  */
 export const OrdersLoader = createLoader(async (_ctx) => {
-  "use server";
   await new Promise((resolve) => setTimeout(resolve, 100));
   return orders;
 });

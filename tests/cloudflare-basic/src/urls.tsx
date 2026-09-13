@@ -166,6 +166,8 @@ import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
+import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
+import { clientUrlsVarsMiddleware } from "./client-urls-vars/shared.js";
 import {
   MirrorSessionLoader,
   MirrorBasketLoader,
@@ -618,6 +620,12 @@ export const urlpatterns = urls(
           loader(MirrorBasketLoader),
           loader(MirrorVehicleLoader),
           include("/__client-urls", pureClientUrls),
+        ]),
+        // Route middleware vars (createVar token + string key) reach a group
+        // loader on the document and partial lanes; the fetch lane is pinned
+        // separately (e2e/client-urls-vars.test.ts).
+        middleware(clientUrlsVarsMiddleware, () => [
+          include("/client-urls-vars", clientUrlsVarsPatterns),
         ]),
         // Streaming useLoader demo: no-loading() route streams per-loader;
         // /gated contrasts the loading() boundary; /ppr pins live holes.

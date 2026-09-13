@@ -14,6 +14,8 @@ const INDEX_PATH = "/client-urls-e2e";
 const HARD_LOAD_PATH = "/client-urls-e2e/items/hard-load";
 const SOFT_NAV_PATH = "/client-urls-e2e/items/soft-nav";
 const ORDINARY_SERVER_PATH = "/factory-hmr/alpha";
+const VARS_PATH = "/client-urls-vars";
+const VARS_EXPECTED = "var:alice|str:alice-str";
 
 /**
  * Flash detection via MutationObserver on addedNodes so even a single-frame
@@ -69,6 +71,51 @@ async function expectItem(
 }
 
 function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
+  test("middleware vars: a createVar token and a string key reach a group loader on the document and partial lanes", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const [documentResponse, partialResponse] = await Promise.all([
+      request.get(f.url(VARS_PATH), { headers: { accept: "text/html" } }),
+      request.get(f.url(`${VARS_PATH}/other?_rsc_partial=true`), {
+        headers: { accept: "text/x-component" },
+      }),
+    ]);
+    expect(documentResponse.ok()).toBe(true);
+    expect(await documentResponse.text()).toContain(VARS_EXPECTED);
+    expect(partialResponse.ok()).toBe(true);
+    expect(await partialResponse.text()).toContain(VARS_EXPECTED);
+
+    await page.goto(f.url(VARS_PATH));
+    await waitForHydration(page);
+    await expect(testId(page, "cu-vars-route")).toHaveText(VARS_EXPECTED);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "cu-vars-other-link").click();
+    await expect(testId(page, "cu-vars-other-route")).toHaveText(VARS_EXPECTED);
+    await testId(page, "cu-vars-index-link").click();
+    await expect(testId(page, "cu-vars-route")).toHaveText(VARS_EXPECTED);
+  });
+
+  test("middleware vars: the fetch lane skips route middleware unless the loader carries it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url(VARS_PATH));
+    await waitForHydration(page);
+
+    await testId(page, "cu-vars-fetch-bare-btn").click();
+    await expect(testId(page, "cu-vars-fetch-bare")).toHaveText(
+      "var:undefined|str:undefined",
+    );
+
+    await testId(page, "cu-vars-fetch-mw-btn").click();
+    await expect(testId(page, "cu-vars-fetch-mw")).toHaveText(VARS_EXPECTED);
+  });
+
   test("hard load SSRs and hydrates params, loader data, and settled outlet state", async ({
     page,
     request,
@@ -302,7 +349,18 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
 
     await using __ = await expectNoReload(page);
     await testId(page, "ca-bump").click();
-    await expect(testId(page, "ca-loader")).toHaveText(`count:${count + 1}`);
+    // Process-global counter shared with ca-item-bump and
+    // cu-hooks-run-action under fullyParallel: pin "advanced", not the delta.
+    await expect
+      .poll(async () =>
+        Number(
+          (await testId(page, "ca-loader").textContent())?.replace(
+            "count:",
+            "",
+          ),
+        ),
+      )
+      .toBeGreaterThanOrEqual(count + 1);
     // Per-loader CLIENT-RUN revalidate(): the session loader's predicate
     // opted out of action revalidation — same route, same commit, held data.
     await expect(testId(page, "ca-session")).toHaveText(`session:${count}`);
@@ -365,11 +423,22 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
 
     await using __ = await expectNoReload(page);
 
+    // The counter is process-global and other tests in this file bump it
+    // (ca-bump, cu-hooks-run-action) while fullyParallel runs them on sibling
+    // workers, so pin "advanced past the baseline", not an exact delta. The
+    // session value is exact: its skip decision must hold regardless.
+    const readCount = async (): Promise<number> =>
+      Number(
+        (await testId(page, "ca-item-count").textContent())?.replace(
+          "count:",
+          "",
+        ),
+      );
+
     // Action: counter refreshes, session decision (skip) rides the POST.
     await testId(page, "ca-item-bump").click();
-    await expect(testId(page, "ca-item-count")).toHaveText(
-      `count:${count + 1}`,
-    );
+    await expect.poll(readCount).toBeGreaterThanOrEqual(count + 1);
+    const afterAction = await readCount();
     await expect(testId(page, "ca-item-session")).toHaveText(
       `session:${count}`,
     );
@@ -380,9 +449,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ca-item-loader")).toHaveText(
       "client-urls-item:beta",
     );
-    await expect(testId(page, "ca-item-count")).toHaveText(
-      `count:${count + 1}`,
-    );
+    await expect.poll(readCount).toBeGreaterThanOrEqual(afterAction);
     await expect(testId(page, "ca-item-session")).toHaveText(
       `session:${count}`,
     );

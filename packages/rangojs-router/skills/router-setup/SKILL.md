@@ -356,7 +356,6 @@ path("/product/:slug", async (ctx) => {
 
 // In a loader — data-dependent authority lives with the data
 export const ProductLoader = createLoader(async (ctx) => {
-  "use server";
   if (!(await exists(ctx.params.slug))) notFound("Product not found");
   return getProduct(ctx.params.slug);
 });

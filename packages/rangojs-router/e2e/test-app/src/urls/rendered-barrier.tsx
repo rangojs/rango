@@ -19,7 +19,6 @@ const PRICE_MAP: Record<string, number> = {
 };
 
 export const LivePricesLoader = createLoader(async (ctx) => {
-  "use server";
   await ctx.rendered();
   const productIds = ctx.get(RenderedProducts);
   const prices: Record<string, number> = {};
@@ -224,7 +223,6 @@ export const StreamingPrerenderPage = Prerender(async (ctx) => {
 // Must be an `export const` so the expose-internal-ids transform injects a
 // stable $$id — the deadlock guard keys on loader.$$id.
 export const DeadlockLoader = createLoader(async (ctx) => {
-  "use server";
   await ctx.rendered();
   return "unreachable";
 });

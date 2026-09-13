@@ -35,6 +35,7 @@ import {
   hasCreateLoaderImport,
   generateClientLoaderStubs,
   transformLoaders,
+  findLoaderServerDirective,
 } from "./expose-ids/loader-transform.js";
 import {
   transformHandles,
@@ -109,6 +110,51 @@ export function createLoaderScanStubPlugin(): Plugin {
       const filePath = normalizePath(path.relative(projectRoot, id));
       return (
         generateClientLoaderStubs(bindings, code, filePath, true) ?? undefined
+      );
+    },
+  };
+}
+
+/**
+ * Refuse an inline `"use server"` directive inside a createLoader() callback.
+ * Runs `pre` so it sees the raw source before plugin-rsc's directive transform
+ * hoists the body into a registered server reference. See
+ * findLoaderServerDirective for why that registration is a problem.
+ */
+export function createLoaderDirectiveGuardPlugin(): Plugin {
+  return {
+    name: "@rangojs/router:loader-directive-guard",
+    enforce: "pre",
+    transform(code, id) {
+      if (
+        id.includes("/node_modules/") ||
+        !code.includes("use server") ||
+        !code.includes("createLoader") ||
+        !hasCreateLoaderImport(code)
+      ) {
+        return;
+      }
+
+      const cleanId = id.split("?", 1)[0];
+      let program: any;
+      try {
+        program = parseAst(code, { lang: "tsx" });
+      } catch {
+        return;
+      }
+
+      const hit = findLoaderServerDirective(
+        code,
+        getImportedFnNames(code, "createLoader"),
+        program,
+      );
+      if (!hit) return;
+
+      throw new Error(
+        `[rango] createLoader() body at ${cleanId}:${hit.line} carries a "use server" directive. ` +
+          `Loader bodies already run only on the server; the directive would register the body as a ` +
+          `client-callable server reference (reachable through the action endpoint with caller-supplied ` +
+          `arguments). Remove the directive.`,
       );
     },
   };

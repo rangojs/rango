@@ -6,8 +6,6 @@ import { createLoader } from "@rangojs/router";
  */
 export const TestGetLoader = createLoader(
   async (ctx) => {
-    "use server";
-
     console.log("[TestGetLoader] Called with:", {
       method: ctx.method,
       params: ctx.params,

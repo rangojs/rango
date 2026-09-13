@@ -1,7 +1,8 @@
 import type MagicString from "magic-string";
 import { makeStubId } from "../expose-id-utils.js";
 import type { CreateExportBinding } from "./types.js";
-import { isExportOnlyFile } from "./export-analysis.js";
+import { hasDirective } from "@vitejs/plugin-rsc/transforms";
+import { isExportOnlyFile, offsetToLineColumn } from "./export-analysis.js";
 
 export function hasCreateLoaderImport(code: string): boolean {
   return /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/server)?["']/.test(
@@ -61,4 +62,56 @@ export function transformLoaders(
   }
 
   return hasChanges;
+}
+
+export interface LoaderServerDirective {
+  line: number;
+}
+
+function loaderCallback(node: any, names: Set<string>): any {
+  if (
+    node?.type !== "CallExpression" ||
+    node.callee?.type !== "Identifier" ||
+    !names.has(node.callee.name)
+  ) {
+    return undefined;
+  }
+  const fn = node.arguments?.[0];
+  return (fn?.type === "ArrowFunctionExpression" ||
+    fn?.type === "FunctionExpression") &&
+    fn.body?.type === "BlockStatement"
+    ? fn
+    : undefined;
+}
+
+/**
+ * Locate an inline `"use server"` directive at the top of a createLoader()
+ * callback body. Only top-level `const X = createLoader(...)` bindings (bare
+ * or exported) are checked — the same shapes the loader transform registers.
+ * Loaders are never client-callable, and the directive makes plugin-rsc
+ * hoist the body and `registerServerReference` it, so the loader body
+ * becomes a public action reachable with caller-supplied arguments (verified
+ * against a production build: a POST to `?_rsc_action=<id>` ran a loader body
+ * with a forged ctx). The guard plugin throws on the first hit.
+ */
+export function findLoaderServerDirective(
+  code: string,
+  fnNames: readonly string[],
+  program: any,
+): LoaderServerDirective | null {
+  const names = new Set(fnNames);
+  for (const statement of program.body ?? []) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration"
+        ? statement.declaration
+        : statement;
+    if (declaration?.type !== "VariableDeclaration") continue;
+    for (const declarator of declaration.declarations) {
+      const fn = loaderCallback(declarator.init, names);
+      if (fn && hasDirective(fn.body.body, "use server")) {
+        return { line: offsetToLineColumn(code, fn.body.body[0].start).line };
+      }
+    }
+  }
+  return null;
 }

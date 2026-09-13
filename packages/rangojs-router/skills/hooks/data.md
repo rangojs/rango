@@ -270,8 +270,6 @@ Server-side loader for the upload:
 import { createLoader } from "@rangojs/router";
 
 export const FileUploadLoader = createLoader(async (ctx) => {
-  "use server";
-
   const file = ctx.formData?.get("file") as File | null;
   if (file && file.size > 0) {
     // Process file (save to R2, D1, etc.)

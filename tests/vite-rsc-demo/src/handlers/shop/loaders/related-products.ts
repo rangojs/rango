@@ -8,8 +8,6 @@ import { ProductLoader } from "./product.js";
  * This loader depends on ProductLoader to get the current product's category.
  */
 export const RelatedProductsLoader = createLoader(async (ctx) => {
-  "use server";
-
   const product = await ctx.use(ProductLoader);
   await new Promise((resolve) => setTimeout(resolve, 50));
 

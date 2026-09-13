@@ -38,6 +38,9 @@ Request flow (with action):
 Request flow (no action):
   global mw -> route mw -> render pass
 
+Fetchable loader request (_rsc_loader: useFetchLoader / load / useRefreshLoaders):
+  global mw -> per-loader { middleware } list -> loader   (route mw does NOT run)
+
 Progressive enhancement (no-JS form POST):
   global mw -> action executes -> route mw -> full page re-render
 ```

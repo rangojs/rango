@@ -14,7 +14,6 @@ A loader is a server function attached to route segments in the tree; all of a r
 
 ```tsx
 export const StockLoader = createLoader(async (ctx) => {
-  "use server";
   return ctx.env.DB.stockFor(ctx.params.slug);
 });
 
@@ -50,7 +49,6 @@ On a document request, a segment without `loading()` waits for its loaders — t
 
 ```tsx
 export const SearchLoader = createLoader(async (ctx) => {
-  "use server";
   return db.search(ctx.params.q);
 }, true);
 
@@ -64,7 +62,6 @@ Loader values serialize through Flight, so a loader can return ReactNode — ser
 
 ```tsx
 export const ReviewsPanel = createLoader(async (ctx) => {
-  "use server";
   const reviews = await db.reviewsFor(ctx.params.slug);
   return <ReviewList reviews={reviews} />; // RSC, streamed to the client
 }, true);

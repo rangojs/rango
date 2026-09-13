@@ -30,7 +30,6 @@ export const NamedErrorLoader = createLoader(async () => {
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {
-  "use server";
   return { count: Date.now() };
 });
 
@@ -810,7 +809,6 @@ export const ParallelRevalLoader = createLoader(async () => {
 // the loader re-ran. Gated by revalidate(({ isAction }) => isAction(target)).
 let isActionProbeRuns = 0;
 export const IsActionProbeLoader = createLoader(async () => {
-  "use server";
   isActionProbeRuns += 1;
   return { runs: isActionProbeRuns };
 });
@@ -820,7 +818,6 @@ export const IsActionProbeLoader = createLoader(async () => {
 // does NOT match the target. Its own run counter lets the test tell it apart.
 let isActionAnyRuns = 0;
 export const IsActionAnyLoader = createLoader(async () => {
-  "use server";
   isActionAnyRuns += 1;
   return { runs: isActionAnyRuns };
 });
@@ -834,7 +831,6 @@ export const IsActionAnyLoader = createLoader(async () => {
 // and no-JS (PE) transports.
 let revalFormDataRuns = 0;
 export const RevalFormDataLoader = createLoader(async () => {
-  "use server";
   revalFormDataRuns += 1;
   return { runs: revalFormDataRuns };
 });

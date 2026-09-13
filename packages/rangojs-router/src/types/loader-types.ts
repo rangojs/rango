@@ -24,14 +24,12 @@ import type { RequestScope } from "./request-scope.js";
  * @example
  * ```typescript
  * const CartLoader = createLoader(async (ctx) => {
- *   "use server";
  *   const user = ctx.get("user");  // From auth middleware
  *   return await db.cart.get(user.id);
  * });
  *
  * // With typed params:
  * const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
- *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
  * });
@@ -81,7 +79,6 @@ export type LoaderContext<
    * @example
    * ```typescript
    * export const ProductLoader = createLoader(async (ctx) => {
-   *   "use server";
    *   const product = await getProduct(ctx.params.slug);
    *   ctx.use(Meta)({ title: product.name });
    *   ctx.use(Breadcrumbs)({ label: product.name });
@@ -111,7 +108,6 @@ export type LoaderContext<
    * @example
    * ```typescript
    * const PricesLoader = createLoader(async (ctx) => {
-   *   "use server";
    *   await ctx.rendered();
    *   const products = ctx.get(Products); // reads handle data
    *   return pricing.getLive(products.map(p => p.id));
@@ -234,7 +230,8 @@ export type LoadOptions =
  * Loader definition object
  *
  * Created via createLoader(). Contains the loader name and function.
- * On client builds, the fn is stripped by the bundler (via "use server" directive).
+ * On client builds, the fn is stripped by the router's loader transform; the
+ * definition must not carry a "use server" directive (the Vite plugin rejects it).
  *
  * @template T - The return type of the loader
  * @template TParams - Route params type (for type-safe params access)
@@ -243,13 +240,11 @@ export type LoadOptions =
  * ```typescript
  * // Definition (same file works on server and client)
  * export const CartLoader = createLoader(async (ctx) => {
- *   "use server";
  *   return await db.cart.get(ctx.get("user").id);
  * });
  *
  * // With typed params:
  * export const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
- *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
  * });

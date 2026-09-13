@@ -20,8 +20,6 @@ export interface ClientShopProductSummary {
  * Suspense boundary is observable.
  */
 export const ClientShopProductsLoader = createLoader(async (ctx) => {
-  "use server";
-
   // Handle writes from the loader body (ctx.use = push, handler parity).
   // Land before the 400ms delay, so they usually beat the handler barrier;
   // either way delivery is async by design. (Not on the shared CartLoader:
@@ -75,7 +73,6 @@ const LEGACY_SLUGS: Record<string, string> = {
 };
 
 export const ClientShopProductLoader = createLoader(async (ctx) => {
-  "use server";
   const slug = ctx.params.slug;
   if (!slug) {
     notFound("Product slug missing");

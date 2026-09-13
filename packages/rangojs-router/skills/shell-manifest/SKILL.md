@@ -92,7 +92,6 @@ import { createLoader } from "@rangojs/router";
 import { RenderedProducts } from "../handles/rendered-products";
 
 export const PriceLoader = createLoader(async (ctx) => {
-  "use server";
   await ctx.rendered();
   const ids = ctx.get(RenderedProducts);
   return db.pricesFor(ids); // Map<string, number> keyed by product id

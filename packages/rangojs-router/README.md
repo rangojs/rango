@@ -207,7 +207,6 @@ stock lives in the database:
 import { createLoader } from "@rangojs/router";
 
 export const StockLoader = createLoader(async (ctx) => {
-  "use server";
   return db.stockFor(ctx.params.slug);
 });
 ```

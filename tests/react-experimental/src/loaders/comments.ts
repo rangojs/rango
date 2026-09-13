@@ -12,8 +12,6 @@ const commentsBySlug = new Map<string, Comment[]>();
 let nextId = 1;
 
 export const CommentsLoader = createLoader(async (ctx) => {
-  "use server";
-
   const slug = ctx.params.slug as string;
 
   // Handle form submission (mutation via FormData)

@@ -35,6 +35,7 @@ export interface AppVariables {
   // Response route middleware test variables
   outerMw?: string;
   innerMw?: string;
+  cuVarsUserStr?: string;
   role?: string;
   // Include + layout middleware test variable
   includeLayoutMw?: string;
