@@ -16,6 +16,7 @@ const SOFT_NAV_PATH = "/client-urls-e2e/items/soft-nav";
 const ORDINARY_SERVER_PATH = "/factory-hmr/alpha";
 const VARS_PATH = "/client-urls-vars";
 const VARS_EXPECTED = "var:alice|str:alice-str";
+const SSR_SIGNALS_PATH = "/client-urls-ssr-signals";
 
 /**
  * Flash detection via MutationObserver on addedNodes so even a single-frame
@@ -97,6 +98,51 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "cu-vars-other-route")).toHaveText(VARS_EXPECTED);
     await testId(page, "cu-vars-index-link").click();
     await expect(testId(page, "cu-vars-route")).toHaveText(VARS_EXPECTED);
+  });
+
+  test("ssr:false loader redirect() on the document lane: 200 document, client replace, for layout, page, and child-read readers", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const variants = ["layout", "page", "child"] as const;
+    const responses = await Promise.all(
+      variants.map((v) =>
+        request.get(f.url(`${SSR_SIGNALS_PATH}/${v}`), {
+          headers: { accept: "text/html" },
+        }),
+      ),
+    );
+    for (const response of responses) expect(response.status()).toBe(200);
+
+    for (const v of variants) {
+      await page.goto(f.url(`${SSR_SIGNALS_PATH}/${v}`));
+      await expect(page).toHaveURL(
+        f.url(`/client-urls-e2e/state?from=ssr-redirect-${v}`),
+      );
+      await expect(testId(page, "cu-state")).toBeVisible();
+    }
+  });
+
+  test("ssr:false loader notFound() on the document lane: real 404 with the not-found UI, no 500", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const response = await request.get(f.url(`${SSR_SIGNALS_PATH}/notfound`), {
+      headers: { accept: "text/html" },
+    });
+    expect(response.status()).toBe(404);
+    const html = await response.text();
+    expect(html).toContain("<h1>Not Found</h1>");
+    expect(html).not.toContain('data-testid="cu-ssr-notfound-page"');
+
+    await page.goto(f.url(`${SSR_SIGNALS_PATH}/notfound`));
+    await waitForHydration(page);
+    await expect(page.locator("h1", { hasText: "Not Found" })).toBeVisible();
+    await expect(testId(page, "cu-ssr-notfound-page")).toHaveCount(0);
   });
 
   test("middleware vars: the fetch lane skips route middleware unless the loader carries it", async ({

@@ -167,6 +167,7 @@ import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
+import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import { clientUrlsVarsMiddleware } from "./client-urls-vars/shared.js";
 import {
   MirrorSessionLoader,
@@ -627,6 +628,9 @@ export const urlpatterns = urls(
         middleware(clientUrlsVarsMiddleware, () => [
           include("/client-urls-vars", clientUrlsVarsPatterns),
         ]),
+        // { ssr: false } loaders settling with redirect()/notFound() before the
+        // document flush (e2e/client-urls-ssr-signals.test.ts).
+        include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
         // Streaming useLoader demo: no-loading() route streams per-loader;
         // /gated contrasts the loading() boundary; /ppr pins live holes.
         include("/suspense-demo", suspenseDemoPatterns, {

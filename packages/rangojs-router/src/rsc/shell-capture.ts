@@ -17,6 +17,7 @@
  */
 
 import React from "react";
+import { isLoaderDataResult } from "../types.js";
 import { bufferToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
@@ -311,6 +312,14 @@ function refusedCaptureCeilingMs(): number {
 const refusedCaptures = new Map<string, { failures: number; until: number }>();
 
 /** True iff `key` is still inside its (exponential) backoff window. */
+function isSettledLoaderSignal(value: unknown): boolean {
+  return (
+    isLoaderDataResult(value) &&
+    !value.ok &&
+    (value.redirect !== undefined || value.notFound === true)
+  );
+}
+
 function isCaptureBackedOff(key: string): boolean {
   const entry = refusedCaptures.get(key);
   if (entry === undefined) return false;
@@ -1936,6 +1945,19 @@ async function captureAndStoreShell(
         // The container itself never settled: it is a hole (under an ancestor
         // boundary) or the trivial-prelude gate already fired. Omit — no pin.
         if (isLoaderHoleMarker(elided.value)) continue;
+        // redirect()/notFound() RESOLVE as ok:false envelopes
+        // (wrapLoaderWithErrorHandling), so the rejection check above never
+        // sees them; the tree builder resolves them to LoaderRedirect / the
+        // not-found UI (segment-system buildLoaderStreams), which must not
+        // bake into a shell every visitor shares.
+        if (isSettledLoaderSignal(elided.value)) {
+          warnCaptureRefusedOnce(
+            capture.key,
+            `the loader for segment "${segmentKey}" settled with redirect()/notFound() during capture; a request-specific signal must not bake into the shared shell. ` +
+              "Give its entry a loading() boundary so it stays on the live lane, or move the decision into middleware.",
+          );
+          return "refused";
+        }
         // Past the hole check: this container settled with real material that
         // bakes into the shell prelude (independent of the snapshot pin below).
         bakedLoaderMaterial = true;

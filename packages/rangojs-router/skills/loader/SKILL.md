@@ -695,6 +695,15 @@ Semantics by lane:
 | `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: false` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200 |
 | `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware                                                                                                         | Redirect envelope navigates to the target         |
 
+With `loader(Def, { ssr: false })` the result is settled BEFORE the document
+flushes, so both signals are resolved server-side while the tree is built:
+`redirect()` replaces the whole page with the redirect carrier (still a 200
+document, the client replaces to the target on hydration) and `notFound()`
+renders the not-found UI at the owning segment with a real 404. No read site
+runs, so a `useLoader` in a layout above every Suspense boundary is safe.
+(Before this was fixed, the flagged read threw inside the Fizz shell and
+500ed the document.)
+
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
 "this slug moved / does not exist" belongs in the loader.

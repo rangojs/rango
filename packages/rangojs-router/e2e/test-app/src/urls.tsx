@@ -120,6 +120,7 @@ import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
 import clientUrlsVarsPatterns from "./urls/client-urls-vars.js";
+import clientUrlsSsrSignalsPatterns from "./urls/client-urls-ssr-signals.js";
 import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
@@ -864,6 +865,7 @@ export const urlpatterns = urls(
       middleware(clientUrlsVarsMiddleware, () => [
         include("/client-urls-vars", clientUrlsVarsPatterns),
       ]),
+      include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
       // Async include + clientUrls: supported when the include chain and the
       // client routes are NAMED (see urls/client-urls-async-named.ts).
       include(

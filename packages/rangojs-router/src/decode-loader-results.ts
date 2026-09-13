@@ -18,7 +18,10 @@ import { LoaderRedirect } from "./loader-redirect.js";
  * decodeLoaderResults runs during the SERVER tree build on forceAwait/action
  * lanes, where a throw would collapse the whole payload — it routes signals
  * through the errorFallback slot instead (same visual: the slot replaces the
- * children under OutletProvider).
+ * children under OutletProvider). The document lane's `{ ssr: false }`
+ * results take the same non-throwing route (segment-system
+ * buildLoaderStreams): they are settled before the tree is built, and the
+ * read-site throw would land in the Fizz shell with no boundary to absorb it.
  */
 export const LOADER_NOT_FOUND_FALLBACK: unique symbol = Symbol(
   "rango.loaderNotFound",

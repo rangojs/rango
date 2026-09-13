@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### `{ ssr: false }` loaders that redirect or notFound no longer 500 the document
+
+A `loader(Def, { ssr: false })` settles before the document flushes, and its
+read site decodes synchronously. When the loader threw `redirect()` or
+`notFound()`, that decode threw inside the Fizz shell (flagged content renders
+without a Suspense boundary, and a layout reader sits above every boundary),
+so the document was a 500 with the dev overlay instead of the documented 200
+plus client replace. The server tree builder now resolves the settled signal
+itself, the same way the aggregate forceAwait/action path already did: a
+redirect replaces the whole page with the redirect carrier (200 document, the
+client replaces on hydration; any ancestor read is skipped), and a notFound
+renders the not-found UI at the owning segment with the real 404 the flag
+already guaranteed. A flagged loader error that has an `errorBoundary()`
+fallback takes the same route (fallback planted, no shell throw). Build-shell
+capture now refuses to bake a flagged loader that settled with a signal, the
+same way it already refused a rejected one, so a redirect can never be frozen
+into a shell every visitor shares. Pinned dev and production in the test-app
+and cloudflare-basic (`client-urls-ssr-signals` fixtures: layout-owned,
+route-owned, and layout-reads-child redirect readers, plus a notFound page).
+
 ## 0.15.0 (2026-09-13)
 
 ### Loader bodies must not carry `"use server"`
