@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.1 (2026-09-14)
 
 ### `{ ssr: false }` loaders that redirect or notFound no longer 500 the document
 
