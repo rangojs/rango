@@ -43,6 +43,7 @@ vi.mock("../root-error-boundary.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system";
+import { LoaderRedirect } from "../loader-redirect";
 import {
   decodeLoaderEntry,
   LOADER_ERROR_FALLBACK,
@@ -377,6 +378,87 @@ describe("segment-system", () => {
         expect(boundaries[0].props.awaitedLoaderIds).toEqual([
           "flagged-loader",
         ]);
+      });
+
+      it("resolves a settled { ssr: false } redirect() to LoaderRedirect and replaces the whole page", async () => {
+        // Document lane: the flagged result is settled before the tree is
+        // built, and a read-site throw would land in the Fizz shell. The
+        // redirect carrier replaces every segment (an ancestor reading the
+        // loader would otherwise still throw); no OutletProvider renders.
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login", state: { flash: "hi" } },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        const redirects = collectByType(tree, LoaderRedirect);
+        expect(redirects).toHaveLength(1);
+        expect(redirects[0].props).toEqual({
+          to: "/login",
+          state: { flash: "hi" },
+        });
+        expect(collectByType(tree, MockOutletProvider)).toHaveLength(0);
+      });
+
+      it("resolves a settled { ssr: false } notFound() to its fallback at the owning segment", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              notFound: true,
+              error: { message: "gone", name: "DataNotFoundError" },
+              fallback: "not-found-ui",
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        const outlets = collectByType(tree, MockOutletProvider);
+        expect(outlets).toHaveLength(1);
+        expect(outlets[0].props.children).toBe("not-found-ui");
+        expect(collectByType(tree, LoaderRedirect)).toHaveLength(0);
+      });
+
+      it("resolves a settled { ssr: false } redirect() through the LoaderBoundary branch too", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route", loading: "Loading..." }),
+          seg({
+            id: "R0D0.flagged",
+            type: "loader",
+            loaderId: "flagged-loader",
+            awaitBeforeFlush: true,
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login" },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          }),
+        ];
+
+        const tree = toTreeNode(await renderSegments(segments));
+        expect(collectByType(tree, LoaderRedirect)).toHaveLength(1);
+        expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
       });
 
       it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {

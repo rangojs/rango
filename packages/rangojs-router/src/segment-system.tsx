@@ -1,10 +1,16 @@
 import * as React from "react";
-import { createElement, type ReactNode, type ComponentType } from "react";
+import {
+  createElement,
+  type ReactNode,
+  type ComponentType,
+  isValidElement,
+} from "react";
 import { OutletProvider } from "./outlet-provider.js";
 import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { decodeLoaderResults } from "./decode-loader-results.js";
+import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
 import {
   RouteContentWrapper,
@@ -203,20 +209,43 @@ function wrapDefaultOutletContent(
  * SSR-completeness contract must not depend on. Unflagged siblings keep the
  * promise (deliberate streaming). Flagged ids are collected as input for the
  * dev SSR-suspension diagnostic (ssr-suspension-warning.ts).
+ *
+ * The settled results also go through decodeLoaderResults here: a settled
+ * redirect()/notFound() (or an error with an errorBoundary() fallback) must
+ * be resolved to its node while the tree is built, exactly as the
+ * forceAwait/action lanes do, because the read-site throw has no boundary on
+ * the document lane — flagged content renders without Suspense and a layout
+ * reader sits above every boundary, so the throw is a Fizz shell error (500).
+ * `settledFallback` is that node; the caller plants it and, for a redirect,
+ * replaces the whole page (an ancestor reading the loader would still throw).
  */
 async function buildLoaderStreams(loaders: ResolvedSegment[]): Promise<{
   streams: Record<string, unknown>;
   awaitedIds: string[] | undefined;
+  settledFallback: ReactNode | undefined;
 }> {
   const streams: Record<string, unknown> = {};
   let awaitedIds: string[] | undefined;
+  let awaitedValues: unknown[] | undefined;
   for (const l of loaders) {
-    streams[l.loaderId!] = l.awaitBeforeFlush
-      ? await l.loaderData
-      : l.loaderData;
-    if (l.awaitBeforeFlush) (awaitedIds ??= []).push(l.loaderId!);
+    if (l.awaitBeforeFlush) {
+      const value = await l.loaderData;
+      streams[l.loaderId!] = value;
+      (awaitedIds ??= []).push(l.loaderId!);
+      (awaitedValues ??= []).push(value);
+    } else {
+      streams[l.loaderId!] = l.loaderData;
+    }
   }
-  return { streams, awaitedIds };
+  const settledFallback = awaitedIds
+    ? (decodeLoaderResults(awaitedValues!, awaitedIds).errorFallback ??
+      undefined)
+    : undefined;
+  return { streams, awaitedIds, settledFallback };
+}
+
+function isLoaderRedirectNode(node: ReactNode): boolean {
+  return isValidElement(node) && node.type === LoaderRedirect;
 }
 
 /**
@@ -539,10 +568,19 @@ export async function renderSegments(
           });
         }
       } else if (loaderEntries.length > 0) {
+        let settledFallback: ReactNode | undefined;
         ({
           streams: boundaryLoaderStreams,
           awaitedIds: boundaryAwaitedLoaderIds,
+          settledFallback,
         } = await buildLoaderStreams(loaderEntries));
+        if (settledFallback !== undefined) {
+          if (isLoaderRedirectNode(settledFallback)) {
+            content = settledFallback;
+            break;
+          }
+          nodeContent = settledFallback;
+        }
         if (segDebug) {
           segDebugLog(
             `segment ${id}: per-loader streams via LoaderBoundary (read-site suspense)`,
@@ -614,8 +652,19 @@ export async function renderSegments(
           }
         }
       } else if (layoutLoaders.length > 0) {
-        ({ streams: loaderStreams, awaitedIds: awaitedLoaderIds } =
-          await buildLoaderStreams(layoutLoaders));
+        let settledFallback: ReactNode | undefined;
+        ({
+          streams: loaderStreams,
+          awaitedIds: awaitedLoaderIds,
+          settledFallback,
+        } = await buildLoaderStreams(layoutLoaders));
+        if (settledFallback !== undefined) {
+          if (isLoaderRedirectNode(settledFallback)) {
+            content = settledFallback;
+            break;
+          }
+          errorFallback = settledFallback;
+        }
         if (segDebug) {
           segDebugLog(
             `segment ${id}: layout loaders streaming to read sites (no loading())`,

@@ -514,6 +514,47 @@ describe("captureAndStoreShell", () => {
     }
   });
 
+  it("refuses when a bake-lane loader settled with redirect()/notFound() during capture", async () => {
+    // Signals RESOLVE as ok:false envelopes, so the rejection check never sees
+    // them; the tree builder turns them into LoaderRedirect / not-found UI,
+    // which must not bake into a shell every visitor shares.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      reqCtx._shellCaptureLoaderRecords = new Map([
+        [
+          "M0D0.app/x#L",
+          Promise.resolve({
+            __loaderResult: true,
+            ok: false,
+            redirect: { to: "/login" },
+            error: { message: "Loader redirected to /login", name: "Error" },
+            fallback: null,
+          }),
+        ],
+      ]);
+
+      const outcome = await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key: "/bake-signal:shell", buildVersion: "test-build", ttl: 300 },
+      );
+
+      expect(outcome).toBe("refused");
+      expect(putShell).not.toHaveBeenCalled();
+      const warnings = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === "string" && c[0].includes("/bake-signal:shell"),
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0][0]).toContain("settled with redirect()/notFound()");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   // The hole bit rides each pinned loader record (ShellSnapshotLoaderValue):
   // holes: 0 = fully pinned, the HIT overlay resolves pin-first without
   // gating on the fresh run; holes: 1 = hole markers present, the overlay
