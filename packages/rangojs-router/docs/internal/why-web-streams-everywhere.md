@@ -113,6 +113,72 @@ many-small-component page at the real Node version. The hypothesis to disprove i
 "render-side gain > boundary-conversion tax." Do not ship the spike; it forks the
 Flight layer and splits the dev/prod and Node/edge test story.
 
+## Measured: plugin-rsc 0.5.35 Node entries (2026-09-16)
+
+The first revisit condition is now met. `@vitejs/plugin-rsc` 0.5.35 ships
+`@vitejs/plugin-rsc/rsc/server.node` (`renderToPipeableStream`),
+`/rsc/client.node` and `/ssr.node` (`createFromNodeStream`), and
+`/rsc/static.node` (`prerenderToNodeStream`), each wrapping the vendored
+`react-server-dom-webpack` node build with the same manifest wiring as the edge
+entries. Its `examples/node-stream` also carries a Node `Transform` port of
+`injectRSCPayload`. So the spike above was run, on Node 24.12.0, React 19.3,
+`NODE_ENV=production`, a 3000-item host-element page (Flight payload 756 KB,
+HTML 1.3 MB), 30 timed iterations after 5 warm-ups, medians of two passes.
+
+Flight layer (one renderer per process; React refuses to load both):
+
+| Render                                                    | median |
+| --------------------------------------------------------- | ------ |
+| `server.edge` `renderToReadableStream`, `getReader` drain | 8.5 ms |
+| `server.node` `renderToPipeableStream`, `Writable` sink   | 8.7 ms |
+| `server.node` render, `Readable.toWeb` at the boundary    | 8.8 ms |
+
+No difference. The Flight layer stays on the edge build regardless of preset.
+
+SSR layer, isolated (Flight consumed from a pre-recorded payload, no
+`injectRSCPayload`):
+
+| Pipeline                                                     | median  |
+| ------------------------------------------------------------ | ------- |
+| A `client.edge` + `server.edge` Fizz (current)               | 15.7 ms |
+| B `client.node` + `renderToPipeableStream` into a `Writable` | 9.9 ms  |
+| C same as B, `Readable.toWeb` before the drain               | 10.1 ms |
+| D `client.node` + `server.edge` Fizz                         | 13.1 ms |
+
+The "conversion tax" assumption in reason 1 above does not hold on Node 24: C
+costs 0.2 ms over B. The gain is split between the Flight client (A→D) and
+Fizz (D→B).
+
+SSR layer, realistic shape (the Flight stream arrives as a Web stream from the
+rsc environment, is `tee()`d, and the HTML goes through the existing Web
+`injectRSCPayload`):
+
+| Pipeline                                                            | median  |
+| ------------------------------------------------------------------- | ------- |
+| A' current                                                          | 17.2 ms |
+| E `Readable.fromWeb` → `client.node` + node Fizz → `toWeb` → inject | 14.6 ms |
+| F `client.edge` + node Fizz → `toWeb` → inject                      | 14.6 ms |
+
+Read: the Flight-client half of the gain vanishes once the input is a Web stream
+(the `fromWeb` hop costs what `createFromNodeStream` saves), so the only
+adoptable piece is the Fizz half, worth about 2.6 ms on a 1.3 MB document.
+Scaled to a typical 50-100 KB page that is 0.1-0.2 ms of server CPU, inside the
+noise of a request that runs loaders and cache lookups. That is the third
+revisit condition, not the first: the portable path wins on simplicity.
+
+What a Fizz-only swap would cost, for the record: a node-preset variant of the
+generated SSR entry (`src/vite/plugins/virtual-entries.ts`) injecting
+`react-dom/server.node` wrappers that present the Web-shaped
+`SSRDependencies` (`renderToReadableStream` with `allReady`, `resume`,
+`prerender`) over `renderToPipeableStream`/`resumeToPipeableStream`/
+`prerenderToNodeStream`; a second Fizz scheduler (`setImmediate` on node vs
+`setTimeout` on edge) under the shell-capture quiescence gate
+(`src/rsc/shell-capture.ts`, `POST_QUIESCE_TASK_HOPS`); and the whole node
+test-app suite proving dev and production twice over. Not worth 0.2 ms.
+Re-run the spike scripts before reopening this; they are three ~100-line
+scripts (Flight producer under `--conditions=react-server`, SSR A/B, realistic
+A/B) and take under a minute.
+
 References: React's per-runtime guidance —
 [`renderToReadableStream`](https://react.dev/reference/react-dom/server/renderToReadableStream)
 ("For Node.js, use `renderToPipeableStream` instead") and

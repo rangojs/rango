@@ -16,8 +16,8 @@ catalogs:
       specifier: ^6.1.1
       version: 6.1.1
     '@vitejs/plugin-rsc':
-      specifier: ^0.5.34
-      version: 0.5.34
+      specifier: ^0.5.35
+      version: 0.5.35
     oxc-transform-react:
       specifier: ^0.145.0
       version: 0.145.0
@@ -126,7 +126,7 @@ importers:
         version: 6.1.1(oxc-transform-react@0.145.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
       '@vitejs/plugin-rsc':
         specifier: 'catalog:'
-        version: 0.5.34(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
+        version: 0.5.35(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -405,8 +405,8 @@ importers:
         specifier: ^3.0.0
         version: 3.7.5(ws@8.21.0)
       '@vitejs/plugin-rsc':
-        specifier: ^0.5.34
-        version: 0.5.34(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
+        specifier: ^0.5.35
+        version: 0.5.35(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
       debug:
         specifier: ^4.4.1
         version: 4.4.3
@@ -1456,6 +1456,9 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@jridgewell/sourcemap-codec@1.6.0':
+    resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
@@ -3481,8 +3484,8 @@ packages:
       oxc-transform-react:
         optional: true
 
-  '@vitejs/plugin-rsc@0.5.34':
-    resolution: {integrity: sha512-95V6fyGQklQMYIWTr5qwwNmpDYxsHkTunuzq8i/keIcgdckL9zb6nyEgTnb1CEl1IPJWVxGgORMkTFHrct7XJg==}
+  '@vitejs/plugin-rsc@0.5.35':
+    resolution: {integrity: sha512-OZtJ57o5luSeNb2lqi3xeHHF41W8jCgm4nGb/1qmKjLb5gk/szIHS0Wxfo82WWQkKIqBBu6M697ohKWXrP0qqg==}
     peerDependencies:
       react: '*'
       react-dom: '*'
@@ -4006,8 +4009,8 @@ packages:
   es-module-lexer@2.3.0:
     resolution: {integrity: sha512-KLdwQm2NvGLDkQDCGvmiQrhkd0JbMzXthwQAUgWjQuQdBLFa3eiBP5arXZyA+f8x+x7OXgud6bq2rxjGtHV2tw==}
 
-  es-module-lexer@2.3.1:
-    resolution: {integrity: sha512-shc1dbU90Yl/xq1QrC7QRtfcwURZuVRfPhZbDoldJ1cn1gzDvBaBWlv0eFolj5+0znnPJz5TXLxsN77X/12KTA==}
+  es-module-lexer@2.3.2:
+    resolution: {integrity: sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==}
 
   es-object-atoms@1.1.1:
     resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
@@ -4367,11 +4370,11 @@ packages:
       react:
         optional: true
 
+  js-tokens@10.0.0:
+    resolution: {integrity: sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==}
+
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
-
-  js-tokens@9.0.1:
-    resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
   js-yaml@3.15.1:
     resolution: {integrity: sha512-S99WuO3HlhO3XN41EtYUNl9zzXjoJx7QvmipxsJVxtCBT0YHEFy+iOJhjSvrmV12nYhWpZaM8lPHkJm0yUMbag==}
@@ -4575,6 +4578,9 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  magic-string@1.4.1:
+    resolution: {integrity: sha512-8lyCu36ErXR0J9uaGKlKQoiLZKmtI63YGLE8G2o9jyRPdr4X47LusSOwgOJOzcVtp81fTAAjxR7BwKz682Jhow==}
 
   manage-path@2.0.0:
     resolution: {integrity: sha512-NJhyB+PJYTpxhxZJ3lecIGgh4kwIY2RAh44XvAz9UlqthlQwtPBf62uBVR8XaD8CRuSjQ6TnZH2lNJkbLPZM2A==}
@@ -4897,6 +4903,10 @@ packages:
 
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==}
+
+  obug@3.0.0:
+    resolution: {integrity: sha512-5vvB5+W7ePv+p3uqxi+RcW1XAzLW0/hxt3/4X4Lc4qHudzOhmBiBwOY6DRob4WnanAEGvNcLjF+KNOufrUoEQw==}
+    engines: {node: '>=12.20.0'}
 
   on-net-listen@1.1.2:
     resolution: {integrity: sha512-y1HRYy8s/RlcBvDUwKXSmkODMdx4KSuIvloCnQYJ2LdBBC1asY4HtfhXwe3UWknLakATZDnbzht2Ijw3M1EqFg==}
@@ -5313,8 +5323,8 @@ packages:
     engines: {node: '>=20.16.0'}
     hasBin: true
 
-  srvx@0.12.4:
-    resolution: {integrity: sha512-RixzFlMn3dvzDTpKIAXhXrqL4cy6vScNCP0VVwgVbUBU94o+DiXLsFnAZetbyKAEnK6Ox3hzHXWGsyv/Iibv7g==}
+  srvx@0.12.8:
+    resolution: {integrity: sha512-7k9HoDhluTlD7UJ+F+OopZoPZXB2J8f/5nW2VMLaB8KsSlZlRQxyyoX0hWEQCxB+F+3ZvB5QX3LqB6xSBRfxQQ==}
     engines: {node: '>=20.16.0'}
     hasBin: true
 
@@ -5351,8 +5361,8 @@ packages:
     resolution: {integrity: sha512-BrpvfNAE3dcvq7ll3xVumzjKjZQ5tI1sEUIKr3Uoks0XUl45St3FlatVqef9prk4jRDzhW6WZg+3bk93y6pLjA==}
     engines: {node: '>=6'}
 
-  strip-literal@3.1.0:
-    resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
+  strip-literal@4.0.0:
+    resolution: {integrity: sha512-PaqAvfUZKBwc/SLmNZtHmzK+v19Z4O4eS3cKPeGvbIv/U3pnyEq4Tuw3/4v/FwfM8VQaEawsyCcOQ0P+kpwWWw==}
 
   style-to-js@1.1.21:
     resolution: {integrity: sha512-RjQetxJrrUJLQPHbLku6U/ocGtzyjbJMP9lCNK7Ag0CNh690nSH8woqWH9u16nMjYBAok+i7JO1NP2pOy8IsPQ==}
@@ -5432,8 +5442,8 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  turbo-stream@3.2.0:
-    resolution: {integrity: sha512-EK+bZ9UVrVh7JLslVFOV0GEMsociOqVOvEMTAd4ixMyffN5YNIEdLZWXUx5PJqDbTxSIBWw04HS9gCY4frYQDQ==}
+  turbo-stream@3.2.1:
+    resolution: {integrity: sha512-BaX0eWz3IrypOVDFqPv3VGD6uZZW8y3oFAOJqZQ+oopmOyQ8/xNm7IMwAJFvxax2DBa8zSk+/AeqA6D6b1PXGg==}
 
   turbo@2.9.18:
     resolution: {integrity: sha512-bwabv6PupzeavybzEoArBAkwq5fnzwf8OFnRtpHwnviFWuwJPFxtyH+aVp36TmIqK3aYYgtTJ3J0m2ysxxSzQg==}
@@ -6174,7 +6184,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -6186,10 +6196,12 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
+  '@jridgewell/sourcemap-codec@1.6.0': {}
+
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@jridgewell/trace-mapping@0.3.9':
     dependencies:
@@ -7998,17 +8010,18 @@ snapshots:
     optionalDependencies:
       oxc-transform-react: 0.145.0
 
-  '@vitejs/plugin-rsc@0.5.34(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))':
+  '@vitejs/plugin-rsc@0.5.35(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      es-module-lexer: 2.3.1
+      es-module-lexer: 2.3.2
       estree-walker: 3.0.3
-      magic-string: 0.30.21
+      magic-string: 1.4.1
+      obug: 3.0.0
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
-      srvx: 0.12.4
-      strip-literal: 3.1.0
-      turbo-stream: 3.2.0
+      srvx: 0.12.8
+      strip-literal: 4.0.0
+      turbo-stream: 3.2.1
       vite: 8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0)
       vitefu: 1.1.3(vite@8.0.16(@types/node@24.10.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.21.0))
 
@@ -8558,7 +8571,7 @@ snapshots:
 
   es-module-lexer@2.3.0: {}
 
-  es-module-lexer@2.3.1: {}
+  es-module-lexer@2.3.2: {}
 
   es-object-atoms@1.1.1:
     dependencies:
@@ -8910,7 +8923,7 @@ snapshots:
   import-in-the-middle@3.3.3:
     dependencies:
       cjs-module-lexer: 2.2.1
-      es-module-lexer: 2.3.1
+      es-module-lexer: 2.3.2
       module-details-from-path: 1.0.4
 
   import-meta-resolve@4.2.0: {}
@@ -8969,9 +8982,9 @@ snapshots:
       '@types/react': 19.3.0
       react: 19.3.0
 
-  js-tokens@4.0.0: {}
+  js-tokens@10.0.0: {}
 
-  js-tokens@9.0.1: {}
+  js-tokens@4.0.0: {}
 
   js-yaml@3.15.1:
     dependencies:
@@ -9126,6 +9139,10 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  magic-string@1.4.1:
+    dependencies:
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   manage-path@2.0.0: {}
 
@@ -9742,6 +9759,8 @@ snapshots:
   object-assign@4.1.1: {}
 
   obug@2.1.1: {}
+
+  obug@3.0.0: {}
 
   on-net-listen@1.1.2: {}
 
@@ -10385,7 +10404,7 @@ snapshots:
 
   srvx@0.11.15: {}
 
-  srvx@0.12.4: {}
+  srvx@0.12.8: {}
 
   stackback@0.0.2: {}
 
@@ -10420,9 +10439,9 @@ snapshots:
 
   strip-final-newline@2.0.0: {}
 
-  strip-literal@3.1.0:
+  strip-literal@4.0.0:
     dependencies:
-      js-tokens: 9.0.1
+      js-tokens: 10.0.0
 
   style-to-js@1.1.21:
     dependencies:
@@ -10483,7 +10502,7 @@ snapshots:
       fsevents: 2.3.3
     optional: true
 
-  turbo-stream@3.2.0: {}
+  turbo-stream@3.2.1: {}
 
   turbo@2.9.18:
     optionalDependencies:

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Dependencies: `@vitejs/plugin-rsc` `^0.5.35`
+
+0.5.35 adds Node stream entry points (`/rsc/server.node`, `/rsc/client.node`,
+`/ssr.node`, `/rsc/static.node`); the rest is dependency churn. Nothing in the
+router adopts them: the Flight and SSR layers stay on the Web-stream entries in
+every preset. The benchmark behind that decision (Flight unchanged, SSR gain
+inside request noise once the Flight tee and `injectRSCPayload` stay Web
+streams) is recorded in `docs/internal/why-web-streams-everywhere.md`.
+
 ## 0.15.1 (2026-09-14)
 
 ### `{ ssr: false }` loaders that redirect or notFound no longer 500 the document
