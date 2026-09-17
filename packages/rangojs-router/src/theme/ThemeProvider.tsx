@@ -249,16 +249,24 @@ export function ThemeProvider({
     return config.themes;
   }, [config.themes, config.enableSystem]);
 
+  // Keyed on the exposed field values, not on `mounted`: the mount re-sync
+  // above re-renders the provider on every load, and a NEW context object with
+  // unchanged fields propagates into every dehydrated Suspense boundary still
+  // streaming in (React cannot see their consumers) and makes React
+  // client-render those boundaries instead of adopting the server HTML their
+  // $RC script delivers. A field that genuinely changes (dark system theme,
+  // stored override) must still publish; that case stays open (CHANGELOG).
+  const exposedSystemTheme: ResolvedTheme = mounted ? systemTheme : "light";
   const contextValue: ThemeContextValue = useMemo(
     () => ({
       theme,
       setTheme,
       resolvedTheme,
-      systemTheme: mounted ? systemTheme : "light",
+      systemTheme: exposedSystemTheme,
       themes,
       config,
     }),
-    [theme, setTheme, resolvedTheme, systemTheme, themes, config, mounted],
+    [theme, setTheme, resolvedTheme, exposedSystemTheme, themes, config],
   );
 
   return (

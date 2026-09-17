@@ -23,8 +23,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderProvider(overrides?: { enableSystem?: boolean }): {
+function renderProvider(overrides?: {
+  enableSystem?: boolean;
+  initialTheme?: Theme;
+}): {
   ctx: ThemeContextValue;
+  /** Every context value the consumer observed, in render order. */
+  seen: ThemeContextValue[];
 } {
   const config = resolveThemeConfig({
     themes: ["light", "dark"],
@@ -32,20 +37,23 @@ function renderProvider(overrides?: { enableSystem?: boolean }): {
       ? { enableSystem: overrides.enableSystem }
       : {}),
   });
-  const captured: { ctx?: ThemeContextValue } = {};
+  const seen: ThemeContextValue[] = [];
 
   function Capture() {
-    captured.ctx = useContext(ThemeContext)!;
+    seen.push(useContext(ThemeContext)!);
     return null;
   }
 
   render(
-    <ThemeProvider config={config} initialTheme="light">
+    <ThemeProvider
+      config={config}
+      initialTheme={overrides?.initialTheme ?? "light"}
+    >
       <Capture />
     </ThemeProvider>,
   );
 
-  return { ctx: captured.ctx! };
+  return { ctx: seen.at(-1)!, seen };
 }
 
 function readCookieTheme(): string | null {
@@ -176,6 +184,29 @@ describe("post-mount cookie re-sync (PPR shell HIT theme fidelity)", () => {
 // visitor's stored theme instead, any raw-theme text (a toggle label) would
 // mismatch, hydration would fail, and React's client regeneration would wipe
 // the FOUC-applied class from <html>. This suite pins the first-render value.
+describe("context value identity across the mount re-sync", () => {
+  // See the contextValue comment in ThemeProvider.tsx: a new context object
+  // with unchanged fields would make React client-render every dehydrated
+  // Suspense boundary still streaming in.
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("keeps one context identity when the mount re-sync changes no field", () => {
+    const { seen } = renderProvider();
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]!.resolvedTheme).toBe("light");
+    expect(seen[0]!.systemTheme).toBe("light");
+  });
+
+  it("publishes a new identity when the stored theme re-sync changes the theme", () => {
+    document.cookie = "theme=dark; Path=/";
+    const { seen } = renderProvider();
+    expect(new Set(seen).size).toBe(2);
+    expect(seen.at(-1)!.theme).toBe("dark");
+  });
+});
+
 describe("initializer hydration parity (never reads storage)", () => {
   beforeEach(() => {
     localStorage.clear();

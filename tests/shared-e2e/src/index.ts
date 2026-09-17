@@ -353,6 +353,32 @@ export function fizzBootstrapScript(html: string): {
   return { tag: tag!, src: src! };
 }
 
+/**
+ * Fizz Suspense boundary markers in a served document: `<!--$-->` (complete)
+ * and `<!--$?-->` (pending, completed later by `$RC`).
+ */
+export function countHtmlBoundaryMarkers(html: string): number {
+  return (html.match(/<!--\$\??-->/g) ?? []).length;
+}
+
+/**
+ * Settled boundary markers in the live DOM. `$RC` rewrites a pending `$?`
+ * marker to `$` in place, while a client-rendered boundary deletes its
+ * dehydrated nodes, so after the stream settled this equals
+ * countHtmlBoundaryMarkers(document) exactly when every boundary adopted the
+ * server HTML.
+ */
+export function countDomBoundaryMarkers(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
+    let count = 0;
+    while (walker.nextNode()) {
+      if ((walker.currentNode as Comment).data === "$") count++;
+    }
+    return count;
+  });
+}
+
 /** Fetch a URL as a document (Accept: text/html) and return the HTML text. */
 export async function fetchDocument(url: string): Promise<string> {
   const res = await fetch(url, { headers: { Accept: "text/html" } });

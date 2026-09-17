@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Streaming Suspense boundaries are no longer client-rendered by the theme provider's mount re-sync
+
+Every page load re-rendered `ThemeProvider` from its mount effect (`mounted`,
+system theme, stored-theme re-sync) and published a NEW context object even
+when no field changed. A provider value change propagates to every dehydrated
+Suspense boundary still waiting on the streamed document (React marks them
+conservatively; it cannot see their consumers), and React then abandons the
+server HTML for those boundaries and client-renders them from the Flight
+payload. On a page whose shell hydrates before a `loading()` boundary
+finishes streaming, that discarded the outlined server markup and, until the
+boundary's `$RC` script ran, left a hidden duplicate of the content in the
+document. The context value now keeps its identity across the re-sync when its
+fields are unchanged, so a pending boundary stays dehydrated and adopts the
+server HTML. Root cause of the dev-only `use-cache-inline-action` flake
+(strict-mode locator hit both copies). Still open: when the re-sync genuinely
+changes a field (dark system theme, a stored theme differing from the
+server's), the value must publish and a boundary pending at that moment is
+still client-rendered; wrapping the re-sync in `startTransition` was measured
+and does not help (React retries on a hydration lane and client-renders
+anyway). Unit: `theme-provider.test.tsx` "context value identity across the
+mount re-sync". E2e (dev + production, test-app and cloudflare-basic):
+`streamed-boundary-adoption.test.ts` pins that every server boundary marker
+survives in the settled DOM.
+
 ### Dependencies: `@vitejs/plugin-rsc` `^0.5.35`
 
 0.5.35 adds Node stream entry points (`/rsc/server.node`, `/rsc/client.node`,
