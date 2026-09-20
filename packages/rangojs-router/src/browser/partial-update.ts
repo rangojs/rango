@@ -31,6 +31,7 @@ import {
 } from "./validate-redirect-origin.js";
 import type { NavigationUpdate } from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
+import { loaderStore } from "../loader-store.js";
 import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
@@ -138,6 +139,28 @@ export function createPartialUpdater(
     const currentKey = store.getHistoryKey();
     const cached = store.getCachedSegments(currentKey);
     return cached?.segments || [];
+  }
+
+  /**
+   * Transition commit. Every held commit announces the loader streams the
+   * committed tree is still receiving (loader-store.ts announcePendingStreams)
+   * so held useLoader readers pin isLoading:true until this transition lands;
+   * settled/cached segments make it a no-op. Urgent commits call onUpdate
+   * directly: nothing is held there, a reader of a pending stream suspends to
+   * its fallback.
+   */
+  function commitInTransition(
+    segments: readonly ResolvedSegment[],
+    update: NavigationUpdate,
+    transitionTypes: readonly string[],
+  ): void {
+    startTransition(() => {
+      loaderStore.announcePendingStreams(segments);
+      if (addTransitionType) {
+        for (const type of transitionTypes) addTransitionType(type);
+      }
+      onUpdate(update);
+    });
   }
 
   async function fetchPartialUpdate(
@@ -351,12 +374,7 @@ export function createPartialUpdater(
           };
 
           if (shouldStartViewTransition(existingSegments)) {
-            startTransition(() => {
-              if (addTransitionType) {
-                addTransitionType("navigation");
-              }
-              onUpdate(cachedUpdate);
-            });
+            commitInTransition(existingSegments, cachedUpdate, ["navigation"]);
           } else {
             onUpdate(cachedUpdate);
           }
@@ -589,31 +607,25 @@ export function createPartialUpdater(
 
       const scrollPayload = toScrollPayload(navScroll);
 
+      const update: NavigationUpdate = {
+        root: newTree,
+        metadata: payload.metadata!,
+        scroll: scrollPayload,
+      };
       if (mode.type === "action" || mode.type === "stale-revalidation") {
-        startTransition(() => {
-          if (hasTransition && addTransitionType) {
-            addTransitionType("action");
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: scrollPayload,
-          });
-        });
+        commitInTransition(
+          reconciled.mainSegments,
+          update,
+          hasTransition ? ["action"] : [],
+        );
       } else if (hasTransition) {
-        startTransition(() => {
-          if (addTransitionType) {
-            addTransitionType("navigation");
-            if (optimisticPresented) {
-              addTransitionType(OPTIMISTIC_COMMIT_TRANSITION_TYPE);
-            }
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: scrollPayload,
-          });
-        });
+        commitInTransition(
+          reconciled.mainSegments,
+          update,
+          optimisticPresented
+            ? ["navigation", OPTIMISTIC_COMMIT_TRANSITION_TYPE]
+            : ["navigation"],
+        );
       } else if (fullyPrefetched || isSameStructureNav || optimisticPresented) {
         // Content-hold commit, two triggers. Fully-prefetched nav: the payload
         // is fully resolved (forceAwait above), so the transition commits
@@ -637,26 +649,17 @@ export function createPartialUpdater(
         // optimistic clientUrls() presentation commits here too: the group
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
-        startTransition(() => {
-          if (optimisticPresented && addTransitionType) {
-            addTransitionType(OPTIMISTIC_COMMIT_TRANSITION_TYPE);
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: scrollPayload,
-          });
-        });
+        commitInTransition(
+          reconciled.mainSegments,
+          update,
+          optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
+        );
       } else {
         // Cold/partially-prefetched nav that mounts NEW segments: normal
         // commit so fallbacks stream like a first load and the click has
         // visible feedback. Explicit transition() routes keep the
         // content-hold via the hasTransition branch above (the opt-in).
-        onUpdate({
-          root: newTree,
-          metadata: payload.metadata!,
-          scroll: scrollPayload,
-        });
+        onUpdate(update);
       }
 
       debugLog("[Browser] Navigation complete");
@@ -689,6 +692,11 @@ export function createPartialUpdater(
 
       const fullHasTransition = shouldStartViewTransition(segments);
       const fullScrollPayload = toScrollPayload(fullScroll);
+      const fullUpdate: NavigationUpdate = {
+        root: newTree,
+        metadata: payload.metadata!,
+        scroll: fullScrollPayload,
+      };
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
@@ -704,44 +712,21 @@ export function createPartialUpdater(
           );
           return;
         }
-        startTransition(() => {
-          if (fullHasTransition && addTransitionType) {
-            addTransitionType("action");
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: fullScrollPayload,
-          });
-        });
+        commitInTransition(
+          segments,
+          fullUpdate,
+          fullHasTransition ? ["action"] : [],
+        );
       } else if (mode.type === "action") {
-        startTransition(() => {
-          if (fullHasTransition && addTransitionType) {
-            addTransitionType("action");
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: fullScrollPayload,
-          });
-        });
+        commitInTransition(
+          segments,
+          fullUpdate,
+          fullHasTransition ? ["action"] : [],
+        );
       } else if (fullHasTransition) {
-        startTransition(() => {
-          if (addTransitionType) {
-            addTransitionType("navigation");
-          }
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-            scroll: fullScrollPayload,
-          });
-        });
+        commitInTransition(segments, fullUpdate, ["navigation"]);
       } else {
-        onUpdate({
-          root: newTree,
-          metadata: payload.metadata!,
-          scroll: fullScrollPayload,
-        });
+        onUpdate(fullUpdate);
       }
 
       return;

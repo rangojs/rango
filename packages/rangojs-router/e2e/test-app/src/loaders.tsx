@@ -149,6 +149,14 @@ export const SwrProductLoader = createLoader(async (ctx) => {
   return { id, name: `Product ${id}`, loadedAt: new Date().toISOString() };
 });
 
+// Layout loader on TxShellLayout (persists across /tx-group-a/:id navs). A
+// same-route nav inside the block does NOT re-run it, so its useLoader reader
+// must stay isLoading:false while SwrProductLoader streams for the new param
+// (loader-nav-stale.test.ts). loadedAt pins that it really did not re-run.
+export const TxShellLoader = createLoader(async () => {
+  return { label: "shell", loadedAt: new Date().toISOString() };
+});
+
 // Counter to track fetchable loader invocations
 let fetchableLoaderCount = 0;
 

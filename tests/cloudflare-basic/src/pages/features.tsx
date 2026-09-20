@@ -1,7 +1,9 @@
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
+import { FeatureStatus } from "../components/FeatureStatus.js";
+import { FeatureShellStatus } from "../components/FeatureShellStatus.js";
 
 const featuresDetail: Record<
   string,
@@ -26,6 +28,20 @@ const featuresDetail: Record<
       "RSC streaming allows you to progressively render UI as data becomes available. Combined with Suspense boundaries, you can show loading states while content streams in.",
   },
 };
+
+/**
+ * Persistent layout over /features/:slug. Registers FeatureShellLoader (not
+ * re-run on a feature -> feature nav) so FeatureShellStatus pins that a
+ * non-revalidating loader never reports isLoading:true during the hold.
+ */
+export function FeaturesShell() {
+  return (
+    <div data-testid="features-shell">
+      <FeatureShellStatus />
+      <Outlet />
+    </div>
+  );
+}
 
 export async function FeatureDetailPage(ctx: HandlerContext<{ slug: string }>) {
   const slug = ctx.params.slug;
@@ -55,6 +71,7 @@ export async function FeatureDetailPage(ctx: HandlerContext<{ slug: string }>) {
         {feature.description}
       </p>
       <p data-testid="feature-details">{feature.details}</p>
+      <FeatureStatus />
       {/* Sibling links enable same-route (feature -> feature) navigation, which
           reconciles the route subtree and keeps this content visible while the
           next feature loads (no skeleton flash). */}

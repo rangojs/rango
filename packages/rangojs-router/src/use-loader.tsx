@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useOptimistic,
   useRef,
   useState,
   type ReactNode,
@@ -261,6 +262,13 @@ function useLoaderInternal<T>(
     }
   }, [loaderId, bucketKey]);
 
+  // Held-navigation pin: a transition commit whose stream for this loader is
+  // still pending announces it (loader-store.ts announcePendingStreams, which
+  // documents the lane discipline); this optimistic update renders urgently
+  // on the held content and React reverts it when that transition commits,
+  // i.e. together with the new data.
+  const [streamPending, setStreamPending] = useOptimistic(false);
+
   const [sharedState, setSharedState] = useState<{
     bucketKey: string;
     snapshot: LoaderEntry;
@@ -295,6 +303,9 @@ function useLoaderInternal<T>(
         ephemeral: !hasContextData,
         group: hasGroups ? groupList : undefined,
         refetch: hasGroups ? groupRefetch : undefined,
+        onStreamPending: hasContextData
+          ? () => startTransition(() => setStreamPending(true))
+          : undefined,
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
@@ -362,7 +373,7 @@ function useLoaderInternal<T>(
     : sharedSnapshot.hasValue
       ? (sharedSnapshot.value as T | undefined)
       : contextData;
-  const isLoading = localIsLoading || sharedSnapshot.isLoading;
+  const isLoading = localIsLoading || sharedSnapshot.isLoading || streamPending;
   const error = localError ?? sharedSnapshot.error;
 
   const throwOnError = options?.throwOnError ?? true;

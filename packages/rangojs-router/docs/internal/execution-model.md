@@ -489,7 +489,23 @@ by `$$id`) so a route-context reset can clear them together.
 | `load({ method: non-GET })` / `body` | local to the calling hook                       | local to the calling hook          |
 | loader not in route context          | local to the calling hook                       | shared by `$$id + key` (ephemeral) |
 
-`isLoading` and `error` follow the bucket. `throwOnError: true` render-throws are
+`isLoading` and `error` follow the bucket, with one navigation-driven addition:
+a route-context reader whose content is HELD on screen by a transition commit
+(browser/partial-update.ts) while its loader is still streaming reports
+`isLoading: true` until that commit lands. Every transition commit goes through
+`commitInTransition` (browser/partial-update.ts), which calls
+`loaderStore.announcePendingStreams(segments)` INSIDE its `startTransition`:
+that registers each loader segment whose data is still a pending promise
+(settled Flight chunks — cached/reused segments, forceAwait lanes — are skipped
+via `unwrapsSynchronously`, thenable-status.ts) and fires each route-context
+subscriber's `onStreamPending`; the hook answers with a `useOptimistic` pin —
+React renders it urgently and reverts it in the commit that brings the new
+data, so the flag never flashes `false` on the old data (the stream settles a
+beat before React commits, and a suspended navigation lane is excluded from a
+transition batch, which rules out a timed release). Urgent commits (cold nav
+mounting new segments) skip the announce: nothing is held there. Ephemeral
+readers subscribe without `onStreamPending` and are never pinned.
+`throwOnError: true` render-throws are
 scoped to the **originating** hook: a shared error is thrown only by the hook
 whose `load()` produced it (matched on the bucket's `requestId`); co-bucket
 siblings expose it via `error` without throwing. A successful follow-up `load()`

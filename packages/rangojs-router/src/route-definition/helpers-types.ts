@@ -457,8 +457,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *    through React's startTransition, so a same-route nav (same route,
    *    different params, e.g. /product/1 -> /product/2) holds the previous
    *    content while the new loader resolves instead of flashing the route's
-   *    loading() skeleton (see segment-system.tsx inTransitionScope). This is
-   *    also the precondition for any view-transition animation.
+   *    loading() skeleton (see segment-system.tsx inTransitionScope). Held
+   *    useLoader readers of the re-run loaders report isLoading: true until
+   *    the new data commits (use-loader.tsx). This is also the precondition
+   *    for any view-transition animation.
    * 2. <ViewTransition> (experimental React only): the segment content is also
    *    wrapped in React's <ViewTransition>, so the held swap cross-fades/morphs.
    *    Layered on by default; pass { viewTransition: false } to keep #1 without
