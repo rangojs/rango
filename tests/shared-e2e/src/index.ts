@@ -353,6 +353,106 @@ export function fizzBootstrapScript(html: string): {
   return { tag: tag!, src: src! };
 }
 
+/**
+ * Fizz Suspense boundary markers in a served document: `<!--$-->` (complete)
+ * and `<!--$?-->` (pending, completed later by `$RC`).
+ */
+export function countHtmlBoundaryMarkers(html: string): number {
+  return (html.match(/<!--\$\??-->/g) ?? []).length;
+}
+
+/**
+ * Boundary markers in the live DOM once the stream settled. `$RC` rewrites a
+ * pending `$?` marker to `$` in place, while a client-rendered boundary
+ * deletes its dehydrated nodes, so `adopted` equals
+ * countHtmlBoundaryMarkers(document) exactly when every boundary adopted the
+ * server HTML. A boundary that errored after its placeholder flushed becomes
+ * `$!` (never `$`); counted separately so a loader error does not read as a
+ * lost adoption.
+ */
+export function countDomBoundaryMarkers(
+  page: Page,
+): Promise<{ adopted: number; errored: number }> {
+  return page.evaluate(() => {
+    const walker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
+    const counts = { adopted: 0, errored: 0 };
+    while (walker.nextNode()) {
+      const data = (walker.currentNode as Comment).data;
+      if (data === "$") counts.adopted++;
+      else if (data === "$!") counts.errored++;
+    }
+    return counts;
+  });
+}
+
+/**
+ * Shared body of the streamed-boundary-adoption suites: a boundary that
+ * resolves AFTER the shell hydrated must stay dehydrated and adopt the server
+ * HTML Fizz outlines for it ($RC swap), never be client-rendered from the
+ * Flight payload. Root cause and mechanism: the contextValue comment in
+ * packages/rangojs-router/src/theme/ThemeProvider.tsx.
+ *
+ * `contentTestIds` are the streamed boundaries' contents; at least one must
+ * still be pending when the shell hydrates, otherwise the run proves nothing.
+ */
+export async function expectStreamedBoundariesAdopted(
+  page: Page,
+  options: { url: string; mode: "dev" | "build"; contentTestIds: string[] },
+): Promise<void> {
+  const { url, mode, contentTestIds } = options;
+  const content = contentTestIds.map((id) =>
+    page.locator(`[data-testid="${id}"]`),
+  );
+
+  if (mode === "dev") {
+    // Warm the module graph so hydration reliably beats the loaders; a build
+    // has no compile race.
+    await page.goto(url);
+    for (const locator of content) await expect(locator).toBeVisible();
+  }
+
+  const documentResponse = page.waitForResponse(
+    (r) => r.url() === url && r.request().resourceType() === "document",
+  );
+  // "commit", not the default "load": load fires only after the streamed
+  // document closed, i.e. after every boundary already flushed.
+  await page.goto(url, { waitUntil: "commit" });
+  await waitForShellHydration(page);
+
+  const pending = await page.evaluate(
+    (ids) => ({
+      missing: ids.filter(
+        (id) => !document.querySelector(`[data-testid="${id}"]`),
+      ),
+      placeholder: !!document.querySelector('template[id^="B:"]'),
+    }),
+    contentTestIds,
+  );
+  expect(
+    pending.missing,
+    "a boundary is still pending when the shell hydrates",
+  ).not.toEqual([]);
+  // A client-rendered boundary deletes its dehydrated nodes at mount, so the
+  // bug already shows here, before the stream settles.
+  expect(
+    pending.placeholder,
+    "the pending boundary is still dehydrated (Fizz placeholder present)",
+  ).toBe(true);
+
+  for (const locator of content) await expect(locator).toBeVisible();
+  const serverMarkers = countHtmlBoundaryMarkers(
+    await (await documentResponse).text(),
+  );
+  expect(serverMarkers).toBeGreaterThan(0);
+  expect(
+    (await countDomBoundaryMarkers(page)).errored,
+    "no boundary errored ($! marker)",
+  ).toBe(0);
+  await expect
+    .poll(async () => (await countDomBoundaryMarkers(page)).adopted)
+    .toBe(serverMarkers);
+}
+
 /** Fetch a URL as a document (Accept: text/html) and return the HTML text. */
 export async function fetchDocument(url: string): Promise<string> {
   const res = await fetch(url, { headers: { Accept: "text/html" } });

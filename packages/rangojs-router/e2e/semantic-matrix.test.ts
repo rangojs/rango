@@ -291,7 +291,9 @@ const matrixRows: SemanticMatrixRow[] = [
       const clickAndReadSurface = async () => {
         await page.waitForTimeout(100);
         await testId(page, "pri-link-alpha").click();
-        let surface: "modal" | "detail" | "pending" = "pending";
+        // Cast, not an annotation: assignments happen inside the poll closure,
+        // so an annotated initializer stays narrowed to "pending" for callers.
+        let surface = "pending" as "modal" | "detail" | "pending";
         await expect
           .poll(
             async () => {
@@ -870,10 +872,13 @@ const matrixRows: SemanticMatrixRow[] = [
         );
       }).toPass({ timeout: 10000 });
 
-      const document = await request.get(baseUrl(targetPath), {
+      const documentResponse = await request.get(baseUrl(targetPath), {
         headers: { Accept: "text/html" },
       });
-      assertShellStatus({ headers: new Headers(document.headers()) }, "MISS");
+      assertShellStatus(
+        { headers: new Headers(documentResponse.headers()) },
+        "MISS",
+      );
     },
   },
   // Explicit-tier-first replay composition (the storefront shape: ppr routes
