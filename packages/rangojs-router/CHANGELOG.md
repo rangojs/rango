@@ -15,7 +15,10 @@ finishes streaming, that discarded the outlined server markup and, until the
 boundary's `$RC` script ran, left a hidden duplicate of the content in the
 document. The context value now keeps its identity across the re-sync when its
 fields are unchanged, so a pending boundary stays dehydrated and adopts the
-server HTML. Root cause of the dev-only `use-cache-inline-action` flake
+server HTML. `resolvedTheme` also no longer reports `"light"` before mount for
+a concrete `defaultTheme` rendered without `initialTheme` (standalone
+`ThemeProvider`, `renderRoute`); it reports the theme from the first render
+instead of flipping at mount. Root cause of the dev-only `use-cache-inline-action` flake
 (strict-mode locator hit both copies). Still open: when the re-sync genuinely
 changes a field (dark system theme, a stored theme differing from the
 server's), the value must publish and a boundary pending at that moment is

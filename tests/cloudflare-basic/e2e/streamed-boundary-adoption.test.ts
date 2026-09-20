@@ -1,7 +1,7 @@
-import { expect, test } from "@playwright/test";
-import { countDomBoundaryMarkers, countHtmlBoundaryMarkers } from "@shared/e2e";
+import { test } from "@playwright/test";
+import { expectStreamedBoundariesAdopted } from "@shared/e2e";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, testId } from "./helper";
+import { expectNoPageError } from "./helper";
 
 // Cloudflare counterpart of packages/rangojs-router/e2e/streamed-boundary-
 // adoption.test.ts. /suspense-demo/gated has two boundaries that resolve after
@@ -19,37 +19,11 @@ function defineSuite(mode: "dev" | "build") {
       page,
     }) => {
       using _ = expectNoPageError(page);
-      const url = f.url("/suspense-demo/gated");
-
-      // Warm the module graph so hydration reliably beats the loaders.
-      await page.goto(url);
-      await expect(testId(page, "sd-report")).toBeVisible();
-
-      const document = page.waitForResponse(
-        (r) => r.url() === url && r.request().resourceType() === "document",
-      );
-      await page.goto(url);
-      await waitForHydration(page);
-
-      // Hydration can still lose the race on a slow runner; the placeholder
-      // shape is only observable while a boundary is pending.
-      const pending = await page.evaluate(() => ({
-        report: !!document.querySelector('[data-testid="sd-report"]'),
-        placeholder: !!document.querySelector('template[id^="B:"]'),
-      }));
-      if (!pending.report) {
-        expect(pending.placeholder).toBe(true);
-      }
-
-      await expect(testId(page, "sd-stats")).toBeVisible();
-      await expect(testId(page, "sd-report")).toBeVisible();
-      const serverMarkers = countHtmlBoundaryMarkers(
-        await (await document).text(),
-      );
-      expect(serverMarkers).toBeGreaterThan(0);
-      await expect
-        .poll(() => countDomBoundaryMarkers(page))
-        .toBe(serverMarkers);
+      await expectStreamedBoundariesAdopted(page, {
+        url: f.url("/suspense-demo/gated"),
+        mode,
+        contentTestIds: ["sd-stats", "sd-report"],
+      });
     });
   });
 }

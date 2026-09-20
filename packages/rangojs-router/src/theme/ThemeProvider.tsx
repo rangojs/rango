@@ -114,8 +114,6 @@ export function ThemeProvider({
   initialTheme,
   children,
 }: ThemeProviderProps): React.ReactNode {
-  const [mounted, setMounted] = useState(false);
-
   // HYDRATION PARITY: this initializer is the server (SSR/resume) render AND
   // the client's hydration render — both must produce the same value. It must
   // NEVER read cookie/localStorage: whenever the payload's initialTheme
@@ -132,7 +130,6 @@ export function ThemeProvider({
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
 
   useEffect(() => {
-    setMounted(true);
     setSystemTheme(getSystemTheme());
     // Re-sync state from an EXPLICITLY stored theme after mount. initialTheme
     // comes from the payload and can legitimately differ from the visitor's
@@ -229,18 +226,16 @@ export function ThemeProvider({
     };
   }, [config]);
 
+  // No pre-mount special case: `theme` and `systemTheme` ("light" until the
+  // mount effect) are identical on the server and in the hydration render, so
+  // this is hydration-safe, and a concrete defaultTheme without an initialTheme
+  // no longer flips at mount.
   const resolvedTheme: ResolvedTheme = useMemo(() => {
-    if (!mounted) {
-      if (initialTheme && initialTheme !== "system") {
-        return initialTheme as ResolvedTheme;
-      }
-      return "light";
-    }
     if (theme === "system" && config.enableSystem) {
       return systemTheme;
     }
     return theme as ResolvedTheme;
-  }, [theme, systemTheme, config.enableSystem, mounted, initialTheme]);
+  }, [theme, systemTheme, config.enableSystem]);
 
   const themes = useMemo(() => {
     if (config.enableSystem) {
@@ -249,24 +244,23 @@ export function ThemeProvider({
     return config.themes;
   }, [config.themes, config.enableSystem]);
 
-  // Keyed on the exposed field values, not on `mounted`: the mount re-sync
-  // above re-renders the provider on every load, and a NEW context object with
+  // Keyed on the exposed field values only: a NEW context object with
   // unchanged fields propagates into every dehydrated Suspense boundary still
   // streaming in (React cannot see their consumers) and makes React
   // client-render those boundaries instead of adopting the server HTML their
-  // $RC script delivers. A field that genuinely changes (dark system theme,
-  // stored override) must still publish; that case stays open (CHANGELOG).
-  const exposedSystemTheme: ResolvedTheme = mounted ? systemTheme : "light";
+  // $RC script delivers. A field that genuinely changes at mount (dark system
+  // theme, stored override) must still publish; that case stays open
+  // (CHANGELOG).
   const contextValue: ThemeContextValue = useMemo(
     () => ({
       theme,
       setTheme,
       resolvedTheme,
-      systemTheme: exposedSystemTheme,
+      systemTheme,
       themes,
       config,
     }),
-    [theme, setTheme, resolvedTheme, exposedSystemTheme, themes, config],
+    [theme, setTheme, resolvedTheme, systemTheme, themes, config],
   );
 
   return (

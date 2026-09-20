@@ -25,6 +25,8 @@ afterEach(() => {
 
 function renderProvider(overrides?: {
   enableSystem?: boolean;
+  defaultTheme?: Theme;
+  /** Pass the key with `undefined` to omit the prop (default "light"). */
   initialTheme?: Theme;
 }): {
   ctx: ThemeContextValue;
@@ -35,6 +37,9 @@ function renderProvider(overrides?: {
     themes: ["light", "dark"],
     ...(overrides?.enableSystem !== undefined
       ? { enableSystem: overrides.enableSystem }
+      : {}),
+    ...(overrides?.defaultTheme !== undefined
+      ? { defaultTheme: overrides.defaultTheme }
       : {}),
   });
   const seen: ThemeContextValue[] = [];
@@ -47,7 +52,11 @@ function renderProvider(overrides?: {
   render(
     <ThemeProvider
       config={config}
-      initialTheme={overrides?.initialTheme ?? "light"}
+      initialTheme={
+        overrides && "initialTheme" in overrides
+          ? overrides.initialTheme
+          : "light"
+      }
     >
       <Capture />
     </ThemeProvider>,
@@ -192,14 +201,56 @@ describe("context value identity across the mount re-sync", () => {
     window.localStorage.clear();
   });
 
+  function stubSystemScheme(scheme: "light" | "dark"): void {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: scheme === "dark" && query.includes("dark"),
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+  }
+
   it("keeps one context identity when the mount re-sync changes no field", () => {
+    stubSystemScheme("light");
     const { seen } = renderProvider();
     expect(new Set(seen).size).toBe(1);
     expect(seen[0]!.resolvedTheme).toBe("light");
     expect(seen[0]!.systemTheme).toBe("light");
   });
 
+  it("keeps one identity for a 'system' theme on a light system", () => {
+    stubSystemScheme("light");
+    const { seen } = renderProvider({ initialTheme: "system" });
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]!.resolvedTheme).toBe("light");
+  });
+
+  it("keeps one identity for a concrete defaultTheme without initialTheme", () => {
+    stubSystemScheme("light");
+    const { seen } = renderProvider({
+      defaultTheme: "dark",
+      initialTheme: undefined,
+    });
+    expect(new Set(seen).size).toBe(1);
+    expect(seen[0]!.resolvedTheme).toBe("dark");
+  });
+
+  // Open case (CHANGELOG): systemTheme is a published field, so detecting a
+  // dark system at mount republishes the context.
+  it("publishes a second identity when the system scheme is dark", () => {
+    stubSystemScheme("dark");
+    const { seen } = renderProvider({ initialTheme: "system" });
+    expect(new Set(seen).size).toBe(2);
+    expect(seen[0]!.resolvedTheme).toBe("light");
+    expect(seen.at(-1)!.systemTheme).toBe("dark");
+    expect(seen.at(-1)!.resolvedTheme).toBe("dark");
+  });
+
   it("publishes a new identity when the stored theme re-sync changes the theme", () => {
+    stubSystemScheme("light");
     document.cookie = "theme=dark; Path=/";
     const { seen } = renderProvider();
     expect(new Set(seen).size).toBe(2);
