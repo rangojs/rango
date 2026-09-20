@@ -18,20 +18,9 @@
  * render's warnings through the once-per-id set).
  */
 
-const warned = new Set<string>();
+import { unwrapsSynchronously } from "./thenable-status.js";
 
-/** Thenable statuses `use()` unwraps without suspending: React's re-check
- *  after `.then()` handles "fulfilled", and Flight chunks in the resolved_*
- *  states initialize synchronously inside that same call. Anything else
- *  (pending, blocked, an unstamped native promise) suspends at least once. */
-function unwrapsSynchronously(stream: Promise<unknown>): boolean {
-  const status = (stream as { status?: string }).status;
-  return (
-    status === "fulfilled" ||
-    status === "resolved_model" ||
-    status === "resolved_module"
-  );
-}
+const warned = new Set<string>();
 
 export function warnAwaitedSsrSuspension(
   loaderId: string,

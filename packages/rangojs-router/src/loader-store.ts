@@ -34,6 +34,15 @@
  * the store — the hook falls back to `OutletContext.loaderData`.
  */
 
+import { unwrapsSynchronously } from "./thenable-status.js";
+
+/** The loader-segment shape announcePendingStreams reads (ResolvedSegment). */
+export interface PendingStreamSource {
+  type: string;
+  loaderId?: string;
+  loaderData?: unknown;
+}
+
 export interface LoaderEntry<T = unknown> {
   readonly value: T | undefined;
   /**
@@ -87,6 +96,14 @@ export interface SubscribeOptions {
    * Refreshes this bucket in place (no params/body) and rejects on failure.
    */
   refetch?: () => Promise<void>;
+  /**
+   * Called by `announcePendingStreams` (inside a transition commit) when a
+   * navigation stream for this bucket's loader is still pending. The hook pins
+   * `isLoading: true` with a useOptimistic update; React reverts it when that
+   * transition commits. Route-context readers only — an ephemeral reader owns
+   * its own lifecycle.
+   */
+  onStreamPending?: () => void;
 }
 
 interface InternalEntry {
@@ -118,6 +135,8 @@ interface InternalEntry {
   groups: Map<string, number>;
   /** Plain-GET refresh thunk for `refreshGroups`, set while in any group. */
   refetch: (() => Promise<void>) | undefined;
+  /** Subscribers' `onStreamPending` callbacks (see SubscribeOptions). */
+  streamPendingListeners: Set<() => void>;
 }
 
 /**
@@ -137,6 +156,18 @@ export class LoaderStore {
   private readonly families = new Map<string, Set<string>>();
   /** refresh group name -> set of bucket keys, for refreshGroups(). */
   private readonly groups = new Map<string, Set<string>>();
+  /**
+   * loader.$$id -> per-loader streams a committed navigation is still
+   * receiving. Registered and announced by announcePendingStreams(), which
+   * browser/partial-update.ts calls INSIDE every transition commit, so a
+   * reader whose content is held on screen by that transition pins
+   * `isLoading: true` for the data it is still showing until the transition
+   * lands (use-loader.tsx). The new tree's own read of the loader suspends at
+   * the read site and never observes the flag. A Set, not a flag: overlapping
+   * navigations (second click before the first stream lands) keep the family
+   * pending until the LAST stream settles.
+   */
+  private readonly pendingStreams = new Map<string, Set<Promise<unknown>>>();
 
   private getOrCreate(bucketKey: string): InternalEntry {
     let e = this.entries.get(bucketKey);
@@ -151,6 +182,7 @@ export class LoaderStore {
         clearWhenSettled: false,
         groups: new Map(),
         refetch: undefined,
+        streamPendingListeners: new Set(),
       };
       this.entries.set(bucketKey, e);
     }
@@ -195,8 +227,11 @@ export class LoaderStore {
     e.pendingClear = false;
     e.clearWhenSettled = false;
     e.listeners.add(cb);
+    const onStreamPending = options?.onStreamPending;
+    if (onStreamPending) e.streamPendingListeners.add(onStreamPending);
     return () => {
       e.listeners.delete(cb);
+      if (onStreamPending) e.streamPendingListeners.delete(onStreamPending);
       // Group membership is refcounted per subscriber so refreshGroups() never
       // fetches for an unmounted reader, and a bucket shared by subscribers in
       // different groups stays in each group until ALL of that group's
@@ -480,6 +515,73 @@ export class LoaderStore {
   }
 
   /**
+   * Register a still-streaming per-loader result for `loaderId`. No-op for a
+   * settled Flight chunk (unwrapsSynchronously / "rejected"): the forceAwait
+   * and action lanes commit settled chunks, and a { ssr: false } loader is
+   * awaited before flush. Released as the stream settles, either way.
+   */
+  trackPendingStream(loaderId: string, stream: Promise<unknown>): void {
+    if (
+      unwrapsSynchronously(stream) ||
+      (stream as { status?: string }).status === "rejected"
+    ) {
+      return;
+    }
+    let set = this.pendingStreams.get(loaderId);
+    if (set?.has(stream)) return;
+    if (!set) {
+      set = new Set();
+      this.pendingStreams.set(loaderId, set);
+    }
+    set.add(stream);
+    const release = () => {
+      const current = this.pendingStreams.get(loaderId);
+      if (!current || !current.delete(stream)) return;
+      if (current.size === 0) this.pendingStreams.delete(loaderId);
+    };
+    stream.then(release, release);
+  }
+
+  /** True while any navigation stream for `loaderId` is still pending. */
+  isStreamPending(loaderId: string): boolean {
+    return this.pendingStreams.has(loaderId);
+  }
+
+  /**
+   * Register the loader segments of a tree being committed whose data is
+   * still a pending promise, then fire `onStreamPending` on every subscriber
+   * of every family with a pending stream. MUST run inside the startTransition
+   * that commits the tree: the hook answers with a useOptimistic update, which
+   * React reverts exactly when that transition commits — so the held reader
+   * reports isLoading:true for as long as its data stays on screen and not a
+   * frame longer. Outside a transition React reverts an optimistic update on
+   * the next render, pinning nothing useful. Registering here rather than in
+   * the tree build keeps register + announce in one call; settled chunks
+   * (cached/reused segments, forceAwait lanes) are skipped by
+   * trackPendingStream.
+   */
+  announcePendingStreams(segments: readonly PendingStreamSource[]): void {
+    for (const segment of segments) {
+      if (
+        segment.type === "loader" &&
+        segment.loaderId &&
+        segment.loaderData instanceof Promise
+      ) {
+        this.trackPendingStream(segment.loaderId, segment.loaderData);
+      }
+    }
+    for (const loaderId of this.pendingStreams.keys()) {
+      const fam = this.families.get(loaderId);
+      if (!fam) continue;
+      for (const bucketKey of fam) {
+        const e = this.entries.get(bucketKey);
+        if (!e) continue;
+        for (const cb of e.streamPendingListeners) cb();
+      }
+    }
+  }
+
+  /**
    * Test-only escape hatch. Drops every entry. Production code should never
    * call this; the store is process-scoped and lives for the tab's lifetime.
    * @internal
@@ -488,6 +590,7 @@ export class LoaderStore {
     this.entries.clear();
     this.families.clear();
     this.groups.clear();
+    this.pendingStreams.clear();
   }
 }
 

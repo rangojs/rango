@@ -13,7 +13,8 @@ function ProductPrice() {
   const { data, isLoading, error } = useLoader(ProductLoader);
 
   // data: T (guaranteed - throws if not in context)
-  // isLoading: boolean (refetch/load() states — NOT the initial streamed read)
+  // isLoading: boolean (refetch/load() states + a held navigation replacing
+  //   this data — NOT the initial streamed read)
   // error: Error | null
 
   return <span>${data.price}</span>;
@@ -28,6 +29,27 @@ boundary (or the route's `loading()`) — it does NOT render with
 component renders, `data` is present. (On document loads a loader registered
 with `{ ssr: false }` is already settled at first paint, so its
 reads never suspend there — see `/loader`.)
+
+**A held navigation flags the data it keeps on screen.** When a navigation
+keeps the current content visible while the loader re-runs (a `transition()`
+same-route nav, a same-structure search/filter nav), the reader that is still
+showing the OLD data reports `isLoading: true` from
+the moment the new tree is committed until the new data lands — render your
+stale indicator from it. The flag never flashes back to `false` on the old
+data: it flips in the same commit that swaps `data`. Only loaders the
+navigation actually re-runs are flagged: a layout loader the server does not
+re-execute keeps its data and stays `isLoading: false`. It never applies to a
+navigation that remounts the route (that reader is gone; the skeleton shows),
+to a fully-prefetched nav (its data is already settled when it commits, so
+nothing is pending to flag), or to an ephemeral `useFetchLoader` read outside
+route context.
+
+```tsx
+function ProductPrice() {
+  const { data, isLoading } = useLoader(ProductLoader);
+  return <span style={{ opacity: isLoading ? 0.5 : 1 }}>${data.price}</span>; // dims while /products/1 -> /products/2 streams the next price
+}
+```
 
 **Precondition**: Loader must be registered on route via `loader()` helper.
 

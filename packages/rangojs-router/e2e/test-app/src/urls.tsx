@@ -114,8 +114,11 @@ import {
   CartQuantityLoader,
   SlowProductDetailLoader,
   SwrProductLoader,
+  TxShellLoader,
 } from "./loaders.js";
 import { SwrProductCounter } from "./components/SwrProductCounter.js";
+import { SwrProductStatus } from "./components/SwrProductStatus.js";
+import { TxShellStatus } from "./components/TxShellStatus.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import clientUrlPatterns from "./urls/client-urls.js";
@@ -153,6 +156,23 @@ import {
 function TxBlockShell(): React.ReactNode {
   return (
     <div data-testid="tx-block-shell">
+      <Outlet />
+    </div>
+  );
+}
+
+/**
+ * Layout INSIDE the tx-group transition block, registering TxShellLoader. It
+ * persists across /tx-group-a/1 -> /2 (not re-run), so TxShellStatus pins that
+ * a non-revalidating loader never reports isLoading:true during the hold
+ * (loader-nav-stale.test.ts). Deliberately NOT on TxBlockShell: in this app
+ * that layout also sits in the chain of sibling routes (/, /inline-bound-action,
+ * ...), and a boundary-less live loader there breaks every PPR shell capture.
+ */
+function TxShellLayout(): React.ReactNode {
+  return (
+    <div data-testid="tx-shell-layout">
+      <TxShellStatus />
       <Outlet />
     </div>
   );
@@ -514,6 +534,7 @@ export const urlpatterns = urls(
               <h1 data-testid="swr-product-name">{name}</h1>
               <p data-testid="swr-product-loaded-at">{loadedAt}</p>
               <SwrProductCounter />
+              <SwrProductStatus />
               <nav>
                 <Link to="/swr-product/1" data-testid="swr-product-link-1">
                   Product 1
@@ -641,51 +662,55 @@ export const urlpatterns = urls(
       // across different routes.
       layout(TxBlockShell, () => [
         transition({}, () => [
-          path(
-            "/tx-group-a/:id",
-            async (ctx) => {
-              const { name, loadedAt } = await ctx.use(SwrProductLoader);
-              return (
-                <div data-testid="tx-group-a-page">
-                  <h1 data-testid="tx-group-a-name">{name}</h1>
-                  <p data-testid="tx-group-a-loaded-at">{loadedAt}</p>
-                  <nav>
-                    <Link to="/tx-group-a/1" data-testid="tx-a-link-1">
-                      A1
-                    </Link>
-                    <Link to="/tx-group-a/2" data-testid="tx-a-link-2">
-                      A2
-                    </Link>
-                    <Link to="/tx-group-b/1" data-testid="tx-cross-b-link">
-                      to B
-                    </Link>
-                  </nav>
-                </div>
-              );
-            },
-            { name: "txGroup.a" },
-            () => [
-              loader(SwrProductLoader),
-              loading(<div data-testid="tx-group-a-skeleton">Loading…</div>),
-            ],
-          ),
-          path(
-            "/tx-group-b/:id",
-            async (ctx) => {
-              const { name, loadedAt } = await ctx.use(SwrProductLoader);
-              return (
-                <div data-testid="tx-group-b-page">
-                  <h1 data-testid="tx-group-b-name">{name}</h1>
-                  <p data-testid="tx-group-b-loaded-at">{loadedAt}</p>
-                </div>
-              );
-            },
-            { name: "txGroup.b" },
-            () => [
-              loader(SwrProductLoader),
-              loading(<div data-testid="tx-group-b-skeleton">Loading…</div>),
-            ],
-          ),
+          layout(TxShellLayout, () => [
+            loader(TxShellLoader),
+            path(
+              "/tx-group-a/:id",
+              async (ctx) => {
+                const { name, loadedAt } = await ctx.use(SwrProductLoader);
+                return (
+                  <div data-testid="tx-group-a-page">
+                    <h1 data-testid="tx-group-a-name">{name}</h1>
+                    <p data-testid="tx-group-a-loaded-at">{loadedAt}</p>
+                    <SwrProductStatus />
+                    <nav>
+                      <Link to="/tx-group-a/1" data-testid="tx-a-link-1">
+                        A1
+                      </Link>
+                      <Link to="/tx-group-a/2" data-testid="tx-a-link-2">
+                        A2
+                      </Link>
+                      <Link to="/tx-group-b/1" data-testid="tx-cross-b-link">
+                        to B
+                      </Link>
+                    </nav>
+                  </div>
+                );
+              },
+              { name: "txGroup.a" },
+              () => [
+                loader(SwrProductLoader),
+                loading(<div data-testid="tx-group-a-skeleton">Loading…</div>),
+              ],
+            ),
+            path(
+              "/tx-group-b/:id",
+              async (ctx) => {
+                const { name, loadedAt } = await ctx.use(SwrProductLoader);
+                return (
+                  <div data-testid="tx-group-b-page">
+                    <h1 data-testid="tx-group-b-name">{name}</h1>
+                    <p data-testid="tx-group-b-loaded-at">{loadedAt}</p>
+                  </div>
+                );
+              },
+              { name: "txGroup.b" },
+              () => [
+                loader(SwrProductLoader),
+                loading(<div data-testid="tx-group-b-skeleton">Loading…</div>),
+              ],
+            ),
+          ]),
         ]),
       ]),
 

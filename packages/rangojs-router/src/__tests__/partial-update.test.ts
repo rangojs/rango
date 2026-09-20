@@ -28,6 +28,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
+import { loaderStore } from "../loader-store";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -413,6 +414,57 @@ describe("partial-update", () => {
       await run();
       expect(onUpdate).toHaveBeenCalledTimes(1);
       expect(commitLanes).toEqual([true]);
+    });
+
+    it("a transition commit announces the committed tree's loader segments (held readers pin isLoading)", async () => {
+      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
+      const pending = new Promise(() => {});
+      const { commitLanes, run } = runNav({
+        cached: [
+          seg("L0", { type: "layout" }),
+          seg("L0R0"),
+          seg("L0R0D0.p", { type: "loader", loaderId: "p", loaderData: 1 }),
+        ],
+        matched: ["L0", "L0R0", "L0R0D0.p"],
+        diff: ["L0R0", "L0R0D0.p"],
+        serverSegments: [
+          seg("L0R0", { component: "refreshed" }),
+          seg("L0R0D0.p", {
+            type: "loader",
+            loaderId: "p",
+            loaderData: pending,
+          }),
+        ],
+      });
+      try {
+        await run();
+        expect(commitLanes).toEqual([true]);
+        expect(announce).toHaveBeenCalledTimes(1);
+        expect(announce.mock.calls[0]![0]).toContainEqual(
+          expect.objectContaining({ id: "L0R0D0.p", loaderData: pending }),
+        );
+        expect(loaderStore.isStreamPending("p")).toBe(true);
+      } finally {
+        announce.mockRestore();
+        loaderStore.reset();
+      }
+    });
+
+    it("an urgent commit announces nothing (nothing is held)", async () => {
+      const announce = vi.spyOn(loaderStore, "announcePendingStreams");
+      const { commitLanes, run } = runNav({
+        cached: [seg("L0", { type: "layout" }), seg("L0R0")],
+        matched: ["L0", "L0R1"],
+        diff: ["L0R1"],
+        serverSegments: [seg("L0R1")],
+      });
+      try {
+        await run();
+        expect(commitLanes).toEqual([false]);
+        expect(announce).not.toHaveBeenCalled();
+      } finally {
+        announce.mockRestore();
+      }
     });
 
     it("commits a nav that mounts a new segment urgently (fallbacks stream like a first load)", async () => {

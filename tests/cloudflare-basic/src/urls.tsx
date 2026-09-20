@@ -17,6 +17,7 @@ import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
+import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
@@ -98,7 +99,7 @@ import {
 } from "./pages/ppr-slow-meta.js";
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { FeatureDetailPage } from "./pages/features.js";
+import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
   BlogSidebarHandler,
@@ -1184,16 +1185,25 @@ export const urlpatterns = urls(
           name: "search",
           search: { q: "string", page: "number?", sort: "string?" },
         }),
-        path(
-          "/features/:slug",
-          FeatureDetailPage,
-          { name: "featuresDetail" },
-          // transition() opts this route into same-route stale-while-revalidate:
-          // navigating between /features/:slug values holds the current content
-          // instead of flashing FeatureLoading. Cross-route navs (home ->
-          // feature) still remount and may show the skeleton.
-          () => [loading(<FeatureLoading />), transition()],
-        ),
+        layout(FeaturesShell, () => [
+          loader(FeatureShellLoader),
+          path(
+            "/features/:slug",
+            FeatureDetailPage,
+            { name: "featuresDetail" },
+            // transition() opts this route into same-route stale-while-revalidate:
+            // navigating between /features/:slug values holds the current content
+            // instead of flashing FeatureLoading. Cross-route navs (home ->
+            // feature) still remount and may show the skeleton. FeatureLoader
+            // (800ms) streams during that hold so FeatureStatus can report
+            // isLoading:true for the held data (e2e/loader-nav-stale.test.ts).
+            () => [
+              loader(FeatureLoader),
+              loading(<FeatureLoading />),
+              transition(),
+            ],
+          ),
+        ]),
 
         // #642 regression guard: a NAME-LESS 3-arg children-fn route
         // (path(pattern, component, () => [...]) with no { name } options).
