@@ -106,6 +106,8 @@ export type CacheItem = {
 export type TransitionItem = {
   name: string;
   type: "transition";
+  /** Wrapper form only: the children it wraps (see hasRoutesInItem). */
+  uses?: AllUseItems[];
 };
 
 /**

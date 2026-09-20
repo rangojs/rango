@@ -57,7 +57,8 @@ array of predicates (AND logic); omit it to always activate.
 ## Orphan Layout Behavior
 
 An **orphan layout** is a layout with no route children (directly or through
-nested caches/includes). Orphan layouts are composable wrappers that attach to
+nested `cache()`, `middleware()`, wrapper-form `transition()` blocks, or
+includes). Orphan layouts are composable wrappers that attach to
 their parent's `layout[]` array.
 
 ### What orphan layouts CAN have as children
@@ -76,7 +77,12 @@ their parent's `layout[]` array.
 
 ### How orphan layouts work
 
-1. During definition, `hasRoutesInItem()` determines if a layout is orphan
+1. During definition, `hasRoutesInItem()` determines if a layout is orphan. It
+   recurses through every wrapper item that carries `uses` — `cache`, `layout`,
+   `middleware` and wrapper-form `transition` — so
+   `layout(Shell, () => [transition(cfg, () => [path(...)])])` is NOT an orphan
+   (scar tissue: before the `transition` case existed, that shape was pushed
+   onto the parent's `layout[]` and Shell wrapped every sibling route)
 2. Orphan layouts get `parent = null` and are pushed to `parent.layout[]`
 3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout
 4. `collectRouteMiddleware()` recursively processes orphan layouts for middleware
