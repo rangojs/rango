@@ -1,6 +1,39 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 (2026-09-20)
+
+### `useLoader().isLoading` is true for data held on screen while a navigation re-runs its loader
+
+When a navigation keeps the current content visible while its loader re-runs
+(a `transition()` same-route nav such as `/products/1 -> /products/2`, a
+same-structure search/filter nav), the reader still showing the old data now
+reports `isLoading: true` from the moment the new tree is committed until the
+commit that swaps `data`, so a stale indicator can be rendered from it. The
+flag never flashes back to `false` on the old data: every transition commit
+announces the loader streams the committed tree is still receiving
+(`announcePendingStreams` in `loader-store.ts`, called inside the
+`startTransition` in `browser/partial-update.ts`), and the hook answers with a
+`useOptimistic` pin that React reverts in the commit that brings the new data.
+Loaders the navigation does not re-run keep their data and stay `false`; a
+fully-prefetched nav commits settled data and flags nothing; a cold navigation
+that remounts the route is unchanged (the read suspends to its fallback); an
+ephemeral `useFetchLoader` read outside route context is never pinned. Pinned
+dev and production in the test-app (`/swr-product/:id`, and `/tx-group-a/:id`
+with a persisting layout loader) and cloudflare-basic (`/features/:slug`).
+
+### A layout over a wrapper-form `transition()` block no longer wraps every sibling route
+
+`layout(Shell, () => [transition(cfg, () => [routes])])`, the shape the
+view-transitions guide recommends, was classified as an orphan (routeless)
+layout because the orphan check could not see routes inside a transition
+block. Orphans are pushed onto the parent's wrapper list and render around the
+parent's entire content, so `Shell`, and any `loader()`, `middleware()` or
+`loading()` on it, applied to every sibling route of its parent instead of its
+own routes. The wrapper-form transition item now carries its children and the
+check recurses through any item that does; the same change covers `cache()`
+and `middleware()` blocks over a transition block, and a lazy `include()`
+inside a transition block is now discovered. Child-form `transition(cfg)` and
+routeless transition blocks are unchanged (still orphan wrappers).
 
 ### Streaming Suspense boundaries are no longer client-rendered by the theme provider's mount re-sync
 
