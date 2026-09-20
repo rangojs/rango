@@ -48,8 +48,17 @@ import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
 import { ALL_USE_ITEM_TYPES } from "./use-item-types.js";
 
 /**
- * Check if an item contains routes (directly or inside nested structures like cache).
+ * Check if an item contains routes (directly or inside nested wrappers).
  * Used to determine if a layout or cache should be treated as an orphan.
+ *
+ * Recurses through ANY item carrying `uses` (cache, layout, middleware,
+ * wrapper-form transition) rather than an enumerated list: a wrapper helper
+ * that returns `uses` is covered the moment it exists. Scar tissue: the list
+ * form missed `transition`, so `layout(Shell, () => [transition(cfg, () =>
+ * [routes])])` was classified orphan and pushed onto its PARENT's layout[] —
+ * rendering around every sibling route (test-app TxBlockShell wrapped "/").
+ * parallel()/intercept() register their children by side effect and return
+ * no `uses`, so a layout whose only children are those still reads as orphan.
  */
 const hasRoutesInItem = (item: AllUseItems): boolean => {
   if (item.type === "route") return true;
@@ -57,16 +66,8 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
   // to prevent the parent layout from being misclassified as orphan,
   // which would clear its parent pointer and break the middleware chain.
   if (item.type === "include") return true;
-  if (item.type === "cache" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  if (item.type === "layout" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  if (item.type === "middleware" && item.uses) {
-    return item.uses.some((child) => hasRoutesInItem(child));
-  }
-  return false;
+  const uses = (item as { uses?: AllUseItems[] }).uses;
+  return uses ? uses.some(hasRoutesInItem) : false;
 };
 
 /**
@@ -958,7 +959,11 @@ const transition = (
 
   if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
-  return { name: namespace, type: "transition" } as TransitionItem;
+  return {
+    name: namespace,
+    type: "transition",
+    uses: result,
+  } as TransitionItem;
 };
 
 const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
