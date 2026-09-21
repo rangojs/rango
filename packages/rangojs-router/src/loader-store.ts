@@ -162,10 +162,13 @@ export class LoaderStore {
    * browser/partial-update.ts calls INSIDE every transition commit, so a
    * reader whose content is held on screen by that transition pins
    * `isLoading: true` for the data it is still showing until the transition
-   * lands (use-loader.tsx). The new tree's own read of the loader suspends at
-   * the read site and never observes the flag. A Set, not a flag: overlapping
-   * navigations (second click before the first stream lands) keep the family
-   * pending until the LAST stream settles.
+   * lands (use-loader.tsx). Family-keyed on purpose: a persisting layout
+   * reader of the same createLoader the child is re-running is pinned too
+   * (the loader is in flight; not "this segment's copy is being replaced" —
+   * issue #862, working as designed). The new tree's own read of the loader
+   * suspends at the read site and never observes the flag. A Set, not a
+   * flag: overlapping navigations (second click before the first stream
+   * lands) keep the family pending until the LAST stream settles.
    */
   private readonly pendingStreams = new Map<string, Set<Promise<unknown>>>();
 
