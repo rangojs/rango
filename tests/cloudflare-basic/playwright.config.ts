@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { checkoutPortOffset } from "@shared/e2e";
+import { assertExistingServerIsOurs, checkoutPortOffset } from "@shared/e2e";
 
 const isUIMode = process.argv.includes("--ui");
 
@@ -12,6 +12,24 @@ const PORT_OFFSET = checkoutPortOffset();
 
 const DEV_PORT = 5199 + PORT_OFFSET;
 const PREVIEW_PORT = 5198 + PORT_OFFSET;
+const reuseExistingServer = !process.env.CI;
+
+// reuseExistingServer only checks that the TCP port is open. Probe GET /
+// for this app's home marker so a foreign Vite server on this checkout's
+// port fails at config load with lsof instead of running the suite against
+// the wrong app (issue #863). Skipped on CI (reuse is off there).
+if (reuseExistingServer) {
+  assertExistingServerIsOurs({
+    port: DEV_PORT,
+    marker: 'data-testid="home-page"',
+    label: "cloudflare-basic dev",
+  });
+  assertExistingServerIsOurs({
+    port: PREVIEW_PORT,
+    marker: 'data-testid="home-page"',
+    label: "cloudflare-basic preview",
+  });
+}
 
 export default defineConfig({
   testDir: "./e2e",
@@ -57,7 +75,7 @@ export default defineConfig({
       // on every non-e2e build.
       command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
       port: DEV_PORT,
-      reuseExistingServer: true,
+      reuseExistingServer,
       env: {
         ...process.env,
         RANGO_MANIFEST_TEXT: "1",
@@ -71,7 +89,7 @@ export default defineConfig({
       // a preview-triggered rebuild bakes in the same render-timeout fixture.
       command: `pnpm preview --port ${PREVIEW_PORT}`,
       port: PREVIEW_PORT,
-      reuseExistingServer: true,
+      reuseExistingServer,
       env: { ...process.env, RANGO_E2E_RENDER_TIMEOUT: "1" },
     },
   ],

@@ -3,6 +3,16 @@ import { utimesSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+export {
+  assertExistingServerIsOurs,
+  classifyExistingServer,
+  formatForeignServerError,
+} from "./assert-existing-server.js";
+export type {
+  ExistingServerIdentity,
+  ExistingServerKind,
+} from "./assert-existing-server.js";
+
 /**
  * Shared end-to-end test utilities for HMR-driven tests across apps.
  *

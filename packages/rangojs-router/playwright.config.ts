@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { checkoutPortOffset } from "@shared/e2e";
+import { assertExistingServerIsOurs, checkoutPortOffset } from "@shared/e2e";
 
 const browserConfig = {
   ...devices["Desktop Chrome"],
@@ -46,6 +46,40 @@ const RUN_HOST = !isCI || process.env.RANGO_E2E_HOST === "1";
 // The dedicated host CI job runs ONLY `--project=host`, so it skips the heavy
 // test-app build/dev/preview servers.
 const HOST_ONLY = process.env.RANGO_E2E_HOST === "1";
+
+// reuseExistingServer only checks that the TCP port is open. Probe GET /
+// for an app-specific marker so a foreign Vite server on this checkout's
+// port fails at config load with lsof instead of running the suite against
+// the wrong app (issue #863). Skipped on CI (reuse is off there).
+if (!isCI) {
+  if (!HOST_ONLY && !ROUTE_HMR_ONLY) {
+    assertExistingServerIsOurs({
+      port: DEV_SERVER_PORT,
+      marker: 'data-testid="index-page"',
+      label: "rangojs-router test-app dev",
+    });
+    assertExistingServerIsOurs({
+      port: PREVIEW_SERVER_PORT,
+      marker: 'data-testid="index-page"',
+      label: "rangojs-router test-app preview",
+    });
+  }
+  if (RUN_HOST && !ROUTE_HMR_ONLY) {
+    const hostHeaders = { cookie: "x-rango-host=a.localhost" };
+    assertExistingServerIsOurs({
+      port: HOST_DEV_PORT,
+      marker: "App A home",
+      label: "rangojs-router host-fixture dev",
+      headers: hostHeaders,
+    });
+    assertExistingServerIsOurs({
+      port: HOST_PREVIEW_PORT,
+      marker: "App A home",
+      label: "rangojs-router host-fixture preview",
+      headers: hostHeaders,
+    });
+  }
+}
 
 export default defineConfig({
   testDir: "e2e",
