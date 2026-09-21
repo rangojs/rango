@@ -36,9 +36,15 @@ same-route nav, a same-structure search/filter nav), the reader that is still
 showing the OLD data reports `isLoading: true` from
 the moment the new tree is committed until the new data lands — render your
 stale indicator from it. The flag never flashes back to `false` on the old
-data: it flips in the same commit that swaps `data`. Only loaders the
-navigation actually re-runs are flagged: a layout loader the server does not
-re-execute keeps its data and stays `isLoading: false`. It never applies to a
+data: it flips in the same commit that swaps `data`. The pin is per loader
+family (`loader.$$id`), not per segment: a navigation that re-runs
+`CartLoader` flags every `useLoader(CartLoader)`, including a persisting
+layout reader whose own copy is not replaced. That is "this loader is in
+flight," not "this segment's copy is being replaced." A _different_ layout
+loader the server does not re-execute stays `isLoading: false`. A child can
+already read a layout registration via the context walk; a second
+`loader(Same)` on the child is a second run of the same family, not a
+separate loading flag. It never applies to a
 navigation that remounts the route (that reader is gone; the skeleton shows),
 to a fully-prefetched nav (its data is already settled when it commits, so
 nothing is pending to flag), or to an ephemeral `useFetchLoader` read outside

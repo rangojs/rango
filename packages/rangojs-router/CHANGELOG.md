@@ -14,10 +14,14 @@ announces the loader streams the committed tree is still receiving
 (`announcePendingStreams` in `loader-store.ts`, called inside the
 `startTransition` in `browser/partial-update.ts`), and the hook answers with a
 `useOptimistic` pin that React reverts in the commit that brings the new data.
-Loaders the navigation does not re-run keep their data and stay `false`; a
-fully-prefetched nav commits settled data and flags nothing; a cold navigation
-that remounts the route is unchanged (the read suspends to its fallback); an
-ephemeral `useFetchLoader` read outside route context is never pinned. Pinned
+Loaders the navigation does not re-run keep their data and stay `false`. The
+pin follows the loader family (`$$id`), not the segment: if the same
+`createLoader` is also registered on a persisting layout, that layout's
+`useLoader` reports true too — the loader is in flight, even though the
+layout copy is not replaced. A fully-prefetched nav commits settled data and
+flags nothing; a cold navigation that remounts the route is unchanged (the
+read suspends to its fallback); an ephemeral `useFetchLoader` read outside
+route context is never pinned. Pinned
 dev and production in the test-app (`/swr-product/:id`, and `/tx-group-a/:id`
 with a persisting layout loader) and cloudflare-basic (`/features/:slug`).
 

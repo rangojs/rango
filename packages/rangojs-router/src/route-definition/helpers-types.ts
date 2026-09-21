@@ -459,7 +459,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *    content while the new loader resolves instead of flashing the route's
    *    loading() skeleton (see segment-system.tsx inTransitionScope). Held
    *    useLoader readers of the re-run loaders report isLoading: true until
-   *    the new data commits (use-loader.tsx). This is also the precondition
+   *    the new data commits (use-loader.tsx). The pin is per loader family
+   *    (`$$id`), not per segment — a layout reader of the same createLoader
+   *    the child is re-running is flagged too. This is also the precondition
    *    for any view-transition animation.
    * 2. <ViewTransition> (experimental React only): the segment content is also
    *    wrapped in React's <ViewTransition>, so the held swap cross-fades/morphs.

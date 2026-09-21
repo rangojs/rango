@@ -117,6 +117,14 @@ export type LoadFunction<T> = (options?: LoadOptions) => Promise<T>;
 
 export interface UseLoaderResult<T> {
   data: T;
+  /**
+   * True while this loader family (`loader.$$id`) is in flight: a `load()` /
+   * group refresh, or a held navigation still streaming a re-run of this
+   * loader. Family-keyed, not segment-keyed: a layout `useLoader` of the same
+   * `createLoader` the child route is re-running also reports true, even if
+   * the layout copy is not replaced. Not used for the initial streamed read
+   * (that suspends).
+   */
   isLoading: boolean;
   error: Error | null;
   load: LoadFunction<T>;
@@ -125,6 +133,7 @@ export interface UseLoaderResult<T> {
 
 export interface UseFetchLoaderResult<T> {
   data: T | undefined;
+  /** Same family-keyed contract as {@link UseLoaderResult.isLoading}. */
   isLoading: boolean;
   error: Error | null;
   load: LoadFunction<T>;
