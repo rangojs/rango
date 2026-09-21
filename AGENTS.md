@@ -116,6 +116,7 @@ Why: suites bucket dev vs production by grepping describe titles — `production
 - webServer-build suites (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<fragment>"` — the webServer still builds/serves.
 - Setup-project-build suites (vite-rsc-demo, no-typescript): `pnpm build` in the app first, then `--no-deps`.
 - Match stable title fragments, not `file:line` — react-compiler apps report compiler-transformed line numbers in `--list`.
+- A local full `dev`+`production` router run is ~2200 tests / ~15+ min; CI shards it (5+2). `globalTimeout` is 10 min on CI only — do not size a local run against that cap (issue #864). `--global-timeout=0` restores Playwright's unlimited default if a config ever pins one again.
 
 ## Userland test coverage
 
