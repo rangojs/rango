@@ -50,7 +50,10 @@ const HOST_ONLY = process.env.RANGO_E2E_HOST === "1";
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  globalTimeout: 600000, // 10 minutes max
+  // 10m hang guard on CI shards only. A local dev+production run is ~2200
+  // tests / ~15 min and was cut mid-suite with a green "N passed" line
+  // (issue #864). Playwright default (0) is unlimited locally.
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: [
     ...(HOST_ONLY || ROUTE_HMR_ONLY

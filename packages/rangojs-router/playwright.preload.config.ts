@@ -19,7 +19,7 @@ const browserConfig = {
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  globalTimeout: 600_000,
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60_000 : 30_000,
   webServer: [
     {

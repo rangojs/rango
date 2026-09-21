@@ -9,7 +9,7 @@ const browserConfig = {
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  globalTimeout: 600000,
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000,
   use: {
     screenshot: "only-on-failure",
