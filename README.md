@@ -1,126 +1,123 @@
 # Rango
 
-React RSC Route Wrangler
+**A code-first, type-safe router for React Server Components.**
 
-A code-first, type-safe React Server Components router
+Your whole app is one route tree you can read top to bottom. Every route
+has a name, and URLs are built from those names.
 
-## Stability
+```tsx
+// src/router.tsx
+import { createRouter, urls } from "@rangojs/router";
 
-> **Pre-1.0:** Rango follows semver 0.x — breaking changes land in minor
-> releases and are noted in the
-> [changelog](packages/rangojs-router/CHANGELOG.md). Install the current
-> release:
->
-> ```bash
-> npm install @rangojs/router@latest
-> ```
->
-> Or scaffold a complete app with [`create-rango`](#create-an-app), which
-> installs the latest release. The `experimental` tag tracks `main` between
-> tagged releases.
+const urlpatterns = urls(({ path, layout }) => [
+  layout(<SiteLayout />, () => [
+    path("/", HomePage, { name: "home" }),
 
-## Why Rango?
+    layout(<ShopLayout />, () => [
+      path("/products", ProductList, { name: "products" }),
+      path("/products/:slug", ProductPage, { name: "product" }),
+    ]),
+  ]),
+]);
 
-Rango keeps simple applications simple: define a route tree, render server
-components, and navigate by type-safe route names. As requirements grow, the
-same tree can express data freshness, caching, partial rendering, and complex UI
-composition without moving those decisions into a separate framework model.
-That makes it useful to one developer out of the box while preserving a coherent,
-machine-readable architecture as the application and its AI-assisted development
-workflow grow more complex.
-
-- **Readable, code-first routing** - `urls()`, `path()`, and `include()` keep URL
-  structure, module boundaries, and shared concerns visible in one declared tree
-  instead of making them implicit in filesystem conventions.
-- **Type-safe named routes** - Generated route names, params, search schemas, and
-  `reverse()` calls stay checked when paths move or modules are composed.
-- **RSC with progressive-enhancement parity** - Server Components, Server
-  Actions, and forms share tested behavior across client navigation and no-JS
-  requests.
-- **Live data beneath cached UI** - Loaders stay fresh by default, even when the
-  surrounding segment is cached or prerendered, and resolve in parallel while
-  the UI streams.
-- **Precise client updates** - `revalidate()` controls which segments and loaders
-  re-render after an action, independently from cache invalidation.
-- **Composable rendering** - Named slots, parallel routes, and intercepts model
-  dashboards, sidebars, modals, and alternate soft-navigation compositions in
-  the route graph.
-- **Controlled navigation** - Request-aware prefetching, in-flight adoption,
-  Rango State with userland invalidation, partial rendering, and integrated
-  deployment-skew recovery make navigation behavior explicit and stable.
-- **Request and cache safety built in** - Default origin checks protect Server
-  Actions, loader fetches, and no-JS form submissions, while tainted request
-  context protects cache boundaries from request-specific data and effects.
-- **CSP-ready rendering** - Per-request nonce generation and propagation cover
-  SSR, RSC payload scripts, typed middleware access, and document-rendered script
-  handles while leaving policy decisions with the application.
-- **Integrated diagnostics** - `debugPerformance` exposes a request waterfall
-  and `Server-Timing` headers without additional instrumentation.
-
-See [Rango compared to Next.js, TanStack Start, and Waku](packages/rangojs-router/docs/comparison.md)
-for the detailed design and capability comparison.
-
-## Features
-
-- **Code-first routing** - No file-based conventions
-- **Named routes** - Type-safe `reverse()` references that survive path refactors
-- **Type-safe params** - Automatic inference from route patterns
-- **Django-style URL patterns** - `urls()` and `include()` for composition
-- **Partial rendering** - Optimal performance with RSC
-- **Parallel routes** - First-class support for complex layouts
-- **Intercepting routes** - Modal patterns with soft navigation
-- **Server Actions** - `"use server"` mutations with `useActionState` / `useOptimistic` and per-segment + per-loader `revalidate()` rules
-- **Middleware** - Auth, logging, rate limiting
-- **Error/NotFound boundaries** - Graceful error handling
-- **Pre-rendering** - Build-time caching for static content
-- **Live data loaders** - Pre-render or cache UI structure while `loader()` stays fresh by default
-- **Trailing slash control** - Per-route canonical URL handling via `path(..., { trailingSlash })`
-
-## Structure
-
-```
-.
-├── packages/
-│   └── rangojs-router/    # Main RSC router package
-├── tests/                 # Demo + e2e apps (vite-rsc-demo, cloudflare-basic, ...)
-├── examples/              # Cloudflare example apps (cloudflare-basic-nonce, cloudflare-multi-router)
-├── apps/
-│   └── docs/              # Documentation site
-├── tools/                 # Repo tooling and bundle scripts
-└── docs/                  # Design documents
+export const router = createRouter().routes(urlpatterns);
 ```
 
-## Getting Started
+`SiteLayout` wraps every page and `ShopLayout` wraps only the shop. Each
+renders its children through `<Outlet />`. A page is an async Server
+Component whose params are typed by route name:
 
-### Create an app
+```tsx
+// src/routes/product.tsx
+import type { Handler } from "@rangojs/router";
 
-Start from a complete Rango template with [`create-rango`](https://github.com/rangojs/templates):
+export const ProductPage: Handler<"product"> = async (ctx) => {
+  const product = await db.products.find(ctx.params.slug); // slug: string
+  return <ProductView product={product} back={ctx.reverse("products")} />;
+};
+```
+
+You don't register anything. The Vite plugin generates the route types, so a
+misspelled route name or a missing param is a compile error.
+
+As the app grows, you add to the same tree:
+
+```tsx
+cache({ ttl: 600 }, () => [
+  path("/products/:slug", ProductPage, { name: "product" }, () => [
+    loader(StockLoader), // stays live: runs on every request, even on a cache hit
+  ]),
+]),
+path.json("/products/:slug", getProduct, { name: "productJson" }), // same URL, JSON for API clients
+include("/account", () => import("./account"), { name: "account" }), // code-split
+```
+
+> **Pre-1.0:** Rango follows semver 0.x. Breaking changes land in minor
+> releases and are listed in the
+> [changelog](packages/rangojs-router/CHANGELOG.md). npm `latest` is the
+> current release; `experimental` tracks `main`.
+
+## What it gives you
+
+- **One tree you can read.** `urls()`, `path()`, `layout()` and `include()`
+  put URL structure, module boundaries and shared concerns in declared code,
+  not filesystem conventions. Route modules can be mounted, renamed and
+  lazy-loaded as units.
+- **URLs built from names.** Route names, params and search schemas are
+  checked wherever you build a URL: `ctx.reverse()`, `href()`,
+  `useReverse()`. If a route module is mounted twice, its links resolve
+  correctly for each mount.
+- **Cached shell, live data.** `cache()`, `Prerender()` and `ppr` store the
+  rendered UI. Loaders underneath keep running on every request, and you
+  invalidate with tags (`updateTag("products")`) from the action that changed
+  the data.
+- **Server Actions that work without JavaScript.** Forms behave the same with
+  and without client JS. `revalidate()` matches actions by reference, so
+  renaming an action is a type error, not a silent stale page.
+- **Layouts beyond nesting.** Parallel slots, intercepted routes (modals on
+  soft navigation), `loading()` skeletons, and error or not-found boundaries
+  are all part of the tree.
+- **Pages and APIs in one router.** `path.json()`, `.text()`, `.xml()`,
+  `.md()`, `.image()`, `.stream()` and `.any()` sit next to your pages, with
+  `Accept`-based content negotiation, typed payloads, and RFC 9457 errors.
+- **Testable at every layer.** `runLoader`, `runMiddleware` and
+  `renderHandler` test pieces in isolation. `parityDescribe` runs one e2e
+  body against both dev and production builds, and `expectParity` checks
+  JS and no-JS give the same result.
+- **Built-in diagnostics.** `ctx.debugPerformance()` gives you a per-request
+  waterfall and `Server-Timing` headers. The package ships about 50
+  [agent skills](packages/rangojs-router/skills/rango/SKILL.md) so coding
+  agents learn the API from the version you installed.
+
+## Get started
 
 ```bash
 pnpm create rango my-app
 ```
 
-Choose a deployment target non-interactively:
+Pick a target with `--template basic` (Node), `--template cloudflare`, or
+`--template vercel`, and add `--js` for plain JavaScript. With npm, run
+`npm create rango@latest my-app`. Requires Node.js 24 or newer.
 
-```bash
-pnpm create rango my-app --template basic       # Node
-pnpm create rango my-app --template cloudflare  # Cloudflare Workers
-pnpm create rango my-app --template vercel      # Vercel
-pnpm create rango my-app --template basic --js  # Node, JavaScript
-```
+Then read the **[package guide](packages/rangojs-router/README.md)**. It
+builds a small shop step by step and covers the core API along the way.
 
-Each template is a complete streaming RSC app with routes, Server Actions, and
-production build/deployment configuration already wired; the scaffolder
-installs the latest `@rangojs/router` release. Use
-`npm create rango@latest my-app` if you prefer npm. The scaffolder currently
-requires Node.js 24 or newer.
+## Learn more
 
-### Prerequisites
+- [Package guide](packages/rangojs-router/README.md): the step-by-step tour
+  plus the reference tables
+- [Why Rango](packages/rangojs-router/docs/why-rango.md): the reasoning
+  behind each design decision
+- [Rango vs Next.js, TanStack Start and Waku](packages/rangojs-router/skills/comparison/references/framework-comparison.md)
+- [Agent skills catalog](packages/rangojs-router/skills/rango/SKILL.md): one
+  guide per feature, written for coding agents and readable by people
+- [Examples](examples/): Cloudflare and Vercel apps, including multi-app host
+  routing
 
-- Node.js `^20.19.0 || >=22.12.0` for this repository (the `@rangojs/router` `engines` floor, matching Vite 8); CI tests on Node 24 (see `.nvmrc`)
-- pnpm 11+ (`packageManager` is `pnpm@11.9.0`)
+## Developing this repository
 
-### Repository development
+Prerequisites: Node.js 24 (see `.nvmrc`) and pnpm 11 (`packageManager` is
+pinned).
 
 ```bash
 pnpm install
@@ -128,94 +125,33 @@ pnpm build
 pnpm dev
 ```
 
-## Quick Example
-
-```typescript
-import { createRouter } from "@rangojs/router";
-
-const router = createRouter().routes(({ path }) => [
-  path("/", () => <Home />, { name: "home" }),
-  path("/about", () => <About />, { name: "about" }),
-]);
-
-router.reverse("home"); // "/"
+```
+.
+├── packages/rangojs-router/   # @rangojs/router, its unit tests and e2e apps
+├── tests/                     # Consumer apps that use the published API
+├── examples/                  # Cloudflare and Vercel example apps
+├── apps/docs/                 # Documentation site
+├── docs/                      # Design documents
+└── tools/                     # Repo checks and bundle tooling
 ```
 
-For larger apps, extract route modules with `urls()` and compose with `include()`:
+| Script                     | Purpose                                       |
+| -------------------------- | --------------------------------------------- |
+| `pnpm dev`                 | Run the dev servers                           |
+| `pnpm build`               | Build all packages                            |
+| `pnpm build-router`        | Build only `@rangojs/router`                  |
+| `pnpm typecheck`           | Type-check every package                      |
+| `pnpm test:unit:all`       | Unit and Flight tests for every package       |
+| `pnpm test:e2e`            | Playwright suites                             |
+| `pnpm lint`, `pnpm format` | oxlint and oxfmt checks (`format:fix` to fix) |
 
-```typescript
-import { createRouter, urls } from "@rangojs/router";
+Router debug logging is off by default. `INTERNAL_RANGO_DEBUG=1 pnpm dev`
+turns on structured server and browser logs, tagged with request and
+transaction ids.
 
-const shopPatterns = urls(({ path }) => [
-  path("/", () => <ShopIndex />, { name: "index" }),
-  path("/cart", () => <CartPage />, { name: "cart" }),
-  path("/product/:slug", async (ctx) => {
-    const product = await getProduct(ctx.params.slug);
-    return <ProductDetail product={product} />;
-  }, { name: "product" }),
-]);
-
-const router = createRouter().routes(({ path, include }) => [
-  path("/", () => <Home />, { name: "home" }),
-  include("/shop", shopPatterns, { name: "shop" }),
-]);
-
-router.reverse("shop.cart"); // "/shop/cart"
-router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"
-```
-
-Rango treats loaders as the live data layer: pre-rendering and route-level
-cache boundaries can store the UI structure, while `loader()` re-resolves fresh
-request-time data by default. That lets you pre-render the page shell without
-freezing the data behind it.
-
-Trailing slash handling is supported directly on `path()`:
-
-```typescript
-const urlpatterns = urls(({ path }) => [
-  path("/about", AboutPage, { name: "about", trailingSlash: "never" }),
-  path("/docs/", DocsPage, { name: "docs", trailingSlash: "always" }),
-  path("/webhook", WebhookHandler, {
-    name: "webhook",
-    trailingSlash: "ignore",
-  }),
-]);
-```
-
-If `trailingSlash` is omitted, there is no separate global default mode. The router uses the pattern you define as the canonical form and redirects to it.
-
-## Debug Logging
-
-The router has structured debug logging that is off by default. Enable it with the `INTERNAL_RANGO_DEBUG` environment variable:
-
-```bash
-INTERNAL_RANGO_DEBUG=1 pnpm dev
-```
-
-This produces structured output for server-side and client-side router operations:
-
-```
-[Router][req:req-1][tx:document-tx-1] [matchRoute] matching started { pathname: "/shop/products" }
-[Browser][req:creq-1][tx:navigate-ctx-1] navigation started { url: "/shop/products" }
-```
-
-## Scripts
-
-- `pnpm dev` - Start development mode
-- `pnpm build` - Build all packages
-- `pnpm preview` - Preview production builds
-- `pnpm typecheck` - Run TypeScript type checking
-
-## Built With
-
-- [React 19](https://react.dev/) - React Server Components
-- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
-- [TypeScript](https://www.typescriptlang.org/)
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Security reports go through
-[SECURITY.md](./SECURITY.md), not the public issue tracker.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [AGENTS.md](./AGENTS.md) for the
+pre-push checks. Report security issues through [SECURITY.md](./SECURITY.md),
+not the public issue tracker.
 
 ## License
 
