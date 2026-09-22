@@ -74,7 +74,7 @@ export default defineConfig({
     react({ compiler: true }),
     rango({ preset: "cloudflare" }),
     cloudflare({
-      /* ... */
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
     }),
   ],
 });
@@ -200,7 +200,8 @@ import babel from "@rolldown/plugin-babel";
 ## Reference
 
 A worked, tested wiring (dev + production e2e markers, incl. the client-only
-contract and the Fast Refresh check) lives in the `@rangojs/router` repository —
-not shipped in this package: `docs/react-compiler.md` and the
-`react-compiler.test.ts` files under `e2e/e2e-basic`, `tests/cloudflare-basic`,
-and `tests/vite-rsc-demo`.
+contract and the Fast Refresh check) lives in the `@rangojs/router` repository,
+not shipped in this package: `packages/rangojs-router/docs/react-compiler.md`,
+`packages/rangojs-router/e2e/react-compiler.test.ts` (covers the
+`e2e/e2e-basic` app), `tests/cloudflare-basic/e2e/react-compiler.test.ts`, and
+`tests/vite-rsc-demo/e2e/react-compiler.test.ts`.

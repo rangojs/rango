@@ -29,7 +29,7 @@ function ProductId() {
 }
 ```
 
-Returns merged params from all matched route segments as a `Readonly<T>` map. Updates on navigation commit (not during pending navigation).
+Returns merged params from all matched route segments as a `Readonly<T>` map (default `Record<string, string | undefined>` — absent optional params are omitted, so guard them). Updates on navigation commit, not during a pending navigation — except inside an optimistically rendered `clientUrls()` destination, where it reports that destination's params (see `/client-urls`).
 
 ### usePathname()
 
@@ -119,19 +119,21 @@ import { useHref, href, Link } from "@rangojs/router/client";
 
 // Inside include("/shop", shopPatterns)
 function ShopNav() {
-  const href = useHref();
+  const localHref = useHref();
 
   return (
     <>
       {/* Local paths - auto-prefixed with /shop */}
-      <Link to={href("/cart")}>Cart</Link>
-      <Link to={href("/product/widget")}>Widget</Link>
+      <Link to={localHref("/cart")}>Cart</Link>
+      <Link to={localHref("/product/widget")}>Widget</Link>
+      {/* Absolute path - not prefixed */}
+      <Link to={href("/about")}>About</Link>
     </>
   );
 }
 ```
 
-Use `useHref()` for local navigation. Use the bare `href()` function for absolute paths.
+Use `useHref()` for local navigation. Use the bare `href()` function for absolute paths. The function `useHref()` returns is referentially stable within a mount, so it is safe as a hook dependency or memoized prop.
 
 ### useMount()
 

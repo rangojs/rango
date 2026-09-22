@@ -27,6 +27,7 @@ export interface AppVariables {
 
 ```typescript
 // router.tsx
+import { createRouter } from "@rangojs/router";
 import type { AppBindings, AppVariables } from "./env";
 
 const router = createRouter<AppBindings>({
@@ -40,7 +41,9 @@ declare global {
     interface Vars extends AppVariables {}
   }
 }
+```
 
+```typescript
 // middleware - typed via ctx.set / ctx.get
 import type { Middleware } from "@rangojs/router";
 
@@ -52,38 +55,35 @@ export const authMiddleware: Middleware = async (ctx, next) => {
   });
   await next();
 };
-
-// loaders - typed context
-export const UserLoader = createLoader(async (ctx) => {
-  const db = ctx.env.DB; // D1Database (plain bindings)
-  const userId = ctx.get("user")?.id; // from Rango.Vars
-  return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
-});
 ```
 
 ## Global Environment Registration
 
-Register environment types globally for implicit typing:
+The `declare global` block above is what types the contexts. `createRouter<TEnv>()`
+types the router instance, but `urls()` modules, `Handler`, middleware, and
+response routes read `Rango.Env` / `Rango.Vars` — they cannot see the router's
+generic. Put the block in a file that is part of every TypeScript program that
+typechecks handlers (usually `router.tsx`, kept in via tsconfig `files`).
 
-```typescript
-// router.tsx
-declare global {
-  namespace Rango {
-    interface Env extends AppBindings {}
-    interface Vars extends AppVariables {}
-  }
-}
-```
+What each context sees:
 
-Now handlers have typed context without explicit imports:
+| Context                               | `ctx.env`                                 | `ctx.get("key")`                       |
+| ------------------------------------- | ----------------------------------------- | -------------------------------------- |
+| Handlers, middleware, response routes | `Rango.Env` (`unknown` if not registered) | `Rango.Vars` (`any` if not registered) |
+| Loaders (`createLoader`)              | `any` (not typed from `Rango.Env`)        | `Rango.Vars` (`any` if not registered) |
+
+An unregistered `Rango.Env` is deliberately `unknown`, so `ctx.env.DB` is a
+compile error rather than a silent `any`. An unregistered `Rango.Vars` falls
+back to `any` so string-key vars work with zero config.
 
 ```typescript
 // In loaders
+import { createLoader } from "@rangojs/router";
+
 export const DashboardLoader = createLoader(async (ctx) => {
-  // ctx.env.DB is typed from global Rango.Env
-  // ctx.get("user") is typed from global Rango.Vars
-  const user = ctx.get("user");
-  return { user };
+  const user = ctx.get("user"); // typed from global Rango.Vars
+  const db = ctx.env.DB as D1Database; // ctx.env is `any` in loaders
+  return { user, count: await countOrders(db, user?.id) };
 });
 ```
 
@@ -104,7 +104,10 @@ interface PaginationData {
 export const Pagination = createVar<PaginationData>();
 
 // Non-cacheable var — reading inside cache() or "use cache" throws at runtime
-const Session = createVar<SessionData>({ cache: false });
+interface SessionData {
+  userId: string;
+}
+export const Session = createVar<SessionData>({ cache: false });
 ```
 
 `createVar` accepts an optional options object. The `cache` option (default
@@ -114,9 +117,16 @@ marks a specific write as non-cacheable even if the var itself is cacheable.
 "Least cacheable wins" — if either says `cache: false`, the value throws on
 read inside `cache()` or `"use cache"`.
 
-### Producer (handler or middleware)
+### Producer (handler, layout, or middleware)
+
+Write with `ctx.set()` from middleware, route handlers, or layout handlers;
+read with `ctx.get()` in the segments they wrap. A route handler runs before
+the layouts and parallels declared in its own use callback (handler-first), so
+those see the value; an outer layout wrapping the route renders first and
+does not. See `/route` for the full ordering.
 
 ```typescript
+import type { Handler } from "@rangojs/router";
 import { Pagination } from "../vars/pagination.js";
 
 const ArticleList: Handler<"articles.list"> = async (ctx) => {
@@ -132,14 +142,29 @@ const ArticleList: Handler<"articles.list"> = async (ctx) => {
 ### Consumer (layout, parallel, or any context with get)
 
 ```typescript
+import type { Handler } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
 import { Pagination } from "../vars/pagination.js";
 
-export function PaginationLayout(ctx: any) {
-  const pagination = ctx.get(Pagination);  // typed as PaginationData | undefined
-  if (!pagination) return <Outlet />;
-  return <nav>Page {pagination.current} of {pagination.total}</nav>;
-}
+// Mounted inside the producer's use callback:
+// path("/articles", ArticleList, { name: "articles.list" }, () => [layout(PaginationLayout)])
+export const PaginationLayout: Handler = (ctx) => {
+  const pagination = ctx.get(Pagination); // typed as PaginationData | undefined
+  return (
+    <>
+      <Outlet />
+      {pagination && (
+        <nav>
+          Page {pagination.current} of {pagination.total}
+        </nav>
+      )}
+    </>
+  );
+};
 ```
+
+Type the layout (`Handler`) rather than annotating `ctx: any`: with `any`,
+`ctx.get(Pagination)` is `any` too and the token contract is lost.
 
 ### Why not just use Rango.Vars?
 
@@ -154,7 +179,9 @@ Both approaches coexist: `ctx.get("user")` (global via Vars) and
 
 ## Handle Type Safety
 
-Handles have typed data:
+A handle is typed by two parameters: `Handle<TData, TAccumulated>`. `TData` is
+what each segment pushes; `TAccumulated` is what readers get after the collect
+function runs (default `TData[][]`, one array per segment).
 
 ```typescript
 // Built-in Breadcrumbs handle — import from "@rangojs/router"
@@ -168,18 +195,33 @@ path("/shop/product/:slug", (ctx) => {
   breadcrumb({ label: "Products", href: "/shop/products" });
   return <ProductPage />;
 }, { name: "product" });
+```
 
+```tsx
 // In client — typed array
+"use client";
 import { useHandle, Breadcrumbs } from "@rangojs/router/client";
-function BreadcrumbNav() {
-  const crumbs = useHandle(Breadcrumbs);
-  // crumbs: BreadcrumbItem[]
-}
 
-// Custom handles also work the same way
+function BreadcrumbNav() {
+  const crumbs = useHandle(Breadcrumbs); // crumbs: BreadcrumbItem[]
+  return (
+    <nav>
+      {crumbs.map((c) => (
+        <a key={c.href} href={c.href}>
+          {c.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+```
+
+```typescript
+// Custom handle: give TAccumulated whenever collect changes the shape
 import { createHandle } from "@rangojs/router";
+
 export const PageTitle = createHandle<string, string>(
-  (segments) => segments.flat().at(-1) ?? "Default Title"
+  (segments) => segments.flat().at(-1) ?? "Default Title",
 );
 ```
 
@@ -190,11 +232,16 @@ Use `typeof` to get the full typed definition without manually specifying generi
 
 ```typescript
 // loaders.ts
+import { createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// Built-in Breadcrumbs — or any custom handle created with createHandle()
+// Server: pass the definitions as props
+path("/product/:slug", () => (
+  <MyComponent loader={ProductLoader} handle={Breadcrumbs} />
+), { name: "product" }, () => [loader(ProductLoader)]);
 ```
 
 ```tsx
@@ -208,19 +255,26 @@ function MyComponent({
   handle,
 }: {
   loader: typeof ProductLoader; // LoaderDefinition<{ product: Product }>
-  handle: typeof Breadcrumbs; // Handle<{ label: string; href: string }>
+  handle: typeof Breadcrumbs; // Handle<BreadcrumbItem, BreadcrumbItem[]>
 }) {
   const { data } = useLoader(loader); // data is typed
-  const crumbs = useHandle(handle); // crumbs is typed array
+  const crumbs = useHandle(handle); // crumbs: BreadcrumbItem[]
   // ...
 }
 ```
 
-RSC Flight serialization calls `toJSON()` on both loaders and handles,
-sending only `{ __brand, $$id }` to the client. The hooks recover the
-full functionality from module-level registries.
+Loader and handle definitions are plain `{ __brand, $$id }` objects — the
+loader function and the handle's collect function live in module-level
+registries keyed by `$$id` — so they cross the RSC boundary as-is and the
+hooks look the rest up by id. `useLoader()` still needs the loader registered
+on the route with `loader()` (or use `useFetchLoader()` for on-demand fetching).
 
 ## Location State Type Safety
+
+`createLocationState<T>()` returns a typed definition; the Vite plugin injects
+its key, so it must be exported from a module. Values are stored in
+`history.state`, so `T` must be structured-cloneable: functions, symbols,
+class constructors, React elements, and `unknown` are compile errors.
 
 ```typescript
 // location-states.ts
@@ -233,13 +287,28 @@ export const ProductPreview = createLocationState<{
   image: string;
 }>();
 
+// Flash state: cleared after the first read
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
+```
+
+```tsx
+"use client";
+import { Link, href, useLocationState } from "@rangojs/router/client";
+import { ProductPreview } from "./location-states";
+
 // Passing state through Link
-<Link
-  to={href("product", { slug: "widget" })}
-  state={[ProductPreview({ name: "Widget", price: 99, image: "/img.jpg" })]}
->
-  View Product
-</Link>
+function ProductCard() {
+  return (
+    <Link
+      to={href("/product/widget")}
+      state={[ProductPreview({ name: "Widget", price: 99, image: "/img.jpg" })]}
+    >
+      View Product
+    </Link>
+  );
+}
 
 // Reading state in component
 function ProductHeader() {
@@ -247,8 +316,18 @@ function ProductHeader() {
   // preview: { name: string; price: number; image: string } | undefined
 
   if (preview) {
-    return <h1>{preview.name} - ${preview.price}</h1>;
+    return (
+      <h1>
+        {preview.name} - ${preview.price}
+      </h1>
+    );
   }
   return <h1>Loading...</h1>;
 }
 ```
+
+Other entry points: pass a getter (`ProductPreview(() => ({ ... }))`) to compute
+the value at click time; `ctx.setLocationState(entry)` attaches state from a
+handler; `redirect(url, { state })` carries it through a redirect; and
+`ProductPreview.read()` / `.write(value)` / `.delete()` access the current
+history entry outside React (client-only, non-reactive).

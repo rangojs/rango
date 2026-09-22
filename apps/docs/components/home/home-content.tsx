@@ -104,13 +104,8 @@ const TRADEOFFS = [
   },
   {
     description:
-      "Its loading branch can render before global middleware finishes, and the clientUrls() DSL leaves route middleware, boundaries, cache, and PPR in the server tree around the mount.",
+      "The destination branch can render before global middleware finishes, and the clientUrls() DSL leaves route middleware, nested include()/parallel(), error and not-found boundaries, and cache() in the server tree around the mount.",
     title: "Client URL loading is optimistic, not authorization",
-  },
-  {
-    description:
-      "The semantics are pinned and tested and the API is converging, but pre-1.0 means pre-1.0.",
-    title: "The router is experimental",
   },
 ];
 
@@ -122,7 +117,7 @@ export function HomeContent() {
   return (
     <div className="container mx-auto max-w-[1448px]">
       <Hero
-        badge="Pre-1.0 · semantics pinned and tested"
+        badge="Semantics pinned and tested"
         description={homeSubtitle}
         title={homeTitle}
       >

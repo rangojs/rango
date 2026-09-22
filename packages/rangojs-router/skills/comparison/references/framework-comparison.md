@@ -44,10 +44,10 @@ and multi-region composition without replacing its routing or data model.
 
 | Dimension               | **Rango**                                                                                                  | Next.js (App Router)                                                           | TanStack Start                                                                     | Waku                                                                    |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Routing model           | Code DSL (`urls()`/`include()`), named + `reverse()`                                                       | File-system convention                                                         | File or code, type-first                                                           | File-system (+ `createPages`)                                           |
+| Routing model           | Code DSL (`urls()`/`include()`), named + `ctx.reverse()`                                                   | File-system convention                                                         | File or code, type-first                                                           | File-system (+ `createPages`)                                           |
 | Foundation              | Vite + plugin-rsc                                                                                          | Turbopack (default in 16; Webpack opt-in)                                      | [Vite or Rsbuild](https://tanstack.com/start/latest/docs/framework/react/overview) | Vite + plugin-rsc                                                       |
 | RSC model               | RSC-first                                                                                                  | RSC-first                                                                      | SSR/client-first; RSC opt-in (experimental)                                        | RSC-first                                                               |
-| Type-safe routes/params | Generated names, params, search, `reverse()`, response MIME                                                | Stable typed links; route-local param types                                    | Best-in-class                                                                      | Typed path params                                                       |
+| Type-safe routes/params | Generated names, params, search, `ctx.reverse()`/`href()`, response MIME                                   | Stable typed links; route-local param types                                    | Best-in-class                                                                      | Typed path params                                                       |
 | Client render selection | Per-segment/loader `revalidate()` policy; typed action and result matching                                 | Automatic segment reuse; refresh/invalidation APIs                             | Match/loader reload policy                                                         | Route refetch/reload                                                    |
 | Slots and intercepts    | Code-defined named slots with their own loaders/policy; conditional alternate soft-navigation compositions | File-system `@slot` + intercept conventions                                    | Route masking, no parallel RSC slot graph                                          | No equivalent route-slot graph                                          |
 | Caching                 | One segment store = runtime + build-time + `"use cache"`, tags, SWR                                        | Cache Components plus distinct server/client cache lifecycles                  | Router loader cache + Query integration + HTTP/CDN policy                          | Minimal                                                                 |
@@ -81,16 +81,16 @@ const router = createRouter().routes(({ path }) => [
 As the application grows, each requirement adds one local primitive to that same
 tree:
 
-| When you need to…                          | Add…                              |
-| ------------------------------------------ | --------------------------------- |
-| make navigation refactor-safe              | a route `name` and `reverse()`    |
-| split the application into modules         | `urls()` and `include()`          |
-| keep request data live beneath cached UI   | `loader()`                        |
-| cache or prerender a shared shell          | `cache()` or `Prerender()`        |
-| choose what updates after an action        | `revalidate()`                    |
-| render independent regions                 | `parallel()` and named slots      |
-| open a route as a modal on soft navigation | `intercept()`                     |
-| inspect where request time went            | `debugPerformance` or `telemetry` |
+| When you need to…                          | Add…                               |
+| ------------------------------------------ | ---------------------------------- |
+| make navigation refactor-safe              | a route `name` and `ctx.reverse()` |
+| split the application into modules         | `urls()` and `include()`           |
+| keep request data live beneath cached UI   | `loader()`                         |
+| cache or prerender a shared shell          | `cache()` or `Prerender()`         |
+| choose what updates after an action        | `revalidate()`                     |
+| render independent regions                 | `parallel()` and named slots       |
+| open a route as a modal on soft navigation | `intercept()`                      |
+| inspect where request time went            | `debugPerformance` or `telemetry`  |
 
 Nothing in the first route requires learning the last row. More importantly, the
 last row does not force a migration to a second router, client data library, or
@@ -208,7 +208,7 @@ you statically generate your top 1,000 products and serve the long tail
 dynamically, from one definition. Next.js approximates this with
 `generateStaticParams` + `dynamicParams`, but that is two separate knobs rather
 than one decision point inside your handler. See
-[prerender-api-design.md](../../../docs/prerender-api-design.md).
+[prerender-api-design.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/prerender-api-design.md).
 
 ### Progressive enhancement is a tested contract
 
@@ -297,8 +297,8 @@ The router gives you guarantees most file-based routers leave implicit:
   only; parallel siblings do not bleed into each other.
 - **Dev/prod matching parity** — one trie is used in both dev and production, so
   matching cannot drift between them. See
-  [matching-and-lazy-discovery.md](../../../docs/internal/matching-and-lazy-discovery.md)
-  and [execution-model.md](../../../docs/internal/execution-model.md).
+  [matching-and-lazy-discovery.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/internal/matching-and-lazy-discovery.md)
+  and [execution-model.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/internal/execution-model.md).
 
 ### Observability you do not wire yourself
 
@@ -311,7 +311,7 @@ Next.js also ships automatic OTel instrumentation; Rango's distinction is that t
 same router-owned phase registry drives its traces, local waterfall, and
 `Server-Timing` output. TanStack's strength is client/data devtools; Waku does not
 ship an equivalent request-phase model. See
-[telemetry.md](../../../docs/telemetry.md).
+[telemetry.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/telemetry.md).
 
 ### Deploy to Node, Cloudflare, and Vercel — and host many apps behind one entry
 
@@ -367,15 +367,17 @@ old-deployment request pinning.
 ### A shipped testing harness for server code
 
 The `@rangojs/router/testing/*` entry points give you `runLoader`,
-`runMiddleware`, `dispatch` (base `./testing`), `renderHandler` and real Flight
-rendering (`renderServerTree`, `findClientBoundaries`, `findElements`) from
-`./testing/flight`, `renderRoute` from `./testing/dom`, and a Playwright e2e
-harness with dev/prod parity helpers (`parityDescribe`, `expectParity`) from
-`./testing/e2e`. You can unit-test a loader, a middleware, or an RSC handler in
-isolation. Next.js and Waku ship no official primitives for testing server
-components/handlers; TanStack documents testing patterns (build your own harness
-from `createRouter`/`createMemoryHistory`) but ships no testing package, and
-nothing at the RSC-handler level. See [testing.md](../../../docs/testing.md).
+`runMiddleware`, `runInRequestContext` (server actions), `dispatch` (base
+`./testing`), `renderHandler` and real Flight rendering (`renderServerTree`,
+`findClientBoundaries`, `findElements`) from `./testing/flight`, `renderRoute`
+from `./testing/dom`, a vitest preset from `./testing/vitest`, and a Playwright
+e2e harness with dev/prod parity helpers (`parityDescribe`, `expectParity`) from
+`./testing/e2e`. You can unit-test a loader, a middleware, an action, or an RSC
+handler in isolation. Next.js and Waku ship no official primitives for testing
+server components/handlers; TanStack documents testing patterns (build your own
+harness from `createRouter`/`createMemoryHistory`) but ships no testing package,
+and nothing at the RSC-handler level. See the [testing skill](../../testing/SKILL.md)
+and [testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md).
 
 ### Bundle discipline
 
@@ -386,7 +388,7 @@ the build if React's development bundle leaks into production. Treat those as
 Rango baselines, not a normalized cross-framework benchmark: application shape,
 React version, compiler output, and deployment transforms make headline bundle
 comparisons unreliable. Waku deliberately targets a smaller surface. See
-[client-chunking.md](../../../docs/client-chunking.md).
+[client-chunking.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/client-chunking.md).
 
 ## Runtime mechanics in depth
 
@@ -521,12 +523,12 @@ There are two distinct things named "revalidate", and the split is deliberate:
    downstream revalidators in the same decision chain. This is surgical
    post-action control: "this widget re-renders only when `addToCart` ran; the
    rest of the tree stays put."
-   See [is-action-api-design.md](../../../docs/design/is-action-api-design.md).
+   See [is-action-api-design.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/design/is-action-api-design.md).
 2. **`revalidate: false` on `<Link>` / `navigate()`** — shallow navigation. When
    the pathname is unchanged (a search or hash change), it updates the URL and all
    location hooks but skips the server fetch and re-render entirely. For filters,
    tabs, and pagination. See
-   [shallow-navigation.md](../../../docs/design/shallow-navigation.md).
+   [shallow-navigation.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/design/shallow-navigation.md).
 
 Both are separate from `revalidateTag()`/`updateTag()`, which hard-purge tagged
 cache entries. `updateTag()` is awaitable for read-your-own-writes;
@@ -776,7 +778,7 @@ contracts; they do not provide Rango's route-aware tainted-argument keying,
 non-cacheable typed context variables, handle capture/replay, and loader escape
 path as one system. TanStack Start and Waku leave this boundary primarily to
 application architecture. See the [cache guide](../../cache-guide/SKILL.md) and
-[`"use cache"` design](../../../docs/use-cache-api-design.md).
+[`"use cache"` design](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/use-cache-api-design.md).
 
 ## Performance diagnostics (`debugPerformance`)
 
@@ -809,7 +811,7 @@ Next.js has no equivalent flip-a-boolean per-request phase waterfall: its automa
 OTel spans still need an exporter and trace viewer. TanStack's strength is
 client/data devtools, a different axis from server request-phase diagnostics. Waku
 does not ship an equivalent phase model. See
-[telemetry.md](../../../docs/telemetry.md).
+[telemetry.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/telemetry.md).
 
 ## Coming from a specific framework
 
@@ -819,7 +821,7 @@ layers for a code-defined, refactor-safe router and one caching model. You gain
 Cloudflare as a first-class target and phase spans for free. You give up the
 largest ecosystem and talent pool in the React world — the real cost.
 
-**From TanStack Start.** You get comparable type-safe routing (`reverse()`, typed
+**From TanStack Start.** You get comparable type-safe routing (`ctx.reverse()`/`href()`, typed
 params/search, even typed response MIME via `.json()`/`.text()`/`.image()`), plus a
 true RSC-first model (zero-bundle server components, Flight) that TanStack's
 client-first core added later and opt-in. You give up TanStack's best-in-class

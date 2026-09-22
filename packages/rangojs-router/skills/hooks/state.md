@@ -74,6 +74,16 @@ Plain state can also be evaluated just in time (also requires a client component
 </Link>
 ```
 
+Read plain (untyped) state by calling the hook with a type argument and no
+definition:
+
+```tsx
+const state = useLocationState<{ from?: string }>(); // { from?: string } | undefined
+```
+
+The same `state` option exists on `router.push()` / `router.replace()` (see
+[`./navigation.md`](./navigation.md)).
+
 ### Flash State (read-once)
 
 Create a location state with `{ flash: true }` for read-once state that
@@ -106,22 +116,22 @@ function FlashBanner() {
 ```
 
 Flash behavior is determined by the definition (`{ flash: true }`), not by which
-hook reads it. `useLocationState` reads the value synchronously during render,
-then clears it from `history.state` via `replaceState` in a `useEffect`.
-Multiple components reading the same flash definition all see the value.
-Pressing back/forward will not re-show the flash since it was cleared.
+hook reads it. `useLocationState` reads the value during render (on the
+hydration render it returns `undefined` and reads in a post-mount effect, so
+SSR and hydration agree), then clears it from `history.state` via
+`replaceState` in a `useEffect`. Multiple components reading the same flash
+definition all see the value. Pressing back/forward will not re-show the flash
+since it was cleared.
 
-Set flash state from the server via `redirect()` with state:
+Set flash state from the server via `redirect()` with state (from a handler,
+middleware, or server action). Import the definition from the shared module so
+the client reader uses the same one:
 
 ```tsx
 // In a route handler
-import { redirect, createLocationState } from "@rangojs/router";
+import { redirect } from "@rangojs/router";
+import { FlashMessage } from "../location-states";
 
-export const FlashMessage = createLocationState<{ text: string }>({
-  flash: true,
-});
-
-// Handler
 (ctx) => {
   return redirect("/dashboard", {
     state: [FlashMessage({ text: "Item saved!" })],
@@ -129,7 +139,7 @@ export const FlashMessage = createLocationState<{ text: string }>({
 };
 ```
 
-Or via `ctx.setLocationState()` on any response:
+Or via `ctx.setLocationState()` on any response (handlers and middleware):
 
 ```tsx
 (ctx) => {
@@ -194,9 +204,21 @@ ProductState.delete();
 Force the client's caches to miss after a mutation the router can't see (a REST
 call, a WebSocket push, a login). It is a plain function, not a hook, so it works
 from module-level callbacks too. Imported from the root entry `@rangojs/router`,
-it is selected by export conditions: in a client component it marks the caches
-stale immediately; from a handler/server component it writes a rotated
-`Set-Cookie` for the responding client.
+it is selected by export conditions:
+
+- **Client** (client component or module): marks the history cache stale,
+  flushes the prefetch cache, rotates the router state, and notifies other tabs
+  — the same thing a completed server action does. During SSR of a client
+  component it is a no-op (dev warning).
+- **Server** (handler, server component, middleware, loader, or action): writes
+  a rotated state `Set-Cookie` for the responding client, which marks its
+  caches stale when it next reads them. Idempotent within a request; throws
+  inside a `cache()` / `"use cache"` boundary; a no-op with a dev warning
+  outside a request.
+
+Server actions already invalidate automatically; to suppress that for a no-op
+action, call `keepClientCache()` inside it (see `/server-actions` → "Client
+Cache After an Action").
 
 ```tsx
 "use client";

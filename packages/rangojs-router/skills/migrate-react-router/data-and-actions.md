@@ -20,6 +20,8 @@ function ProductPage() {
 }
 
 // Rango: handler fetches and renders directly
+import type { Handler } from "@rangojs/router";
+
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
   return <div>{product.name}</div>;
@@ -76,6 +78,7 @@ function EditProfile() {
 }
 
 // Rango: "use server" action + native form or useActionState
+// actions/profile.ts
 "use server";
 import { redirect } from "@rangojs/router";
 
@@ -84,7 +87,10 @@ export async function updateProfile(formData: FormData): Promise<void> {
   throw redirect("/profile");
 }
 
-// Client component:
+// EditProfile.tsx — a server or client component; passing the action itself
+// (not a wrapper function) keeps the form working with JavaScript disabled.
+import { updateProfile } from "./actions/profile";
+
 function EditProfile() {
   return (
     <form action={updateProfile}>
@@ -122,9 +128,12 @@ function ProductPrice() {
 }
 ```
 
-`useLoader()` provides live data that stays fresh — it re-fetches on navigation
-and after actions (controlled by `revalidate()`). This is different from
-`useLoaderData()` which just reads a snapshot.
+`useLoader()` provides live data that stays fresh — the loader re-runs on
+navigation and after actions (controlled by `revalidate()`), and the result also
+exposes `isLoading`, `error`, `load`, and `refetch`. Register the loader on the
+route (`loader(PriceLoader)`) so its data is in the tree the component reads;
+the read suspends until it arrives, so keep a `<Suspense>` or `loading()` above
+it. See `/loader` and `/hooks`.
 
 ### useActionData
 
@@ -155,8 +164,12 @@ function EditForm() {
 // Rango: useActionState (standard React hook)
 "use client";
 import { useActionState } from "react";
-import { saveForm } from "../actions"; // "use server" function
+// "use server" function with the useActionState shape:
+//   export async function saveForm(prev: State, formData: FormData): Promise<State>
+import { saveForm } from "../actions";
 
+// Pass the imported action straight to useActionState — not an inline closure —
+// so the form still posts and re-renders with JavaScript disabled.
 function EditForm() {
   const [state, action, pending] = useActionState(saveForm, null);
   return (

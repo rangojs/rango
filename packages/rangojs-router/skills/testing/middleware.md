@@ -2,14 +2,17 @@
 
 **Layer:** unit (node) · **Import:** `@rangojs/router/testing` · **DSL it tests:** `middleware()` (see `/middleware`)
 
-`runMiddleware` executes your chain through the router's REAL `executeLoaderMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
+`runMiddleware(mw | mw[], opts)` executes your chain through the router's REAL `executeLoaderMiddleware`, so `next()`, return-Response and throw-Response short-circuits, double-next guards, and header/cookie merge are production-identical. You SEED the request and any prior-middleware state (`vars`, `params`, `env`, `routeMap`); everything else (cookie/header merge, request-context resolution) is real machinery.
 
 ## API
 
 ### Options — `RunMiddlewareOptions<TEnv>`
 
+`opts` is a required argument (unlike `runLoader`); pass `{}` when you need no seeds.
+
 | Field           | Type                                                   | Meaning                                                                                                                                                                                                                                                                               |
 | --------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`         | `boolean`                                              | Seed `ctx.build` (default `false`) to test a middleware that branches on the build-time PPR shell-capture pass (e.g. `if (ctx.build) ctx.dynamic()`). With `true`, `ctx.waitUntil()` is inert, as at build time. Assert the opt-out via `result.dynamic`.                             |
 | `request`       | `Request \| string`                                    | The request the chain runs under: a `Request`, or a URL string (absolute or path). Optional — defaults to `http://localhost/`; pass it for path-, header-, or cookie-driven middleware.                                                                                               |
 | `env`           | `TEnv`                                                 | Environment bindings surfaced as `ctx.env`. Your seam for doubling platform bindings (see `./bindings.md`).                                                                                                                                                                           |
 | `params`        | `Record<string, string>`                               | Route params surfaced as `ctx.params`.                                                                                                                                                                                                                                                |
@@ -37,6 +40,7 @@ The `ctx` your middleware reads. Notable fields:
 | `setLocationState(entries)` | fn                      | Attach flash/location state to the response.                                       |
 | `theme` / `setTheme`        | `Theme` / fn            | Current theme; `undefined` unless `theme` is passed.                               |
 | `routeName`                 | `string`                | Matched route name (from `opts.routeName`).                                        |
+| `build` / `dynamic()`       | `boolean` / fn          | Build-pass flag (from `opts.build`) and the PPR shell opt-out (`result.dynamic`).  |
 
 ### Returns — `RunMiddlewareResult<TEnv>`
 
@@ -45,6 +49,7 @@ The `ctx` your middleware reads. Notable fields:
 | `response`        | `Response`                | The final Response: the downstream response, or a middleware short-circuit.                                                                                                                                                                                  |
 | `ctx`             | `RequestContext<TEnv>`    | The underlying RequestContext (NOT a per-middleware `MiddlewareContext`). Use `ctx.get(...)` for anything the envelope above doesn't surface.                                                                                                                |
 | `nextCalled`      | `number`                  | Times the terminal handler ran: `0` on short-circuit, `1` on pass-through.                                                                                                                                                                                   |
+| `dynamic`         | `boolean`                 | Whether the chain called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                                                                                                            |
 | `cookies`         | `Record<string, string>`  | Effective cookie view: request cookies merged with chain sets/deletes (last-write-wins), as `{ name: value }`.                                                                                                                                               |
 | `headers`         | `Record<string, string>`  | Final response headers as `{ name: value }`, lowercased, EXCLUDING `set-cookie` (use `cookies`).                                                                                                                                                             |
 | `locationState`   | `Record<string, unknown>` | Flat `{ key: value }` state set via `setLocationState()` / `redirect({ state })` (empty when none).                                                                                                                                                          |

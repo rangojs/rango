@@ -32,7 +32,8 @@ hydration cost lives under the boundary (see "Verifying and measuring").
 
 ## The recipe
 
-~40 lines, plain React, no rango imports — copy it into your app:
+About 50 lines of plain React, no rango imports. Copy it into a client module in
+your app:
 
 ```tsx
 "use client";

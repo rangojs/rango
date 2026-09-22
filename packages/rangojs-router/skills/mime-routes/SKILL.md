@@ -15,12 +15,14 @@ See also: `/response-routes` for the base response route API (path.json, path.te
 ## Defining Negotiated Routes
 
 Declare the same URL pattern with both an RSC route and one or more response-type routes.
-Order within the `urls()` array does not matter — the trie merges them at build time.
+The trie merges them into one negotiated leaf at build time, whatever their order. Order
+only decides the default for `*/*`, a missing `Accept`, or an `Accept` no variant serves:
+the first-defined route wins (rule 4 below).
 
 ```typescript
 import { urls } from "@rangojs/router";
 
-export const urlpatterns = urls(({ path, layout, include }) => [
+export const urlpatterns = urls(({ path }) => [
   // RSC page + JSON API on the same URL
   path("/products/:id", ProductPage, { name: "product" }),
   path.json(
@@ -38,10 +40,10 @@ When an API client requests the same URL (`Accept: application/json`), the JSON 
 
 ## Negotiation Rules
 
-1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC)
+1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC); `q=0` entries are ignored
 2. **Client order tiebreaker** — when q-values are equal, the type listed first in Accept wins (matches Express/Hono behavior)
-3. **Specific MIME match** — the variant whose MIME type appears in Accept wins
-4. **Wildcard / empty Accept** — `*/*` and missing Accept fall back to route definition order (the first-defined variant wins); when the RSC route wins this way, it serves the HTML document
+3. **Specific MIME match** — the variant whose MIME type appears in Accept wins; a type wildcard such as `text/*` picks the first candidate of that type
+4. **Wildcard / empty / unmatched Accept** — `*/*`, a missing Accept, and an Accept that no candidate serves fall back to route definition order (the first-defined variant wins); when the RSC route wins this way, it serves the HTML document
 5. **All responses** on a negotiated URL get `Vary: Accept` header, including the RSC side
 
 RSC participates as a candidate alongside response-type variants under two MIME
@@ -150,9 +152,12 @@ no payloads, so response types resolve to `never`.
 1. **Build time**: `buildRouteTrie()` calls `mergeLeaves()` when multiple routes share a pattern.
    RSC routes become the primary trie leaf; response-type routes are stored in the `nv`
    (negotiate variants) array on the leaf. The `rf` (rsc-first) flag tracks definition order.
-2. **Runtime**: `previewRoute()` reads `negotiateVariants` from the trie match result.
+2. **Runtime**: `negotiateRoute()` (called during request classification) reads `negotiateVariants` from the trie match result.
    It parses the `Accept` header (extracting q-values and order), builds a candidate list
-   (RSC as `text/html` + response-type variants), and calls `pickNegotiateVariant()`.
+   (the response-type variants in definition order, plus RSC as `text/html` and `text/x-component` —
+   placed first when the RSC route was defined first, otherwise last),
+   and calls `pickNegotiateVariant()`. When a variant with different param names wins
+   (`/widgets/:id` vs `/widgets/:file`), params are re-keyed to the variant's names.
 3. **Candidate matching**: walks the client's sorted Accept list (by q desc, then order asc),
    matching each entry against candidates. Wildcards (`*/*`, `text/*`) fall back to definition order.
 4. **Vary header**: both the response-route handler wrapper and the RSC handler wrapper

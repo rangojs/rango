@@ -9,14 +9,23 @@ argument-hint: "[setup]"
 Caches the rendered HTML **shell** of a page route (React `prerender` prelude
 bytes plus `postponed` state) and, on a later request, flushes those bytes after
 route classification and the complete middleware chain, but before downstream
-tail rendering. It then resumes fizz for just the live holes. The browser sees
-one ordinary streamed document; loaders stay fresh on every request. This is
-the second render axis — the default axis-1 path is untouched, and every
-ineligible request falls open to it.
+tail rendering. It then resumes React's HTML renderer for just the live holes.
+The browser sees one ordinary streamed document; loaders stay fresh on every
+request. Rango calls this the second render axis ("axis 2"): the default path
+("axis 1", a normal full render) is untouched, and every ineligible request
+falls open to it.
+
+Use it when a page has a stable layout that should reach the browser instantly
+(the first byte comes from cache) while specific regions stay per-request:
+prices, a basket, recommendations. Opt in per page route with the `ppr` path
+option; the holes are decided by the shape of your tree (see "The hole
+doctrine").
 
 Compare `/document-cache`, which freezes the WHOLE response including loader
-output. Shell caching is for pages that mix a stable shell with live data: the
-shell is shared per host+URL, the holes are per request.
+output, and the `cache()` DSL (`/caching`), which caches Flight segments but
+still renders HTML on every request. Shell caching is for pages that mix a
+stable shell with live data: the shell is shared per host+URL, the holes are
+per request.
 
 This is in-function PPR on every deployment. The worker/function serves the
 prelude; it is not a CDN static file. See `/deployment-caching` before combining
@@ -27,8 +36,11 @@ PPR with HTTP shared-cache headers.
 - You want the WHOLE response frozen, loader output included — see
   `/document-cache`.
 - You want build-time Flight segment payloads from `Static()`/`Prerender()` —
-  see `/prerender`. A `Prerender` page may also declare `ppr`; then producer B
-  can bake the HTML shell at build time while loaders stay live.
+  see `/prerender`. A `Prerender` page may also declare `ppr`; then the build
+  step called "producer B" bakes the HTML shell at build time while loaders stay
+  live.
+- You want cached segments with live loaders but no cached HTML — that is the
+  `cache()` DSL: see `/caching`.
 - You are unsure which cache layer you need — start at `/cache-guide`.
 
 ## Setup: one path option, no PPR middleware to mount
@@ -37,9 +49,9 @@ PPR is a DOCUMENT-level property declared on the page route via the `ppr` path
 option. Serving is **integral to the router** — there is nothing to mount. The
 only prerequisite is an app-level `createRouter({ cache })` store that
 implements the shell family (`getShell`/`putShell`): `MemorySegmentCacheStore`
-(dev/tests), `CFCacheStore` (Cache API L1 + KV L2), or `VercelCacheStore`
-(runtime cache). A ppr route on a store without the family stays on axis 1 with
-a once-per-key warning.
+(dev/tests), `CFCacheStore` (Cache API L1 + optional KV L2), or
+`VercelCacheStore` (Vercel Runtime Cache). A ppr route on a store without the
+family stays on axis 1 with a once-per-key warning.
 
 ```typescript
 import { createRouter, urls } from "@rangojs/router";
@@ -61,14 +73,13 @@ export const urlpatterns = urls(({ path, layout, loader, loading }) => [
   ]),
 ]);
 
-const router = createRouter<AppBindings>({
+export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
   cache: (env, ctx) => ({
     store: new CFCacheStore({ kv: env.CACHE_KV, ctx: ctx! }),
   }),
 });
-export default router;
 ```
 
 That is ONE of two hole mechanisms — the loader one. Do not conclude PPR
@@ -121,9 +132,8 @@ At capture the pending fetch cannot win the task-quantized quiet window, so
 the boundary postpones — fallback in the frozen prelude, value resumed fresh
 on every HIT. This is the PHYSICS class from the hole doctrine below, and it
 is exactly how an existing Suspense-shaped tree (e.g. migrated from Next.js
-PPR) works with zero restructuring. The e2e proof lives in the router
-repository (not shipped in this package): a promise hole living in a LAYOUT
-with no loader registration at all.
+PPR) works with zero restructuring. The same works for a promise hole in a
+LAYOUT with no loader registration at all.
 
 A route WITHOUT the `ppr` option is pure axis 1: no store read, no capture, no
 logs, zero cost. `ppr` is per page route — declaring it on a layout is not
@@ -139,7 +149,7 @@ outermost (final bytes):
 | ----------------------- | ---------------------------------------- | -------------------------------------------------- | -------------------------------------- |
 | 1. Function values      | `"use cache"`                            | a function's return value                          | everything around the call             |
 | 2. Loader values        | `loader(Fn, () => [cache({...})])`       | one loader's result (opt-in; loaders default live) | all other loaders, handlers, rendering |
-| 3. Segments (Flight)    | `cache()` route / build-time `prerender` | serialized rendered segments + replayed handles    | loaders, HTML render                   |
+| 3. Segments (Flight)    | `cache()` route / build-time `Prerender` | serialized rendered segments + replayed handles    | loaders, HTML render                   |
 | 4. **HTML shell (PPR)** | `ppr` path option                        | rendered prelude bytes + React postponed state     | the holes, hydration payload           |
 | 5. Whole response       | `/document-cache`                        | final response bytes, headers included             | nothing — all-or-nothing               |
 
@@ -176,6 +186,11 @@ point is after the chain, an unauthorized request NEVER sees shell bytes — put
 auth middleware anywhere (global or route DSL) and it guards PPR for free.
 
 ### Soft navigation caches and reuses the handler layer
+
+In short: client-side (soft) navigations to a `ppr` route reuse the handler
+segments captured with the shell, while loaders stay live. Nothing needs
+configuring; the rest of this section explains the `x-rango-ppr-replay` header
+for when you are debugging replay behavior.
 
 Ordinary partial RSC navigations to a `ppr` URL use the same handler-layer cache
 contract even when no document request has captured an HTML shell yet. When a
@@ -321,7 +336,7 @@ the write — a write before it still throws.
 ```ts
 function catalogPage(ctx) {
   ctx.dynamic(); // declare live -> refuses capture AND clears the header latch
-  ctx.headers.set("x-rango-sfra-proxy", "catalog");
+  ctx.headers.set("x-catalog-mode", "live");
   return <Catalog />;
 }
 ```
@@ -498,7 +513,7 @@ capturing session's identifiers — served to anonymous visitors.)
 - `ctx.use(H)(promise)` — a TOP-LEVEL pushed promise is awaited server-side
   before SSR (`resolvedHandleStream`) and BAKED into the shell. The capture
   gate is held open for the same await, so real latency here is safe (bounded
-  by the capture's 5s guard).
+  by the capture budget, `ppr.captureTimeout`, 15s by default).
 - `ctx.use(H)({ x: promise })` — the container passes through verbatim
   (resolution is shallow); the nested promise streams to the consumer, who must
   `<Suspense>` it. Under capture that boundary postpones — a hole — REGARDLESS
@@ -516,7 +531,8 @@ how fast the value settles.
 ### The bake lane: loaders without loading() on THEIR entry
 
 A loader on an entry with no renderable `loading()` EXECUTES during capture
-(the capture gate holds open for its real latency, bounded by the 5s guard).
+(the capture gate holds open for its real latency, bounded by
+`ppr.captureTimeout`, 15s by default).
 Its settled container bakes into the prelude; every promise nested in it is
 masked at capture (regardless of how fast it settles) and postpones at the
 consumer's own `<Suspense>` — a hole. On every HIT the
@@ -543,9 +559,9 @@ Four hard edges (each e2e/unit-pinned):
 - **Header writes throw (issue #713).** ppr is a document-scoped `cache()`:
   in any cached scenario ONLY MIDDLEWARE writes response headers. A handler
   or loader on a ppr route calling `ctx.headers.set()`, `cookies().set()`,
-  `ctx.header()`, `ctx.setTheme()`, or `setStatus()` throws on EVERY render —
-  dev and prod,
-  first render, same guard family as the `cache()` boundary guard. Handlers
+  `ctx.setTheme()`, or the request-context `header()`/`setStatus()` throws on
+  EVERY render — dev and prod, first render, same guard family as the
+  `cache()` boundary guard. Handlers
   are replayed on HITs (the write would silently differ between MISS and
   HIT); loaders are live but settle AFTER the response headers flushed with
   the shell (dead letters). Move the write into route middleware — it runs
@@ -636,7 +652,7 @@ container — refuses the capture by construction. The one exemption is
 handler-INVOKED loader bodies (`await ctx.use(loader)`): they execute at
 capture with identity reads permitted, and the value bakes as a shared
 capture-time copy — mirroring `cache()` semantics (the consumption-lane
-rule; semantic-matrix row PPR3).
+rule, `/rango` → Invariants).
 
 ### Designing routes for cheap captures (the cost model)
 
@@ -814,14 +830,16 @@ A captured shell auto-carries the UNION of the non-loader tags recorded during
 the capture render — every `cacheTag(...)` that ran as shell material, whether
 from a `"use cache"` function, a `cache()` segment, or a render-callable
 `cacheTag()` in a plain server component (no `"use cache"`/`cache()` in its
-tree). Loader tags never attach (the holes are already live). `ppr.tags` adds
+tree), plus the tags of cached loaders on the BAKE lane (they execute during
+capture). Live-lane loader tags (behind `loading()`) never attach — those
+loaders are masked at capture, and the holes are already live. `ppr.tags` adds
 operational tags the render cannot know (a tenant id, a deploy marker).
 
-| Lever                                         | Reaches the frozen shell?                                     | Reaches the holes?                                  |
-| --------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
-| `updateTag` / `revalidateTag` on a SHELL tag  | YES — drops the shell → MISS → recapture                      | n/a (holes are already live)                        |
-| `updateTag` / `revalidateTag` on a LOADER tag | no — loader tags never attach to a shell                      | drops that loader's cached value (if it `cache()`s) |
-| `revalidate()` (named revalidation contract)  | **no** — re-runs segments/loaders for the PAYLOAD, never HTML | yes — the hole re-renders with fresh data           |
+| Lever                                                   | Reaches the frozen shell?                                     | Reaches the holes?                                  |
+| ------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
+| `updateTag` / `revalidateTag` on a SHELL tag            | YES — drops the shell → MISS → recapture                      | n/a (holes are already live)                        |
+| `updateTag` / `revalidateTag` on a live-lane LOADER tag | no — live-lane loader tags never attach to a shell            | drops that loader's cached value (if it `cache()`s) |
+| `revalidate()` (named revalidation contract)            | **no** — re-runs segments/loaders for the PAYLOAD, never HTML | yes — the hole re-renders with fresh data           |
 
 A server action's automatic invalidation refreshes the CLIENT only — it re-runs
 the holes and streams a fresh payload, but does NOT evict the server shell.
@@ -871,19 +889,21 @@ evicted by tag at all — move always-fresh data under a `loading()` hole.
   re-synced post-mount by ThemeProvider. Nothing to configure — but a themed
   component in the shell may briefly render the captured theme's markup before
   the post-mount re-sync.
-- **Shell shows CAPTURE-time data for the shell's lifetime**: a `cache()`/`"use
-cache"` value baked into the shell is PINNED at capture (the capture data
-  snapshot) and replayed on every HIT, so the shell stays byte-identical to the
-  frozen prelude even after that cache entry expires, gets recomputed, or is
-  tag-invalidated. This is deliberate — parity beats freshness inside the shell.
-  If a shell region needs to be fresh, put it under a hole — `loading()` for
-  loader data, or an un-awaited promise under the consumer's `<Suspense>`
+- **Shell shows CAPTURE-time data for the shell's lifetime**: a
+  `cache()`/`"use cache"` value baked into the shell is PINNED at capture (the
+  capture data snapshot) and replayed on every HIT, so the shell stays
+  byte-identical to the frozen prelude even after that cache entry expires or
+  is recomputed. This is deliberate — parity beats freshness inside the shell.
+  Tags are the link back: every tag a `cache()`/`"use cache"` entry carried when
+  the capture read it also rides the shell, so `updateTag` on that tag drops the
+  shell too (next request MISSes and recaptures). An untagged entry has no such
+  link. If a shell region needs to be fresh, put it under a hole — `loading()`
+  for loader data, or an un-awaited promise under the consumer's `<Suspense>`
   (holes are never pinned) — or make the SHELL itself invalidatable by tagging
-  it: call `cacheTag(...)` from the shell-material render code (the render-time
-  lever), or add the tag to `ppr.tags` (operational tags the render cannot know —
-  a tenant id, a deploy marker). Ring-1/ring-3 tag invalidation does NOT drop the
-  shell. Tags are optional: if TTL/SWR is the complete freshness policy, leave
-  the shell untagged. Rango does not warn for that choice; with
+  it: tag the cached read, call `cacheTag(...)` from the shell-material render
+  code (the render-time lever), or add the tag to `ppr.tags` (operational tags
+  the render cannot know — a tenant id, a deploy marker). Tags are optional: if
+  TTL/SWR is the complete freshness policy, leave the shell untagged. Rango does not warn for that choice; with
   `debugShellCapture` enabled, a stored event reports `untaggedBake: true` when
   bake-lane loader material uses TTL/SWR-only invalidation.
 - **Uncached nondeterminism in the shell is a hydration hazard**: a raw
@@ -912,7 +932,11 @@ cache"` value baked into the shell is PINNED at capture (the capture data
 - `/defer-hydration` — keep the full body HTML in the shell while moving a
   heavy subtree's hydration off the initial main-thread task (gated boundary,
   content-as-fallback)
-- `/document-cache` — whole-response edge caching (no live holes)
-- `/caching` and `/cache-guide` — segment/function caching (axis 1 data)
+- `/document-cache` — store-backed whole-response caching (no live holes)
+- `/caching` — `cache()` segment caching and stores; `/use-cache` — function caching
 - `/shell-manifest` — replayed handles as cache metadata read by live loaders
-- Design doc: `docs/design/ppr-shell-resume.md` in the package
+- `/prerender` — `Prerender` + `ppr` bakes the shell at build time
+- `/cache-guide` — where the shell layer sits among the other cache layers
+- `/deployment-caching` — why this is in-function PPR, not a CDN shell
+- Design doc: `docs/design/ppr-shell-resume.md` in the router repository (not
+  shipped in the npm package)

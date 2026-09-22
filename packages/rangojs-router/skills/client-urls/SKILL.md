@@ -119,20 +119,27 @@ The async form works without a server wrapper module too:
 behavior, no startup win, uniform with code-split server groups.
 
 Route names compose through the include (`shop.index`, `shop.product`) and
-flow into the generated route map, so `href`/`reverse` and `Handler<"...">`
-typing work exactly as for server routes (`/typesafety`).
+flow into the generated route map, so `href()`, `ctx.reverse()` and
+`RouteParams<"shop.product">` typing work exactly as for server routes
+(`/typesafety`). `rango generate` also writes a per-module `.gen.ts` for a
+`clientUrls()` module, so components inside the group can link with
+`useReverse(routes)` (`/links`).
 
 ## Helpers: what exists inside clientUrls()
 
-| Helper         | Notes                                                                                                                                                          |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see /ppr skill; loader routes need `loading()` or capture refuses); no response variants |
-| `layout()`     | Must contain at least one `path()`                                                                                                                             |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                         |
-| `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait          |
-| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                             |
-| `transition()` | Data-only ViewTransition animation config — no `when`; same-route navs in a group already hold previous content without it                                     |
-| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                          |
+| Helper         | Notes                                                                                                                                                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr`; loader routes need `loading()` or capture refuses); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
+| `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                                                     |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                                                       |
+| `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                                                        |
+| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                                                           |
+| `transition()` | Inside a `path()` use callback only (at most one). Data-only ViewTransition config — no `when`; same-route navs in a group already hold previous content without it                                                          |
+| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                                                                                        |
+
+At the top level of the builder only `path()`, `layout()` and `intercept()`
+are accepted, and the builder must define at least one `path()`. Any helper
+name not in this table throws (`clientUrls() has no route() helper`).
 
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,
 `notFoundBoundary` **throw** — and that is a design position, not a gap.
@@ -226,10 +233,12 @@ Two scars worth copying:
 Everything a DSL loader can do in the server tree works here — the loader body
 is server code either way.
 
-**Authority signals.** A loader may `throw notFound()` or
+**Authority signals.** A loader may call `notFound()` (it throws) or
 `throw redirect(url)`:
 
 ```ts
+import { createLoader, notFound, redirect } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   const moved = LEGACY_SLUGS[ctx.params.slug];
   if (moved) throw redirect(`/shop/product/${moved}`);
@@ -265,7 +274,11 @@ document — `<head>` meta via a handle, or a real 404 status — flag it:
 
 ```ts
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { ssr: false }, () => [revalidate(productData)]),
+  loader(ProductLoader, { ssr: false }, () => [
+    revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) =>
+      currentParams.slug !== nextParams.slug ? defaultShouldRevalidate : false,
+    ),
+  ]),
   loader(RelatedLoader),   // untouched: still streams behind its boundary
 ]),
 ```
@@ -286,8 +299,10 @@ Constraints:
   construction. It throws a deadlock error naming the fix.
 - `intercept()` loaders reject the flag — intercepts render on client
   navigations only, so a document-render await can never apply.
-- It does not change PPR capture behavior: capture renders mask loaders and
-  skip the await.
+- Under a `ppr` group route the flag is the BAKE lane: the loader executes at
+  shell capture and its settled return (handle pushes included) freezes into
+  the stored shell; nested promises stay live holes. Unflagged loaders stay
+  masked as live holes (`/ppr`).
 
 Every document load pays the flagged loader's latency before first byte —
 that is the point, but it is a real cost. Keep flagged loaders fast (existence

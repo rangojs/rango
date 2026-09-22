@@ -1,5 +1,9 @@
 # Streaming, preview, and deployment
 
+Keeping responses streamed through a custom Worker entry, choosing local
+tooling, route-owned CORS, deploying the built Worker, and isolating
+dev/preview differences.
+
 ## Contents
 
 - [Keep streamed responses intact](#keep-streamed-responses-intact)
@@ -80,9 +84,12 @@ pnpm exec vite build
 pnpm exec wrangler deploy -c dist/rsc/wrangler.json
 ```
 
-Do not deploy the source `main` from the root config after building. Wrangler's
-bundler cannot reconstruct Rango's Vite virtual modules. If the RSC environment
-has a custom name, use its matching `dist/<name>/wrangler.json` path.
+`vite build` also writes a `.wrangler/deploy/config.json` redirect, so a plain
+`wrangler deploy` run after the build picks up the same generated config. Never
+deploy the source `main` (for example `wrangler deploy -c wrangler.json`, or a
+deploy with no fresh build): Wrangler's bundler cannot reconstruct Rango's Vite
+virtual modules. If the RSC environment has a custom name, use its matching
+`dist/<name>/wrangler.json` path.
 
 Before deployment:
 

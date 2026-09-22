@@ -1,12 +1,19 @@
 # Route Types
 
+Route names come from the `name` option on `path()`. Names are typed in two
+places: the `urls()` value itself (local names, patterns and response payloads
+as phantom types) and the generated `router.named-routes.gen.ts` (the global
+name map behind `Handler<"name">`, `ctx.reverse()` and `href()`). See
+[`./generated-files-and-cli.md`](./generated-files-and-cli.md) for which surface
+feeds which API.
+
 ## Route Definition with Type-Safe Names
 
 ```typescript
 // urls.tsx
 import { urls } from "@rangojs/router";
 
-export const urlpatterns = urls(({ path, layout }) => [
+export const urlpatterns = urls(({ path }) => [
   path("/", HomePage, { name: "home" }),
   path("/products", ProductsPage, { name: "products" }),
   path("/product/:slug", ProductPage, { name: "product" }),
@@ -17,7 +24,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 // Route names are inferred from the { name } option
 ```
 
-## Type-Safe href()
+## Type-Safe URL Generation
 
 ### Server: ctx.reverse with route names
 
@@ -36,8 +43,13 @@ export const ProductHandler: Handler<"shop.product"> = (ctx) => {
 };
 ```
 
-For type-safe local names, generate a route types file with `npx rango generate urls/shop.tsx`
-and pass it as the second generic to `Handler` or `Prerender`:
+Without a local route map, `.name` calls accept any string (the include scope
+is only known at runtime). Global names are checked against the generated
+map once it exists. For type-safe local names, generate a route types file with
+`npx rango generate urls/shop.tsx` and pass its `routes` type as the second
+generic to `Handler` or `Prerender`. With a local map, local names also
+require their params (mount params such as `:tenantId` may still be passed as
+extras):
 
 ```typescript
 import type { Handler } from "@rangojs/router";
@@ -61,6 +73,7 @@ import { href, useHref, Link } from "@rangojs/router/client";
 // href() validates absolute paths via PatternToPath types
 href("/about");                        // Valid path
 href("/blog/hello");                   // Matches /blog/:slug
+href("/blog/hello?page=2#top");        // Query and hash suffixes are allowed
 
 // useHref() auto-prefixes with include() mount
 function ShopNav() {
@@ -69,6 +82,10 @@ function ShopNav() {
 }
 ```
 
+`href()` is compile-time only: at runtime it returns the path unchanged. It
+does not resolve route names. `useHref()` prepends the mount but its argument
+is typed as any `/${string}`, not checked against routes.
+
 `href()` and the `Rango.Path` type read from `RegisteredRoutes` when you augment
 it, otherwise from the auto-generated `GeneratedRouteMap` — so `rango generate`
 alone type-checks `href()` paths with no manual augmentation. The augmentation
@@ -76,6 +93,7 @@ below is only needed for **`Rango.PathResponse`** (response-payload inference), 
 `GeneratedRouteMap` cannot provide:
 
 ```typescript
+// router.tsx, below `export const router = createRouter(...).routes(urlpatterns)`
 // The alias is required: an interface heritage clause cannot take a `typeof`
 // type query directly (TS1109).
 type AppRoutes = typeof router.routeMap;
@@ -200,15 +218,24 @@ a rename is a type error in one place instead of silent drift:
 ```ts
 import { addToCart, removeFromCart } from "./actions/cart";
 import * as CartActions from "./actions/cart";
+import * as OrderActions from "./actions/order";
 
+revalidate((ctx) => ctx.isAction() || undefined); // any action at all
 revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
 revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
 revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
+revalidate(
+  (ctx) =>
+    ctx.isAction({ Cart: CartActions, Order: OrderActions }) || undefined,
+); // grouped namespaces
 ```
 
-`ctx.isAction()` (only available on the revalidate predicate's context) returns a
-raw boolean — combine with `|| undefined` for the "revalidate on match, else
-defer" intent. It resolves the reference the same way the router derives
-`actionId` (`$id` in production, `$$id` in dev), so matching
-works in both modes. `actionId` stays available for advanced cases.
+`ctx.isAction()` (only available on the revalidate predicate's argument)
+returns a raw boolean and is `false` on plain navigation — combine with
+`|| undefined` for the "revalidate on match, else defer" intent. It resolves
+the reference the same way the router derives `actionId` (`$id ?? $$id`: the
+file-path `$id` injected in a production RSC build, otherwise React's `$$id`),
+so matching works in dev and production. `actionId` stays available for
+advanced cases. In `clientUrls()` groups the predicate runs in the browser,
+where `actionId` is the hashed form (see `/client-urls`).

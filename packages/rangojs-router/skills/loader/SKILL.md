@@ -1,15 +1,20 @@
 ---
 name: loader
-description: Define data loaders for fetching data in routes with createLoader. Use when pages need per-request data that stays fresh, data should stream while the page renders, client components need reactive server data, a loader should throw notFound()/redirect(), set page meta/breadcrumbs from loader data (handle writes), or loader data must be guaranteed in the SSR'd document (ssr:false).
+description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, or must be settled in the SSR'd document (ssr:false).
 argument-hint: "[loader]"
 ---
 
 # Data Loaders with loader()
 
-Loaders fetch data on the server and stream it to the client. For mutations
-(writes triggered by forms or buttons), use server actions instead — see
-`/server-actions`. Loaders re-resolve after an action runs, so the typical
-flow is _action mutates → loader re-reads → UI updates_.
+A loader is a server function created with `createLoader()` and registered on a
+route segment with `loader()`. It runs fresh on every request, streams its
+result to the client, and client components read it with `useLoader()`. This
+skill covers defining, registering, consuming, revalidating, caching, and
+client-fetching loaders.
+
+For mutations (writes triggered by forms or buttons), use server actions
+instead — see `/server-actions`. Loaders re-resolve after an action runs, so
+the typical flow is _action mutates → loader re-reads → UI updates_.
 
 ## Not this skill if…
 
@@ -119,11 +124,9 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 > - `revalidate()` — which **server** segments/loaders recompute during
 >   navigation and action refreshes.
 
-DSL loaders are the **live data layer** — they resolve fresh on every
-request, even when the route is inside a `cache()` boundary. The router
-excludes them from the segment cache at storage time and re-resolves them
-on retrieval. This means `cache()` gives you cached UI + fresh data by
-default.
+DSL loaders are the **live data layer**: they resolve fresh on every request,
+even when the route is inside a `cache()` boundary, so `cache()` gives you
+cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
 
 ### Cache safety
 
@@ -137,6 +140,7 @@ For cases where you need loader data in the server handler itself (e.g.,
 to set ctx variables or make routing decisions), use `ctx.use(Loader)`:
 
 ```typescript
+// Product is a context-variable token: export const Product = createVar<ProductData>();
 path("/product/:slug", async (ctx) => {
   const { product } = await ctx.use(ProductLoader);
   ctx.set(Product, product); // make available to children
@@ -175,27 +179,34 @@ same memoized result — loaders never run twice per request.
 
 ## Loader Context
 
-Loaders receive the same context shape as route handlers.
+Loaders receive a request-scoped context that shares its read surface with
+route handlers (`params`, `request`, `url`, `env`, `get`, `use`, `reverse`).
+It has no handler-only writers: there is no `ctx.set`, `ctx.headers`, or
+`ctx.setLocationState` (a loader can stream after the response has started,
+so response-shaping belongs in middleware or the handler).
 
 ### Full field surface
 
-| Field          | Type                            | Notes                                                                                                                                                                                          |
-| -------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `params`       | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                            |
-| `routeParams`  | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                   |
-| `request`      | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                            |
-| `url`          | `URL`                           | Parsed request URL.                                                                                                                                                                            |
-| `pathname`     | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                |
-| `searchParams` | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                           |
-| `search`       | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                              |
-| `env`          | `TEnv`                          | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                                                                                                            |
-| `get`          | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                    |
-| `use`          | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                        |
-| `rendered`     | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `ssr: false` (cycle; throws). |
-| `method`       | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                          |
-| `body`         | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                 |
-| `formData`     | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                |
-| `reverse`      | `ScopedReverseFunction`         | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                                                         |
+| Field              | Type                            | Notes                                                                                                                                                                                          |
+| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `params`           | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                            |
+| `routeParams`      | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                   |
+| `request`          | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                            |
+| `url`              | `URL`                           | Request URL with internal `_rsc*` transport params stripped. Use this for application logic.                                                                                                   |
+| `originalUrl`      | `URL`                           | Request URL with every param intact, including `_rsc*`. Only for debugging or custom cache keying.                                                                                             |
+| `pathname`         | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                |
+| `searchParams`     | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                           |
+| `search`           | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                              |
+| `env`              | `any`                           | Bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.). `createLoader` types it as `any`; annotate or cast at the use site.                                                              |
+| `waitUntil`        | `(fn: () => Promise<void>)`     | Run work after the response is sent. Takes a function, not a promise. Delegates to Cloudflare's `waitUntil`; fire-and-forget with error logging elsewhere.                                     |
+| `executionContext` | `ExecutionContext \| undefined` | Raw Cloudflare `ExecutionContext` for libraries that need it; `undefined` off Cloudflare. Prefer `waitUntil`.                                                                                  |
+| `get`              | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                    |
+| `use`              | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                        |
+| `rendered`         | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `ssr: false` (cycle; throws). |
+| `method`           | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                          |
+| `body`             | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                 |
+| `formData`         | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                |
+| `reverse`          | `ScopedReverseFunction`         | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                                                         |
 
 ### Example
 
@@ -292,7 +303,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 > Caching a loader is a separate, opt-in step (`loader(Fn, () => [cache({...})])`).
 > See `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
-A `revalidate(fn)` callback can return one of four shapes. The chain
+A `revalidate(fn)` callback returns one of three kinds of value. The chain
 processes revalidators in order; each call's return controls how the
 chain continues:
 
@@ -318,8 +329,24 @@ revalidate(() => undefined); // explicit defer
 revalidate(() => null); // explicit defer
 ```
 
-If every revalidator on a segment defers, the segment-type default
-(e.g. params-changed for routes, `false` for parallels) is used.
+If every revalidator on a segment defers, the segment default is used
+(`defaultShouldRevalidate`, see the table below).
+
+The callback must be **synchronous**. A returned Promise is ignored (dev
+warning) and the running suggestion is kept, so move async work into a loader.
+A callback that throws is logged and treated as a defer; a thrown `Response`
+(e.g. `throw redirect(...)`) propagates as control flow.
+
+Segment defaults when no revalidator decides (from
+`src/router/revalidation.ts`). A segment the client does not hold yet always
+renders.
+
+| Segment                                                              | After an action (POST) | Navigation                          |
+| -------------------------------------------------------------------- | ---------------------- | ----------------------------------- |
+| Route (`path()`)                                                     | `true`                 | `true` when params or search change |
+| Owned by the route (loaders, layouts, parallels inside the `path()`) | `true`                 | `true` when params or search change |
+| Loader above the route (e.g. on a parent `layout()`)                 | `true`                 | `false`                             |
+| Layout or parallel above the route                                   | `false`                | `false`                             |
 
 #### `|| undefined` (defer) vs `?? false` (hard) — pick deliberately
 
@@ -335,10 +362,11 @@ revalidate(({ actionId }) => actionId?.includes("Cart") || undefined);
 revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
 ```
 
-This matters most for loaders, whose defaults are permissive: a loader defaults
-to revalidating on **any** action (`POST`) and on **param/search changes**
-during navigation. So `?? false` on a loader silently suppresses both — the
-loader will not refetch when you navigate to a different `:id`. Use
+This matters most for loaders, whose defaults are permissive: every loader
+revalidates on **any** action (`POST`), and a route-owned loader also
+revalidates on **param/search changes** during navigation. So `?? false` on a
+loader silently suppresses both — the loader will not refetch when you navigate
+to a different `:id`. Use
 `|| undefined` when you want to _add_ a revalidation signal on top of the
 sensible defaults, and reserve `?? false` for the rare case where you genuinely
 want the loader to refetch on nothing but your matched action.
@@ -363,16 +391,21 @@ loader(CartLoader, () => [
 revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
 revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
+revalidate((ctx) => ctx.isAction({ Cart: CartActions }) || undefined); // grouped namespaces
+revalidate((ctx) => ctx.isAction() || undefined); // no args: any action at all
 ```
 
 `isAction()` is a method on the revalidate predicate's **context argument** —
 there is no standalone `isAction` import; you always reach it through the callback
 parameter (`revalidate((ctx) => ctx.isAction(...))`). It returns a raw boolean, so
 pair it with `|| undefined` for the usual "revalidate on match, else defer"
-intent. It returns `false` on plain navigation and on non-matches, and resolves
-the reference the same way the router derives `actionId` (`$id` in production,
-`$$id` in dev), so it matches in both modes. The raw `actionId` string stays
-available on the same context as an escape hatch.
+intent. It returns `false` on plain navigation and on non-matches; called with no
+arguments it answers "is this request an action?". It resolves the reference with
+the same `$id ?? $$id` precedence the router uses to derive `actionId`, so it
+matches in both dev and production. The raw `actionId` string stays available on
+the same context as an escape hatch, alongside `actionResult`, `formData`,
+`actionUrl`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`,
+`fromRouteName`/`toRouteName`, and the full handler `context`.
 
 ### Revalidation Contracts for Loader Dependencies
 
@@ -381,13 +414,15 @@ the same named revalidation contract across producer and consumer segments.
 
 ```typescript
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import * as AccountActions from "./actions/account";
 
 // Match by reference with ctx.isAction() (rename-safe), and defer (|| undefined)
 // so these contracts compose — a hard `false` would short-circuit the rest.
-export const revalidateAccountScope = (ctx) =>
+export const revalidateAccountScope: Revalidate = (ctx) =>
   ctx.isAction(AccountActions) || undefined;
 
+// urls.tsx
 layout(AccountLayout, () => [
   revalidate(revalidateAccountScope), // producer reruns
   path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
@@ -418,16 +453,15 @@ layout(AccountLayout, () => [
 
 ## Loaders: The Live Data Layer
 
-Loaders are the live data layer of the router. They resolve fresh on every
-request, even when the route's UI segments are served from cache. This is a
-core design principle — route-level `cache()` caches rendered components but
-never caches loader data. Loaders are excluded at storage time and re-resolved
-on retrieval.
+Loaders resolve fresh on every request, even when the route's UI segments are
+served from cache. Route-level `cache()` caches rendered segments but never
+loader data: loaders are excluded when the segments are stored and re-resolved
+when they are served. Caching a loader's own data is a separate opt-in (see
+"Opting a Loader into Caching").
 
-This means `cache()` gives you cached UI + fresh data by default. Pre-rendering
-follows the same rule: at build time, loaders are skipped entirely (there is no
-real request context), and at runtime the worker resolves them fresh against
-the live database.
+Pre-rendering follows the same rule: at build time loaders are skipped entirely
+(there is no real request context), and at runtime the worker resolves them
+fresh against the live database.
 
 ### Parallel and streaming — latency overlaps first paint
 
@@ -462,16 +496,26 @@ const router = createRouter({ document: Document, debugPerformance: true });
 ```
 
 Or enable it per-request from middleware (e.g. only when `?debug` is present) by
-calling `ctx.debugPerformance()` **before** `await next()`. Each HTML request
-then prints a shared-axis waterfall (and emits a `Server-Timing` header):
+calling `ctx.debugPerformance()` **before** `await next()`:
+
+```typescript
+router.use(async (ctx, next) => {
+  if (ctx.searchParams.has("debug")) ctx.debugPerformance();
+  return next();
+});
+```
+
+Each metered request then prints a shared-axis waterfall to the server console
+(and adds the timings to the `Server-Timing` response header):
 
 ```
 [RSC Perf] GET /product/widget (24.53ms)
 start      dur  span                          timeline
  0.08ms  3.20ms  route-matching               |#####...................................|
- 3.40ms  8.70ms  ssr-render-html              |.....##############.....................|
+ 3.30ms 20.10ms  render:total:product         |....############################........|
+ 3.40ms  8.70ms  ssr:render-html              |.....##############.....................|
  3.42ms 11.90ms  loader:…#ProductLoader       |.....###################................|
- 3.45ms 11.40ms  loader:…#ReviewsLoader        |.....##################.................|
+ 3.45ms 11.40ms  loader:…#ReviewsLoader       |.....##################.................|
  0.00ms 24.53ms  handler:total                |########################################|
 ```
 
@@ -479,12 +523,13 @@ How to read it:
 
 - **Humans:** scan the `#` bars on the shared axis. Bars that start at the same
   offset and run side by side are executing **in parallel** — loaders should
-  overlap `ssr-render-html` / `render:total`, not sit alone to the right of
+  overlap `ssr:render-html` / `render:total`, not sit alone to the right of
   everything. A lone `loader:*` bar past the render bar is serialized latency to
-  chase. `handler:total` is the whole request; `render:total` is the render pass.
+  chase. `handler:total` is the whole request; `render:total` is the render pass
+  (labelled `render:total:<routeName>` when the matched route has a name).
 - **LLMs / programmatic:** read each row as `{ start, dur, label }`. A loader
   overlaps paint when its `[start, start+dur]` interval intersects
-  `render:total` / `ssr-render-html`. Flag a regression when a `loader:*`
+  `render:total` / `ssr:render-html`. Flag a regression when a `loader:*`
   interval is **disjoint from and starts after** `render:total`, or when its
   `dur` approaches `handler:total` — that loader is on the critical path instead
   of overlapping it. Two `loader:*` rows with near-equal `start` confirm
@@ -507,10 +552,13 @@ through the cache.
 
 ### Cache Key
 
-The default cache key is `loader:{loaderId}:{pathname}:{sortedParams}`.
-This can be customized at two levels:
+The default cache key is `loader:{loaderId}:{host}{pathname}:{sortedParams}`
+(the host keeps multi-tenant hosts from sharing entries). This can be customized
+at two levels:
 
 ```typescript
+import { cookies } from "@rangojs/router";
+
 // Full override — key function replaces the default entirely
 loader(ProductLoader, () => [
   cache({
@@ -527,10 +575,12 @@ Resolution priority (same as route-level `cache()`):
 
 1. `key(ctx)` from cache options — full override
 2. `store.keyGenerator(ctx, defaultKey)` — store-level modification
-3. Default key — `loader:{id}:{pathname}:{params}`
+3. Default key — `loader:{loaderId}:{host}{pathname}:{sortedParams}`
 
-If a custom key function throws, it falls back to the default key silently
-(logged to console.error).
+A `key` function (or store `keyGenerator`) that throws is **not** caught: the
+loader fails as if its body threw. There is no silent fallback to the default
+key, because a personalised key collapsing onto the broad default would share
+one user's data with everyone.
 
 ### Tags for Invalidation
 
@@ -589,8 +639,9 @@ loader(PricingLoader, () => [
 ]),
 ```
 
-Without an explicit store, the loader uses the app-level store from the
-handler config (`cache.store`).
+Without an explicit store, the loader uses the app-level store from the router
+config (`createRouter({ cache: { store } })`). Without any store, `cache()` on
+a loader is inert and the loader runs fresh.
 
 ## Multiple Loaders
 
@@ -621,8 +672,9 @@ layout(<ShopLayout />, () => [
 
 ## Passing Loaders as Props
 
-Loaders can be passed as props from server to client components. RSC serialization
-uses `toJSON()` to send only `{ __brand, $$id }` — the loader function is stripped.
+Loaders can be passed as props from server to client components. A loader
+definition is a plain `{ __brand, $$id }` object (the function itself stays in the
+server registry), so it serializes as-is.
 
 ```typescript
 // Server component (route handler)
@@ -701,8 +753,6 @@ flushes, so both signals are resolved server-side while the tree is built:
 document, the client replaces to the target on hydration) and `notFound()`
 renders the not-found UI at the owning segment with a real 404. No read site
 runs, so a `useLoader` in a layout above every Suspense boundary is safe.
-(Before this was fixed, the flagged read threw inside the Fizz shell and
-500ed the document.)
 
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
@@ -796,14 +846,14 @@ The costs and constraints:
   captured shells outline per the explicit option or React's default.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
-loader-heavy shape makes it most useful. `LoaderOptions` is exported from the
-package root.
+loader-heavy shape makes it most useful.
 
 ## Fetchable Loaders
 
-By default, loaders only run during SSR and navigation. Pass `true` as the second
-argument to `createLoader` to make a loader **fetchable** — callable from the client
-via `useFetchLoader()` and `load()`:
+By default, loaders only run as part of a render (document, navigation, or
+post-action revalidation); the `_rsc_loader` endpoint rejects them. Pass `true`
+as the second argument to `createLoader` to make a loader **fetchable** —
+callable from the client via `useFetchLoader()` and `load()`:
 
 ```typescript
 import { createLoader } from "@rangojs/router";
@@ -839,9 +889,10 @@ requireAuth] })` (next section).
 
 ### Fetchable Loader with Middleware
 
-Pass an options object instead of `true` to attach per-loader middleware.
-This middleware runs only on `_rsc_loader` fetch requests (client-side
-`load()` / `useFetchLoader()` calls), not during SSR `ctx.use()` execution:
+Pass an options object instead of `true` to attach per-loader middleware (any
+options object makes the loader fetchable). This middleware runs only on
+`_rsc_loader` fetch requests (client-side `load()` / `useFetchLoader()` /
+`useRefreshLoaders()` calls), not when the loader runs as part of a render:
 
 ```typescript
 import { createLoader } from "@rangojs/router";
@@ -893,6 +944,13 @@ export const MutationLoader = createLoader(async (ctx) => {
 }, true);
 ```
 
+A fetchable-loader POST is not a server action: the router does not run a
+revalidation render afterwards and the client does not invalidate its caches.
+Other loaders on the page keep their current data until you refresh them
+(`load()`, `useRefreshLoaders()`, `router.refresh()`), and cached history or
+prefetch entries stay valid unless you call `invalidateClientCache()`. For
+writes that should refresh the page, prefer a server action (`/server-actions`).
+
 ### File Upload Example
 
 ```typescript
@@ -904,9 +962,11 @@ export const FileUploadLoader = createLoader(async (ctx) => {
   if (file && file.size > 0) {
     // Save to R2, D1, etc.
     await ctx.env.BUCKET.put(file.name, file.stream());
-    return { uploaded: { name: file.name, size: file.size, type: file.type } };
+    return {
+      uploadedFile: { name: file.name, size: file.size, type: file.type },
+    };
   }
-  return { uploaded: null };
+  return { uploadedFile: null };
 }, true);
 ```
 
@@ -923,7 +983,7 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 
 ```typescript
 // loaders/shop.ts
-import { createLoader } from "@rangojs/router";
+import { createLoader, notFound } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
   const product = await ctx.env.DB
@@ -947,7 +1007,9 @@ export const CartLoader = createLoader(async (ctx) => {
 });
 
 // urls.tsx — register loaders in the DSL
+import { urls } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
+import { CartLoader, ProductLoader } from "./loaders/shop";
 
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [

@@ -94,7 +94,7 @@ import { RenderedProducts } from "../handles/rendered-products";
 export const PriceLoader = createLoader(async (ctx) => {
   await ctx.rendered();
   const ids = ctx.get(RenderedProducts);
-  return db.pricesFor(ids); // Map<string, number> keyed by product id
+  return db.pricesFor(ids); // Record<string, number> keyed by product id
 });
 ```
 
@@ -138,9 +138,11 @@ cache({ ttl: 600, tags: ["products"] }, () => [
 ## Contract and gotchas
 
 - **The manifest is exactly as fresh as the shell.** Replayed handle data is
-  frozen with the payload. To change _which_ products render, invalidate the
-  shell (`updateTag("products")`, TTL expiry, rebuild) — never treat the
-  loader as the refresh path for the list itself. This is the point:
+  frozen with the payload. To change _which_ products render, refresh the
+  shell — for `cache()`, `updateTag("products")` or TTL expiry; for
+  `Prerender`, a rebuild (tag invalidation does not reach build-time payloads,
+  see `/prerender`). Never treat the loader as the refresh path for the list
+  itself. This is the point:
   shell and holes cannot desync because they share one artifact.
 - **No request-scoped data in a manifest handle.** The handle data is baked
   into a shared artifact — the same cross-user rule as any cached content.
@@ -187,6 +189,7 @@ production), like every cache-path behavior.
 
 - `/prerender` — `Prerender`/`Passthrough`, build flow, passthrough fallback
 - `/caching` — segment `cache()`, stores, tags
+- `/ppr` — cached HTML shells; its holes are the same live loaders
 - `/loader` — loader context, `ctx.rendered()`, streaming
 - `/hooks` — `useHandle` for reading handle data in client components
 - `/rango` → "Passing data down the tree" — this pattern is the frozen→live

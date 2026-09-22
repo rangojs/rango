@@ -92,15 +92,19 @@ parityDescribe("product page caches", (f) => {
 Zero-prod-surface alternative — the telemetry sink. No header at all; you inspect captured `cache.decision` events:
 
 ```ts
+import { expect } from "vitest";
+import { createRouter } from "@rangojs/router";
 import {
   createCacheSink,
   assertCacheDecision,
   filterCacheDecisions,
 } from "@rangojs/router/testing";
+import { urlpatterns } from "../src/urls";
 
 const { sink, events } = createCacheSink();
 const router = createRouter({ telemetry: sink }).routes(urlpatterns);
-// ...drive a request through the router's RSC fetch path...
+// ...drive a request through the router's RSC fetch path (e.g. an e2e server
+// built from this router); dispatch() never emits cache.decision...
 
 // One-call assert (counterpart of assertCacheStatus), keyed by the route NAME:
 assertCacheDecision(events, "product.detail", "stale");
@@ -117,15 +121,15 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 
 **DSL:** `ppr: true | PartialPrerenderProps` on a page route (see `/ppr`). **Not** the same header as `X-Rango-Cache` — shell is a second render axis.
 
-| Helper                                    | Import                               | Role                                                                                                   |
-| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `assertShellStatus(res, "HIT" \| "MISS")` | `@rangojs/router/testing` or `…/e2e` | Assert `x-rango-shell` on a **real document** Response                                                 |
-| `parseShellStatus(res)`                   | same                                 | `"HIT" \| "MISS" \| null` (null = header absent / unrecognized)                                        |
-| `shellCacheKey(url)`                      | same                                 | Production shell store key (`host+pathname+sorted search+:shell`) for `store.getShell` / custom stores |
-| `SHELL_STATUS_HEADER`                     | same                                 | `"x-rango-shell"` constant                                                                             |
-| `assertPprReplayStatus(res, expected)`    | same                                 | Assert fresh/stale replay or a bounded bypass decision                                                 |
-| `parsePprReplayStatus(res)`               | same                                 | Structured replay/bypass status, or null for an absent/unrecognized header                             |
-| `PPR_REPLAY_STATUS_HEADER`                | same                                 | `"x-rango-ppr-replay"` constant                                                                        |
+| Helper                                    | Import                               | Role                                                                                                                                                                                                                            |
+| ----------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assertShellStatus(res, "HIT" \| "MISS")` | `@rangojs/router/testing` or `…/e2e` | Assert `x-rango-shell` on a **real document** Response                                                                                                                                                                          |
+| `parseShellStatus(res)`                   | same                                 | `"HIT" \| "MISS" \| null` (null = header absent / unrecognized)                                                                                                                                                                 |
+| `shellCacheKey(url, searchParams?)`       | same                                 | Production shell store key (`host+pathname+sorted search+:shell`) for `store.getShell` / custom stores. Pass your router's `cache.searchParams` config as the second argument when it sets one — the production key applies it. |
+| `SHELL_STATUS_HEADER`                     | same                                 | `"x-rango-shell"` constant                                                                                                                                                                                                      |
+| `assertPprReplayStatus(res, expected)`    | same                                 | Assert fresh/stale replay or a bounded bypass decision                                                                                                                                                                          |
+| `parsePprReplayStatus(res)`               | same                                 | Structured replay/bypass status, or null for an absent/unrecognized header                                                                                                                                                      |
+| `PPR_REPLAY_STATUS_HEADER`                | same                                 | `"x-rango-ppr-replay"` constant                                                                                                                                                                                                 |
 
 ### What unit can prove vs e2e
 
@@ -141,19 +145,41 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 ### Recipe (e2e)
 
 ```ts
-import { assertShellStatus, shellCacheKey } from "@rangojs/router/testing/e2e";
-// or from @rangojs/router/testing under Vitest
+import { expect, test } from "@playwright/test";
+import {
+  createRangoE2E,
+  assertShellStatus,
+  parseShellStatus,
+} from "@rangojs/router/testing/e2e";
 
-// Document GET (not Accept: text/x-component):
-const first = await page.request.get(f.url("/products/1"));
-assertShellStatus({ headers: new Headers(first.headers()) }, "MISS");
-// After capture flushes (poll — background putShell):
-const second = await page.request.get(f.url("/products/1"));
-assertShellStatus({ headers: new Headers(second.headers()) }, "HIT");
+const { parityDescribe } = createRangoE2E({ test, expect });
 
-// Custom store / unit: same key the serve path uses
-const key = shellCacheKey(new URL("http://localhost/products/1"));
-expect(await store.getShell(key)).not.toBeNull();
+parityDescribe("product shell", (f) => {
+  test("MISS captures, then HIT", async ({ page }) => {
+    // Document GET (not Accept: text/x-component):
+    const first = await page.request.get(f.url("/products/1"));
+    assertShellStatus({ headers: new Headers(first.headers()) }, "MISS");
+    // Capture runs in the background (putShell), so poll for the HIT:
+    await expect
+      .poll(async () => {
+        const res = await page.request.get(f.url("/products/1"));
+        return parseShellStatus({ headers: new Headers(res.headers()) });
+      })
+      .toBe("HIT");
+  });
+});
+```
+
+```ts
+// Unit (Vitest): the key the serve path uses, against your own store instance
+import { expect, it } from "vitest";
+import { shellCacheKey } from "@rangojs/router/testing";
+
+it("stores the shell under the production key", async () => {
+  // ...after your code under test captured a shell into `store`...
+  const key = shellCacheKey(new URL("http://localhost/products/1"));
+  expect(await store.getShell(key)).not.toBeNull();
+});
 ```
 
 ## Caveats

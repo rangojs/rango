@@ -1,9 +1,10 @@
 # Client URL Routes
 
 `clientUrls()` lets the browser recognize selected client-component routes after
-hydration. On a soft navigation, that local match can show the destination's
-`loading()` UI immediately and set `useOutlet().pending` while the ordinary
-partial Flight request is still running.
+hydration. On a soft navigation inside a group, that local match renders the
+destination component immediately (its `useLoader()` reads suspend into the
+route's `loading()`) and sets `useOutlet().pending` while the ordinary partial
+Flight request is still running.
 
 The browser match is presentation only. The server still matches the request,
 runs middleware and route loaders, and returns the canonical partial Flight
@@ -175,7 +176,8 @@ canonical response commits; a redirect or error discards the branch and its
 values with it. A group's route segments share one React key, so the
 optimistically rendered instance is the one the canonical response commits
 into: local state entered during the window survives and effects run once.
-Design and rationale: `docs/design/client-urls-optimistic-destination.md`.
+Design and rationale:
+[client-urls-optimistic-destination.md](./design/client-urls-optimistic-destination.md).
 
 The local result cannot authorize the request, run or skip middleware, execute a
 loader, commit history, or override a redirect or error from the server. The
@@ -274,9 +276,10 @@ Two consequences worth stating plainly:
   refresh with the group, use middleware `ctx.set()` (fresh every pass) or a
   shared revalidation contract — not the layout handler's own body.
 
-The one window that precedes middleware is the optimistic branch (destination
-`loading()` / `useOutlet().pending`) — presentation only, never
-authorization; see the security boundary below.
+The one window that precedes middleware is the optimistic branch (the
+destination component with its suspended loader reads, its `loading()`, and
+`useOutlet().pending`) — presentation only, never authorization; see the
+security boundary below.
 
 Pinned dev+prod in `tests/vite-rsc-demo/e2e/client-shop-guards.test.ts`: the
 demo's `/client-shop` mount is wrapped in exactly this shape
@@ -328,7 +331,7 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   `loading()`) unmounts at click time — put status readers in chrome that
   survives the swap.
 - **`useFetchLoader`** works unchanged: the fetch lane addresses a
-  `createLoader(fn, fetchable: true)` definition by id, with no route or
+  fetchable `createLoader(fn, true)` definition by id, with no route or
   group mechanics involved. It deliberately does NOT consult `revalidate()`
   predicates — those govern nav/action re-runs of held data; an imperative
   `load()` is an explicit freshness request.
@@ -349,9 +352,11 @@ any client component), `invalidateClientCache` (acts on the GLOBAL history
 cache / prefetch map through the registered store — no context or mount
 involved; `keepClientCache` is a server-action directive and a warn-only
 no-op in the browser), and the definition factories (`createLocationState`
-on the browser client entry; `createLoader` / `createHandle` / `isHandle`
-exist only under the react-server condition — define loaders and handles
-in server or shared modules, not browser-only code). `MountContext` is the
+is on the `@rangojs/router/client` entry; `createLoader` / `createHandle` /
+`isHandle` come from the root `@rangojs/router` entry, not `/client`, and
+outside the react-server condition `createLoader` is an id-only stub —
+define loaders and handles in server or shared modules, not browser-only
+code). `MountContext` is the
 raw context behind `useMount` — an advanced escape hatch; the hook is the
 API. `initBrowserApp` / `Rango` (`./browser`) bootstrap the app above
 everything and are out of group scope entirely.
@@ -371,13 +376,14 @@ mount, while absolute paths stay app-absolute — the mount is scoped, so
 mount-independent: `refresh()` refetches the CURRENT route,
 `forward()` is history traversal, and `back()` traverses history with a
 first-entry guard whose fallback lands on the APP root (basename, not the
-mount — consistent with absolute semantics). `useParams` reports the COMMITTED
-match: during the optimistic window (destination `loading()` presenting) it
-still holds the ORIGIN params, like `useSearchParams` — destination params
-arrive with the canonical commit. `useRefreshLoaders` works in groups with
-the same contract as `useFetchLoader` (the refresh lane IS the fetch lane,
-so tagged loaders must be `fetchable: true`; `revalidate()` is deliberately
-not consulted).
+mount — consistent with absolute semantics). During the optimistic window,
+`useParams` / `usePathname` / `useSearchParams` INSIDE the destination branch
+report the destination's local match (see "Navigation authority"), while the
+same hooks in chrome outside the branch keep the COMMITTED origin values until
+the canonical commit. `useRefreshLoaders` works in groups with the same
+contract as `useFetchLoader` (the refresh lane IS the fetch lane, so tagged
+loaders must be fetchable — `createLoader(fn, true)`; `revalidate()` is
+deliberately not consulted).
 
 `useLocationState` works in groups through three write lanes, none of which
 needs a handler: `<Link state={...}>`, action writes
@@ -395,7 +401,8 @@ handlers.
 `useReverse` works in groups through its local form: name your group routes
 (`path("/items/:itemId", Item, { name: "item" })`) and the per-module gen
 writer emits a sibling `<module>.gen.ts` route map for the default-exported
-`clientUrls()` module, exactly as for named `urls()` modules. Import that
+`clientUrls()` module, exactly as for named `urls()` modules (written by
+`rango generate`, not by the Vite plugin; see [Manifests](./manifests.md)). Import that
 map and `useReverse(routes)` resolves names against the include mount
 (`reverse("item", { itemId })` → `<mount>/items/<itemId>`; the `/` index
 collapses to the bare mount). Route names in a group stay LOCAL unless the
@@ -464,7 +471,8 @@ with a client-computable subset of the server args (`currentUrl`, `nextUrl`,
 the same callable matcher as on the server (`isAction()`, `isAction(fn)`,
 `isAction(import * as Actions)`, `isAction({ a, b })`) — not a boolean —
 and matches against `actionId` via the action stub's `$id ?? $$id`
-(hashed `$$id` in production browsers — not a file-path substring). On the server, every materialized loader stub has a
+(hashed `$$id` in production browsers — not a file-path substring). On the
+server, every materialized loader stub has a
 synthesized per-loader `revalidate()` that honors a decision addressed to
 its id and otherwise applies the locked default; requests that carry no
 decisions (no-JS, PE, prefetch, document loads) always get the defaults,
@@ -495,17 +503,18 @@ render on client navigations only). Pinned dev+prod in
 INSIDE `clientUrls()` the DSL is deliberately minimal: client route groups
 exist for transition performance — instant optimistic presentation, held
 data, streaming reads — not for full-feature routing. `middleware()`,
-`include()`, `parallel()`, `cache()`, error or not-found boundaries, and PPR
-are not supported inside the group and are not a roadmap; they belong to the
+`include()`, `parallel()`, `cache()`, and error or not-found boundaries are
+not supported inside the group and are not a roadmap; they belong to the
 surrounding server tree the include mounts into. (Boundaries are a
 deliberate exclusion: a server-tree boundary around the mount catches
 loader-thrown signals from the group with the uniform server-resolved
 envelope, and inside the group plain React error boundaries work — every
 component is a client component, and a streamed loader rejection throws to
 the boundary above its `useLoader` read.) Every helper rejection and the
-option-level rejections (`intercept`, `parallel`, `revalidate`, and any
-other non-projected `PathOptions` key) are pinned by tests; `ppr` PROJECTS
-(see Supported surface). `Static()`/`Prerender()` handler VALUES are also
+option-level rejections (any path-option key other than `name`, `search`,
+`trailingSlash`, and `ppr`, such as `intercept`, `parallel`, or
+`revalidate`) are pinned by tests; `ppr` PROJECTS (see Supported surface).
+`Static()`/`Prerender()` handler VALUES are also
 rejected with a targeted message: build-time handlers are server-DSL
 surface — their code cannot live in a "use client" bundle and their render
 runs at build. Shell caching of a group route is the `ppr` path option;
@@ -534,8 +543,9 @@ Composition limits around a client include, locked explicitly:
      ```
 
   2. **Client-declared**, inside `clientUrls()` — the restricted, fully
-     JSON-projectable form: `intercept(slot, ".localTarget", Component,
-use?)` where the target is a dot-local NAMED route in the same
+     JSON-projectable form:
+     `intercept(slot, ".localTarget", Component, use?)` where the target is a
+     dot-local NAMED route in the same
      definition and `use` may contain `loader()`/`loading()` only. No `when`,
      no middleware. Scoping is MODULE-LOCAL by contract: only navigations
      whose origin is inside the group's mount render the modal; an outside
@@ -561,7 +571,8 @@ use?)` where the target is a dot-local NAMED route in the same
   name to check membership — so the origin stays untouched until the canonical
   response commits the modal. `when`-conditional intercepts suppress
   conservatively (selectors need live navigation context); worst case a
-  non-intercepted navigation loses its optimistic loading, never the reverse.
+  non-intercepted navigation loses its optimistic presentation, never the
+  reverse.
   One narrow edge: a back/forward restore served purely from the history cache
   keeps the previous location's target set until the next fresh commit.
 - A clientUrls include NESTED inside another include module — including async
@@ -578,7 +589,11 @@ boundary (or the route's `loading()`) instead of rendering a loading flag.
 
 ## Security boundary
 
-Optimistic loading UI can appear before global authentication or authorization
-middleware completes. Do not put protected data or sensitive route-state details
-in that loading branch. If revealing the destination shell itself is sensitive,
-do not configure optimistic loading for that route.
+The optimistic destination branch (the destination component and its
+`loading()` UI) can render before global authentication or authorization
+middleware completes. It has no loader data (every `useLoader()` read
+suspends), so it cannot reveal protected data, but it does reveal the
+destination's shell. Do not put protected data or sensitive route-state details
+in a group component outside a loader read. There is no per-route opt-out: if
+revealing the destination shell itself is sensitive, define that route in
+`urls()` instead of a client route group.

@@ -85,7 +85,7 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | `ctx.search` (typed search schema) in a loader                                                                                              | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                                                                                                                                                                                                                                  | Seed the typed object with **`searchData`** on `runLoader`                                                                                                                                                  |
 | `ctx.theme` / `ctx.setTheme` in a handler                                                                                                   | Always `undefined` — the real handler injects the theme config                                                                                                                                                                                                                                                                                        | Pass **`theme`** (the `createRouter({ theme })` shape) to `runLoader`/`runMiddleware`/`renderRoute`                                                                                                         |
 | `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                                                                                                                                                                                                                                 | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                                                                                               |
-| a `middleware()` reading handle data (`ctx.use(Handle)` after `ctx.rendered()`)                                                             | Middleware runs **before** the render barrier, so it has no post-barrier handle access in production — `runMiddleware` has no `handles`/`rendered` by design (only `runLoader` does, because only loaders run after the barrier)                                                                                                                      | Read handle data in a **loader/handler** and seed it with `runLoader`'s `handles`/`rendered`                                                                                                                |
+| a `middleware()` reading handle data (`ctx.get(Handle)` after `ctx.rendered()`)                                                             | Middleware runs **before** the render barrier, so it has no post-barrier handle access in production — `runMiddleware` has no `handles`/`rendered` by design (only `runLoader` does, because only loaders run after the barrier)                                                                                                                      | Read handle data in a **loader/handler** and seed it with `runLoader`'s `handles`/`rendered`                                                                                                                |
 | your real `/m/:slug` **component-route** middleware chain (the guard stack)                                                                 | `dispatch` runs the real route-level middleware chain for **response** routes, but throws on component routes; `renderToFlightString`/`renderRoute` don't run route middleware                                                                                                                                                                        | Assert a component route's guard stack at **e2e**, or extract the middleware fn and unit-test it directly with `runMiddleware`                                                                              |
 | `dispatch(router, { request })` as a full request→response                                                                                  | Runs the real **global + route-level** middleware chain for **response** routes (so a guard stack IS exercised); throws on RSC/component routes; rejects actions; a `_rsc_partial` request to a response route runs global mw then returns `X-RSC-Reload` (route mw skipped, like prod); else response routes + redirects + 404 + content negotiation | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                                                                                                        |
 | `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                                                                                                                                                                                                                                     | Keep Flight tests to leaf server components; test full pages at e2e                                                                                                                                         |
@@ -247,14 +247,14 @@ it and assert the generated route map has not drifted:
 ```ts
 import { createRouter } from "@rangojs/router";
 import { dispatch, assertGeneratedRoutesMatch } from "@rangojs/router/testing";
-import NamedRoutes from "../src/router.named-routes.gen";
+import { NamedRoutes } from "../src/router.named-routes.gen";
 import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no page imports
 
 const router = createRouter().routes(apiPatterns);
 
 const res = await dispatch(router, { request: "/health" }); // real matching + middleware
 expect(res.status).toBe(200);
-assertGeneratedRoutesMatch(router, NamedRoutes); // drift check
+await assertGeneratedRoutesMatch(router, NamedRoutes); // drift check (async)
 ```
 
 A router whose tree uses `Prerender()` / `Static()` / `createLoader()` /
@@ -388,9 +388,9 @@ you to import through the preset or pass the raw body.) Exporting the body
 separately is therefore optional — no longer a testability requirement:
 
 ```ts
-import { runLoader } from "@rangojs/router/testing";
-
 // loaders/product.ts
+import { createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   const product = await ctx.env.DB.get(ctx.params.id);
   if (!product) return { product: null };
@@ -398,6 +398,8 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 // product.test.ts — pass the registered handle directly (no body extraction)
+import { runLoader } from "@rangojs/router/testing";
+
 it("returns the product and a self link", async () => {
   const data = await runLoader(ProductLoader, {
     params: { id: "42" },
@@ -417,7 +419,8 @@ a response header, or a `throw redirect(...)` (the auth-loader pattern: validate
 set a session cookie, redirect) — reach for the sibling **`runLoaderResult`**.
 Same options, but it returns the same envelope `runInRequestContext` does
 (`{ result, thrown, response, cookies, headers, locationState, stateCookieName }`
-— `result` is the loader's data):
+— `result` is the loader's data) plus `handlePushes`, the handle writes the
+loader made via `ctx.use(SomeHandle)({...})`, in push order:
 
 ```ts
 import { runLoaderResult } from "@rangojs/router/testing";
@@ -440,10 +443,12 @@ a `createVar()` handle), `method`/`body`/`formData`, `routeMap`/`routeName`,
 `loaders` (seed `ctx.use(OtherLoader)` by reference as `[[OtherLoader, data]]`
 tuples — the same shape as `renderHandler`/`renderRoute`; checked before `use`),
 and `use` (a dynamic resolver for `ctx.use(OtherLoader)`; `loaders` wins when both
-match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one. In the body, `ctx.reverse` accepts any
-name from `routeMap` and `ctx.get` accepts any string key or `createVar()` handle
-(both are driven by the options, so neither is bound to the app's global
-augmentation).
+match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one.
+Also accepted: `request`, `basename`, `theme`, `cacheStore`/`cacheProfiles`,
+`stateCookie`, and `rendered`/`handles` (below). In the body, `ctx.reverse`
+accepts any name from `routeMap` and `ctx.get` accepts any string key or
+`createVar()` handle (both are driven by the options, so neither is bound to the
+app's global augmentation).
 
 Unit-only limitations:
 
@@ -451,9 +456,10 @@ Unit-only limitations:
 - `ctx.isAction(...)` (action-render context) is unavailable — cover with e2e.
 - `ctx.rendered()` throws **by default** (the real render barrier only exists
   during a full match). For a loader that awaits the barrier then reads handle
-  data — `await ctx.rendered(); ctx.use(SomeHandle)` (the "rendered barrier"
-  pattern) — pass `{ rendered: true }` to mock the barrier and `{ handles:
-[[SomeHandle, accumulatedData]] }` to seed the handle read:
+  data — `await ctx.rendered(); ctx.get(SomeHandle)` (the "rendered barrier"
+  pattern) — pass `{ rendered: true }` to mock the barrier and
+  `{ handles: [[SomeHandle, accumulatedData]] }` to seed the handle read
+  (`rendered` also accepts a function to control the barrier's timing):
 
   ```ts
   const data = await runLoader(livePricesBody, {
@@ -495,7 +501,10 @@ it("sets a session cookie and passes through", async () => {
 
 `nextCalled` is `0` on short-circuit, `1` on pass-through. The result also carries
 `cookies`, `headers`, and `locationState` (a flash set via `setLocationState` or
-`redirect({ state })`) as effective views, parity with `runInRequestContext`. The
+`redirect({ state })`) as effective views, parity with `runInRequestContext`, and
+`dynamic` (whether the chain called `ctx.dynamic()`, the PPR shell opt-out; seed
+`build: true` to exercise a middleware that branches on the build-time shell
+capture pass). The
 returned `ctx` is the underlying `RequestContext`. The request the chain runs
 under is `opts.request`. Seed prior state with `vars`, model the downstream route
 with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production —
@@ -665,6 +674,7 @@ with `collectHandle(handle, segments)` — it runs your handle's REAL registered
 collect on the per-segment values you provide:
 
 ```ts
+import { createHandle } from "@rangojs/router";
 import { collectHandle } from "@rangojs/router/testing";
 
 const PageTitle = createHandle<string, string>(
@@ -741,7 +751,7 @@ is a comment.
 
 ## Integration
 
-### dispatch — request to Response, plus the vi.mock requirement
+### dispatch — request to Response
 
 `dispatch` runs the router's real matching + middleware (reusing
 `previewMatch`), with no RSC render. It covers redirects, 404s, response routes,
@@ -900,7 +910,7 @@ it("renders an async server component to Flight", async () => {
 `toMatchFlight(substring)` is containment on the normalized string (row framing
 is an internal detail). `toMatchFlightSnapshot()` snapshots the normalized
 payload. `renderToFlightString` options (`request`, `headers`, `env`, `params`,
-`routeName`, `vars`) set up the request context for a component that genuinely needs it
+`routeName`, `routeMap`, `vars`, `theme`) set up the request context for a component that genuinely needs it
 via internal imports — but a **consumer** importing those server APIs from the
 barrel hits the caveat below, so prefer props.
 
@@ -1045,7 +1055,10 @@ import {
   renderHandler,
   findClientBoundaries,
 } from "@rangojs/router/testing/flight";
+import { Meta } from "@rangojs/router";
 import { ProductPage } from "../src/pages/product"; // the real handler: (ctx) => rsc
+import { ProductLoader } from "../src/loaders/product";
+import { Tenant } from "../src/vars"; // a createVar() token
 
 it("renders the product page for a tenant", async () => {
   const { tree, handles } = await renderHandler(ProductPage, {
@@ -1060,12 +1073,16 @@ it("renders the product page for a tenant", async () => {
 });
 ```
 
-Result: `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }`.
+Result: `{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles, dynamic }`.
 The handler's **effects** are surfaced (cookies/headers/flash) and a
 `throw redirect(...)` is captured on `thrown` (with `tree` undefined, since it
 produced a `Response`) — exactly like `runInRequestContext`, plus the rendered
 RSC. `handles` is a `Map<Handle, pushed[]>` of what the handler pushed via
-`ctx.use(Handle)`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
+`ctx.use(Handle)`, and `dynamic` reports whether the handler called
+`ctx.dynamic()`. Beyond the options shown, `renderHandler` also takes
+`request`, `env`, `headers`, `routeName`, `build`, `clientComponents`,
+`stateCookie`, `cacheStore`, `cacheProfiles`, `inActionRevalidation`, and
+`theme`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
 
 ## E2E with dev/prod and PE parity
 
@@ -1141,6 +1158,7 @@ Two traps when grepping a single e2e:
    Grep a metacharacter-free fragment, or escape.
 
 ```bash
+# "production" is this repo's project name; use your own Playwright project names
 pnpm exec playwright test --project=production --no-deps --grep "add to cart parity"
 ```
 
@@ -1245,8 +1263,8 @@ rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them y
 // Response; the render/run primitives -> an envelope (effect snapshot and/or tree).
 runMiddleware(
   mw: Middleware | Middleware[],
-  opts: { request?: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, theme?, next?: () => Promise<Response>, cacheStore?, cacheProfiles?, stateCookie? }, // request optional, defaults to http://localhost/
-): Promise<{ response: Response; ctx: RequestContext; nextCalled: number;
+  opts: { request?: Request | string; env?, params?, build?, vars?, routeMap?, routeName?, basename?, theme?, next?: () => Promise<Response>, cacheStore?, cacheProfiles?, stateCookie? }, // request optional, defaults to http://localhost/
+): Promise<{ response: Response; ctx: RequestContext; nextCalled: number; dynamic: boolean;
              cookies: Record<string, string>; headers: Record<string, string>;
              locationState: Record<string, unknown> }>;
 // `cookies`/`headers`/`locationState` are the effective views — assert what the chain set without the @internal ctx cast.
@@ -1261,7 +1279,7 @@ runLoader<T>(
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
 // loaders: [[OtherLoader, data]] seeds ctx.use(OtherLoader) by reference (same shape as renderHandler/renderRoute); use = dynamic resolver.
 // In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
-// rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
+// rendered: true (or a fn) mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.get(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
 // const data = await runLoader(ProductLoader, { params: { id: "1" }, env }); // or runLoader(rawBody, ...)
 
 runLoaderResult<T>(                       // sibling of runLoader for EFFECT-setting loaders (same opts)
@@ -1269,8 +1287,10 @@ runLoaderResult<T>(                       // sibling of runLoader for EFFECT-set
   opts?: { /* identical to runLoader */ },
 ): Promise<{ result: T | undefined; thrown: unknown; response: Response;
              cookies: Record<string, string>; headers: Record<string, string>;
-             locationState: Record<string, unknown>; stateCookieName: string }>;
+             locationState: Record<string, unknown>; stateCookieName: string;
+             handlePushes: { handle: Handle; value: unknown }[] }>;
 // Use when the loader sets a cookie / header or `throw redirect(...)` (auth loaders) and you must assert that output.
+// handlePushes = the loader's ctx.use(SomeHandle)({...}) writes, in push order.
 // const { thrown, cookies } = await runLoaderResult(AuthLoader, { request: new Request(url) }); // thrown = the redirect Response
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
@@ -1288,6 +1308,7 @@ renderRoute(                            // async; lazy-loads RTL at call time
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
+    defaultPrefetch?,                   // createRouter({ defaultPrefetch }) value for Links / plain anchors
   },
 ): Promise<RenderResult & { router }>;
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });
@@ -1298,16 +1319,16 @@ renderRoute(                            // async; lazy-loads RTL at call time
 
 // Integration — @rangojs/router/testing
 dispatch(router: Rango, opts: { request: Request | string; env? }): Promise<Response>;
-// accepts your public router type (no cast); use rangoTestAliases() for setup.
+// accepts your public router type (no cast); use the rangoTestConfig() preset for setup.
 // const res = await dispatch(createRouter().routes(apiPatterns), { request: "/health" });
 
 // RSC — @rangojs/router/testing/flight, react-server vitest project only
-renderToFlightString(element, opts?: { request?: Request|string, headers?, env?, params?, routeName?, vars? }): Promise<string>;
+renderToFlightString(element, opts?: { request?: Request|string, headers?, env?, params?, routeName?, routeMap?, vars?, theme? }): Promise<string>;
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
 renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
-  Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles }>;
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, routeName?, build?, headers?, clientComponents?, stateCookie?, cacheStore?, cacheProfiles?, inActionRevalidation?, theme? }):
+  Promise<{ tree, flight, thrown, response, cookies, headers, stateCookieName, locationState, handles, dynamic }>;
 // cacheStore (e.g. new MemorySegmentCacheStore()) + cacheProfiles exercise a "use cache" fn the handler
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
@@ -1339,9 +1360,10 @@ collectHandle(handle, segments: TData[][]): TAccumulated; // runs the handle's r
 // expect(collectHandle(PageTitle, [["a"],["b"]])).toBe("b"); // a "last wins" collect
 
 // Generated-route drift
-diffGeneratedRoutes(router, generatedMap?): { missing, extra, mismatch, ok };
-assertGeneratedRoutesMatch(router, generatedMap?): void;
-// import NamedRoutes from "./router.named-routes.gen"; assertGeneratedRoutesMatch(router, NamedRoutes);
+diffGeneratedRoutes(router, generatedMap?): Promise<{ missing, extra, mismatch, ok }>;
+assertGeneratedRoutesMatch(router, generatedMap?): Promise<void>; // throws a descriptive Error on drift
+// import { NamedRoutes } from "./router.named-routes.gen"; await assertGeneratedRoutesMatch(router, NamedRoutes);
+// generatedMap omitted -> the global route map is used as the generated side.
 // include()-using apps: lazy include()d routes are absent from router.routeMap
 // until first matched, so diffGeneratedRoutes force-expands them (via findMatch
 // on each generated pattern) before diffing — the whole-app drift check works in

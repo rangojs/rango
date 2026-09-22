@@ -2,7 +2,8 @@
 
 ## 4. Middleware / Route Protection
 
-React Router doesn't have built-in middleware. Protection is typically done in loaders:
+React Router v6 and Remix v2 have no middleware, so protection is typically done
+in loaders (v7 route `middleware` exports map to the same Rango shape below):
 
 ```typescript
 // React Router: auth check in loader
@@ -13,9 +14,27 @@ export async function loader({ request }) {
 }
 
 // Rango: router.use() for request-level auth
+import {
+  createRouter,
+  cookies,
+  redirect,
+  type Middleware,
+} from "@rangojs/router";
+
+const authInit: Middleware = async (ctx, next) => {
+  const session = cookies().get("session")?.value;
+  if (session) ctx.set("user", await getUserFromSession(session));
+  await next();
+};
+
+const requireAuth: Middleware = async (ctx, next) => {
+  if (!ctx.get("user")) return redirect("/login");
+  await next();
+};
+
 const router = createRouter({})
   .use(authInit) // all routes — resolves session
-  .use("/dashboard/*", requireAuth) // scoped guard
+  .use("/dashboard/*", requireAuth) // /dashboard and everything under it
   .routes(urlpatterns);
 ```
 
@@ -122,7 +141,7 @@ export function meta() {
 }
 
 // Rango: Meta handle in server handlers
-import { Meta } from "@rangojs/router";
+import { Meta, type Handler } from "@rangojs/router";
 
 const HomePage: Handler<"home"> = (ctx) => {
   const meta = ctx.use(Meta);

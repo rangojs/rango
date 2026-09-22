@@ -10,8 +10,12 @@ npm remove react-router @react-router/dev @react-router/node @react-router/serve
 # Library mode:
 npm remove react-router react-router-dom
 
-npm install @rangojs/router
+npm install @rangojs/router   # keep react and react-dom
 ```
+
+`rango()` includes `@vitejs/plugin-rsc` and supplies the client and server
+entries. Add `@vitejs/plugin-react` only if you want Fast Refresh or the React
+Compiler.
 
 Replace the `@react-router/dev` Vite plugin with `rango()`:
 
@@ -58,7 +62,7 @@ loader                      → fetch in handler, or createLoader() — a Rango
 action                      → "use server" function
 meta                        → ctx.use(Meta) in handler; meta({ data }) →
                               ctx.use(Meta) push in the loader that owns data
-headers                     → ctx.header() in handler or middleware
+headers                     → ctx.headers.set() in a handler; ctx.header() in middleware
 shouldRevalidate            → revalidate() DSL
 ErrorBoundary               → errorBoundary() DSL
 HydrateFallback             → loading() DSL
@@ -107,15 +111,15 @@ export function ErrorBoundary() {
 
 ```typescript
 // Rango: urls.tsx + handler
-import { notFound } from "@rangojs/router";
+import { Meta, notFound, type Handler } from "@rangojs/router";
 
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
-  if (!product) notFound("Product not found");
+  if (!product) notFound("Product not found"); // throws: nearest notFoundBoundary, else the router's notFound
 
   const meta = ctx.use(Meta);
   meta({ title: product.name });
-  ctx.header("Cache-Control", "max-age=300");
+  ctx.headers.set("Cache-Control", "max-age=300"); // response headers
 
   return <div>{product.name}</div>;
 };
@@ -130,6 +134,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 Key shift: the route module's scattered exports consolidate into the handler
 (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+The `action` export becomes a `"use server"` function (see
+[`./data-and-actions.md`](./data-and-actions.md)).
 
 The loader-shaped variant is equally valid — and closer to the RR module when
 the loader carried authority. A `createLoader()` body can throw `notFound()`

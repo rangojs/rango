@@ -1,17 +1,27 @@
 ---
 name: typesafety
-description: Set up type-safe routes, params, and environment types in @rangojs/router. Use when route or search params aren't typed, TypeScript can't infer a loader's return type, or wiring up typed environment bindings.
+description: Set up type-safe route names, params, search params, response payloads, and environment types in @rangojs/router. Use when route or search params aren't typed, ctx.env or ctx.get() is untyped, TypeScript can't infer a loader's return type, or wiring RegisteredRoutes / the generated route map.
 argument-hint: [setup]
 ---
 
 # Type Safety Setup
 
-@rangojs/router provides end-to-end type safety for routes, parameters, and
-environment. Without it: `ctx.reverse()`/`href()` accept any string (typos
-404 at runtime, not compile time), `ctx.search`/`ctx.params` fall back to
-loose `Record<string, string>`, and `ctx.env`/`ctx.get()` are untyped so a
-missing binding surfaces as `undefined` in production instead of a build
-error.
+This skill covers how route names, params, search params, response payloads,
+environment bindings, and context variables get their types. Use it when
+setting up a new app's type surfaces or when one of them resolves to
+`any`/`unknown`/`never` unexpectedly.
+
+What you lose without the setup:
+
+- `ctx.reverse()` accepts any name and `href()` any `/${string}` path, so a
+  typo 404s at runtime instead of failing to compile.
+- `Handler<"name">` is rejected (there is no generated map to look the name
+  up in), so `ctx.params`/`ctx.search` can't be inferred from the route.
+- `ctx.env` is `unknown` until `Rango.Env` is registered (every binding access
+  is a compile error), and string-key `ctx.get("key")` returns `any` until
+  `Rango.Vars` is registered (a typo'd key is silently accepted).
+- `Rango.PathResponse` resolves to `never` until `Rango.RegisteredRoutes` is
+  registered.
 
 Each topic's full setup, code, and caveats live in a companion file linked
 below. Read the one for your case.
@@ -48,5 +58,6 @@ below. Read the one for your case.
   scoped context tokens, handle typing, passing loaders/handles as typed
   props, and location state typing.
 
-See `/links` for the full URL generation guide (per-module `*.gen.ts`,
-`useReverse`).
+Related skills: `/links` (URL generation: `ctx.reverse`, `href`,
+`useReverse`, per-module `*.gen.ts`), `/response-routes` (response payload
+typing), `/api-client` (typed fetch client over `RouteResponse`).

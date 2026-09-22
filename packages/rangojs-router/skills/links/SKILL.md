@@ -6,9 +6,12 @@ argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 
 # Links & URL Generation
 
-@rangojs/router provides different href APIs for server and client contexts.
+Use this skill to generate URLs to your own routes by name (server) or by
+typed path (client), and to keep links correct when a module is mounted under
+a different `include()` prefix. For route typing setup see `/typesafety`; for
+links to JSON/text endpoints see `/response-routes`.
 
-**Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills mount params, and resolves local (`.name`) and absolute (`name.sub`) names.
+**Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills params from the current request, and resolves local (`.name`) and global (`name`) names.
 
 **On the client, two patterns:**
 
@@ -19,10 +22,14 @@ argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 
 ## Server: ctx.reverse()
 
-Available in route handlers via HandlerContext. Resolves named routes using the full route map. This is the default way to generate URLs on the server.
+Available on the handler context (route handlers, layouts, parallels), on
+middleware and loader contexts, and on `getRequestContext()` inside server
+actions. Resolves named routes using the full route map. This is the default
+way to generate URLs on the server. Patterns in the map already include the
+router `basename`, so results are basename-prefixed.
 
 ```typescript
-import { urls, scopedReverse } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 
 export const shopPatterns = urls(({ path, layout }) => [
   layout(<ShopLayout />, () => [
@@ -63,7 +70,7 @@ path("/product/:slug", (ctx) => {
 
 ### Local names (dot-prefixed)
 
-Prefix a name with `.` to resolve it within the current `include()` scope. The route is looked up using the include's mount namespace.
+Prefix a name with `.` to resolve it within the current `include()` scope. The route is looked up using the include's mount namespace. If the name is not found there, lookup walks up the enclosing include scopes (`shop.admin.x`, then `shop.x`). It falls back to a bare root-level name only for root-scoped routes (top-level routes and routes under `{ name: "" }` mounts); inside a named mount, a dot-local name never leaks into unrelated global names.
 
 ```typescript
 // urls/magazine.tsx — mounted at include("/magazine", magazinePatterns, { name: "magazine" })
@@ -97,7 +104,7 @@ export const tenantPatterns = urls(({ path }) => [
 ]);
 ```
 
-Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored.
+Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored. Because every current param is a default, drop an optional one explicitly with `undefined` or `""` — under `include("/:locale?", ...)` on `/en/...`, a bare `ctx.reverse("menu.index")` keeps `/en`, while `ctx.reverse("menu.index", { locale: undefined })` returns `/` (see `/i18n`). A missing required param throws `Missing param "slug" for route "…"`; an unknown name throws `Unknown route: "…"`.
 
 ### Global names (unprefixed)
 
@@ -112,7 +119,7 @@ Unprefixed names resolve against the full named-routes map (the generated `route
 
 ### reverse with search params
 
-When a route has a `search` schema, pass a typed search object as the third argument:
+When a route has a `search` schema, pass a typed search object as the third argument. `undefined`/`null` values are skipped; keys keep insertion order:
 
 ```typescript
 path("/search", (ctx) => {
@@ -124,7 +131,7 @@ path("/search", (ctx) => {
 
 ### scopedReverse() - type-safe ctx.reverse
 
-Wraps `ctx.reverse` with local route type information for autocomplete and validation. Runtime behavior is identical to `ctx.reverse` — `scopedReverse` is a type-only cast. The same dot-prefix rule applies: local names use `.name`, global names use `name.sub`.
+Wraps `ctx.reverse` with the module's local route types for autocomplete and validation. Runtime behavior is identical to `ctx.reverse` — `scopedReverse` is a type-only cast, and it also works on loader and middleware contexts. Always call local names with the dot: the returned function is typed only against the module's local map, so an unprefixed local name (`reverse("cart")`) type-checks but is resolved as a global name at runtime — it throws `Unknown route` unless a global route of that exact name happens to exist.
 
 ```typescript
 import { scopedReverse } from "@rangojs/router";
@@ -134,11 +141,14 @@ path("/product/:slug", (ctx) => {
 
   reverse(".cart");                        // Local name (dot-prefixed) — resolves in include scope
   reverse(".product", { slug: "widget" }); // Local name with params
-  reverse("blog.post", { slug: "hi" });    // Global name (dotted) — full route map
+
+  ctx.reverse("blog.post", { slug: "hi" }); // Global names: call ctx.reverse directly
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
 ```
+
+To type local and global names on one function, type the handler with the module's generated map instead: `Handler<"shop.product", routes>` (see `/typesafety`).
 
 `reverse()` does not accept raw path strings (`"/about"`). For static paths in client components, use `href("/about")`; on the server, look up the route by name.
 
@@ -150,9 +160,12 @@ path("/product/:slug", (ctx) => {
 
 ```tsx
 // server
-function BlogPostPage(ctx: HandlerContext) {
+import type { Handler } from "@rangojs/router";
+import { ShareButton } from "./share-button";
+
+export const BlogPostPage: Handler<{ slug: string }> = (ctx) => {
   return <ShareButton url={ctx.reverse(".post", { slug: ctx.params.slug })} />;
-}
+};
 ```
 
 ```tsx
@@ -169,6 +182,8 @@ export function ShareButton({ url }: { url: string }) {
 
 ```tsx
 // server — loaders/nav.ts
+import { createLoader } from "@rangojs/router";
+
 export const NavLoader = createLoader((ctx) => ({
   home: ctx.reverse("home"),
   blog: ctx.reverse("blog.index"),
@@ -182,6 +197,8 @@ const urlpatterns = urls(({ path, loader }) => [
 
 ```tsx
 "use client";
+import { Link, useLoader } from "@rangojs/router/client";
+import { NavLoader } from "../loaders/nav";
 
 function Nav() {
   const { data } = useLoader(NavLoader);
@@ -195,6 +212,7 @@ function Nav() {
 
 ```tsx
 "use server";
+import { getRequestContext } from "@rangojs/router";
 
 export async function getProductUrl(slug: string) {
   const ctx = getRequestContext();
@@ -237,7 +255,9 @@ import { href } from "@rangojs/router/client";
 export const appHref = (path: Rango.Path): string => href(path);
 ```
 
-`href()` is a raw path helper — it is **not** basename-aware. It returns the path as-is (or with the include mount prefix via `useHref()`). For basename-aware navigation, use `Link`, `useRouter().push()`, or `reverse()`, which auto-prefix root-relative paths with the router's basename.
+`href()` is a raw path helper — it is **not** basename-aware. It returns the path as-is (or with the include mount prefix via `useHref()`). `<Link to={href("/about")}>` still lands on the basename-prefixed URL because `Link` and `useRouter().push()` prefix root-relative paths with the router's basename; a plain `<a href>`, `fetch()`, or `window.location` gets the raw path. On the server, `ctx.reverse()` output is already basename-prefixed.
+
+`href.json()`, `href.text()`, `href.html()`, `href.xml()`, `href.md()`, `href.image()`, `href.stream()` and `href.any()` return `{ to, "data-external": "" }` props for linking to response routes with a hard navigation — see `/response-routes`.
 
 ## Client: useHref()
 
@@ -263,6 +283,8 @@ function ShopNav() {
 
 Use `useHref()` for local navigation within a mounted module. Use the bare `href()` function for absolute paths outside the current mount.
 
+`useHref()` concatenates the mount **pattern** as-is and does not substitute params, and its argument is not checked against your routes. Under a parameterized mount (`include("/tenant/:tenantId", ...)`) it would produce `/tenant/:tenantId/cart` — use `useReverse(routes)` there, which substitutes mount params from `useParams()`.
+
 ## Client: useMount()
 
 Returns the current `include()` mount path. Useful for building custom logic based on mount location.
@@ -279,7 +301,7 @@ function MountInfo() {
 }
 ```
 
-`useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree.
+`useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree. Nested includes return the nearest mount's full URL prefix (e.g. `/shop/admin`), and a parameterized include returns its pattern (`/tenant/:tenantId`), not the matched URL. `href(path, mount)` is the non-hook equivalent of `useHref()`.
 
 ## Client: useReverse(routes)
 
@@ -309,7 +331,9 @@ export function BlogNav() {
 1. Strips an optional leading `.` and looks up the name in the imported `routes` map.
 2. Joins the local pattern with the surrounding `useMount()` value — the include's URL pattern.
 3. Substitutes params: explicit params from the call, then auto-filled from `useParams()` for anything still unresolved (mount params like `:tenantId` flow in this way).
-4. Appends a query string if a search object is passed and the route has a `search` schema.
+4. Appends a query string when a search object is passed (typed from the route's `search` schema; `undefined`/`null` values are skipped).
+
+The returned function is memoized on the routes map, mount, and current params, so it is safe to pass to memoized children.
 
 ### Mount-relativity
 
@@ -337,13 +361,16 @@ The `/` pattern under a non-root mount collapses cleanly: under `/news`, `revers
 When the include itself carries `:params`, those are auto-filled from `useParams()` so the caller doesn't have to thread them through:
 
 ```typescript
+// urls/tenant.tsx: index "/" and post "/posts/:postId"
 // urls.tsx
-include("/tenant/:tenantId", clientReversePatterns, { name: "tenant" });
+include("/tenant/:tenantId", tenantPatterns, { name: "tenant" });
 ```
 
 ```tsx
+import { routes as tenantRoutes } from "../urls/tenant.gen.js";
+
 // At /tenant/acme/posts/p1, useParams() = { tenantId: "acme", postId: "p1" }
-const reverse = useReverse(clientReverseRoutes);
+const reverse = useReverse(tenantRoutes);
 
 reverse(".index"); // "/tenant/acme"
 reverse(".post", { postId: "p2" }); // "/tenant/acme/posts/p2"   (tenantId auto-filled)
@@ -411,7 +438,7 @@ pnpm exec rango generate src/urls --static
 
 Don't edit the file by hand — re-run codegen when patterns change.
 
-**Today the Vite plugin only regenerates the router-level `*.named-routes.gen.ts`.** Per-module `urls/*.gen.ts` files are emitted only by the CLI (or `writePerModuleRouteTypesForFile` programmatically). Commit the generated files and re-run `rango generate` whenever a `urls()` module's `path()`/`include()` shape changes. A common workflow is to wire it into a `predev` script:
+**The Vite plugin only regenerates the router-level `*.named-routes.gen.ts`.** Per-module `urls/*.gen.ts` files are emitted only by the `rango generate` CLI. Commit the generated files and re-run `rango generate` whenever a `urls()` module's `path()`/`include()` shape changes. `clientUrls()` modules get a `.gen.ts` the same way. A common workflow is to wire it into a `predev` script:
 
 ```jsonc
 // package.json
@@ -452,7 +479,7 @@ queued or in flight; removing it re-arms both Link types.
 | Context          | API                                                | Resolves                                  | Use for                                                          |
 | ---------------- | -------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------- |
 | Server handler   | `ctx.reverse("name")`                              | Named routes (local + absolute)           | **Default** server-side URL generation                           |
-| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Same, with type safety                    | Type-safe server URLs                                            |
+| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Local `.name` routes, typed from `T`      | Type-safe in-module server URLs                                  |
 | Client component | `useReverse(routes)`                               | Local names from an imported `routes` map | Typed in-module URL generation without round-tripping the server |
 | Client component | (URL passed as prop / loader data / action return) | Named routes                              | Cross-module URLs or one-off names you don't want to import      |
 | Client component | `href("/path")`                                    | Absolute paths (static strings)           | Static navigation where no named-route lookup is needed          |
@@ -470,7 +497,7 @@ import { urls, scopedReverse } from "@rangojs/router";
 export const shopPatterns = urls(({ path, layout }) => [
   layout((ctx) => {
     const reverse = scopedReverse<typeof shopPatterns>(ctx.reverse);
-    return <ShopLayout cartUrl={reverse("cart")} />;
+    return <ShopLayout cartUrl={reverse(".cart")} />;
   }, () => [
     path("/", ShopIndex, { name: "index" }),
     path("/cart", CartPage, { name: "cart" }),

@@ -13,7 +13,9 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 | `params`               | `Record<string, string>`                               | Route params surfaced as `ctx.params`.                                                                                                                                                                                                                                                                                                                                               |
 | `env`                  | `TEnv`                                                 | Environment bindings surfaced as `ctx.env`.                                                                                                                                                                                                                                                                                                                                          |
 | `request`              | `Request \| string`                                    | Backing Request (string or `Request`); defaults to a localhost GET.                                                                                                                                                                                                                                                                                                                  |
-| `headers`              | `HeadersInit`                                          | Request headers (e.g. `Cookie`) the handler reads via `cookies()`.                                                                                                                                                                                                                                                                                                                   |
+| `headers`              | `HeadersInit`                                          | Request headers (e.g. `Cookie`) the handler reads via `cookies()`. Used only when `request` is a string or omitted; a passed `Request` keeps its own headers.                                                                                                                                                                                                                        |
+| `build`                | `boolean`                                              | Seed `ctx.build` (default `false`) to test a handler that branches on the build-time pass, including calling `ctx.dynamic()` on a miss. Assert the opt-out via `result.dynamic`.                                                                                                                                                                                                     |
+| `theme`                | `ThemeConfig \| true`                                  | Theme config (`createRouter({ theme })` shape). Without it `ctx.theme`/`ctx.setTheme` are inert; pass one to test a handler that reads the theme or writes the theme cookie.                                                                                                                                                                                                         |
 | `vars`                 | `VarsInit` (object or `[[Var, value]]` tuples)         | Variables a prior middleware set, read via `ctx.get(...)`.                                                                                                                                                                                                                                                                                                                           |
 | `routeName`            | `string`                                               | Matched route name (drives `ctx.routeName` and scoped reverse).                                                                                                                                                                                                                                                                                                                      |
 | `routeMap`             | `Record<string, string>`                               | Route name -> pattern map enabling `ctx.reverse()`.                                                                                                                                                                                                                                                                                                                                  |
@@ -26,21 +28,21 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 
 ### Context — `HandlerContext` (what your handler receives)
 
-| Field              | Type                                 | Meaning                                                                                        |
-| ------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `params`           | `Record<string, string>`             | The seeded route params.                                                                       |
-| `env`              | `TEnv`                               | The seeded environment bindings.                                                               |
-| `request`          | `Request`                            | The backing request.                                                                           |
-| `searchParams`     | `URLSearchParams`                    | Parsed query of `request.url`.                                                                 |
-| `pathname`         | `string`                             | Pathname of `request.url`.                                                                     |
-| `url`              | `URL`                                | Parsed `request.url`.                                                                          |
-| `routeName`        | `string \| undefined`                | The matched route name (from `routeName`).                                                     |
-| `use`              | `(loaderOrHandle) => data \| pushFn` | A loader returns its seeded data; a handle returns a push fn that RECORDS to `result.handles`. |
-| `reverse`          | `(name, params?) => string`          | Build a URL from `routeMap`.                                                                   |
-| `get`              | `(Var) => value`                     | Read a seeded `vars` variable.                                                                 |
-| `headers`          | `Headers`                            | Response headers; set via `ctx.headers.set(...)` (merged into `result.response`).              |
-| `setLocationState` | `(entries) => void`                  | Set location state (surfaced on `result.locationState`).                                       |
-| `waitUntil`        | `(fn: () => Promise<void>) => void`  | Register background work.                                                                      |
+| Field              | Type                                          | Meaning                                                                                                                       |
+| ------------------ | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `params`           | `Record<string, string>`                      | The seeded route params.                                                                                                      |
+| `env`              | `TEnv`                                        | The seeded environment bindings.                                                                                              |
+| `request`          | `Request`                                     | The backing request.                                                                                                          |
+| `searchParams`     | `URLSearchParams`                             | Parsed query of `request.url`.                                                                                                |
+| `pathname`         | `string`                                      | Pathname of `request.url`.                                                                                                    |
+| `url`              | `URL`                                         | Parsed `request.url`.                                                                                                         |
+| `routeName`        | `string \| undefined`                         | The matched route name (from `routeName`).                                                                                    |
+| `use`              | `(loaderOrHandle) => Promise<data> \| pushFn` | A loader returns a Promise of its seeded data (like production); a handle returns a push fn that RECORDS to `result.handles`. |
+| `reverse`          | `(name, params?) => string`                   | Build a URL from `routeMap`.                                                                                                  |
+| `get`              | `(Var) => value`                              | Read a seeded `vars` variable.                                                                                                |
+| `headers`          | `Headers`                                     | Response headers; set via `ctx.headers.set(...)` (merged into `result.response`).                                             |
+| `setLocationState` | `(entries) => void`                           | Set location state (surfaced on `result.locationState`).                                                                      |
+| `waitUntil`        | `(fn: () => Promise<void>) => void`           | Register background work.                                                                                                     |
 
 ### Returns — `RenderHandlerResult`
 
@@ -55,18 +57,22 @@ A Rango route handler is a pure function `(ctx) => rsc` — the function you pas
 | `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing. |
 | `locationState`   | `Record<string, unknown>` | Location state the handler set (`ctx.setLocationState`/`redirect({ state })`).                                                                                      |
 | `handles`         | `Map<Handle, unknown[]>`  | What the handler pushed via `ctx.use(Handle)(...)` (e.g. `Meta`, `Breadcrumbs`), keyed by handle.                                                                   |
+| `dynamic`         | `boolean`                 | Whether the handler called `ctx.dynamic()` (the PPR shell opt-out).                                                                                                 |
 
 ## Recipe
 
 ```tsx
+import { it, expect } from "vitest";
 import {
   renderHandler,
   findClientBoundaries,
+  textContent,
 } from "@rangojs/router/testing/flight";
+import { Meta } from "@rangojs/router";
 import { ProductPage } from "../src/pages/product"; // the real handler: (ctx) => rsc
+import { LogoutPage, QuietPage } from "../src/pages/account"; // call invalidateClientCache() / keepClientCache()
 import { ProductLoader } from "../src/loaders/product";
-import { Tenant } from "../src/middleware/tenant";
-import { Meta } from "../src/handles";
+import { Tenant } from "../src/middleware/tenant"; // a createVar()
 
 it("renders the product page for a tenant", async () => {
   const { tree, handles } = await renderHandler(ProductPage, {
@@ -76,8 +82,9 @@ it("renders the product page for a tenant", async () => {
     routeMap: { product: "/p/:slug" }, // enables ctx.reverse
   });
 
-  expect(JSON.stringify(tree)).toContain("Wine");
-  const [counter] = findClientBoundaries(tree, "Counter"); // islands inspectable too
+  expect(textContent(tree)).toContain("Wine");
+  const [addToCart] = findClientBoundaries(tree, "AddToCart"); // islands inspectable too
+  expect(addToCart.props.slug).toBe("wine");
   expect(handles.get(Meta)).toEqual([{ title: "Wine - Shop" }]); // ctx.use(Meta) pushes
 });
 
@@ -109,7 +116,7 @@ it("asserts the client-cache directives", async () => {
 ## Caveats
 
 - An unseeded `ctx.use(loader)` REJECTS with a setup error — seed every dependency via `{ loaders: [[OtherLoader, data]] }`, matched by reference. Loaders are SEEDED, not executed (same as `runLoader`).
-- Same alias requirement as flight tests: without the `@rangojs/router -> index.rsc.ts` alias (see [`./setup.md`](./setup.md)), a handler reading `getRequestContext()`/`cookies()` hits the throwing out-of-react-server stub. Symptom: `tree: undefined` with the stub error on `thrown`.
+- Same alias requirement as flight tests: without the `@rangojs/router -> index.rsc.ts` alias (see [`./setup.md`](./setup.md)), a handler reading `getRequestContext()`/`cookies()` hits the throwing out-of-react-server stub. `renderHandler` detects this and REJECTS with a setup error naming `rangoTestAliases` (it is not captured on `thrown`).
 - A `throw redirect()` is captured on `thrown` (with `tree` undefined, since it produced a `Response`) — assert on `thrown`/`response`, no try/catch needed.
 - No hydration and no interaction — for clicks, forms, and navigation use e2e.
 - `renderHandler` runs a handler FUNCTION `(ctx) => rsc`; for a plain ELEMENT `<Page/>` use `renderServerTree` (see [`./server-tree.md`](./server-tree.md)).

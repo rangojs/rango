@@ -22,6 +22,7 @@
 | `cacheStore`    | `SegmentCacheStore`                                    | Backing store for `use cache` functions (same shape as `createRouter({ cache })`). Without it, cached functions run uncached and their guards never fire.                                                                                                                                                                                             |
 | `cacheProfiles` | `Record<string, CacheProfile>`                         | Profiles for `use cache: "name"`, same shape as `createRouter({ cacheProfiles })`. An unknown profile throws.                                                                                                                                                                                                                                         |
 | `theme`         | `ThemeConfig \| true`                                  | Theme config (same shape as `createRouter({ theme })`). Without it `ctx.theme` / `ctx.setTheme` are inert.                                                                                                                                                                                                                                            |
+| `build`         | `boolean`                                              | Seed `ctx.build` (default `false`) for code that branches on the build-time PPR shell-capture pass. With `true`, `ctx.waitUntil()` is inert, as at build time.                                                                                                                                                                                        |
 | `stateCookie`   | `StateCookieSeed` (`{ prefix?, routerId?, version? }`) | Customize the rango state cookie an action calling `invalidateClientCache()` rotates. The name is ALWAYS seeded (default `rango-state_router_0`) so the rotation `Set-Cookie` fires like production; override `prefix`/`routerId` to match `createRouter({ stateCookiePrefix, id })`, or `version` (value is `{version}:{timestamp}`, default `"0"`). |
 
 ### Context — `RequestContext<TEnv>` (what your code receives)
@@ -52,7 +53,12 @@
 | `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing.                               |
 | `locationState`   | `Record<string, unknown>` | The flash set via `ctx.setLocationState()` / `redirect({ state })`, as the flat `{ key: value }` the client reads.                                                                                |
 
-Low-level variant: when you already hold a context from `createTestRequestContext(opts)`, call `runWithRequestContext(ctx, fn)` (re-exported from `@rangojs/router/testing`) to enter it directly. `runInRequestContext` is the one-call convenience over `createTestRequestContext` + `runWithRequestContext`.
+Low-level building blocks (all from `@rangojs/router/testing`):
+
+- `createTestRequestContext(opts)` builds the context WITHOUT entering it and returns `{ ctx, request, url, variables, stateCookieName }`. Its `ctx.reverse` accepts any name from your `routeMap`.
+- `runWithRequestContext(ctx, fn)` enters a context you already hold. `runInRequestContext` is the one-call convenience over these two, plus the result snapshot.
+- `toRequest(request?, init?)` normalizes a `Request | string | undefined` into a `Request` (strings resolve against `http://localhost/`).
+- `seedVariables(variables, vars?)` writes a `VarsInit` (object or `[key, value]` tuples) into a raw variables record, the same way the `vars` option does.
 
 ## Recipe
 
@@ -60,10 +66,13 @@ Low-level variant: when you already hold a context from `createTestRequestContex
 import { it, expect } from "vitest";
 import { runInRequestContext } from "@rangojs/router/testing";
 import { loginAction } from "../src/actions/login"; // sets a session cookie + flash, then throw redirect("/app")
+import { logoutAction, dismissBannerAction } from "../src/actions/session"; // invalidateClientCache() / keepClientCache()
+
+const env = { DB: fakeDb }; // your binding double (see ./bindings.md)
 
 it("sets the session cookie + flash and redirects", async () => {
   const { thrown, cookies, locationState } = await runInRequestContext(
-    () => loginAction(input),
+    () => loginAction({ email: "ada@example.com", password: "pw" }),
     {
       env,
       request: new Request("https://app.test/admin", {
@@ -97,7 +106,7 @@ it("asserts the client-cache directives an action issued", async () => {
 
 - The snapshot fires whether `fn` RETURNS or THROWS. A `throw redirect("/app")` on the success path is captured on `thrown` (NOT re-thrown), so no try/catch is needed; assert on `thrown` for a throwing action.
 - There is no cookies / headers option. Seed a request cookie by passing a full `Request` with the `Cookie` header (as in the recipe).
-- `runWithRequestContext(ctx, fn)` is the low-level entry when you already hold a context; `runInRequestContext` is the one-call convenience over `createTestRequestContext` + `runWithRequestContext`.
+- An action has no loader context, so `runLoader` is the wrong shape for it even when the action reads cookies or vars; use `runInRequestContext`.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 
 ## See also

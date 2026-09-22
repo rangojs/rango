@@ -33,7 +33,7 @@ with the shape, then pick a primitive.
   index by tag and invalidate via `updateTag(...tags)` (awaitable, read-your-own-writes)
   or `revalidateTag(...tags)` (background, non-blocking).
 - **Type-safe end to end** — route names, params, search schemas, loader return
-  types, context vars, and `href` / `reverse` are checked at compile time
+  types, context vars, and `href()` / `ctx.reverse()` are checked at compile time
   (`/typesafety`).
 - **See where time goes** — turn on `debugPerformance` early (router option, or
   `ctx.debugPerformance()` in middleware for per-request opt-in). It prints a
@@ -42,7 +42,9 @@ with the shape, then pick a primitive.
   console, OpenTelemetry, or custom sink. See `/observability`.
 
 Most features are **just-in-time**: the core is `urls()`, `path()`, `layout()`,
-`include()`, and `reverse()`. Caching, parallel routes, intercepts, prerender,
+`include()`, and URL generation (`ctx.reverse()` on the server, `href()` /
+`useReverse()` on the client; there is no standalone `reverse()` export — see
+`/links`). Caching, parallel routes, intercepts, prerender,
 i18n, themes, and the rest are opt-in — reach for them when a requirement
 appears, not up front.
 
@@ -201,8 +203,11 @@ The predicate arg carries the action's full context, not just its identity. Matc
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
-(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
-`_rsc_stale` signal). All are `undefined` on plain navigation (no action).
+(raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
+and `stale` (the `_rsc_stale` signal that an action ran in this or another tab).
+`actionId`, `actionUrl`, `actionResult`, and `formData` are `undefined` on plain
+navigation; `method` is `"GET"` there and `"POST"` for an action. Call
+`ctx.isAction()` with no arguments to ask "was this any action?".
 
 Two idioms, picked by what an _unrelated_ action should do. `ctx.isAction()`
 returns a raw boolean, so combine it with `|| undefined` to **defer** ("mine,
@@ -326,6 +331,8 @@ Grouped by concern — read when you need to…
 ```typescript
 // urls.tsx
 import { urls } from "@rangojs/router";
+import { RootLayout } from "./layouts/root"; // renders <Outlet />
+import { HomePage, AboutPage } from "./pages";
 
 export const urlpatterns = urls(({ path, layout }) => [
   layout(RootLayout, () => [
@@ -336,12 +343,15 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 // router.tsx
 import { createRouter } from "@rangojs/router";
+import { Document } from "./document"; // <html>/<head>/<body> shell
 import { urlpatterns } from "./urls";
 
-export default createRouter({ document: Document }).routes(urlpatterns);
+export const router = createRouter({ document: Document, urls: urlpatterns });
 ```
 
-Use `/typesafety` for type-safe href and environment setup.
+`createRouter({ ... }).routes(urlpatterns)` is equivalent to passing `urls`.
+See `/router-setup` for the Document component and router options, and
+`/typesafety` for type-safe href and environment setup.
 
 ## CLI: `npx rango generate`
 
@@ -362,27 +372,37 @@ npx rango generate src/
 npx rango generate src/urls.tsx src/api/
 ```
 
+Three modes:
+
+| Flag        | Behavior                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic). |
+| `--static`  | Static parser, but writes partial output and prints the unresolvable includes as warnings.                                |
+| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite` and `@vitejs/plugin-rsc`). `--config <path>` picks the config.  |
+
 ### Auto-detection
 
 Each file is classified by its contents:
 
-| Contains       | Generated output                                                 |
-| -------------- | ---------------------------------------------------------------- |
-| `urls(`        | Per-module `*.gen.ts` with route names, patterns, params, search |
-| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map         |
-| Both           | Both files                                                       |
+| Contains                 | Generated output                                                 |
+| ------------------------ | ---------------------------------------------------------------- |
+| `urls(` or `clientUrls(` | Per-module `*.gen.ts` with route names, patterns, params, search |
+| `createRouter`           | Per-router `*.named-routes.gen.ts` with global route map         |
+| Both                     | Both files                                                       |
 
-Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`,
-dotfiles, and existing `.gen.` files.
+Directories are scanned recursively for `.ts`/`.tsx`/`.js`/`.jsx` files, skipping
+`node_modules`, `dist`, `build`, `coverage`, dot-directories, and existing
+`.gen.` files.
 
 > The two generated files are **not interchangeable surfaces**.
 > `router.named-routes.gen.ts` augments the global `GeneratedRouteMap` for
 > named-route typing (`Handler<"name">`, `ctx.reverse("name")`, prerender).
 > Per-module `*.gen.ts` exports a local `routes` map for `useReverse(routes)`
 > and explicit local handler typing (`Handler<".name", routes>`). Neither
-> carries response payloads — response/MIME payload inference comes from
-> `typeof router.routeMap` via `RegisteredRoutes`, not `*.named-routes.gen.ts`.
-> See `/typesafety` for the full surface breakdown.
+> carries response payloads: `RouteResponse<typeof patterns, "name">` reads
+> them from the `urls()` value directly, and `Rango.PathResponse` reads them from
+> `RegisteredRoutes` (`typeof router.routeMap`). See `/typesafety` for the full
+> surface breakdown.
 
 ### Recursive includes
 
@@ -413,7 +433,8 @@ extract routes defined dynamically:
 - Routes computed from external data (databases, config files)
 - Template literal patterns with interpolated variables
 
-These routes are only discovered by the Vite plugin's runtime discovery during
-`pnpm dev` or `pnpm build`. The CLI-generated `.gen.ts` may have fewer routes
-than the runtime-generated version. During dev, the `preserveIfLarger` guard
-prevents the static parser from overwriting a larger runtime-discovered file.
+These routes are only discovered at runtime: by the Vite plugin during
+`pnpm dev` / `pnpm build`, or by `rango generate --runtime`. A statically
+generated `.gen.ts` may have fewer routes than the runtime-generated version.
+During dev, the `preserveIfLarger` guard prevents the static parser from
+overwriting a larger runtime-discovered file.
