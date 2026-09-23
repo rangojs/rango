@@ -140,7 +140,11 @@ configure a node, so they can be imported or composed through small factories:
 ```tsx
 const withAccountPolicy = () => [
   middleware(requireUser),
-  revalidate((ctx) => ctx.isAction(AccountActions) || undefined),
+  // After an action, re-run only for account actions (a hard decision that ends
+  // the chain for later revalidators); on navigation, keep the default.
+  revalidate((ctx) =>
+    ctx.isAction() ? ctx.isAction(AccountActions) : undefined,
+  ),
 ];
 
 const accountPatterns = urls(({ path }) => [

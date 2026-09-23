@@ -16,11 +16,14 @@ pnpm add -D tailwindcss @tailwindcss/vite
 
 ```typescript
 // vite.config.ts
+import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
+import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
   plugins: [
     tailwindcss(),
+    rango(),
     // ... other plugins
   ],
 });
@@ -63,9 +66,9 @@ export function Document({ children }: { children: ReactNode }) {
 }
 ```
 
-The `?url` suffix tells Vite to return the processed CSS file's URL instead of injecting it as a side effect. This gives you a stable, hashed asset path that works in both development and production. The `<link rel="preload" as="style">` eliminates render-blocking by starting the download early.
+The `?url` suffix tells Vite to return the processed CSS file's URL instead of injecting it as a side effect. This gives you a stable, hashed asset path that works in both development and production. The `<link rel="preload" as="style">` starts the stylesheet download early.
 
-`?url` is required here — a bare side-effect `import "./index.css"` also produces managed CSS via `@vitejs/plugin-rsc`, but it carries an SSR-streaming caveat, so prefer the `?url` + `<link precedence>` form for document CSS. The [CSS guide](/docs/rango/guides/css) has the full reasoning.
+Use `?url` for the document stylesheet. A bare side-effect `import "./index.css"` also produces managed CSS via `@vitejs/plugin-rsc`, but it is not guaranteed to be in the initial streamed `<head>`. The [CSS guide](/docs/rango/guides/css) has the full reasoning.
 
 ## Customizing the theme
 
@@ -85,17 +88,25 @@ Tailwind v4 uses the CSS `@theme` block for customization — colors, fonts, bre
 
 ## Dark mode
 
-Combine Tailwind with the Rango theme system (see the [Theme guide](/docs/rango/guides/theme)):
+Combine Tailwind with the Rango theme system (see the [Theme guide](/docs/rango/guides/theme)). With `attribute: "class"` (the default) the theme script puts `class="dark"` or `class="light"` on `<html>` before first paint; add `suppressHydrationWarning` to the Document's `<html>` so React accepts that change:
 
 ```typescript
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   theme: { attribute: "class" },
 });
 ```
 
-Then use Tailwind's `dark:` variant, which reads the `class` attribute:
+Tailwind v4's `dark:` variant follows `prefers-color-scheme` by default, so on its own it ignores the user's stored choice. Point it at the class instead:
+
+```css
+/* src/index.css */
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+Then use the `dark:` variant as usual:
 
 ```tsx
 <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
@@ -125,13 +136,12 @@ No extra `<link>` tags needed in the Document — Vite bundles the font files fr
 
 ## Multiple apps under a host router
 
-If you run several apps under one [host router](/docs/rango/guides/host-router), you don't need to coordinate stylesheet `href`s or `precedence` values across them. A client-side navigation that crosses an app boundary is a **full document load**, not a soft swap — the framework redirects on an app switch, so each app's document (stylesheets, theme, meta) is re-established cleanly by the target app's own load.
-
-This matters for Tailwind specifically: every app's `@import "tailwindcss"` compiles to one hashed asset, so under an earlier soft-swap design a shared stylesheet could be dropped by React's by-`href` resource dedup if the apps disagreed on `precedence`. The full reload removes that footgun entirely.
+If you run several apps under one [host router](/docs/rango/guides/host-router), you don't need to coordinate stylesheet `href`s or `precedence` values across them. A client-side navigation that crosses an app boundary is a **full document load**, not a soft swap — the server answers an app switch with `X-RSC-Reload` — so each app's document (stylesheets, theme, meta) is re-established by the target app's own load. That holds even though every app's `@import "tailwindcss"` can compile to the same hashed asset.
 
 ## Pitfalls
 
-- **Classes not applied at all?** Check the `?url` import and the `<link>` in the Document — a bare CSS import injects styles as a side effect and does not work with SSR streaming.
+- **Classes not applied at all?** Check the `?url` import and the `<link>` in the Document — a bare side-effect CSS import is not guaranteed to be in the initial streamed `<head>`.
+- **`dark:` classes follow the OS instead of the theme toggle?** Add `@custom-variant dark (&:where(.dark, .dark *));` to the CSS entry point.
 - **Reaching for `tailwind.config.js`?** Tailwind v4 doesn't use it — put customization in the `@theme` block in CSS instead.
 - **Missing `precedence` on the stylesheet link?** Without it, React doesn't manage the sheet — you lose dedup, ordering, and the before-paint load guarantee.
 

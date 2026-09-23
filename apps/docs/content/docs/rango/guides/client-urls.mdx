@@ -1,0 +1,427 @@
+---
+title: Client URLs
+description: Define route groups whose pages are client components, so navigations inside the group render the destination at once while the server keeps the final say.
+type: guide
+---
+
+You have an admin panel, a dashboard, or a settings area: one layout, many tabs, frequent param and filter switches, and pages that are client components full of hooks. `clientUrls()` defines that area as a client route group. The definition lives in a `"use client"` module, every page and layout in it is a client component, and every data read is a `useLoader()` call in the component that needs the data. Client groups have no handlers.
+
+After hydration the browser matches the group's routes itself. When the user moves from one route of the group to another, the browser renders the destination component at once. Its loader reads suspend into the route's `loading()` or an inline `<Suspense>`, and the group's layouts see `useOutlet().pending`. The usual partial request still goes to the server, which matches the route, runs middleware and loaders, and sends the response that commits the URL, history, and content. Hard requests SSR and hydrate from the same routes.
+
+## When to use a client group
+
+| Use a client group when                                                  | Use server routes (`urls()`) when                                          |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Pages and layouts are client components with hooks and local state       | Pages are server components, or a handler fetches and renders in one place |
+| Most navigations stay inside one layout: tabs, params, filters           | Individual routes need their own `middleware()`, `cache()`, or boundaries  |
+| Each component can read its data with `useLoader()`                      | You want `Static()` or `Prerender()` handlers                              |
+| Showing the destination's layout before the server answers is acceptable | The route's layout must not render until authorization has run             |
+
+The last row is the trade-off. Rendering in a client group is optimistic and does not authorize anything. The destination component can appear before any middleware has run for that navigation. At that point it has no loader data, but it does show the destination's layout and static content. See [Security boundary](#security-boundary).
+
+The two kinds of route mix freely. A group mounts into the `urls()` tree with `include()` like any route module, so server layouts, middleware, and boundaries can wrap it.
+
+## Define a group
+
+### Loaders
+
+A group's loaders are ordinary `createLoader()` definitions in a server or shared module. The client module only imports the definition object, and the server runs the loader by its ID. Route loaders in a group don't have to be fetchable.
+
+```ts
+// src/catalog/catalog.loaders.ts
+import { createLoader, notFound } from "@rangojs/router";
+import { getProduct, listProducts } from "./db.js";
+
+export const ProductsLoader = createLoader(async () => listProducts());
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.productId);
+  if (!product) notFound("Product not found");
+  return product;
+});
+```
+
+Don't put a `"use server"` directive in a loader body. It isn't needed, and the build rejects it.
+
+### The client module
+
+```tsx
+// src/catalog/catalog.client-urls.tsx
+"use client";
+
+import { Suspense } from "react";
+import {
+  clientUrls,
+  Link,
+  useLoader,
+  useOutlet,
+  useParams,
+} from "@rangojs/router/client";
+import { ProductLoader, ProductsLoader } from "./catalog.loaders.js";
+
+function CatalogLayout() {
+  const { content, pending } = useOutlet();
+  return (
+    <main aria-busy={pending}>
+      <Link to="/catalog">All products</Link>
+      {content}
+    </main>
+  );
+}
+
+function CatalogIndex() {
+  return (
+    <Suspense fallback={<p>Loading products...</p>}>
+      <ProductList />
+    </Suspense>
+  );
+}
+
+function ProductList() {
+  const { data: products } = useLoader(ProductsLoader);
+  return (
+    <ul>
+      {products.map((product) => (
+        <li key={product.id}>
+          <Link to={`/catalog/products/${product.id}`}>{product.name}</Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProductPage() {
+  const { productId } = useParams<{ productId: string }>();
+  const { data: product } = useLoader(ProductLoader);
+  return (
+    <article>
+      <h1>{product.name}</h1>
+      <p>Product id: {productId}</p>
+    </article>
+  );
+}
+
+function ProductLoading() {
+  return <p>Loading product...</p>;
+}
+
+export default clientUrls(({ path, layout, loader, loading }) => [
+  layout(CatalogLayout, () => [
+    path("/", CatalogIndex, { name: "index" }, () => [loader(ProductsLoader)]),
+    path(
+      "/products/:productId",
+      ProductPage,
+      { name: "product", search: { ref: "string?" } },
+      () => [loader(ProductLoader), loading(<ProductLoading />)],
+    ),
+  ]),
+]);
+```
+
+The Vite plugin finds the module, evaluates the definition, and sends the server a JSON projection of it: patterns, names, options, loader IDs, and which routes declare `loading()` or `transition()`. The server builds real routes from that projection. That process sets these rules:
+
+- The module starts with `"use client"` and default-exports the `clientUrls()` result.
+- Path, layout, and intercept components are named function values. Write `path("/", CatalogIndex)`, not `path("/", <CatalogIndex />)` and not an inline arrow.
+- Everything else in the definition must be JSON-serializable. Helpers that carry server code are rejected, not silently dropped.
+- Duplicate patterns or route names throw. So does a `layout()` without a `path()` inside, or a builder that defines no `path()` at all.
+
+### Mount it with include()
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog/catalog.client-urls.js";
+import { CatalogRscLayout } from "./catalog/catalog-layout.js";
+
+export const urlpatterns = urls(({ include, layout }) => [
+  layout(<CatalogRscLayout />, () => [
+    include("/catalog", catalogClientUrls, { name: "catalog" }),
+  ]),
+]);
+```
+
+Patterns are local to the definition. The `include()` adds the URL prefix and the route-name prefix. `/` becomes `/catalog` (the index maps to the bare mount path), `/products/:productId` becomes `/catalog/products/:productId`, and the routes are named `catalog.index` and `catalog.product`. The browser strips the same prefix before it matches locally, so if you mount the definition somewhere else, all of its routes move with it.
+
+- Import the client module's default export. A `clientUrls()` object built in a server module can't cross the server/client boundary.
+- The lazy form also works: `include("/catalog", () => import("./catalog/catalog.client-urls.js"), { name: "catalog" })`. It saves nothing at startup, because the server only holds a client reference to a `"use client"` module. Use it if you want all groups mounted the same way.
+- In an app that is entirely one group, you can pass the definition straight to the router. `createRouter({ document: Document }).routes(catalogClientUrls)` is shorthand for a root `include("/", definition, { name: "" })`. Mount with `include()` yourself when you need a prefix, a wrapping layout, or middleware.
+- If a group is mounted inside another included module (lazy includes too), give explicit names to every wrapping `include()` and to the client routes. Unnamed routes get auto-generated names that differ between discovery and runtime, and requests then 404.
+
+Under a named `include()`, group routes are added to the generated route map, so `href()`, `ctx.reverse()`, and named-route types work the same as they do for server routes.
+
+## What a group can contain
+
+The builder receives seven helpers:
+
+| Helper                                      | Allowed in                                           | Notes                                                                                                           |
+| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `path(pattern, Component, options?, use?)`  | builder, `layout()` children                         | The use callback may contain `loader()`, `loading()`, and at most one `transition()`                            |
+| `layout(Component, children)`               | builder, `layout()` children                         | Must contain at least one `path()`. May also hold `loader()`, `loading()`, `intercept()`, and nested `layout()` |
+| `loader(Def, options?, use?)`               | `path()` use, `layout()` children, `intercept()` use | The only option is `ssr` (`{ ssr: false }`). The use callback may contain `revalidate()` only                   |
+| `loading(element)`                          | `path()` use, `layout()` children, `intercept()` use | The route-level fallback around the optimistic render. Takes no options                                         |
+| `revalidate(fn)`                            | `loader()` use only                                  | Runs in the browser, see [Revalidation](#revalidation-runs-in-the-browser)                                      |
+| `transition(config)`                        | `path()` use only                                    | Data only: view transition classes, `name`, `viewTransition`. No `when`                                         |
+| `intercept(slot, ".name", Component, use?)` | builder, `layout()` children                         | A restricted form, see [Intercepts](#intercepts)                                                                |
+
+A `loader()` or `loading()` placed in a layout's children applies to every route inside that layout.
+
+`path()` accepts four options: `name`, `search` (the values `"string"`, `"number"`, and `"boolean"`, each with an optional `?` suffix), `trailingSlash` (`"always"`, `"never"`, or `"ignore"`), and `ppr` (`true` or an object with `ttl`, `swr`, `captureTimeout`, `maxSnapshotBytes`, and `tags`). Any other option throws.
+
+These helpers throw. Just reading one from the helpers object throws `clientUrls() does not support include()` and so on, so even listing one in the builder's parameter destructuring fails:
+
+- `include`, `parallel`, `cache`, `middleware`
+- `errorBoundary`, `notFoundBoundary`
+
+Any other name throws a `clientUrls() has no X() helper` error. Passing a `Static()` or `Prerender()` handler as a component throws a specific error. To cache a group route's shell, use the `ppr` option. Build-time prerendering belongs in the server tree around the include.
+
+The exclusions are deliberate. A client group is built for fast navigation, and the server tree around the `include()` handles everything else. Put the excluded helpers at or around the mount:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import adminClientUrls from "./admin/admin.client-urls.js";
+import { AdminNotFound, AdminRscLayout } from "./admin/admin-layout.js";
+import { requireAdmin } from "./auth.js";
+
+export const urlpatterns = urls(
+  ({ include, layout, middleware, notFoundBoundary }) => [
+    layout(<AdminRscLayout />, () => [
+      middleware(requireAdmin),
+      notFoundBoundary(<AdminNotFound />),
+      include("/admin", adminClientUrls, { name: "admin" }),
+    ]),
+  ],
+);
+```
+
+Middleware wrapping the mount runs for every route in the group. A `notFoundBoundary()` on an enclosing layout catches a `notFound()` thrown by the group's loaders. For caching, put [`"use cache"`](/docs/rango/guides/use-cache) on the expensive function a loader calls, and the loader itself stays live. Inside the group, handle errors with React boundaries. Every component is a client component, and a failed loader throws at its `useLoader()` read, so wrap the parts that can fail in `ErrorBoundary` from `@rangojs/router/client`.
+
+### Transitions
+
+If a navigation stays on the same route and only changes a param or the search string, the previous content stays on screen until the new data arrives. All of a group's routes share one React key per mount, so the mounted instance is reused instead of remounting, and a group route doesn't need `transition()` for that. Use it to configure the view transition animation:
+
+```tsx
+"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { ProductLoader } from "./catalog.loaders.js";
+import { ProductPage } from "./product-page.js";
+
+export default clientUrls(({ path, loader, transition }) => [
+  path("/products/:productId", ProductPage, { name: "product" }, () => [
+    loader(ProductLoader),
+    transition({ default: "slide", name: "product" }),
+  ]),
+]);
+```
+
+`when` is rejected because it is a predicate that runs on the server. For a conditional transition, declare `transition()` in the server tree around the include. See [View Transitions](/docs/rango/guides/view-transitions) for the classes and React version support.
+
+### Intercepts
+
+```tsx
+"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { ItemLoader } from "./items.loaders.js";
+import {
+  ItemDetail,
+  ItemModal,
+  ItemsIndex,
+  ModalSkeleton,
+} from "./items-components.js";
+
+export default clientUrls(({ path, intercept, loader, loading }) => [
+  path("/", ItemsIndex, { name: "index" }),
+  path("/:id", ItemDetail, { name: "detail" }, () => [loader(ItemLoader)]),
+  intercept("@modal", ".detail", ItemModal, () => [
+    loader(ItemLoader),
+    loading(<ModalSkeleton />),
+  ]),
+]);
+```
+
+Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector and no middleware. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start inside the group's mount open the modal. From outside the group, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
+
+If you need `when`, middleware, or a server handler, declare the intercept in the server tree around the include. A server-declared intercept can target a group route by its full name (`catalog.product`). When such an intercept applies, the browser skips the optimistic render, and the origin page stays on screen until the modal commits.
+
+## Loaders in a group
+
+The loader body is server code, so anything a loader can do in the server tree works here. It can throw `notFound()` or `redirect()`, push handles with `ctx.use(Meta)({ title })`, and read handles with `ctx.get()` after `await ctx.rendered()`. A redirect thrown by a loader is always a client-side navigation, never an HTTP 302 on a document load. Put redirects that must happen before the response in middleware.
+
+`useLoader()` suspends until its data streams in. Pick the pending UI per route. `loading()` replaces the whole route while its reads wait. An inline `<Suspense>` above each read keeps the rest of the destination visible and lets each read wait on its own. During an optimistic render, reads suspend into `loading()` if the route declares one, and otherwise into the nearest inline `<Suspense>`. A destination with no boundary at all keeps the current page on screen until the response commits.
+
+### Revalidation runs in the browser
+
+A `revalidate()` predicate in a group is declared in a `"use client"` module, so it runs in the browser before the request goes out. Only its decision (skip or force, per loader ID) travels with the request, in a header. It receives `currentUrl`, `nextUrl`, `currentParams`, `nextParams` (both definition-local), `defaultShouldRevalidate`, `stale`, `isAction`, and `actionId`. There is no server `context`. Return a boolean for a final decision, `{ defaultShouldRevalidate }` to adjust the default for later predicates, or nothing to keep the default.
+
+```tsx
+"use client";
+import { clientUrls } from "@rangojs/router/client";
+import * as CartActions from "./cart.actions.js";
+import { CartLoader, ProductLoader } from "./shop.loaders.js";
+import { ProductPage, ShopLayout } from "./shop-components.js";
+
+export default clientUrls(({ path, layout, loader, revalidate }) => [
+  layout(ShopLayout, () => [
+    // Refresh the cart after cart actions only; hold it across navigations.
+    loader(CartLoader, () => [
+      revalidate(({ isAction }) => isAction(CartActions)),
+    ]),
+    path("/product/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader, () => [
+        revalidate(
+          ({
+            isAction,
+            currentParams,
+            nextParams,
+            defaultShouldRevalidate,
+          }) => {
+            if (isAction()) return false;
+            return currentParams.slug !== nextParams.slug
+              ? defaultShouldRevalidate
+              : false;
+          },
+        ),
+      ]),
+    ]),
+  ]),
+]);
+```
+
+`isAction` works the same as it does on the server: `isAction()` matches any action, and `isAction(ref)`, `isAction(a, b)`, `isAction(ModuleNamespace)`, and `isAction({ a, b })` match specific ones. In the browser, `actionId` is a hashed ID, so match actions by reference instead of by `actionId` substrings. Compare the param that identifies the data. A predicate that always returns `false` keeps showing the old product when only `:slug` changes. Requests that carry no decisions (no-JS, progressive enhancement, prefetch, document loads) use the server defaults. A decision can only make the client's own view staler or fresher. It never skips middleware.
+
+### `ssr: false`
+
+By default every loader streams, so nothing a slow loader produces is guaranteed to be in the server-rendered HTML: its data, its handle pushes, or the 404 status from a thrown `notFound()`. `loader(Def, { ssr: false })` makes document renders wait for that loader before the first flush. Client navigations still stream it. The option applies to one loader, and unflagged siblings keep streaming behind their boundaries.
+
+- A flagged loader must not `await ctx.rendered()` or read handles with `ctx.get()`. The document render waits for the loader before the render barrier resolves, so the two would wait on each other, and the router throws a deadlock error.
+- Intercept loaders reject the option, because intercepts only render on client navigations.
+- Every document load pays the flagged loader's latency before the first byte. Keep flagged loaders fast.
+
+### Shell caching with `ppr`
+
+A group route with the `ppr` path option caches its shell the same way a server [PPR](/docs/rango/guides/ppr) route does. When the shell is captured, a loader flagged `ssr: false` is baked into the shell: it runs, and its settled return value is frozen into the stored shell (promises nested in the return value still load live). Every other loader stays live. It doesn't run during capture, so its read needs a boundary above it, either `loading()` or an inline `<Suspense>`. If a live read has no boundary, the capture refuses to store the shell. A route whose loaders are all flagged needs no `loading()`. The search string is part of the shell's identity, so each query string gets its own shell.
+
+### Fetchable loaders
+
+Route loaders in a group don't need to be fetchable, but the on-demand hooks do. `useFetchLoader()` and `useRefreshLoaders()` call the loader through the fetch endpoint, which requires `createLoader(fn, true)` or `createLoader(fn, { middleware })`. Both hooks work unchanged inside a group, and neither consults `revalidate()` predicates. A fetch runs global middleware and the loader's own middleware, but never the route middleware around the mount. A protected fetchable loader therefore needs its own guard:
+
+```ts
+import { createLoader } from "@rangojs/router";
+import { requireAdmin } from "./auth.js";
+import { searchOrders } from "./db.js";
+
+export const OrderSearchLoader = createLoader(
+  async (ctx) => searchOrders(ctx.params.query ?? ""),
+  { middleware: [requireAdmin] },
+);
+```
+
+## Navigation and hooks inside a group
+
+### The optimistic window
+
+Optimistic rendering applies to soft navigations that start on a route of a mounted group and go to a different route of the same group. Navigations into the group from elsewhere, and out of it, run as ordinary navigations. Between the click and the commit:
+
+- `useOutlet().pending` is `true` in the group's layouts. It is also `true` for param or search changes that stay on the same route, where it is the only progress signal because the previous content stays on screen. It clears when the navigation commits, fails, redirects, is cancelled, or is replaced by a newer one. It is `false` during SSR and before hydration. It doesn't cover prefetches, generic Suspense, server routes, or unrelated actions. Use `useNavigation()` or `useLinkStatus()` for those.
+- `useParams()`, `usePathname()`, and `useSearchParams()` inside the group return the destination's values. Outside the group, in server layout chrome for example, they keep the current location until the commit. If the server redirects or errors, the optimistic render and its values are discarded.
+- The destination component stays mounted when the response commits, so state the user enters during the window survives.
+- A component that reads `useNavigation()` or `useLinkStatus()` inside content that gets swapped (a destination with `loading()`) unmounts at the click. Put status readers in layout chrome outside the swapped content.
+
+### Links and paths
+
+`usePathname()` returns the full path, including the mount. Don't compare it with the group's local patterns. `useMount()` returns the mount path (`/catalog`), and the function returned by `useHref()` adds the mount to a local path: `href("/products/espresso")` gives `/catalog/products/espresso`. Hand-written absolute `to` values also work, but they hardcode the mount.
+
+For links by route name, use `useReverse()` with the per-module route map. The `rango generate` CLI writes a sibling `.gen.ts` for a default-exported `clientUrls()` module, the same way it does for `urls()` modules. The Vite plugin never writes this file. Run the CLI again whenever the group's `path()` shape changes, and commit the output.
+
+```bash
+npx rango generate src/catalog/catalog.client-urls.tsx
+# writes src/catalog/catalog.client-urls.gen.ts
+```
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes } from "./catalog.client-urls.gen.js";
+
+export function CatalogNav() {
+  const reverse = useReverse(routes);
+  return (
+    <nav>
+      <Link to={reverse("index")}>All products</Link>
+      <Link to={reverse("product", { productId: "espresso" })}>
+        Espresso machine
+      </Link>
+    </nav>
+  );
+}
+```
+
+`reverse()` resolves names against the current mount and fills missing params from the current route. `reverse("index")` gives `/catalog`. Group route names stay local unless the `include()` itself is named. An unnamed include keeps them out of the global route map.
+
+`useRouter()` also knows about the mount. A relative path (no leading slash) resolves against the mount, and an absolute path is never prefixed:
+
+```tsx
+"use client";
+import { useRouter } from "@rangojs/router/client";
+
+export function OpenEspresso() {
+  const router = useRouter();
+  return (
+    <button onClick={() => router.push("products/espresso")}>
+      Open espresso machine
+    </button>
+  );
+}
+// Inside include("/catalog"): navigates to /catalog/products/espresso.
+// router.push("/account") goes to /account.
+```
+
+`refresh()`, `back()`, and `forward()` don't depend on the mount.
+
+A few client APIs don't apply inside a group. `ParallelOutlet` has no slots to render, and `useSegments()` sees the whole group as one server segment. Render `ScrollRestoration` once in the root layout, not in a group. `MetaTags` and `Scripts` belong in the document head. `useHandle()` only reads inside a group, because handle writes come from loaders.
+
+## Security boundary
+
+The optimistic render (the destination component, its group layouts, and its `loading()` UI) can appear before any middleware has run for that navigation. It has no loader data, since every `useLoader()` read suspends, so it can't reveal protected data. It does reveal the destination's layout and static content. Also, group components are client code: all of their source ships in the browser bundle.
+
+- **Keep protected data behind loaders.** Don't put protected data or sensitive route state in a group component outside a loader read.
+- **Authorize in server code.** Middleware around the mount runs on every navigation's server request, including a tab switch whose loaders all hold, so it re-checks each navigation. The outer server layout's handler does not re-run on navigations inside the group. For request data that must refresh on each navigation, use middleware `ctx.set()`, not the layout body. Loaders check what they return. Route middleware doesn't wrap server actions, so authorize inside the action. Fetchable loaders use their own `middleware` option.
+- **If the layout itself is sensitive, use a server route.** A group has no per-route opt-out. A route that must not render before authorization belongs in `urls()`:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import adminClientUrls from "./admin/admin.client-urls.js";
+import { AdminRscLayout } from "./admin/admin-layout.js";
+import { AuditLogPage } from "./admin/audit-log.js";
+import { requireAdmin } from "./auth.js";
+
+export const urlpatterns = urls(({ include, layout, middleware, path }) => [
+  layout(<AdminRscLayout />, () => [
+    middleware(requireAdmin),
+    // Server route: nothing renders until requireAdmin has run.
+    path("/admin/audit-log", AuditLogPage, { name: "auditLog" }),
+    include("/admin", adminClientUrls, { name: "admin" }),
+  ]),
+]);
+```
+
+A navigation from a group page to `/admin/audit-log` doesn't match any group route, so nothing renders optimistically. The page appears only after the server response, with `requireAdmin` already run.
+
+<Cards>
+  <Card href="/docs/rango/features/routing" title="Routing">
+    The `urls()` tree that client groups mount into.
+  </Card>
+  <Card href="/docs/rango/features/loaders" title="Loaders">
+    Streaming, fetchable loaders, and handle writes.
+  </Card>
+  <Card
+    href="/docs/rango/guides/intercepting-routes"
+    title="Intercepting Routes"
+  >
+    The full server `intercept()` with `when` and middleware.
+  </Card>
+  <Card href="/docs/rango/features/navigation" title="Navigation">
+    Links, prefetch, and programmatic navigation.
+  </Card>
+</Cards>

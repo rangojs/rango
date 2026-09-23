@@ -450,11 +450,11 @@ the data subset of `TransitionConfig`: ViewTransition classes
 server-executed predicate and is rejected — declare it with a server-tree
 `transition()` wrapping the include. Materialization re-emits the config in
 the standard child position, so the canonical commit gets the transition
-hold — its remaining delta over the same-route default above is PARAM navs:
-the config drops the param from the segment key, so `/items/one → /items/two`
-reconciles and holds instead of remounting into its skeleton (pinned dev+prod
-in `e2e/client-urls.test.ts` against a transition-less twin) — and, on
-React 19.3+, the router's ViewTransition boundary with those classes.
+config — on React 19.3+, the router's ViewTransition boundary with those
+classes. It does not change whether a param nav holds: group segments are
+keyed by the group, so `/items/one → /items/two` reconciles and holds with or
+without `transition()` (pinned dev+prod in `e2e/client-urls.test.ts`, where
+the transition-less twin holds too).
 `startTransition` itself needs no opt-in here: the local presentation already
 wraps its swaps, and the canonical commit is transition-driven once the
 config is present.

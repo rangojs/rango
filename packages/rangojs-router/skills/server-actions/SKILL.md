@@ -52,9 +52,15 @@ export const urlpatterns = urls(({ path, loader, revalidate }) => [
   // The loader belongs to the route that consumes its data — nest it inside
   // the owning path() so the segment owns its data dependency.
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    // The route and its loaders re-run after every action by default. Narrow
+    // both to cart actions; on navigation, undefined keeps the default.
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
   ]),
 ]);
@@ -103,11 +109,13 @@ import { ChangedTenant } from "./context";
 
 export const urlpatterns = urls(({ path, revalidate }) => [
   path("/dashboard/:tenantId", DashboardPage, { name: "dashboard" }, () => [
+    // The route re-runs after every action by default. Narrow it: after an
+    // action, re-run only when a tenant action changed this tenant.
     revalidate((ctx) => {
-      if (!ctx.isAction(TenantActions)) return undefined;
+      if (!ctx.isAction()) return undefined; // navigation: keep the default
       return (
-        ctx.context.get(ChangedTenant) === ctx.context.params.tenantId ||
-        undefined
+        ctx.isAction(TenantActions) &&
+        ctx.context.get(ChangedTenant) === ctx.context.params.tenantId
       );
     }),
   ]),
@@ -401,9 +409,18 @@ re-render so the UI updates. Rango runs the action, then evaluates
 intercept, or loader rule decides whether that piece re-renders/re-resolves.
 
 Use `ctx.isAction()` for specific actions or modules. It accepts one action,
-several actions, or a namespace import (`import * as CartActions`). Pair it with
-`|| undefined` for "revalidate on match, otherwise defer to defaults/downstream
-rules."
+several actions, or a namespace import (`import * as CartActions`). Wrap it by
+what the segment's default already does:
+
+- **Add a signal** where the default skips (a parent layout or layout-level
+  parallel): `ctx.isAction(CartActions) || undefined` re-renders it after cart
+  actions and defers otherwise. On a loader or route segment it changes nothing.
+- **Narrow after actions** where the default re-runs (loaders, the route, and
+  segments inside the `path()`):
+  `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
+  actions and keeps the navigation default.
+- **Avoid bare `ctx.isAction(CartActions)`.** It is a hard `false` on navigation
+  too, so a loader stops refetching when params change.
 
 ```typescript
 // urls.tsx — inside the urls() callback. Nest each loader inside the path(),
@@ -418,18 +435,25 @@ urls(({ path, loader, revalidate }) => [
     loader(StaticHomepageLoader, () => [revalidate(() => false)]),
   ]),
 
-  // Re-render the cart page handler AND re-resolve its loader after cart actions
+  // Re-render the cart page handler AND re-resolve its loader only after cart
+  // actions (both re-run after every action by default)
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
   ]),
 
-  // Re-run after any action exported by the account actions module
+  // Re-run the loader only after actions exported by the account actions module
   path("/account", AccountPage, { name: "account" }, () => [
     loader(AccountLoader, () => [
-      revalidate((ctx) => ctx.isAction(AccountActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(AccountActions) : undefined,
+      ),
     ]),
   ]),
 ]);
@@ -438,7 +462,8 @@ urls(({ path, loader, revalidate }) => [
 The raw `actionId` string stays available for broad path filters:
 
 ```typescript
-// Match any action under src/actions/account/, including modules not imported here.
+// On a parent layout (skipped after actions by default): also re-render after
+// any action under src/actions/account/, including modules not imported here.
 revalidate(
   ({ actionId }) => actionId?.startsWith("src/actions/account/") || undefined,
 );
@@ -468,9 +493,11 @@ const revalidateCart: Revalidate = (ctx) =>
 
 urls(({ path, layout, loader, revalidate }) => [
   layout(CartLayout, () => [
-    revalidate(revalidateCart), // producer reruns
+    revalidate(revalidateCart), // producer: re-renders after cart actions (skipped by default)
     path("/cart", CartPage, { name: "cart" }, () => [
-      loader(CartItemsLoader, () => [revalidate(revalidateCart)]), // consumer reruns
+      // consumer: loaders re-run after every action anyway; the shared
+      // contract names the dependency
+      loader(CartItemsLoader, () => [revalidate(revalidateCart)]),
     ]),
   ]),
 ]);

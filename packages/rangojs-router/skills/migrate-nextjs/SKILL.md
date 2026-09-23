@@ -130,7 +130,7 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export default createRouter({
+export const router = createRouter({
   document: Document,
 }).routes(urlpatterns);
 ```
@@ -533,7 +533,8 @@ re-rendering:
 ```typescript
 import { updateBlog } from "./actions/blog";
 
-// Re-run this layout when a blog action fires
+// Re-run this layout when a blog action fires (layouts above the route are
+// skipped after actions by default; undefined defers otherwise)
 layout(BlogLayout, () => [
   revalidate((ctx) => ctx.isAction(updateBlog) || undefined),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
@@ -757,7 +758,7 @@ Server actions work the same way — `"use server"` directive, `useActionState`,
 
 Key difference: in Rango, route middleware does NOT wrap action execution. Actions only see global middleware context. Use `getRequestContext()` in actions to access `ctx.set()`/`ctx.get()`.
 
-Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `cacheTag(...)`, then invalidate. **In a server action use `await updateTag(tag)`** — it is read-your-own-writes, so the action's own re-render sees fresh data; `revalidateTag(tag)` is a background (non-blocking) hard-purge and is NOT read-your-own-writes, so reserve it for route handlers / webhooks (calling it from an action can leave that action's re-render stale). `revalidatePath()` has no path-based equivalent — tag the route's entries instead. Separately, to force specific matched segments (path/layout/parallel/intercept) and their loaders to re-render after an action, attach a `revalidate((ctx) => ctx.isAction(updateBlog) || undefined)` rule to that segment or loader registration (match the imported action by reference, as in §3). See `/server-actions` for the full pattern (validation, error handling, file uploads), `/caching` for tag invalidation, and `/loader` for revalidation rule semantics.
+Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `cacheTag(...)`, then invalidate. **In a server action use `await updateTag(tag)`** — it is read-your-own-writes, so the action's own re-render sees fresh data; `revalidateTag(tag)` is a background (non-blocking) hard-purge and is NOT read-your-own-writes, so reserve it for route handlers / webhooks (calling it from an action can leave that action's re-render stale). `revalidatePath()` has no path-based equivalent — tag the route's entries instead. Separately, the route, the segments inside its `path()`, and all loaders already re-run after every action; layouts and parallels above the route are skipped. To re-render one of those skipped segments after an action, attach `revalidate((ctx) => ctx.isAction(updateBlog) || undefined)` to it; to narrow a loader or route segment to one action, use `revalidate((ctx) => (ctx.isAction() ? ctx.isAction(updateBlog) : undefined))` (match the imported action by reference, as in §3). See `/server-actions` for the full pattern (validation, error handling, file uploads), `/caching` for tag invalidation, and `/loader` for revalidation rule semantics.
 
 ## 8. Metadata / Head
 

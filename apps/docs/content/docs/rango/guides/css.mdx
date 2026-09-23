@@ -4,7 +4,7 @@ description: Import stylesheets in the Document head with ?url and a precedence-
 type: guide
 ---
 
-You need your app's global stylesheet applied before the first paint, in dev and production alike. In Rango, document-level CSS lives in the Document `<head>`, loaded with Vite's `?url` import and a `precedence`-managed `<link rel="stylesheet">`. This page explains the pattern and why it's shaped this way; the [Tailwind guide](/docs/rango/guides/tailwind) is the concrete setup for Tailwind v4.
+You need your app's global stylesheet applied before the first paint, in dev and production alike. The rule: document-level CSS lives in the Document `<head>`, loaded with Vite's `?url` import and a `precedence`-managed `<link rel="stylesheet">`. This page explains the pattern, when a side-effect `import "./x.css"` is fine, and how CSS behaves across host-router apps. The [Tailwind guide](/docs/rango/guides/tailwind) is the concrete setup for Tailwind v4.
 
 ## The pattern
 
@@ -61,7 +61,7 @@ For **document-level** CSS, prefer the explicit `?url` + `<link precedence>` for
 
 If you're mounting multiple apps under one [host router](/docs/rango/guides/host-router), you do **not** need to coordinate CSS across apps. A client-side navigation that crosses an app boundary is a **full document load** — the server returns `X-RSC-Reload` on an app switch — so the target app's entire document (its stylesheets, theme, meta) is re-established by the target app's own load. Each app owns its document; how one app renders a stylesheet has no effect on another.
 
-Some scar tissue on why this is a hard boundary: an earlier design did a soft cross-app swap. Under it, a stylesheet shared across apps by `href` — classically every app's `@import "tailwindcss"` compiling to one hashed asset — could be silently dropped by React's by-`href` resource dedup when the apps disagreed on `precedence` (one unmanaged, one managed). The full reload removes that footgun entirely, which is the main reason cross-app navigation is a full document load.
+In particular, apps may disagree on `precedence` for a stylesheet they share by `href` — for example every app's `@import "tailwindcss"` compiling to one hashed asset — without React's by-`href` dedup dropping it.
 
 ## Pitfalls
 

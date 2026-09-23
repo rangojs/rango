@@ -25,6 +25,7 @@ By the end of part 3 the project looks like this; the later parts add loaders, a
 ```
 brew/
 ├── package.json
+├── tsconfig.json
 ├── vite.config.ts
 ├── wrangler.json
 └── src/
@@ -33,6 +34,7 @@ brew/
     ├── document.tsx      # the <html> shell
     ├── worker.ts         # Cloudflare Worker entry
     ├── data.ts           # the hardcoded catalog
+    ├── *.gen.ts          # generated route types (committed)
     ├── pages/
     │   ├── home.tsx
     │   ├── shop.tsx
@@ -45,7 +47,7 @@ brew/
 
 ## Prerequisites
 
-- **Node 20+**
+- **Node 24 or newer**
 - **pnpm**
 - **A Cloudflare account** — only for the deploy at the very end of part 6. Everything before that runs locally.
 
@@ -93,7 +95,7 @@ Each part starts where the previous one left off and ends with something you can
 
 ## How to read this tutorial
 
-When a file changes, the part shows its full new contents — you can copy each snippet over the previous version rather than patching lines. Each part opens with a one-line recap of where the app stands, so if you step away you can pick up where you left off.
+When a file changes, the part shows its full new contents, so you can copy each snippet over the previous version rather than patching lines. Each part opens with a one-line recap of where the app stands, so if you step away you can pick up where you left off.
 
 If you'd rather see the API surface reference-style first, start with [Getting Started](/docs/rango/getting-started) and come back; the tutorial doesn't assume you've read it.
 

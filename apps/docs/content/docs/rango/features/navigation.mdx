@@ -4,20 +4,41 @@ description: Fully-prefetched navigations commit instantly — and turning prefe
 type: guide
 ---
 
-A fully-prefetched navigation commits with no loading flash: if the prefetch stream drained and decoded cleanly, the router renders the resolved payload synchronously instead of suspending into skeletons.
+Client navigation in Rango is a partial update: the router fetches only the segments that change and merges them into what's on screen. This page covers prefetching, how the client caches are invalidated, and connection warmup.
+
+A fully-prefetched navigation commits with no loading flash: if the prefetch stream drained and decoded cleanly, the router renders the resolved payload synchronously instead of suspending into skeletons. A click on a link whose prefetch is still in flight adopts that request instead of starting a second one.
 
 ```tsx
-<Link to={href("/shop/:slug", { slug })} prefetch="viewport">
+"use client";
+import { href, Link } from "@rangojs/router/client";
+
+<Link to={href(`/shop/${slug}`)} prefetch="viewport">
   {name}
-</Link>
+</Link>;
 ```
+
+## Prefetch strategies
+
+`<Link prefetch>` takes one of five strategies:
+
+| Strategy     | When it prefetches                                         |
+| ------------ | ---------------------------------------------------------- |
+| `"hover"`    | On mouse enter                                             |
+| `"viewport"` | When the link enters the viewport (queued, waits for idle) |
+| `"render"`   | When the link mounts, whether visible or not (queued)      |
+| `"adaptive"` | Hover on pointer devices, viewport on touch devices        |
+| `"none"`     | Never                                                      |
+
+Links without a `prefetch` prop use the router's `defaultPrefetch`, which is `"none"` in development and `"viewport"` in production. Set it with `createRouter({ defaultPrefetch })`; `prefetchCacheTTL`, `prefetchCacheSize`, and `prefetchConcurrency` tune the client prefetch cache ([reference](/docs/rango/reference/create-router#defaultprefetch)). To opt a whole section of the page out, put `data-prefetch-scope="none"` on its container.
 
 ## Why aggressive prefetch is safe
 
 Aggressive client caching is only as good as its invalidation, and that is where client routers usually lose user trust. Rango's client cache is invalidated automatically and coherently:
 
-- **Every server action invalidates by default.** History entries are marked stale (back/forward still paints instantly, then revalidates in the background), the prefetch cache flushes, and a rotating `X-Rango-State` value — sent on every prefetch and keyed into the browser HTTP cache via `Vary` — strands every HTTP-cached payload from before the mutation.
-- **Sibling tabs are notified.** The state cookie itself is the cross-tab sync channel, so a mutation in one tab cannot serve pre-mutation data in another.
+- **Every server action invalidates by default.** Once the action's response arrives — even if the action threw — history entries are marked stale (back/forward still paints instantly, then revalidates in the background), the prefetch cache flushes, and a rotating `X-Rango-State` value — sent on prefetch and navigation requests and keyed into the browser HTTP cache via `Vary` — strands every HTTP-cached payload from before the mutation.
+- **Sibling tabs are notified.** The state value lives in a session cookie shared by every tab, and the stale-marking is broadcast to other open tabs, so a mutation in one tab cannot serve pre-mutation data in another.
+
+For a mutation the router can't see — a REST call, a WebSocket push — call `invalidateClientCache()` to trigger the same invalidation ([Hooks](/docs/rango/reference/hooks#invalidateclientcache)).
 
 <TwoTabsDemo />
 
@@ -26,8 +47,11 @@ Aggressive client caching is only as good as its invalidation, and that is where
 An action that turns out to be a no-op keeps the caches warm by saying so:
 
 ```ts
+// actions/cart.ts
+"use server";
+import { keepClientCache } from "@rangojs/router";
+
 export async function addToCart(productId: string) {
-  "use server";
   const result = await tryAddToCart(productId);
   if (!result.ok) {
     keepClientCache(); // this invocation mutated nothing — keep prefetches
@@ -36,7 +60,7 @@ export async function addToCart(productId: string) {
 }
 ```
 
-Forget the call and you merely lose warmth — the default invalidation covers you. Every failure direction in this subsystem points toward freshness, never toward staleness.
+`keepClientCache()` is decided per call, not per action. It skips the stale-marking, the prefetch flush, the state rotation, and the cross-tab broadcast for this invocation only; the action's own response still carries the revalidation render your `revalidate()` rules select. Forget the call and you merely lose warmth — the default invalidation covers you. Every failure direction in this subsystem points toward freshness, never toward staleness. See [Server Actions](/docs/rango/guides/server-actions#client-cache-after-an-action).
 
 ## Connection warmup
 
@@ -44,4 +68,4 @@ Enabled by default. After 60 seconds without interaction the connection is marke
 
 ## JS and no-JS are the same contract
 
-A form POST without JavaScript and the same action with it must produce matching middleware effects, cookies, and rendered state. Divergence is classified as a bug, not a caveat — the guarantee is pinned by the router's semantic matrix suite in both dev and production.
+A form POST without JavaScript and the same action with it must produce matching middleware effects, cookies, and rendered state. Divergence is classified as a bug, not a caveat — the guarantee is pinned by the router's semantic matrix suite in both dev and production. [Progressive Enhancement](/docs/rango/concepts/progressive-enhancement) explains why the two transports agree.

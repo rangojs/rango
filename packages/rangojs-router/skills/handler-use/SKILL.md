@@ -313,7 +313,11 @@ import * as CatalogActions from "./actions/catalog";
 export const CategoriesLoader = createLoader(async () => fetchCategories());
 CategoriesLoader.use = () => [
   cache({ ttl: 300 }),
-  revalidate((ctx) => ctx.isAction(CatalogActions) || undefined),
+  // Loaders re-run after every action by default. Re-run this one only for
+  // catalog actions; on navigation, undefined keeps the default.
+  revalidate((ctx) =>
+    ctx.isAction() ? ctx.isAction(CatalogActions) : undefined,
+  ),
 ];
 
 // Mount sites get the cache + revalidation defaults with no extra wiring.

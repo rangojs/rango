@@ -737,7 +737,10 @@ export const urlpatterns = urls(({ path, layout, cache, loader, revalidate }) =>
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [cache({ ttl: 120 })]),
       loader(CartLoader, () => [
-        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+        // after an action, re-run only for cart actions; on navigation, keep the default
+        revalidate((ctx) =>
+          ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+        ),
       ]),
     ]),
   ]),

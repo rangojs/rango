@@ -4,7 +4,7 @@ description: Load web fonts with preload hints — Fontsource, Google Fonts, or 
 type: guide
 ---
 
-You need a custom font that loads fast and doesn't flash or swap after first paint. In Rango, fonts are declared in the Document component's `<head>` alongside your stylesheet — this guide covers the three ways to get them there, fastest path first.
+You need a custom font that loads fast and doesn't flash or swap after first paint. This guide covers three ways to load one, recommended path first: Fontsource packages bundled by Vite, Google Fonts, and self-hosted files. The first needs only a CSS import; the other two add links to the Document `<head>` next to your stylesheet, which follows the `?url` + `precedence` pattern from the [CSS guide](/docs/rango/guides/css).
 
 ## The recommended path: Fontsource
 
@@ -37,7 +37,7 @@ With Tailwind:
 }
 ```
 
-That's it — no changes to your Document. Why this wins over Google Fonts with Vite:
+That's it — no font links in the Document; the font ships with the stylesheet you already link there. Why this wins over Google Fonts with Vite:
 
 - No external network requests at runtime — fonts are bundled into your build output.
 - No `<link rel="preconnect">` or extra stylesheet needed in the Document.
@@ -71,15 +71,16 @@ export function Document({ children }: { children: ReactNode }) {
           crossOrigin="anonymous"
         />
 
-        {/* Load font stylesheet */}
+        {/* Font stylesheet first, so app styles can override it */}
         <link
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
           rel="stylesheet"
+          precedence="default"
         />
 
         {/* App styles */}
         <link rel="preload" href={styles} as="style" />
-        <link rel="stylesheet" href={styles} />
+        <link rel="stylesheet" href={styles} precedence="default" />
         <MetaTags />
       </head>
       <body>{children}</body>
@@ -101,6 +102,8 @@ Or in a Tailwind theme (see the [Tailwind guide](/docs/rango/guides/tailwind)):
 
 ```css
 /* src/index.css */
+@import "tailwindcss";
+
 @theme {
   --font-sans: "Inter", sans-serif;
 }
@@ -133,7 +136,7 @@ body {
 }
 ```
 
-Then preload the most critical weight in the Document — usually regular 400 — so the browser fetches it before it even parses the CSS:
+Then preload the most critical weight in the Document — usually regular 400 — so the browser fetches it before it even parses the CSS. The imports are the same as in the Google Fonts example. Font preloads need `crossOrigin` even for same-origin files, or the browser fetches the font twice:
 
 ```tsx
 export function Document({ children }: { children: ReactNode }) {
@@ -148,7 +151,7 @@ export function Document({ children }: { children: ReactNode }) {
           crossOrigin="anonymous"
         />
         <link rel="preload" href={styles} as="style" />
-        <link rel="stylesheet" href={styles} />
+        <link rel="stylesheet" href={styles} precedence="default" />
         <MetaTags />
       </head>
       <body>{children}</body>

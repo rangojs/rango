@@ -237,25 +237,29 @@ its own deps) or plugin `virtual:` modules that need the rango plugin. For
 whole-router `dispatch` / drift checks, build from a focused include (e.g. your
 API routes), or run them at e2e.
 
-#### Quickstart: dispatch / drift-check your real routes
+#### Quickstart: dispatch your real routes
 
-The fastest reliable whole-app test does **not** import your `router.tsx`. Build
+The fastest reliable route test does **not** import your `router.tsx`. Build
 a router from a focused, importable include — typically your response/API routes,
 which pull no plugin `virtual:` page deps — then `dispatch` real requests through
-it and assert the generated route map has not drifted:
+it:
 
 ```ts
 import { createRouter } from "@rangojs/router";
-import { dispatch, assertGeneratedRoutesMatch } from "@rangojs/router/testing";
-import { NamedRoutes } from "../src/router.named-routes.gen";
+import { dispatch } from "@rangojs/router/testing";
 import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no page imports
 
 const router = createRouter().routes(apiPatterns);
 
 const res = await dispatch(router, { request: "/health" }); // real matching + middleware
 expect(res.status).toBe(200);
-await assertGeneratedRoutesMatch(router, NamedRoutes); // drift check (async)
 ```
+
+Keep the generated-route drift check separate. `assertGeneratedRoutesMatch`
+diffs the router you pass against the map you pass, so a focused router checked
+against the full `NamedRoutes` reports every route outside the include as
+missing. Run it against the whole router (see the drift test in the
+`/testing` skill's `reverse-and-types.md`), or at e2e.
 
 A router whose tree uses `Prerender()` / `Static()` / `createLoader()` /
 `createHandle()` **constructs fine** here (each falls back to a runtime `$$id`
@@ -1202,7 +1206,7 @@ parityDescribe("product page caches", (f) => {
 });
 ```
 
-Statuses: `hit | miss | stale | prerendered | passthrough`. v1 is COARSE
+Statuses: `hit | miss | stale | prerendered`. (`passthrough` is in the type union but never emitted: a passthrough route renders fresh and reports `miss`, `src/router/telemetry.ts` `deriveCacheStatus`.) v1 is COARSE
 (route-level, keyed by the route key — the route NAME, e.g. `product.detail`, NOT
 the URL pattern), not per-individual-segment. `parseCacheHeader` exposes the raw
 `{ routeKey: status }` map if you need it.
@@ -1349,7 +1353,7 @@ rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-disco
 
 // Cache / prerender
 assertCacheStatus(target: Response | { headers }, segment: string,
-  expected: "hit"|"miss"|"stale"|"prerendered"|"passthrough"): void; // needs the debug gate on
+  expected: "hit"|"miss"|"stale"|"prerendered"): void; // needs the debug gate on
 parseCacheHeader(value): Record<string, string>;
 createCacheSink(): { sink, events };   // wire via createRouter({ telemetry: sink })
 assertCacheDecision(events, routeKey: string, expected: same union): void; // telemetry counterpart of assertCacheStatus, zero prod surface

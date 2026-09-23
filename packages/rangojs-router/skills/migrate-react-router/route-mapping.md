@@ -38,7 +38,7 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export default createRouter({
+export const router = createRouter({
   document: Document,
 }).routes(urlpatterns);
 ```

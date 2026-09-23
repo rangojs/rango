@@ -4,7 +4,23 @@ description: Your API lives in the same tree — JSON, text, XML, images, and st
 type: guide
 ---
 
-Response routes are ordinary tree entries — `path.json()`, `path.text()`, `path.xml()`, `path.image()`, `path.stream()` — not a parallel routing system. That buys two things most React frameworks don't have.
+Response routes are ordinary tree entries that skip the RSC pipeline and return a `Response` — not a parallel routing system. There are eight tags: `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.md()`, `path.image()`, `path.stream()`, and `path.any()`. Each takes `(pattern, handler, options?, use?)` like `path()`. The string tags (`json`, `text`, `html`, `xml`, `md`) wrap the handler's return value in a response with the right content type; `image`, `stream`, and `any` expect the handler to return a `Response` itself.
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path.json("/api/status", () => ({ status: "ok" }), { name: "status" }),
+  path.text("/robots.txt", () => "User-agent: *\nAllow: /\n", {
+    name: "robots",
+  }),
+]);
+```
+
+The only use items a response route accepts are `middleware()` and `cache()` — no `loader`, `loading`, `layout`, or `parallel`. The handler gets a lighter context: params, env, the request, `ctx.reverse` (global names only), `ctx.get` for middleware variables, and `ctx.header()` for response headers. Client navigation to a response route becomes a hard navigation.
+
+That design buys two things most React frameworks don't have.
 
 ## Content negotiation out of the box
 
@@ -19,24 +35,30 @@ path.json("/products/:id", (ctx) => db.getProduct(ctx.params.id), {
 }),
 ```
 
-Handlers return bare values; errors serialize as RFC 9457 `application/problem+json`. External consumers get a clean, standard wire with no client library required.
+Higher `q` values win, then the client's order; `*/*` or a missing `Accept` falls back to the first-defined variant, and every negotiated response carries `Vary: Accept`. The full rules are in [MIME Routes](/docs/rango/guides/mime-routes).
+
+`path.json()` handlers return bare values, serialized with no envelope; a thrown error becomes an RFC 9457 `application/problem+json` body (throw `RouterError` to choose the status and code). The other string tags answer errors with `text/plain`. External consumers get a clean, standard wire with no client library required.
 
 ## Inferred endpoint types
 
 The payload type of every response route is inferred from its handler — no codegen, no schema duplication:
 
 ```ts
+import type { RouteResponse } from "@rangojs/router";
+
 type Product = RouteResponse<typeof urlpatterns, "productJson">;
 ```
 
-Internal TypeScript code can call your endpoints like functions — typed params, typed payload, typed `ProblemDetails` errors — while the same endpoints stay plain HTTP for everyone else. RPC ergonomics without an RPC protocol.
+`RouteResponse` is the JSON wire shape (a handler returning a `Date` field resolves to `string`) and needs no global setup. The ambient `Rango.PathResponse<"/products/:id">` looks the payload up by path instead, and resolves only once `Rango.RegisteredRoutes` is wired ([Type Safety](/docs/rango/concepts/typesafety#response-payloads-rangopathresponse)).
+
+Internal TypeScript code can call your endpoints like functions — typed params, typed payload, typed `ProblemDetails` errors — while the same endpoints stay plain HTTP for everyone else. [API Client](/docs/rango/guides/api-client) has a copy-paste typed client built on these types.
 
 ## Streams and sockets
 
-`path.stream()` serves server-sent events; `path.any()` handles WebSocket upgrades. Both are tree entries like everything else — named, reversible, and guarded by the same middleware chain as your pages.
+`path.stream()` serves server-sent events; `path.any()` handles WebSocket upgrades (and any other hand-built `Response`). Both are tree entries like everything else — named, reversible, and guarded by the same middleware chain as your pages. See [Streams & WebSockets](/docs/rango/guides/streams-and-websockets).
 
 ## Why this beats an /api directory
 
 - **One URL space.** The product page and the product API are two lines apart in the tree, not two directory hierarchies apart in the repo.
-- **One middleware chain.** Auth on `/products/*` covers the page and the JSON endpoint in one place.
+- **One middleware chain.** A `router.use("/products/*", auth)` covers the page and the JSON endpoint in one place.
 - **One naming scheme.** `ctx.reverse("productJson", { id })` builds API URLs with the same rename safety as page URLs.

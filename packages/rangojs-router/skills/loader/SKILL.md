@@ -286,10 +286,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
     revalidate(() => false), // Never revalidate
   ]),
 
-  // Loader that revalidates after cart actions (defer otherwise — keeps the
-  // permissive loader defaults for navigation and other actions intact)
+  // Loader that re-runs only after cart actions. Loaders re-run after every
+  // action by default; on navigation, `undefined` keeps the default
+  // (re-run when params or search change).
   loader(CartLoader, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
   ]),
 ]);
 ```
@@ -362,18 +365,28 @@ revalidate(({ actionId }) => actionId?.includes("Cart") || undefined);
 revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
 ```
 
-This matters most for loaders, whose defaults are permissive: every loader
-revalidates on **any** action (`POST`), and a route-owned loader also
-revalidates on **param/search changes** during navigation. So `?? false` on a
-loader silently suppresses both — the loader will not refetch when you navigate
-to a different `:id`. Use
-`|| undefined` when you want to _add_ a revalidation signal on top of the
-sensible defaults, and reserve `?? false` for the rare case where you genuinely
-want the loader to refetch on nothing but your matched action.
+Pick the idiom by what the segment's default already does (table above). After
+an action, loaders, the route, and segments inside the `path()` already re-run;
+layouts and parallels above the route are skipped:
 
-When **composing multiple revalidators** on one segment (see below), defer is
-mandatory: the first hard `?? false` ends the chain and the later contracts
-never run.
+- **Add a signal where the default skips.** `ctx.isAction(X) || undefined` on a
+  parent layout or a layout-level parallel re-renders it after `X` and defers
+  otherwise. On a loader, the route, or a segment inside the `path()` it
+  changes nothing: they already re-run after every action, and on navigation it
+  defers.
+- **Narrow after actions where the default re-runs.**
+  `ctx.isAction() ? ctx.isAction(X) : undefined` re-runs a loader or route
+  segment only for `X`'s actions and keeps the navigation default (params or
+  search changed). After an action it is a hard decision, so later revalidators
+  on the same segment do not run for actions.
+- **Avoid bare `ctx.isAction(X)` (and `?? false`).** It returns a hard `false`
+  on navigation too, so a loader stops refetching when you navigate to a
+  different `:id`. Reserve it for the rare case where the segment should re-run
+  on nothing but the matched action.
+
+When **composing multiple revalidators** on one segment (see below), prefer the
+defer form: the first hard `false` ends the chain and the later contracts never
+run.
 
 #### Matching actions: `ctx.isAction()`
 
@@ -386,20 +399,25 @@ import { addToCart, removeFromCart } from "../actions/cart";
 import * as CartActions from "../actions/cart";
 
 loader(CartLoader, () => [
-  revalidate((ctx) => ctx.isAction(addToCart) || undefined), // one action
+  // After an action, re-run only for addToCart; on navigation, keep the default.
+  revalidate((ctx) => (ctx.isAction() ? ctx.isAction(addToCart) : undefined)),
 ]);
-revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
-revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
-revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
-revalidate((ctx) => ctx.isAction({ Cart: CartActions }) || undefined); // grouped namespaces
-revalidate((ctx) => ctx.isAction() || undefined); // no args: any action at all
+
+// Matcher forms (each returns a boolean):
+ctx.isAction(addToCart); // one action
+ctx.isAction(addToCart, removeFromCart); // several
+ctx.isAction(CartActions); // any action in the module
+ctx.isAction({ addToCart, removeFromCart }); // object form
+ctx.isAction({ Cart: CartActions }); // grouped namespaces
+ctx.isAction(); // no args: any action at all
 ```
 
 `isAction()` is a method on the revalidate predicate's **context argument** —
 there is no standalone `isAction` import; you always reach it through the callback
 parameter (`revalidate((ctx) => ctx.isAction(...))`). It returns a raw boolean, so
-pair it with `|| undefined` for the usual "revalidate on match, else defer"
-intent. It returns `false` on plain navigation and on non-matches; called with no
+wrap it by placement (the three cases above): the ternary on a loader or route
+segment, `|| undefined` on a layout or layout-level parallel the default skips.
+It returns `false` on plain navigation and on non-matches; called with no
 arguments it answers "is this request an action?". It resolves the reference with
 the same `$id ?? $$id` precedence the router uses to derive `actionId`, so it
 matches in both dev and production. The raw `actionId` string stays available on
@@ -424,10 +442,13 @@ export const revalidateAccountScope: Revalidate = (ctx) =>
 
 // urls.tsx
 layout(AccountLayout, () => [
-  revalidate(revalidateAccountScope), // producer reruns
+  // producer: adds the re-render the default skips for a parent layout
+  revalidate(revalidateAccountScope),
   path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
     loader(OrdersLoader, () => [
-      revalidate(revalidateAccountScope), // consumer reruns
+      // consumer: loaders re-run after every action anyway; the shared
+      // contract names the dependency
+      revalidate(revalidateAccountScope),
     ]),
   ]),
 ]);
@@ -840,10 +861,12 @@ The costs and constraints:
   that wait is a cycle by construction; it throws a deadlock error naming the
   fix.
 - PPR capture is the BAKE lane for flagged loaders (`/ppr`): the capture
-  render awaits them too, and the settled result — handle pushes included —
-  freezes into the stored shell. Unflagged loaders stay masked as live
-  holes. The `progressiveChunkSize` auto-raise is live-document only;
-  captured shells outline per the explicit option or React's default.
+  render awaits them too, and the settled result's non-promise data — handle
+  pushes included — freezes into the stored shell; promises nested in plain
+  objects/arrays of the result stay live holes. Unflagged loaders stay masked
+  as live holes and need a boundary (`loading()` or an inline `<Suspense>`).
+  The `progressiveChunkSize` auto-raise is live-document only; captured
+  shells outline per the explicit option or React's default.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.
@@ -1014,7 +1037,8 @@ import { CartLoader, ProductLoader } from "./loaders/shop";
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      // after an action, re-run only for cart actions; on navigation, keep the default
+      revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
     ]),
 
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [

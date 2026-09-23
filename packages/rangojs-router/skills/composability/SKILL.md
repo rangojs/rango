@@ -57,15 +57,12 @@ Define reusable factories that return arrays of use items:
 ```typescript
 // route-config.tsx
 import type { ReactNode } from "react";
-import { cache, revalidate, loading, errorBoundary, middleware } from "@rangojs/router";
+import { cache, loading, errorBoundary, middleware } from "@rangojs/router";
 import { authMiddleware, loggingMiddleware } from "./middleware";
 
 // Shared caching configuration
 export const withCaching = () => [
   cache({ ttl: 600 }), // seconds
-  // Defer on navigation (|| undefined) so each route keeps its own param/search
-  // revalidation default; force a re-run after any action.
-  revalidate((ctx) => ctx.isAction() || undefined),
 ];
 
 // Shared loading and error handling
@@ -134,13 +131,10 @@ Factories can be defined in shared modules and reused across separate `urls()` d
 
 ```typescript
 // src/route-config.ts
-import { cache, revalidate, middleware } from "@rangojs/router";
+import { cache, middleware } from "@rangojs/router";
 import { authMiddleware } from "./middleware/auth";
 
-export const withPublicDefaults = () => [
-  cache({ ttl: 300 }),
-  revalidate((ctx) => ctx.isAction() || undefined),
-];
+export const withPublicDefaults = () => [cache({ ttl: 300 })];
 
 export const withProtectedDefaults = () => [
   middleware(authMiddleware),
@@ -238,8 +232,10 @@ the same way, so a code-split group is still fully typed.
 ### Sizing async include groups (measured)
 
 The first request into an async group pays that group's chunk import; every
-request after that is flat. Measured on a deployed Cloudflare worker with
-26k routes (2026-07, warm RTT floor ~23 ms):
+request after that is flat. One cold, single-run measurement right after
+deploying a 26k-route app to Cloudflare Workers (2026-07, warm RTT floor
+~23 ms, see `tests/cloudflare-stress-demo/BENCHMARK-2026-07-04-edge-26k.md`).
+Treat the numbers as orders of magnitude:
 
 | Group size                 | First-hit latency                    |
 | -------------------------- | ------------------------------------ |

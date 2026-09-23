@@ -4,18 +4,20 @@ description: Every route carries a name, and URLs are built from names — never
 type: guide
 ---
 
-Every route carries a name, and URLs are built from names, never hand-assembled from strings:
+Every route carries a name, and URLs are built from names, never hand-assembled from strings. This page covers the URL-generation APIs on each side: `ctx.reverse()` on the server, and `useReverse()`, `href()`, and `useHref()` on the client.
 
 ```tsx
-// in a handler, action, or middleware — far from the tree
+import { redirect } from "@rangojs/router";
+
+// in a handler, loader, or middleware — far from the tree
 throw redirect(ctx.reverse("product", { slug: "espresso-cup" }));
 ```
 
-`ctx.reverse()` on the server and `useReverse()` on the client are compile-time checked against the generated route map: a misspelled name or a missing param is a type error, not a runtime 404. The payoff is rename safety — change `/shop/:slug` to `/store/:slug` in the one place it is defined, and every link, redirect, and prefetch in the codebase follows. There is no grep-for-the-old-URL migration, because no call site ever knew the URL.
+`ctx.reverse()` is compile-time checked against the generated route map, and `useReverse()` against the per-module map you import: a misspelled name or a missing param is a type error, not a runtime 404. The payoff is rename safety — change `/shop/:slug` to `/store/:slug` in the one place it is defined, and every link, redirect, and prefetch built from the name follows. There is no grep-for-the-old-URL migration, because no call site ever knew the URL. (Literal paths checked with `href()` are the exception: they don't follow a rename, but they stop compiling, so the build points you at each one.)
 
 ## Server: ctx.reverse()
 
-The default way to generate URLs on the server. Local names are dot-prefixed and resolve within the current `include()` scope; global names resolve against the full route map:
+The default way to generate URLs on the server. It's available on handler, layout, middleware, and loader contexts, and on `getRequestContext()` inside server actions. There is no standalone `reverse()` export. Local names are dot-prefixed and resolve within the current `include()` scope; global names resolve against the full route map. Results already include the router's `basename`:
 
 ```tsx
 // inside shopPatterns, mounted at include("/shop", shopPatterns, { name: "shop" })
@@ -31,6 +33,8 @@ path(
 );
 ```
 
+Which global names exist is decided at the include site: `include("/shop", shopPatterns, { name: "shop" })` exposes `shop.index`, `shop.product`, …; `{ name: "" }` flattens them into the parent namespace; omitting `name` keeps them private to the module, where dot-local names still work. A missing required param throws `Missing param`, and an unknown name throws `Unknown route`.
+
 When routes are mounted via a parameterized `include()`, mount params auto-fill from the current match — explicit params override:
 
 ```tsx
@@ -42,6 +46,8 @@ ctx.reverse(".settings", { tenantId: "other" }); // "/tenant/other/settings"
 Routes with a `search` schema take a typed search object as the third argument:
 
 ```tsx
+import { Link } from "@rangojs/router/client";
+
 path(
   "/search",
   (ctx) => {
@@ -53,9 +59,11 @@ path(
 );
 ```
 
+For typed local names on the server, `scopedReverse<typeof shopPatterns>(ctx.reverse)` from `@rangojs/router` wraps `ctx.reverse` with the module's route types. It's a type-only cast, so always call local names with the dot.
+
 ## Client: useReverse(routes)
 
-`ctx.reverse()` is server-only. When a client component needs to generate URLs itself, import the generated `routes` map from the relevant `urls()` module and pass it to `useReverse()`:
+`ctx.reverse()` is server-only. When a client component needs to generate URLs itself, import the generated `routes` map from the relevant `urls()` module's `.gen.ts` and pass it to `useReverse()`:
 
 ```tsx
 "use client";
@@ -73,29 +81,33 @@ export function BlogNav() {
 }
 ```
 
-The imported map is the exposure boundary: only that module's names enter the client bundle. Patterns are mount-relative and joined at runtime, so the same component works under any `include()` — mount the blog at `/news` and `/journal`, and `reverse("post", …)` produces the right URL under each.
+The imported map is the exposure boundary: only that module's names enter the client bundle. Patterns are mount-relative and joined at runtime, so the same component works under any `include()` — mount the blog at `/news` and `/journal`, and `reverse("post", …)` produces the right URL under each. Mount params (`:tenantId` in `include("/tenant/:tenantId", …)`) auto-fill from `useParams()`, and the leading dot is optional because the imported map is the scope.
+
+Per-module `.gen.ts` files come from the `rango generate` CLI (for example `rango generate src/urls`); the Vite plugin only rewrites the router-level `router.named-routes.gen.ts`. Commit the generated files and re-run the CLI when a module's `path()`/`include()` shape changes — see the [CLI reference](/docs/rango/reference/cli).
 
 The other client pattern is simpler: generate URLs on the server and hand strings to client components as props, loader data, or an action's return value.
 
 ## Static paths: href()
 
-For static paths where no named-route lookup is needed, `href()` validates the path at compile time against the registered route patterns:
+For static paths where no named-route lookup is needed, `href()` validates the path at compile time against the registered route patterns. It takes a literal path, not a name and params; dynamic segments go in a template string:
 
 ```tsx
 "use client";
 import { href, Link } from "@rangojs/router/client";
 
 <Link to={href("/about")}>About</Link>;
+<Link to={href(`/blog/${slug}`)}>Post</Link>;
 ```
 
-`useHref()` is the mount-aware variant — inside `include("/shop", …)`, `useHref()("/cart")` returns `/shop/cart`.
+`href()` is not basename-aware: `<Link>` and `useRouter().push()` prefix root-relative paths with the router's `basename`, but a plain `<a href>` or `fetch()` gets the raw path. `useHref()` is the mount-aware variant — inside `include("/shop", …)`, `useHref()("/cart")` returns `/shop/cart`. It doesn't substitute params, so under a parameterized mount use `useReverse(routes)` instead.
 
 ## When to use what
 
-| Context          | API                            | Use for                                          |
-| ---------------- | ------------------------------ | ------------------------------------------------ |
-| Server handler   | `ctx.reverse("name")`          | Default server-side URL generation               |
-| Client component | `useReverse(routes)`           | Typed in-module URLs without a server round-trip |
-| Client component | URL passed as prop/loader data | Cross-module URLs or one-off names               |
-| Client component | `href("/path")`                | Static paths, compile-time validated             |
-| Client component | `useHref()`                    | Local navigation inside an `include()` mount     |
+| Context          | API                             | Use for                                          |
+| ---------------- | ------------------------------- | ------------------------------------------------ |
+| Server handler   | `ctx.reverse("name")`           | Default server-side URL generation               |
+| Server handler   | `scopedReverse<T>(ctx.reverse)` | Type-checked local `.name` routes                |
+| Client component | `useReverse(routes)`            | Typed in-module URLs without a server round-trip |
+| Client component | URL passed as prop/loader data  | Cross-module URLs or one-off names               |
+| Client component | `href("/path")`                 | Static paths, compile-time validated             |
+| Client component | `useHref()`                     | Local navigation inside an `include()` mount     |

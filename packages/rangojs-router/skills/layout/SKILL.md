@@ -285,6 +285,10 @@ layout(<CartLayout />, () => [
 ]);
 ```
 
+On the layout the contract adds the re-render the default skips after an
+action. The route segment already re-runs after every action, so there it
+changes nothing by default; the shared name documents the dependency.
+
 If a segment depends on multiple upstream domains, compose multiple
 contracts (`revalidateAuthData`, `revalidateCartData`, and so on).
 
@@ -342,9 +346,12 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
     push({ label: "Shop", href: "/shop" });
     return <ShopLayout />;
   }, () => [
-    // Layout loaders
+    // Layout loaders: after an action, re-run only for cart actions;
+    // on navigation, undefined keeps the default
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
 
     // Parallel routes

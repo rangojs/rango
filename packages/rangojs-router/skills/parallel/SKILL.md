@@ -386,7 +386,8 @@ parallel(
   },
   () => [
     loader(CartLoader),
-    // Revalidate when cart actions occur
+    // Layout-level slot (kept after actions by default): also re-render after
+    // cart actions. Under a path() the slot re-renders after every action anyway.
     revalidate((ctx) => ctx.isAction(CartActions) || undefined),
   ]
 )

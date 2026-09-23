@@ -4,13 +4,11 @@ description: Stream per-product stock into the product page with createLoader, t
 type: tutorial
 ---
 
-Where we are: Brew serves three routes — home, the `/shop` grid, and `/shop/:slug` product pages — all rendered straight from the hardcoded `PRODUCTS` array in `src/data.ts`.
+**Where we are:** Brew serves three routes (home, the `/shop` grid, and `/shop/:slug` product pages) inside a shared shop layout, all rendered straight from the hardcoded `PRODUCTS` array in `src/data.ts`.
 
-That array is fine for names and prices, but a storefront also has data that changes between requests: stock levels, search results, soon a cart. In Rango that is the job of **loaders** — server functions that resolve fresh on every request and stream their results to the client. Loaders are the read side of the house; writes are server actions, which we get to in part 5.
+That array is fine for names and prices, but a storefront also has data that changes between requests: stock levels, search results, soon a cart. In Rango that is the job of **loaders**: server functions that resolve fresh on every request and stream their results to the client. Loaders are the read side of the app; writes are server actions, which arrive in part 5.
 
 ## The stock loader
-
-Create `src/loaders/stock.ts`:
 
 ```ts
 // src/loaders/stock.ts
@@ -20,7 +18,7 @@ import { PRODUCTS } from "../data";
 export const StockLoader = createLoader(async (ctx) => {
   // Stand-in for a warehouse query: derive a level from the hardcoded
   // data plus a wobble, so the tutorial runs without a database. The
-  // randomness is deliberate — it will prove a point in part 6.
+  // randomness is deliberate: it proves a point in part 6.
   const product = PRODUCTS.find((p) => p.slug === ctx.params.slug);
   if (!product) return { stock: 0 };
 
@@ -32,45 +30,7 @@ export const StockLoader = createLoader(async (ctx) => {
 });
 ```
 
-The handler receives the same context shape as a route handler: `ctx.params.slug` comes from the `/shop/:slug` pattern, and on a real deployment you would reach bindings through `ctx.env` (D1, KV) instead of an in-memory array.
-
-## Register it under the product route
-
-Loaders are attached in the route DSL with `loader()`. While we are here, add `loading()` too — it opts the route into skeleton-then-stream rendering:
-
-```tsx
-// src/urls.tsx — the shop group; home route unchanged
-import { StockLoader } from "./loaders/stock";
-import { ProductSkeleton } from "./pages/product";
-
-export const urlpatterns = urls(({ path, layout, loader, loading }) => [
-  path("/", HomePage, { name: "home" }),
-
-  layout(<ShopLayout />, () => [
-    path("/shop", ShopPage, { name: "shop" }),
-    path("/shop/:slug", ProductPage, { name: "product" }, () => [
-      loader(StockLoader),
-      loading(<ProductSkeleton />),
-    ]),
-  ]),
-]);
-```
-
-`ProductSkeleton` is a plain component — add it next to `ProductPage`:
-
-```tsx
-// src/pages/product.tsx — add alongside ProductPage
-export function ProductSkeleton() {
-  return (
-    <article aria-hidden className="skeleton">
-      <div className="skeleton-title" />
-      <div className="skeleton-line" />
-    </article>
-  );
-}
-```
-
-Loaders do not block the page. Every matched loader kicks off concurrently as the render pass begins, and each result streams to the client as its own chunk. With `loading()` in place, the shell paints immediately and the stock figure fills in 400ms later — reload a product page and watch the skeleton flash first.
+The loader receives a request context much like a route handler's: `ctx.params.slug` comes from the `/shop/:slug` pattern, and on a real deployment you would reach bindings through `ctx.env` (D1, KV) instead of an in-memory array. A loader isn't bound to one route, so its params are typed `string | undefined`.
 
 ## Read it in a client component
 
@@ -88,14 +48,79 @@ export function StockBadge() {
 }
 ```
 
-Render `<StockBadge />` anywhere inside `ProductPage`. Two rules to keep straight:
+Two rules to keep straight:
 
-- `useLoader()` is client-only — never call it in a server component.
-- The split matters: fetching stays on the server (the loader), consumption stays on the client (the badge). This is the recommended pattern, and it is what keeps loader data live when we wrap these routes in `cache()` in part 6. There is a server-side escape hatch, `ctx.use(StockLoader)`, for when a handler needs the data to make a decision — but rendering its result in a handler forfeits the live-data guarantee, so reach for it deliberately.
+- `useLoader()` is client-only. Never call it in a server component.
+- Fetching stays on the server (the loader) and consumption stays on the client (the badge). This is the recommended pattern, and it is what keeps loader data live when you wrap these routes in `cache()` in part 6. There is a server-side escape hatch, `ctx.use(StockLoader)`, for when a handler needs the data to make a decision, but rendering its result in a handler forfeits the live-data guarantee, so reach for it deliberately.
+
+## The product page
+
+Render the badge in `ProductPage`, and add a `ProductSkeleton` next to it. The skeleton is a plain component that stands in for the product while its data streams:
+
+```tsx
+// src/pages/product.tsx
+import { notFound } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+import { StockBadge } from "../components/stock-badge";
+import { PRODUCTS } from "../data";
+
+export const ProductPage: Handler<"product"> = (ctx) => {
+  const product = PRODUCTS.find((p) => p.slug === ctx.params.slug);
+  if (!product) notFound(`No product called "${ctx.params.slug}"`);
+
+  return (
+    <article>
+      <h1>{product.name}</h1>
+      <p>{product.description}</p>
+      <p>${product.price}</p>
+      <StockBadge />
+    </article>
+  );
+};
+
+export function ProductSkeleton() {
+  return (
+    <article aria-hidden className="skeleton">
+      <div className="skeleton-title" />
+      <div className="skeleton-line" />
+    </article>
+  );
+}
+```
+
+## Register the loader on the product route
+
+A component can only read a loader that the route tree registers. Attach it to the product route with `loader()`, and add `loading()` with the skeleton:
+
+```tsx
+// src/urls.tsx
+import { urls } from "@rangojs/router";
+import { ShopLayout } from "./layouts/shop-layout";
+import { StockLoader } from "./loaders/stock";
+import { HomePage } from "./pages/home";
+import { ProductPage, ProductSkeleton } from "./pages/product";
+import { ShopPage } from "./pages/shop";
+
+export const urlpatterns = urls(({ path, layout, loader, loading }) => [
+  path("/", HomePage, { name: "home" }),
+
+  layout(<ShopLayout />, () => [
+    path("/shop", ShopPage, { name: "shop" }),
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [
+      loader(StockLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+Loaders do not block the page. Every matched loader starts concurrently as the render begins, right after middleware, and each result streams to the client as its own chunk. `StockBadge` suspends until the stock arrives, and `loading()` gives that wait a fallback. Without a `loading()` or `<Suspense>` boundary, the waiting read would hold up its parent instead.
+
+Reload a product page: the shop layout paints immediately, `ProductSkeleton` holds the product area, and the page fills in about 400ms later, when the stock streams in.
 
 ## Search-as-you-type on the shop grid
 
-By default a loader only runs during SSR and navigation. Pass `true` as the second argument to `createLoader` to make it **fetchable** — callable on demand from the client:
+By default a loader only runs as part of a render: a document request, a navigation, or the re-render after an action. Pass `true` as the second argument to `createLoader` to make it **fetchable**, callable on demand from the client:
 
 ```ts
 // src/loaders/search.ts
@@ -112,9 +137,9 @@ export const SearchLoader = createLoader(async (ctx) => {
 }, true); // true = fetchable
 ```
 
-Fetchable loaders need no `loader()` registration in the DSL and no worker-entry import — importing one into the client component that calls it is enough. Rango discovers every `createLoader(fn, true)` at build time and wires it to its fetch endpoint, in dev and production alike.
+Fetchable loaders need no `loader()` registration in the tree and no worker-entry import. Importing one into the client component that calls it is enough: Rango discovers every `createLoader(fn, true)` at build time and wires it to its fetch endpoint, in dev and production alike.
 
-Wire it up with `useFetchLoader()`:
+Call it with `useFetchLoader()`:
 
 ```tsx
 // src/components/search-box.tsx
@@ -143,8 +168,41 @@ export function SearchBox() {
 }
 ```
 
-Render `<SearchBox />` at the top of `ShopPage`. Each keystroke calls `load({ params: { query } })`, which invokes `SearchLoader` on the server with `ctx.params.query` set to the client-provided value. Note the asymmetry with `useLoader`: here `data` starts as `undefined` until the first `load()` resolves. One security note for later: client-supplied params land in `ctx.params`, while `ctx.routeParams` always carries the server-trusted values from URL matching — use the latter for authorization checks.
+Render it at the top of the shop grid:
 
-The full loader surface — caching individual loaders, revalidation control, layout loaders, file uploads through fetchable loaders — lives in [Loaders](/docs/rango/features/loaders).
+```tsx
+// src/pages/shop.tsx
+import type { Handler } from "@rangojs/router";
+import { Link } from "@rangojs/router/client";
+import { SearchBox } from "../components/search-box";
+import { PRODUCTS } from "../data";
+
+export const ShopPage: Handler<"shop"> = (ctx) => {
+  return (
+    <section>
+      <h1>Shop</h1>
+      <SearchBox />
+      <ul>
+        {PRODUCTS.map((product) => (
+          <li key={product.slug}>
+            <Link
+              to={ctx.reverse("product", { slug: product.slug })}
+              prefetch="viewport"
+            >
+              {product.name} — ${product.price}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
+```
+
+Each keystroke calls `load({ params: { query } })`, which runs `SearchLoader` on the server with `ctx.params.query` set to the client-provided value. Note the difference from `useLoader`: here `data` is `undefined` until the first `load()` resolves.
+
+One security note for later: client-supplied params land in `ctx.params`, while `ctx.routeParams` always carries the server-trusted values from URL matching. Use `ctx.routeParams` for authorization checks.
+
+The full loader surface (caching individual loaders, revalidation control, layout loaders, file uploads through fetchable loaders) is covered in [Loaders](/docs/rango/features/loaders).
 
 Next: [5. Actions & Revalidation](/docs/rango/tutorial/actions-and-revalidation)

@@ -4,11 +4,11 @@ description: Serve different response types — RSC, JSON, text, XML — from th
 type: guide
 ---
 
-One URL often has two audiences: browsers want the page, API clients want JSON. Content negotiation lets you register multiple response types on the same URL pattern — the router inspects the `Accept` header and dispatches to the matching handler, and every negotiated response carries `Vary: Accept` so CDNs and HTTP caches store each variant separately.
+One URL often has two audiences: browsers want the page, API clients want JSON. Content negotiation lets you register multiple response types on the same URL pattern — the router inspects the `Accept` header and dispatches to the matching handler, and every negotiated response carries `Vary: Accept` so CDNs and HTTP caches store each variant separately. For the response-route API itself (`path.json()`, `path.text()`, and the rest), see [Response Routes](/docs/rango/features/response-routes).
 
 ## Two handlers, one URL
 
-Declare the same pattern with an RSC route and a response-type route. Order within the `urls()` array does not matter — the trie merges them at build time:
+Declare the same pattern with an RSC route and a response-type route. The trie merges them into one negotiated leaf at build time, whatever their order. Order only decides the default for `*/*`, a missing `Accept`, or an `Accept` no variant serves: the first-defined route wins.
 
 ```tsx
 import { urls } from "@rangojs/router";
@@ -30,26 +30,26 @@ When a browser requests `/products/42` (`Accept: text/html`), the RSC page rende
 
 ## How the router picks
 
-1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC).
+1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC); `q=0` entries are ignored.
 2. **Client order tiebreaker** — when q-values are equal, the type listed first in Accept wins (matches Express/Hono behavior).
-3. **Specific MIME match** — the variant whose MIME type appears in Accept wins.
-4. **Wildcard / empty Accept** — `*/*` and a missing Accept header fall back to route definition order (the first-defined variant wins).
+3. **Specific MIME match** — the variant whose MIME type appears in Accept wins; a type wildcard such as `text/*` picks the first candidate of that type.
+4. **Wildcard / empty / unmatched Accept** — `*/*`, a missing Accept header, and an Accept that no candidate serves fall back to route definition order (the first-defined variant wins). When the RSC route wins this way, it serves the HTML document.
 5. **All responses** on a negotiated URL get the `Vary: Accept` header, including the RSC side.
 
-RSC participates as a `text/html` candidate alongside the response-type variants. There is no special short-circuit — RSC follows the same negotiation rules as every other type.
+RSC participates as a candidate under two MIME types: `text/html` (the document, its canonical representation) and `text/x-component` (the RSC Flight wire format). There is no special short-circuit — RSC follows the same negotiation rules as every other type.
 
 The MIME mapping used for matching:
 
-| Tag                  | MIME type                                                    |
-| -------------------- | ------------------------------------------------------------ |
-| RSC (plain `path()`) | `text/html` (negotiation) / `text/x-component` (wire format) |
-| `json`               | `application/json`                                           |
-| `text`               | `text/plain`                                                 |
-| `xml`                | `application/xml`                                            |
-| `html`               | `text/html`                                                  |
-| `md`                 | `text/markdown`                                              |
+| Tag                  | MIME type                              |
+| -------------------- | -------------------------------------- |
+| RSC (plain `path()`) | `text/html` **and** `text/x-component` |
+| `json`               | `application/json`                     |
+| `text`               | `text/plain`                           |
+| `xml`                | `application/xml`                      |
+| `html`               | `text/html`                            |
+| `md`                 | `text/markdown`                        |
 
-One subtlety worth knowing: RSC routes negotiate as `text/html` but respond with `text/x-component`, the RSC wire format. The browser's RSC runtime decodes this transparently — clients requesting `text/html` get the page rendered normally.
+When the RSC route wins, the same Accept header decides which representation it renders. The Flight wire format is explicit opt-in only: `Accept: text/x-component`, or the internal transport parameters the client runtime sends on navigation. Everything else — browsers, `curl` (`*/*`), a missing Accept header, a type like `application/json` on a URL with no JSON variant — gets the HTML document. A generic HTTP client never sees the wire format by accident, and an explicit `Accept: text/x-component` selects the Flight stream even on a route where a response variant is defined first.
 
 The `image`, `stream`, and `any` tags are pass-through and do not participate in Accept matching.
 
@@ -58,6 +58,8 @@ The `image`, `stream`, and `any` tags are pass-through and do not participate in
 A single URL can carry an RSC route plus several response-type variants:
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path }) => [
   path("/data", DataPage, { name: "data" }),
   path.json("/data", () => ({ format: "json" }), { name: "dataJson" }),
@@ -66,11 +68,12 @@ export const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-- `Accept: text/html` — RSC page
+- `Accept: text/html` — RSC page (HTML document)
 - `Accept: application/json` — JSON handler
 - `Accept: text/plain` — text handler
 - `Accept: application/xml` — XML handler
-- `Accept: */*` — RSC page (the primary, since it was registered first)
+- `Accept: */*` — RSC page as HTML (the primary, since it was registered first)
+- `Accept: text/x-component` — RSC page as the Flight wire format
 
 ## Wildcard patterns
 
@@ -86,7 +89,7 @@ path.json("/files/*", (ctx) => {
 
 ## API-only negotiation (no RSC primary)
 
-Two or more response-type routes can share a URL without an RSC route. The last registered route becomes the primary; earlier ones become variants:
+Two or more response-type routes can share a URL without an RSC route. The last registered route becomes the primary and earlier ones become variants; `*/*` or a missing Accept still gets the first-defined route:
 
 ```tsx
 path.json("/api/data", () => ({ format: "json" }), { name: "dataJson" }),
@@ -104,11 +107,15 @@ Without an RSC primary there is no `text/html` candidate — the Accept header p
 
 ```tsx
 // router.tsx
+import { createRouter } from "@rangojs/router";
+
 export const router = createRouter({ document: Document }).routes(urlpatterns);
+
+type AppRoutes = typeof router.routeMap;
 
 declare global {
   namespace Rango {
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 ```

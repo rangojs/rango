@@ -4,23 +4,30 @@ description: Inspect the generated route manifest when a path matches the wrong 
 type: guide
 ---
 
-A path resolves to the wrong handler, a layout isn't wrapping its children, or an intercept never fires. The debug manifest shows you the route tree Rango actually built — parent relationships, shortCodes, and per-route flags — so you can verify structure instead of guessing.
+A path resolves to the wrong handler, a layout isn't wrapping its children, or an intercept never fires. The debug manifest shows you the route tree Rango actually built from your `urls()` — parent relationships, shortCodes, and which entries carry loaders, middleware, error boundaries, parallel slots, or intercepts — so you can verify structure instead of guessing.
+
+It is a development aid: the method and the diff helpers are internal and may change between releases.
 
 ## Programmatic access
 
-Call `router.debugManifest()` in development — an `async` method that returns a summarized `{ routes, layouts, totalRoutes, totalLayouts }` shape:
+The router instance has an async `debugManifest()` method that returns a summarized `{ routes, layouts, totalRoutes, totalLayouts }` shape. It is not part of the public router type, so TypeScript needs a cast:
 
 ```ts
+import type { SerializedManifest } from "@rangojs/router/__internal";
 import { router } from "./router.js";
 
-// Only in development
+// Development only
 if (process.env.NODE_ENV !== "production") {
-  const manifest = await router.debugManifest();
+  const manifest = await (
+    router as unknown as { debugManifest(): Promise<SerializedManifest> }
+  ).debugManifest();
   console.log(JSON.stringify(manifest, null, 2));
 }
 ```
 
-A typical result:
+Run it on the server side (for example from a dev-only route handler), since it evaluates your `urls()` tree. Groups mounted with `include()` are registered lazily as their own mounts, so check included routes against a running app as well rather than relying on this dump alone.
+
+Every entry has the same fields; `pattern` is present on routes only. Cache boundaries are listed under `layouts` with `type: "cache"`. A typical result (values are illustrative):
 
 ```jsonc
 {
@@ -44,6 +51,11 @@ A typical result:
       "shortCode": "M0L0",
       "type": "layout",
       "parentShortCode": null,
+      "hasLoader": false,
+      "hasMiddleware": false,
+      "hasErrorBoundary": false,
+      "parallelCount": 0,
+      "interceptCount": 0,
     },
   },
   "totalRoutes": 45,
@@ -53,24 +65,26 @@ A typical result:
 
 ## Reading shortCodes
 
-A shortCode encodes a node's position in the tree, one prefix per level:
+A shortCode is the parent's shortCode plus one segment per level:
 
-| Prefix | Meaning                                  |
-| ------ | ---------------------------------------- |
-| **M**  | Mount index (multiple `.routes()` calls) |
-| **L**  | Layout                                   |
-| **C**  | Cache boundary                           |
-| **R**  | Route                                    |
-| **P**  | Parallel slot                            |
+| Prefix | Meaning                                                                 |
+| ------ | ----------------------------------------------------------------------- |
+| **M**  | Mount index (`.routes()` / `urls` registrations and `include()` mounts) |
+| **L**  | Layout (the router adds a root layout, `M<n>L0`)                        |
+| **C**  | Cache boundary                                                          |
+| **R**  | Route                                                                   |
+| **P**  | Parallel slot                                                           |
+| **I**  | `include()` scope token, so included routes never collide with siblings |
 
-Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route.
+Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route. At runtime, a route from an `include()` placed under the root layout gets a shortCode such as `M0L0I0R0`.
 
 ## What to verify
 
-1. **Routes have parents**: `parentShortCode` should NOT be `null` (except the root layout).
-2. **Correct hierarchy**: the shortCode should reflect nesting — `M0L0R0`, not `M0R0`.
-3. **Loaders attached**: `hasLoader: true` on routes with data requirements.
-4. **Intercepts registered**: `interceptCount > 0` for modal/overlay patterns (see [Intercepting Routes](/docs/rango/guides/intercepting-routes)).
+1. **Correct hierarchy**: the shortCode reflects nesting — `M0L0L1R0` for a route in a nested layout, not `M0L0R0`.
+2. **Parents**: only a mount's root layout (`M<n>L0`) has `parentShortCode: null`.
+3. **Loaders attached**: `hasLoader: true` on routes and layouts that declare `loader()`.
+4. **Intercepts registered**: `interceptCount > 0` where you declared `intercept()` for modal/overlay patterns (see [Intercepting Routes](/docs/rango/guides/intercepting-routes)).
+5. **Slots**: `parallelCount` matches the number of `parallel()` slots.
 
 ## Diffing manifests across a change
 
@@ -78,34 +92,39 @@ To pin down exactly what a refactor changed, capture a manifest before and after
 
 ```ts
 import {
-  serializeManifest,
   compareManifests,
   formatManifestDiff,
+  type SerializedManifest,
 } from "@rangojs/router/__internal";
 
-const oldManifest = await router.debugManifest();
+const debugManifest = () =>
+  (
+    router as unknown as { debugManifest(): Promise<SerializedManifest> }
+  ).debugManifest();
+
+const oldManifest = await debugManifest();
 // ... make changes ...
-const newManifest = await router.debugManifest();
+const newManifest = await debugManifest();
 
 const diff = compareManifests(oldManifest, newManifest);
 console.log(formatManifestDiff(diff));
 ```
 
-These come from the `__internal` subpath — debugging utilities, not public API surface.
+`compareManifests` reports added, removed, and changed routes and layouts, with an old and new value per changed field. These helpers come from the `__internal` subpath — debugging utilities, not public API surface.
 
 ## Common issues
 
-### Routes have `parentShortCode: null`
+### A route sits under the wrong layout
 
-Routes should have a layout parent. Check that the `urls()` handler is being wrapped in the root layout.
+Check that the `layout()` call wraps the route in its `use` callback (`layout(<Shell />, () => [path(...)])`). A `path()` listed next to a `layout()` is a sibling, not a child. See [Layouts](/docs/rango/guides/layouts).
 
-### Layouts missing from the hierarchy
+### Unexpected mount index
 
-Verify your `layout()` calls wrap the child routes correctly — see [Layouts](/docs/rango/guides/layouts).
+Each `.routes()` call (and the `urls` option) registers a separate mount (`M0`, `M1`, …), and each `include()` also takes a mount index. Routes registered by separate `.routes()` calls do not share layouts or middleware; compose modules with `include()` inside one `urls()` tree when they should.
 
-### Wrong mount index
+### Missing flags
 
-Multiple `.routes()` calls create separate mounts (`M0`, `M1`, …). Use `include()` to share context instead.
+`hasMiddleware`, `hasLoader`, and `hasErrorBoundary` are per entry. Middleware or a loader declared on a parent layout shows on that layout, not on each child route.
 
 <Cards>
   <Card href="/docs/rango/features/routing" title="Routing">

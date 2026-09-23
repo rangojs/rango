@@ -180,9 +180,10 @@ See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [                 // structure: wraps children
     loader(CartLoader, () => [                   // config: live data
-      // partial-render axis: re-run on cart actions, defer otherwise.
+      // partial-render axis: after an action, re-run only for cart actions;
+      // on navigation, undefined keeps the default.
       // ctx.isAction() matches by reference (rename-safe), not by string.
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
     ]),
     path("/shop/:slug", ProductPage, { name: "product" }, () => [  // structure: leaf
       loader(ProductLoader, () => [cache({ ttl: 60 })]),  // config: cache loader DATA
@@ -209,14 +210,23 @@ and `stale` (the `_rsc_stale` signal that an action ran in this or another tab).
 navigation; `method` is `"GET"` there and `"POST"` for an action. Call
 `ctx.isAction()` with no arguments to ask "was this any action?".
 
-Two idioms, picked by what an _unrelated_ action should do. `ctx.isAction()`
-returns a raw boolean, so combine it with `|| undefined` to **defer** ("mine,
-else let the default decide": `ctx.isAction(CartActions) || undefined`) or leave
-it bare to **suppress** ("mine only": `ctx.isAction(CartActions)`). Prefer the
-defer form unless a sibling segment must own the unrelated-action decision.
+`ctx.isAction()` returns a raw boolean. Pick the idiom by what the segment's
+default already does: after an action, loaders, the route, and segments inside
+the `path()` re-run; layouts and parallels above the route are skipped.
+
+- **Add a signal** where the default skips: `ctx.isAction(CartActions) || undefined`
+  on a parent layout re-renders it after cart actions and defers otherwise. On a
+  loader or route segment it changes nothing.
+- **Narrow after actions** where the default re-runs:
+  `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
+  actions and keeps the navigation default (params or search changed).
+- **Avoid bare `ctx.isAction(CartActions)`.** It is a hard `false` on navigation
+  too, so a loader stops refetching when params change, and it ends the chain for
+  any later revalidator on the segment.
 
 ```ts
-// re-render only when checkout actually succeeded; defer otherwise
+// on a parent layout (skipped after actions by default): also re-render when
+// checkout succeeded; defer to the default otherwise
 revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
 ```
 

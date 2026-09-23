@@ -348,7 +348,8 @@ the route handler and its children re-run together by default, so handler
 data stays consistent on its own. Contracts matter in two cases:
 
 1. **You narrow the entry's revalidation** with a predicate that can return a
-   hard `false` (e.g. bare `ctx.isAction(X)`). A hard `false` on one side of a
+   hard `false` (e.g. `ctx.isAction() ? ctx.isAction(X) : undefined`). A hard
+   `false` on one side of a
    producer/consumer pair desyncs it — the child re-runs by default and reads
    `undefined`, or vice versa. Put the same named contract on the route and
    its dependent children so they narrow together.
@@ -361,15 +362,17 @@ data stays consistent on its own. Contracts matter in two cases:
 import type { Revalidate } from "@rangojs/router";
 import * as CheckoutActions from "./actions/checkout";
 
-// Defer (|| undefined), not ?? false: a hard `false` short-circuits the chain,
-// so when the same segment composes multiple contracts the later ones never run.
+// The route and its children re-run after every action by default, so this
+// contract narrows them together: after an action, re-run only for checkout
+// actions; on navigation, undefined keeps the default. After an action it is a
+// hard decision, so later revalidators on the same segment do not run.
 export const revalidateCheckoutData: Revalidate = (ctx) =>
-  ctx.isAction(CheckoutActions) || undefined;
+  ctx.isAction() ? ctx.isAction(CheckoutActions) : undefined;
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
-  revalidate(revalidateCheckoutData), // producer (route handler) reruns
+  revalidate(revalidateCheckoutData), // producer (route handler)
   layout(CheckoutLayout, () => [
-    revalidate(revalidateCheckoutData), // consumer reruns
+    revalidate(revalidateCheckoutData), // consumer
     parallel({ "@summary": CheckoutSummary }, () => [
       revalidate(revalidateCheckoutData),
     ]),
@@ -377,8 +380,10 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
 ]);
 ```
 
-If children depend on multiple upstream domains, compose multiple contracts on
-the same segment (`revalidateAuthData`, `revalidateCheckoutData`, and so on).
+If children depend on multiple upstream domains, match them in one narrowing
+contract (`ctx.isAction(CheckoutActions, AuthActions)`): a second narrowing
+contract on the same segment would never run, because the first one's hard
+`false` ends the chain.
 
 For cleaner route trees, expose contract helpers and spread them:
 

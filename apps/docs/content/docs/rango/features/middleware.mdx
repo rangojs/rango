@@ -4,7 +4,7 @@ description: The onion model — global middleware wraps the whole request, rout
 type: guide
 ---
 
-Middleware runs before and after route handlers using the onion model. There are two levels with different execution scopes, and the difference matters most for auth:
+Middleware runs before and after route handlers using the onion model: code before `await next()` runs on the way in, code after it runs on the way out with the downstream `Response` available. There are two levels with different execution scopes, and the difference matters most for auth. The rule: global middleware wraps server actions, route middleware does not.
 
 <MiddlewareOnionDemo />
 
@@ -13,11 +13,15 @@ Middleware runs before and after route handlers using the onion model. There are
 Registered on the router instance. Wraps the **entire request** — including server actions, rendering, and no-JS progressive-enhancement re-renders:
 
 ```ts
-const router = createRouter<AppEnv>({ document: Document })
+import { createRouter } from "@rangojs/router";
+
+export const router = createRouter<AppEnv>({ document: Document })
   .use(loggerMiddleware) // all routes
   .use("/admin/*", authMiddleware) // pattern-scoped
   .routes(urlpatterns);
 ```
+
+Scope patterns use the route pattern syntax (`:param`, `:param?`, a trailing `*`) and are prefixed with the router's `basename` automatically. A pattern matches the request URL, not the action: an action is identified by its ID, and any URL that matches a route can carry it. So a pattern-scoped `.use("/admin/*", …)` guards pages under `/admin`, but it is not an authorization boundary for server actions.
 
 ## Route middleware: middleware() in the tree
 
@@ -29,11 +33,16 @@ Request flow (with action):
 
 Request flow (no action):
   global mw → route mw → render pass
+
+Fetchable loader call (useFetchLoader / load()):
+  global mw → per-loader middleware → loader   (route mw does not run)
 ```
 
-**Implication for auth:** route middleware cannot guard server actions. Use `router.use("/admin/*", requireAuth)` for action protection, or check inside the action body.
+**Implication for auth:** route middleware cannot guard server actions. Load identity in global middleware (unscoped `router.use()` wraps every action) and check authorization inside the action body. See [Server Actions](/docs/rango/guides/server-actions#auth-inside-actions).
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path, layout, middleware }) => [
   layout(<AdminLayout />, () => [
     middleware(authMiddleware), // admin routes only
@@ -44,7 +53,7 @@ export const urlpatterns = urls(({ path, layout, middleware }) => [
 ]);
 ```
 
-The wrapping form scopes middleware to a subset of routes without introducing a visible layout:
+The wrapping form scopes middleware to a subset of routes without introducing a visible layout. Pass an array to register several in order — `middleware([authMw, loggingMw])`; the variadic form `middleware(a, b)` is not supported:
 
 ```tsx
 middleware(authMw, () => [
@@ -68,7 +77,18 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 ```
 
-Throwing a `Response` short-circuits the chain and becomes the HTTP response. `ctx.env` carries your platform bindings; `ctx.set()` shares data with everything downstream.
+Every middleware must either call `next()` or return (or throw) a `Response`. Returning or throwing a `Response` short-circuits the chain and becomes the HTTP response; headers and cookies already set are merged into it. `ctx.env` carries your platform bindings; `ctx.set()` shares data with everything downstream.
+
+Cookies and request headers are free functions, not `ctx` members: `cookies().get("session")` and `headers().get("accept-language")`, both imported from `@rangojs/router`. To set a response header, call `ctx.header(name, value)`; after `await next()` it writes to the real downstream response:
+
+```ts
+import type { Middleware } from "@rangojs/router";
+
+export const securityHeaders: Middleware = async (ctx, next) => {
+  await next();
+  ctx.header("Strict-Transport-Security", "max-age=63072000");
+};
+```
 
 ## Typed context variables
 
@@ -76,15 +96,20 @@ Throwing a `Response` short-circuits the chain and becomes the HTTP response. `c
 
 ```ts
 import { createVar } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
 interface AuthUser {
   id: string;
   email: string;
   role: string;
 }
-export const CurrentUser = createVar<AuthUser>();
+// cache: false — per-user data must never bake into a cache() segment
+export const CurrentUser = createVar<AuthUser>({ cache: false });
 
 export const authMiddleware: Middleware = async (ctx, next) => {
+  const token = ctx.request.headers.get("Authorization");
+  if (!token) throw new Response("Unauthorized", { status: 401 });
+
   ctx.set(CurrentUser, await verifyToken(token)); // type-checked
   await next();
 };
@@ -93,13 +118,15 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 const user = ctx.get(CurrentUser); // AuthUser | undefined
 ```
 
-Use `createVar` for route-local or feature-scoped data; use the global `Rango.Vars` augmentation for app-wide middleware state.
+Use `createVar` for route-local or feature-scoped data; use the global `Rango.Vars` augmentation for app-wide middleware state. Marking a var `{ cache: false }` makes a direct `ctx.get()` of it inside a `cache()` boundary throw, so one user's data can't be served to another; loaders can still read it because they always run fresh.
 
 ## Redirects with flash state
 
 ```ts
 import { createLocationState, redirect } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
+// shared module: the client component that reads it imports the same definition
 export const FlashMessage = createLocationState<{ text: string }>({
   flash: true,
 });
@@ -114,8 +141,8 @@ export const requireAuth: Middleware = async (ctx, next) => {
 };
 ```
 
-The target page reads the flash with `useLocationState(FlashMessage)`; `{ flash: true }` auto-clears it after first render.
+The target page reads the flash with `useLocationState(FlashMessage)` from `@rangojs/router/client`; `{ flash: true }` auto-clears it after first render. See [Hooks](/docs/rango/reference/hooks#uselocationstatedefinition).
 
 ## Why route middleware is never stale
 
-Route middleware wraps **every** render pass — normal renders, post-action revalidation, and no-JS re-renders — so context it sets is never stale. That makes it the safest place for request-shaped context: auth, session, locale. It does not change partial-revalidation boundaries between segments; for shared segment data, put the same named `revalidate()` contract on producer and consumer segments.
+Route middleware wraps **every** render pass — normal renders, post-action revalidation, and no-JS re-renders — so context it sets is never stale. That makes it the safest place for request-shaped context: auth, session, locale. It does not change partial-revalidation boundaries between segments; for shared segment data, put the same named `revalidate()` contract on producer and consumer segments. [Data Flow](/docs/rango/concepts/data-flow) covers the full ladder, and [Execution Model](/docs/rango/concepts/execution-model) covers the exact ordering.

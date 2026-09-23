@@ -4,7 +4,7 @@ description: Animate navigations across layouts, routes, and parallel slots with
 type: guide
 ---
 
-You want navigations to animate instead of flashing loading skeletons. `transition()` opts a route — or a whole group of routes — into transition-driven navigation, and you choose how far to take it.
+You want navigations to animate instead of flashing loading skeletons. `transition()` opts a route — or a whole group of routes — into transition-driven navigation, and you choose how far to take it. This page covers the two layers `transition()` controls, where the animation lands in the rendered tree, direction-aware classes, conditional transitions, and how intercepted modals interact with layout transitions.
 
 ## The two layers
 
@@ -31,7 +31,7 @@ The shortest path — a fade between pages that share a layout:
 import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
-function ShopShell({ children }: { children: React.ReactNode }) {
+function ShopShell() {
   return (
     <div className="shop">
       <NavBar />
@@ -53,16 +53,28 @@ export const urlpatterns = urls(({ layout, path, transition }) => [
 ]);
 ```
 
+The config values are React `<ViewTransition>` classes: React applies them as `view-transition-class`, so the CSS targets the view-transition pseudo-elements by class:
+
 ```css
-::view-transition-old(root) {
-  animation: fade-out 200ms ease both;
+::view-transition-old(.page-fade) {
+  animation: 200ms ease both fade-out;
 }
-::view-transition-new(root) {
-  animation: fade-in 200ms ease both;
+::view-transition-new(.page-fade) {
+  animation: 200ms ease both fade-in;
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 ```
 
-Navigating between `/`, `/about`, and `/contact` morphs the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not morph, because the wrap sits inside the shell, not around it.
+Navigating between `/`, `/about`, and `/contact` cross-fades the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not animate, because the wrap sits inside the shell, not around it.
 
 ## Where the wrap lands
 
@@ -76,7 +88,7 @@ The layout case is the important one: a layout transition does **not** wrap the 
 
 ## Direction-aware transitions
 
-Each phase prop accepts an object keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward popstate as `"navigation-back"`:
+`transition()` accepts the props of React's `<ViewTransition>` — `enter`, `exit`, `update`, `share`, `default` (the fallback for any unset phase), and `name`. Each phase prop takes a class string or an object keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"`; a back/forward that has to refetch from the server is tagged `"navigation"`:
 
 ```tsx
 layout(<ShopShell />, () => [
@@ -89,6 +101,16 @@ layout(<ShopShell />, () => [
   path("/", ShopIndex, { name: "index" }),
   path("/about", AboutPage, { name: "about" }),
 ]);
+```
+
+```css
+::view-transition-old(.slide-left) {
+  animation: 250ms ease both slide-out-to-left;
+}
+::view-transition-new(.slide-left) {
+  animation: 250ms ease both slide-in-from-right;
+}
+/* .slide-right mirrors it; define the @keyframes as usual */
 ```
 
 `"action"` is only tagged on partial-update action/refetch paths today; ordinary `useAction` / `useActionState` revalidations are not tagged. Don't rely on an `action`-keyed class firing on every form action.
@@ -145,7 +167,10 @@ urls(({ path, transition }) => [
   ]),
 ]);
 
-// ProductPage renders the boundary itself, exactly where it's wanted:
+// ProductPage renders the boundary itself, exactly where it's wanted
+// (ViewTransition is exported by React 19.3+ and experimental builds):
+import { ViewTransition } from "react";
+
 function ProductPage() {
   return (
     <ViewTransition name="hero">
@@ -159,7 +184,14 @@ Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`
 
 ## Conditional transitions with `when`
 
-`transition({ when })` gates the hold per request. The predicate runs server-side, **after** the route handler and outside any cache scope; return `false` to drop the transition for that request (the navigation streams its `loading()` fallback instead of holding). Its context mirrors the `revalidate()` predicate args — navigation source (`currentUrl`, `currentParams`, `fromRouteName`), target (`nextUrl`, `nextParams`, `toRouteName`), action metadata (`actionId`, `actionUrl`, `actionResult`, `formData`), `method` — plus `get`/`env` for post-handler reads:
+`transition({ when })` gates the hold per request. The predicate runs server-side and outside any cache scope; return `false` to drop this segment's transition for the request. The hold is navigation-wide: the navigation streams its `loading()` fallback instead of holding only when no other matched segment still has a transition (the common case is a single `transition()` on the route).
+
+When it runs depends on the route:
+
+- **Ordinary routes** run it after the route handler during fresh resolution, so `get()` can read handler- and middleware-set context. Cache and prerender hits replay the stored decision.
+- **[PPR](/docs/rango/guides/ppr) routes** run it before route handlers, on every match — including runtime-cache, prerender, and partial-navigation replays. It can read URL, params, action metadata, `env`, and middleware-set context, but not values set by route handlers.
+
+Its context mirrors the `revalidate()` predicate args — navigation source (`currentUrl`, `currentParams`, `fromRouteName`), target (`nextUrl`, `nextParams`, `toRouteName`), action metadata (`actionId`, `actionUrl`, `actionResult`, `formData`), `method` — plus `get`/`env` for request-context reads. Source fields are `undefined` on the initial full load and on action error paths:
 
 ```ts
 // Hold only when the handler marked this request (handler sets, gate reads):
@@ -172,7 +204,7 @@ transition({ when: ({ fromRouteName }) => fromRouteName === "products.list" });
 A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold. Two caveats:
 
 - **Same-route content-holds need the transition present on the first render.** Source fields are `undefined` on the initial full load; a gate that returns `false` there drops the transition before the route mounts, and every later same-route param nav remounts (skeleton flash) regardless of what the gate decides then. Write source gates to hold when there is no source — `({ currentParams }) => currentParams?.tab !== "raw"` rather than `=== "details"`.
-- **Prefetch and cache freeze the gate.** A prefetched navigation decides at prefetch time, and a `cache()`/prerender hit replays the stored transition without re-running the predicate. If your gate must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and don't `cache()` that segment.
+- **Prefetch and cache freeze the gate.** A prefetched navigation decides at prefetch time, and on ordinary routes a `cache()`/prerender hit replays the stored transition without re-running the predicate. PPR routes re-run it on the server for each match, but a completed browser prefetch still carries its earlier decision. If your gate must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and, on an ordinary route, don't `cache()` that segment.
 
 ## Testing a transition() route
 

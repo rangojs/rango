@@ -220,20 +220,27 @@ import { addToCart, removeFromCart } from "./actions/cart";
 import * as CartActions from "./actions/cart";
 import * as OrderActions from "./actions/order";
 
-revalidate((ctx) => ctx.isAction() || undefined); // any action at all
-revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
-revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
-revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
-revalidate((ctx) => ctx.isAction({ addToCart, removeFromCart }) || undefined); // object form
-revalidate(
-  (ctx) =>
-    ctx.isAction({ Cart: CartActions, Order: OrderActions }) || undefined,
-); // grouped namespaces
+// On a loader: after an action, re-run only for cart actions; on navigation,
+// keep the default.
+revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined));
+
+// Matcher forms (each returns a boolean):
+ctx.isAction(); // any action at all
+ctx.isAction(addToCart); // one action
+ctx.isAction(addToCart, removeFromCart); // several
+ctx.isAction(CartActions); // any action in the module
+ctx.isAction({ addToCart, removeFromCart }); // object form
+ctx.isAction({ Cart: CartActions, Order: OrderActions }); // grouped namespaces
 ```
 
 `ctx.isAction()` (only available on the revalidate predicate's argument)
-returns a raw boolean and is `false` on plain navigation — combine with
-`|| undefined` for the "revalidate on match, else defer" intent. It resolves
+returns a raw boolean and is `false` on plain navigation. Wrap it by what the
+segment's default already does: `|| undefined` adds a re-render on a parent
+layout or layout-level parallel (skipped after actions by default); on a loader
+or route segment, which already re-run after every action, `|| undefined`
+changes nothing, so narrow with the ternary above. Avoid a bare
+`ctx.isAction(X)`: it is a hard `false` on navigation too. See `/loader` →
+"`revalidate()` return shapes". It resolves
 the reference the same way the router derives `actionId` (`$id ?? $$id`: the
 file-path `$id` injected in a production RSC build, otherwise React's `$$id`),
 so matching works in dev and production. `actionId` stays available for

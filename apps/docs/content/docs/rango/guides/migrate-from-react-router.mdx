@@ -19,23 +19,43 @@ React Router v6 and Remix v2 follow the same patterns as v7 library mode and fra
 
 Work route-by-route, bottom-up: leaf routes first, then layouts, then loaders/actions. Verify each route works before moving to the next.
 
+## Choose a target shape per route group
+
+Every React Router route lands in one of two Rango shapes. Pick per route group, not per app; both compose in one `urls()` tree through `include()`.
+
+- **Server handlers** (the default in this guide): the route component becomes a server component, and its data fetching merges into the handler. This shape gives the biggest gains (server-first rendering, smaller client bundles) and is the right target whenever the component can become a server component.
+- **`clientUrls()` groups**: for groups whose components are hook-heavy client components, `clientUrls()` keeps the route-module shape. The definition lives in a `"use client"` module, components stay client components, and data comes from `createLoader()` definitions:
+
+| React Router route module          | `clientUrls()`                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| component (client, hooks)          | stays a client component                                                 |
+| `loader` (throws `redirect` / 404) | `createLoader()`; thrown `redirect()` / `notFound()` keep working        |
+| `useLoaderData()`                  | `useLoader(Loader)` at the read site, under `<Suspense>`                 |
+| `shouldRevalidate`                 | a `revalidate()` predicate on the loader, which also runs in the browser |
+| `meta({ data })`                   | `ctx.use(Meta)` push from the loader body                                |
+| `defer` / `Await`                  | loaders stream; `<Suspense>` above each read                             |
+
+Start with server handlers. Reach for `clientUrls()` when converting a group means rewriting interactive components rather than moving data fetching, or for high-frequency navigation surfaces such as dashboards, admin panels, and settings: the definition also matches in the browser, so a navigation shows its pending UI without waiting for the server. A group ported this way can move to server handlers later, route by route. See [Client URL routes](/docs/rango/features/routing#client-url-routes).
+
 ## Replace imports — never shim React Router
 
 Do not create mock `react-router` modules, Vite aliases, or compatibility wrappers (a local `useLoaderData` backed by context, a `Form` that wraps `<form>`, a fake `useFetcher`). Shims freeze React Router semantics into the app, hide unsupported behavior until runtime, and keep the old packages in the dependency graph. Replace every `react-router` / `react-router-dom` / `@remix-run/*` import at its call site:
 
-| React Router import                           | Replace with                                                                      |
-| --------------------------------------------- | --------------------------------------------------------------------------------- |
-| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`) |
-| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                            |
-| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client`                                       |
-| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()`, `useParams()` from `@rangojs/router/client` |
-| `useLoaderData`                               | merge the loader into the handler; `useLoader()` only for live client data        |
-| `useActionData`                               | `useActionState` (standard React)                                                 |
-| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function                     |
-| `useFetcher`                                  | submits: server actions + `useActionState`/`useOptimistic`; reads: `useLoader()`  |
-| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>`                                              |
-| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                            |
-| `useRouteError`                               | the `error` prop of `errorBoundary()`                                             |
+| React Router import                           | Replace with                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`)                                                                             |
+| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                                                                                        |
+| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client`                                                                                                                   |
+| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()` (same `[params, setParams]` tuple), `useParams()` from `@rangojs/router/client`; `location.state` → `useLocationState()` |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes                                                                |
+| `useActionData`                               | `useActionState` (standard React)                                                                                                                             |
+| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function                                                                                                 |
+| `useFetcher`                                  | submits: server actions + `useActionState`/`useOptimistic`; reads: `useLoader()` / `useFetchLoader()`                                                         |
+| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>`                                                                                                                          |
+| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                                                                                        |
+| `useRouteError`                               | the `error` prop of `errorBoundary()`                                                                                                                         |
+
+The client hooks are documented in [Hooks](/docs/rango/reference/hooks). If an import has no row here and no obvious Rango equivalent, stop and check the docs before mocking it to keep the build green.
 
 Done means: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns nothing, and the packages are out of `package.json`.
 
@@ -47,8 +67,11 @@ npm remove react-router @react-router/dev @react-router/node @react-router/serve
 # Library mode:
 npm remove react-router react-router-dom
 
-npm install @rangojs/router
+npm install @rangojs/router   # keep react and react-dom
+npm install -D vite           # if the app is not already on Vite
 ```
+
+Rango needs Node 24 or later, `react` and `react-dom` 19.2.8 or later, and Vite 8. A React Router v6 app on React 18 has to upgrade React first. The `rango()` plugin bundles `@vitejs/plugin-rsc` and generates the client and server entries; add `@vitejs/plugin-react` only if you want Fast Refresh or the [React Compiler](/docs/rango/guides/react-compiler).
 
 Replace the `@react-router/dev` Vite plugin with `rango()`, and delete `react-router.config.ts` — route configuration moves to the `urls()` DSL:
 
@@ -63,16 +86,20 @@ export default defineConfig({
 });
 ```
 
+`rango()` defaults to the Node preset; pass `preset: "cloudflare"` or `preset: "vercel"` for those targets (see [Setup](/docs/rango/getting-started) and [Deploy to Vercel](/docs/rango/guides/deploy-vercel)).
+
 ```tsx
 // src/router.tsx
 import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export default createRouter({
+export const router = createRouter({
   document: Document,
 }).routes(urlpatterns);
 ```
+
+Export the router by name as `router`: the server entry that the Node and Vercel presets generate imports it that way. The `Document` component owns the `<html>` element that `root.tsx` rendered in framework mode. See [createRouter](/docs/rango/reference/create-router).
 
 ## Step 2: Route mapping
 
@@ -80,18 +107,19 @@ export default createRouter({
 
 Every conventional export of an RR7 route module has a home in Rango — either the handler or the DSL:
 
-| RR7 route module export         | Rango equivalent                                            |
-| ------------------------------- | ----------------------------------------------------------- |
-| `default` (Component)           | handler in `path()`                                         |
-| `loader`                        | fetch in handler, or `createLoader()`                       |
-| `action`                        | `"use server"` function                                     |
-| `meta`                          | `ctx.use(Meta)` in handler                                  |
-| `headers`                       | `ctx.header()` in handler or middleware                     |
-| `shouldRevalidate`              | `revalidate()` DSL                                          |
-| `ErrorBoundary`                 | `errorBoundary()` DSL                                       |
-| `HydrateFallback`               | `loading()` DSL                                             |
-| `handle`                        | `createHandle()` for cross-segment data (breadcrumbs, etc.) |
-| `clientLoader` / `clientAction` | `"use client"` component with React hooks                   |
+| RR7 route module export         | Rango equivalent                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `default` (Component)           | handler in `path()`                                                                                    |
+| `loader`                        | fetch in the handler, or `createLoader()`                                                              |
+| `action`                        | `"use server"` function                                                                                |
+| `meta`                          | `ctx.use(Meta)` in the handler, or in the loader that owns the data                                    |
+| `headers`                       | `ctx.headers.set()` in the handler; `ctx.header()` in middleware                                       |
+| `middleware`                    | `router.use()` for guards (wraps actions too); DSL `middleware()` for render-only concerns             |
+| `shouldRevalidate`              | `revalidate()` DSL                                                                                     |
+| `ErrorBoundary`                 | `errorBoundary()` DSL                                                                                  |
+| `HydrateFallback`               | `loading()` DSL                                                                                        |
+| `handle`                        | `createHandle()` for cross-segment data ([Breadcrumbs](/docs/rango/guides/breadcrumbs) is one example) |
+| `clientLoader` / `clientAction` | `"use client"` component with React hooks                                                              |
 
 A full route module before and after:
 
@@ -127,29 +155,31 @@ export function ErrorBoundary() {
 ```
 
 ```tsx
-// Rango: urls.tsx + handler
-import { notFound } from "@rangojs/router";
+// Rango: handler + urls.tsx
+import { Meta, notFound } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
 
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
+  // throws: renders the nearest notFoundBoundary, else the router's notFound
   if (!product) notFound("Product not found");
 
   const meta = ctx.use(Meta);
   meta({ title: product.name });
-  ctx.header("Cache-Control", "max-age=300");
+  ctx.headers.set("Cache-Control", "max-age=300"); // response headers
 
   return <div>{product.name}</div>;
 };
 
 // In urls.tsx:
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  revalidate(({ actionId }) => !!actionId),
+  revalidate(({ actionId }) => !!actionId), // re-render after any action
   errorBoundary(() => <div>Product error</div>),
   loading(<ProductSkeleton />),
 ]);
 ```
 
-The route module's scattered exports consolidate into the handler (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+The route module's scattered exports consolidate into the handler (data fetching, meta, headers) and the DSL (revalidation, error boundary, loading). The `action` export becomes a `"use server"` function ([Step 3](#actions-become-use-server-functions)).
 
 ### Route paths
 
@@ -190,6 +220,8 @@ path(
 );
 ```
 
+Every route takes a `name`, so links and redirects can be built with `ctx.reverse()` instead of path strings. See [Routing](/docs/rango/features/routing) and [Named routes](/docs/rango/features/named-routes).
+
 ### Layouts and nesting
 
 The `<Outlet />` concept is unchanged — only the import path and where the tree is declared:
@@ -212,12 +244,46 @@ layout(<DashboardLayout />, () => [
 ]);
 ```
 
-Nested `children` arrays map to nested `layout()` calls; pathless layouts are simply layouts without a URL prefix; an index route (`{ index: true }`) is a `path("/...", ...)` inside the layout. A layout that read `useLoaderData()` becomes a handler-function layout — a server component that gets data from `ctx`:
+Nested `children` arrays map to nested `layout()` calls, and paths inside a layout are written in full:
+
+```tsx
+// React Router:
+createBrowserRouter([
+  {
+    path: "/",
+    element: <RootLayout />,
+    children: [
+      {
+        path: "dashboard",
+        element: <DashboardLayout />,
+        children: [
+          { index: true, element: <DashboardIndex /> },
+          { path: "settings", element: <Settings /> },
+        ],
+      },
+    ],
+  },
+]);
+
+// Rango:
+import { urls } from "@rangojs/router";
+
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(<RootLayout />, () => [
+    layout(<DashboardLayout />, () => [
+      path("/dashboard", DashboardIndex, { name: "dashboard" }),
+      path("/dashboard/settings", Settings, { name: "settings" }),
+    ]),
+  ]),
+]);
+```
+
+Pathless layouts are layouts without a URL prefix, and an index route (`{ index: true }`) is the `path()` for the layout's own URL. A layout that read `useLoaderData()` becomes a handler-function layout — a server component that gets data from `ctx`:
 
 ```tsx
 layout(
   async (ctx) => {
-    const user = ctx.get("user");
+    const user = ctx.get("user"); // set by the auth middleware in Step 4
     return (
       <Shell user={user}>
         <Outlet />
@@ -248,24 +314,27 @@ function ProductPage() {
 }
 
 // Rango: handler fetches and renders directly
+import type { Handler } from "@rangojs/router";
+
 const ProductPage: Handler<"product"> = async (ctx) => {
   const product = await getProduct(ctx.params.slug);
   return <div>{product.name}</div>;
 };
 ```
 
-The handler IS the loader — it fetches data, then returns JSX. No separate data-fetching layer needed.
+The handler is the loader — it fetches data, then returns JSX. No separate data-fetching layer needed.
 
 ### When to use createLoader()
 
-Rango's `createLoader()` is a live data layer, not a loader migration target. Use it only when you need capabilities beyond what the handler provides:
+Rango's `createLoader()` is a live data layer, not a one-for-one replacement for React Router loaders. Use it when you need something the handler does not give you:
 
 - **Client-side reactive data** — `useLoader()` in client components for data that updates without a full page navigation
 - **Shared data across segments** — a loader registered on a layout is available to all child routes via `ctx.use(Loader)` or `useLoader(Loader)`
 - **Independent revalidation** — `revalidate()` on a specific loader after actions
 - **Per-loader caching** — `loader(L, () => [cache({ ttl: 60 })])`
+- **Loader-shaped authority** — a Rango loader can throw `redirect()` or `notFound()` and push data-derived metadata with `ctx.use(Meta)`. Register it with `loader(L, { ssr: false })` when the 404 status or the title must be in the server-rendered document. One habit does not carry over: a redirect thrown from a loader becomes a client-side navigation on document loads, never an HTTP 302. Keep auth redirects in middleware ([Step 4](#step-4-route-protection)).
 
-If the React Router loader just fetches data for its page component, merge it into the handler. When a client component does need live data:
+If the React Router loader just fetches data for its page component and the component can become a server component, merge it into the handler. If the component stays a client component, consider porting the whole group with [`clientUrls()`](#choose-a-target-shape-per-route-group). When a client component needs live data:
 
 ```tsx
 "use client";
@@ -278,7 +347,7 @@ function ProductPrice() {
 }
 ```
 
-`useLoader()` provides live data that stays fresh — it re-fetches on navigation and after actions (controlled by `revalidate()`), unlike `useLoaderData()`, which reads a snapshot. See [Loaders](/docs/rango/features/loaders).
+Register the loader on the route (`loader(PriceLoader)`) so its data is in the tree the component reads. The read suspends until the data arrives, so keep a `<Suspense>` or `loading()` above it. Unlike `useLoaderData()`, which reads a snapshot, `useLoader()` stays fresh: the loader re-runs on navigation and after actions (controlled by `revalidate()`), and the result also exposes `isLoading`, `error`, `load`, and `refetch`. See [Loaders](/docs/rango/features/loaders).
 
 ### Actions become "use server" functions
 
@@ -291,9 +360,11 @@ export async function action({ request }) {
   await updateUser(formData.get("name"));
   return redirect("/profile");
 }
+```
 
-// Rango:
-("use server");
+```tsx
+// Rango: actions/profile.ts
+"use server";
 import { redirect } from "@rangojs/router";
 
 export async function updateProfile(formData: FormData): Promise<void> {
@@ -302,12 +373,30 @@ export async function updateProfile(formData: FormData): Promise<void> {
 }
 ```
 
-`<Form method="post">` becomes a native `<form action={updateProfile}>`. For `useActionData()`, use the standard React `useActionState` hook:
+`<Form method="post">` becomes a native `<form>` that receives the action itself. Passing the imported action, not a wrapper function, keeps the form working with JavaScript disabled:
+
+```tsx
+// EditProfile.tsx — a server or client component
+import { updateProfile } from "./actions/profile";
+
+export function EditProfile() {
+  return (
+    <form action={updateProfile}>
+      <input name="name" />
+      <button type="submit">Save</button>
+    </form>
+  );
+}
+```
+
+For `useActionData()`, use the standard React `useActionState` hook, again with the imported action rather than an inline closure:
 
 ```tsx
 "use client";
 import { useActionState } from "react";
-import { saveForm } from "../actions"; // "use server" function
+// A "use server" function with the useActionState shape:
+//   export async function saveForm(prev: State, formData: FormData): Promise<State>
+import { saveForm } from "../actions";
 
 function EditForm() {
   const [state, action, pending] = useActionState(saveForm, null);
@@ -325,7 +414,7 @@ Since Rango uses RSC server actions, all React action patterns work: `useActionS
 
 ### clientLoader / clientAction
 
-RR7 framework mode's `clientLoader` and `clientAction` run in the browser. Rango has no framework-level client loader/action concept — anything that ran there moves into React hooks (`useState`, `useEffect`, `useActionState`, `useOptimistic`) inside a `"use client"` component. There is no framework wrapper — it's just React.
+RR7 framework mode's `clientLoader` and `clientAction` run in the browser. Rango has no framework-level client loader or action — anything that ran there moves into React hooks (`useState`, `useEffect`, `useActionState`, `useOptimistic`) inside a `"use client"` component.
 
 ### shouldRevalidate becomes revalidate()
 
@@ -345,11 +434,11 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
-RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments re-run during partial rendering after navigation or actions. The intent is the same — skip unnecessary work — but the mechanism is segment-level rather than loader-level.
+RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments and loaders re-run on the server during partial rendering after navigation or actions; in a `clientUrls()` group, a loader's `revalidate()` predicate runs in the browser instead. The intent is the same — skip unnecessary work. To react to one specific action, match it by reference with `ctx.isAction(updateProfile)` rather than comparing `actionId` strings. See [Choosing what revalidates](/docs/rango/guides/server-actions#choosing-what-revalidates).
 
 ## Step 4: Route protection
 
-React Router has no built-in middleware; protection typically lives in loaders. In Rango, move auth guards to `router.use()` — it wraps the entire request, including actions:
+React Router v6 and Remix v2 have no middleware, so protection typically lives in loaders; React Router v7 route `middleware` exports map to the same Rango shape. Move auth guards to `router.use()` — it wraps the entire request, including actions:
 
 ```tsx
 // React Router: auth check in loader
@@ -358,15 +447,31 @@ export async function loader({ request }) {
   if (!user) throw redirect("/login");
   return { user };
 }
+```
 
+```tsx
 // Rango: router.use() for request-level auth
-const router = createRouter({})
-  .use(authInit) // all routes — resolves session
-  .use("/dashboard/*", requireAuth) // scoped guard
+import { createRouter, cookies, redirect } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
+
+const authInit: Middleware = async (ctx, next) => {
+  const session = cookies().get("session")?.value;
+  if (session) ctx.set("user", await getUserFromSession(session));
+  await next();
+};
+
+const requireAuth: Middleware = async (ctx, next) => {
+  if (!ctx.get("user")) return redirect("/login");
+  await next();
+};
+
+export const router = createRouter({ document: Document })
+  .use(authInit) // all routes — resolves the session
+  .use("/dashboard/*", requireAuth) // /dashboard and everything under it
   .routes(urlpatterns);
 ```
 
-Use DSL `middleware()` for render-level concerns (context shaping, headers). See [Middleware](/docs/rango/features/middleware).
+A scope pattern such as `/dashboard/*` matches the URL a request is sent to. Actions are posted to the current page's URL, but an action is identified by its id and can be carried by any URL that matches a route, so authorize sensitive actions inside the action body as well (see [Auth inside actions](/docs/rango/guides/server-actions#auth-inside-actions)). Use DSL `middleware()` for render-level concerns (context shaping, headers). See [Middleware](/docs/rango/features/middleware).
 
 ## Step 5: Loading and error states
 
@@ -378,7 +483,7 @@ path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
 ]);
 ```
 
-`errorElement` / `ErrorBoundary` + `useRouteError()` becomes `errorBoundary()` wrapping a group of routes. Server-side error boundaries only receive `error` — there is no `reset`, since a server render cannot be retried; users can navigate away or refresh:
+`errorElement` / `ErrorBoundary` + `useRouteError()` becomes `errorBoundary()` wrapping a group of routes. Server-side error boundaries only receive `error` — there is no `reset`, since a server render cannot be retried in place; users can navigate away or refresh:
 
 ```tsx
 layout(<DashboardLayout />, () => [
@@ -391,6 +496,8 @@ layout(<DashboardLayout />, () => [
   path("/dashboard", DashboardIndex, { name: "dashboard" }),
 ]);
 ```
+
+For errors thrown while a client component renders, wrap that subtree in `ErrorBoundary` from `@rangojs/router/client`; its function fallback receives `{ error, reset }`.
 
 The catch-all `{ path: "*", element: <NotFound /> }` route becomes the app-level `notFound` option, with `notFoundBoundary()` for route-level scopes:
 
@@ -407,29 +514,33 @@ layout(<ShopLayout />, () => [
 ]);
 ```
 
+See [Not-found handling](/docs/rango/features/routing#not-found-handling).
+
 ## Step 6: Navigation
 
-| React Router                              | Rango                                                                            |
-| ----------------------------------------- | -------------------------------------------------------------------------------- |
-| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                  |
-| `<Link to="/about">`                      | `<Link to="/about">`                                                             |
-| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                      |
-| `navigate("/about")`                      | `useRouter().push("/about")`                                                     |
-| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                  |
-| `navigate(-1)`                            | `useRouter().back()`                                                             |
-| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
-| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
-| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
-| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
+| React Router                              | Rango                                                                                                                                    |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                                                                          |
+| `<Link to="/about">`                      | `<Link to="/about">`                                                                                                                     |
+| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                                                                              |
+| `navigate("/about")`                      | `useRouter().push("/about")`                                                                                                             |
+| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                                                                          |
+| `navigate(-1)`                            | `useRouter().back()`                                                                                                                     |
+| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                                                                            |
+| `useLocation().state`                     | `useLocationState()` from `@rangojs/router/client`                                                                                       |
+| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client` — same `[params, setParams]` tuple; the setter takes `{ replace, scroll, revalidate }` |
+| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers)                                                         |
+| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                                                                           |
 
-`useParams<T>()` keeps the same generic annotation pattern. See [Navigation](/docs/rango/features/navigation).
+`useParams<T>()` keeps the same generic annotation pattern. See [Navigation](/docs/rango/features/navigation) and [Hooks](/docs/rango/reference/hooks).
 
 ## Step 7: Metadata, API routes, theme
 
-The `meta` export becomes the `Meta` handle in server handlers, rendered by `<MetaTags />` in the Document's `<head>`:
+The `meta` export becomes the `Meta` handle in server handlers, rendered by `<MetaTags />` (from `@rangojs/router/client`) in the Document's `<head>`:
 
 ```tsx
 import { Meta } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
 
 const HomePage: Handler<"home"> = (ctx) => {
   const meta = ctx.use(Meta);
@@ -438,6 +549,8 @@ const HomePage: Handler<"home"> = (ctx) => {
   return <div>Home page</div>;
 };
 ```
+
+A data-derived `meta({ data })` becomes the same push from the loader that owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body — registered with `loader(L, { ssr: false })` when the title must be in the server-rendered `<head>`. See [Metadata](/docs/rango/features/metadata).
 
 Resource routes become typed response routes:
 
@@ -460,9 +573,9 @@ For theming, replace a custom theme provider with `theme: true` in `createRouter
 
 ## Cloudflare Workers (RR7-on-Workers apps)
 
-RR7 serves a fully-rendered HTML response; Rango serves a streamed RSC/SSR response. Anything in the request path that buffers the response silently kills that stream — the `loading()` / `<Suspense>` fallback never shows and the page appears "awaited". Four things to fix:
+RR7 serves a fully rendered HTML response; Rango streams its RSC/SSR response. Anything in the request path that buffers the response removes that streaming: the `loading()` / `<Suspense>` fallback never shows and the page appears to wait for all its data. Four things to check:
 
-**Never buffer the Rango response in a custom worker entry.** `await response.text()`, `await response.arrayBuffer()`, and `HTMLRewriter` all drain the stream. Pass the body through:
+**Never buffer the Rango response in a custom Worker entry.** `await response.text()`, `await response.arrayBuffer()`, and `HTMLRewriter` all drain the stream. Pass the body through and change only the headers:
 
 ```ts
 // BAD — buffers the whole RSC stream before returning
@@ -470,50 +583,58 @@ const response = await router.fetch(request, { env, ctx });
 const body = await response.text(); // <- drains the stream
 return new Response(rewrite(body), response);
 
-// GOOD — pass the body through as a stream (re-wrap headers only)
+// GOOD — keep the body stream, change headers only
 const response = await router.fetch(request, { env, ctx });
-return new Response(response.body, response);
+const headers = new Headers(response.headers);
+headers.set("X-App", "worker");
+return new Response(response.body, {
+  status: response.status,
+  statusText: response.statusText,
+  headers,
+});
 ```
 
-Keep the custom entry itself (host/site resolution, sessions, proxy fallback) — that's real product logic. If a legacy proxy branch legitimately buffers to rewrite HTML, gate it so it never runs on the `router.fetch()` result.
+Keep the custom entry itself (host/site resolution, sessions, proxy fallback) — that's real product logic. If a legacy proxy branch has to buffer to rewrite HTML, make sure it never runs on the `router.fetch()` result.
 
-**Use `vite dev` / `vite preview`, not `wrangler dev`.** Both run your worker entry in miniflare with bindings and `.dev.vars`, and both stream. `wrangler dev` gzip-buffers the entire body before sending, so RSC does not stream locally under it — a local-only artifact; the deployed edge does streaming compression. Note that `vite preview` reads `.dev.vars` from the build output, so re-run `vite build` after editing it (`vite dev` loads it live).
+**Use `vite dev` / `vite preview` for local work, not `wrangler dev`.** Both run your Worker in Miniflare with your bindings, and both stream. `wrangler dev`'s local gzip compression can buffer the response, so streaming looks broken locally even though deployed Cloudflare compression streams. `vite dev` reads `.dev.vars` live; `vite preview` reads the copy made during the last build, so re-run `vite build` after editing it.
 
-**Move build output paths from `build/` to `dist/`.** RR7's `react-router build` wrote to `build/`; Rango's `vite build` writes to `dist/` (`dist/client`, `dist/rsc`, …). Update `wrangler.toml` (`assets` directory becomes `./dist/client/`) and cleanup scripts, or you deploy stale/empty assets.
+**Move build output paths from `build/` to `dist/`.** RR7's `react-router build` wrote to `build/`; Rango's `vite build` writes client assets to `dist/client/` and the Worker to `dist/rsc/`. Update `assets.directory` in your Wrangler config and any cleanup scripts that referenced `build/`.
 
-**Deploy the built worker, not the source entry.** `vite build` emits the deployable config at `dist/<env>/wrangler.json` (`no_bundle: true`). A plain `wrangler deploy` from the repo root uses the root `wrangler.toml` pointing at your source entry — and wrangler's bundler cannot resolve Rango's `virtual:rsc-router/*` modules. Deploy with `wrangler deploy -c dist/<env>/wrangler.json` or the plugin's deploy flow.
+**Deploy the built Worker, not the source entry.** `vite build` writes a deployable config at `dist/rsc/wrangler.json` (`dist/<name>/wrangler.json` if your RSC environment has a different name). Deploy it with `wrangler deploy -c dist/rsc/wrangler.json`; a plain `wrangler deploy` run right after the build also picks it up. Never deploy the source config or skip the fresh build: Wrangler's bundler cannot rebuild Rango's `virtual:rsc-router/*` modules.
+
+See [Setup](/docs/rango/getting-started) for the Worker entry itself.
 
 ## Key conceptual differences
 
-| Concept             | React Router                        | Rango                                  |
-| ------------------- | ----------------------------------- | -------------------------------------- |
-| Rendering           | Client-side by default, SSR opt-in  | Server components by default (RSC)     |
-| Data loading        | `loader()` + `useLoaderData()`      | Direct fetch in server components      |
-| Form actions        | Route-scoped `action()`             | Function-scoped `"use server"`         |
-| Route definition    | File-based or `createBrowserRouter` | `urls()` DSL with `path()`, `layout()` |
-| Middleware          | Not built-in (use loaders)          | `router.use()` + DSL `middleware()`    |
-| Parallel routes     | Not built-in                        | `parallel()` DSL                       |
-| Intercepting routes | Not built-in                        | `intercept()` DSL                      |
-| Caching             | Not built-in                        | `cache()` DSL, `"use cache"`           |
-| Type-safe routes    | Partial (v7 framework mode)         | Full: params, names, href, reverse     |
+| Concept             | React Router                                                                | Rango                                  |
+| ------------------- | --------------------------------------------------------------------------- | -------------------------------------- |
+| Rendering           | Client-side by default, SSR opt-in                                          | Server components by default (RSC)     |
+| Data loading        | `loader()` + `useLoaderData()`                                              | Direct fetch in server components      |
+| Form actions        | Route-scoped `action()`                                                     | Function-scoped `"use server"`         |
+| Route definition    | File-based or `createBrowserRouter`                                         | `urls()` DSL with `path()`, `layout()` |
+| Middleware          | v7: route `middleware` export; v6 / Remix v2: none (guards live in loaders) | `router.use()` + DSL `middleware()`    |
+| Parallel routes     | Not built-in                                                                | `parallel()` DSL                       |
+| Intercepting routes | Not built-in                                                                | `intercept()` DSL                      |
+| Caching             | Not built-in                                                                | `cache()` DSL, `"use cache"`           |
+| Type-safe routes    | Partial (v7 framework mode)                                                 | Full: params, names, href, reverse     |
 
 ## Migration checklist
 
-1. Set up Vite config with the `rango()` plugin
+1. Set up the Vite config with the `rango()` plugin (Node 24+, React 19.2.8+, Vite 8)
 2. Create the Document component with `<MetaTags />` in head
-3. Create `router.tsx` with `createRouter()`
+3. Create `router.tsx` with `createRouter()` and export it as `router`
 4. Convert route config / file routes to the `urls()` DSL
 5. Migrate layouts — keep `<Outlet />` (import from `@rangojs/router/client`)
-6. Merge loaders + components into handler functions (fetch + render in one place)
-7. Convert React Router actions to `"use server"` functions
-8. Migrate auth guards from loaders to `router.use()`
+6. Merge loaders + components into handler functions (fetch + render in one place), or port hook-heavy groups with `clientUrls()`
+7. Convert React Router actions to `"use server"` functions, passing the action itself to `<form action>`
+8. Migrate auth guards from loaders to `router.use()`, and authorize sensitive actions in the action body
 9. Replace `react-router-dom` Link/navigation with `@rangojs/router/client`
 10. Convert error boundaries to the `errorBoundary()` DSL
 11. Update metadata to the `Meta` handle + `<MetaTags />`
 12. Replace a custom theme provider with `theme: true` in `createRouter`
-13. Run `npx rango generate src/` to generate route types
+13. Run `npx rango generate src/` to generate route types (see [CLI](/docs/rango/reference/cli))
 14. Verify no shims: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns nothing, no mock modules or aliases exist, and the packages are out of `package.json`
-15. On Workers: audit the worker entry for stream buffering, switch local dev to `vite dev` / `vite preview`, move `build/` paths to `dist/`, and deploy from `dist/<env>/wrangler.json`
+15. On Workers: remove stream buffering from the Worker entry, switch local dev to `vite dev` / `vite preview`, move `build/` paths to `dist/`, and deploy from `dist/rsc/wrangler.json`
 
 <Cards>
   <Card href="/docs/rango/guides/comparison" title="Comparison">
