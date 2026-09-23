@@ -322,6 +322,14 @@ server projection.
   payload). The stamp and settled-value delivery also apply to
   `loading(false)` entries and parallel-owned loaders — both already paid
   the pre-flush await and must not re-suspend at the read site.
+- Loader-level cache (`loader(Def, () => [cache({...})])`,
+  `router/segment-resolution/loader-cache.ts`): item-family read-through with
+  SWR. The `ctx.use(Handle)` pushes of the body and of the loaders it awaits
+  via `ctx.use` are recorded on a MISS (`startHandleCapture` with an `accept`
+  predicate on the loader body scope, `isInsideLoaderBody`) into
+  the item's `handles` blob (`encodeHandles`, as `"use cache"`) and appended
+  to the current owning segment on every HIT, stale included; a stale
+  revalidation's fresh pushes are diverted into the refreshed entry only.
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

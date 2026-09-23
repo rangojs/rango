@@ -321,7 +321,9 @@ works on every built-in store. Without options, `cache()` uses the store's
 defaults (ttl 60 when the store sets none); it does **not** inherit the options
 of an enclosing `cache()` boundary. Inside `loader()` only the direct form
 `cache({...})` is valid — the wrapper form `cache(opts, () => [...])` throws.
-See `/loader` for the full loader reference.
+Handle pushes from the loader body (`Meta`, `Breadcrumbs`) are stored with the
+value and replayed on every hit, stale included. See `/loader` for the full
+loader reference.
 
 ## Global Cache Configuration
 

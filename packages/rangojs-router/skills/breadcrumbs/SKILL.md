@@ -103,7 +103,8 @@ Delivery follows the loader race model: a push that beats the handler barrier
 is in the SSR'd document; a push after a slow fetch streams and applies
 client-side (`useHandle` re-renders when it lands). To guarantee document
 delivery, register the loader as `loader(Def, { ssr: false })` —
-see `/loader` → "Writing Handles from Loaders".
+see `/loader` → "Writing Handles from Loaders". A loader with its own
+`cache()` keeps its crumbs on a hit: they are replayed from the cache entry.
 
 ## Async Content
 

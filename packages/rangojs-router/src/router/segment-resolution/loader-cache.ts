@@ -16,10 +16,22 @@
  * On hit: returns cached data directly, skips loader execution.
  * On stale hit (SWR): returns stale data, schedules background revalidation.
  * On miss: executes loader, schedules non-blocking cache write.
+ *
+ * Handle pushes (`ctx.use(Handle)(...)` in the loader body) are a side effect
+ * the HIT must reproduce: the MISS records the body's own pushes into the
+ * entry's `handles` blob (the "use cache" capture/encode), and every HIT —
+ * stale included — replays them. See replayLoaderHandles.
  */
 
-import type { LoaderEntry } from "../../server/context.js";
+import { isInsideLoaderBody, type LoaderEntry } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
+import type { HandleStore } from "../../server/handle-store.js";
+import type { CacheItemResult } from "../../cache/types.js";
+import {
+  startHandleCapture,
+  type HandleCapture,
+} from "../../cache/handle-capture.js";
+import { encodeHandles, decodeHandles } from "../../cache/handle-snapshot.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import {
   getRequestContext,
@@ -119,6 +131,40 @@ function getLoaderStore(
   const cacheConfig = loaderEntry.cache;
   if (!cacheConfig || cacheConfig.options === false) return null;
   return resolveCacheStore(cacheConfig.options.store);
+}
+
+/**
+ * Replay a loader-cache entry's recorded handle pushes on a HIT.
+ *
+ * Appends via push() rather than restoreHandles (which REPLACES a segment's
+ * per-handle array): a DSL loader pushes into its owning route/layout
+ * segment, the same bucket the entry's handler and sibling loaders push
+ * into, so a replace would drop their values. Values go to the CURRENT
+ * owning segment (the recorded ids are the MISS request's), in recorded
+ * order.
+ *
+ * Deliberately NOT inside the loader's body scope: a stale hit's background
+ * revalidation of the same loader can be running with a diverting capture
+ * keyed on that body scope (executeLoaderData), which would swallow the
+ * replay.
+ * Outside it, a PPR shell capture classifies replayed pushes as
+ * loader-scoped and unbaked (shell-capture.ts), so a shell HIT gets them
+ * from the loader's own re-run, not twice.
+ */
+async function replayLoaderHandles(
+  encoded: string,
+  handleStore: HandleStore,
+  segmentId: string,
+): Promise<void> {
+  const recorded = await decodeHandles(encoded);
+  if (!recorded) return;
+  for (const segmentHandles of Object.values(recorded)) {
+    for (const [handleName, values] of Object.entries(segmentHandles)) {
+      for (const value of values) {
+        handleStore.push(handleName, segmentId, value);
+      }
+    }
+  }
 }
 
 /**
@@ -310,6 +356,15 @@ function executeLoaderData<TEnv>(
   const tags = resolveTags(loaderEntry);
   recordRequestTags(tags);
 
+  // Handle pushes: the store and the owning segment are read synchronously
+  // at kickoff, as createLoaderExecutor does for the body's own pushes.
+  const handleStore = _getRequestContext()?._handleStore;
+  const owningSegmentId = internal._currentSegmentId;
+  // Record only pushes from THIS loader's body and the loaders it awaits via
+  // ctx.use (none of them run on a HIT): the handler and sibling loaders push
+  // into the same store concurrently.
+  const isOwnBodyPush = () => isInsideLoaderBody(loaderId);
+
   const dataPromise = (async () => {
     const codec = await getCodec();
     const key = await resolveLoaderKey(
@@ -328,11 +383,46 @@ function executeLoaderData<TEnv>(
     // The wrap is applied via wrapBackground (background path only); the
     // foreground miss runs execute() directly since its context is present.
     const requestCtxForExecute = getRequestContext();
-    return readThroughItem({
+
+    // One readThroughItem call runs at most one execution — the foreground
+    // MISS or the background stale revalidation (flagged by wrapBackground)
+    // — so a single capture slot serves the setItem that follows it.
+    let capture: HandleCapture | undefined;
+    let revalidating = false;
+    let hitHandles: string | undefined;
+    const onCachedRead = (label: string, cached: CacheItemResult) => {
+      hitHandles = cached.handles;
+      debugLoaderCacheLog(`[LoaderCache] ${label}: ${key}`);
+    };
+    const execute = async (): Promise<any> => {
+      if (!handleStore) return runMiss(loaderEntry.loader);
+      // A stale-hit revalidation diverts the body's pushes: the foreground
+      // already replayed the stale entry's, so the fresh ones belong only to
+      // the refreshed entry (not a duplicate in the live response).
+      const c = startHandleCapture(handleStore, {
+        accept: isOwnBodyPush,
+        divert: revalidating,
+      });
+      capture = c.capture;
+      try {
+        return await runMiss(loaderEntry.loader);
+      } finally {
+        c.stop();
+      }
+    };
+
+    const data = await readThroughItem({
       getItem: (k) => store.getItem!(k),
-      setItem: (k, v, o) => store.setItem!(k, v, o),
+      // Handles ride the entry like "use cache" (encodeHandles: Flight, pending
+      // pushes awaited up to its timeout, the whole blob dropped on failure).
+      // Encoded here, inside the deferred write, so a MISS response never
+      // waits on it.
+      setItem: async (k, v, o) => {
+        const handles = capture ? await encodeHandles(capture.data) : "";
+        await store.setItem!(k, v, handles ? { ...o, handles } : o);
+      },
       key,
-      execute: () => runMiss(loaderEntry.loader),
+      execute,
       // The rango.background span (kind=loader-revalidation) wraps the WHOLE
       // stale revalidation — the re-execution AND the serialize/setItem write
       // (read-through-swr routes the full task through wrapBackground) — so
@@ -340,20 +430,33 @@ function executeLoaderData<TEnv>(
       // store write all nest under one explanatory parent instead of dangling
       // under the ended foreground phases. Inside runWithRequestContext so
       // observePhase can read tracing on workerd (ALS detaches in waitUntil).
-      wrapBackground: (run) =>
-        runWithRequestContext(requestCtxForExecute, () =>
+      wrapBackground: (run) => {
+        revalidating = true;
+        return runWithRequestContext(requestCtxForExecute, () =>
           observePhase(PHASES.background("loader-revalidation"), run),
-        ),
+        );
+      },
       serialize: (d) => codec.serializeResult(d),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
-      onHit: () => debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`),
-      onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
+      onHit: (cached) => onCachedRead("HIT", cached),
+      onStale: (cached) => onCachedRead("STALE", cached),
       onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
       onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
       host: requestCtxForExecute,
     });
+
+    // An entry written before handles were recorded has none: no replay.
+    if (hitHandles && handleStore && owningSegmentId) {
+      await replayLoaderHandles(hitHandles, handleStore, owningSegmentId);
+    }
+    return data;
   })();
+
+  // Keep the store open for the replay: a HIT runs no loader body, so nothing
+  // else holds the auxiliary lane while getItem/decode are in flight, and a
+  // push after full drain throws LateHandlePushError.
+  handleStore?.trackAuxiliary(dataPromise);
 
   overrides.set(loaderId, dataPromise);
 

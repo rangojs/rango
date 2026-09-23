@@ -540,7 +540,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ```
 
 This attaches the cache config directly to the loader entry. The loader's
-data is cached independently from the route's segment cache. Loader caching
+data is cached independently from the route's segment cache, together with
+the handle pushes its body made (replayed on every hit). Loader caching
 supports custom keys, tags, SWR, conditional bypass, and per-loader store
 overrides — see `/loader` for the full reference.
 

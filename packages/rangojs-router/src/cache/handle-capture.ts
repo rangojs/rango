@@ -9,7 +9,23 @@
 import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
 
-export interface HandleCapture {
+/**
+ * Scoping for one capture (loader-level cache, loader-cache.ts): a loader
+ * body runs concurrently with the handler and sibling loaders that push into
+ * the same store.
+ */
+export interface HandleCaptureOptions {
+  /** Push-time predicate; a rejected push is not recorded by this capture. */
+  accept?: () => boolean;
+  /**
+   * Recorded pushes do not reach the store. A stale-hit loader revalidation:
+   * the foreground already replayed the entry's pushes, so the fresh body's
+   * pushes belong only to the refreshed entry.
+   */
+  divert?: boolean;
+}
+
+export interface HandleCapture extends HandleCaptureOptions {
   data: Record<string, SegmentHandleData>;
 }
 
@@ -42,7 +58,10 @@ function ensureInterceptorInstalled(handleStore: HandleStore): void {
     segmentId: string,
     value: unknown,
   ) => {
+    let diverted = false;
     for (const capture of captures) {
+      if (capture.accept && !capture.accept()) continue;
+      if (capture.divert) diverted = true;
       if (!capture.data[segmentId]) {
         capture.data[segmentId] = {};
       }
@@ -51,24 +70,28 @@ function ensureInterceptorInstalled(handleStore: HandleStore): void {
       }
       capture.data[segmentId][handleName].push(value);
     }
-    originalPush(handleName, segmentId, value);
+    if (!diverted) originalPush(handleName, segmentId, value);
   };
 }
 
 /**
- * Start capturing handle pushes for a cached function execution.
+ * Start capturing handle pushes for a cached function or cached loader
+ * execution (`options`: see HandleCaptureOptions).
  *
  * Concurrency-safe: multiple overlapping captures on the same
  * HandleStore are independent. Each capture registers a token in a
  * Set; stopping removes it. No ordering requirement (LIFO not needed).
  */
-export function startHandleCapture(handleStore: HandleStore): {
+export function startHandleCapture(
+  handleStore: HandleStore,
+  options?: HandleCaptureOptions,
+): {
   capture: HandleCapture;
   stop: () => void;
 } {
   ensureInterceptorInstalled(handleStore);
 
-  const capture: HandleCapture = { data: {} };
+  const capture: HandleCapture = { data: {}, ...options };
   const captures = activeCapturesMap.get(handleStore)!;
   captures.add(capture);
 
