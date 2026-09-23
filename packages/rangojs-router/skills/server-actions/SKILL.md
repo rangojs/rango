@@ -1,6 +1,6 @@
 ---
 name: server-actions
-description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, and client-cache control (keepClientCache). Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, or needing optimistic UI after a mutation.
+description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, client-cache control (keepClientCache), and the default CSRF origin check. Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, needing optimistic UI after a mutation, or asking how actions are protected from CSRF.
 argument-hint: "[action]"
 ---
 
@@ -723,6 +723,43 @@ export async function deleteOrder(orderId: string) {
 > page, and `notFound()` or a domain error class (branch on `error.name` in the
 > boundary) for missing or forbidden resources. For recoverable cases, return
 > `{ error: "..." }` via `useActionState` instead of throwing.
+
+## CSRF Protection
+
+Actions are protected against cross-site request forgery by default, with no
+token to thread through your forms. Before an action runs — called over JS or
+posted by a no-JS form — the router's `originCheck` compares the request's
+`Origin` header (or `Referer` when `Origin` is absent) with the request
+protocol and `Host`:
+
+| Request                                        | Result                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------ |
+| Same-origin `Origin` / `Referer`               | Action runs                                                  |
+| Cross-origin `Origin` / `Referer`              | `403`, action never runs                                     |
+| `Origin: null` (sandboxed iframe, `data:` URL) | `403`, action never runs                                     |
+| Neither header (curl, server-to-server)        | Action runs — a non-browser client carries no victim cookies |
+| `Origin` present but no `Host` header          | `403` (fails closed)                                         |
+
+The same gate covers fetchable-loader requests (`useFetchLoader()`,
+`load({ method: "POST" })`). It runs before the action is decoded, so a
+rejected request executes no action code. A rejection returns `403` with
+`X-Rango-Origin-Check: failed` (in dev the body shows both header values),
+reports to `onError` with phase `"origin"`, and emits a
+`request.origin-rejected` telemetry event (`/observability`).
+
+What the check does not do:
+
+- **Authorize.** A same-origin request from a logged-out or unprivileged user
+  passes. Keep the checks from "Authorization in actions".
+- **Run before global middleware.** `router.use()` middleware wraps the whole
+  request, so it runs for a cross-origin POST before the `403`. Don't mutate
+  state in middleware assuming the origin was already checked.
+- **Cover response routes.** `path.json()` and the other response-route tags
+  are outside the gate; see `/response-routes` → "CSRF".
+- **Trust proxies.** `X-Forwarded-Host` / `X-Forwarded-Proto` are ignored.
+  Behind a proxy that rewrites `Host`, or to allow an extra trusted origin, pass
+  an `originCheck` function (`/router-setup` → "Origin check").
+  `originCheck: false` disables the gate.
 
 ## Action Context
 
