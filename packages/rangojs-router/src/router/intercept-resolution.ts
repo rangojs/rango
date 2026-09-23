@@ -27,6 +27,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
 import { getRouterContext } from "./router-context.js";
@@ -242,8 +243,8 @@ export async function resolveInterceptEntry<TEnv>(
   const loaderIds: string[] = [];
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const { loader, revalidate: loaderRevalidateFns } =
-      interceptEntry.loader[i];
+    const loaderEntry = interceptEntry.loader[i];
+    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
     if (revalidationContext) {
@@ -305,7 +306,11 @@ export async function resolveInterceptEntry<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        runInsideLoaderScope(() => context.use(loader)),
+        // The DSL binding's funnel, as for route loaders: a loader's own
+        // cache() applies here too.
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, context, context.pathname),
+        ),
         parentEntry,
         segmentId,
         context.pathname,
@@ -463,8 +468,8 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   } = revalidationContext;
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const { loader, revalidate: loaderRevalidateFns } =
-      interceptEntry.loader[i];
+    const loaderEntry = interceptEntry.loader[i];
+    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
     const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
@@ -513,7 +518,11 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        runInsideLoaderScope(() => context.use(loader)),
+        // The DSL binding's funnel, as for route loaders: a loader's own
+        // cache() applies here too.
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, context, context.pathname),
+        ),
         parentEntry,
         segmentId,
         context.pathname,

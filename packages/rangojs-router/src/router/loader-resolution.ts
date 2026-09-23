@@ -429,7 +429,12 @@ function createLoaderExecutor<TEnv>(
       deps.add(loader.$$id);
     }
 
-    // Return cached promise if already started
+    // Every loader execution funnels here (handler and loader-to-loader
+    // reads, uncached DSL bindings, cache misses): memoized per request, so a
+    // loader runs at most once however many reads, with no store cache. A
+    // loader's cache() read-through lives in loader-cache.ts
+    // (executeLoaderData), whose ctx.use override serves a later handler read
+    // the binding's result.
     if (loaderPromises.has(loader.$$id)) {
       return loaderPromises.get(loader.$$id)!;
     }

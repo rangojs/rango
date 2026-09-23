@@ -175,8 +175,10 @@ async function replayLoaderHandles(
  * here (consumer docs: skills/ppr/SKILL.md "The loader lane rule";
  * docs/design/loader-container-bake.md). This is the single funnel every
  * loader segment path routes through (fresh resolveLoaders, cache-hit
- * resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation), so the
- * lane is decided here, per LOADER, never by the entry's loading():
+ * resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation, and
+ * intercept loaders in intercept-resolution.ts, which pass no bake key and
+ * never run under a shell capture), so the lane is decided here, per LOADER,
+ * never by the entry's loading():
  *
  * - BAKE lane: `loader(Def, { ssr: false })` (awaitBeforeFlush) with a
  *   `bakeSegmentKey` from the caller. The loader EXECUTES at capture (the
