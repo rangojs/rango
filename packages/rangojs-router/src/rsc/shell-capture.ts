@@ -1586,7 +1586,9 @@ export function deriveShellCaptureContext(
     rawCapturePush(handleName, segmentId, masked);
   };
 
-  const derivedCtx: RequestContext = Object.create(reqCtx);
+  const derivedCtx: RequestContext = Object.assign(Object.create(reqCtx), {
+    _handleStore: freshHandleStore,
+  });
   if (identity) {
     derivedCtx.request = identity.request;
     derivedCtx.url = identity.url;
@@ -1594,7 +1596,6 @@ export function deriveShellCaptureContext(
     derivedCtx.pathname = identity.url.pathname;
     derivedCtx.searchParams = identity.url.searchParams;
   }
-  derivedCtx._handleStore = freshHandleStore;
   // Own render barrier, closure-bound to the derived ctx and the fresh store
   // (issue #684, plan 009). Without this every _renderBarrier* read fell
   // through the prototype to the foreground's ALREADY-RESOLVED barrier: a

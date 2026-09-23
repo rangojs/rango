@@ -275,6 +275,15 @@ Client B: /shop → /blog/2 (partial)
   - Complete render works
 ```
 
+**Isolation:** the background render, and the stale-route refresh, run through
+`rerenderAndCacheRoute` (`match-middleware/background-revalidation.ts`) on a
+derived request context (`Object.create(requestCtx)`) with its own handle
+store. Neither swaps the request's shared `_handleStore` field. The foreground
+is still producing the page when they run (the response body streams, and a
+stale HIT re-runs its loaders), and a loader push reads that field at push
+time, so a swap sent live pushes into the background render and they went
+missing from the page.
+
 **Scope:**
 
 Proactive caching only applies to segments within a `cache()` boundary:

@@ -82,13 +82,12 @@
  * ISOLATION FROM RESPONSE
  * =======================
  *
- * Background revalidation creates fully isolated context:
- *   - Fresh handleStore (prevents polluting the response stream)
+ * Background revalidation re-renders through rerenderAndCacheRoute (shared
+ * with proactive caching in cache-store.ts):
+ *   - Own handleStore on a derived request context (the shared field is never
+ *     swapped; the foreground is still producing the page)
  *   - Fresh handlerContext + loaderPromises (prevents reusing memoized
  *     loader results from the foreground pass)
- *   - handleStore is saved/restored in try/finally
- *
- * This matches the proactive caching pattern in cache-store.ts.
  *
  *
  * FRESH RESOLUTION (NO REVALIDATION)
@@ -101,7 +100,8 @@
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
-import { getRouterContext } from "../router-context.js";
+import { getRouterContext, type RouterContext } from "../router-context.js";
+import type { CacheScope } from "../../cache/cache-scope.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
@@ -109,6 +109,89 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+
+/**
+ * Re-render a cached route in the background and write it with
+ * cacheScope.cacheRoute: the stale-hit refresh below and proactive caching
+ * (cache-store.ts). Returns the number of segments written.
+ *
+ * Runs on a DERIVED request context with its own handle store; the request's
+ * shared `_handleStore` is never swapped. The foreground is still producing
+ * the page (a stale HIT re-runs its loaders; a proactive render starts once
+ * the Response exists, while its body streams), and it reads that field late
+ * (loader pushes and aux-lane tracking in loader-resolution.ts, nested cache
+ * restores and captures in cache-scope.ts), so a swap sent live pushes into
+ * this render. setupLoaderAccess binds the store at setup, so it runs inside
+ * the derived context too. runWithRequestContext also re-establishes the
+ * request ALS, which a waitUntil task on workerd loses; ctx.Store is a
+ * different ALS (DSL build context).
+ */
+export async function rerenderAndCacheRoute<TEnv>(
+  ctx: MatchContext<TEnv>,
+  requestCtx: RequestContext<TEnv>,
+  cacheScope: CacheScope,
+  routerCtx: RouterContext<TEnv>,
+): Promise<number> {
+  const handleStore = routerCtx.createHandleStore();
+  const renderCtx: RequestContext<TEnv> = Object.assign(
+    Object.create(requestCtx),
+    { _handleStore: handleStore },
+  );
+  return runWithRequestContext(renderCtx, async () => {
+    const handlerContext = routerCtx.createHandlerContext(
+      ctx.matched.params,
+      ctx.request,
+      ctx.url.searchParams,
+      ctx.pathname,
+      ctx.url,
+      ctx.env,
+      ctx.routeMap,
+      ctx.matched.routeKey,
+      ctx.matched.responseType,
+      ctx.matched.pt === true,
+    );
+    const loaderPromises = new Map<string, Promise<any>>();
+    routerCtx.setupLoaderAccess(handlerContext, loaderPromises);
+
+    const segments = await ctx.Store.run(() =>
+      routerCtx.resolveAllSegments(
+        ctx.entries,
+        ctx.routeKey,
+        ctx.matched.params,
+        handlerContext,
+        loaderPromises,
+        { skipLoaders: true },
+      ),
+    );
+    if (ctx.interceptResult) {
+      segments.push(
+        ...(await ctx.Store.run(() =>
+          routerCtx.resolveInterceptEntry(
+            ctx.interceptResult!.intercept,
+            ctx.interceptResult!.entry,
+            ctx.matched.params,
+            handlerContext,
+            true, // belongsToRoute
+            undefined, // no revalidationContext: render fresh
+            // Skip intercept middleware: the foreground already ran it.
+            // Re-running it here would double its side effects, and a
+            // short-circuit Response would abort the write.
+            { skipMiddleware: true },
+          ),
+        )),
+      );
+    }
+
+    handleStore.seal();
+    await cacheScope.cacheRoute(
+      ctx.pathname,
+      ctx.matched.params,
+      segments,
+      ctx.isIntercept,
+    );
+    return segments.length;
+  });
+}
 
 /**
  * Creates background revalidation middleware
@@ -137,16 +220,8 @@ export function withBackgroundRevalidation<TEnv>(
       return;
     }
 
-    const {
-      getRequestContext,
-      createHandleStore,
-      createHandlerContext,
-      setupLoaderAccess,
-      resolveAllSegments,
-      resolveInterceptEntry,
-    } = getRouterContext<TEnv>();
-
-    const requestCtx = getRequestContext();
+    const routerCtx = getRouterContext<TEnv>();
+    const requestCtx = routerCtx.getRequestContext();
     const cacheScope = ctx.cacheScope;
     const reqId = INTERNAL_RANGO_DEBUG
       ? getOrCreateRequestId(ctx.request)
@@ -166,82 +241,17 @@ export function withBackgroundRevalidation<TEnv>(
         fullMatch: ctx.isFullMatch,
       });
 
-      // Save and replace handleStore to avoid polluting the response stream.
-      // Restore in finally (same pattern as proactive caching in cache-store).
-      const originalHandleStore = requestCtx._handleStore;
-      requestCtx._handleStore = createHandleStore();
-
       try {
-        const freshHandlerContext = createHandlerContext(
-          ctx.matched.params,
-          ctx.request,
-          ctx.url.searchParams,
-          ctx.pathname,
-          ctx.url,
-          ctx.env,
-          ctx.routeMap,
-          ctx.matched.routeKey,
-          ctx.matched.responseType,
-          ctx.matched.pt === true,
-        );
-        const freshLoaderPromises = new Map<string, Promise<any>>();
-        setupLoaderAccess(freshHandlerContext, freshLoaderPromises);
-
-        // Re-establish the request-context ALS around the re-render. ctx.Store
-        // is a different ALS (DSL build context); on workerd a waitUntil task
-        // runs detached from the request's I/O context, so a handler/component
-        // that reads the ambient getRequestContext() during this background
-        // re-render would otherwise throw "called outside of a request context".
-        const freshSegments = await runWithRequestContext(
+        const count = await rerenderAndCacheRoute(
+          ctx,
           requestCtx as RequestContext<TEnv>,
-          () =>
-            ctx.Store.run(() =>
-              resolveAllSegments(
-                ctx.entries,
-                ctx.routeKey,
-                ctx.matched.params,
-                freshHandlerContext,
-                freshLoaderPromises,
-                { skipLoaders: true },
-              ),
-            ),
-        );
-
-        let freshInterceptSegments: ResolvedSegment[] = [];
-        if (ctx.interceptResult) {
-          freshInterceptSegments = await runWithRequestContext(
-            requestCtx as RequestContext<TEnv>,
-            () =>
-              ctx.Store.run(() =>
-                resolveInterceptEntry(
-                  ctx.interceptResult!.intercept,
-                  ctx.interceptResult!.entry,
-                  ctx.matched.params,
-                  freshHandlerContext,
-                  true,
-                  undefined,
-                  // Skip intercept middleware: this is a post-response background
-                  // re-render to refresh a stale cached route. The foreground
-                  // already ran the middleware; re-running it would double its
-                  // side effects and a short-circuit Response would abort the write.
-                  { skipMiddleware: true },
-                ),
-              ),
-          );
-        }
-
-        const completeSegments = [...freshSegments, ...freshInterceptSegments];
-        requestCtx._handleStore.seal();
-        await cacheScope.cacheRoute(
-          ctx.pathname,
-          ctx.matched.params,
-          completeSegments,
-          ctx.isIntercept,
+          cacheScope,
+          routerCtx,
         );
         if (INTERNAL_RANGO_DEBUG) {
           const dur = performance.now() - start;
           console.log(
-            `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+            `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${count}`,
           );
         }
         debugLog("backgroundRevalidation", "revalidation complete", {
@@ -259,7 +269,6 @@ export function withBackgroundRevalidation<TEnv>(
           error: String(error),
         });
       } finally {
-        requestCtx._handleStore = originalHandleStore;
         ctx.Store.metrics = savedMetrics;
       }
     });

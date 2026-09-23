@@ -197,8 +197,13 @@ export interface RequestContext<
   /** HTTP method (GET, POST, PUT, PATCH, DELETE, etc.) */
   method: string;
 
-  /** @internal Handle store for tracking handle data across segments */
-  _handleStore: HandleStore;
+  /**
+   * @internal Handle store for tracking handle data across segments.
+   * Readonly: a background render that needs its own store derives a context
+   * (rerenderAndCacheRoute, shell-capture.ts) instead of swapping this field,
+   * which the foreground still reads while it produces the page.
+   */
+  readonly _handleStore: HandleStore;
 
   /**
    * @internal transition({ when }) predicates for segments matched this request,
