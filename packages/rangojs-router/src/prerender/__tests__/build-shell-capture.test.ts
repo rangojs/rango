@@ -3,6 +3,11 @@ import { RouteNotFoundError } from "../../errors.js";
 import type { BuildShellCaptureOptions } from "../build-shell-capture.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../../router/middleware.js";
 import { getRequestContext } from "../../server/request-context.js";
+import {
+  clearCachedManifest,
+  setCachedManifest,
+} from "../../route-map-builder.js";
+import { runMiddleware } from "../../testing/run-middleware.js";
 
 vi.mock("../../deps/rsc.js", () => ({
   renderToReadableStream: vi.fn(),
@@ -206,6 +211,89 @@ describe("captureShellForBuild", () => {
       "route-after",
       "global-after",
     ]);
+  });
+
+  it("gives build middleware the same global-only ctx.reverse as a live request", async () => {
+    // Records what ctx.reverse returns (or the error it throws) for a dot-local
+    // name, a global name relying on param auto-fill, and a fully specified
+    // global name. The cast models untyped (JS) code: MiddlewareContext rejects
+    // ".name" at compile time.
+    const reverseProbe =
+      (results: string[]): MiddlewareFn =>
+      async (ctx, next) => {
+        const reverse = ctx.reverse as (
+          name: string,
+          params?: Record<string, string>,
+        ) => string;
+        for (const call of [
+          () => reverse(".index"),
+          () => reverse("shop.category"),
+          () => reverse("shop.category", { category: "tools" }),
+        ]) {
+          try {
+            results.push(call());
+          } catch (error) {
+            results.push((error as Error).message);
+          }
+        }
+        return next();
+      };
+    const routeMap = {
+      "shop.index": "/shop",
+      "shop.category": "/shop/:category",
+    };
+
+    // Live request: middleware reverse is map-only (rsc/handler.ts), mirrored
+    // by runMiddleware.
+    const live: string[] = [];
+    await runMiddleware(reverseProbe(live), {
+      request: "/shop/power-set",
+      params: { category: "power-set" },
+      routeName: "shop.category",
+      routeMap,
+    });
+    expect(live[0]).toBe('Unknown route: ".index"');
+    expect(live[2]).toBe("/shop/tools");
+
+    captureAndStoreShellMock.mockReset();
+    captureAndStoreShellMock.mockResolvedValue("refused");
+    const buildGlobal: string[] = [];
+    const buildRoute: string[] = [];
+    const router = {
+      middleware: [
+        {
+          pattern: null,
+          regex: null,
+          paramNames: [],
+          handler: reverseProbe(buildGlobal),
+        } satisfies MiddlewareEntry,
+      ],
+      previewMatch: vi.fn(async () => ({
+        routeKey: "shop.category",
+        params: { category: "power-set" },
+        routeMiddleware: [
+          {
+            handler: reverseProbe(buildRoute),
+            params: { category: "power-set" },
+          },
+        ],
+      })),
+      match: vi.fn(async () => ({
+        routeName: "shop.category",
+        params: { category: "power-set" },
+      })),
+    };
+
+    setCachedManifest(routeMap);
+    try {
+      await expect(captureShellForBuild(makeOptions(router))).resolves.toEqual({
+        outcome: "refused",
+      });
+    } finally {
+      clearCachedManifest();
+    }
+    expect(buildGlobal).toEqual(live);
+    expect(buildRoute).toEqual(live);
   });
 
   it("a bake-lane opt-out DURING the capture render discards the shell (outcome 'dynamic')", async () => {

@@ -44,7 +44,7 @@ import { isRouteNotFoundError } from "../errors.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
 import type { MiddlewareEntry } from "../router/middleware.js";
-import { getGlobalRouteMap, isRouteRootScoped } from "../route-map-builder.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   resolvePprConfig,
   type ResolvedPprConfig,
@@ -234,14 +234,11 @@ async function attemptBuildCapture(
       setRequestContextParams(preview.params ?? {}, preview.routeKey);
     }
 
-    const routeReverse = createReverseFunction(
-      getGlobalRouteMap(),
-      preview?.routeKey,
-      preview?.params ?? {},
-      preview?.routeKey
-        ? isRouteRootScoped(preview.routeKey, router.id)
-        : undefined,
-    );
+    // Global-only, like the live request's middleware reverse
+    // (rsc/handler.ts: createReverseFunction(getRequiredRouteMap())): no
+    // include() scope, no param auto-fill. A scoped reverse here resolved
+    // `.name` at build while the live request threw `Unknown route`.
+    const middlewareReverse = createReverseFunction(getGlobalRouteMap());
 
     const runCapture = () =>
       runBuildCaptureFinal({
@@ -268,7 +265,7 @@ async function attemptBuildCapture(
         env,
         variables,
         runCapture,
-        routeReverse,
+        middlewareReverse,
         baseCtx,
       );
 
@@ -281,7 +278,7 @@ async function attemptBuildCapture(
       env,
       variables,
       runRouteMiddleware,
-      routeReverse,
+      middlewareReverse,
       baseCtx,
     );
   });

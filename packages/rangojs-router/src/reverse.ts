@@ -218,8 +218,8 @@ export type ScopedReverseFunction<
  * handleResponseRoute, router/intercept-resolution.ts; mirrored by
  * testing/run-middleware.ts and testing/dispatch.ts), so a dot-local `.name`
  * has no scope to resolve against and throws `Unknown route`. Build-time PPR
- * shell capture (prerender/build-shell-capture.ts) does pass a scoped reverse
- * to route middleware, but the live request for the same route does not.
+ * shell capture (prerender/build-shell-capture.ts) gives global and route
+ * middleware the same global-only reverse.
  *
  * - Route map with a string index signature (no generated map, the permissive
  *   `Record<string, string>` fallback): any name except a dot-prefixed literal.
