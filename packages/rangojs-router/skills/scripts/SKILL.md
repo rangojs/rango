@@ -6,13 +6,15 @@ argument-hint: "[vendor]"
 
 # Scripts
 
-Inject `<script>` tags into the document the idiomatic Rango way: push a config
-from a **server** route/layout handler — or a loader body — with
-`ctx.use(Script)(config)`, and render them with the built-in **`<Scripts />`**
-component (the `Meta` / `<MetaTags>` pair, but for scripts). The request CSP **nonce is applied automatically to
-document-rendered scripts** — you never read or pass it. (The one exception is an
-async script first encountered on a soft navigation; see the nonce caveat under
-"Execution contract".)
+Push a script config from a **server** route/layout handler (or a loader) with
+`ctx.use(Script)(config)`; the built-in **`<Scripts />`** component renders it.
+It is the `Meta` / `<MetaTags>` pair, but for scripts. The request CSP **nonce
+is applied automatically to document-rendered scripts**; you never read or pass
+it. (The one exception is an async script first encountered on a soft
+navigation; see the nonce caveat under "Execution contract".)
+
+Read "Execution contract" before choosing a shape: inline and ordered scripts
+run only on a hard (document) load, never on a soft navigation.
 
 ## Setup
 
@@ -21,10 +23,12 @@ async script first encountered on a soft navigation; see the nonce caveat under
 adds them next to `<MetaTags />`:
 
 ```tsx
-// document.tsx ("use client")
+// document.tsx
+"use client";
+import type { ReactNode } from "react";
 import { MetaTags, Scripts } from "@rangojs/router/client";
 
-export function Document({ children }) {
+export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -80,7 +84,8 @@ ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 - `type` — free string: `"module"`, `"application/ld+json"`, `"text/partytown"`, …
 - `attributes` — React-cased (`crossOrigin`, not `crossorigin`) and React-typed
   (`data-*`, `integrity`, `referrerPolicy`, …). Excluded: the fields the handle
-  manages (`id`/`src`/`async`/`defer`/`type`/`children`/`nonce`) and all `on*`
+  manages (`id`/`src`/`async`/`defer`/`type`/`children`/`nonce`/
+  `dangerouslySetInnerHTML`) and all `on*`
   handlers (`onLoad`/`onError`/… — a config is serialized to the client, so a
   function can't survive; use a `"use client"` component for callbacks).
 
@@ -95,7 +100,7 @@ innerHTML, which the HTML spec never executes). So:
 | External ordered (`defer`/plain) | Yes                            | **No** — document-load only                           |
 | External `async`                 | Yes                            | **Yes** — React loads the resource on first encounter |
 
-`<Scripts>` enforces this honestly: after hydration it **freezes** the inline +
+`<Scripts>` enforces this: after hydration it **freezes** the inline +
 ordered set to what was in the initial HTML, so a navigation never inserts an
 inert (silently dead) `<script>`. Async configs stay reactive. Reusing an `id`
 shapes the INITIAL document output (last-push-wins) — it does not re-run a script
@@ -133,9 +138,14 @@ the loader could run before the bootstrap. Instead let the bootstrap inject its
 own loader (Google's snippet does exactly this):
 
 ```ts
-function gtmBootstrap(id: string): string {
+// `initial` is pushed into dataLayer before the GTM start event, so tags that
+// fire on the first page_view can read it (see per-route tagging below).
+function gtmBootstrap(id: string, initial?: Record<string, string>): string {
   return [
     "window.dataLayer=window.dataLayer||[];",
+    // <Scripts> escapes the body against </script> breakout, so plain
+    // JSON.stringify is enough here.
+    initial ? `window.dataLayer.push(${JSON.stringify(initial)});` : "",
     'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',
     `(function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${JSON.stringify(id)});`,
   ].join("");
@@ -157,7 +167,7 @@ ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 // a route: same id, with content_group baked in
 ctx.use(Script)({
   id: "gtm",
-  children: gtmBootstrapWith({ content_group: "blog" }),
+  children: gtmBootstrap("GTM-XXXX", { content_group: "blog" }),
 });
 ```
 

@@ -32,6 +32,12 @@ import { menuRoutes } from "./menu";
 export const urlpatterns = urls(({ include }) => [
   include("/:locale?", menuRoutes, { name: "menu" }),
 ]);
+
+// menu.tsx
+export const menuRoutes = urls(({ path }) => [
+  path("/", MenuIndex, { name: "index" }),
+  path("/c/:slug", MenuCategory, { name: "category" }),
+]);
 ```
 
 URLs that match:
@@ -59,7 +65,8 @@ URLs that match:
 Absent optionals are `undefined` (not `""`), so `??` coalesces correctly:
 
 ```typescript
-import { Handler } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+import { resolveLocale } from "../lib/locale";
 
 export const MenuIndex: Handler<"menu.index"> = (ctx) => {
   // ctx.params.locale is `string | undefined`
@@ -87,9 +94,9 @@ import { cookies, headers } from "@rangojs/router";
 
 export const SUPPORTED_LOCALES = ["en", "gb", "fr"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
-const DEFAULT_LOCALE: Locale = "en";
+export const DEFAULT_LOCALE: Locale = "en";
 
-const isSupported = (v: string): v is Locale =>
+export const isSupported = (v: string): v is Locale =>
   (SUPPORTED_LOCALES as readonly string[]).includes(v);
 
 export function resolveLocale(ctx: {
@@ -104,24 +111,35 @@ export function resolveLocale(ctx: {
   const accept = headers().get("accept-language") ?? "";
   for (const tag of accept.split(",")) {
     const code = tag.split(";")[0].trim().split("-")[0];
-    if (isSupported(code)) return code as Locale;
+    if (isSupported(code)) return code;
   }
   return DEFAULT_LOCALE;
 }
 ```
 
+`cookies()` and `headers()` read the current request, so the helper works in
+handlers, layouts, loaders, and middleware without passing the request in.
+
 If you want to redirect to the canonical URL when the resolved locale
 doesn't match the URL (e.g., user has `gb` cookie but visits `/`), do
-that in a global middleware so it covers actions too:
+that in global middleware (`router.use()`). Global middleware runs before
+route matching, and its `ctx.params` come from its own pattern — not from
+`include("/:locale?")` — so read the locale segment from the pathname:
 
 ```typescript
+// router.tsx
 import { redirect } from "@rangojs/router";
+import { DEFAULT_LOCALE, isSupported, resolveLocale } from "./lib/locale";
 
-router.use("/*", async (ctx, next) => {
-  const fromUrl = ctx.params.locale;
-  const resolved = resolveLocale(ctx);
-  if (resolved !== DEFAULT_LOCALE && !fromUrl) {
-    return redirect(`/${resolved}${ctx.url.pathname}`);
+router.use(async (ctx, next) => {
+  if (ctx.request.method !== "GET") return next(); // leave actions alone
+  const first = ctx.url.pathname.split("/")[1] ?? "";
+  if (!isSupported(first)) {
+    const resolved = resolveLocale({ params: {} }); // cookie → Accept-Language → default
+    if (resolved !== DEFAULT_LOCALE) {
+      const rest = ctx.url.pathname === "/" ? "" : ctx.url.pathname;
+      return redirect(`/${resolved}${rest}${ctx.url.search}`);
+    }
   }
   await next();
 });
@@ -138,8 +156,13 @@ ctx.reverse("menu.index", { locale: "" }); // → "/"
 ctx.reverse("menu.index", { locale: undefined }); // → "/"
 ctx.reverse("menu.index", { locale: "en" }); // → "/en"
 ctx.reverse("menu.category", { locale: "en", slug: "breads" }); // → "/en/c/breads"
-ctx.reverse("menu.category", { slug: "breads" }); // → "/c/breads"
+ctx.reverse("menu.category", { slug: "breads" }); // → "/c/breads" on an unprefixed request
 ```
+
+`ctx.reverse()` auto-fills missing params from the current request, so the
+last call returns `/en/c/breads` when the current URL is `/en/...`. That is
+what you want for in-locale links; to leave the locale, pass it explicitly
+(`{ locale: "fr" }`, or `undefined`/`""` for the bare default).
 
 If the active locale is the app default and your URL strategy hides it
 (`"en"` → `/`, others → `/<locale>`), normalize before calling reverse:
@@ -177,28 +200,27 @@ export async function loadMessages(locale: Locale) {
 
 ### Server layout: hand off to the client provider
 
+A layout handler receives the handler context (not props) and renders its
+children with `<Outlet />`. It sees the matched route's params, including
+`locale` from the include below it:
+
 ```tsx
-// layouts/intl-layout.tsx (server component)
-import type { ReactNode } from "react";
+// layouts/intl-layout.tsx (server)
+import type { Handler } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
 import { resolveLocale } from "../lib/locale";
 import { loadMessages } from "../lib/messages";
 import { IntlClientProvider } from "../components/intl-client-provider";
 
-export async function IntlLayout({
-  ctx,
-  children,
-}: {
-  ctx: any;
-  children: ReactNode;
-}) {
+export const IntlLayout: Handler = async (ctx) => {
   const locale = resolveLocale(ctx);
   const messages = await loadMessages(locale);
   return (
     <IntlClientProvider locale={locale} messages={messages}>
-      {children}
+      <Outlet />
     </IntlClientProvider>
   );
-}
+};
 ```
 
 ### Client provider
@@ -252,20 +274,22 @@ export const urlpatterns = urls(({ layout, include }) => [
 ```
 
 `<FormattedMessage>`, `useIntl()`, etc. work in any client component
-under the layout. Server components can use `formatjs`'s `createIntl()`
-directly with the same `messages` map for static text.
+under the layout. Server components and handlers can't use React context
+providers from the client; call `createIntl({ locale, messages })` (from
+`@formatjs/intl` or `react-intl`) directly with the same `messages` map for
+server-rendered text.
 
 ## Common Pitfalls
 
-| Pitfall                                                       | Fix                                                                                    |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `ctx.params.locale === ""` returns `false`                    | Absent optionals are `undefined`, not `""`. Use `=== undefined` or `??`.               |
-| `ctx.params.locale ?? "en"` returns `""`                      | Pre-fix behavior. After the include-prefix fix this works correctly.                   |
-| Bare `/` 404s when mounted via `include("/:locale?", routes)` | Requires the all-optional pattern fix in `compilePattern` (shipped).                   |
-| Unknown locale (e.g. `/de`) matches as `locale: "de"`         | Add a constraint: `:locale(en\|gb\|fr)?`. Unknown values now 404.                      |
-| Reverse produces `//c/breads` for absent locale               | `reverse()` collapses `undefined`/`""` segments — should not happen. File a bug.       |
-| Locale switcher loses search params                           | Read `ctx.url.search` and pass to `reverse(..., undefined, parsedSearch)`.             |
-| Action middleware can't read `ctx.params.locale`              | Route middleware doesn't wrap action execution. Use global `router.use()` for actions. |
+| Pitfall                                                       | Fix                                                                                                                |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `ctx.params.locale === ""` returns `false`                    | Absent optionals are `undefined`, not `""`. Use `=== undefined` or `??`.                                           |
+| Unknown locale (e.g. `/de`) matches as `locale: "de"`         | Add a constraint: `:locale(en\|gb\|fr)?`. Unknown values now 404.                                                  |
+| Link meant for the default locale keeps `/en`                 | `ctx.reverse()` auto-fills the current `locale`. Pass `{ locale: undefined }` (or `""`) to drop it.                |
+| Reverse produces `//c/breads` for absent locale               | `reverse()` collapses `undefined`/`""` segments — should not happen. File a bug.                                   |
+| Locale switcher loses search params                           | Append `ctx.url.search` to the reversed URL, or pass `Object.fromEntries(ctx.searchParams)` as the third argument. |
+| Global middleware's `ctx.params.locale` is always `undefined` | Global middleware params come from its own pattern. Parse the first path segment (see "Locale Resolution").        |
+| Route middleware doesn't see actions                          | Route middleware doesn't wrap action execution. Use global `router.use()` for action-time locale logic.            |
 
 ## Cross-references
 

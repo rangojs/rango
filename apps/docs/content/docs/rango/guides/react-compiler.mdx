@@ -52,13 +52,13 @@ export default defineConfig({
     react({ compiler: true }),
     rango({ preset: "cloudflare" }),
     cloudflare({
-      /* ... */
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
     }),
   ],
 });
 ```
 
-Both layouts keep `react()` ahead of `rango()` / `cloudflare()`, which is what Rango's own e2e apps run.
+Both layouts keep `react()` ahead of `rango()` / `cloudflare()`, which is what Rango's own e2e apps run. The `compiler` option is the only change from a normal Rango config.
 
 ## What gets compiled (client-only)
 
@@ -79,7 +79,7 @@ If you genuinely need to compile **server** components, the native option cannot
 | Option                          | Effect                                                                                                                                         |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `compilationMode: 'annotation'` | Compile only components marked with the `"use memo"` directive, not every eligible one                                                         |
-| `target: '17' \| '18'`          | Emit `react-compiler-runtime` calls for React < 19. Omit on React 19+.                                                                         |
+| `target: '17' \| '18'`          | Emit `react-compiler-runtime` calls for React 17 or 18. Omit on React 19+.                                                                     |
 | `logDiagnostics: true`          | Log recoverable compiler diagnostics (why a component was skipped) through Vite. Default `false`. Fatal diagnostics always fail the transform. |
 
 `logDiagnostics` can only relay what the binding reports. `oxc-transform-react` 0.145.x, the range plugin-react 6.1 declares, reports bail-out reasons. 0.148.0 dropped them ([oxc-project/oxc#26318](https://github.com/oxc-project/oxc/issues/26318)), so the flag goes silent once plugin-react's peer range moves past it; 0.146 and 0.147 still report but need a later plugin-react. Callback-valued Babel options (`logger`, function-valued `sources`) do not exist on the native path; `sources` takes an array of filename substrings.
@@ -112,7 +112,7 @@ Output is not byte-identical to Babel's: the port tracks React's experimental co
 
 ## Babel fallback
 
-On `@vitejs/plugin-react` < 6.1, or if you need a Babel-only compiler option, the previous wiring still works: a top-level [`@rolldown/plugin-babel`](https://www.npmjs.com/package/@rolldown/plugin-babel) running `reactCompilerPreset()` from `@vitejs/plugin-react`, placed **after `react()`** and **before the plugin that supplies `@vitejs/plugin-rsc`**. The preset gates itself to `consumer === "client"`, so the client-only contract is the same. Do not combine it with `compiler: true`.
+On `@vitejs/plugin-react` older than 6.1, or if you need a Babel-only compiler option, the previous wiring still works: a top-level [`@rolldown/plugin-babel`](https://www.npmjs.com/package/@rolldown/plugin-babel) running `reactCompilerPreset()` from `@vitejs/plugin-react`, placed **after `react()`** and **before the plugin that supplies `@vitejs/plugin-rsc`**. The preset gates itself to `consumer === "client"`, so the client-only contract is the same. Do not combine it with `compiler: true`.
 
 ```bash
 pnpm add -D @rolldown/plugin-babel @babel/core babel-plugin-react-compiler @types/babel__core

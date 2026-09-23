@@ -4,9 +4,13 @@ description: Route requests to different apps by domain, subdomain, or path pref
 type: guide
 ---
 
-You're running several apps behind one deployment — a marketing site on the apex domain, an admin app on `admin.*`, an API on `api.*` — and requests need to land in the right one by hostname. `createHostRouter` matches hostname (and optionally path prefix) patterns and dispatches to lazily-loaded sub-apps.
+You're running several apps behind one deployment (a marketing site on the apex domain, an admin app on `admin.*`, an API on `api.*`) and requests need to land in the right one by hostname. `createHostRouter` from `@rangojs/router/host` matches hostname (and optionally path prefix) patterns and dispatches to lazily-loaded sub-apps.
+
+Each sub-app is an ordinary `createRouter()` app or a plain request handler; the host router only picks which one runs. For a single app served under a sub-path, use the router's `basename` option instead (see [createRouter](/docs/rango/reference/create-router)).
 
 ## The shortest path
+
+This is the Cloudflare form, where your worker entry owns `fetch`. For `node` and `vercel`, see [Deploying](#deploying-who-owns-the-server-entry).
 
 ```ts
 // host-router.ts
@@ -43,6 +47,12 @@ Patterns are tested in registration order — first match wins.
 | `admin.**`        | `admin` subdomain of any domain                |
 | `admin.`          | `admin` subdomain of any apex (no wildcard)    |
 | `example.com/api` | Domain + path prefix (prefix match)            |
+
+Matching details:
+
+- **Apex means exactly two labels.** There is no Public Suffix List: `example.co.uk` has three labels, so `.` and `*` do not match it and `*.` does. `localhost` has one label, so it matches neither `.` nor `*.`; use an exact `localhost` pattern (or `**`) for local dev.
+- **Hosts are case-insensitive; paths are not.** A path prefix matches the exact path or anything below it (`example.com/api` matches `/api` and `/api/x`, not `/apix`). A trailing `/` on the pattern is ignored.
+- A pattern that is empty, not a string, or contains whitespace throws `InvalidPatternError` at registration.
 
 For autocompleted, reusable pattern names, wrap them with `defineHosts` (returns a frozen object):
 
@@ -103,7 +113,9 @@ export default (request: Request, input: any) => router.fetch(request, input);
 
 A host app has several `createRouter()` sub-apps, so single-router auto-discovery can't pick one entry. Either let rango auto-detect the lone `createHostRouter()` file, or point at it explicitly in `vite.config.ts`: `rango({ preset: "vercel", hostRouter: "./src/worker.rsc.tsx" })`.
 
-On Vercel this runs as a single function calling `hostRouter.match()` for every request (mirroring the Cloudflare single-worker model); `{ env, ctx }` (`process.env` + `{ waitUntil }`) is threaded unchanged to each matched sub-app's handler and `cache(env, ctx)` factory.
+On Vercel this runs as a single function calling `hostRouter.match()` for every request (mirroring the Cloudflare single-worker model); `{ env, ctx }` (`process.env` + `{ waitUntil }`) is passed unchanged to each matched sub-app's handler and `cache(env, ctx)` factory. See [Deploy to Vercel](/docs/rango/guides/deploy-vercel).
+
+Each sub-app has its own generated route map and `Rango.Env`. Typecheck each one in its own TypeScript program (or give route names per-app prefixes) so the global type augmentations don't collide. See [Type Safety](/docs/rango/concepts/typesafety).
 
 ## Handling unmatched hosts
 
@@ -129,25 +141,38 @@ export default {
 };
 ```
 
-Note `router.fallback()` is **not** for unmatched hosts — it handles cookie-override errors only (see below).
+Note `router.fallback()` is **not** for unmatched hosts. It handles cookie-override errors only (see below).
 
 ## Middleware
 
-Global middleware runs for every matched route; per-route middleware runs only for its host pattern. Signature: `(request: Request, input: RouterRequestInput, next: () => Promise<Response>) => Promise<Response>`. Calling `next()` more than once throws.
+Global middleware runs for every matched route; per-route middleware runs only for its host pattern. Global middleware runs first, then the matched route's middleware, then the handler. Signature: `(request: Request, input: RouterRequestInput, next: () => Promise<Response>) => Promise<Response>`. Calling `next()` more than once throws.
 
 ```ts
-// Global — runs for all routes
+import { createHostRouter, type Middleware } from "@rangojs/router/host";
+
+const router = createHostRouter();
+
+// Global: runs for all routes
 router.use(async (request, input, next) => {
   console.log(`[${new Date().toISOString()}] ${request.url}`);
   return next();
 });
 
-// Per-route
+// Per-route: return a Response without calling next() to short-circuit
+const requireAuth: Middleware = async (request, input, next) => {
+  if (!request.headers.get("authorization")) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return next();
+};
+
 router
   .host(["admin.*"])
   .use(requireAuth)
   .lazy(() => import("./apps/admin"));
 ```
+
+`input` is typed `RouterRequestInput<any>` on purpose: one host router fans out to sub-apps with different env shapes, so `input.env` and `input.vars` are `any` here, and each sub-app types its own env via `createRouter<TEnv>()`.
 
 ## Dev: cookie-based host override
 
@@ -164,15 +189,27 @@ const router = createHostRouter({
 });
 ```
 
-Resolution: no cookie → actual hostname; cookie present and the host is in `allowedHosts` → cookie value becomes the hostname; cookie present but host not allowed → `HostOverrideNotAllowedError`. Without a custom `validate`, the cookie value is validated as a hostname via `new URL()`.
+When a request arrives:
 
-`router.fallback().map(...)` handles these cookie-override errors (override from a disallowed host, invalid cookie hostname):
+1. No cookie: the actual hostname is used.
+2. Cookie present and the actual host matches an `allowedHosts` pattern: the cookie value becomes the hostname (after `validate`, when given).
+3. Cookie present but the host is not allowed: `HostOverrideNotAllowedError`, handled by the fallback below.
+
+Without a custom `validate`, the cookie value must parse as a bare hostname via `new URL()` (no port or path) and is lowercased; otherwise the request fails with `InvalidHostnameError`. A custom `validate` returns the effective hostname; if it throws, the error is wrapped in `HostValidationError`. The effective hostname is then matched against the host patterns as usual.
+
+`router.fallback().map(...)` handles these cookie-override errors (override from a disallowed host, invalid cookie hostname, a throwing `validate`). Global middleware and the fallback's own middleware still run:
 
 ```ts
-router
-  .fallback()
-  .map((request) => new Response("Invalid host override", { status: 400 }));
+router.fallback().map((request, input) => {
+  // The override error is passed on the input (not part of RouterRequestInput's type)
+  const { error } = input as { error?: Error };
+  return new Response(`Invalid host override: ${error?.message}`, {
+    status: 400,
+  });
+});
 ```
+
+Without a registered fallback, a failed override returns a `400` JSON response (`{ error, message }`) that also clears the override cookie.
 
 For visibility into matching decisions, `createHostRouter({ debug: true })` logs pattern matching, route registration, and cookie override decisions to the console.
 
@@ -195,15 +232,19 @@ matchesHost(
   new Request("https://foo.workers.dev/admin"),
 ); // true
 
-// Build requests for integration tests
+// Build requests for integration tests (method defaults to GET, path to "/")
 const request = createTestRequest({
   host: "admin.example.com",
   path: "/dashboard",
+  method: "POST",
+  headers: { authorization: "Bearer test" },
   cookies: { "x-dev-host": "api.example.com" },
 });
+const response = await router.match(request);
 
-// Which route would match, without executing
+// Which route would match, without executing (pathname defaults to "/")
 router.test("admin.example.com"); // { pattern, handler, kind } | null
+router.test("example.com", "/admin");
 ```
 
 See [Testing](/docs/rango/features/testing) for the router-level primitives.

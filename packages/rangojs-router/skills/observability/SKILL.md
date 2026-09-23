@@ -9,15 +9,17 @@ argument-hint:
 Use this when you need to understand request latency, cache decisions,
 revalidation behavior, loader overlap, or production traces.
 
-Rango exposes two complementary observability surfaces:
+Rango exposes three complementary observability surfaces:
 
 1. **Performance timeline** (`debugPerformance`) — per-request waterfall for
    local or targeted debugging. It prints to the console and emits
    `Server-Timing`.
-2. **Structured telemetry** (`telemetry`) — lifecycle events sent to a pluggable
-   sink for production monitoring, OpenTelemetry, or custom metrics.
+2. **Structured telemetry** (`telemetry`) — discrete lifecycle events sent to a
+   pluggable sink for production monitoring, OpenTelemetry, or custom metrics.
+3. **Tracing** (`tracing`) — the same phases as the timeline, emitted as spans
+   into OpenTelemetry, Cloudflare Workers, or Vercel traces.
 
-The essentials are below. The exported `TelemetryEvent` union type
+All three are off by default. The essentials are below. The exported `TelemetryEvent` union type
 (`import type { TelemetryEvent } from "@rangojs/router"`) is the full event
 contract — every event kind and its fields are typed there.
 
@@ -35,7 +37,8 @@ const router = createRouter({
 });
 ```
 
-Or enable for selected requests from middleware:
+Or enable for selected requests from middleware (route `middleware()` inside
+`urls()`, or `router.use()` for every request):
 
 ```typescript
 middleware(async (ctx, next) => {
@@ -52,11 +55,19 @@ shared-axis waterfall and adds a `Server-Timing` header.
 Read the timeline as intervals:
 
 - `handler:total` is the whole router request.
-- `render:total` / `ssr-render-html` show the render pass.
-- `loader:*` rows should overlap render work. If a loader starts only after the
-  render bar, it is serialized latency.
-- Cache, route matching, middleware pre/post, RSC serialization, and SSR phases
-  appear as separate spans, so the slow phase is visible without guessing.
+- `render:total:<routeName>` (or `render:total` for unnamed routes) and
+  `ssr:render-html` show the render pass.
+- `loader:<id>` rows should overlap render work. If a loader starts only after
+  the render bar, it is serialized latency.
+- Route matching (`match:*`), middleware (`middleware:<name>:pre` / `:post`),
+  actions (`action:<id>`), cache, RSC serialization, and SSR setup appear as
+  separate rows, so the slow phase is visible without guessing.
+
+The console waterfall uses these labels as written. In the `Server-Timing`
+header, colons become hyphens and other non-alphanumeric characters are
+dropped (`ssr:render-html` → `ssr-render-html`, `handler:total` →
+`handler-total`), and nested rows get a `d<depth>-` prefix. The full metric
+list is in the repository's `packages/rangojs-router/docs/telemetry.md`.
 
 **Deployed Cloudflare caveat**: on production Workers, timers are frozen
 during request execution (Spectre mitigation), so `Server-Timing` durations
@@ -106,7 +117,9 @@ const router = createRouter({
 On **Cloudflare Workers**, use `createCloudflareTracing` for the `tracing` slot
 instead — it emits the same phases as native Cloudflare custom spans (in the
 Workers trace waterfall, next to the automatic KV/D1/fetch spans), with no
-`@opentelemetry/api` dependency:
+`@opentelemetry/api` dependency. It reads the tracer from the `ctx` your Worker
+passes to `router.fetch(request, { env, ctx })`, and is a pass-through when
+Workers tracing is not enabled for the Worker:
 
 ```typescript
 import { createRouter } from "@rangojs/router";
@@ -226,6 +239,7 @@ Then inspect:
 
 ## Zero-overhead defaults
 
-`debugPerformance` is off by default, and `telemetry` emits nothing unless a sink
-is configured. Per-request `ctx.debugPerformance()` lets you turn on the
-waterfall only for the route, user, or query param you are investigating.
+`debugPerformance` is off by default, `telemetry` emits nothing unless a sink
+is configured, and with `tracing` unset every span call runs the work directly.
+Per-request `ctx.debugPerformance()` lets you turn on the waterfall only for the
+route, user, or query param you are investigating.

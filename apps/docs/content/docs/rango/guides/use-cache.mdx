@@ -4,9 +4,11 @@ description: Function-level caching with the "use cache" directive — profiles,
 type: guide
 ---
 
-You have one expensive async function — a query, an API call, an RSC component — that should memoize its own output instead of re-running on every request. That's the `"use cache"` directive: function-level caching with TTL + stale-while-revalidate, complementary to the segment-level `cache()` DSL and the build-time `Static()`/`Prerender()` handlers.
+You have one expensive async function — a query, an API call, an RSC component — that should memoize its own output instead of re-running on every request. That's the `"use cache"` directive: function-level caching with TTL + stale-while-revalidate, keyed by the function's arguments. The code around the call keeps running.
 
-If you want to cache a whole route or a rendered subtree of segments, you want segment `cache()` instead — see [Caching & Revalidation](/docs/rango/features/caching).
+One rule before anything else: `"use cache"` reads and writes the app-level store from `createRouter({ cache })`. Without a store the function simply runs uncached on every call.
+
+**Which cache layer?** If you want to cache a whole route or a rendered subtree of segments, use segment `cache()` instead — see [Caching & Revalidation](/docs/rango/features/caching) and the [cache() vs "use cache"](/docs/rango/concepts/freshness) comparison. For build-time output use [Prerender](/docs/rango/guides/prerender); for a cached HTML shell with live holes use [PPR](/docs/rango/guides/ppr). A value that must be fresh on every request belongs in a [loader](/docs/rango/features/loaders).
 
 ## The shortest path
 
@@ -39,7 +41,9 @@ export async function ProductCard({ id }: { id: string }) {
 }
 ```
 
-A Vite plugin (`rango:use-cache`) detects the directive and wraps the function with `registerCachedFunction()` at build time — you never call the runtime yourself. This works in dev too: functions cache normally against a local `MemorySegmentCacheStore`, so you can test cache behavior before deploying.
+A Vite plugin that is part of `rango()` detects the directive and wraps the function with `registerCachedFunction()` — you never call the runtime yourself. A function-level directive is hoisted out of the function and wrapped the same way. With a file-level directive, only exports that are statically confirmed functions are wrapped; any other export (a constant, or a factory call) fails the build. Functions that carry their own `"use server"` directive are server actions and are left alone.
+
+The transform runs in dev exactly as in production, but there is no implicit dev store: to see cache hits locally, configure one (see [Dev mode and tests](#dev-mode-and-tests)).
 
 ## Profiles
 
@@ -58,9 +62,11 @@ createRouter({
 ```
 
 - `"use cache"` with no name resolves to `default`; `"use cache: short"` resolves to `short`.
+- `default` is built in as `{ ttl: 900, swr: 1800 }`; defining `default` overrides it.
+- Profile names must match `[a-zA-Z0-9_-]+`, and `ttl`/`swr` must be finite and non-negative; `createRouter()` throws otherwise.
 - The DSL `cache()` does not accept a string profile name — it takes an options object (`cache({ ttl: 60 })`). Profile names belong to the directive.
-- `foregroundOnAction: true` (default false) changes what a _stale_ entry does during a server action's revalidation render: instead of serving stale + revalidating in the background (SWR), it re-executes in the foreground so the action response reflects a fresh value (only the store write is deferred). Use it for mutation-related data; for strong read-your-own-writes after a mutation, prefer `updateTag()` — a hard purge, so the action's own re-render is a fresh foreground miss.
-- Unknown profile names throw at runtime on the first invocation of the cached function, not at build or boot. The error names the missing profile and shows the `cacheProfiles` entry to add.
+- `foregroundOnAction: true` (default false) changes what a _stale_ entry does during a server action's revalidation render: instead of serving stale + revalidating in the background (SWR), it re-executes in the foreground so the action response reflects a fresh value (only the store write is deferred). Use it for mutation-related data; for strong read-your-own-writes after a mutation, prefer `updateTag()` — a hard purge, so the action's own re-render is a fresh foreground miss. Only `"use cache"` honors this flag.
+- Unknown profile names throw at runtime on the first cached invocation of the function, not at build or boot. The error names the missing profile and shows the `cacheProfiles` entry to add.
 
 ## What makes the cache key
 
@@ -68,7 +74,7 @@ createRouter({
 use-cache:{functionId}:{serializedArgs}
 ```
 
-`functionId` is a stable ID from the Vite transform (module path + export name); `serializedArgs` is the key-generating arguments serialized via RSC `encodeReply()`. Two consequences worth knowing:
+`functionId` is a stable ID from the Vite transform (module path + export name in dev, a hash of both in production builds). `serializedArgs` is the key-generating arguments: a stable JSON encoding when every argument is JSON-safe, otherwise RSC `encodeReply()`. With no key-generating arguments the key is just `use-cache:{functionId}`. If the arguments cannot be serialized at all, the call runs uncached (no error). Two consequences worth knowing:
 
 - **Different functions never share entries**, even on the same URL. An intercepted route's path handler and intercept handler each have their own `functionId`, so each caches separately with no extra work.
 - **Route context is folded into the key.** If you pass `ctx`, the tainted object itself is excluded from serialization, but the route-identifying fields read off it are extracted into the key: `url.host`, route name, `pathname`, `params`, response type, and the user-facing sorted search params. The same cached function on different routes, params, or query variants gets distinct entries — not one shared one.
@@ -93,12 +99,15 @@ export async function getProductData(ctx) {
 
 The guards are correctness-first: anything that would bake one user's request into a shared entry, or silently lose an effect on a hit, throws instead.
 
-| Call                                                                                        | Inside `"use cache"` | Why                                                                              |
-| ------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
-| `cookies()`, `headers()`                                                                    | Throws               | Per-request values aren't in the cache key — one user's data would serve another |
-| `ctx.set()`, `ctx.header()`, `ctx.setTheme()`, `ctx.setLocationState()`, `ctx.onResponse()` | Throws               | Effects are lost on a hit (the body is skipped)                                  |
-| `ctx.get()`                                                                                 | Allowed              | It's a read                                                                      |
-| `ctx.use(Handle)`                                                                           | Allowed              | Captured on miss, replayed on hit                                                |
+| Call                                                                                                                    | Inside `"use cache"` | Why                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
+| `cookies()`, `headers()`                                                                                                | Throws               | Per-request values aren't in the cache key — one user's data would serve another |
+| `ctx.set()`, `ctx.headers.set()` (and the other mutating `Headers` methods), `ctx.setTheme()`, `ctx.setLocationState()` | Throws               | Effects are lost on a hit (the body is skipped)                                  |
+| Request-context writers: `header()`, `setCookie()`, `deleteCookie()`, `setStatus()`, `onResponse()`                     | Throws               | Same reason                                                                      |
+| `ctx.get()`                                                                                                             | Allowed              | It's a read                                                                      |
+| `ctx.use(Handle)`                                                                                                       | Allowed              | Captured on miss, replayed on hit                                                |
+
+These guards run only on the cached path. With no store configured the function runs uncached and nothing throws, so a guard violation only shows up once a store exists.
 
 For cookie- or header-dependent data, extract the value first and pass it as an argument so it lands in the key:
 
@@ -140,12 +149,38 @@ Three placements throw at boot because caching there is either wrong or redundan
 
 ## Tags and invalidation
 
-Everything writes to the same `SegmentCacheStore` as the `cache()` DSL, `Static()`, and `Prerender()` — one store, one configuration. Tag entries via a profile's `tags`, `cache({ tags })`, or runtime `cacheTag(...tags)` inside the cached function. Then invalidate:
+`"use cache"` reads and writes the app-level store from `createRouter({ cache })` — the same store `cache()` boundaries and cached loaders use. One store, one configuration. (`Static()`/`Prerender()` output is not in this store; it is built into the server bundle.)
+
+Entries are tagged by the profile's `tags` plus any runtime `cacheTag(...tags)` calls in the function body. Then invalidate:
 
 - `updateTag(...tags)` — awaitable, read-your-own-writes; for server actions.
 - `revalidateTag(...tags)` — background, non-blocking; for route handlers and webhooks.
 
-Both hard-purge; the difference is awaitability, not stale-serving. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag; for `CFCacheStore`, distributed invalidation needs a `kv` namespace (markers live in that same namespace).
+```ts
+// data/products.ts
+import { cacheTag } from "@rangojs/router";
+
+export async function getProduct(id: string) {
+  "use cache: products";
+  cacheTag(`product:${id}`);
+  return await db.query("SELECT * FROM products WHERE id = ?", [id]);
+}
+```
+
+```ts
+// actions/products.ts
+"use server";
+import { updateTag } from "@rangojs/router";
+
+export async function renameProduct(id: string, name: string) {
+  await db.rename(id, name);
+  await updateTag(`product:${id}`); // the action's own re-render misses and refetches
+}
+```
+
+Both hard-purge; the difference is awaitability, not stale-serving. All built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`) index by tag. For `CFCacheStore`, cross-colo invalidation needs a `kv` namespace (markers live in that same namespace) or `tagPurge`.
+
+A `"use cache"` entry's tags do not propagate to an enclosing `cache()` segment entry: invalidating them re-runs the function on the next miss of the outer boundary, not before (see [Nesting](/docs/rango/concepts/freshness#nesting-the-outer-window-bounds-the-inner)). Inside a [PPR](/docs/rango/guides/ppr) shell, a `"use cache"` value that renders as shell material is pinned at capture time, and its tags ride the shell.
 
 Don't confuse this with the `revalidate()` export — that's the client-update axis (which segments re-render after a navigation or action), not a cache bust. The two compose; see [Caching & Revalidation](/docs/rango/features/caching).
 
@@ -175,13 +210,32 @@ export const ProductLoader = createLoader(async (ctx) => {
 
 ## Where it fits
 
-| Mechanism            | Granularity        | When       | Use case                                        |
-| -------------------- | ------------------ | ---------- | ----------------------------------------------- |
-| `"use cache"`        | Function/component | Runtime    | Cache individual data fetches or components     |
-| `cache()` DSL        | Route segment      | Runtime    | Cache entire route subtrees with children       |
-| `cache({ ttl })` DSL | Route segment      | Runtime    | Cache a route subtree with explicit options     |
-| `Static()`           | Route segment      | Build-time | Render once, never re-render                    |
-| `Prerender()`        | Route segment      | Build-time | Pre-render known params, optional live fallback |
+| Mechanism                         | Granularity        | When       | Use case                                                                       |
+| --------------------------------- | ------------------ | ---------- | ------------------------------------------------------------------------------ |
+| `"use cache"`                     | Function/component | Runtime    | Cache individual data fetches or components                                    |
+| loader `cache()`                  | One loader's data  | Runtime    | Cache a loader result while the page stays live                                |
+| `cache()` DSL                     | Route segment tree | Runtime    | Cache rendered subtrees; loaders inside stay live                              |
+| `ppr` path option                 | HTML shell         | Runtime    | Serve a cached HTML shell, resume live holes ([PPR](/docs/rango/guides/ppr))   |
+| `Static()`                        | One segment        | Build-time | Render once at build, no params ([Prerender](/docs/rango/guides/prerender))    |
+| `Prerender()`                     | Route segment tree | Build-time | Pre-render known params, optional live fallback                                |
+| `createDocumentCacheMiddleware()` | Whole response     | Runtime    | Freeze a public response ([Document Cache](/docs/rango/guides/document-cache)) |
+
+## Dev mode and tests
+
+The transform runs in dev exactly as in production, but caching only happens when the router has a store: there is no implicit dev store. Configure one (a `MemorySegmentCacheStore` is the usual dev and test choice) to see cache hits locally:
+
+```ts
+import { createRouter } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+
+export const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  cache: { store: new MemorySegmentCacheStore() },
+});
+```
+
+With no store configured, a `"use cache"` function runs on every call and the guards above are inactive — test with a store. Under Vitest, `runLoader`, `runMiddleware` and `dispatch` (from `@rangojs/router/testing`) and `renderHandler` (from `@rangojs/router/testing/flight`) take `{ cacheStore, cacheProfiles }` and warn when a cached function ran without one (see [Testing](/docs/rango/features/testing)).
 
 <Cards>
   <Card href="/docs/rango/features/caching" title="Caching & Revalidation">

@@ -17,6 +17,10 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
   - `undefined` / `null` -> OutletProvider directly (no boundary)
   - `false` -> LoaderBoundary + OutletProvider (boundary, no RouteContentWrapper)
   - truthy (ReactNode) -> LoaderBoundary + OutletProvider + RouteContentWrapper
+  - a `clientUrls()` group segment (`segment.clientGroup` set) -> ONE wrapper
+    shape per group mount, with no LoaderBoundary/RouteContentWrapper
+    (`ClientUrlsRoot` renders `loading()` itself); the server-side `loading`
+    value still drives PPR masking and SSR
 
   Segment `key` derivation (the per-segment `key` that flows into the
   LoaderBoundary/OutletProvider/Suspense keys), gated on `inTransitionScope`
@@ -34,6 +38,12 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
     then animates the same-route swap (morph) rather than exit/enter. Without a
     transition scope the route keeps the param and remounts on param change (the
     default).
+  - `clientUrls()` group segments use ONE key per group mount
+    (`cg:<clientGroup>`) regardless of route or params, so an in-group
+    navigation reconciles the mounted `ClientUrlsRoot`: the optimistic
+    destination keeps its instance across the canonical commit, and same-route
+    param navigations hold instead of remounting. The param-bearing
+    `id-params` value is passed to the group's error boundary as its reset key.
   - `error` / `notFound` segments ALWAYS keep a param-BEARING key (`id-params`).
     `createErrorSegment` reuses the boundary layout's shortCode as the error
     segment id (`src/router/error-handling.ts`), so a param-agnostic error key
@@ -67,5 +77,7 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
    return different `loading` values based on `isSSR` context.
 
 4. Run `pnpm --filter @rangojs/router exec playwright test loader-behavior` after
-   any changes to these files. The skipSSR action tests specifically catch tree
-   structure regressions.
+   any changes to these files. The skipSSR tests (`loading(fallback, { ssr: false })`)
+   specifically catch tree structure regressions. Changes that touch the
+   client group key also need `e2e/client-urls.test.ts` (param-nav hold and the
+   optimistic destination) in dev and production.

@@ -1,42 +1,49 @@
 # Route Definition Rules
 
 Constraints enforced at definition time by `urls()`, `layout()`, `path()`, and
-other route helpers. Violations throw an `Invariant` error immediately when
-the route tree is built.
+other route helpers. Violations throw immediately when the route tree is built:
+nesting and naming violations throw an `Error` whose message starts with
+`Invariant:` (from `invariant()` in `src/errors.ts`), and calling any helper
+outside an active `urls()` builder throws a `DslContextError`
+("`<helper>() must be called inside urls()`").
+
+Guard locations below are relative to `src/`: `path()` guards live in
+`urls/path-helper.ts`; the other helpers live in
+`route-definition/dsl-helpers.ts`.
 
 ## Nesting Rules
 
-### path() (href)
+### path()
 
-| Rule                                        | Example                                                   | Guard location            |
-| ------------------------------------------- | --------------------------------------------------------- | ------------------------- |
-| Cannot be inside `parallel()`               | `parallel({ "@slot": path(...) })`                        | `urls.ts`                 |
-| Cannot be nested inside another `path()`    | `path("/a", A, () => [path("/b", B)])`                    | `urls.ts` (ancestor walk) |
-| Ancestor walk catches intermediate wrappers | `path("/a", A, () => [layout(L, () => [path("/b", B)])])` | `urls.ts` (ancestor walk) |
-| Same through cache boundaries               | `path("/a", A, () => [cache(c, () => [path("/b", B)])])`  | `urls.ts` (ancestor walk) |
+| Rule                                        | Example                                                   | Guard location                        |
+| ------------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
+| Cannot be inside `parallel()`               | `parallel({ "@slot": path(...) })`                        | `urls/path-helper.ts`                 |
+| Cannot be nested inside another `path()`    | `path("/a", A, () => [path("/b", B)])`                    | `urls/path-helper.ts` (ancestor walk) |
+| Ancestor walk catches intermediate wrappers | `path("/a", A, () => [layout(L, () => [path("/b", B)])])` | `urls/path-helper.ts` (ancestor walk) |
+| Same through cache boundaries               | `path("/a", A, () => [cache(c, () => [path("/b", B)])])`  | `urls/path-helper.ts` (ancestor walk) |
 
 ### layout()
 
-| Rule                                                 | Example                                                  | Guard location        |
-| ---------------------------------------------------- | -------------------------------------------------------- | --------------------- |
-| Cannot be inside `parallel()`                        | `layout(L)` inside parallel callback                     | `route-definition.ts` |
-| Orphan layout cannot contain other layouts           | `layout(A, () => [layout(B)])` where A has no routes     | `route-definition.ts` |
-| Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition.ts` |
-| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition.ts` |
+| Rule                                                 | Example                                                  | Guard location                    |
+| ---------------------------------------------------- | -------------------------------------------------------- | --------------------------------- |
+| Cannot be inside `parallel()`                        | `layout(L)` inside parallel callback                     | `route-definition/dsl-helpers.ts` |
+| Orphan layout cannot contain other layouts           | `layout(A, () => [layout(B)])` where A has no routes     | `route-definition/dsl-helpers.ts` |
+| Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition/dsl-helpers.ts` |
+| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition/dsl-helpers.ts` |
 
 ### parallel()
 
-| Rule                                         | Example                             | Guard location        |
-| -------------------------------------------- | ----------------------------------- | --------------------- |
-| Cannot be nested inside another `parallel()` | `parallel({ "@a": parallel(...) })` | `route-definition.ts` |
-| Needs a parent entry                         | `parallel()` at root level          | `route-definition.ts` |
+| Rule                                         | Example                             | Guard location                    |
+| -------------------------------------------- | ----------------------------------- | --------------------------------- |
+| Cannot be nested inside another `parallel()` | `parallel({ "@a": parallel(...) })` | `route-definition/dsl-helpers.ts` |
+| Needs a parent entry                         | `parallel()` at root level          | `route-definition/dsl-helpers.ts` |
 
 ### intercept()
 
-| Rule                          | Example                              | Guard location        |
-| ----------------------------- | ------------------------------------ | --------------------- |
-| Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition.ts` |
-| Needs a parent entry          | `intercept()` at root level          | `route-definition.ts` |
+| Rule                          | Example                              | Guard location                    |
+| ----------------------------- | ------------------------------------ | --------------------------------- |
+| Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition/dsl-helpers.ts` |
+| Needs a parent entry          | `intercept()` at root level          | `route-definition/dsl-helpers.ts` |
 
 ### `when` (intercept config)
 
@@ -44,15 +51,15 @@ The match-time selector is the `when` field of the `intercept()` config object
 (4th argument), not a standalone DSL helper. It is a single predicate or an
 array of predicates (AND logic); omit it to always activate.
 
-| Rule                                             | Example                                                     | Guard location        |
-| ------------------------------------------------ | ----------------------------------------------------------- | --------------------- |
-| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from }) => ... })` | `route-definition.ts` |
+| Rule                                             | Example                                                     | Guard location                    |
+| ------------------------------------------------ | ----------------------------------------------------------- | --------------------------------- |
+| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from }) => ... })` | `route-definition/dsl-helpers.ts` |
 
 ### Route names
 
-| Rule                                        | Example                                    | Guard location                   |
-| ------------------------------------------- | ------------------------------------------ | -------------------------------- |
-| Must be unique across the entire route tree | Two `path()` calls with `{ name: "home" }` | `urls.ts`, `route-definition.ts` |
+| Rule                                        | Example                                    | Guard location                                           |
+| ------------------------------------------- | ------------------------------------------ | -------------------------------------------------------- |
+| Must be unique across the entire route tree | Two `path()` calls with `{ name: "home" }` | `urls/path-helper.ts`, `route-definition/dsl-helpers.ts` |
 
 ## Orphan Layout Behavior
 
@@ -123,6 +130,10 @@ layout(RootLayout, () => [
 A cache **with** children callback but no routes among its children is treated
 like an orphan layout and pushed to `parent.layout[]`.
 
+Inside a `loader()` use callback, `cache()` is not a structural entry: it sets
+that loader's own cache config (`loader(Def, () => [cache({ ttl: 60 })])`) and
+does not change `ctx.parent`. A `cache()` **with** children is rejected there.
+
 ## include() Behavior
 
 `include()` items are treated as containing routes by `hasRoutesInItem()`. This
@@ -185,11 +196,11 @@ The `name` option determines child route visibility:
 - **`{ name: "blog" }`** — children are prefixed (`blog.index`, `blog.post`).
   Visible in generated route types, globally reversible.
 - **`{ name: "" }`** — children merge into the parent namespace with no prefix.
-  Equivalent to defining those routes inline. Both global `reverse("child")` and
-  dot-local `reverse(".child")` work (routes are at root scope).
+  Equivalent to defining those routes inline. Both global `ctx.reverse("child")`
+  and dot-local `ctx.reverse(".child")` work (routes are at root scope).
 - **Omitted** — children get a private `$prefix_N` scope. Hidden from the
-  generated route map and global `reverse()`. Only dot-local reverse
-  (`reverse(".child")`) works from handlers inside the mounted module.
+  generated route map and global reverse. Only dot-local reverse
+  (`ctx.reverse(".child")`) works from handlers inside the mounted module.
 
 Without a name, `include()` is a composition mechanism for URL mounting
 without polluting the global route namespace. To make child names available

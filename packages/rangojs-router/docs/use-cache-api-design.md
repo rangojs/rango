@@ -4,7 +4,7 @@
 
 `"use cache"` is a function/component-level caching directive for RSC. It caches the return value of async server functions and RSC components. The router does not need to understand `"use cache"` -- it operates below the router at the function/component level.
 
-This is complementary to the existing `cache()` DSL (route-segment-level) and `Static()`/`Prerender()` (build-time caching). All three share the same backing `SegmentCacheStore`.
+This is complementary to the existing `cache()` DSL (route-segment-level) and `Static()`/`Prerender()` (build-time caching). `"use cache"` and `cache()` share the router's backing `SegmentCacheStore`; `Static()`/`Prerender()` output is a build artifact served from the prerender/static store, not the runtime store (see [prerender-api-design.md](./prerender-api-design.md)).
 
 ## Directive Syntax
 
@@ -82,8 +82,9 @@ createRouter({
 });
 ```
 
-- `"use cache"` (no name) resolves to the `default` profile.
-- `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`.
+- `"use cache"` (no name) resolves to the `default` profile. A built-in `default` of `{ ttl: 900, swr: 1800 }` always exists; define `default` yourself to override it.
+- `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`, and `ttl`/`swr` must be finite non-negative numbers (both checked when `createRouter()` resolves the profiles).
+- A profile may also set `foregroundOnAction: true`: a stale entry met during a server action's revalidation render re-executes in the foreground instead of being served stale. Only `"use cache"` honors it.
 - Unknown profile names throw at runtime with an actionable error message.
 - Profiles are scoped per router: `registerCachedFunction` resolves the profile name at request-time from `requestCtx._cacheProfiles` (set per-request by the active router via `createRequestContext()`). There is no global fallback. The same `cacheProfiles` map set by `createRouter()` is also propagated through `RangoContext.run()` for DSL-time route-segment cache resolution.
 
@@ -93,8 +94,8 @@ createRouter({
 use-cache:{functionId}:{serializedArgs}
 ```
 
-- `functionId` -- stable ID assigned at build time by the Vite transform (module path + export name).
-- `serializedArgs` -- function arguments serialized via RSC `encodeReply()`. If the arguments cannot be encoded, the call runs uncached (no key is generated, the function still executes); there is no JSON fallback.
+- `functionId` -- stable ID assigned by the Vite transform: `path#export` in dev, a hash of it in production builds.
+- `serializedArgs` -- the non-tainted arguments. When every argument is JSON-safe, the key uses a deterministic stable stringify under a `j:` namespace (`use-cache:{functionId}:j:{json}`) and skips `encodeReply()`; otherwise the arguments are serialized with RSC `encodeReply()`. A call with no key arguments uses `use-cache:{functionId}`. If the arguments cannot be encoded, the call runs uncached (no key is generated, the function still executes).
 
 ### Tainted arguments
 
@@ -106,8 +107,9 @@ When `registerCachedFunction` detects a tainted argument:
 2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a single `HandleStore.push` interceptor installed once per store; each push fans out to a `Set` of active capture tokens. Overlapping/nested captures are independent and may stop in any order (no LIFO requirement).
 3. **Replay handle data on hit** -- restore via `restoreHandles()` into the current request's `HandleStore`.
 
-This means handle-style metadata side effects such as `ctx.breadcrumb()` work
-correctly with `"use cache"` and are captured/replayed on cache hit.
+This means handle pushes made through a tainted `ctx` (`ctx.use(Breadcrumbs)(...)`,
+`ctx.use(Meta)(...)`) work correctly with `"use cache"` and are
+captured/replayed on cache hit.
 
 Request-scoped reads and response/render mutations are different:
 
@@ -121,29 +123,33 @@ For caching full route behavior, including request-scoped rendering semantics,
 use the route-level `cache()` DSL instead.
 
 ```ts
-export const handle = createHandle(({ ctx }) => {
+import { Breadcrumbs } from "@rangojs/router";
+
+export async function getProductData(ctx) {
   "use cache: short";
-  ctx.breadcrumb("Products");
+  ctx.use(Breadcrumbs)({ label: "Products", href: "/products" });
   return await getExpensiveData();
-});
+}
 // On cache hit: return value restored, breadcrumb replayed.
 ```
 
 ## Backing Store
 
-`"use cache"` writes to the same `SegmentCacheStore` that `cache()` DSL, `Static()`, and `Prerender()` use. One store, one configuration, one invalidation API.
+`"use cache"` writes to the same `SegmentCacheStore` the `cache()` DSL uses: the router's `cache.store` (`createRouter({ cache: { store } })`). One store, one configuration, one invalidation API. With no store configured, `"use cache"` functions run uncached.
 
-- Development: `MemorySegmentCacheStore`
-- Production (Cloudflare): `CFCacheStore` (Cache API)
-- Future: KV, Redis, etc.
+Shipped stores, all from `@rangojs/router/cache`:
+
+- `MemorySegmentCacheStore` -- in-process; typical for development and Node
+- `CFCacheStore` -- Cloudflare Cache API, with an optional KV namespace for distributed tag invalidation
+- `VercelCacheStore` -- Vercel Runtime Cache
 
 ## Build-Time: Vite Transform
 
-A Vite plugin (`rango:use-cache`) detects the directive and wraps exports.
+A Vite plugin (`@rangojs/router:use-cache`, `src/vite/plugins/use-cache-transform.ts`) detects the directive and wraps exports.
 
 Uses existing helpers from `@vitejs/plugin-rsc/transforms`:
 
-- `hasDirective()` / `findDirectives()` -- detect `"use cache"` in source
+- `hasDirective()` -- detect a file-level `"use cache"` in source
 - `transformWrapExport()` -- wrap file-level exports
 - `transformHoistInlineDirective()` -- hoist function-level directives
 
@@ -154,10 +160,10 @@ Uses existing helpers from `@vitejs/plugin-rsc/transforms`:
 "use cache"
 export async function getProducts() { ... }
 
-// Output
-import { registerCachedFunction } from '@rangojs/router/cache-runtime';
+// Output (simplified; the id is hashed in production builds)
+import { registerCachedFunction as __rango_registerCachedFunction } from '@rangojs/router/cache-runtime';
 /* "use cache" -- wrapped by rango */
-export const getProducts = registerCachedFunction(
+export const getProducts = __rango_registerCachedFunction(
   async function getProducts() { ... },
   "src/data/products.ts#getProducts",
   "default"
@@ -175,8 +181,9 @@ export async function getProducts() {
   return await db.query("...");
 }
 
-// Output (function hoisted and wrapped)
-const __rango_cached_getProducts = registerCachedFunction(
+// Output (function hoisted and wrapped; simplified -- the hoisted binding
+// name comes from plugin-rsc's transformHoistInlineDirective)
+const __rango_cached_getProducts = __rango_registerCachedFunction(
   async function getProducts() {
     return await db.query("...");
   },
@@ -228,7 +235,7 @@ registerCachedFunction(fn, id, profileName);
 
 1. Receive call with `args`.
 2. Check args for tainted objects. If found, strip from key, enable handle capture mode.
-3. Generate cache key: `use-cache:{id}:{encodeReply(nonTaintedArgs)}`.
+3. Generate cache key: `use-cache:{id}:j:{stableJson(nonTaintedArgs)}` when the args are JSON-safe, else `use-cache:{id}:{encodeReply(nonTaintedArgs)}` (see Cache Key).
 4. Look up in `SegmentCacheStore.get(key)`.
 5. **Hit (fresh)**: deserialize value via `createFromReadableStream()`, replay handle data if present, return.
 6. **Hit (stale)**: return stale value, trigger background revalidation via `waitUntil()`.
@@ -255,7 +262,7 @@ timestamp, so it also heals entries stranded by a killed context (no timer in
 that context needs to survive). A follower timeout is reported through
 `reportCacheError` as `cache-read` with the `inflight-timeout` label. The shell
 capture pipeline that armed the incident has its own containment -- see "Wedge
-containment" in `docs/design/ppr-shell-resume.md`.
+containment" in [ppr-shell-resume.md](./design/ppr-shell-resume.md).
 
 ### Serialization
 
@@ -264,7 +271,7 @@ containment" in `docs/design/ppr-shell-resume.md`.
 
 ### Dev mode
 
-Caching is active in development (backed by `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. HMR invalidates the in-memory store so code changes take effect immediately.
+Caching is active in development whenever the router has a cache store (usually `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. `MemorySegmentCacheStore` keeps its maps on `globalThis` so entries survive HMR module reloads, and the dev function id (`path#export`) does not change when you edit the body -- an existing entry keeps serving until it expires or is invalidated by tag (or the dev server restarts).
 
 ## Embedding server actions in cached components
 
@@ -318,14 +325,14 @@ them.
 | `Static()` / `Prerender()` | Route segment        | Captured via HandleStore                                                    | Build-time |
 | `"use cache"`              | Function / component | Handle data captured/replayed; request-scoped reads and mutations forbidden | Runtime    |
 
-All three write to the same `SegmentCacheStore`.
+`cache()` and `"use cache"` write to the router's `SegmentCacheStore`; `Static()` / `Prerender()` output is stored as build artifacts in the prerender/static store.
 
 **Tags**: `CacheProfile.tags`, `CacheOptions.tags`, and runtime `cacheTag(...tags)` all tag the stored entry. `cacheTag()` has two forms depending on what is active when it runs:
 
 - Inside a `"use cache"` function it tags that cache entry (the default).
 - Render-callable (no `"use cache"` scope active, but a request render is in progress) it records the tags onto the request's DOCUMENT artifact (`_requestTags`) instead of throwing. The PPR shell capture and the document cache middleware both collect `_requestTags`, so a plain server component can call `cacheTag("campaign:spring")` — with zero `cache()`/`"use cache"` in its tree — and `revalidateTag("campaign:spring")` will drop the shell / document it rendered into. Inside a `cache()` DSL segment the render-callable form records at the DOCUMENT level (only the `"use cache"` runtime enters the tag scope). With neither a scope nor a request context, `cacheTag()` throws.
 
-The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag. Invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes; server actions) or `revalidateTag(...tags)` (background, non-blocking; route handlers/webhooks). Both hard-purge — the only difference is awaitability; neither serves stale. For `CFCacheStore` the markers live in its own KV namespace.
+The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag; `VercelCacheStore` delegates tag expiry to the platform. Invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes; server actions) or `revalidateTag(...tags)` (background, non-blocking; route handlers/webhooks). Both hard-purge — the only difference is awaitability; neither serves stale. For `CFCacheStore` the markers live in its own KV namespace.
 
 ## Remaining / Future
 

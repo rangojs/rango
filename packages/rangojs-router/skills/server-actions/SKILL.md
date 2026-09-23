@@ -1,6 +1,6 @@
 ---
 name: server-actions
-description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, revalidation. Use when handling a form submission on the server, calling a server function from a client component, or needing optimistic UI after a mutation.
+description: Define and call server actions (`"use server"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, and client-cache control (keepClientCache). Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, or needing optimistic UI after a mutation.
 argument-hint: "[action]"
 ---
 
@@ -10,6 +10,10 @@ Server actions are async functions that run on the server and are callable from
 the client. They are React's RSC mutation primitive — Rango uses them as-is
 with no framework wrapper. All standard React hooks (`useActionState`,
 `useFormStatus`, `useOptimistic`, `useTransition`) work directly.
+
+This skill covers defining actions, calling them (with and without JavaScript),
+validation, redirects, errors, authorization, what re-renders after an action,
+and how the client cache reacts.
 
 ## When to Use Actions vs Loaders
 
@@ -48,9 +52,15 @@ export const urlpatterns = urls(({ path, loader, revalidate }) => [
   // The loader belongs to the route that consumes its data — nest it inside
   // the owning path() so the segment owns its data dependency.
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    // The route and its loaders re-run after every action by default. Narrow
+    // both to cart actions; on navigation, undefined keeps the default.
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
   ]),
 ]);
@@ -99,11 +109,13 @@ import { ChangedTenant } from "./context";
 
 export const urlpatterns = urls(({ path, revalidate }) => [
   path("/dashboard/:tenantId", DashboardPage, { name: "dashboard" }, () => [
+    // The route re-runs after every action by default. Narrow it: after an
+    // action, re-run only when a tenant action changed this tenant.
     revalidate((ctx) => {
-      if (!ctx.isAction(TenantActions)) return undefined;
+      if (!ctx.isAction()) return undefined; // navigation: keep the default
       return (
-        ctx.context.get(ChangedTenant) === ctx.context.params.tenantId ||
-        undefined
+        ctx.isAction(TenantActions) &&
+        ctx.context.get(ChangedTenant) === ctx.context.params.tenantId
       );
     }),
   ]),
@@ -138,6 +150,14 @@ export async function addToCart(productId: string): Promise<void> {
 export async function removeFromCart(productId: string): Promise<void> {
   const userId = cookies().get("user-id")?.value;
   await db.cart.delete({ userId, productId });
+}
+
+export async function updateQuantity(
+  productId: string,
+  delta: number,
+): Promise<void> {
+  const userId = cookies().get("user-id")?.value;
+  await db.cart.adjust({ userId, productId, delta });
 }
 ```
 
@@ -192,9 +212,9 @@ export function AddToCartForm({ productId }: { productId: string }) {
 ### 2. `useActionState` — preserve return value + pending state
 
 Standard React 19 hook. The action receives `(prevState, formData)` and its
-return value becomes the new `state`. The form input values are preserved by
-the browser on validation errors as long as you re-render the same form
-element with `defaultValue` (not `value`).
+return value becomes the new `state`. To keep what the user typed after a
+validation error, return the submitted values in the state and render them as
+`defaultValue` (see below).
 
 Define the state shape next to the action so the client and server share
 one type:
@@ -248,10 +268,12 @@ export function ProfileForm({ initial }: { initial: { name: string } }) {
 }
 ```
 
-**Why `defaultValue`, not `value`** — on validation error the form re-renders.
-With `value` the inputs reset; with `defaultValue` (and a stable form key) the
-browser keeps user input. Re-echo the submitted values in `state.values` so
-they survive a full no-JS re-render too.
+**Why echo values into `defaultValue`** — React 19 resets a form's
+uncontrolled fields after its `action` completes, and a no-JS submission
+re-renders the whole page. In both cases the only thing that survives is what
+you render, so return the submitted values in `state.values` and use them as
+`defaultValue`. (A controlled `value` without an `onChange` would make the
+inputs read-only.)
 
 ### 3. `useOptimistic` — instant UI before the action settles
 
@@ -387,9 +409,18 @@ re-render so the UI updates. Rango runs the action, then evaluates
 intercept, or loader rule decides whether that piece re-renders/re-resolves.
 
 Use `ctx.isAction()` for specific actions or modules. It accepts one action,
-several actions, or a namespace import (`import * as CartActions`). Pair it with
-`|| undefined` for "revalidate on match, otherwise defer to defaults/downstream
-rules."
+several actions, or a namespace import (`import * as CartActions`). Wrap it by
+what the segment's default already does:
+
+- **Add a signal** where the default skips (a parent layout or layout-level
+  parallel): `ctx.isAction(CartActions) || undefined` re-renders it after cart
+  actions and defers otherwise. On a loader or route segment it changes nothing.
+- **Narrow after actions** where the default re-runs (loaders, the route, and
+  segments inside the `path()`):
+  `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
+  actions and keeps the navigation default.
+- **Avoid bare `ctx.isAction(CartActions)`.** It is a hard `false` on navigation
+  too, so a loader stops refetching when params change.
 
 ```typescript
 // urls.tsx — inside the urls() callback. Nest each loader inside the path(),
@@ -404,18 +435,25 @@ urls(({ path, loader, revalidate }) => [
     loader(StaticHomepageLoader, () => [revalidate(() => false)]),
   ]),
 
-  // Re-render the cart page handler AND re-resolve its loader after cart actions
+  // Re-render the cart page handler AND re-resolve its loader only after cart
+  // actions (both re-run after every action by default)
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    revalidate((ctx) =>
+      ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+    ),
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
   ]),
 
-  // Re-run after any action exported by the account actions module
+  // Re-run the loader only after actions exported by the account actions module
   path("/account", AccountPage, { name: "account" }, () => [
     loader(AccountLoader, () => [
-      revalidate((ctx) => ctx.isAction(AccountActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(AccountActions) : undefined,
+      ),
     ]),
   ]),
 ]);
@@ -424,7 +462,8 @@ urls(({ path, loader, revalidate }) => [
 The raw `actionId` string stays available for broad path filters:
 
 ```typescript
-// Match any action under src/actions/account/, including modules not imported here.
+// On a parent layout (skipped after actions by default): also re-render after
+// any action under src/actions/account/, including modules not imported here.
 revalidate(
   ({ actionId }) => actionId?.startsWith("src/actions/account/") || undefined,
 );
@@ -446,21 +485,71 @@ stale context. Share the same `revalidate` predicate on both producer and
 consumer:
 
 ```typescript
+import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
-const revalidateCart = (ctx) => ctx.isAction(CartActions) || undefined;
+const revalidateCart: Revalidate = (ctx) =>
+  ctx.isAction(CartActions) || undefined;
 
 urls(({ path, layout, loader, revalidate }) => [
   layout(CartLayout, () => [
-    revalidate(revalidateCart), // producer reruns
+    revalidate(revalidateCart), // producer: re-renders after cart actions (skipped by default)
     path("/cart", CartPage, { name: "cart" }, () => [
-      loader(CartItemsLoader, () => [revalidate(revalidateCart)]), // consumer reruns
+      // consumer: loaders re-run after every action anyway; the shared
+      // contract names the dependency
+      loader(CartItemsLoader, () => [revalidate(revalidateCart)]),
     ]),
   ]),
 ]);
 ```
 
 See `/middleware` for the full cross-segment revalidation contract.
+
+## Client Cache After an Action
+
+`revalidate()` decides what the server re-renders **in the action's response**.
+Separately, the browser invalidates its own caches once the action's response
+arrives: it marks the history cache stale (Back renders the cached entry, then
+revalidates), flushes the prefetch cache, rotates the router's state cookie,
+and tells other open tabs to do the same. This happens for every action that
+reached the server, including ones that threw. No setup is needed.
+
+### `keepClientCache()` — skip it for no-op actions
+
+Some hot actions change nothing a route renders: a debounced draft autosave, an
+analytics event, a save that turned out to be a no-op. Call `keepClientCache()`
+inside the action to tell the client to leave its caches alone for this call:
+
+```typescript
+// app/actions/draft.ts
+"use server";
+
+import { keepClientCache } from "@rangojs/router";
+
+export async function saveDraft(formData: FormData) {
+  const changed = await drafts.persist(formData);
+  if (!changed) keepClientCache(); // decided per call, not per action
+  return { saved: true };
+}
+```
+
+What it suppresses, for this action only: the stale-marking of the history
+cache, the prefetch flush, the state-cookie rotation, the cross-tab broadcast,
+and the background re-fetch the client runs when the user navigated away while
+the action was in flight. What it does not change:
+
+- The action's own response still carries the revalidation render your
+  `revalidate()` rules select, and the client applies it.
+- A concurrent action that did not call it still invalidates.
+- An explicit `invalidateClientCache()` in the same action still rotates the
+  cookie, so invalidation wins.
+
+It is a server directive (an internal response header the client reads).
+Outside a request it is a no-op with a dev warning; the client-side import is
+also a no-op with a dev warning. Like `cookies()`, it throws inside a
+`cache()` / `"use cache"` boundary. For the opposite case — a mutation the
+router cannot see, such as a REST call or WebSocket push — use
+`invalidateClientCache()` (see `/hooks`, `state.md`).
 
 ## Redirects
 
@@ -527,35 +616,54 @@ is usually too aggressive.
 ### Unexpected errors — let them throw
 
 Throw for genuinely exceptional conditions (network failure, DB outage,
-auth violation). The nearest `errorBoundary()` in the route tree catches
-them.
+auth violation). The nearest `errorBoundary()` above the page the action was
+called from catches them, and the boundary renders inside route middleware like
+a normal render.
 
 ```typescript
-import { errorBoundary } from "@rangojs/router";
-
+// urls.tsx — inside the urls() callback
 layout(CheckoutLayout, () => [
-  errorBoundary(({ error, reset }) => (
-    <div>
-      <p>Checkout failed: {error.message}</p>
-      <button onClick={reset}>Try again</button>
+  // Server fallback: receives { error } only (ErrorInfo); there is no reset().
+  errorBoundary(({ error }) => (
+    <div role="alert">
+      <p>
+        {error.name === "ForbiddenError"
+          ? "You cannot change this order."
+          : "Checkout failed."}
+      </p>
+      <a href="/checkout">Try again</a>
     </div>
   )),
   path("/checkout", CheckoutPage, { name: "checkout" }),
 ]);
 ```
 
+In production `error.message` is replaced with `"An error occurred"` (and
+`stack` / `cause` are dropped), while `error.name` and `error.code` are kept —
+branch on `name` or `code`, not on the message.
+
 ### Not found from an action
 
+`notFound()` inside an action is handled like any other thrown error: it
+renders the nearest `errorBoundary()` with `error.name === "DataNotFoundError"`.
+`notFoundBoundary()` handles `notFound()` from handlers and loaders, not from
+actions.
+
 ```typescript
+// app/actions/posts.ts
+"use server";
+
 import { notFound } from "@rangojs/router";
 
 export async function deletePost(id: string): Promise<void> {
-  "use server";
   const post = await db.posts.find(id);
-  if (!post) notFound("Post not found"); // hits notFoundBoundary
+  if (!post) notFound("Post not found"); // → nearest errorBoundary()
   await db.posts.delete(id);
 }
 ```
+
+For a recoverable "already gone" case, return a result the form can show
+(`{ error: "Post not found" }`) instead of throwing.
 
 ### Authorization in actions
 
@@ -564,11 +672,18 @@ middleware (`router.use()`) does. Auth checks must therefore live in
 `router.use()` or inside the action itself. Don't rely on a route-level
 `middleware()` to gate action access.
 
+An action is identified by its id, not by a URL: the client posts it to the
+current page's URL, but any URL that matches a route can carry it. A
+pattern-scoped `router.use("/admin/*", ...)` therefore guards action requests
+posted from `/admin/*` pages, not the action itself. Use global middleware to
+establish identity (load the session), and authorize sensitive actions inside
+the action body.
+
 ```typescript
-// router.tsx — global guard wraps action + render
+// router.tsx — global middleware wraps action + render
 const router = createRouter()
-  .use(authInit)
-  .use("/admin/*", requireAdmin) // protects actions on /admin too
+  .use(authInit) // loads the session for every request, actions included
+  .use("/admin/*", requireAdmin) // guards /admin pages and actions posted from them
   .routes(urlpatterns);
 ```
 
@@ -590,7 +705,7 @@ export async function deleteOrder(orderId: string) {
   if (!user) throw redirect("/login"); // unauthenticated → bounce to login
 
   const order = await db.orders.get(orderId);
-  if (!order) notFound("Order not found"); // → notFoundBoundary
+  if (!order) notFound("Order not found"); // → errorBoundary (DataNotFoundError)
   if (order.userId !== user.id) throw new ForbiddenError(); // → errorBoundary
 
   await db.orders.delete(orderId);
@@ -601,10 +716,9 @@ export async function deleteOrder(orderId: string) {
 > Responses thrown from actions are treated as errors and routed to the nearest
 > `errorBoundary()`, not returned as real HTTP responses (the dev build warns
 > when you do this). Use `redirect()` to send unauthenticated users to a login
-> page, `notFound()` for missing resources, and a domain error class for
-> forbidden access so the boundary can render an appropriate UI. For
-> recoverable cases, return `{ error: "..." }` via `useActionState` instead of
-> throwing.
+> page, and `notFound()` or a domain error class (branch on `error.name` in the
+> boundary) for missing or forbidden resources. For recoverable cases, return
+> `{ error: "..." }` via `useActionState` instead of throwing.
 
 ## Action Context
 
@@ -633,18 +747,15 @@ request scope.
 
 ### Constraints
 
-| Constraint                                               | Why                                                                                                                                                                                                                     |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actions cannot return or throw a non-redirect `Response` | Return values go through RSC Flight serialization. A thrown non-redirect `Response` is treated as a regular error and hits the nearest `errorBoundary()` (dev warns). Use `redirect()`, `notFound()`, or domain errors. |
-| Route DSL `middleware()` does not wrap actions           | Actions execute before route middleware. Only global `router.use()` middleware (and its scoped variants) wrap action execution.                                                                                         |
-| `useFetchLoader()` is for reads, not writes              | Actions are the mutation primitive; loaders are for data fetching.                                                                                                                                                      |
+| Constraint                                               | Why                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Actions cannot return or throw a non-redirect `Response` | Return values go through RSC Flight serialization. A returned non-redirect `Response` is discarded and the page re-renders; a thrown one is treated as a regular error and hits the nearest `errorBoundary()` (dev warns in both cases). Use `redirect()`, `notFound()`, or domain errors. |
+| Route DSL `middleware()` does not wrap actions           | Actions execute before route middleware. Only global `router.use()` middleware (and its scoped variants) wrap action execution.                                                                                                                                                            |
+| Prefer actions over fetchable-loader POSTs for writes    | Only actions trigger the post-action revalidation render and the client-cache invalidation. A `useFetchLoader()` / `load({ method: "POST" })` call does neither (see `/loader` → "Mutation Context").                                                                                      |
 
 Cookies/headers set in **global** `router.use()` middleware DO propagate to
-action responses (the same merge path as a normal render). The constraint
-specific to **per-fetchable-loader** middleware (`createLoader(fn, {
-middleware })` on a POST request) is that it cannot set cookies — set them
-in the loader body instead. See `/middleware` for the full middleware
-contract.
+action responses (the same merge path as a normal render). See `/middleware`
+for the full middleware contract.
 
 ## File Uploads
 
@@ -729,22 +840,30 @@ function AddButton({ productId }: { productId: string }) {
       >
         {state === "loading" ? "Adding…" : "Add"}
       </button>
-      {error && <p role="alert">{error.message}</p>}
+      {error instanceof Error && <p role="alert">{error.message}</p>}
     </>
   );
 }
 ```
 
+`error` is typed `unknown` (whatever the action threw), so narrow it before
+reading `.message`.
+
 `useActionState` and `useAction` are complementary — use `useActionState`
 for `<form action={...}>` flows, `useAction` for imperative button clicks
-or to observe an action triggered elsewhere on the page.
+or to observe an action triggered elsewhere on the page. See `/hooks`
+(`handle-and-actions.md`) for the full `useAction` state shape and string
+matching.
 
 ## Progressive Enhancement
 
 `<form action={serverAction}>` works without JavaScript: the form posts as a
 normal HTTP request, the action runs, and the page re-renders server-side.
-For PE to work, write actions that accept `FormData` directly (not curried
-or wrapped):
+For PE to work, the form's `action` must be the server reference itself, or a
+`.bind(null, ...)` of it (React encodes bound arguments into the form, as in
+pattern 1 above), or the dispatcher `useActionState` returns for it. A
+client-side closure that calls the action is not a server reference and breaks
+PE (see "File Uploads"). The simplest PE-safe shape:
 
 ```tsx
 // Works with no-JS submission
@@ -764,7 +883,8 @@ export async function submitName(formData: FormData) {
 
 `useActionState` and `useOptimistic` only enhance the experience once JS is
 loaded — without JS, the underlying action still runs and the page still
-re-renders. Don't rely on client-only state for required form behavior.
+re-renders (with the `useActionState` result restored as its state). Don't rely
+on client-only state for required form behavior.
 
 ## Cross-references
 

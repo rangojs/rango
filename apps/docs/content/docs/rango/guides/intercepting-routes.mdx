@@ -4,9 +4,16 @@ description: Open a route as a modal or slide-over on soft navigation while the 
 type: guide
 ---
 
-You want a product page to open as a modal when the user clicks a link, but load as a full page when the URL is visited directly or shared. `intercept()` does exactly that: during soft (client-side) navigation it renders an alternate component into a slot while preserving the background route; hard navigation gets the full page.
+You want a product page to open as a modal when the user clicks a link, but load as a full page when the URL is visited directly or shared. `intercept()` does exactly that: during soft (client-side) navigation it renders an alternate component into a slot while keeping the background route; hard navigation gets the full page.
 
-If you want a region that **always** renders alongside the page (sidebar, multi-column layout), that's a permanent [parallel slot](/docs/rango/guides/parallel-routes), not an intercept — intercepts only swap on soft navigation.
+If you want a region that **always** renders alongside the page (sidebar, multi-column layout), that's a permanent [parallel slot](/docs/rango/guides/parallel-routes), not an intercept. Intercepts only swap on soft navigation.
+
+The signature is `intercept(slot, routeName, handler, config?, use?)`:
+
+- `slot` is the `@name` slot the intercept renders into. The layout places it with `<ParallelOutlet name="@modal" />`.
+- `routeName` is the target route. A bare name (`"product"`) is the global route name; a dot prefix (`".product"`) resolves inside the current `include()` scope. Declare the intercept in a layout that wraps the target route: the router finds intercepts by walking up the target route's own layout chain.
+- `handler` is the component or handler rendered in the slot.
+- `config` is an optional `{ when }` object (see [Conditional intercepts](#conditional-intercepts-with-when)). With no config, pass the `use` callback as the 4th argument.
 
 ## The shortest path
 
@@ -48,30 +55,31 @@ export const urlpatterns = urls(
 
 ## Modal chrome and closing
 
-Wrap the intercept content in a modal layout inside its use callback:
+Wrap the intercept content in a modal layout inside its use callback. Like any layout, it renders the intercept content through `<Outlet />`, not a `children` prop. Only the first `layout()` in an intercept's `use()` is applied.
 
 ```tsx
 intercept("@modal", "product", <ProductModalContent />, () => [
-  layout(<ModalWrapper />), // Wraps the modal content
+  layout(<ModalWrapper />), // Wraps the modal content via <Outlet />
   loader(ProductLoader),
   loading(<ProductModalSkeleton />),
 ]);
 ```
 
-Close by navigating — `router.back()` restores the background route:
+Close by navigating: `router.back()` restores the background route.
 
 ```tsx
 "use client";
-import { useRouter } from "@rangojs/router/client";
+import { Outlet, useRouter } from "@rangojs/router/client";
 
-function ModalWrapper({ children }) {
+// Used as the intercept's layout: layout(<ModalWrapper />)
+export function ModalWrapper() {
   const router = useRouter();
 
   return (
     <div className="modal-overlay" onClick={() => router.back()}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => router.back()}>Close</button>
-        {children}
+        <Outlet />
       </div>
     </div>
   );
@@ -80,7 +88,7 @@ function ModalWrapper({ children }) {
 
 ## Conditional intercepts with `when`
 
-`when` lives in an `InterceptConfig` object as the 4th argument; the use items move to the 5th. It's a match-time selector receiving `{ from, to, params, segments, ... }`. Omit it and the intercept always activates:
+`when` goes in a config object as the 4th argument; the use items then move to the 5th argument. It is a synchronous match-time selector that receives `from` and `to` (URLs), `fromRouteName` and `toRouteName` (named routes only), `params` (the target's), `segments` (the client's current segment path and ids), `request`, and `env`. Omit it and the intercept always activates. The config type is not exported; pass an object literal.
 
 ```tsx
 intercept(
@@ -91,9 +99,14 @@ intercept(
   { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
   () => [loader(ProductLoader)],
 );
+
+// Only intercept when opened from the shop index
+intercept("@modal", "product", <ProductModal />, {
+  when: ({ fromRouteName }) => fromRouteName === "index",
+});
 ```
 
-Pass an array of predicates for AND logic — all must return true:
+Pass an array of predicates for AND logic; all must return true:
 
 ```tsx
 intercept(
@@ -110,13 +123,17 @@ intercept(
 );
 ```
 
+`when` is not re-evaluated during action revalidation, so an open modal stays open after an action.
+
 ## Middleware and data
 
 Intercepts support their own middleware chain. For an intercept request the full order is:
 
 ```
-global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept handler -> intercept loaders
+global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept loaders + handler
 ```
+
+The intercept's loaders start before its handler is called, so they run in parallel with it. If intercept middleware returns a `Response` (a redirect, for example), the intercept stops there.
 
 ```tsx
 intercept("@modal", "product", <ProductModal />, () => [
@@ -129,7 +146,7 @@ intercept("@modal", "product", <ProductModal />, () => [
 ]);
 ```
 
-The intercept handler reads context variables set by all upstream layers (global, route, intercept-specific). You can register multiple loaders, each with its own config:
+The intercept handler reads context variables set by all upstream middleware layers (global, route, intercept-specific). You can register multiple loaders, each with its own config:
 
 ```tsx
 intercept("@modal", "product", <ProductModal />, () => [
@@ -143,12 +160,13 @@ See [Middleware](/docs/rango/features/middleware) and [Loaders](/docs/rango/feat
 
 ### Revalidation across entries
 
-Handler/layout `ctx.set()` data follows the same rule as elsewhere: intercepts see data produced in the current render pass, but partial action revalidation only recomputes segments that actually revalidate. If the intercept depends on data established by an outer layout or handler, put a named revalidation contract on both sides — or reload/guard the data inside the intercept:
+Handler and layout `ctx.set()` data follows the same rule as elsewhere: intercepts see data produced in the current render pass, but a partial action revalidation only recomputes segments that actually revalidate. If the intercept depends on data established by an outer layout or handler, put a named revalidation contract on both sides, or reload or guard the data inside the intercept:
 
 ```tsx
+import type { Revalidate } from "@rangojs/router";
 import * as ProductActions from "./actions/product";
 
-export const revalidateProductShell = (ctx) =>
+export const revalidateProductShell: Revalidate = (ctx) =>
   ctx.isAction(ProductActions) || undefined;
 
 layout(ProductLayout, () => [
@@ -164,9 +182,11 @@ Compose multiple contracts if the intercept depends on multiple upstream domains
 
 ## Self-contained modals with handler.use
 
-An intercept handler can carry its own middleware, loaders, loading state, boundaries, and nested `layout`/`route` defaults via `.use` — the modal travels with its own data and chrome:
+An intercept handler can carry its own middleware, loaders, loading state, error and not-found boundaries, and modal layout via `.use`, so the modal travels with its own data and chrome:
 
 ```tsx
+import { layout, loader, loading, type Handler } from "@rangojs/router";
+
 const QuickViewModal: Handler = async (ctx) => {
   const product = await ctx.use(ProductLoader);
   return <QuickView product={product} />;
@@ -174,32 +194,33 @@ const QuickViewModal: Handler = async (ctx) => {
 QuickViewModal.use = () => [
   loader(ProductLoader),
   loading(<QuickViewSkeleton />),
-  layout(<ModalChrome />),
+  layout(<ModalChrome />), // ModalChrome renders <Outlet />
 ];
 
 intercept("@modal", "product", QuickViewModal);
 ```
 
-Conditional activation stays config-only — `when` goes on the mount-site `intercept()` call, never inside `.use`. Explicit `use()` at the mount site merges after the handler's defaults; see [handler.use](/docs/rango/guides/handler-use).
+Conditional activation stays config-only: `when` goes on the mount-site `intercept()` call, never inside `.use`. Explicit `use()` at the mount site merges after the handler's defaults; see [handler.use](/docs/rango/guides/handler-use).
 
 ## Interaction with view transitions
 
-Opening a modal does **not** fire the owning layout's `transition()` — Rango narrows the layout's `<ViewTransition>` wrap to the layout's default outlet content, so the `<ParallelOutlet />` where the modal mounts is a sibling of the wrap, not inside it. Form actions submitted from inside an open modal commit without firing the underlying layout's transition, the modal subtree identity survives revalidation (no remount, `useActionState` survives), and closing the modal restores the page without a stray transition.
+Opening a modal does **not** fire the owning layout's `transition()`. Rango narrows the layout's `<ViewTransition>` wrap to the layout's default outlet content, so the `<ParallelOutlet />` where the modal mounts is a sibling of the wrap, not inside it. Form actions submitted from inside an open modal commit without firing the underlying layout's transition, the modal subtree survives revalidation without remounting (so `useActionState` survives), and closing the modal restores the page without a stray transition.
 
 Two caveats:
 
-- For a modal-only morph (intercepted URLs changing while the modal stays open), use an element-level React `<ViewTransition>` inside the modal component — `transition()` accepted on `intercept()` via the DSL is not applied to slot rendering today.
-- Route-level `transition()` wraps the route component itself, so a `<ParallelOutlet />` rendered directly inside that route component would sit inside the route's VT subtree. Mount the slot in a layout instead when combining intercept modals with route-level transitions.
+- For a modal-only morph (intercepted URLs changing while the modal stays open), use an element-level React `<ViewTransition>` inside the modal component. A `transition()` on `intercept()` is accepted by the DSL but not applied to slot rendering.
+- Route-level `transition()` wraps the route component itself, so a `<ParallelOutlet />` rendered directly inside that route component would sit inside the route's transition subtree. Mount the slot in a layout instead when combining intercept modals with route-level transitions.
 
 See [View Transitions](/docs/rango/guides/view-transitions).
 
 ## Interaction with prerender
 
-When the intercept's target route uses `Prerender`, the intercept handler is also resolved at build time and stored alongside the main pre-rendered segments — intercept navigations to pre-rendered routes are served from the prerender store without executing handler code at runtime.
+When the intercept's target route uses `Prerender`, the intercept handler is also resolved at build time and stored alongside the main pre-rendered segments. Intercept navigations to pre-rendered routes are then served from the prerender store without running handler code at runtime.
 
-Build time: the intercept handler is resolved with BuildContext and stored under the key `"detail/paramHash/i"` (intercept variant); `when` conditions are skipped (all intercepts pre-rendered unconditionally). Runtime: intercept navigation serves the `/i` variant (frozen handler + fresh loaders), direct navigation serves the main variant; if no intercept prerender entry exists, resolution falls through to the live intercept path, and `when` is still evaluated by the intercept-resolution middleware. Loaders inside the intercept always run fresh at request time.
+- **Build time:** the intercept handler is resolved with `BuildContext` and stored as an intercept variant of the route's entry. `when` conditions are skipped, so every intercept is pre-rendered unconditionally.
+- **Runtime:** an intercept navigation serves the intercept variant (frozen handler, fresh loaders); a direct navigation serves the main variant. `when` is still evaluated at runtime. If no intercept prerender entry exists, resolution falls through to the live intercept path.
 
-See [Prerender](/docs/rango/guides/prerender).
+Loaders inside the intercept always run fresh at request time, as on any pre-rendered route. See [Prerender](/docs/rango/guides/prerender).
 
 <Cards>
   <Card href="/docs/rango/guides/parallel-routes" title="Parallel Routes">

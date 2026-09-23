@@ -9,6 +9,8 @@ One tree shows every URL, who owns it, what data it loads, what wraps it, and wh
 <TreeToPageDemo />
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path, layout, loader, loading }) => [
   layout(<ShopLayout />, () => [
     loader(CartLoader),
@@ -27,18 +29,19 @@ export const urlpatterns = urls(({ path, layout, loader, loading }) => [
 ```ts
 urls(
   ({
-    path, // define a route
+    path, // define a route (plus path.json(), path.text(), … response routes)
+    include, // mount another urls() module under a prefix
     layout, // wrap routes in a layout
     parallel, // parallel routes (slots)
     loader, // attach a data loader
     loading, // opt a segment into skeleton-then-stream
     cache, // cache a rendered subtree
     middleware, // request processing for a subtree
-    revalidate, // client-update selection after actions
+    revalidate, // which segments re-run on navigations and actions
     intercept, // modal / soft-navigation interception
     errorBoundary, // error boundary for a subtree
     notFoundBoundary, // not-found boundary for a subtree
-    transition, // view transitions
+    transition, // hold content across navigations; view transitions
   }) => [
     // route definitions
   ],
@@ -49,21 +52,26 @@ urls(
 
 The tree has one design rule, and everything else follows from it:
 
-- `path()` and `include()` are **structure** — they define URLs and must stay visible in `urls()`. They cannot be hidden in a factory.
-- Everything else — `cache`, `loader`, `loading`, `middleware`, `revalidate`, `parallel`, `intercept`, boundaries — is **config**. It attaches to a node via its callback, is importable, and extracts into factories that return arrays (`withAuth()`, `withCaching()`), flattened automatically.
+- `path()` and `include()` are **structure** — they define URLs and must stay visible in `urls()`. They exist only on the `urls()` callback parameter, so they cannot be hidden in a factory.
+- Everything else — `layout`, `cache`, `loader`, `loading`, `middleware`, `revalidate`, `parallel`, `intercept`, `transition`, boundaries — is **config**. It attaches to a node via its callback, is importable from `@rangojs/router`, and extracts into factories that return arrays (`withAuth()`, `withCaching()`), flattened automatically.
 
 To decide where something can live: **does it define a URL? Structure — stays in `urls()`. Does it modify a node? Config — compose freely.**
 
 ```tsx
+import { cache, loading } from "@rangojs/router";
+
 // A shared config factory — just a function returning helpers
 export const withCaching = () => [cache({ ttl: 300 }), loading(<Skeleton />)];
 
+// in a urls() tree
 path("/products", ProductsPage, { name: "products" }, () => [withCaching()]);
 ```
 
+[Structure vs Config](/docs/rango/concepts/structure-vs-config) covers factory rules and typing in depth.
+
 ## Composing sub-apps with include()
 
-`include()` mounts a whole `urls()` module under a prefix:
+`include()` mounts a whole `urls()` module under a prefix. Its `name` option namespaces the module's route names (`shop.index`, `shop.product`); `{ name: "" }` flattens them into the parent, and leaving it out keeps them private to the module:
 
 ```tsx
 // src/urls/shop.tsx
@@ -90,11 +98,12 @@ Build-time discovery still awaits the provider, so route types, `href()`, and pr
 
 ## Client URL routes
 
-`clientUrls()` is a narrow opt-in for routes whose path and layout values are named client components. Put the definition in a `"use client"` module, default-export it, and mount it directly at the router root:
+`clientUrls()` is a narrow opt-in for routes whose path and layout values are named client components. Put the definition in a `"use client"` module, default-export it, and mount it with `include()` in the server `urls()` tree:
 
 ```tsx
 // catalog.client-urls.tsx
 "use client";
+import { clientUrls } from "@rangojs/router/client";
 
 export default clientUrls(({ path, layout, loader, loading }) => [
   layout(CatalogLayout, () => [
@@ -107,6 +116,9 @@ export default clientUrls(({ path, layout, loader, loading }) => [
 ]);
 
 // urls.tsx — mount through include() like any route module
+import { urls } from "@rangojs/router";
+import catalogClientUrls from "./catalog.client-urls";
+
 export const urlpatterns = urls(({ include, layout }) => [
   layout(<CatalogRscLayout />, () => [
     include("/catalog", catalogClientUrls, { name: "catalog" }),
@@ -114,15 +126,15 @@ export const urlpatterns = urls(({ include, layout }) => [
 ]);
 ```
 
-After hydration, the browser can match a different client route immediately, show its `loading()` UI, and set the wrapping `useOutlet().pending`. The existing partial Flight request is still authoritative: the server matches the route, runs global router middleware and `createLoader()` definitions by ID, and commits content, URL, and history. Hard requests still SSR and hydrate normally.
+After hydration, the browser can match a different client route immediately, show its `loading()` UI, and set the wrapping `useOutlet().pending`. The partial Flight request that follows is still authoritative: the server matches the route, runs the middleware around the mount on every navigation, runs the `createLoader()` definitions by ID, and commits content, URL, and history. Hard requests still SSR and hydrate normally.
 
-The supported helpers are `path`, `layout`, `loader`, and `loading`; projected path options are limited to `name`, `search`, and `trailingSlash`. Definitions mount through `include()` in the canonical `urls()` tree — the include supplies URL/name prefixes and the wrapping RSC layouts and middleware scope; patterns are definition-local. Route middleware/revalidation, parallel routes, intercepts, cache, transitions, boundaries, and PPR are not supported inside `clientUrls()`. See the [complete client URL guide](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/client-urls.md).
+Inside `clientUrls()` the helpers are `path`, `layout`, `loader`, `loading`, `intercept`, `revalidate` (inside a `loader()` use callback, where it runs in the browser), and `transition` (inside a `path()` use callback). Path options are limited to `name`, `search`, `trailingSlash`, and `ppr`. `include`, `parallel`, `cache`, `middleware`, `errorBoundary`, and `notFoundBoundary` throw — put them at or around the `include()` mount in the server tree, which also supplies the URL/name prefixes and the wrapping RSC layouts. See the [Client URLs guide](/docs/rango/guides/client-urls).
 
 ## Not-found handling
 
 Two distinct 404s:
 
-1. **No route matches the URL** — the router renders the `notFound` component from `createRouter()`. Automatic.
+1. **No route matches the URL** — the router renders the `notFound` option from `createRouter()` (or a built-in page when unset) with status 404. Automatic.
 2. **The route matched but the data doesn't exist** — the handler calls `notFound()`:
 
 ```tsx
@@ -135,7 +147,7 @@ path("/product/:slug", async (ctx) => {
 });
 ```
 
-`notFound()` falls back through `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from config, then `notFound`, then a built-in. All cases set HTTP 404.
+`notFound()` falls back through the nearest `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from `createRouter()`, then the `notFound` option, then a built-in `<h1>Not Found</h1>`. No-match and handler-thrown 404s always set HTTP 404. A loader can call `notFound()` too; on a document load its 404 status is only guaranteed when the loader is registered with `{ ssr: false }` ([reference](/docs/rango/reference/create-router#fallback-chain-for-notfound)).
 
 ## Dev and production agree
 

@@ -7,9 +7,14 @@ argument-hint: "[setup]"
 # Breadcrumbs
 
 Built-in handle for accumulating breadcrumb items across route segments.
-Handlers and loader bodies push items via `ctx.use(Breadcrumbs)`, and they
-are collected in parent-to-child order with automatic deduplication by
-`href`.
+Route, layout, and parallel-slot handlers and loader bodies push items via
+`ctx.use(Breadcrumbs)`; client components read the collected trail with
+`useHandle(Breadcrumbs)`. Items are collected in parent-to-child order with
+automatic deduplication by `href`.
+
+`Breadcrumbs` is exported from both `@rangojs/router` (server, for pushing) and
+`@rangojs/router/client` (for `useHandle`). For page titles and meta tags, use
+the `Meta` handle the same way.
 
 ## BreadcrumbItem Type
 
@@ -59,6 +64,20 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 On `/blog/my-post`, breadcrumbs accumulate: `Home > Blog > my-post`.
 
+The push function also accepts a `Promise` of an item, or an async function
+(called immediately) that returns one:
+
+```typescript
+const breadcrumb = ctx.use(Breadcrumbs);
+breadcrumb(async () => {
+  const post = await getPost(ctx.params.slug);
+  return { label: post.title, href: `/blog/${post.slug}` };
+});
+```
+
+Either way the item is resolved before any consumer reads it — `useHandle`
+never sees a pending crumb.
+
 ## Pushing from Loaders
 
 A data-derived crumb belongs where the data lives — the loader body pushes
@@ -66,6 +85,8 @@ with the same API (handler parity), so routes without handlers (`useLoader`
 consumption, `clientUrls()` groups) still build trails:
 
 ```typescript
+import { Breadcrumbs, createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
   const product = await getProduct(ctx.params.slug);
 
@@ -219,9 +240,11 @@ const count = useHandle(Breadcrumbs, (data) => data.length);
 
 ## Deduplication
 
-The built-in collect function deduplicates by `href`. If multiple segments
-push the same `href`, the last one wins. This prevents duplicates when
-navigating between sibling routes that share a common breadcrumb.
+The built-in collect function deduplicates by `href`: each `href` appears once,
+at the position of its **first** push, with the value of its **last** push. A
+child that re-pushes a parent's `href` therefore updates that crumb's label in
+place without reordering the trail. Items without a string `href` are kept
+as-is and skip deduplication.
 
 ## Passing as Props
 
@@ -246,7 +269,9 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   return (
     <nav>
       {crumbs.map((c) => (
-        <a href={c.href}>{c.label}</a>
+        <a key={c.href} href={c.href}>
+          {c.label}
+        </a>
       ))}
     </nav>
   );
@@ -256,20 +281,31 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
 ## Complete Example
 
 ```typescript
-// urls.tsx
-import { urls, Breadcrumbs, Meta } from "@rangojs/router";
-import { Outlet, MetaTags } from "@rangojs/router/client";
-import { BreadcrumbNav } from "./components/BreadcrumbNav";
+// document.tsx — passed to createRouter({ document: Document, ... })
+"use client";
+import type { ReactNode } from "react";
+import { MetaTags } from "@rangojs/router/client";
 
-function RootLayout() {
+export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head><MetaTags /></head>
-      <body>
-        <BreadcrumbNav />
-        <main><Outlet /></main>
-      </body>
+      <body>{children}</body>
     </html>
+  );
+}
+
+// urls.tsx
+import { urls, Breadcrumbs, Meta } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import { BreadcrumbNav } from "./components/BreadcrumbNav"; // the client component above
+
+function RootLayout() {
+  return (
+    <>
+      <BreadcrumbNav />
+      <main><Outlet /></main>
+    </>
   );
 }
 
@@ -342,9 +378,9 @@ second argument to `createHandle()`:
 import { createHandle } from "@rangojs/router";
 
 // With a collect function (reducer): collect is first arg, tag is second
-export const Breadcrumbs = createHandle<BreadcrumbItem, BreadcrumbItem[]>(
-  collectBreadcrumbs,
-  "__my_package_breadcrumbs__",
+export const PackageCrumbs = createHandle<CrumbItem, CrumbItem[]>(
+  collectCrumbs,
+  "__my_package_crumbs__",
 );
 
 // Without a collect function: pass undefined, then the tag
@@ -354,5 +390,6 @@ export const Warnings = createHandle<string>(
 );
 ```
 
-The tag must be globally unique and stable across builds. Without it,
-`createHandle` throws in development mode.
+The tag must be globally unique and stable across builds. Without it (and
+without a plugin-injected id), `createHandle` throws — in dev and in production
+builds. Only test runners fall back to a synthetic id.

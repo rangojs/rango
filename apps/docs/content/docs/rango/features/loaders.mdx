@@ -10,16 +10,37 @@ First, the default data path: handlers are async server components, so you fetch
 
 <LoaderLanesDemo />
 
-A loader is a server function attached to route segments in the tree; all of a route's loaders start in parallel right after middleware, so data latency overlaps the render instead of serializing after it. Client components read them with `useLoader()`:
+A loader is a server function attached to route segments in the tree; all of a route's loaders start in parallel right after middleware, so data latency overlaps the render instead of serializing after it. Register it with `loader()` and read it with `useLoader()` in a client component:
 
 ```tsx
+// loaders/stock.ts
+import { createLoader } from "@rangojs/router";
+
 export const StockLoader = createLoader(async (ctx) => {
   return ctx.env.DB.stockFor(ctx.params.slug);
 });
-
-// in a client component
-const { data, isLoading } = useLoader(StockLoader);
 ```
+
+```tsx
+// urls.tsx: register it on the route
+path("/products/:slug", ProductPage, { name: "product" }, () => [
+  loader(StockLoader),
+]);
+```
+
+```tsx
+// components/stock.tsx
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import { StockLoader } from "../loaders/stock";
+
+export function Stock() {
+  const { data } = useLoader(StockLoader);
+  return <span>{data.count} in stock</span>;
+}
+```
+
+A first read whose data hasn't streamed in yet suspends to the nearest `<Suspense>` or `loading()` boundary; `isLoading` covers later refetches. Handlers can also read a loader with `await ctx.use(StockLoader)`, but that value is baked into the handler's output — inside a cached route it freezes with the shell. Prefer `useLoader()` for data that must stay live.
 
 ## Live by default, even inside caches
 
@@ -33,15 +54,17 @@ cache({ ttl: 600 }, () => [
 ]);
 ```
 
-A cache hit streams the stored UI instantly while `StockLoader` resolves fresh alongside it. Caching a loader's data is a separate, explicit opt-in:
+A cache hit streams the stored UI instantly while `StockLoader` resolves fresh alongside it. Caching a loader's data is a separate, explicit opt-in, independent of the route's segment cache:
 
 ```tsx
 loader(ProductLoader, () => [cache({ ttl: 60 })]),
 ```
 
+Which loaders re-run on a client update is the other axis. After an action every loader re-runs by default; on a navigation, loaders inside the matched `path()` re-run when params or search change and loaders above the route don't. A `revalidate()` inside the loader's use callback adjusts that — see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate).
+
 ## Skeletons are a choice, not the default
 
-On a document request, a segment without `loading()` waits for its loaders — the HTML arrives with data in place, a ready page. Declaring `loading()` (or your own Suspense boundary) opts that segment into skeleton-then-stream. A per-request `ssr.resolveStreaming` resolver can force fully-settled HTML (`"allReady"`) for bots and crawlers.
+On a document request, a segment without `loading()` waits for its loaders — the HTML arrives with data in place, a ready page. Declaring `loading()` (or your own Suspense boundary) opts that segment into skeleton-then-stream. Two knobs force settled output when you need it: `loader(Def, { ssr: false })` makes document renders await that one loader before the first byte, and a per-request `createRouter({ ssr: { resolveStreaming } })` resolver can return `"allReady"` for bots and crawlers ([reference](/docs/rango/reference/create-router#ssrresolvestreaming)).
 
 ## Fetchable on demand
 
@@ -54,7 +77,10 @@ export const SearchLoader = createLoader(async (ctx) => {
 
 // client: search-as-you-type, no hand-rolled endpoint
 const { data, load } = useFetchLoader(SearchLoader);
+// load({ params: { q: "espresso" } })
 ```
+
+A fetch call runs global middleware, then the loader's own middleware list, and never route `middleware()`. `true` attaches an empty list, so a fetchable loader that needs auth passes it itself: `createLoader(fn, { middleware: [requireAuth] })`. A fetchable-loader POST is not a server action — no revalidation render runs afterwards and the client caches stay as they are; use a [server action](/docs/rango/guides/server-actions) for writes that should refresh the page.
 
 ## Loaders carry RSC, not just JSON
 
@@ -72,6 +98,23 @@ const { data: panel, load } = useFetchLoader(ReviewsPanel);
 
 That closes a gap RSC frameworks usually leave to bespoke endpoints or full-route navigation: fetching a server-rendered fragment on interaction — a tab panel, a modal body, a chart — dynamic when it should be, cached when it can be.
 
+## Loaders can write handles
+
+A loader body can push to a handle exactly like a handler — `ctx.use(Handle)` returns the push function. That lets data-derived titles and breadcrumb trails live where the data is fetched:
+
+```tsx
+import { Breadcrumbs, Meta, createLoader } from "@rangojs/router";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  ctx.use(Meta)({ title: `${product.name} — Shop` });
+  ctx.use(Breadcrumbs)({ label: product.name, href: `/shop/${product.slug}` });
+  return product;
+});
+```
+
+Because loaders stream, a push that settles after the page's non-loader segments have rendered misses the server HTML; it streams to the client and is applied after hydration. When the push must be in the first HTML — `<head>` metadata for crawlers, say — register the loader with `loader(ProductLoader, { ssr: false })` so document renders await it. See [Breadcrumbs](/docs/rango/guides/breadcrumbs) and [Metadata & Handles](/docs/rango/features/metadata).
+
 ## When to reach for a loader
 
-If the data can be a loader, make it a loader. Loaders resolve fresh on every pass — full renders, action revalidations, cache hits — so there is nothing to keep in sync. Handler fetching is right when the data belongs to the shell and should freeze with it; a loader is right when the data must outlive the shell's freshness.
+If the data can be a loader, make it a loader. Loaders resolve fresh every time they run — full renders, cache hits, and every action revalidation — so there is nothing to keep in sync. Handler fetching is right when the data belongs to the shell and should freeze with it; a loader is right when the data must outlive the shell's freshness. [Data Flow](/docs/rango/concepts/data-flow) covers how loaders compare with the other ways of passing data down the tree.

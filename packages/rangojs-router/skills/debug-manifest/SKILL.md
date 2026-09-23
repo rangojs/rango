@@ -1,30 +1,45 @@
 ---
 name: debug-manifest
-description: Debug and inspect route manifest structure. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.
+description: Inspect the router's route manifest (route/layout tree, shortCodes, parent links, loader/middleware flags) and diff it between versions. Use when routes aren't matching as expected, you need to see the generated route tree, or a path resolves to the wrong handler.
 argument-hint:
 ---
 
 # Debug Manifest
 
-Inspect the route manifest to verify parent relationships, shortCodes, and route structure.
+Dump the route manifest the router builds from your `urls()` tree to verify
+parent relationships, shortCodes, and which segments carry loaders, middleware,
+error boundaries, parallel slots, or intercepts. This is a development aid: the
+method and the diff helpers are internal and may change between releases.
 
-## Programmatic Access
+## Programmatic access
 
-Call `router.debugManifest()` — an `async` method on the router instance:
+The router instance has an async `debugManifest()` method. It is not part of
+the public `Rango` type, so TypeScript needs a cast:
 
 ```typescript
+import type { SerializedManifest } from "@rangojs/router/__internal";
 import { router } from "./router.js";
 
-// Only in development
+// Development only
 if (process.env.NODE_ENV !== "production") {
-  const manifest = await router.debugManifest();
+  const manifest = await (
+    router as unknown as { debugManifest(): Promise<SerializedManifest> }
+  ).debugManifest();
   console.log(JSON.stringify(manifest, null, 2));
 }
 ```
 
-## Manifest Structure
+Run it on the server side (for example from a dev-only route handler), since
+it evaluates your `urls()` tree. Groups mounted with `include()` are registered
+lazily as their own mounts, so check included routes against a running app as
+well rather than relying on this dump alone.
 
-The programmatic `router.debugManifest()` call returns `{ routes, layouts, totalRoutes, totalLayouts }`:
+## Manifest structure
+
+`debugManifest()` returns `{ routes, layouts, totalRoutes, totalLayouts }`.
+Every entry has the same fields; `pattern` is present on routes only. Cache
+boundaries are listed under `layouts` with `type: "cache"`. Shape (values are
+illustrative):
 
 ```json
 {
@@ -47,7 +62,12 @@ The programmatic `router.debugManifest()` call returns `{ routes, layouts, total
       "id": "debug.M0.$root",
       "shortCode": "M0L0",
       "type": "layout",
-      "parentShortCode": null
+      "parentShortCode": null,
+      "hasLoader": false,
+      "hasMiddleware": false,
+      "hasErrorBoundary": false,
+      "parallelCount": 0,
+      "interceptCount": 0
     }
   },
   "totalRoutes": 45,
@@ -55,52 +75,77 @@ The programmatic `router.debugManifest()` call returns `{ routes, layouts, total
 }
 ```
 
-## ShortCode Format
+## ShortCode format
 
-| Prefix | Meaning                                  |
-| ------ | ---------------------------------------- |
-| **M**  | Mount index (multiple `.routes()` calls) |
-| **L**  | Layout                                   |
-| **C**  | Cache boundary                           |
-| **R**  | Route                                    |
-| **P**  | Parallel slot                            |
+A shortCode is the parent's shortCode plus one segment per level:
 
-Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route
+| Prefix | Meaning                                                                 |
+| ------ | ----------------------------------------------------------------------- |
+| **M**  | Mount index (`.routes()` / `urls` registrations and `include()` mounts) |
+| **L**  | Layout (the router adds a root layout, `M<n>L0`)                        |
+| **C**  | Cache boundary                                                          |
+| **R**  | Route                                                                   |
+| **P**  | Parallel slot                                                           |
+| **I**  | `include()` scope token, so included routes never collide with siblings |
 
-## Debugging Checklist
+Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route.
+At runtime, a route from an `include()` placed under the root layout gets a
+shortCode such as `M0L0I0R0`.
 
-1. **Routes have parents**: `parentShortCode` should NOT be `null` (except root layout)
-2. **Correct hierarchy**: ShortCode should reflect nesting (e.g., `M0L0R0` not `M0R0`)
-3. **Loaders attached**: Check `hasLoader: true` for routes with data requirements
-4. **Intercepts registered**: `interceptCount > 0` for modal/overlay patterns
+## Debugging checklist
 
-## Comparing Manifests
+1. **Correct hierarchy**: the shortCode reflects nesting (`M0L0L1R0` for a
+   route in a nested layout, not `M0L0R0`).
+2. **Parents**: only a mount's root layout (`M<n>L0`) has
+   `parentShortCode: null`.
+3. **Loaders attached**: `hasLoader: true` on routes/layouts that declare
+   `loader()`.
+4. **Intercepts registered**: `interceptCount > 0` where you declared
+   `intercept()` for modal/overlay patterns.
+5. **Slots**: `parallelCount` matches the number of `parallel()` slots.
+
+## Comparing manifests
 
 ```typescript
 import {
-  serializeManifest,
   compareManifests,
   formatManifestDiff,
+  type SerializedManifest,
 } from "@rangojs/router/__internal";
 
-const oldManifest = await router.debugManifest();
+const debugManifest = () =>
+  (
+    router as unknown as { debugManifest(): Promise<SerializedManifest> }
+  ).debugManifest();
+
+const oldManifest = await debugManifest();
 // ... make changes ...
-const newManifest = await router.debugManifest();
+const newManifest = await debugManifest();
 
 const diff = compareManifests(oldManifest, newManifest);
 console.log(formatManifestDiff(diff));
 ```
 
-## Common Issues
+`compareManifests` reports added, removed, and changed routes and layouts
+(field-level: `old` / `new` per changed field).
 
-### Routes have `parentShortCode: null`
+## Common issues
 
-Routes should have a layout parent. Check that `urls()` handler is being wrapped in root layout.
+### A route sits under the wrong layout
 
-### Missing layouts in hierarchy
+Check that the `layout()` call wraps the route in its `use` callback
+(`layout(<Shell />, () => [path(...)])`). A `path()` listed next to a
+`layout()` is a sibling, not a child.
 
-Verify `layout()` calls wrap child routes correctly.
+### Unexpected mount index
 
-### Wrong mount index
+Each `.routes()` call (and the `urls` option) registers a separate mount (M0,
+M1, ...), and each `include()` also takes a mount index. Routes registered by
+separate `.routes()` calls do not share layouts or middleware; compose modules
+with `include()` inside one `urls()` tree when they should (`/composability`).
 
-Multiple `.routes()` calls create separate mounts (M0, M1, etc.). Use `include()` to share context.
+### Missing flags
+
+`hasMiddleware` / `hasLoader` / `hasErrorBoundary` are per entry. Middleware or
+a loader declared on a parent layout shows on that layout, not on each child
+route.

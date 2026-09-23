@@ -2,23 +2,31 @@
 
 ### Outlet / ParallelOutlet
 
-Render child content in layouts:
+Render child content in layouts. `<Outlet />` renders the matched child
+segment; `<ParallelOutlet name="@slot" />` renders a named `parallel()` slot.
+Both apply the segment's `loading()` fallback as a Suspense boundary:
 
 ```tsx
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-function DashboardLayout({ children }: { children?: React.ReactNode }) {
+function DashboardLayout() {
   return (
     <div className="dashboard">
       <aside>
         <ParallelOutlet name="@sidebar" />
       </aside>
-      <main>{children ?? <Outlet />}</main>
+      <main>
+        <Outlet />
+      </main>
       <ParallelOutlet name="@notifications" />
     </div>
   );
 }
 ```
+
+`<Outlet name="@sidebar" />` is equivalent to `<ParallelOutlet name="@sidebar" />`;
+`ParallelOutlet` requires the name and reads clearer at the call site. See
+`/layout` and `/parallel` for the server side.
 
 ### useOutlet()
 
@@ -48,9 +56,8 @@ function ConditionalLayout() {
 }
 ```
 
-Migration from the old bare-node return is `const { content, pending } =
-useOutlet()`, then render `content` where you previously rendered the hook result.
-`<Outlet />` itself is unchanged.
+Migrating from the older API where `useOutlet()` returned the node directly:
+destructure `content` and render it where you rendered the hook result.
 
 `pending` is narrow. After hydration, a `clientUrls()` layout receives `true`
 while a browser-local match to a different client route beneath it is presenting

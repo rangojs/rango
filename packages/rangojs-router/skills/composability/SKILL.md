@@ -1,12 +1,17 @@
 ---
 name: composability
-description: Reusable composition patterns with globally importable route helpers in @rangojs/router. Use when sharing loaders, middleware, or handler logic across multiple route files, or avoiding copy-pasting the same route setup everywhere.
+description: Reusable composition patterns with globally importable route helpers and include() modules in @rangojs/router. Use when sharing loaders, middleware, or caching config across multiple route files, splitting routes into eager or code-split include() groups, or avoiding copy-pasting the same route setup everywhere.
 argument-hint: "pattern-name"
 ---
 
 # Composability
 
 Route helpers can be imported directly from `@rangojs/router` and used to build reusable composition factories. This enables sharing common route configurations across multiple routes and modules.
+
+Use this skill when the same config (auth middleware, caching, loading and error
+UI, revalidation) repeats across routes, when splitting a route tree into
+modules with `include()`, or when sizing code-split route groups. To attach
+defaults to one handler instead of a factory, see `/handler-use`.
 
 ## Globally Importable Helpers
 
@@ -24,10 +29,11 @@ import {
   intercept,
   errorBoundary,
   notFoundBoundary,
+  transition,
 } from "@rangojs/router";
 ```
 
-They work because they use AsyncLocalStorage internally and resolve context at call time, not import time.
+They work because they read the active `urls()` builder from AsyncLocalStorage at call time, not import time. Calling one outside a running `urls()` builder throws a `DslContextError`.
 
 ## Why path() and include() Are Not Global
 
@@ -49,26 +55,25 @@ The globally importable helpers (`cache`, `middleware`, `loading`, etc.) are con
 Define reusable factories that return arrays of use items:
 
 ```typescript
-import { cache, revalidate, loading, errorBoundary, middleware } from "@rangojs/router";
+// route-config.tsx
+import type { ReactNode } from "react";
+import { cache, loading, errorBoundary, middleware } from "@rangojs/router";
+import { authMiddleware, loggingMiddleware } from "./middleware";
 
 // Shared caching configuration
-const withCaching = () => [
-  cache({ ttl: 600_000 }),
-  // Defer on navigation (|| undefined) so each route keeps its own param/search
-  // revalidation default; only force a re-run when an action ran.
-  revalidate(({ actionId }) => (actionId ? true : undefined)),
+export const withCaching = () => [
+  cache({ ttl: 600 }), // seconds
 ];
 
 // Shared loading and error handling
-const withLoadingAndError = (skeleton: ReactNode) => [
+export const withLoadingAndError = (skeleton: ReactNode) => [
   loading(skeleton),
   errorBoundary(() => <div>Something went wrong</div>),
 ];
 
-// Shared auth middleware
-const withAuth = () => [
-  middleware(authMiddleware),
-  middleware(loggingMiddleware),
+// Shared middleware (the array form registers both in order)
+export const withAuth = () => [
+  middleware([authMiddleware, loggingMiddleware]),
 ];
 ```
 
@@ -97,7 +102,7 @@ const withAuth = () => [
 
 ## Using Factories in Routes
 
-Place factory calls inside `path()` or `layout()` use callbacks. The returned arrays are flattened automatically (up to 3 levels):
+Place factory calls inside any use callback (`path()`, `layout()`, `parallel()`, `intercept()`, `loader()`), as long as every item is valid there. The returned arrays are flattened automatically (up to 3 levels):
 
 ```typescript
 import { urls } from "@rangojs/router";
@@ -126,13 +131,10 @@ Factories can be defined in shared modules and reused across separate `urls()` d
 
 ```typescript
 // src/route-config.ts
-import { cache, revalidate, middleware } from "@rangojs/router";
+import { cache, middleware } from "@rangojs/router";
 import { authMiddleware } from "./middleware/auth";
 
-export const withPublicDefaults = () => [
-  cache({ ttl: 300 }),
-  revalidate(({ actionId }) => (actionId ? true : undefined)),
-];
+export const withPublicDefaults = () => [cache({ ttl: 300 })];
 
 export const withProtectedDefaults = () => [
   middleware(authMiddleware),
@@ -195,7 +197,10 @@ urls(({ include }) => [
 ]);
 ```
 
-The split module exposes its `urls()` value as the default export (convention):
+The provider must resolve to a `urls()` value — either as the module's `default`
+export (the usual form) or returned directly
+(`() => import("./shop-patterns").then((m) => m.shopPatterns)`). Anything else
+throws when the group is first loaded:
 
 ```typescript
 // src/shop-patterns.ts
@@ -219,7 +224,7 @@ splitting a thin group buys little). Both match identically at runtime — only 
 module's runtime evaluation timing differs.
 
 What you do NOT lose by splitting: build-time discovery `await`s the provider, so
-`href()`, `reverse()`, generated route types, and prerender still see every route
+`href()`, `ctx.reverse()`, generated route types, and prerender still see every route
 in the group — including nested `include()`s inside the split module. Only the
 module's runtime evaluation defers. `rango generate` resolves the `() => import()`
 the same way, so a code-split group is still fully typed.
@@ -227,8 +232,10 @@ the same way, so a code-split group is still fully typed.
 ### Sizing async include groups (measured)
 
 The first request into an async group pays that group's chunk import; every
-request after that is flat. Measured on a deployed Cloudflare worker with
-26k routes (2026-07, warm RTT floor ~23 ms):
+request after that is flat. One cold, single-run measurement right after
+deploying a 26k-route app to Cloudflare Workers (2026-07, warm RTT floor
+~23 ms, see `tests/cloudflare-stress-demo/BENCHMARK-2026-07-04-edge-26k.md`).
+Treat the numbers as orders of magnitude:
 
 | Group size                 | First-hit latency                    |
 | -------------------------- | ------------------------------------ |
@@ -261,11 +268,12 @@ erases first-hit cost for the isolate entirely.
 For typed factories, import the composition types:
 
 ```typescript
+import { cache, loading, middleware } from "@rangojs/router";
 import type { RouteUseItem, LayoutUseItem, UseItems } from "@rangojs/router";
 
 // Factory for path() use callbacks
 const withCaching = (): RouteUseItem[] => [
-  cache({ ttl: 600_000 }),
+  cache({ ttl: 600 }),
 ];
 
 // Factory for layout() use callbacks
@@ -281,12 +289,13 @@ const withEverything = (): UseItems<RouteUseItem> => [
 ```
 
 - `RouteUseItem[]` -- flat array for `path()` use callbacks
-- `LayoutUseItem[]` -- flat array for `layout()` use callbacks
-- `UseItems<T>` -- allows nested arrays from composing factories together
+- `LayoutUseItem[]` -- flat array for `layout()` use callbacks (every item type)
+- `UseItems<T>` -- allows one level of nested arrays from composing factories together
+- `HandlerUseItem` -- items a `handler.use` callback may return (see `/handler-use`)
 
 ## Rules
 
-- Helpers execute lazily -- factory functions are defined anywhere, but only called inside a `urls()` context (within `path()` or `layout()` use callbacks)
-- Calling helpers outside a `urls()` context throws an error
+- Helpers execute lazily -- factory functions are defined anywhere, but only called while a `urls()` builder runs (inside a use callback)
+- Calling helpers outside a `urls()` builder throws a `DslContextError`
 - Nested arrays from factories are flattened automatically via `.flat(3)`
-- `path()` and `include()` cannot be used in factories -- they define route structure and must remain visible in the `urls()` callback
+- `path()` and `include()` are not exported as standalone helpers -- they define route structure and must remain visible in the `urls()` callback

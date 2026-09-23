@@ -284,8 +284,8 @@ export const pageMeta: PageMeta[] = [
     "toc": [
       {
         "depth": 2,
-        "id": "two-generated-files-two-different-jobs",
-        "text": "Two generated files, two different jobs"
+        "id": "two-generated-files-and-one-manual-hook",
+        "text": "Two generated files and one manual hook"
       },
       {
         "depth": 2,
@@ -399,6 +399,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "loaders-can-write-handles",
+        "text": "Loaders can write handles"
+      },
+      {
+        "depth": 2,
         "id": "when-to-reach-for-a-loader",
         "text": "When to reach for a loader"
       }
@@ -509,6 +514,11 @@ export const pageMeta: PageMeta[] = [
     "toc": [
       {
         "depth": 2,
+        "id": "prefetch-strategies",
+        "text": "Prefetch strategies"
+      },
+      {
+        "depth": 2,
         "id": "why-aggressive-prefetch-is-safe",
         "text": "Why aggressive prefetch is safe"
       },
@@ -609,6 +619,11 @@ export const pageMeta: PageMeta[] = [
     "toc": [
       {
         "depth": 2,
+        "id": "the-entries",
+        "text": "The entries"
+      },
+      {
+        "depth": 2,
         "id": "the-primitives",
         "text": "The primitives"
       },
@@ -627,6 +642,11 @@ export const pageMeta: PageMeta[] = [
     "slug": "rango/getting-started",
     "title": "Setup",
     "toc": [
+      {
+        "depth": 2,
+        "id": "install",
+        "text": "Install"
+      },
       {
         "depth": 2,
         "id": "vite-config",
@@ -659,8 +679,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "deploying-to-vercel",
-        "text": "Deploying to Vercel"
+        "id": "node-and-vercel",
+        "text": "Node and Vercel"
       },
       {
         "depth": 2,
@@ -769,6 +789,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "push-crumbs-from-loaders",
+        "text": "Push crumbs from loaders"
+      },
+      {
+        "depth": 2,
         "id": "render-the-trail-on-the-client",
         "text": "Render the trail on the client"
       },
@@ -855,6 +880,101 @@ export const pageMeta: PageMeta[] = [
     ],
     "type": "guide",
     "url": "/docs/rango/guides/bundle-analysis"
+  },
+  {
+    "description": "Define route groups whose pages are client components, so navigations inside the group render the destination at once while the server keeps the final say.",
+    "filePath": "/content/docs/rango/guides/client-urls.mdx",
+    "slug": "rango/guides/client-urls",
+    "title": "Client URLs",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "when-to-use-a-client-group",
+        "text": "When to use a client group"
+      },
+      {
+        "depth": 2,
+        "id": "define-a-group",
+        "text": "Define a group"
+      },
+      {
+        "depth": 3,
+        "id": "loaders",
+        "text": "Loaders"
+      },
+      {
+        "depth": 3,
+        "id": "the-client-module",
+        "text": "The client module"
+      },
+      {
+        "depth": 3,
+        "id": "mount-it-with-include",
+        "text": "Mount it with include()"
+      },
+      {
+        "depth": 2,
+        "id": "what-a-group-can-contain",
+        "text": "What a group can contain"
+      },
+      {
+        "depth": 3,
+        "id": "transitions",
+        "text": "Transitions"
+      },
+      {
+        "depth": 3,
+        "id": "intercepts",
+        "text": "Intercepts"
+      },
+      {
+        "depth": 2,
+        "id": "loaders-in-a-group",
+        "text": "Loaders in a group"
+      },
+      {
+        "depth": 3,
+        "id": "revalidation-runs-in-the-browser",
+        "text": "Revalidation runs in the browser"
+      },
+      {
+        "depth": 3,
+        "id": "ssr-false",
+        "text": "ssr: false"
+      },
+      {
+        "depth": 3,
+        "id": "shell-caching-with-ppr",
+        "text": "Shell caching with ppr"
+      },
+      {
+        "depth": 3,
+        "id": "fetchable-loaders",
+        "text": "Fetchable loaders"
+      },
+      {
+        "depth": 2,
+        "id": "navigation-and-hooks-inside-a-group",
+        "text": "Navigation and hooks inside a group"
+      },
+      {
+        "depth": 3,
+        "id": "the-optimistic-window",
+        "text": "The optimistic window"
+      },
+      {
+        "depth": 3,
+        "id": "links-and-paths",
+        "text": "Links and paths"
+      },
+      {
+        "depth": 2,
+        "id": "security-boundary",
+        "text": "Security boundary"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/client-urls"
   },
   {
     "description": "Rango placed next to Next.js App Router, TanStack Start, and Waku — where its design leads, and where the others still do.",
@@ -979,18 +1099,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "routes-have-parentshortcode-null",
-        "text": "Routes have parentShortCode: null"
+        "id": "a-route-sits-under-the-wrong-layout",
+        "text": "A route sits under the wrong layout"
       },
       {
         "depth": 3,
-        "id": "layouts-missing-from-the-hierarchy",
-        "text": "Layouts missing from the hierarchy"
+        "id": "unexpected-mount-index",
+        "text": "Unexpected mount index"
       },
       {
         "depth": 3,
-        "id": "wrong-mount-index",
-        "text": "Wrong mount index"
+        "id": "missing-flags",
+        "text": "Missing flags"
       }
     ],
     "type": "guide",
@@ -1079,6 +1199,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "invalidation",
+        "text": "Invalidation"
+      },
+      {
+        "depth": 2,
         "id": "layering-with-the-routers-own-caching",
         "text": "Layering with the router's own caching"
       }
@@ -1144,8 +1269,13 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "loading-is-single-assignment--scope-it-deliberately",
-        "text": "loading() is single-assignment — scope it deliberately"
+        "id": "loading-is-single-assignment-scope-it-deliberately",
+        "text": "loading() is single-assignment: scope it deliberately"
+      },
+      {
+        "depth": 2,
+        "id": "loader-defaults",
+        "text": "Loader defaults"
       },
       {
         "depth": 2,
@@ -1339,8 +1469,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "revalidation-on-actions",
-        "text": "Revalidation on actions"
+        "id": "revalidation",
+        "text": "Revalidation"
       },
       {
         "depth": 3,
@@ -1496,6 +1626,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "identify-the-mode-first",
         "text": "Identify the mode first"
+      },
+      {
+        "depth": 2,
+        "id": "choose-a-target-shape-per-route-group",
+        "text": "Choose a target shape per route group"
       },
       {
         "depth": 2,
@@ -1774,13 +1909,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "loaders-loading-is-the-lane-selector",
-        "text": "Loaders: loading() is the lane selector"
+        "id": "loaders-ssr-false-picks-the-lane",
+        "text": "Loaders: ssr: false picks the lane"
       },
       {
         "depth": 2,
         "id": "how-a-request-is-served",
         "text": "How a request is served"
+      },
+      {
+        "depth": 3,
+        "id": "opting-out-per-request-with-ctxdynamic",
+        "text": "Opting out per request with ctx.dynamic()"
       },
       {
         "depth": 2,
@@ -1824,8 +1964,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "static-segments",
+        "text": "Static segments"
+      },
+      {
+        "depth": 2,
         "id": "how-the-dsl-items-behave",
         "text": "How the DSL items behave"
+      },
+      {
+        "depth": 2,
+        "id": "freshness-what-stays-frozen",
+        "text": "Freshness: what stays frozen"
       },
       {
         "depth": 3,
@@ -1962,7 +2112,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/guides/scripts"
   },
   {
-    "description": "Mutations with \"use server\" — forms, useActionState, validation, revalidation selection, and action-side auth.",
+    "description": "Mutations with \"use server\" — forms, useActionState, validation, errors, revalidation selection, client-cache control, and action-side auth.",
     "filePath": "/content/docs/rango/guides/server-actions.mdx",
     "slug": "rango/guides/server-actions",
     "title": "Server Actions",
@@ -1984,8 +2134,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "errors-and-not-found",
+        "text": "Errors and not-found"
+      },
+      {
+        "depth": 2,
         "id": "choosing-what-revalidates",
         "text": "Choosing what revalidates"
+      },
+      {
+        "depth": 2,
+        "id": "client-cache-after-an-action",
+        "text": "Client cache after an action"
       },
       {
         "depth": 2,
@@ -2157,6 +2317,101 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/guides/tailwind"
   },
   {
+    "description": "Set up Vitest and Playwright for a Rango app, then test loaders, middleware, response routes, actions, handlers, client components, and full flows in dev and production.",
+    "filePath": "/content/docs/rango/guides/testing.mdx",
+    "slug": "rango/guides/testing",
+    "title": "Testing",
+    "toc": [
+      {
+        "depth": 2,
+        "id": "pick-the-layer-first",
+        "text": "Pick the layer first"
+      },
+      {
+        "depth": 2,
+        "id": "install",
+        "text": "Install"
+      },
+      {
+        "depth": 2,
+        "id": "vitest-setup-two-projects",
+        "text": "Vitest setup: two projects"
+      },
+      {
+        "depth": 2,
+        "id": "loaders",
+        "text": "Loaders"
+      },
+      {
+        "depth": 2,
+        "id": "middleware",
+        "text": "Middleware"
+      },
+      {
+        "depth": 2,
+        "id": "response-routes-with-dispatch",
+        "text": "Response routes with dispatch"
+      },
+      {
+        "depth": 2,
+        "id": "server-actions",
+        "text": "Server actions"
+      },
+      {
+        "depth": 2,
+        "id": "route-handlers-and-server-components",
+        "text": "Route handlers and Server Components"
+      },
+      {
+        "depth": 3,
+        "id": "renderhandler",
+        "text": "renderHandler"
+      },
+      {
+        "depth": 3,
+        "id": "pinning-the-flight-payload",
+        "text": "Pinning the Flight payload"
+      },
+      {
+        "depth": 2,
+        "id": "client-components-with-renderroute",
+        "text": "Client components with renderRoute"
+      },
+      {
+        "depth": 2,
+        "id": "generated-route-types",
+        "text": "Generated route types"
+      },
+      {
+        "depth": 2,
+        "id": "cache-and-prerender",
+        "text": "Cache and prerender"
+      },
+      {
+        "depth": 2,
+        "id": "end-to-end-dev-production-and-js-off",
+        "text": "End-to-end: dev, production, and JS off"
+      },
+      {
+        "depth": 3,
+        "id": "paritydescribe",
+        "text": "parityDescribe"
+      },
+      {
+        "depth": 3,
+        "id": "js-on-and-js-off",
+        "text": "JS on and JS off"
+      },
+      {
+        "depth": 2,
+        "id": "where-each-layer-stops",
+        "text": "Where each layer stops"
+      }
+    ],
+    "type": "guide",
+    "url": "/docs/rango/guides/testing"
+  },
+  {
     "description": "Opt-in light/dark mode with FOUC prevention, persisted on the server and the client.",
     "filePath": "/content/docs/rango/guides/theme.mdx",
     "slug": "rango/guides/theme",
@@ -2241,6 +2496,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "where-it-fits",
         "text": "Where it fits"
+      },
+      {
+        "depth": 2,
+        "id": "dev-mode-and-tests",
+        "text": "Dev mode and tests"
       }
     ],
     "type": "guide",
@@ -2316,15 +2576,25 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/reference"
   },
   {
-    "description": "npx rango generate — file and directory forms, auto-detection, recursive includes, deduplication, and its static-analysis limits.",
+    "description": "rango generate — modes and flags, file and directory arguments, auto-detection, recursive includes, deduplication, and the static parser's limits.",
     "filePath": "/content/docs/rango/reference/cli.mdx",
     "slug": "rango/reference/cli",
     "title": "CLI",
     "toc": [
       {
         "depth": 2,
-        "id": "npx-rango-generate",
-        "text": "npx rango generate"
+        "id": "when-you-need-it",
+        "text": "When you need it"
+      },
+      {
+        "depth": 2,
+        "id": "arguments",
+        "text": "Arguments"
+      },
+      {
+        "depth": 2,
+        "id": "modes",
+        "text": "Modes"
       },
       {
         "depth": 2,
@@ -2348,13 +2618,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "limitations",
-        "text": "Limitations"
-      },
-      {
-        "depth": 2,
-        "id": "preserveiflarger-dev-guard",
-        "text": "preserveIfLarger dev guard"
+        "id": "limitations-of-the-static-parser",
+        "text": "Limitations of the static parser"
       },
       {
         "depth": 2,
@@ -2366,7 +2631,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/reference/cli"
   },
   {
-    "description": "The full RangoOptions surface, request handling, chaining, and the notFound() fallback chain.",
+    "description": "Every createRouter option, the router instance (routes, use, reverse, fetch), and the notFound() fallback chain.",
     "filePath": "/content/docs/rango/reference/create-router.mdx",
     "slug": "rango/reference/create-router",
     "title": "createRouter",
@@ -2378,58 +2643,28 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "structure",
+        "text": "Structure"
+      },
+      {
+        "depth": 3,
         "id": "document",
         "text": "document"
       },
       {
-        "depth": 2,
+        "depth": 3,
         "id": "basename",
         "text": "basename"
       },
       {
-        "depth": 2,
-        "id": "cache",
-        "text": "cache"
+        "depth": 3,
+        "id": "id",
+        "text": "id"
       },
       {
         "depth": 2,
-        "id": "theme",
-        "text": "theme"
-      },
-      {
-        "depth": 2,
-        "id": "ssrresolvestreaming",
-        "text": "ssr.resolveStreaming"
-      },
-      {
-        "depth": 2,
-        "id": "telemetry--tracing",
-        "text": "telemetry / tracing"
-      },
-      {
-        "depth": 2,
-        "id": "warmup",
-        "text": "warmup"
-      },
-      {
-        "depth": 2,
-        "id": "prefetchcachettl",
-        "text": "prefetchCacheTTL"
-      },
-      {
-        "depth": 2,
-        "id": "defaultprefetch",
-        "text": "defaultPrefetch"
-      },
-      {
-        "depth": 2,
-        "id": "nonce",
-        "text": "nonce"
-      },
-      {
-        "depth": 2,
-        "id": "notfound--defaulterrorboundary--defaultnotfoundboundary",
-        "text": "notFound / defaultErrorBoundary / defaultNotFoundBoundary"
+        "id": "fallbacks-and-errors",
+        "text": "Fallbacks and errors"
       },
       {
         "depth": 3,
@@ -2437,9 +2672,134 @@ export const pageMeta: PageMeta[] = [
         "text": "Fallback chain for notFound()"
       },
       {
+        "depth": 3,
+        "id": "defaulterrorboundary",
+        "text": "defaultErrorBoundary"
+      },
+      {
+        "depth": 3,
+        "id": "onerror",
+        "text": "onError"
+      },
+      {
         "depth": 2,
-        "id": "routerfetch-routes-and-use",
-        "text": "router.fetch, .routes(), and .use()"
+        "id": "caching",
+        "text": "Caching"
+      },
+      {
+        "depth": 3,
+        "id": "cache",
+        "text": "cache"
+      },
+      {
+        "depth": 3,
+        "id": "cacheprofiles",
+        "text": "cacheProfiles"
+      },
+      {
+        "depth": 2,
+        "id": "client-navigation-and-prefetch",
+        "text": "Client navigation and prefetch"
+      },
+      {
+        "depth": 3,
+        "id": "defaultprefetch",
+        "text": "defaultPrefetch"
+      },
+      {
+        "depth": 3,
+        "id": "prefetchcachettl-prefetchcachesize-prefetchconcurrency",
+        "text": "prefetchCacheTTL, prefetchCacheSize, prefetchConcurrency"
+      },
+      {
+        "depth": 3,
+        "id": "viewtransition",
+        "text": "viewTransition"
+      },
+      {
+        "depth": 3,
+        "id": "warmup",
+        "text": "warmup"
+      },
+      {
+        "depth": 3,
+        "id": "strictmode",
+        "text": "strictMode"
+      },
+      {
+        "depth": 3,
+        "id": "statecookieprefix",
+        "text": "stateCookiePrefix"
+      },
+      {
+        "depth": 2,
+        "id": "request-handling",
+        "text": "Request handling"
+      },
+      {
+        "depth": 3,
+        "id": "nonce",
+        "text": "nonce"
+      },
+      {
+        "depth": 3,
+        "id": "version",
+        "text": "version"
+      },
+      {
+        "depth": 3,
+        "id": "origincheck",
+        "text": "originCheck"
+      },
+      {
+        "depth": 3,
+        "id": "timeout-timeouts-ontimeout",
+        "text": "timeout, timeouts, onTimeout"
+      },
+      {
+        "depth": 3,
+        "id": "ssrresolvestreaming",
+        "text": "ssr.resolveStreaming"
+      },
+      {
+        "depth": 3,
+        "id": "theme",
+        "text": "theme"
+      },
+      {
+        "depth": 2,
+        "id": "observability-and-debugging",
+        "text": "Observability and debugging"
+      },
+      {
+        "depth": 3,
+        "id": "debugperformance",
+        "text": "debugPerformance"
+      },
+      {
+        "depth": 3,
+        "id": "telemetry-and-tracing",
+        "text": "telemetry and tracing"
+      },
+      {
+        "depth": 3,
+        "id": "debugcachesignal",
+        "text": "debugCacheSignal"
+      },
+      {
+        "depth": 3,
+        "id": "debugshellcapture",
+        "text": "debugShellCapture"
+      },
+      {
+        "depth": 2,
+        "id": "the-router-instance",
+        "text": "The router instance"
+      },
+      {
+        "depth": 3,
+        "id": "serving-requests",
+        "text": "Serving requests"
       },
       {
         "depth": 3,
@@ -2451,7 +2811,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/reference/create-router"
   },
   {
-    "description": "Client-side React hooks for navigation, loader data, URL generation, history state, and outlets.",
+    "description": "Client-side React hooks for navigation, loader data, URLs and search params, handles, action state, history state, outlets, scroll restoration, and the CSP nonce.",
     "filePath": "/content/docs/rango/reference/hooks.mdx",
     "slug": "rango/reference/hooks",
     "title": "Hooks",
@@ -2508,8 +2868,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "url-generation",
-        "text": "URL generation"
+        "id": "urls-and-params",
+        "text": "URLs and params"
       },
       {
         "depth": 3,
@@ -2580,6 +2940,21 @@ export const pageMeta: PageMeta[] = [
         "depth": 3,
         "id": "useoutlet",
         "text": "useOutlet()"
+      },
+      {
+        "depth": 2,
+        "id": "scroll-and-nonce",
+        "text": "Scroll and nonce"
+      },
+      {
+        "depth": 3,
+        "id": "usescrollrestorationoptions",
+        "text": "useScrollRestoration(options?)"
+      },
+      {
+        "depth": 3,
+        "id": "usenonce",
+        "text": "useNonce()"
       }
     ],
     "type": "reference",
@@ -2616,7 +2991,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/tutorial"
   },
   {
-    "description": "Add a cookie-backed cart with a \"use server\" action, a form driven by useActionState, and a cart badge that revalidates after cart mutations.",
+    "description": "Add a cookie-backed cart with a \"use server\" action, a form driven by useActionState, and a cart badge that re-reads only after cart actions.",
     "filePath": "/content/docs/rango/tutorial/actions-and-revalidation.mdx",
     "slug": "rango/tutorial/actions-and-revalidation",
     "title": "5. Actions & Revalidation",
@@ -2651,7 +3026,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/tutorial/actions-and-revalidation"
   },
   {
-    "description": "Cache the shop segment on the Cloudflare edge while loaders stay live, bust it by tag from the cart action, add a JSON endpoint, and deploy.",
+    "description": "Cache the shop segments on Cloudflare while loaders stay live, bust a product's cache by tag from the cart action, add a JSON endpoint, and deploy.",
     "filePath": "/content/docs/rango/tutorial/caching-and-deployment.mdx",
     "slug": "rango/tutorial/caching-and-deployment",
     "title": "6. Caching & Deployment",
@@ -2663,13 +3038,13 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "cache-the-shop-segment",
-        "text": "Cache the shop segment"
+        "id": "cache-the-shop-segments",
+        "text": "Cache the shop segments"
       },
       {
         "depth": 2,
-        "id": "tag-the-product-cache-bust-it-from-the-action",
-        "text": "Tag the product cache, bust it from the action"
+        "id": "bust-the-product-cache-from-the-action",
+        "text": "Bust the product cache from the action"
       },
       {
         "depth": 2,
@@ -2733,13 +3108,18 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "register-it-under-the-product-route",
-        "text": "Register it under the product route"
+        "id": "read-it-in-a-client-component",
+        "text": "Read it in a client component"
       },
       {
         "depth": 2,
-        "id": "read-it-in-a-client-component",
-        "text": "Read it in a client component"
+        "id": "the-product-page",
+        "text": "The product page"
+      },
+      {
+        "depth": 2,
+        "id": "register-the-loader-on-the-product-route",
+        "text": "Register the loader on the product route"
       },
       {
         "depth": 2,
@@ -2760,6 +3140,11 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "install-dependencies",
         "text": "Install dependencies"
+      },
+      {
+        "depth": 2,
+        "id": "typescript-configuration",
+        "text": "TypeScript configuration"
       },
       {
         "depth": 2,
@@ -2818,8 +3203,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
-        "id": "generate-route-types",
-        "text": "Generate route types"
+        "id": "route-types",
+        "text": "Route types"
       },
       {
         "depth": 2,
@@ -4821,6 +5206,10 @@ export const pageTree: TreeNode[] = [
             "url": "/docs/rango/guides/host-router"
           },
           {
+            "title": "Client URLs",
+            "url": "/docs/rango/guides/client-urls"
+          },
+          {
             "title": "Server Actions",
             "url": "/docs/rango/guides/server-actions"
           },
@@ -4891,6 +5280,10 @@ export const pageTree: TreeNode[] = [
           {
             "title": "Streams & WebSockets",
             "url": "/docs/rango/guides/streams-and-websockets"
+          },
+          {
+            "title": "Testing",
+            "url": "/docs/rango/guides/testing"
           },
           {
             "title": "Observability",

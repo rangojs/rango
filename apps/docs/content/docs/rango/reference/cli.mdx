@@ -1,12 +1,29 @@
 ---
 title: CLI
-description: npx rango generate — file and directory forms, auto-detection, recursive includes, deduplication, and its static-analysis limits.
+description: rango generate — modes and flags, file and directory arguments, auto-detection, recursive includes, deduplication, and the static parser's limits.
 type: reference
 ---
 
-## npx rango generate
+The `rango` binary has one command, `generate`. It writes the `.gen.ts` route type files for the router and `urls()` modules you point it at.
 
-A single command generates `.gen.ts` route type files. It auto-detects file type and generates the appropriate output:
+```
+rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]
+```
+
+`rango help` (or `--help`, `-h`, or no command) prints the usage. An unknown command or flag exits with an error.
+
+## When you need it
+
+The Vite plugin writes the router-level `router.named-routes.gen.ts` on its own: before the dev server starts, again when route files change, and during `vite build`. Run the CLI for two things the plugin does not do:
+
+- **Per-module `*.gen.ts` files.** The plugin never writes them. They are what `useReverse(routes)` and local `Handler<".name", routes>` typing import, so run `rango generate` whenever a `urls()` module's `path()` or `include()` shape changes.
+- **Generating without Vite.** A fresh clone or a CI typecheck step needs the router-level file before any dev server has run.
+
+Commit the generated files, and don't edit a `.gen.ts` file by hand.
+
+## Arguments
+
+Pass files, directories, or a mix:
 
 ```bash
 # Single file
@@ -22,39 +39,47 @@ npx rango generate src/
 npx rango generate src/urls.tsx src/api/
 ```
 
-Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`, dotfiles, and existing `.gen.` files. The same recursive form works for a single `urls/` tree:
+Directories are scanned recursively for `.ts`, `.tsx`, `.js`, and `.jsx` files. The scan skips `node_modules`, `dist`, `build`, `coverage`, dot-directories, and existing `.gen.` files. A path that does not exist is skipped with a warning.
+
+## Modes
+
+| Flag              | Behavior                                                                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (none)            | Static parser. If an `include()` cannot be resolved statically (a factory function or a dynamic expression), it lists them, exits with an error, and writes nothing. |
+| `--static`        | Static parser. Writes partial output and prints the unresolvable includes as warnings.                                                                               |
+| `--runtime`       | Vite-based runtime discovery, covering every route. Requires `vite` and `@vitejs/plugin-rsc`, and at least one `createRouter()` file among the arguments.            |
+| `--config <path>` | The Vite config for `--runtime` (auto-detected when omitted). Ignored with a warning in the other modes.                                                             |
 
 ```bash
-pnpm exec rango generate src/urls/blog.tsx
-# or generate everything under a directory:
-pnpm exec rango generate src/urls --static
+npx rango generate src/router.tsx --runtime
+npx rango generate src/ --static
 ```
 
 ## Auto-detection
 
 Each file is classified by its contents:
 
-| Contains       | Generated output                                                 |
-| -------------- | ---------------------------------------------------------------- |
-| `urls(`        | Per-module `*.gen.ts` with route names, patterns, params, search |
-| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map         |
-| Both           | Both files                                                       |
+| Contains                 | Generated output                                                 |
+| ------------------------ | ---------------------------------------------------------------- |
+| `urls(` or `clientUrls(` | Per-module `*.gen.ts` with route names, patterns, params, search |
+| `createRouter`           | Per-router `*.named-routes.gen.ts` with the global route map     |
+| Both                     | Both files                                                       |
 
 ## Two generated files, not interchangeable
 
-`router.named-routes.gen.ts` augments the global `GeneratedRouteMap` for named-route typing (`Handler<"name">`, `ctx.reverse("name")`, prerender). Per-module `*.gen.ts` exports a local `routes` map for `useReverse(routes)` and explicit local handler typing (`Handler<".name", routes>`). Neither carries response payloads — response/MIME payload inference comes from `typeof router.routeMap` via `RegisteredRoutes`, not `*.named-routes.gen.ts`. See [Type Safety](/docs/rango/concepts/typesafety) for the full surface breakdown.
+`router.named-routes.gen.ts` augments the global `GeneratedRouteMap` for named-route typing (`Handler<"name">`, `ctx.reverse("name")`, `href()`, prerender). Per-module `*.gen.ts` exports a local `routes` map for `useReverse(routes)` and explicit local handler typing (`Handler<".name", routes>`).
 
-**Today the Vite plugin only regenerates the router-level `*.named-routes.gen.ts`.** Per-module `urls/*.gen.ts` files are emitted only by the CLI (or `writePerModuleRouteTypesForFile` programmatically). Commit the generated files, and re-run `rango generate` whenever a `urls()` module's `path()`/`include()` shape changes. Don't edit a `.gen.ts` file by hand.
+Neither carries response payloads. `RouteResponse<typeof patterns, "name">` reads them from the `urls()` value directly, and `Rango.PathResponse` reads them from `RegisteredRoutes` (`typeof router.routeMap`). See [Type Safety](/docs/rango/concepts/typesafety) for the full surface breakdown.
 
 ## Recursive includes
 
-The generator follows `include()` calls across files, resolving imports to build the full route tree. It resolves both the eager form —
+The generator follows `include()` calls across files, resolving imports to build the full route tree. It resolves both the eager form:
 
 ```typescript
 include("/x", patterns),
 ```
 
-— and the code-split async form, walking the imported module's `export default urls(...)`, including any nested `include()`s inside it, so a code-split route group is still fully typed:
+and the code-split async form, walking the imported module's `export default urls(...)` and any nested `include()` inside it, so a code-split route group is still fully typed:
 
 ```typescript
 include("/x", () => import("./x")),
@@ -64,28 +89,26 @@ Circular includes are detected and warned about.
 
 ## First-wins deduplication
 
-When a route name appears more than once, the first definition wins and duplicates are dropped with a warning. This applies only to the generated `.gen.ts` type files — define the primary route before any fallback variant that reuses the same name.
+When a route name appears more than once, the first definition wins and duplicates are dropped with a warning. This applies only to the generated `.gen.ts` type files, so define the primary route before any fallback variant that reuses the same name.
 
-[Content negotiation](/docs/rango/guides/mime-routes) is unaffected: negotiated routes use distinct names (e.g. `"product"` and `"productJson"`), and the `Accept` header dispatching happens at runtime in the trie, not in the type generator.
+[Content negotiation](/docs/rango/guides/mime-routes) is unaffected: negotiated routes use distinct names (for example `"product"` and `"productJson"`), and the `Accept` header dispatching happens at runtime in the trie, not in the type generator.
 
-## Limitations
+## Limitations of the static parser
 
-The CLI uses static source analysis (AST walking), not runtime execution. It cannot extract routes defined dynamically:
+The default and `--static` modes use static source analysis (AST walking), not runtime execution. They cannot extract routes defined dynamically:
 
 - `Array.from()` or `.map()` generating `path()` calls
 - Conditional routes behind `import.meta.env` or feature flags
 - Routes computed from external data (databases, config files)
 - Template literal patterns with interpolated variables
 
-These routes are only discovered by the Vite plugin's runtime discovery during `pnpm dev` or `pnpm build`. The CLI-generated `.gen.ts` may therefore have fewer routes than the runtime-generated version.
+Those routes are discovered only at runtime: by the Vite plugin during `vite dev` and `vite build`, or by `rango generate --runtime`. A statically generated `.gen.ts` can therefore have fewer routes than the runtime-generated one.
 
-## preserveIfLarger dev guard
-
-During dev, the `preserveIfLarger` guard prevents the static parser from overwriting a larger runtime-discovered file — a CLI run mid-session can't regress a `.gen.ts` that the Vite plugin already expanded with dynamically-discovered routes.
+When Vite starts (for `dev` or `build`), the plugin first runs its own static pass with a `preserveIfLarger` guard: it does not overwrite an existing router-level file that lists more routes than the static parser found, so a file expanded by runtime discovery is not regressed. The CLI does not apply this guard. It always writes what it discovers, so use `--runtime` for apps with dynamic routes.
 
 ## predev workflow
 
-Wire generation into a `predev` script so `.gen.ts` files stay current without a manual step:
+Wire generation into a `predev` script so the per-module files stay current without a manual step:
 
 ```jsonc
 // package.json

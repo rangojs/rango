@@ -6,7 +6,15 @@ argument-hint: [component]
 
 # Layouts with layout()
 
-Layouts wrap child routes and persist during navigation within their scope.
+`layout(handler, use?)` wraps its child routes in shared UI (nav, sidebar,
+shell). The child content renders where the layout places `<Outlet />`, and the
+layout stays mounted while you navigate between the routes it wraps. This skill
+covers layout forms, outlets, orphan layouts (a layout inside a `path()`), and
+layout revalidation.
+
+Related skills: `/parallel` (named slots rendered by a layout), `/intercept`
+(modal slots), `/route` (the routes a layout wraps), `/router-setup` (the
+`document` shell that renders `<html>`).
 
 ## Basic Layout
 
@@ -50,7 +58,12 @@ layout(ShopLayout, () => [path("/shop", ShopIndex, { name: "shop" })]);
 
 ### Handler with Context
 
+A function layout receives the same handler context as a route (`ctx.params`,
+`ctx.get()`, `ctx.set()`, `ctx.use()`):
+
 ```typescript
+import { Breadcrumbs } from "@rangojs/router";
+
 layout((ctx) => {
   const push = ctx.use(Breadcrumbs);
   push({ label: "Shop", href: "/shop" });
@@ -97,7 +110,8 @@ layout(<ShopLayout />, () => [
 
 ## The Outlet Component
 
-`<Outlet />` renders child content. Import from `@rangojs/router/client`:
+`<Outlet />` renders child content. Import from `@rangojs/router/client`
+(it works in server and client components):
 
 ```typescript
 import { Outlet } from "@rangojs/router/client";
@@ -119,7 +133,9 @@ A layout's `transition()` config wraps the content that flows through `<Outlet /
 
 ## Named Outlets
 
-For parallel routes, use named outlets:
+For parallel routes, use named outlets (`<Outlet name="@sidebar" />` is
+equivalent to `<ParallelOutlet name="@sidebar" />`). Slot content is defined
+with `parallel()` — see `/parallel`.
 
 ```typescript
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -143,40 +159,40 @@ function DashboardLayout() {
 
 ## Orphan Layout (inside route)
 
-A layout as a child of `path()` wraps the route content and can read
-data set by the route handler via `ctx.get()`. The handler always
-executes before its children.
+A layout declared inside a `path()` (an "orphan" layout) wraps that route's
+content and can read what the route handler stored with `ctx.set()`. The
+handler always executes before its orphan layouts and their parallels.
 
-This is the recommended way to pass handler data downward, and it is
-safe under partial action revalidation with zero configuration: orphan
-layouts (and their parallels) belong to the route entry, and on an
-action the whole entry re-runs together by default — route segment,
-loaders, and `belongsToRoute` children all seed revalidate-true, with
-handler-first ordering preserved. Producer and consumer cannot desync
-unless you narrow one side with a predicate that returns a hard `false`
-(then put the same contract on both — see "Revalidation Contracts").
+This is the recommended way to pass handler data downward. It needs no
+revalidation setup: orphan layouts and their parallels belong to the route
+entry, so on an action the route segment, its loaders, and these children all
+re-run together, handler first. They can only desync if you narrow one side
+with a predicate that returns a hard `false` — then put the same contract on
+both (see "Revalidation Contracts").
 
-Data from an **outer** handler or layout entry is the opposite case:
-outer entries do not revalidate on actions by default (parent-chain
-skip). If an orphan layout depends on data established above its own
-route entry, that outer segment must share a revalidation contract, or
-the orphan must guard/reload the data independently. See `/rango` →
+Data from an **outer** handler or layout entry is the opposite case: outer
+entries are skipped on actions by default. If an orphan layout depends on data
+set above its own route entry, give that outer segment a shared revalidation
+contract, or have the orphan load/guard the data itself. See `/rango` →
 "Passing data down the tree" for the full safest-first ladder.
 
 ```typescript
+import { createVar } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
+const CurrentProduct = createVar<Product>();
+
 urls(({ path, layout, parallel }) => [
-  path("/product/:slug", (ctx) => {
+  path("/product/:slug", async (ctx) => {
     const product = await fetchProduct(ctx.params.slug);
-    ctx.set("product", product);
+    ctx.set(CurrentProduct, product);
     return <ProductPage product={product} />;
   }, { name: "product" }, () => [
     layout((ctx) => {
-      const product = ctx.get("product");
+      const product = ctx.get(CurrentProduct); // Product | undefined
       return (
         <div>
-          <Breadcrumb name={product?.name} />
+          <ProductHeader name={product?.name} />
           <Outlet />
           <ParallelOutlet name="@related" />
         </div>
@@ -184,7 +200,7 @@ urls(({ path, layout, parallel }) => [
     }, () => [
       parallel({
         "@related": (ctx) => {
-          const product = ctx.get("product");
+          const product = ctx.get(CurrentProduct);
           return <RelatedProducts category={product?.category} />;
         },
       }),
@@ -193,35 +209,48 @@ urls(({ path, layout, parallel }) => [
 ])
 ```
 
-Orphan layouts can call `ctx.get()` to read data set by their parent
-handler. They can also call `ctx.set()`, though the primary pattern is
-for route handlers and middleware to write context variables and for
-orphan layouts to read them.
+Orphan layouts can also call `ctx.set()` for their own children, but the usual
+split is: middleware and route handlers write, orphan layouts and parallels
+read.
 
 ## Layout Revalidation
 
-Standalone `layout()` entries don't revalidate by default — on an action,
-parent-chain segments are skipped unless a `revalidate()` opts them in.
-(Orphan layouts inside a `path()` are the opposite: they ride along with
-the route entry by default.) Control with `revalidate()`:
+A standalone `layout()` renders when it is first mounted and is then kept as-is:
+
+- **Navigation** between routes it already wraps does not re-render it — even
+  when the URL params change.
+- **Actions** skip it too (the revalidation trace calls this
+  `action:parent-chain-skip`).
+
+Orphan layouts inside a `path()` are the opposite: they belong to the route
+entry and re-render with it (on param/search changes and on every action).
+
+Opt a standalone layout in with `revalidate()`. Return `true` to re-render,
+or `undefined` to defer to the default:
 
 ```typescript
-layout(<ShopLayout />, () => [
-  // Never revalidate (default behavior)
-  revalidate(() => false),
-
-  path("/shop", ShopIndex, { name: "shop" }),
-])
-
-// Or revalidate based on conditions
 import * as CartActions from "./actions/cart";
 
+// Re-render after any cart action
 layout(<CartLayout />, () => [
   revalidate((ctx) => ctx.isAction(CartActions) || undefined),
 
   path("/cart", CartPage, { name: "cart" }),
 ])
+
+// Re-render when a param the layout displays changes
+layout(LocaleLayout, () => [
+  revalidate(({ currentParams, nextParams }) =>
+    currentParams.locale !== nextParams.locale || undefined,
+  ),
+
+  path("/:locale/shop", ShopIndex, { name: "shop" }),
+])
 ```
+
+`revalidate(() => false)` on a standalone layout only restates the default.
+The return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer)
+are covered in `/loader` → "`revalidate()` return shapes".
 
 If child segments read data that was established by this layout or by a
 route handler above them, revalidate the outer segment too. Partial
@@ -240,9 +269,11 @@ consumer segments:
 
 ```typescript
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
-export const revalidateCartData = (ctx) => ctx.isAction(addToCart) || undefined;
+export const revalidateCartData: Revalidate = (ctx) =>
+  ctx.isAction(addToCart) || undefined;
 ```
 
 ```typescript
@@ -254,6 +285,10 @@ layout(<CartLayout />, () => [
 ]);
 ```
 
+On the layout the contract adds the re-render the default skips after an
+action. The route segment already re-runs after every action, so there it
+changes nothing by default; the shared name documents the dependency.
+
 If a segment depends on multiple upstream domains, compose multiple
 contracts (`revalidateAuthData`, `revalidateCartData`, and so on).
 
@@ -261,10 +296,10 @@ You can also package them as importable handoff helpers:
 
 ```typescript
 // revalidation-contracts.ts
-import { revalidate } from "@rangojs/router";
+import { revalidate, type Revalidate } from "@rangojs/router";
 import * as AuthActions from "./actions/auth";
 
-export const revalidateAuthData = (ctx) =>
+export const revalidateAuthData: Revalidate = (ctx) =>
   ctx.isAction(AuthActions) || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
@@ -281,8 +316,8 @@ layout(<ShellLayout />, () => [
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router";
-import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+import { urls, Breadcrumbs } from "@rangojs/router";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import * as CartActions from "./actions/cart";
 
 function ShopLayout() {
@@ -290,8 +325,8 @@ function ShopLayout() {
     <div className="shop">
       <ParallelOutlet name="@promoBanner" />
       <nav>
-        <a href="/shop">Home</a>
-        <a href="/shop/cart">Cart</a>
+        <Link to="/shop">Home</Link>
+        <Link to="/shop/cart">Cart</Link>
       </nav>
       <div className="content">
         <aside>
@@ -311,9 +346,12 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
     push({ label: "Shop", href: "/shop" });
     return <ShopLayout />;
   }, () => [
-    // Layout loaders
+    // Layout loaders: after an action, re-run only for cart actions;
+    // on navigation, undefined keeps the default
     loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+      revalidate((ctx) =>
+        ctx.isAction() ? ctx.isAction(CartActions) : undefined,
+      ),
     ]),
 
     // Parallel routes
@@ -335,6 +373,8 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
 Layout handlers can carry their own middleware, default parallels, and includes via `.use` so a layout becomes a self-contained unit reusable across mount sites.
 
 ```typescript
+import { middleware, parallel, type Handler } from "@rangojs/router";
+
 const AdminLayout: Handler = (ctx) => {
   const user = ctx.get(CurrentUser);
   return <Admin user={user} />;

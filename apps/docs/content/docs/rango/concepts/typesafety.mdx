@@ -4,19 +4,19 @@ description: Which generated file covers which surface, how Handler<"name"> reso
 type: concept
 ---
 
-Type safety in Rango isn't one mechanism — it's a handful of surfaces that each cover a different gap. Skip one and you get a specific, recognizable symptom: `ctx.reverse()` / `href()` accept any string (a typo 404s at runtime, not compile time), `ctx.search` / `ctx.params` fall back to a loose `Record<string, string>`, or `ctx.env` / `ctx.get()` are untyped so a missing binding surfaces as `undefined` in production instead of a build error.
+Type safety in Rango isn't one mechanism — it's a handful of surfaces that each cover a different gap. Skip one and you get a specific, recognizable symptom: `ctx.reverse()` accepts any name and `href()` any path (a typo 404s at runtime, not compile time); `Handler<"name">` is rejected, so `ctx.params` and `ctx.search` can't be inferred; `ctx.env` is `unknown` until `Rango.Env` is registered, and string-key `ctx.get("key")` returns `any` until `Rango.Vars` is; `Rango.PathResponse` resolves to `never` until `RegisteredRoutes` is wired. This page covers where each type comes from and which surface it serves.
 
-## Two generated files, two different jobs
+## Two generated files and one manual hook
 
-`npx rango generate` (see the [CLI reference](/docs/rango/reference/cli)) can emit two kinds of file, and they are **not interchangeable** — pick the one that matches what you're typing:
+There are three route-typing surfaces, and they are **not interchangeable** — pick the one that matches what you're typing. Two are generated files, produced by `npx rango generate` (see the [CLI reference](/docs/rango/reference/cli)); the third is a manual augmentation:
 
-| Surface             | Source                                   | Scope  | Gives                                    | Does not give                                                                                    |
-| ------------------- | ---------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)      | global | route names, path params, search schemas | response/MIME payloads                                                                           |
-| `routes`            | per-module `*.gen.ts` (`rango generate`) | local  | local names, params, search              | the global app map                                                                               |
-| `RegisteredRoutes`  | manual `extends typeof router.routeMap`  | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
+| Surface             | Source                                               | Scope  | Gives                                    | Does not give                                                                                    |
+| ------------------- | ---------------------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)                  | global | route names, path params, search schemas | response/MIME payloads                                                                           |
+| `routes`            | per-module `*.gen.ts` (`rango generate`)             | local  | local names, params, search              | the global app map                                                                               |
+| `RegisteredRoutes`  | manual `extends` of a `typeof router.routeMap` alias | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
 
-`router.named-routes.gen.ts` augments the global `Rango.GeneratedRouteMap` — that's what drives `Handler<"name">`, server `ctx.reverse("name")`, and prerender param inference. A per-module `*.gen.ts` is CLI-opt-in and exports a local `routes` map for `useReverse(routes)` and explicit local handler typing (`Handler<".name", routes>`). Neither one carries response payloads — that inference comes only from `typeof router.routeMap`, exposed globally via a manually-augmented `RegisteredRoutes`.
+`router.named-routes.gen.ts` sits next to your router file, exports a `NamedRoutes` map, and augments the global `Rango.GeneratedRouteMap` — that's what drives `Handler<"name">`, server `ctx.reverse("name")`, and prerender param inference. The Vite plugin rewrites it when route files change; run `rango generate` against the router file to produce it without starting Vite (a fresh clone, a CI typecheck). Commit it with the router source. A per-module `*.gen.ts` is CLI-opt-in and exports a local `routes` map for `useReverse(routes)` and explicit local handler typing (`Handler<".name", routes>`). Neither one carries response payloads — that inference comes only from `typeof router.routeMap`, exposed globally via a manually-augmented `RegisteredRoutes`.
 
 Recommended setup, once, in your router file:
 
@@ -28,33 +28,45 @@ import type { AppBindings, AppVars } from "./env";
 
 export const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
+// The alias is required: an interface cannot extend a `typeof` query
+// directly (TS1109).
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVars {}
-    interface RegisteredRoutes extends typeof router.routeMap {}
+    interface RegisteredRoutes extends AppRoutes {} // only for Rango.PathResponse
   }
 }
 ```
 
-`rango generate` alone — no manual augmentation — already gives you path-checked `href()` and typed `Handler<"name">`. Add `RegisteredRoutes` only when you need response-payload inference (`Rango.PathResponse`, below). If a type error ever points at a generated `.gen.ts` file instead of your call site, that's a smell: fix the call site or regenerate, never hand-edit the generated file.
+The generated map alone — no manual augmentation — already gives you path-checked `href()` and `Rango.Path`, typed `Handler<"name">`, and checked `ctx.reverse("name")`. Add `RegisteredRoutes` only when you need response-payload inference (`Rango.PathResponse`, below). If a type error ever points at a generated `.gen.ts` file instead of your call site, that's a smell: fix the call site or regenerate, never hand-edit the generated file.
 
 ## `Handler<"name">`: typed params and search
 
 Add a `search` schema to `path()` options, and `Handler<"name">` resolves both `ctx.params` and `ctx.search` from the global route map with no explicit import:
 
 ```typescript
+// urls.tsx
+path("/search", SearchPage, {
+  name: "search",
+  search: { q: "string", page: "number?", sort: "string?" },
+});
+```
+
+```typescript
 // pages/search.tsx
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.search is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.search;
+  // ctx.search is typed: { q: string | undefined; page?: number; sort?: string }
+  const { q = "", page = 1, sort } = ctx.search;
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```
 
-Supported search types are `"string"`, `"number"`, `"boolean"`, with a `?` suffix for optional — values coerce from the query string automatically (`"2"` becomes `2`).
+Supported search types are `"string"`, `"number"`, `"boolean"`, with a `?` suffix for optional — values coerce from the query string automatically (`"2"` becomes `2`). Inside the handler, a required key still resolves to `T | undefined`: the schema tells callers (`ctx.reverse`, `useReverse`) what to send, but the server can't trust the client to send it, so the handler must default or check.
 
 For per-module isolation, pass an explicit route map (opt-in, after `npx rango generate`). With a local map the name is **dot-prefixed**:
 
@@ -75,7 +87,7 @@ export const SearchPage: Handler<".search", routes> = (ctx) => {
 import type { RouteSearchParams, RouteParams } from "@rangojs/router";
 
 type SP = RouteSearchParams<"search">;
-// { q: string; page?: number; sort?: string }
+// { q: string | undefined; page?: number; sort?: string }
 
 type P = RouteParams<"checkout">; // route: /checkout/:step?
 // { step?: string } — optional URL params are string | undefined at runtime,
@@ -110,7 +122,7 @@ interface PaginationData {
 }
 export const Pagination = createVar<PaginationData>();
 
-// Non-cacheable var — reading inside cache() or "use cache" throws at runtime
+// Non-cacheable var — a direct ctx.get() inside a cache() boundary throws
 const Session = createVar<SessionData>({ cache: false });
 ```
 
@@ -122,11 +134,11 @@ ctx.set(Pagination, { current: 1, total: 10, perPage: 5 }); // type-checked
 const pagination = ctx.get(Pagination); // typed as PaginationData | undefined
 ```
 
-`createVar`'s `cache` option (default `true`) controls whether the var's values can be read inside cache scopes. A single write can also escalate: `ctx.set(Var, value, { cache: false })` marks that write non-cacheable even if the var itself allows caching. Least-cacheable wins — if either the var or a specific write says `cache: false`, reading it inside `cache()` or `"use cache"` throws. Both approaches coexist: `ctx.get("user")` (global, via `Rango.Vars`) and `ctx.get(Pagination)` (scoped, via `createVar`) work side by side.
+`createVar`'s `cache` option (default `true`) controls whether the var's values can be read inside a `cache()` boundary. A single write can also escalate: `ctx.set(Var, value, { cache: false })` marks that write non-cacheable even if the var itself allows caching. Least-cacheable wins — if either the var or a specific write says `cache: false`, a direct `ctx.get()` of it inside a `cache()` boundary throws. Loaders are exempt because they always run fresh. See [Freshness](/docs/rango/concepts/freshness#correctness-guards) for what the guard does and doesn't catch. Both approaches coexist: `ctx.get("user")` (global, via `Rango.Vars`) and `ctx.get(Pagination)` (scoped, via `createVar`) work side by side.
 
 ## Stable identity: ctx.isAction() matches by reference
 
-Loaders, handles, cached functions, and server actions all share one identity scheme — `{modulePath}#{exportName}` — injected at build time. It's also the identity React server actions carry across the Flight boundary, which is why a `revalidate()` predicate sees an action as a `path#export` string like `"src/actions/cart.ts#addToCart"`.
+Loaders, handles, cached functions, and server actions all share one identity scheme — `{modulePath}#{exportName}` — injected at build time. It's also the identity React server actions carry across the Flight boundary, which is why a `revalidate()` predicate sees an action from a module-level `"use server"` file as a `path#export` string like `"src/actions/cart.ts#addToCart"`. (Inline `"use server"` actions declared inside a component keep hashed IDs, so file paths never reach the client.)
 
 Matching that string by hand (`actionId?.includes("cart.ts#")`) is brittle — a rename or a moved file stops matching with no compile error. `ctx.isAction()`, available on the `revalidate()` predicate's context, resolves the reference the same way the router derives the id, so a rename becomes a type error at the one call site instead of a silent runtime miss:
 
@@ -134,12 +146,17 @@ Matching that string by hand (`actionId?.includes("cart.ts#")`) is brittle — a
 import { addToCart, removeFromCart } from "./actions/cart";
 import * as CartActions from "./actions/cart";
 
-revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
-revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
-revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+// On a loader: after an action, re-run only for cart actions; on navigation, keep the default.
+revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined));
+
+// Matcher forms (each returns a boolean):
+ctx.isAction(addToCart); // one action
+ctx.isAction(addToCart, removeFromCart); // several
+ctx.isAction(CartActions); // any action in the module
+ctx.isAction(); // no args: any action at all
 ```
 
-`ctx.isAction()` returns a raw boolean — combine it with `|| undefined` to defer to the default decision for unrelated actions ("mine, else let the default decide"), or leave it bare to suppress revalidation for everything else ("mine only"). `actionId` stays available as the raw string for advanced cases.
+`ctx.isAction()` returns a raw boolean, so wrap it by what the segment's default already does. On a parent layout, which is skipped after actions, `ctx.isAction(X) || undefined` adds a re-render after `X` and defers otherwise. On a loader or route segment, which already re-run after every action, `|| undefined` changes nothing, so narrow with the ternary above. Avoid a bare `ctx.isAction(X)`: it is a hard `false` on navigation too, so a loader stops refetching when params change. See [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate). `actionId` stays available as the raw string for advanced cases.
 
 ## Response payloads: Rango.PathResponse
 

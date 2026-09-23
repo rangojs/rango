@@ -11,9 +11,9 @@ You want proof that your app ships the bundles you expect: a small client, no se
 Your app builds in three Vite environments — `client`, `ssr`, and `rsc` — and each ships its own bundle. The most common bundle bugs in a Rango app:
 
 1. **Server code leaking into the client.** A file that imports `node:fs`, calls a database, or contains action logic ends up in the client bundle because a client component pulled it in transitively. Symptom: a client bundle much larger than expected, sometimes with imports that fail at runtime.
-2. **Both dev and prod React in the SSR/RSC bundle.** When `process.env.NODE_ENV` isn't folded at build time, React's CJS files ship both `.development.js` _and_ `.production.js` variants — doubling React's footprint. The Cloudflare vite plugin folds NODE_ENV automatically; vanilla `vite build` does it for client but not always for SSR/RSC.
+2. **Both dev and prod React in the SSR/RSC bundle.** When `process.env.NODE_ENV` isn't folded at build time, React's CJS files ship both `.development.js` _and_ `.production.js` variants — doubling React's footprint. The Cloudflare Vite plugin and Rango's `vercel` preset fold NODE_ENV automatically; on the default `node` preset, `vite build` does it for the client but not always for SSR/RSC, so add the `define` shown below.
 3. **An oversized routes-manifest in the RSC worker.** The `virtual:rsc-router/routes-manifest/<routerId>` chunk holds your route trie and precomputed entries — large only in proportion to your route count. If it's surprisingly big, you may have unintentionally generated routes (e.g., parametrized fixtures) that bloated the trie.
-4. **Inefficient client-reference grouping.** Each `"use client"` boundary becomes a chunk. Too many small client components means many tiny chunks; one giant client component means one giant chunk that defeats code-splitting.
+4. **Poor client-chunk grouping.** `rango({ clientChunks })` decides how `"use client"` modules are grouped into browser chunks. The default groups them by route directory (`routes/<id>/**` becomes `app-<id>`), with flat folders like `src/components/` in one shared chunk; `clientChunks: false` ships one client chunk per router. A route that pulls in unrelated routes' client code, or one oversized shared chunk, points at the grouping.
 
 Tree-shaking does _not_ catch generated data inlined as string literals, nor data-dependent conditionals like React's dev/prod branches. You need a visualizer.
 
@@ -60,9 +60,9 @@ export default defineConfig(({ command }) => ({
     // your existing plugins...
     ...analyze(),
   ],
-  // For non-Cloudflare apps, fold NODE_ENV explicitly so React's CJS files
-  // emit only the .production.js variants in SSR/RSC. Skip if your build
-  // setup already does this (the Cloudflare vite plugin does).
+  // For node-preset apps, fold NODE_ENV explicitly so React's CJS files
+  // emit only the .production.js variants in SSR/RSC. Skip it on the
+  // cloudflare and vercel presets, which already do this.
   define:
     command === "build"
       ? { "process.env.NODE_ENV": JSON.stringify("production") }
@@ -97,10 +97,10 @@ Box area is uncompressed size; hover for gzip/brotli numbers.
 
 ### `client.html` first
 
-- **Your server code.** Any of your own files containing database queries, secret keys, server-action implementations (not the action _reference_), or `node:` imports. If they appear with non-zero bytes, they leaked. Common causes: a shared module mixing client and server code without a `"use client"` or `"use server"` directive; a barrel file (`index.ts`) re-exporting both client and server symbols (tree-shaking should help, but `JSON.parse('{...}')` data and side-effecting top-level statements survive); a client component importing a server-only utility through an indirect path such as a shared types file.
+- **Your server code.** Any of your own files containing database queries, secret keys, server-action implementations (not the action _reference_), or `node:` imports. If they appear with non-zero bytes, they leaked. Common causes: a shared module that mixes client-safe helpers and server-only code, imported from a `"use client"` component; a barrel file (`index.ts`) re-exporting both client and server symbols (tree-shaking should help, but `JSON.parse('{...}')` data and side-effecting top-level statements survive); a client component importing a server-only utility through an indirect path such as a shared types file.
 - **Multiple copies of the same package.** Two boxes with the same package name but different version paths usually means a transitive dep pinned a different version.
-- **The `@rangojs/router` chunk** should be roughly **50 KB gzip**. If significantly larger, you might be importing client-incompatible APIs from the wrong subpath.
-- **Client-reference chunks** (named like `chunk-<hash>.js`). Hundreds of tiny chunks means you've over-split (every leaf component a client component); one massive 200 KB chunk means you've under-split (a wide client tree behind one boundary).
+- **The router runtime chunk** (`router-<hash>.js`) is around **40–45 KB gzip**. If yours is much larger, check that client components import from `@rangojs/router/client`, not from a server path.
+- **Per-route client chunks** (groups named like `app-<route>`, plus `app-fallback` for error/not-found boundaries). A route's chunk should hold that route's client components. One massive shared chunk usually means client components live in a flat folder (or `clientChunks: false`); move route-specific ones under a route directory or pass a `clientChunks` function.
 
 ### Then `ssr.html`
 
@@ -110,23 +110,23 @@ Box area is uncompressed size; hover for gzip/brotli numbers.
 
 ### Then `rsc.html`
 
-- **`virtual:rsc-router/routes-manifest`** (the eager chunk) should be **tiny** (under 1 KB). If it's over 100 KB, you're on an old `@rangojs/router` that inlined the trie eagerly — upgrade to a release with the lazy-only manifest fix.
-- **`virtual:rsc-router/routes-manifest/<hash>`** is the lazy per-router chunk, proportional to route count: 5–50 KB gzip for a typical app, hundreds of KB only for thousands of routes. Unexpectedly huge? Check whether you're generating routes you don't need.
+- **`virtual:rsc-router/routes-manifest`** (the eager module) should be **tiny**: well under 2 KB gzip even with tens of thousands of routes. If it is large, route data is being inlined eagerly; report it (see below).
+- **`virtual:rsc-router/routes-manifest/<routerId>`** is the lazy per-router chunk, proportional to route count: 5–50 KB gzip for a typical app, hundreds of KB only for thousands of routes. Unexpectedly huge? Check whether you're generating routes you don't need.
 - **`<your-router>.named-routes.gen.ts`** — the generated route map; should match your route count.
 - **Your action and loader implementations** run server-side. Expected here, not in client.
 - **Worker-incompatible code** (Node-only imports like `node:fs` that Cloudflare doesn't support). The build usually fails before the analyzer runs, but if you're seeing runtime errors at the edge, this treemap shows what made it in.
 
 ## Fix what you find
 
-| Finding                                                 | Fix                                                                                                                                                                         |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Your server code in `client.html` (non-zero bytes)      | Audit the import chain. Add `"use server"` to server-only files. Move shared data out of barrel files. Use the `@rangojs/router/server` subpath for explicitly server APIs. |
-| Your server code in `client.html` listed but 0 bytes    | Tree-shaking already eliminated it. Cosmetic — leave it.                                                                                                                    |
-| `react-dom-server.edge.development-*.js` in SSR or RSC  | Add the `define` block from the config above.                                                                                                                               |
-| Routes-manifest over 100 KB gzip in the RSC eager chunk | Update `@rangojs/router` to a release that includes the lazy-only manifest fix.                                                                                             |
-| Same package present twice                              | Run `pnpm dedupe` (or `npm dedupe`). If it persists, a transitive dep pins an incompatible version — open a PR upstream or pin the resolution.                              |
-| Client chunk over 500 KB gzip with one dominant module  | That module is your largest client component. Lazy-load it via dynamic `import()` or move non-interactive parts to server components.                                       |
-| Hundreds of tiny client chunks                          | `"use client"` sprinkled too liberally. Hoist directives to higher boundaries so React groups them.                                                                         |
+| Finding                                                | Fix                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Your server code in `client.html` (non-zero bytes)     | Audit the import chain from the `"use client"` file. Add `import "server-only"` to server-only modules so the client build fails on the import (`@vitejs/plugin-rsc` checks it; no package install needed). Move shared data out of barrel files. Do not add `"use server"` to a utility module: that turns every export into a client-callable server action. |
+| Your server code in `client.html` listed but 0 bytes   | Tree-shaking already eliminated it. Cosmetic — leave it.                                                                                                                                                                                                                                                                                                       |
+| `react-dom-server.edge.development-*.js` in SSR or RSC | Add the `define` block from the config above.                                                                                                                                                                                                                                                                                                                  |
+| Eager routes-manifest is large in RSC                  | Update `@rangojs/router`; if it persists, report it as a regression.                                                                                                                                                                                                                                                                                           |
+| Same package present twice                             | Run `pnpm dedupe` (or `npm dedupe`). If it persists, a transitive dep pins an incompatible version — open a PR upstream or pin the resolution.                                                                                                                                                                                                                 |
+| Client chunk over 500 KB gzip with one dominant module | That module is your largest client component. Lazy-load it via dynamic `import()` or move non-interactive parts to server components.                                                                                                                                                                                                                          |
+| One route downloads other routes' client code          | Move route-specific client components under a route directory (`routes/<id>/`), or group them yourself with a `clientChunks` function.                                                                                                                                                                                                                         |
 
 ## When to re-run
 
@@ -137,7 +137,7 @@ Box area is uncompressed size; hover for gzip/brotli numbers.
 
 ## Reporting a framework regression
 
-If a finding looks like `@rangojs/router` itself shipping more than it should — not your app — open an issue at the [@rangojs/router GitHub](https://github.com/rangojs/rango/issues) with the `client.html` / `rsc.html` output (screenshots or the JSON `data = {...}` block from the HTML), your `@rangojs/router` version (`pnpm why @rangojs/router`), and your `vite.config.ts`. The maintainers run this same audit to validate every release.
+If a finding looks like `@rangojs/router` itself shipping more than it should — not your app — open an issue at the [@rangojs/router GitHub](https://github.com/rangojs/rango/issues) with the `client.html` / `rsc.html` output (screenshots or the JSON `data = {...}` block from the HTML), your `@rangojs/router` version (`pnpm why @rangojs/router`), and your `vite.config.ts`. The Rango repository runs the same analysis in CI (client leak checks, a router-chunk size cap, and an eager-manifest ceiling).
 
 <Cards>
   <Card href="/docs/rango/guides/observability" title="Observability">

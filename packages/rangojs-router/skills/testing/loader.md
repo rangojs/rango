@@ -2,7 +2,7 @@
 
 **Layer:** unit (node) · **Import:** `@rangojs/router/testing` · **DSL it tests:** `loader()` (see `/loader`)
 
-`runLoader` runs a loader against a real `RequestContext` (cookies, headers, `ctx.get`, `ctx.reverse` all resolve) in plain node — that machinery is REAL; what you SEED is the params, env, vars, search, route map, and any `ctx.use` dependency data. Pass a registered `createLoader()` handle (its fn is recovered from the registry) or the raw async body `(ctx) => ...`.
+`runLoader(loader, opts?)` runs a loader against a real `RequestContext` (cookies, headers, `ctx.get`, `ctx.reverse` all resolve) in plain node — that machinery is REAL; what you SEED is the params, env, vars, search, route map, and any `ctx.use` dependency data. Pass a registered `createLoader()` definition (its fn is recovered from the registry) or the raw async body `(ctx) => ...`; type a raw body's argument as `TestLoaderContext` (exported from `@rangojs/router/testing`).
 
 ## API
 
@@ -51,7 +51,7 @@
 | `formData`         | `FormData \| undefined`                                                                   | Form data (from `opts.formData`).                                                                                                                                                                                                                   |
 | `reverse`          | `(name, params?, search?) => string`                                                      | Build a URL; throws unless `opts.routeMap` was passed.                                                                                                                                                                                              |
 | `rendered`         | `() => Promise<void>`                                                                     | The render barrier; throws by default, mocked via `opts.rendered`.                                                                                                                                                                                  |
-| `waitUntil`        | `(p: Promise<unknown>) => void`                                                           | Register background work (no-op accounting in tests).                                                                                                                                                                                               |
+| `waitUntil`        | `(fn: () => Promise<void>) => void`                                                       | Register background work; takes a function, not a promise (no-op accounting in tests).                                                                                                                                                              |
 | `executionContext` | `ExecutionContext \| undefined`                                                           | Platform execution context from the backing request; pairs with `waitUntil`.                                                                                                                                                                        |
 
 ### Returns — `Promise<T>`
@@ -70,8 +70,10 @@ order). `runLoader` discards those effects.
 ## Recipe
 
 ```ts
+import { it, expect } from "vitest";
 import { runLoader, runLoaderResult } from "@rangojs/router/testing";
 import { createLoader, createVar } from "@rangojs/router";
+import { AuthLoader } from "../src/loaders/auth"; // sets a `session` cookie, then throw redirect("/")
 
 const User = createVar<{ name: string }>();
 // The registered loader — no separate body export needed for testability:
@@ -100,7 +102,6 @@ it("builds a self link via reverse", async () => {
 });
 
 it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
-  // AuthLoader validates, sets a `session` cookie, then `throw redirect("/")`.
   const { thrown, response, cookies } = await runLoaderResult(AuthLoader, {
     request: new Request("https://app.test/login?token=ok"),
   });
@@ -115,9 +116,10 @@ it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
 ## Caveats
 
 - `ctx.reverse(...)` throws unless you pass `routeMap` (and `routeName` for scoped `.name` resolution). It does NOT fall back to the global route map.
-- `ctx.rendered()` throws by default (the render barrier only exists in a full match); pass `{ rendered: true }` to mock it for post-barrier logic, and `{ handles: [[SomeHandle, data]] }` to seed the `ctx.get(SomeHandle)` read. `ctx.isAction(...)` is unavailable — cover those at e2e.
+- `ctx.rendered()` throws by default (the render barrier only exists in a full match); pass `{ rendered: true }` to mock it for post-barrier logic, and `{ handles: [[SomeHandle, data]] }` to seed the `ctx.get(SomeHandle)` read.
+- A loader has no `isAction()`: whether it re-runs after an action is decided by `revalidate()` on its registration, not inside the loader body. Assert post-action re-runs at e2e.
 - Seeded `loaders` (by-reference tuples) are NOT executed — `ctx.use(OtherLoader)` returns the seeded value. The dynamic `use` resolver, by contrast, IS executed (it is a function called to compute the value). Either way the REAL loader body is not run; real loader execution and side-effects are e2e-only. `loaders` is checked before the `use` resolver.
-- A handle imported through the CLIENT build has its body dropped — `runLoader` throws a clear error pointing to the `rangoTestConfig()` preset or the raw body. A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`); only the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules).
+- A `createLoader()` definition imported through the CLIENT build has its body dropped — `runLoader` throws a clear error pointing to the `rangoTestConfig()` preset or the raw body. A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`); only the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules).
 - No `cookies`/`headers` option: seed a cookie by passing a full Request with a Cookie header — `{ request: new Request(url, { headers: { Cookie: "sid=abc" } }) }`. (`search`/`method` are baked onto this request for you.)
 - `ctx.search` (typed) defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`. Seed the typed object with `searchData`. (The harness seeds `searchData` verbatim — it does NOT run a typed-search SCHEMA, so schema parsing/validation is e2e.)
 - `ctx.theme`/`ctx.setTheme` are NOT on the loader context — theme accessors are handler-only. (The `theme` option seeds the underlying request context for `use cache` theme resolution, but a loader body cannot read theme.) `redirect()` does no basename prefixing unless you seed `basename`.

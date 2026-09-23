@@ -4,21 +4,24 @@
 
 > **Prefer `renderServerTree` (see [`./server-tree.md`](./server-tree.md)) for assertions on a Flight render** — it deserializes to a traversable tree with TYPED boundary props (a `Date` is a `Date`, not the opaque `$D...` encoding). Reach for `renderToFlightString` + the wire matchers (`toMatchFlight`/`toMatchFlightSnapshot`) only to pin the raw wire payload SHAPE — a `toMatchFlightSnapshot` drift snapshot. That is the niche/escape-hatch case; for "testing an async Server Component (assert what it rendered)" start at `./server-tree.md`.
 
-`renderToFlightString` runs the REAL react-server-dom serializer the router uses at runtime — your async Server Component genuinely renders to its Flight wire string in plain node, with a request context active for the render. What you SEED is the request, headers, env, params, routeName, and vars that context exposes.
+`renderToFlightString(element, opts?)` runs the REAL react-server-dom serializer the router uses at runtime — your async Server Component genuinely renders to its Flight wire string in plain node, with a request context active for the render. What you SEED is the request, headers, env, params, routeName, route map, vars, theme, and cache store that context exposes.
 
 ## API
 
 ### Options — `RenderToFlightStringOptions`
 
-| Field       | Type                     | Meaning                                                                                                                                                                                                                                                                      |
-| ----------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request`   | `Request \| string`      | The request the render runs under: a `Request`, or a URL string (absolute or path). Defaults to `http://localhost/`. A component reading `getRequestContext()` sees this request's url/cookies. When a `Request` is passed, its headers are used and `headers` is ignored.   |
-| `headers`   | `HeadersInit`            | Request headers (e.g. Cookie) visible to the server tree, used only when `request` is a string.                                                                                                                                                                              |
-| `env`       | `unknown`                | Env / bindings exposed as `ctx.env`. Defaults to `{}`.                                                                                                                                                                                                                       |
-| `params`    | `Record<string, string>` | Route params exposed via `ctx.params` and loader contexts.                                                                                                                                                                                                                   |
-| `routeName` | `string`                 | Matched route name (drives `ctx.routeName` and scoped reverse).                                                                                                                                                                                                              |
-| `routeMap`  | `Record<string, string>` | Route name -> pattern map scoping `ctx.reverse()` (like `renderHandler`). Without it, a component that reverses resolves against the GLOBAL route map and is order-dependent on whatever router registered last. Pass the router-under-test's map for deterministic reverse. |
-| `vars`      | `VarsInit`               | Variables a prior middleware would have set, visible via `ctx.get(...)`. Object form (`{ user }`) or `[key, value]` tuples (`[[userVar, u]]`).                                                                                                                               |
+| Field           | Type                           | Meaning                                                                                                                                                                                                                                                                      |
+| --------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request`       | `Request \| string`            | The request the render runs under: a `Request`, or a URL string (absolute or path). Defaults to `http://localhost/`. A component reading `getRequestContext()` sees this request's url/cookies. When a `Request` is passed, its headers are used and `headers` is ignored.   |
+| `headers`       | `HeadersInit`                  | Request headers (e.g. Cookie) visible to the server tree, used only when `request` is a string.                                                                                                                                                                              |
+| `env`           | `unknown`                      | Env / bindings exposed as `ctx.env`. Defaults to `{}`.                                                                                                                                                                                                                       |
+| `params`        | `Record<string, string>`       | Route params exposed via `ctx.params` and loader contexts.                                                                                                                                                                                                                   |
+| `routeName`     | `string`                       | Matched route name (drives `ctx.routeName` and scoped reverse).                                                                                                                                                                                                              |
+| `routeMap`      | `Record<string, string>`       | Route name -> pattern map scoping `ctx.reverse()` (like `renderHandler`). Without it, a component that reverses resolves against the GLOBAL route map and is order-dependent on whatever router registered last. Pass the router-under-test's map for deterministic reverse. |
+| `vars`          | `VarsInit`                     | Variables a prior middleware would have set, visible via `ctx.get(...)`. Object form (`{ user }`) or `[key, value]` tuples (`[[userVar, u]]`).                                                                                                                               |
+| `theme`         | `ThemeConfig \| true`          | Theme config (`createRouter({ theme })` shape). Without it `getRequestContext().theme` is `undefined` and `setTheme` is inert.                                                                                                                                               |
+| `cacheStore`    | `SegmentCacheStore`            | Store backing a `"use cache"` function the tree calls. Without it the cached path is bypassed (the function runs uncached).                                                                                                                                                  |
+| `cacheProfiles` | `Record<string, CacheProfile>` | Profiles for `"use cache: name"`, the `createRouter({ cacheProfiles })` shape. Pair with `cacheStore`.                                                                                                                                                                       |
 
 ### Context — `RequestContext` (what your component receives)
 
@@ -42,7 +45,12 @@ expect(await renderToFlightString(<C />)).toMatchFlight("substring"); // contain
 expect(await renderToFlightString(<C />)).toMatchFlightSnapshot();     // normalized snapshot
 ```
 
-`toMatchFlight(substring)` is containment (not equality) on the normalized payload; `toMatchFlightSnapshot()` snapshots the normalized payload. Both matchers live at `@rangojs/router/testing/flight-matchers` and run ONLY under the react-server vitest project (see `./setup.md`).
+`toMatchFlight(substring)` is containment (not equality) on the normalized payload; `toMatchFlightSnapshot()` snapshots the normalized payload. Both matchers live at `@rangojs/router/testing/flight-matchers`, which imports `vitest` but not the Flight serializer — so it also loads under the plain node condition (a shared `setupFiles` can `expect.extend(flightMatchers)` for both projects). The Flight strings they assert still come from `renderToFlightString`, which runs only under the react-server project (see `./setup.md`). Importing the entry also adds the matcher types to vitest's `Assertion`.
+
+### Helpers
+
+- `normalizeFlight(flight)` — the normalization both matchers apply: strips the dev-only leading `:N<timestamp>` row and rewrites absolute `file://` paths to `file://<path>`. Use it when asserting on the raw string yourself.
+- `assertFlightRuntimeAvailable()` — throws a descriptive error when the vendored react-server-dom serializer is missing (for example after a `@vitejs/plugin-rsc` upgrade moved it). Call it in a `beforeAll` to fail fast with a clear message.
 
 ## Recipe
 

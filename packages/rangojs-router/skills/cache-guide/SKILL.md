@@ -1,15 +1,55 @@
 ---
 name: cache-guide
-description: When to use cache() DSL vs "use cache" directive — key differences and decision guide. Use when unsure which caching mechanism fits a given problem, comparing route/segment caching, function-level caching, and document-level caching, or asking "which cache API should I use".
+description: Decision guide for Rango's cache layers — "use cache", loader cache(), segment cache(), Prerender/Static, the ppr HTML shell, and document/CDN caching — with the cache() vs "use cache" comparison (keys, guards, SWR, nesting). Use when unsure which caching mechanism fits a problem, comparing layers, or asking "which cache API should I use".
 argument-hint:
 ---
 
-# cache() vs "use cache" — When to Use Which
+# Choosing a cache layer
 
-Both mechanisms share the same backing store and cache profiles, and both accept
-an optional `tags` field (honored by the built-in stores — invalidate with
-`updateTag`/`revalidateTag`; see "Two axes" below). They differ in scope, cache
-key, execution model, and runtime control.
+Start here when you are not sure which cache to use. The first section maps
+every layer; the rest of the page compares the two you will reach for most,
+the `cache()` DSL and the `"use cache"` directive.
+
+## The layers at a glance
+
+Each layer stores a more "cooked" artifact than the one above it, and keeps less
+of the request live on a hit. The runtime layers share the app-level store
+(`createRouter({ cache })`) and one tag system (`cacheTag` / `updateTag` /
+`revalidateTag`); `Prerender()`/`Static()` output is built into the server
+bundle instead.
+
+| Layer                | Declared with                                  | Stores                                | Still runs on a hit                                  | Skill                 |
+| -------------------- | ---------------------------------------------- | ------------------------------------- | ---------------------------------------------------- | --------------------- |
+| Function / component | `"use cache"`                                  | one function's return value           | everything around the call                           | `/use-cache`          |
+| Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                   | other loaders, handlers, rendering                   | `/caching`, `/loader` |
+| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree | middleware, loaders, HTML render                     | `/caching`            |
+| Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build     | middleware, loaders, HTML render                     | `/prerender`          |
+| HTML shell           | `ppr` path option                              | HTML prelude + React postponed state  | middleware, handlers, loaders; only the holes resume | `/ppr`                |
+| Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store       | middleware above it; nothing below                   | `/document-cache`     |
+| Whole response (CDN) | `Cache-Control: s-maxage` read by the platform | final response outside the app        | nothing — the app is not invoked                     | `/deployment-caching` |
+
+Quick rules:
+
+- Expensive **data** used in several places → `"use cache"` on the fetch.
+- Expensive **rendering** of a route subtree → `cache()`.
+- Content fixed at **build time** (known params, files on disk) → `Prerender()`.
+- **Instant first byte** of HTML while parts stay per-request → `ppr`.
+- **Whole response** public and identical for everyone → `/document-cache` or
+  CDN caching (`/deployment-caching`).
+- A value that must be fresh on **every** request → a loader (never cached
+  unless you opt in).
+
+The layers compose: `"use cache"` inside a `cache()` subtree, a cached loader
+under a `cache()` boundary, `cache()` segments replayed inside a `ppr` shell
+capture, or `Prerender()` + `ppr` for a shell baked at build time.
+
+## cache() vs "use cache"
+
+Both mechanisms use the same app-level store, and both can be tagged
+(`cache({ tags })`; profile `tags` or runtime `cacheTag()` for `"use cache"`) and
+invalidated with `updateTag`/`revalidateTag` — see "Two axes" below. Named
+cache profiles apply to `"use cache"` only. They differ in scope, cache key,
+execution model, and runtime control.
 
 ## Two axes — do not conflate
 
@@ -22,8 +62,8 @@ caching:
    Entries expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
    `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during a
    request render outside `"use cache"` it tags the document/shell artifact).
-   Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`)
-   index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
+   All built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`,
+   `VercelCacheStore`) index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
    read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking).
    Both hard-purge; the difference is awaitability, not stale-serving.
 2. **Client-update selection** — _should this segment re-run and stream to the
@@ -36,7 +76,7 @@ update, and `revalidate()` never reads, writes, or expires a cached value. If yo
 know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
 `/rango` → "Coming from another framework" for the cross-framework mapping.
 
-## Fast choice
+## Fast choice: cache() or "use cache"
 
 Read this first; use the rest of the page when the choice has edge cases.
 
@@ -62,20 +102,22 @@ protection the framework already gives you (or assume one it deliberately
 doesn't).
 
 There are two guard models to keep separate. Both block response side effects
-(`ctx.header()`, cookie writes) that would be lost on a hit; they differ in what
+(`ctx.headers.set()`, cookie writes) that would be lost on a hit; they differ in what
 else they allow:
 
 - **`cache()` boundary guard** (route-level) — fires while the handler runs on a
   miss. `cookies()` and `headers()` throw (request-scoped data would be baked into
   the shared cached shell), `ctx.get(nonCacheableVar)` throws (a tainted value
-  would be baked in), and response side effects (`ctx.header()`, `ctx.setCookie()`,
-  `ctx.setStatus()`, `ctx.onResponse()`) throw. `ctx.set()` of a cacheable var is
+  would be baked in), and response side effects (`ctx.headers.set()`,
+  `setCookie()`, `setStatus()`, `onResponse()`) throw. `ctx.set()` of a cacheable var is
   **allowed** — children are cached too and can read it. **Loaders are exempt**
   (they always run fresh) — read request data inside a loader.
 - **`"use cache"` exec-guard** (function-level) — the same request-scoped APIs
   throw inside the cached function (`cookies()`, `headers()`, `ctx.set()`,
-  `ctx.header()`); additionally, tainted `ctx`/`env`/`req` args are excluded from
-  the cache key.
+  `ctx.headers.set()` and other response writes); additionally, tainted
+  `ctx`/`env`/`req` args are excluded from the cache key. The guard runs only on
+  the cached path: with no item-capable store configured the function runs
+  uncached and nothing throws.
 
 ### Cross-deploy safety: version-segmented store keys
 
@@ -94,7 +136,9 @@ deliberately: accept it (correctness over hit-rate), or split the policy — let
 the render/edge cache auto-version while a separate data store gets a stable
 `version` so its entries survive deploys. (Per-process stores like
 `MemorySegmentCacheStore` are cold on every restart anyway; this matters for
-persistent stores.) See `/caching` for store setup.
+persistent stores.) `VercelCacheStore` does not version automatically: pass a
+per-deploy `getCache({ namespace })` or its `version` option (see `/vercel`).
+See `/caching` for store setup.
 
 ### Client cache: forward/back is mutation-aware
 
@@ -139,40 +183,48 @@ recompute for a merely-aging entry.
 SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
 has no stale entry to serve (see version-segmented store keys above).
 
-Store support is layer-specific. `CFCacheStore` supports SWR for segment,
-document/response, and `"use cache"` item entries. `MemorySegmentCacheStore`
-supports SWR for response and `"use cache"` item entries, but its route-segment
-entries expire at TTL and never background-revalidate. Use the memory store for
+Store support is layer-specific. `CFCacheStore` and `VercelCacheStore` support
+SWR for segment, document/response, item (`"use cache"` and cached loaders), and
+PPR shell entries. `MemorySegmentCacheStore` supports SWR for response, item,
+and shell entries, but its route-segment entries expire at `ttl` (the `swr`
+window is dropped) and never background-revalidate. Use the memory store for
 local/dev behavior, not as proof that segment SWR is active.
 
 ## Key Differences
 
-|                      | `cache()` DSL                                         | `"use cache"` directive                            |
-| -------------------- | ----------------------------------------------------- | -------------------------------------------------- |
-| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                       |
-| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top                |
-| **Cache key**        | Request type + pathname + params (+ optional custom)  | Function identity + serialized non-tainted args    |
-| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs  |
-| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches      |
-| **Side effects**     | Response side effects throw inside the boundary       | `ctx.header()`, `ctx.set()`, etc. throw at runtime |
-| **Handle data**      | Captured and replayed                                 | Captured and replayed                              |
-| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                         |
-| **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached  |
+|                      | `cache()` DSL                                         | `"use cache"` directive                           |
+| -------------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                      |
+| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top               |
+| **Cache key**        | Request type + host + pathname + params + search      | Function identity + serialized non-tainted args   |
+| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs |
+| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches     |
+| **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw      |
+| **Handle data**      | Captured and replayed                                 | Captured and replayed when it receives `ctx`      |
+| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                        |
+| **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached |
 
 ### cache() Cache Key
 
-The key is `{requestType}:{pathname}:{params}` where requestType is one of
-`doc:`, `partial:`, or `intercept:`. This means the same URL cached separately
-for full document loads, client navigations, and intercept navigations.
+The default key is `{requestType}:{host}{pathname}[:params][?search]`, where
+requestType is `doc`, `partial`, or `intercept`. The same URL is therefore cached
+separately for full document loads, client navigations, and intercept
+navigations. The host keeps tenants apart when one deployment serves several
+domains; the search part is sorted, excludes the router's internal params, and
+honors `createRouter({ cache: { searchParams } })`.
 
-Custom `key` functions can segment the cache further (e.g., by user role or locale).
-`condition` can disable caching entirely at runtime (e.g., skip for authenticated users).
+A custom `key` function replaces the whole default key (e.g., to key by user role
+or locale); it also bypasses the store's `keyGenerator` and the search-param
+filter. `condition` can disable caching entirely at runtime (e.g., skip for
+authenticated users).
 
 ### "use cache" Cache Key
 
 The key is `use-cache:{functionId}:{serializedArgs}` where functionId is a stable
-ID from the Vite transform (module path + export name) and args are serialized via
-RSC `encodeReply()`. Tainted arguments (ctx, env, req) are excluded.
+ID from the Vite transform (module path + export name) and args are serialized
+(stable JSON when every arg is JSON-safe, RSC `encodeReply()` otherwise). Tainted
+arguments (ctx, env, req) are excluded, but route fields read off `ctx` (host,
+route name, pathname, params, search) are folded in. See `/use-cache`.
 
 ## Execution Model
 
@@ -180,17 +232,21 @@ This is the most important distinction.
 
 ### cache() — all-or-nothing
 
-On cache hit, the cache-lookup middleware short-circuits the entire pipeline.
-No handler code runs. On miss, all handlers execute normally and segments are
-stored.
+On cache hit, the cache-lookup middleware short-circuits segment resolution for
+the boundary: no handler inside it runs. On miss, all handlers execute normally
+and segments are stored.
 
 ```
-HIT  → cached segments served, loaders resolved fresh, no handler runs
+HIT  → cached segments served, loaders resolved fresh, no handler in the boundary runs
 MISS → all handlers run, segments cached, response built normally
 ```
 
-Headers, cookies, and ctx.set() calls inside handlers naturally don't execute on
-hit. There is no partial execution, so no runtime guards are needed.
+`ctx.set()` calls are safe: every handler that could read the value is inside the
+same cached unit, so a hit replays a consistent subtree. Response side effects
+and request-scoped reads are not safe — a write would reach only MISS responses
+and a `cookies()` read would be baked into the shared entry — so the boundary
+guard throws on them even on a miss (see "Correctness & invalidation" above and
+"Headers and Cookies" below).
 
 ### "use cache" — partial execution
 
@@ -203,11 +259,13 @@ HIT  → function body skipped, calling code runs, handle data replayed
 MISS → function body runs, return value + handle data cached
 ```
 
-Runtime guards throw if you call cookies(), headers(), ctx.header(), ctx.set(),
-ctx.onResponse(), ctx.setTheme(), or ctx.setLocationState() inside a "use cache"
-function. cookies() and headers() are blocked because per-request data is not in the
-cache key. Side-effect methods are blocked because their effects are lost on hit.
-Use ctx.use(Handle) instead for data — handle data is captured and replayed.
+Runtime guards throw if you call `cookies()`, `headers()`, `ctx.set()`,
+`ctx.headers.set()` (or any response write: cookie writes, `setStatus()`,
+`onResponse()`), `ctx.setTheme()`, or `ctx.setLocationState()` inside a
+`"use cache"` function. `cookies()` and `headers()` are blocked because
+per-request data is not in the cache key. Side-effect methods are blocked because
+their effects are lost on hit. Use `ctx.use(Handle)` instead for data — handle
+data is captured and replayed.
 
 ## When to Use cache()
 
@@ -250,10 +308,11 @@ async function getProductData(slug: string) {
   return await db.query("SELECT * FROM products WHERE slug = ?", [slug]);
 }
 
-// Handler calls cached function, sets headers outside
+// Handler calls cached function, sets headers outside it
+// (this route is not inside a cache() boundary or a ppr route)
 async function ProductPage(ctx) {
   const data = await getProductData(ctx.params.slug);
-  ctx.header("X-Product", data.id);
+  ctx.headers.set("X-Product", data.id);
   return <Product data={data} />;
 }
 ```
@@ -307,13 +366,15 @@ cache hits per layer, so the actual per-request behavior is observable.
 Neither mechanism caches response headers or cookies.
 
 - **cache()**: Response-level side effects throw inside the cache boundary even
-  on a miss: `ctx.header()`, `ctx.setCookie()`, `ctx.deleteCookie()`,
-  `ctx.setStatus()`, `ctx.onResponse()`, and direct `ctx.headers` mutation. On a
-  hit the handler would be skipped, so allowing the write on a miss would produce
-  inconsistent responses. If you need headers or cookies on every response, set
-  them in middleware or a live segment outside the cache boundary.
-- **"use cache"**: cookies() and headers() throw inside the cached function
-  (both reads and writes). ctx.header() also throws. Move them outside.
+  on a miss: `ctx.headers` mutation (`ctx.headers.set()` etc.), `cookies()`
+  (read or write), and the request-context writers `header()`, `setCookie()`,
+  `deleteCookie()`, `setStatus()`, `onResponse()`. On a hit the handler would be
+  skipped, so allowing the write on a miss would produce inconsistent responses.
+  Registered loaders are exempt (they run on every request, hits included). If
+  you need headers or cookies on every response, set them in middleware, a live
+  segment outside the cache boundary, or a loader.
+- **"use cache"**: `cookies()` and `headers()` throw inside the cached function
+  (both reads and writes), and so do `ctx.headers` mutations. Move them outside.
 
 ```typescript
 // Set headers that must appear on every response in middleware
@@ -351,7 +412,7 @@ specifies `cache: false`, the value is non-cacheable.
 | `ctx.get(cacheableVar)`                   | Allowed                                                |
 | `ctx.get(nonCacheableVar)`                | Throws (would be baked in)                             |
 | `ctx.set(var, value)` (cacheable)         | Allowed                                                |
-| `ctx.header()` / cookie writes            | Throws (response side effect would be lost on hit)     |
+| `ctx.headers.set()` / cookie writes       | Throws (response side effect would be lost on hit)     |
 | Any of the above **inside a loader**      | Allowed (loaders always run fresh)                     |
 
 (Both scopes block the same request-scoped APIs — `cookies()`, `headers()`,
@@ -485,8 +546,10 @@ overrides — see `/loader` for the full reference.
 
 ## See Also
 
-- `/caching` — cache() DSL setup, stores, nested boundaries
+- `/caching` — cache() DSL setup, stores, tags, nested boundaries
 - `/use-cache` — "use cache" directive details, profiles, transforms, guards
+- `/loader` — loader-level caching and the loader context
+- `/prerender` — build-time segments with `Prerender()`/`Static()`
+- `/ppr` — PPR shell caching: cached HTML shell + live holes (different layer)
 - `/document-cache` — store-backed complete-response middleware
 - `/deployment-caching` — in-function versus external CDN cache boundaries
-- `/ppr` — PPR shell caching: cached HTML shell + live loader holes (different layer)

@@ -4,31 +4,55 @@ description: Every consumer-touchable feature is reachable through shipped testi
 type: guide
 ---
 
-Every feature a consumer can touch is reachable through shipped testing primitives — real handlers, real middleware chains, real Flight serialization, no framework mocks:
+Every feature a consumer can touch is reachable through shipped testing primitives — real handlers, real middleware chains, real Flight serialization. The rule for picking one: choose the layer by what the behavior touches. A loader's data logic is a plain Node unit test; a real Server Component render needs Flight, so it can't be a plain Node test at all.
 
 ```ts
-import { findElements, renderHandler } from "@rangojs/router/testing";
+// product.rsc-test.ts — runs in the react-server Vitest project
+import { findElements, renderHandler } from "@rangojs/router/testing/flight";
+import { ProductPage } from "./product-page";
+import { ProductLoader } from "./loaders/product";
 
-const { tree, headers } = await renderHandler(ProductPage, {
+const { tree } = await renderHandler(ProductPage, {
   params: { slug: "widget" },
-  loaders: [[ProductLoader, { name: "Widget" }]],
+  loaders: [[ProductLoader, { name: "Widget" }]], // seeded, no real loader runs
 });
 expect(findElements(tree, { tag: "h1" })[0].text).toContain("Widget");
 ```
 
+## The entries
+
+The primitives are split across entries, one per test runtime, because each pulls in a dependency the others must not:
+
+| Entry                            | Runs under                                    | For                                     |
+| -------------------------------- | --------------------------------------------- | --------------------------------------- |
+| `@rangojs/router/testing`        | Vitest with the Rango Vite plugin (or preset) | Unit and integration tests              |
+| `@rangojs/router/testing/flight` | Vitest with the `react-server` condition      | Real Flight renders of server code      |
+| `@rangojs/router/testing/dom`    | Vitest with a DOM environment and RTL         | Client components reading router hooks  |
+| `@rangojs/router/testing/e2e`    | Playwright                                    | Full-stack tests in dev and production  |
+| `@rangojs/router/testing/vitest` | Your `vitest.config.ts`                       | `rangoTestConfig()` and related presets |
+
+`@rangojs/router/testing/flight-matchers` adds the `toMatchFlight` and `toMatchFlightSnapshot` matchers.
+
 ## The primitives
 
-| Primitive         | Exercises                                                      |
-| ----------------- | -------------------------------------------------------------- |
-| `renderHandler()` | A handler with params, loaders, and context — returns the tree |
-| `runLoader()`     | A loader against a request context                             |
-| `runMiddleware()` | A middleware chain, including short-circuits                   |
-| `renderRoute()`   | A route through the tree, layouts included                     |
-| `dispatch()`      | A full request through matching, middleware, and rendering     |
-| `flight()`        | Real Flight serialization of what a client would receive       |
+| Primitive                                       | Entry     | Exercises                                                                                                         |
+| ----------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
+| `runLoader()` / `runLoaderResult()`             | `testing` | A loader with seeded params, env, and vars; `runLoaderResult` also captures cookies, headers, redirects           |
+| `runMiddleware()`                               | `testing` | A middleware chain: ordering, short-circuits, cookie and header merge                                             |
+| `runInRequestContext()`                         | `testing` | A server action's cookie, header, and flash output, even when it throws `redirect()`                              |
+| `dispatch()`                                    | `testing` | A request through real matching and global and route middleware — response routes, redirects, 404s; no RSC render |
+| `assertGeneratedRoutesMatch()`                  | `testing` | The generated route map against the runtime routes (async)                                                        |
+| `renderHandler()`                               | `flight`  | A route handler with seeded params, loaders, and vars; returns the rendered tree and its effects                  |
+| `renderServerTree()` / `renderToFlightString()` | `flight`  | Real Flight serialization of a Server Component, as an inspectable tree or the raw wire string                    |
+| `renderRoute()`                                 | `dom`     | A client component reading `useParams`, `useLoader`, `Outlet`, and other hooks, with seeded data                  |
+| `parityDescribe()` / `expectParity()`           | `e2e`     | One test body run against dev and production; one form intent run with JS on and off                              |
 
-These cover the tiers below end-to-end: unit tests for handlers and loaders, integration tests through `dispatch()`, and Flight-level assertions for what actually crosses the wire.
+`dispatch()` deliberately stops before rendering: hit a component route with it and it throws, pointing you to `renderHandler()`, `renderServerTree()`, or an e2e test. Loader data in `renderHandler()` and `renderRoute()` is seeded, not executed, so test the loader itself with `runLoader()`.
+
+`parityDescribe` and `expectParity` come from `createRangoE2E({ test, expect })`, which takes your Playwright `test` and `expect`. Cache and prerender hits are asserted at the e2e layer with `assertCacheStatus()`.
 
 ## The dogfood guarantee
 
-The router's own rule: if a feature cannot be tested through these primitives, the primitive gets extended in the same PR. What we use to test the router is what you get to test your app.
+The router's own rule: every consumer-facing feature ships tests written with these public primitives, alongside its internal tests. If a primitive can't reach a feature, the primitive gets extended in the same change, so what the router tests itself with is what you get to test your app.
+
+The full setup — both Vitest projects, the Playwright harness, and each primitive's options — is in the [Testing guide](/docs/rango/guides/testing).

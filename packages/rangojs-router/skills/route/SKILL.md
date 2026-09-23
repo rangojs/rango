@@ -1,10 +1,18 @@
 ---
 name: route
-description: Define routes with path() in @rangojs/router. Use when creating a new page or route, or asking how to define a URL path and its handler.
+description: Define routes with path() in @rangojs/router — URL params, catch-alls, typed search params, the handler context, handler-to-child data, and redirects. Use when creating a new page or route, or asking how to define a URL path and its handler.
 argument-hint: [pattern]
 ---
 
 # Defining Routes with path()
+
+`path(pattern, handler, options?, use?)` maps a URL pattern to a handler inside
+`urls()`. This skill covers patterns and params, typed search params, the handler
+context, passing handler data to child segments, and redirects.
+
+Related skills: `/layout` (wrap routes in shared UI), `/response-routes`
+(`path.json()`, `path.text()`, … endpoints), `/links` (URL generation),
+`/composability` (`include()` and reusable config), `/loader` (data).
 
 ## Basic Route
 
@@ -57,7 +65,8 @@ see `/i18n`.
 
 A catch-all consumes the **rest of the path** and exposes it as a single
 decoded string at `ctx.params.<name>`, with the internal `/` separators kept.
-It must be the **last** segment of the pattern.
+It only acts as a catch-all in the **last** segment of the pattern (see the
+parsing rule at the end of this section).
 
 - `:name+` — **one-or-more** segments (Next `[...name]`, React-Router splat).
   `/docs/:slug+` matches `/docs/a` and `/docs/a/b/c`, but **not** the bare
@@ -81,9 +90,9 @@ urls(({ path }) => [
 ```
 
 `ctx.params.<name>` is always a `string` for a catch-all (never `undefined`) —
-`:name*` binds `""` for the empty case, so read it directly. `reverse()` /
-`ctx.reverse()` rebuild the URL with separators preserved:
-`reverse("docs", { slug: "a/b" })` -> `/docs/a/b`.
+`:name*` binds `""` for the empty case, so read it directly. URL generation
+(`ctx.reverse()`, `href()`) rebuilds the URL with separators preserved:
+`ctx.reverse("docs", { slug: "a/b" })` -> `/docs/a/b`.
 
 The value is the URL-decoded remainder. `split("/")` recovers the segments in the
 common case, but note that a segment containing an encoded slash (`%2F`) decodes
@@ -93,8 +102,27 @@ raw pathname instead.
 
 The bare unnamed wildcard `path("/files/*", …)` still works and is read at
 `ctx.params["*"]`; prefer a named catch-all when you want a typed param key.
-Combining a modifier with `?`, a literal suffix, or a constraint
-(`:slug*?`, `:slug*.html`, `:slug(a|b)+`) is rejected at build time.
+
+Parsing rule: `+` / `*` is a catch-all modifier **only** when it is the bare
+final character of the last segment. Anywhere else it is read as a literal
+suffix character, not rejected: `/docs/:slug+/edit` matches `/docs/x+/edit`,
+and `:slug*.html`, `:slug?*`, and `:slug(a|b)+` are ordinary params followed by
+a literal suffix.
+
+### Constrained and suffixed params
+
+```typescript
+urls(({ path }) => [
+  // Only /en/about or /gb/about match; ctx.params.locale is typed "en" | "gb"
+  path("/:locale(en|gb)/about", AboutPage, { name: "about" }),
+
+  // Constrained + optional: /pricing, /en/pricing, /gb/pricing
+  path("/:locale(en|gb)?/pricing", PricingPage, { name: "pricing" }),
+
+  // Literal suffix: /files/report.pdf -> ctx.params.name === "report"
+  path("/files/:name.pdf", PdfViewer, { name: "pdf" }),
+]);
+```
 
 ## Route Handler Patterns
 
@@ -135,11 +163,24 @@ path("/product/:slug", async (ctx) => {
 
 ## Route Options
 
+All options are optional; with none, pass the `use` callback as the third
+argument: `path("/x", Page, () => [loader(L)])`.
+
 ```typescript
 path("/product/:slug", ProductPage, {
-  name: "product", // Route name for href() and navigation
+  name: "product", // route name for href(), ctx.reverse(), Handler<"product">
+  search: { tab: "string?" }, // typed ctx.search (next section)
+  trailingSlash: "never", // "never" | "always" | "ignore"
+  ppr: true, // serve a cached HTML shell with live holes (see /ppr)
 });
 ```
+
+- `name` — unnamed routes still match but can't be reversed by name or typed
+  with `Handler<"name">`. Inside an `include()`, the include's `name` option
+  decides whether the name is visible globally (see "Nested Routes" below).
+- `trailingSlash` — `"never"` redirects `/docs/` to `/docs`, `"always"` redirects `/docs`
+  to `/docs/`, `"ignore"` matches both. Unset, the pattern's own trailing slash
+  decides.
 
 ### Typed Search Params
 
@@ -158,24 +199,31 @@ Use `Handler<"name">` for typed search params (resolves from the generated route
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.search is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.search;
+  // ctx.search is typed: { q: string | undefined; page?: number; sort?: string }
+  const { q = "", page = 1, sort } = ctx.search;
   // ctx.searchParams is always URLSearchParams
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```
 
 Supported types: `"string"`, `"number"`, `"boolean"`, with `?` suffix for optional.
-Missing params are `undefined` regardless of required/optional. The required/optional
-distinction is a consumer-facing contract (for `href()` and `reverse()` autocomplete).
+
+- **Missing params are `undefined` regardless of required/optional** — a client
+  can always omit them, so the handler must default or check. The
+  required/optional distinction is a consumer-facing contract that drives
+  `href()` / `ctx.reverse()` autocomplete.
+- `"number"` accepts decimal numerals (`42`, `-3.5`, `1e3`). Empty values, hex
+  (`0x10`), and non-finite values are treated as missing, not coerced.
+- `"boolean"` is `true` for `"true"` / `"1"` and `false` for any other present
+  value.
 
 Use `RouteSearchParams<"name">` and `RouteParams<"name">` to extract types for props:
 
 ```typescript
 import type { RouteSearchParams, RouteParams } from "@rangojs/router";
 
-type SP = RouteSearchParams<"search">; // { q: string; page?: number; sort?: string }
-type P = RouteParams<"blogPost">; // { slug: string }
+type SP = RouteSearchParams<"search">; // { q: string | undefined; page?: number; sort?: string }
+type P = RouteParams<"blogPost">; // { year: string; month: string; slug: string }
 ```
 
 ## Route Children
@@ -194,15 +242,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 When a route has children (orphan layouts, parallels), the handler executes
 first. Use `ctx.set(key, value)` to share data with children, who read it
-via `ctx.get(key)`. Caching wraps all segments together, so either all run
-or none do.
+via `ctx.get(key)`. A route-level `cache()` wraps all of the entry's segments
+together, so on a cache hit none of them run and on a miss all of them do.
 
-This pattern is also safe under partial action revalidation: on an action,
-the route entry re-runs as a unit by default — route segment, loaders, and
-`belongsToRoute` children (orphan layouts, entry parallels) all seed
-revalidate-true, with handler-first ordering preserved. Handler-set data
-stays consistent with no configuration. See `/rango` → "Passing data down
-the tree" for the safest-first ladder.
+This stays consistent after actions with no configuration: on an action, the
+route segment, its loaders, and the children declared inside the `path()`
+(orphan layouts and their parallels) all re-run together, handler first. See
+`/rango` → "Passing data down the tree" for the safest-first ladder.
 
 ### Typed context variables with createVar
 
@@ -248,8 +294,10 @@ path("/dashboard/:id", async (ctx) => {
 String keys still work (`ctx.set("key", value)` / `ctx.get("key")`), but
 `createVar<T>()` is preferred for type safety.
 
-Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
-and intercepts can only read via `ctx.get()`.
+Write with `ctx.set()` from middleware, route handlers, and layout handlers;
+read with `ctx.get()` in the segments they wrap. Handlers run before their
+orphan layouts and parallels (handler-first), so those children see the value.
+Parallels and intercepts render last, so treat them as readers.
 
 #### Non-cacheable context variables
 
@@ -268,19 +316,24 @@ ctx.set(Theme, userTheme, { cache: false });
 "Least cacheable wins" — if either the var definition or the write site says
 `cache: false`, the value is non-cacheable.
 
-Reading a non-cacheable var inside `cache()` or `"use cache"` throws at
-runtime. This prevents request-specific data from leaking into cached output:
+Reading a non-cacheable var directly with `ctx.get()` inside a `cache()`
+boundary throws at runtime, so request-specific data can't be baked into a
+cached segment:
 
 ```typescript
-// This throws — Session is non-cacheable
-async function CachedWidget(ctx) {
-  "use cache";
-  const session = ctx.get(Session); // Error: non-cacheable var read inside cache scope
-  return <Widget />;
-}
+cache({ ttl: 60 }, () => [
+  path("/account", (ctx) => {
+    const session = ctx.get(Session); // throws: non-cacheable read inside cache()
+    return <Account session={session} />;
+  }, { name: "account" }),
+]);
 ```
 
-Cacheable vars (the default) can be read freely inside cache scopes.
+The guard is scoped to the `cache()` DSL boundary. It does not fire inside a
+`"use cache"` function body and does not follow derived values (a string copied
+out of `Session` and cached elsewhere is not tracked). Loaders are exempt — they
+run fresh on every request. Cacheable vars (the default) can be read freely
+inside cache scopes. See `/cache-guide` → "Context Variable Cache Safety".
 
 ### Revalidation Contracts for Handler Data
 
@@ -295,7 +348,8 @@ the route handler and its children re-run together by default, so handler
 data stays consistent on its own. Contracts matter in two cases:
 
 1. **You narrow the entry's revalidation** with a predicate that can return a
-   hard `false` (e.g. bare `ctx.isAction(X)`). A hard `false` on one side of a
+   hard `false` (e.g. `ctx.isAction() ? ctx.isAction(X) : undefined`). A hard
+   `false` on one side of a
    producer/consumer pair desyncs it — the child re-runs by default and reads
    `undefined`, or vice versa. Put the same named contract on the route and
    its dependent children so they narrow together.
@@ -305,17 +359,20 @@ data stays consistent on its own. Contracts matter in two cases:
 
 ```typescript
 // revalidation-contracts.ts
+import type { Revalidate } from "@rangojs/router";
 import * as CheckoutActions from "./actions/checkout";
 
-// Defer (|| undefined), not ?? false: a hard `false` short-circuits the chain,
-// so when the same segment composes multiple contracts the later ones never run.
-export const revalidateCheckoutData = (ctx) =>
-  ctx.isAction(CheckoutActions) || undefined;
+// The route and its children re-run after every action by default, so this
+// contract narrows them together: after an action, re-run only for checkout
+// actions; on navigation, undefined keeps the default. After an action it is a
+// hard decision, so later revalidators on the same segment do not run.
+export const revalidateCheckoutData: Revalidate = (ctx) =>
+  ctx.isAction() ? ctx.isAction(CheckoutActions) : undefined;
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
-  revalidate(revalidateCheckoutData), // producer (route handler) reruns
+  revalidate(revalidateCheckoutData), // producer (route handler)
   layout(CheckoutLayout, () => [
-    revalidate(revalidateCheckoutData), // consumer reruns
+    revalidate(revalidateCheckoutData), // consumer
     parallel({ "@summary": CheckoutSummary }, () => [
       revalidate(revalidateCheckoutData),
     ]),
@@ -323,8 +380,10 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
 ]);
 ```
 
-If children depend on multiple upstream domains, compose multiple contracts on
-the same segment (`revalidateAuthData`, `revalidateCheckoutData`, and so on).
+If children depend on multiple upstream domains, match them in one narrowing
+contract (`ctx.isAction(CheckoutActions, AuthActions)`): a second narrowing
+contract on the same segment would never run, because the first one's hard
+`false` ends the chain.
 
 For cleaner route trees, expose contract helpers and spread them:
 
@@ -341,6 +400,9 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
 
 ## Redirects
 
+`redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
+Return it from a handler or middleware, or throw it from a loader.
+
 ### Basic redirect
 
 ```typescript
@@ -353,6 +415,22 @@ path("/old-page", () => redirect("/new-page"), { name: "oldPage" });
 
 ```typescript
 path("/moved", () => redirect("/new-location", 301), { name: "moved" });
+```
+
+Root-relative targets are prefixed with the router's `basename` automatically
+(an already-prefixed URL is left alone).
+
+### Off-origin redirects
+
+Cross-origin targets are blocked by a same-origin guard and replaced with the
+app root. Opt in explicitly for an intended off-host redirect:
+
+```typescript
+path(
+  "/login",
+  () => redirect("https://accounts.example.com/oauth", { external: true }),
+  { name: "login" },
+);
 ```
 
 > **Redirecting from a route with `loading()`:** an `async` handler that returns
@@ -399,7 +477,8 @@ path(
 );
 ```
 
-Read the state on the target page with `useLocationState(FlashMessage)`. The
+`state` takes one entry or an array. Read it on the target page with
+`useLocationState(FlashMessage)` (from `@rangojs/router/client`). The
 `{ flash: true }` option makes it auto-clear. Without `{ flash: true }`,
 state persists on back/forward. See `/hooks` for details.
 
@@ -426,24 +505,44 @@ State flows to the browser via the RSC payload and is merged into
 Every handler receives a context object:
 
 ```typescript
+// Simplified sketch. Import the real type with
+// `import type { HandlerContext } from "@rangojs/router"`.
 interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
-  params: TParams; // URL parameters
-  request: Request; // Original request
-  searchParams: URLSearchParams; // Query params (always URLSearchParams)
-  search: {} | ResolveSearchSchema<TSearch>; // Typed search params (from search schema)
-  url: URL; // Parsed URL
-  env: TEnv; // Environment (bindings + variables)
-  set(key: string, value: any): void; // Set context variable (untyped string key)
-  set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
-  get(key: string): any; // Read context variable (untyped string key)
-  get<T>(contextVar: ContextVar<T>): T | undefined; // Read typed context variable
-  use<T>(handle: Handle<T>): T; // Access handles
+  // Request
+  params: TParams; // URL params
+  request: Request; // original request (raw transport URL, headers, body)
+  url: URL; // request URL with internal _rsc* params stripped
+  pathname: string;
+  searchParams: URLSearchParams; // always URLSearchParams (_rsc* stripped)
+  search: ResolveSearchSchema<TSearch>; // typed from the search schema ({} without one)
+  env: TEnv; // platform bindings
+  routeName?: string; // matched route name (undefined for unnamed routes)
+
+  // Data flow
+  get<T>(contextVar: ContextVar<T>): T | undefined; // also accepts a string key
+  set<T>(
+    contextVar: ContextVar<T>,
+    value: T,
+    options?: { cache?: boolean },
+  ): void;
+  use<T>(loader: LoaderDefinition<T>): Promise<T>; // loader data (memoized per request)
+  use<T>(handle: Handle<T>): HandlePush<T>; // push function for a handle
+
+  // Response
+  headers: Headers; // response headers, merged into the final response
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
   reverse(
     name: string,
     params?: Record<string, string>,
     search?: Record<string, unknown>,
-  ): string; // URL generation
-  setLocationState(entries: LocationStateEntry[]): void; // Attach state to response
+  ): string;
+  waitUntil(fn: () => Promise<void>): void; // work that continues after the response
+
+  // Mode
+  build: boolean; // true while pre-rendering at build time
+  dev: boolean; // true under Vite dev
+  dynamic(): void; // opt this request out of PPR shell capture (see /ppr)
+  theme?: Theme; // plus setTheme?() — only when the router enables themes (/theme)
 }
 ```
 
@@ -460,9 +559,12 @@ path("/product/:slug", (ctx) => {
   // Access platform bindings
   const db = ctx.env.DB;
 
-  // Access handles
-  const breadcrumbs = ctx.use(Breadcrumbs);
-  breadcrumbs.push({ label: "Product", href: `/product/${slug}` });
+  // Push handle data: ctx.use(Handle) returns a push function
+  const pushCrumb = ctx.use(Breadcrumbs);
+  pushCrumb({ label: "Product", href: `/product/${slug}` });
+
+  // Set a response header
+  ctx.headers.set("Cache-Control", "private, max-age=60");
 
   return <ProductPage slug={slug} tab={tab} />;
 }, { name: "product" })
@@ -505,6 +607,8 @@ A route can configure its own `transition()` — the wrap goes around the route'
 Page handlers can carry their own loader, middleware, error boundaries, parallels, and other defaults via a `.use` callback — so the page is self-contained and reusable across mount sites without re-wiring the same items.
 
 ```typescript
+import { loader, loading, middleware, type Handler } from "@rangojs/router";
+
 const ProductPage: Handler<"/product/:slug"> = async (ctx) => {
   const product = await ctx.use(ProductLoader);
   return <ProductView product={product} />;
@@ -514,7 +618,7 @@ ProductPage.use = () => [
   loading(<ProductSkeleton />),
   middleware(async (ctx, next) => {
     await next();
-    ctx.header("Cache-Control", "private, max-age=60");
+    ctx.headers.set("Cache-Control", "private, max-age=60");
   }),
 ];
 

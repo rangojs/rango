@@ -98,6 +98,14 @@ leakage). The chunk loads only when a dashboard route renders; visiting
 `/settings` does not download it. CSS splits at the same granularity
 (`app-dashboard-*.css`).
 
+The **first** marker directory in the path wins (the match is
+case-insensitive). If your source root is itself named after a marker — an
+`app/` root, say — every module under it keys on the next segment:
+`app/components/Button.tsx` becomes `app-components`, and
+`app/routes/dashboard/Chart.tsx` becomes `app-routes`, not `app-dashboard`. Run
+the debug namespace below to confirm the grouping, and use a `clientChunks`
+function if the built-in rule does not fit your layout.
+
 When the path has **no** route-root directory (e.g. a flat `src/components/`),
 the strategy returns `undefined` and the module **inherits `@vitejs/plugin-rsc`'s
 default grouping** — it folds into the shared app chunk, exactly as if splitting
@@ -193,7 +201,7 @@ A `"use client"` component you register as an `errorBoundary` or `notFoundBounda
 fallback is grouped into a dedicated **`app-fallback`** chunk, regardless of where
 it lives:
 
-```ts
+```tsx
 // router.tsx
 import { ClientErrorFallback } from "./ClientErrorFallback.js"; // "use client"
 
@@ -226,7 +234,7 @@ may also be a **handler function** and/or **wrap** the client component in serve
 providers (the common pattern — the boundary needs an Intl/theme provider the
 unmounted layout would have supplied):
 
-```ts
+```tsx
 createRouter({
   defaultErrorBoundary: ({ error }) => (
     <FallbackIntl locales={...}>
@@ -323,6 +331,6 @@ own app, build both ways and run `node tools/bench-client-chunks.mjs <dist-off>
   emitted sizes do not exist yet. It is also unnecessary: per-route groups are
   fetched lazily, so a tiny group costs one extra (multiplexed) request **on its
   own route only** and never taxes another route's first load. An app whose routes
-  are uniformly tiny is the small-app case that opts out with `clientChunks:
-false`, or hand-tunes grouping with a `clientChunks` function (return `undefined`
-  to fold a route back into the shared chunk).
+  are uniformly tiny is the small-app case that opts out with
+  `clientChunks: false`, or hand-tunes grouping with a `clientChunks` function
+  (return `undefined` to fold a route back into the shared chunk).

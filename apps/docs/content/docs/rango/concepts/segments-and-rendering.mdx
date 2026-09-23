@@ -11,6 +11,8 @@ The segment is Rango's unit of everything. Rendering, caching, revalidation, and
 When a request matches, the `urls()` tree resolves to a chain of segments: layouts outermost, the route innermost, with loaders, parallels, and error/not-found boundaries attached along the way. Every node you write becomes a segment:
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path, layout, loader, loading }) => [
   layout(<ShopLayout />, () => [
     path("/shop/:slug", ProductPage, { name: "product" }, () => [
@@ -25,7 +27,7 @@ Matching `/shop/widget` produces a layout segment (`ShopLayout`), a route segmen
 
 Segments are also what the rest of the system holds on to:
 
-- `cache()` stores **rendered segments** — on a hit the stored subtree is served without running your handler, while loaders (excluded from the segment cache) re-resolve fresh. See [Freshness](/docs/rango/concepts/freshness).
+- `cache()` stores **rendered segments** — on a hit the stored subtree is served without running your handler, while loaders (excluded from the segment cache) re-resolve fresh. `Prerender()` stores the same kind of segment payload at build time. See [Freshness](/docs/rango/concepts/freshness).
 - `revalidate()` selects **which segments** re-run and stream to the client on a navigation or action.
 - The browser's forward/back cache keeps **rendered segments** per history entry.
 
@@ -41,19 +43,21 @@ So Rango treats tree structure as a hard guarantee: SSR, client navigation, and 
 
 By default, a route segment's identity includes its params. Navigating from `/product/1` to `/product/2` remounts the route subtree: state resets and the `loading()` skeleton shows again. That is the intended default — a different product is a different page.
 
-Declaring `transition()` on a layout or route in the matched chain changes this. The route and the layouts that belong to it drop params from their identity, so navigating between two param values of the same route **reconciles** the existing subtree instead of remounting it. The previous content stays visible while the new render commits — no skeleton flash — and on React 19.3+ the persistent `<ViewTransition>` animates the same-route swap as a morph rather than an exit/enter pair.
+Declaring `transition()` on a layout or route in the matched chain changes this. The route and the layouts that belong to it drop params from their identity, so navigating between two param values of the same route **reconciles** the existing subtree instead of remounting it. The previous content stays visible while the new render commits — no skeleton flash — and on React 19.3+ (or an experimental build) the persistent `<ViewTransition>` animates the same-route swap as a morph rather than an exit/enter pair. The content hold works on every React version; only the animation needs 19.3+.
 
-Two details worth knowing:
+Three details worth knowing:
 
-- Whether a route sits in a transition scope is a **static property of its position in the tree** — it declares `transition()` or it doesn't. Its identity is therefore the same on SSR, navigation, and action renders; behavior never depends on how you arrived at the page.
+- Without a `when` gate, whether a route sits in a transition scope is a **static property of its position in the tree** — it declares `transition()` or it doesn't. Its identity is therefore the same on SSR, navigation, and action renders.
+- A `transition({ when })` gate is evaluated per request and can drop the transition for that render. The param-agnostic identity is set when the route first mounts, so a gate that returns `false` on the initial full load makes every later same-route navigation remount. Write gates that hold when there is no navigation source. See [View Transitions](/docs/rango/guides/view-transitions#conditional-transitions-with-when).
 - Error and not-found boundaries always keep param-bearing identity, so they reset across param changes even inside a transition scope.
 
 ## What a partial update replaces
 
 A client navigation or an action response is not a page render. The server re-runs a **selected subset** of segments, streams them, and the client merges them into the cached segment set:
 
-- After an action, the matched route's own entry — its handler plus its orphan layouts and parallels — re-runs together by default. Outer layout entries are skipped by default (the revalidation trace calls this `action:parent-chain-skip`).
-- `revalidate()` predicates adjust that selection per segment — see [Loaders](/docs/rango/features/loaders).
+- After an action, the matched route's own entry — its handler plus its orphan layouts and parallels — re-runs together by default, and so does every loader. Outer layout entries are skipped by default (the revalidation trace calls this `action:parent-chain-skip`).
+- On a navigation, the route and the segments inside its `path()` re-run when params or search change. Layouts above the route are kept, even when params change.
+- `revalidate()` predicates adjust that selection per segment — see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate).
 - Everything not selected is kept exactly as cached, boundary shape included, so React reconciles kept segments in place. State in a kept layout survives while the route below it streams in fresh.
 
 Keep the axis straight: this selection is **not** caching. A segment selected for a re-run still consults its own `cache()` (a hit means no recompute), and busting a cache does not force a client update. The two axes compose — [Freshness](/docs/rango/concepts/freshness) covers the other one.

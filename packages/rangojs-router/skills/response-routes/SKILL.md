@@ -8,13 +8,15 @@ argument-hint: [json|text|html|xml|md|image|stream]
 
 Response routes skip the RSC pipeline entirely. Use them for JSON APIs, plain text endpoints,
 XML feeds, image proxies, and any route that returns a `Response` instead of React components.
+Serving several representations from one URL is `/mime-routes`; a typed client for
+calling your JSON routes is `/api-client`.
 
 ## Route-Level Tags: path.json(), path.text(), etc.
 
-Inside any `urls()` callback, use `path.json()`, `path.text()`, or other tags alongside regular RSC routes:
+Inside any `urls()` callback, use `path.json()`, `path.text()`, or other tags alongside regular RSC routes. Each takes `(pattern, handler, options?, use?)` like `path()`:
 
 ```typescript
-import { urls, RouterError } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, include }) => [
   // RSC routes (normal)
@@ -81,18 +83,27 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 ## ResponseHandlerContext
 
-Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.res`):
+Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.set()`, no `ctx.res`):
 
 ```typescript
 interface ResponseHandlerContext<TParams, TEnv> {
-  request: Request;
-  params: TParams; // Typed from URL pattern
-  env: TEnv; // Plain bindings (DB, KV, etc.)
-  searchParams: URLSearchParams;
-  url: URL;
+  // Shared request scope (same as every Rango context)
+  request: Request; // raw request: headers, method, body
+  url: URL; // internal _rsc* params stripped
+  originalUrl: URL; // transport URL, unmodified
   pathname: string;
-  reverse: (name: string, params?: Record<string, string>) => string;
-  get: GetVariableFn; // Read middleware variables
+  searchParams: URLSearchParams;
+  env: TEnv; // Plain bindings (DB, KV, etc.)
+  waitUntil(fn: () => Promise<void>): void; // work after the response
+  executionContext?: ExecutionContext; // Cloudflare only
+  // Response-route specific
+  params: TParams; // Typed from URL pattern
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string; // global names only
+  get: GetVariableFn; // Read middleware variables (string key or createVar token)
   header: (name: string, value: string) => void;
   // Use cookies().set(name, value, opts) for cookie mutations (standalone API)
 }
@@ -104,6 +115,8 @@ String-returning handlers (json, text, html, xml, md) can set custom headers and
 without constructing a full Response:
 
 ```typescript
+import { cookies } from "@rangojs/router";
+
 path.md(
   "/docs/:slug.md",
   (ctx) => {
@@ -127,10 +140,12 @@ merge, and router `onError` is not invoked. Throw ordinary errors (including
 
 ### Environment Access
 
-`ctx.env` is always the plain bindings passed as TEnv to `createRouter<TEnv>()`:
+`ctx.env` is the plain bindings object the router received for the request. Its
+type comes from the global `Rango.Env` registration (`/typesafety`), not from
+the `createRouter<TEnv>()` generic, which `urls()` modules cannot see:
 
 ```typescript
-// createRouter<{ DB: D1Database; KV: KVNamespace }>({ ... })
+// Rango.Env registered as { DB: D1Database; KV: KVNamespace }
 
 // In a response handler:
 path.json(
@@ -192,6 +207,13 @@ path.json(
 );
 ```
 
+`RouterError` defaults to status 500 when `status` is omitted. Any other thrown
+error becomes a 500 with `code: "INTERNAL"`, and its message is hidden in
+production (`RouterError` messages are always sent). Only `path.json()` produces
+`problem+json`: the other response types answer errors with `text/plain` — the
+`RouterError` message, or for other errors the message in development and
+`Internal Server Error` in production.
+
 ### Returning Response Directly
 
 JSON handlers can return `Response` to bypass auto-wrap (custom status, headers, streaming):
@@ -223,6 +245,8 @@ For an OAuth, SSO, or payment callback, validate the registered target and
 return an explicitly external redirect:
 
 ```typescript
+import { redirect } from "@rangojs/router";
+
 path.any("/oauth/decision", async (ctx) => {
   const redirectUri = await readAndValidateRedirectUri(ctx.request);
   return redirect(redirectUri, { status: 303, external: true });
@@ -341,15 +365,18 @@ For local/scoped response typing without global augmentation, prefer
 the response payload straight from the `urls()` patterns and needs no
 `RegisteredRoutes` wiring.
 
-### ParamsFor with Response Routes
+### RouteParams with Response Routes
 
 ```typescript
-import type { ParamsFor } from "@rangojs/router";
+import type { RouteParams } from "@rangojs/router";
 
-// Works for both RSC and response routes
-type ProductParams = ParamsFor<"api.productDetail">;
+// Works for both RSC and response routes (reads the global route map)
+type ProductParams = RouteParams<"api.productDetail">;
 // = { id: string }
 ```
+
+`ParamsFor<TRoutes, "name">` is the lower-level form that takes an explicit
+route map first (e.g. `ParamsFor<typeof router.routeMap, "api.productDetail">`).
 
 ## Links to Response Routes
 
@@ -474,8 +501,7 @@ the `_responses` phantom are inferred from the resolved `urls()` value, so
 ### Type safety after mounting
 
 ```typescript
-import type { RouteResponse } from "@rangojs/router";
-import type { ParamsFor } from "@rangojs/router";
+import type { RouteResponse, RouteParams } from "@rangojs/router";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
@@ -488,21 +514,25 @@ type BlogStats = Rango.PathResponse<"/blog/api/stats">;
 // = { views: number; visitors: number }
 
 // Params work through nested includes
-type LikesParams = ParamsFor<"blog.api.likes">;
+type LikesParams = RouteParams<"blog.api.likes">;
 // = { slug: string }
 ```
 
 ### ctx.reverse inside mounted modules
 
-Response route handlers inside a mounted module can reference local names:
+A response handler's `ctx.reverse` resolves **global** names only: it has no
+`include()` scope and does not auto-fill params from the current request. Use
+the fully qualified name and pass every param:
 
 ```typescript
-// Inside blogApiPatterns handler
-path(
+// Inside blogApiPatterns (mounted via include("/api", ..., { name: "api" })
+// inside blogPatterns, mounted via include("/blog", ..., { name: "blog" }))
+path.json(
   "/:slug/likes",
   (ctx) => {
-    // ctx.reverse resolves names relative to the mount point
-    const commentsUrl = ctx.reverse("comments", { slug: ctx.params.slug });
+    const commentsUrl = ctx.reverse("blog.api.comments", {
+      slug: ctx.params.slug,
+    });
     // -> "/blog/api/my-post/comments"
 
     return { slug: ctx.params.slug, count: 42, commentsUrl };
@@ -510,6 +540,9 @@ path(
   { name: "likes" },
 );
 ```
+
+A dot-local name (`ctx.reverse(".comments")`) type-checks here but throws
+`Unknown route` at runtime.
 
 ## Content Negotiation
 

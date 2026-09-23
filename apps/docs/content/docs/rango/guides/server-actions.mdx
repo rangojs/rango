@@ -1,10 +1,12 @@
 ---
 title: Server Actions
-description: Mutations with "use server" — forms, useActionState, validation, revalidation selection, and action-side auth.
+description: Mutations with "use server" — forms, useActionState, validation, errors, revalidation selection, client-cache control, and action-side auth.
 type: guide
 ---
 
 You need to mutate server state from the browser — submit a form, toggle a setting, delete a record — and have the page reflect the new state. Server actions are React's RSC mutation primitive, and Rango uses them as-is with no framework wrapper: `useActionState`, `useFormStatus`, `useOptimistic`, and `useTransition` all work directly.
+
+This page covers defining and calling actions, validation and errors, what re-renders after an action, how the client cache reacts, and where auth checks belong. Actions are for writes; for reads, use [loaders](/docs/rango/features/loaders) — `createLoader()` + `useLoader()` for data on every navigation, a fetchable loader + `useFetchLoader()` for on-demand reads from the client.
 
 ## The shortest path
 
@@ -37,7 +39,9 @@ export function AddToCartForm({ productId }: { productId: string }) {
 }
 ```
 
-The form submits as `FormData`, the action runs on the server, and the page revalidates. This works without JavaScript too: the form posts as a normal HTTP request and the page re-renders server-side. For that [progressive enhancement](/docs/rango/concepts/progressive-enhancement) to hold, keep actions accepting `FormData` directly — don't curry or wrap them in client-side closures. Actions are for writes; for reads, use [loaders](/docs/rango/features/loaders) — `createLoader()` + `useLoader()` for data on every navigation, a fetchable loader + `useFetchLoader()` for on-demand reads from the client.
+The form submits as `FormData`, the action runs on the server, and the page revalidates. This works without JavaScript too: the form posts as a normal HTTP request and the page re-renders server-side.
+
+For that [progressive enhancement](/docs/rango/concepts/progressive-enhancement) to hold, the form's `action` must be one of three things: the server action itself, a `.bind(null, ...)` of it (React encodes the bound arguments into the form, as above), or the dispatcher `useActionState` returns for it. A client-side closure that calls the action is not a server reference, so the form has no real `action` URL before JavaScript loads.
 
 You can also define a one-off action inline, inside a server component, with `"use server"` as the first line of the function body. Captured variables are serialized, so keep them small and serializable — and note that inline actions keep hashed IDs (see [pitfalls](#pitfalls) below).
 
@@ -70,7 +74,7 @@ export async function saveProfile(
 import { useActionState } from "react";
 import { saveProfile, type ProfileFormState } from "../actions/profile";
 
-export function ProfileForm() {
+export function ProfileForm({ initial }: { initial: { name: string } }) {
   const [state, formAction, isPending] = useActionState<
     ProfileFormState,
     FormData
@@ -80,7 +84,7 @@ export function ProfileForm() {
     <form action={formAction}>
       <input
         name="name"
-        defaultValue={state?.values?.name}
+        defaultValue={state?.values?.name ?? initial.name}
         aria-invalid={!!state?.errors?.name}
       />
       {state?.errors?.name && <p role="alert">{state.errors.name}</p>}
@@ -92,13 +96,19 @@ export function ProfileForm() {
 }
 ```
 
-Use `defaultValue`, not `value`: on a validation error the form re-renders, and `value` resets the inputs while `defaultValue` lets the browser keep what the user typed. Echo the submitted values back in `state.values` so they survive a full no-JS re-render too.
+Echo the submitted values back in `state.values` and render them as `defaultValue`. React 19 resets a form's uncontrolled fields after its `action` completes, and a no-JS submission re-renders the whole page; in both cases the only thing that survives is what you render. (A controlled `value` without an `onChange` would make the inputs read-only.) Without JavaScript, the action still runs and the page re-renders with the `useActionState` result restored as its state.
 
-Two related hooks round this out. `useFormStatus()` (from `react-dom`) gives a nested submit button its own `pending` flag without prop-threading — it only reports the form it's rendered inside. For actions triggered outside a form (an `onClick`), `useAction()` from `@rangojs/router/client` tracks `state` and `error` imperatively; see [Hooks](/docs/rango/reference/hooks). For instant UI before the action settles (quantity steppers, like buttons), wrap `useOptimistic` and the action call in the same `startTransition` — the optimistic value resets once the transition settles with post-action data.
+Write file-upload actions the same way — `(prevState, formData)`, reading `formData.get("avatar") as File` — so one action works both in a plain `<form action={uploadAvatar}>` and in `useActionState`, with no client wrapper. For upload progress or cancellation, use a fetchable loader with `useFetchLoader()` instead.
+
+Three related hooks round this out:
+
+- `useFormStatus()` (from `react-dom`) gives a nested submit button its own `pending` flag without prop-threading. It only reports the form it's rendered inside.
+- `useOptimistic` gives instant UI before the action settles (quantity steppers, like buttons). Call the optimistic setter and the action inside the same `startTransition`; the optimistic value resets once the transition settles and React re-renders with the post-action data.
+- `useAction()` from `@rangojs/router/client` tracks `state` and `error` for an action triggered outside a form (an `onClick`), or one fired elsewhere on the page. See [Hooks](/docs/rango/reference/hooks).
 
 ## Validation
 
-Validate on the server and return structured errors as state — throwing for a validation error escalates to an error boundary, which is usually too aggressive. With Zod:
+Validate on the server and return structured errors as state. Throwing for a validation error escalates to an error boundary, which is usually too aggressive. With Zod:
 
 ```ts
 // app/actions/signup.ts
@@ -139,23 +149,56 @@ export async function signup(
 }
 ```
 
-Throw only for genuinely exceptional conditions (network failure, DB outage) — those hit the nearest `errorBoundary()` in the route tree. For a missing resource, call `notFound("...")` from `@rangojs/router` to reach the notFoundBoundary.
+## Errors and not-found
+
+Throw only for genuinely exceptional conditions (network failure, DB outage, an authorization violation). The nearest `errorBoundary()` above the page the action was called from catches the error, and the boundary renders inside route middleware like a normal render. A server fallback receives only `{ error }` — there is no `reset()`:
+
+```tsx
+// urls.tsx — inside the urls() callback
+layout(CheckoutLayout, () => [
+  errorBoundary(({ error }) => (
+    <div role="alert">
+      <p>
+        {error.name === "ForbiddenError"
+          ? "You cannot change this order."
+          : "Checkout failed."}
+      </p>
+      <a href="/checkout">Try again</a>
+    </div>
+  )),
+  path("/checkout", CheckoutPage, { name: "checkout" }),
+]);
+```
+
+In production `error.message` is replaced with `"An error occurred"` (and `stack` / `cause` are dropped), while `error.name` and `error.code` are kept — branch on `name` or `code`, not on the message.
+
+`notFound()` thrown inside an action is handled like any other error: it renders the nearest `errorBoundary()` with `error.name === "DataNotFoundError"`. `notFoundBoundary()` handles `notFound()` from handlers and loaders, not from actions. For a recoverable "already gone" case, return a result the form can show (`{ error: "Post not found" }`) instead of throwing.
 
 ## Choosing what revalidates
 
-After an action finishes, Rango runs a server-side revalidation render for the matched route so handlers and loaders see the new state. Loader data re-runs by default after any action (opt out with `revalidate(() => false)` on the loader); segment handlers re-render according to their `revalidate()` rules. The control point is `revalidate((ctx) => ...)` on the segment that owns the data — it works on `path()`, `layout()`, `parallel()`, `intercept()`, and loader registrations.
+After an action finishes, Rango runs a server-side revalidation render for the matched route so handlers and loaders see the new state. The defaults:
 
-Match specific actions by imported reference with `ctx.isAction()` — it accepts one action, several, or a namespace import, and survives renames as type errors instead of silent string drift. Pair it with `|| undefined` so unrelated actions defer to defaults:
+- Every loader re-runs. Opt a loader out with `revalidate(() => false)`.
+- The matched route's own entry re-runs — its handler plus the layouts and parallels that belong to it.
+- Outer layouts are skipped. A layout that shows data the action changed has to opt in.
+
+The control point is `revalidate((ctx) => ...)` on the segment that owns the data — it works on `path()`, `layout()`, `parallel()`, `intercept()`, and loader registrations. See [Segments and Rendering](/docs/rango/concepts/segments-and-rendering) for how the re-run set is chosen.
+
+Match specific actions by imported reference with `ctx.isAction()` — it accepts one action, several, or a namespace import, and survives renames as type errors instead of silent string drift. On a loader or the route's own segments, which already re-run after every action, narrow with `ctx.isAction() ? ctx.isAction(CartActions) : undefined`; `|| undefined` changes nothing there (see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate)). On a layout the default skips, pair it with `|| undefined`, so the layout re-renders after matching actions and defers to the default otherwise:
 
 ```tsx
 import { urls } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
-export const urlpatterns = urls(({ path, loader, revalidate }) => [
-  path("/cart", CartPage, { name: "cart" }, () => [
+export const urlpatterns = urls(({ layout, path, loader, revalidate }) => [
+  layout(ShopLayout, () => [
+    // The header's cart badge lives in this layout, which is skipped after
+    // actions by default. Opt it in for cart actions only.
     revalidate((ctx) => ctx.isAction(CartActions) || undefined),
-    loader(CartLoader, () => [
-      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    path("/cart", CartPage, { name: "cart" }, () => [loader(CartLoader)]),
+    path("/", HomePage, { name: "home" }, () => [
+      // Static content: skip the re-run after every action.
+      loader(HomepageLoader, () => [revalidate(() => false)]),
     ]),
   ]),
 ]);
@@ -165,48 +208,84 @@ For broad filters by file or directory, the raw `actionId` is path-bearing in se
 
 Two rules keep this correct:
 
-- **Cross-segment dependencies re-run together.** If a loader reads `ctx.get()` data set by an outer layout, share the same predicate on producer and consumer — otherwise the loader sees stale context. See [Middleware](/docs/rango/features/middleware) for the full contract.
+- **Cross-segment dependencies re-run together.** If a loader reads `ctx.get()` data set by an outer layout, share the same predicate on producer and consumer — otherwise the loader sees stale context. See [Data Flow](/docs/rango/concepts/data-flow) and [Middleware](/docs/rango/features/middleware) for the full contract.
 - **Actions and the revalidation render share one request context.** Values written in the action with `ctx.set(MyVar, value)` (or `cookies().set(...)`) are visible to downstream middleware, handlers, loaders, and `revalidate()` predicates — so a predicate can check _what_ changed, not just _which_ action ran.
+
+## Client cache after an action
+
+`revalidate()` decides what the server re-renders in the action's response. Separately, the browser invalidates its own caches once that response arrives: it marks the history cache stale (Back renders the cached entry, then revalidates), flushes the prefetch cache, rotates the router's state cookie, and tells other open tabs to do the same. This happens for every action that reached the server, including ones that threw. No setup is needed.
+
+Some hot actions change nothing a route renders — a debounced draft autosave, an analytics event, a save that turned out to be a no-op. Call `keepClientCache()` inside the action to leave the client caches alone for that one response:
+
+```ts
+// app/actions/draft.ts
+"use server";
+
+import { keepClientCache } from "@rangojs/router";
+
+export async function saveDraft(formData: FormData) {
+  const changed = await drafts.persist(formData);
+  if (!changed) keepClientCache(); // decided per call, not per action
+  return { saved: true };
+}
+```
+
+It suppresses the stale-marking, the prefetch flush, the cookie rotation, the cross-tab broadcast, and the background re-fetch the client runs when the user navigated away mid-action. It does not change the action's own response (your `revalidate()` rules still apply), a concurrent action that did not call it still invalidates, and an explicit `invalidateClientCache()` in the same action wins. Like `cookies()`, it throws inside a `cache()` / `"use cache"` boundary. For the opposite case — a mutation the router cannot see, such as a REST call or a WebSocket push — call `invalidateClientCache()` (see [Hooks](/docs/rango/reference/hooks)).
 
 ## Redirects
 
-`redirect()` works inside actions; prefer `throw redirect(...)` — it keeps the return type narrow (`redirect()` returns a `Response`, so the `return` form widens the signature). The redirect renders the **target** route's segments and loaders, not the source page's. `redirect()` is same-origin by default on every path, so unvalidated input can never become an open redirect; going off-host (OAuth, say) requires `redirect(url, { external: true })`, which is your audit point — and even then only `http(s)` targets are allowed, never `javascript:` or `data:`.
+`redirect()` works inside actions; prefer `throw redirect(...)` — it keeps the return type narrow (`redirect()` returns a `Response`, so the `return` form widens the signature). The redirect renders the **target** route's segments and loaders, not the source page's. Pass `{ state }` to carry flash state to the target page (read it with `useLocationState`).
+
+`redirect()` is same-origin by default on every path, so unvalidated input can never become an open redirect; a cross-origin target is blocked and the user is sent to the app root instead. Going off-host (OAuth, say) requires `redirect(url, { external: true })`, which is your audit point — and even then only `http(s)` targets are allowed, never `javascript:` or `data:`.
 
 ## Auth inside actions
 
-Route-level `middleware()` does **not** wrap action execution — only global `router.use()` middleware (and its scoped variants) does. So gate actions globally, or in the action body itself:
+Route-level `middleware()` does **not** wrap action execution — only global `router.use()` middleware does. And an action is identified by its ID, not by a URL: the client posts it to the current page's URL, but any URL that matches a route can carry it. So a pattern-scoped `router.use("/admin/*", ...)` guards action requests posted from `/admin/*` pages, not the action itself.
+
+The rule: use global middleware to establish identity (load the session), and authorize sensitive actions inside the action body.
 
 ```ts
-const router = createRouter()
-  .use(authInit)
-  .use("/admin/*", requireAdmin) // protects actions on /admin too
+// router.tsx
+import { createRouter } from "@rangojs/router";
+
+export const router = createRouter({ document: Document })
+  .use(authInit) // loads the session for every request, actions included
   .routes(urlpatterns);
 ```
 
 ```ts
+// app/actions/orders.ts
 "use server";
 import { getRequestContext, redirect, notFound } from "@rangojs/router";
+
+export class ForbiddenError extends Error {
+  constructor() {
+    super("You do not have permission to perform this action.");
+    this.name = "ForbiddenError";
+  }
+}
 
 export async function deleteOrder(orderId: string) {
   const ctx = getRequestContext();
   const user = ctx.get("user"); // set by global middleware
   if (!user) throw redirect("/login");
   const order = await db.orders.get(orderId);
-  if (!order) notFound("Order not found");
+  if (!order) notFound("Order not found"); // → errorBoundary (DataNotFoundError)
   if (order.userId !== user.id) throw new ForbiddenError(); // → errorBoundary
   await db.orders.delete(orderId);
 }
 ```
 
-`getRequestContext()` gives actions the same context-variable, header, and reverse APIs handlers use: `ctx.get(...)`, `ctx.set(...)`, `headers()`, `cookies()`, `ctx.env`, and type-safe `ctx.reverse("routeName")`.
+`getRequestContext()` gives actions the same context-variable, header, and reverse APIs handlers use: `ctx.get(...)`, `ctx.set(...)`, `headers()`, `cookies()`, `ctx.env`, and type-safe `ctx.reverse("routeName")`. Cookies and headers set in global middleware propagate to the action response.
 
 ## Pitfalls
 
-- **Don't throw a non-redirect `Response`.** `throw new Response("Unauthorized", { status: 401 })` is treated as a regular error and routed to the nearest `errorBoundary()`, not returned as HTTP (dev warns). Use `redirect()` for unauthenticated users, `notFound()` for missing resources, a domain error class for forbidden.
+- **Don't throw a non-redirect `Response`.** `throw new Response("Unauthorized", { status: 401 })` is treated as a regular error and routed to the nearest `errorBoundary()`, not returned as HTTP (dev warns). A returned non-redirect `Response` is discarded. Use `redirect()` for unauthenticated users, `notFound()` for missing resources, a domain error class for forbidden.
 - **Route DSL `middleware()` doesn't gate actions.** Actions execute before route middleware; auth lives in `router.use()` or the action body.
-- **Client-side wrappers break progressive enhancement.** `useActionState(async (_prev, fd) => upload(fd), null)` is not a server reference, so the form has no real `action` URL before JS loads. Keep the `(prevState, formData)` signature on the action itself and pass it directly — this also makes file-upload actions (`formData.get("avatar") as File`) work in both `<form action={...}>` and `useActionState` with no wrapper.
+- **Pattern-scoped middleware doesn't guard the action itself.** `router.use("/admin/*", requireAdmin)` only sees action requests posted to `/admin/*` URLs. Check permissions inside the action.
+- **Client-side wrappers break progressive enhancement.** `useActionState(async (_prev, fd) => upload(fd), null)` is not a server reference, so the form has no real `action` URL before JS loads. Keep the `(prevState, formData)` signature on the action itself and pass it directly.
 - **Inline actions keep hashed IDs.** Actions declared inside RSC components (and all client-facing references in production) don't expose file paths. If you need path-based `revalidate()` matching, export the action from a module-level `"use server"` file — or better, match by reference with `ctx.isAction()`.
-- **`useFetchLoader()` is for reads, not writes.** Actions are the mutation primitive.
+- **`useFetchLoader()` is for reads, not writes.** Only actions trigger the post-action revalidation render and the client-cache invalidation; a fetchable-loader POST does neither.
 
 <Cards>
   <Card href="/docs/rango/features/caching" title="Caching & Revalidation">

@@ -52,7 +52,7 @@ A simple cross-fade between pages that share a layout:
 import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
-function ShopShell({ children }: { children: React.ReactNode }) {
+function ShopShell() {
   return (
     <div className="shop">
       <NavBar />
@@ -74,23 +74,34 @@ export const urlpatterns = urls(({ layout, path, transition }) => [
 ]);
 ```
 
+The config values are React `<ViewTransition>` classes: React applies them as
+`view-transition-class`, so the CSS targets the view-transition
+pseudo-elements by class:
+
 ```css
-::view-transition-old(root) {
-  animation: fade-out 200ms ease both;
+::view-transition-old(.page-fade) {
+  animation: 200ms ease both fade-out;
 }
-::view-transition-new(root) {
-  animation: fade-in 200ms ease both;
+::view-transition-new(.page-fade) {
+  animation: 200ms ease both fade-in;
 }
-.page-fade {
-  /* class hooks per phase */
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
 ```
 
-Navigating between `/`, `/about`, and `/contact` morphs the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not morph because the wrap sits inside the shell, not around it.
+Navigating between `/`, `/about`, and `/contact` cross-fades the `<Outlet />` content with the `page-fade` class. The shell (NavBar, Footer) does not animate because the wrap sits inside the shell, not around it.
 
 ## Direction-aware transitions
 
-`ViewTransitionClass` accepts an object form keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward popstate as `"navigation-back"`:
+`ViewTransitionClass` accepts an object form keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`):
 
 ```tsx
 layout(<ShopShell />, () => [
@@ -106,12 +117,19 @@ layout(<ShopShell />, () => [
 ```
 
 ```css
-.slide-left {
-  animation-name: slide-from-right;
+::view-transition-old(.slide-left) {
+  animation: 250ms ease both slide-out-to-left;
 }
-.slide-right {
-  animation-name: slide-from-left;
+::view-transition-new(.slide-left) {
+  animation: 250ms ease both slide-in-from-right;
 }
+::view-transition-old(.slide-right) {
+  animation: 250ms ease both slide-out-to-right;
+}
+::view-transition-new(.slide-right) {
+  animation: 250ms ease both slide-in-from-left;
+}
+/* @keyframes slide-out-to-left, slide-in-from-right, ... defined as usual */
 ```
 
 > Note: `"action"` is only tagged on partial-update action/refetch paths today; ordinary `server-action-bridge` commits (`useAction` / `useActionState` revalidations) are not currently tagged. Don't rely on an `action`-keyed class to fire on every form action.
@@ -147,8 +165,8 @@ function GalleryShell() {
       <main>
         <Outlet /> {/* page transition lands here */}
       </main>
-      <ParallelOutlet name="@modal" />{" "}
-      {/* modal mounts here — sibling of the VT */}
+      {/* modal mounts here, as a sibling of the VT */}
+      <ParallelOutlet name="@modal" />
     </>
   );
 }
@@ -222,7 +240,7 @@ interface TransitionConfig {
 
 ## Conditional transitions (`when`)
 
-`transition({ when })` gates the hold per request. The predicate runs server-side and outside any cache scope; return `false` to drop this segment's transition for the request (the navigation streams its `loading()` fallback instead of holding).
+`transition({ when })` gates the hold per request. The predicate runs server-side and outside any cache scope; return `false` to drop this segment's transition for the request. The hold is navigation-wide: the navigation streams its `loading()` fallback instead of holding only when no other matched segment still has a transition (the common case is a single `transition()` on the route).
 
 Timing follows the route's rendering contract:
 
@@ -280,7 +298,10 @@ urls(({ path, transition }) => [
   ]),
 ]);
 
-// ProductPage renders the boundary itself, exactly where it's wanted:
+// ProductPage renders the boundary itself, exactly where it's wanted
+// (ViewTransition is exported by React 19.3+ and experimental builds):
+import { ViewTransition } from "react";
+
 function ProductPage() {
   return (
     <ViewTransition name="hero">
@@ -311,7 +332,7 @@ const router = createRouter<AppEnv>({ viewTransition: false });
 | `transition({ viewTransition: false })`  | `"auto"`                | no wrap (per-route wins) | **ST only** |
 | `transition({ viewTransition: false })`  | `false`                 | no wrap                  | ST only     |
 
-On stable React the "VT" column is always a no-op (there is no `<ViewTransition>`), so every row collapses to its `startTransition`-only behavior there.
+On React 19.2 (no `<ViewTransition>` export) the "VT" column is a no-op, so every row collapses to its `startTransition`-only behavior there.
 
 | Config                                               | Router boundary  | startTransition driving (no skeleton flash) | Your own `<ViewTransition name>`   |
 | ---------------------------------------------------- | ---------------- | ------------------------------------------- | ---------------------------------- |
@@ -320,7 +341,7 @@ On stable React the "VT" column is always a no-op (there is no `<ViewTransition>
 | `transition({ viewTransition: false })`              | none             | yes                                         | fires alone                        |
 | global `viewTransition: false`, route `transition()` | none             | yes                                         | fires alone                        |
 
-> On **stable** React there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
+> On React 19.2 there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
 
 ## Testing a transition() route
 

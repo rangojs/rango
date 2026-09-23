@@ -1,6 +1,6 @@
 # Testing reverse/href and type-level contracts
 
-**Layer:** unit (node) + typecheck · **Import:** `@rangojs/router/client` (useReverse), `@rangojs/router/testing` (assertGeneratedRoutesMatch) · **DSL it tests:** `reverse`/`href`/`useReverse` (see `/typesafety`, `/links`)
+**Layer:** unit (node) + typecheck · **Import:** `@rangojs/router/client` (useReverse), `@rangojs/router/testing` (assertGeneratedRoutesMatch) · **DSL it tests:** `ctx.reverse`/`href`/`useReverse` (see `/typesafety`, `/links`)
 
 The reverse/href/params/env types are a real contract: a wrong route name, a missing param, or an unknown env binding should be a COMPILE error, not a runtime surprise. The type-test recipes have no runtime API — `tsc --noEmit` IS the assertion. `assertGeneratedRoutesMatch` is the one runtime helper here: it runs the router's real matching to expand lazy includes, then diffs the live `routeMap` against the generated named-routes map you seed. It (and `diffGeneratedRoutes`) are **async — `await` them** — because expanding an async `include(prefix, () => import("./routes"))` group means importing that module first.
 
@@ -8,10 +8,10 @@ The reverse/href/params/env types are a real contract: a wrong route name, a mis
 
 ### Options — `assertGeneratedRoutesMatch(router, generatedMap?)`
 
-| Field          | Type                                 | Meaning                                                                                                                                                    |
-| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`       | `{ routeMap; findMatch? }`           | Your router (real impl). `routeMap` is the live name→pattern map; `findMatch` (when present) is called to force-expand lazy `include()`d routes.           |
-| `generatedMap` | `Record<string, unknown>` (optional) | The imported `*.named-routes.gen.ts` map (name→pattern, or `{ path }` objects). Omit to diff against the global route map (`getGlobalRouteMap()`) instead. |
+| Field          | Type                                 | Meaning                                                                                                                                                 |
+| -------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `router`       | `{ routeMap; findMatch? }`           | Your router (real impl). `routeMap` is the live name→pattern map; `findMatch` (when present) is called to force-expand lazy `include()`d routes.        |
+| `generatedMap` | `Record<string, unknown>` (optional) | The `NamedRoutes` export of your `*.named-routes.gen.ts` file (name→pattern, or `{ path }` objects). Omit to diff against the global route map instead. |
 
 ### Context — `GeneratedRoutesDiff` (what `diffGeneratedRoutes` resolves to)
 
@@ -32,14 +32,19 @@ The reverse/href/params/env types are a real contract: a wrong route name, a mis
 // 1. Negative assertions inline with @ts-expect-error — the directive ERRORS if
 //    the line below it ever starts compiling (i.e. if the type guard regresses).
 //    Validated by `tsc --noEmit`; a runtime test cannot assert this.
+//    Keep the hook call inside a function that is never invoked: tsc checks it,
+//    and a runtime test file that imports it does not execute a hook outside
+//    a component.
 import { useReverse } from "@rangojs/router/client";
 
-const reverse = useReverse({ post: "/blog/:slug" });
-reverse("post", { slug: "hi" }); // ok
-// @ts-expect-error - missing required :slug param
-reverse("post", {});
-// @ts-expect-error - "comment" is not a route in this map
-reverse("comment", { id: "1" });
+function typeOnly() {
+  const reverse = useReverse({ post: "/blog/:slug" });
+  reverse("post", { slug: "hi" }); // ok
+  // @ts-expect-error - missing required :slug param
+  reverse("post", {});
+  // @ts-expect-error - "comment" is not a route in this map
+  reverse("comment", { id: "1" });
+}
 ```
 
 ```ts
@@ -62,10 +67,11 @@ expectTypeOf<
 import { it } from "vitest";
 import { assertGeneratedRoutesMatch } from "@rangojs/router/testing";
 import { router } from "../src/router";
-import generated from "../src/router.named-routes.gen";
+// The generated file has no default export; it exports `NamedRoutes`.
+import { NamedRoutes } from "../src/router.named-routes.gen";
 
 it("generated named-routes map is in sync with the router", async () => {
-  await assertGeneratedRoutesMatch(router, generated);
+  await assertGeneratedRoutesMatch(router, NamedRoutes);
 });
 ```
 
@@ -76,7 +82,7 @@ For a large type-only suite, collect recipe-1/2 assertions in `*.test-d.ts` file
 - Type tests run at TYPECHECK time (`tsc --noEmit`), NOT in the vitest runner. They are their own layer — wire them into CI as a real step (`pnpm run typecheck`). A type test nobody runs is just a comment.
 - `@ts-expect-error` ERRORS if the line below it ever starts compiling, so a regressed guard fails the typecheck. A runtime test cannot assert "this should not type-check".
 - `assertGeneratedRoutesMatch` force-expands lazy `include()`d routes (awaits `findMatch` on a concrete path derived from each generated pattern) before diffing — otherwise every included route reads as a false `missing`. It is **async** so it can await the module import behind an async `include(() => import())` group; `await` the call (or the async group's routes read as `missing`). This makes the whole-app drift check work in a plain unit test. Routers without `findMatch` (a bare `{ routeMap }`) are left as-is.
-- MULTI-APP route-map isolation. `href()`/`reverse()` typing is GLOBAL — each app's generated file augments the one `Rango.GeneratedRouteMap` interface. A `renderRoute` suite that imports a client component from app B (which calls `href("/b-route")`) won't typecheck if the same tsconfig program also carries app A's augmentation: A's route union rejects B's name. `renderRoute` is app-agnostic at RUNTIME; the collision is purely the global `href` typing. Keep a `renderRoute` suite single-app, or give each app its OWN tsconfig program (see `/typesafety`); a quick sidestep is to probe `useMount`/`useHref` inline instead of importing the cross-app component.
+- MULTI-APP route-map isolation. `href()`/`ctx.reverse()` typing is GLOBAL — each app's generated file augments the one `Rango.GeneratedRouteMap` interface. A `renderRoute` suite that imports a client component from app B (which calls `href("/b-route")`) won't typecheck if the same tsconfig program also carries app A's augmentation: A's route union rejects B's name. `renderRoute` is app-agnostic at RUNTIME; the collision is purely the global `href` typing. Keep a `renderRoute` suite single-app, or give each app its OWN tsconfig program (see `/typesafety`); a quick sidestep is to probe `useMount`/`useHref` inline instead of importing the cross-app component.
 
 ## See also
 

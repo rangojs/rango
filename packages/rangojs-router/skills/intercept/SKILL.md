@@ -8,6 +8,18 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
+`intercept(slot, routeName, handler, config?, use?)`:
+
+- `slot` — the `@name` slot the intercept renders into; the layout places it
+  with `<ParallelOutlet name="@modal" />`.
+- `routeName` — the target route. A dot prefix (`".product"`) resolves inside
+  the current `include()` scope; a bare name (`"product"`) is the global route
+  name. Declare the intercept in a layout that wraps the target route — the
+  router finds intercepts by walking up the target route's own layout chain.
+- `handler` — the component or handler rendered in the slot.
+- `config` — optional `{ when }` (see "Conditional Intercept"); pass the `use`
+  callback as the 4th argument when there is no config.
+
 ## Not this skill if…
 
 - You want a slot that ALWAYS renders alongside the page (sidebar, multi-column
@@ -60,7 +72,8 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 
 ## Intercept with Layout
 
-Wrap intercept content in a modal layout:
+Wrap intercept content in a modal layout. The layout renders the intercept
+content through `<Outlet />` (not a `children` prop):
 
 ```typescript
 intercept(
@@ -68,20 +81,26 @@ intercept(
   "product",
   <ProductModalContent />,
   () => [
-    layout(<ModalWrapper />),  // Wraps the modal content
+    layout(<ModalWrapper />),  // Wraps the modal content via <Outlet />
     loader(ProductLoader),
     loading(<ProductModalSkeleton />),
   ]
 )
 ```
 
+Only the first `layout()` in an intercept's `use()` is applied.
+
 ## Intercept Middleware
 
 Intercepts support their own middleware chain via the use callback. The full chain for an intercept request is:
 
 ```
-global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept handler -> intercept loaders
+global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept loaders + handler
 ```
+
+The intercept's loaders are started before its handler is called, so they run
+in parallel with it. If intercept middleware returns a `Response` (e.g. a
+redirect), the intercept stops there.
 
 ```typescript
 intercept(
@@ -114,9 +133,10 @@ Use named revalidation contracts on both the outer producer and the intercept
 consumer when they share `ctx.set()` data:
 
 ```typescript
+import type { Revalidate } from "@rangojs/router";
 import * as ProductActions from "./actions/product";
 
-export const revalidateProductShell = (ctx) =>
+export const revalidateProductShell: Revalidate = (ctx) =>
   ctx.isAction(ProductActions) || undefined;
 
 layout(ProductLayout, () => [
@@ -151,9 +171,9 @@ layout(ProductLayout, () => [
 
 ## Conditional Intercept with the `when` config
 
-Only intercept based on navigation context. `when` is the 4th argument
-(an `InterceptConfig` object); the other use-items go in the 5th-argument
-callback.
+Only intercept based on navigation context. `when` goes in the config object
+(4th argument); the use-items then move to the 5th-argument callback. The
+config type is not exported — pass an object literal.
 
 ```typescript
 intercept(
@@ -168,9 +188,19 @@ intercept(
 )
 ```
 
-`when` is a match-time selector receiving `{ from, to, params, segments, ... }`.
+`when` is a synchronous match-time selector. It receives `from` / `to` (URLs),
+`fromRouteName` / `toRouteName` (named routes only), `params` (the target's),
+`segments` (the client's current segment path and ids), `request`, and `env`.
 Pass an array of predicates for AND logic (all must return true). Omit `when`
-entirely and the intercept always activates.
+entirely and the intercept always activates. `when` is not re-evaluated during
+action revalidation, so an open modal stays open after an action.
+
+```typescript
+// Intercept only when opened from the shop index
+intercept("@modal", "product", <ProductModal />, {
+  when: ({ fromRouteName }) => fromRouteName === "index",
+})
+```
 
 ```typescript
 intercept(
@@ -210,16 +240,17 @@ Use navigation to close:
 
 ```typescript
 "use client";
-import { useRouter } from "@rangojs/router/client";
+import { Outlet, useRouter } from "@rangojs/router/client";
 
-function ModalWrapper({ children }) {
+// Used as the intercept's layout: layout(<ModalWrapper />)
+export function ModalWrapper() {
   const router = useRouter();
 
   return (
     <div className="modal-overlay" onClick={() => router.back()}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => router.back()}>Close</button>
-        {children}
+        <Outlet />
       </div>
     </div>
   );
@@ -305,10 +336,10 @@ segments.
 ## Complete Example
 
 ```typescript
-// components/ProductModal.tsx
+// components/shop-layout.tsx
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-function ShopLayout() {
+export function ShopLayout() {
   return (
     <div className="shop">
       <ParallelOutlet name="@promoBanner" />
@@ -320,16 +351,23 @@ function ShopLayout() {
   );
 }
 
-function ModalWrapper({ children }) {
+// components/modal-wrapper.tsx (see "Closing the Modal" for a closable version)
+import { Outlet } from "@rangojs/router/client";
+
+export function ModalWrapper() {
   return (
     <div className="modal-overlay">
-      <div className="modal">{children}</div>
+      <div className="modal">
+        <Outlet />
+      </div>
     </div>
   );
 }
 
-// urls/shop.tsx
+// urls/shop.tsx — mounted with include("/shop", shopPatterns, { name: "shop" })
 import { urls } from "@rangojs/router";
+import { ShopLayout } from "../components/shop-layout";
+import { ModalWrapper } from "../components/modal-wrapper";
 
 export const shopPatterns = urls(({
   path,
@@ -338,6 +376,7 @@ export const shopPatterns = urls(({
   intercept,
   loader,
   loading,
+  cache,
 }) => [
   layout(<ShopLayout />, () => [
     parallel({
@@ -347,7 +386,7 @@ export const shopPatterns = urls(({
     // Intercept product detail into modal
     intercept(
       "@modal",
-      "product",  // Route name (without prefix)
+      ".product", // dot-local: resolves to "shop.product" in this include
       <ProductModalContent />,
       { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
       () => [
@@ -373,6 +412,8 @@ export const shopPatterns = urls(({
 Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`.)
 
 ```typescript
+import { layout, loader, loading, type Handler } from "@rangojs/router";
+
 const QuickViewModal: Handler = async (ctx) => {
   const product = await ctx.use(ProductLoader);
   return <QuickView product={product} />;
@@ -380,7 +421,7 @@ const QuickViewModal: Handler = async (ctx) => {
 QuickViewModal.use = () => [
   loader(ProductLoader),
   loading(<QuickViewSkeleton />),
-  layout(<ModalChrome />),
+  layout(<ModalChrome />), // ModalChrome renders <Outlet />
 ];
 
 intercept("@modal", "product", QuickViewModal);

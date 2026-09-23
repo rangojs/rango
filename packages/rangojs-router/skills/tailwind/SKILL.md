@@ -6,7 +6,9 @@ argument-hint: [setup]
 
 # Tailwind CSS
 
-Set up Tailwind CSS v4 with the Rango router. Styles are loaded through the Document component using Vite's `?url` CSS import.
+Set up Tailwind CSS v4 in a Rango app: the Vite plugin, the CSS entry, loading
+it from the Document with Vite's `?url` import, theme tokens, class-based dark
+mode, and fonts. The general stylesheet pattern is explained in `/css`.
 
 ## Install
 
@@ -18,11 +20,14 @@ pnpm add -D tailwindcss @tailwindcss/vite
 
 ```typescript
 // vite.config.ts
+import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
+import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
   plugins: [
     tailwindcss(),
+    rango(),
     // ... other plugins
   ],
 });
@@ -37,11 +42,10 @@ export default defineConfig({
 
 ## Document Component
 
-Import the CSS file with `?url` to get a hashed URL, then preload and link it in
-`<head>`. Give the `<link rel="stylesheet">` a `precedence` prop so React 19
-manages it as a resource — de-duped by `href`, ordered, and loaded before paint
-(no flash of unstyled content). See
-[Stylesheets and cross-app navigation](#stylesheets-and-cross-app-navigation):
+Import the CSS file with `?url` to get its hashed URL, then preload and link it
+in `<head>`. Give the `<link rel="stylesheet">` a `precedence` prop so React 19
+manages it as a resource: de-duped by `href`, ordered, and loaded before paint
+(no flash of unstyled content).
 
 ```tsx
 // src/document.tsx
@@ -67,27 +71,15 @@ export function Document({ children }: { children: ReactNode }) {
 }
 ```
 
-## Stylesheets and cross-app navigation
+The `?url` suffix tells Vite to return the processed CSS file's URL instead of
+injecting it as a side effect, giving a stable, hashed asset path in both
+development and production. A bare `import "./index.css"` also produces managed
+CSS, but it is not guaranteed to be in the initial streamed `<head>`; prefer
+`?url` + `<link precedence>` for document CSS (see `/css`).
 
-The `precedence` prop opts a `<link rel="stylesheet">` into React 19's managed
-stylesheet model — React de-duplicates it by `href`, orders it by precedence, and
-loads it before paint (avoiding a flash of unstyled content). It is the
-recommended way to render a stylesheet link, which is why the example above uses
-it. (A bare side-effect `import "./index.css"` also produces managed CSS via
-`@vitejs/plugin-rsc`, but carries an SSR-streaming caveat — prefer the `?url` +
-`<link precedence>` form for document CSS. See `/css`.)
-
-For **host-router** apps (`/host-router`), a client-side navigation that crosses
-an app boundary is a **full document load**, not a soft swap — the framework
-redirects on an app switch. So each app's document (its stylesheets, theme, meta)
-is always re-established cleanly by the target app's own load; you do not have to
-coordinate stylesheet `href`s or `precedence` across apps. (This replaced an
-earlier soft cross-app swap, under which a stylesheet shared across apps — every
-app's `@import "tailwindcss"` compiles to one hashed asset — could be dropped by
-React's by-`href` resource dedup if the apps disagreed on `precedence`. The full
-reload removes that footgun entirely.)
-
-The `?url` suffix tells Vite to return the processed CSS file's URL instead of injecting it as a side effect. This gives you a stable, hashed asset path that works in both development and production.
+For **host-router** apps (`/host-router`), navigating between apps is a full
+document load, so each app's Tailwind stylesheet is loaded by its own Document;
+there is nothing to coordinate across apps.
 
 ## Customizing the Theme
 
@@ -107,17 +99,29 @@ Tailwind v4 uses CSS `@theme` for customization:
 
 ## Dark Mode
 
-Combine with the Rango theme system (see `/theme`):
+Combine with the Rango theme system (see `/theme`). With `attribute: "class"`
+(the default) the theme script puts `class="dark"` or `class="light"` on
+`<html>` before first paint; add `suppressHydrationWarning` to the Document's
+`<html>` so React accepts that change:
 
 ```typescript
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   theme: { attribute: "class" },
 });
 ```
 
-Then use Tailwind's `dark:` variant which reads the `class` attribute:
+Tailwind v4's `dark:` variant follows `prefers-color-scheme` by default. Point
+it at the class instead, so the user's stored choice wins over the OS setting:
+
+```css
+/* src/index.css */
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+Then use the `dark:` variant as usual:
 
 ```tsx
 <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
@@ -147,7 +151,7 @@ No extra `<link>` tags needed in the Document -- Vite bundles the font files fro
 
 ## Notes
 
-- `?url` import is required -- bare CSS imports inject styles as a side effect and do not work with SSR streaming
-- `<link rel="preload" as="style">` eliminates render-blocking by starting the download early
+- Use the `?url` import for the document stylesheet: a bare side-effect import is not guaranteed to be in the initial streamed `<head>` (see `/css`)
+- `<link rel="preload" as="style">` starts the stylesheet download early
 - Tailwind v4 does not need a `tailwind.config.js` -- use `@theme` in CSS instead
 - The `@tailwindcss/vite` plugin handles content detection automatically

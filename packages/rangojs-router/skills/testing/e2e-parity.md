@@ -16,7 +16,7 @@ This is full-stack: the harness builds and serves your real app (`pnpm dev` or `
 | `expect`      | `Expect`   | Your Playwright `expect` (used by helpers + matchers).                   |
 | `defaultRoot` | `string?`  | Fallback app root for `parityDescribe` when a call omits `options.root`. |
 
-### Fixture options — `FixtureOptions` (`useFixture` / `parityDescribe` 3rd arg)
+### Fixture options — `FixtureOptions` (`useFixture`; `parityDescribe`'s 3rd arg takes the same fields minus `mode`)
 
 | Field            | Type               | Meaning                                                                        |
 | ---------------- | ------------------ | ------------------------------------------------------------------------------ |
@@ -54,7 +54,17 @@ This is full-stack: the harness builds and serves your real app (`pnpm dev` or `
 - `expectParity(page, intent, opts) => Promise<void>` — runs `intent` over the JS page and a fresh no-JS context, asserts observed testids' text + pathname/search/hash + `document.cookie` are equal. `opts` is the required `observe` plus optional `baseURL`, `waitFor`, and `ignoreCookies` (the rango state cookie is excluded automatically).
 - `rangoMatchers` — `{ toHaveRangoPathname }` only (pass to `expect.extend`).
 - `testNoJs` — a `test` variant with JavaScript disabled.
-- Page helpers: `waitForHydration`, `expectNoReload`, `expectNoPageError`, `testId`, `waitForNavigation`, `waitForElement`, `goBack`/`goForward`, `getHistoryState`, `waitForTextChange`/`waitForNumericChange`, timing helpers.
+- Page helpers:
+  - navigation/state: `waitForHydration(page)`, `waitForNavigation(page, url)`, `goBack(page)` / `goForward(page)`, `getHistoryState(page)`;
+  - elements: `testId(page, id)`, `waitForElement`, `isVisibleInViewport`, `parseNumber(text)`, `getNumericContent(locator)`;
+  - assertions bound to your `expect`: `expectNoReload(page)` (use with `await using`), `expectNoPageError(page)` (use with `using`), `waitForTextChange`, `waitForNumericChange`;
+  - timing: `createStopwatch()`, `measureTime(fn)`, `expectTiming`, `expectMinTiming`, `expectMaxTiming`.
+
+The entry also exports standalone functions that are NOT on the factory result:
+
+- Prefetch control: `isPrefetchRequest(req)` (true for requests carrying `X-Rango-Prefetch`), `blockPrefetch(page)` / `unblockPrefetch(page)` (abort speculative prefetches — install before `page.goto` when a test needs the click's own navigation fetch, since a warmed Link adopts its prefetch and issues none).
+- The building blocks `createRangoE2E` composes: `createUseFixture(test)`, `createParity({ test, expect, useFixture, defaultRoot? })`, `createPageHelpers(expect)`, `createRangoMatchers(expect)`.
+- The cache/shell status helpers (`assertCacheStatus`, `assertShellStatus`, ... — see `./cache-prerender.md`), re-exported so a plain Playwright runner can use them.
 
 ## Recipe
 

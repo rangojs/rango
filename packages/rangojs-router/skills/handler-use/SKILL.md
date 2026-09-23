@@ -6,7 +6,7 @@ argument-hint: "[handler]"
 
 # Handler-Attached `.use`
 
-A handler function (or branded `Static`/`Prerender`/`Passthrough` definition) can carry its own defaults via a `.use` callback that returns an array of `use` items (loader, middleware, parallel, intercept, layout, loading, etc.). The mount-site DSL (`path()`, `layout()`, `parallel()`, `intercept()`) merges those defaults with any explicit `use()` callback supplied at the registration site.
+A handler function (or branded `Static`/`Prerender`/`Passthrough` definition) can carry its own defaults via a `.use` callback that returns an array of `use` items (loader, middleware, parallel, intercept, layout, loading, etc.). The mount-site DSL (`path()`, `layout()`, `parallel()`, `intercept()`) merges those defaults with any explicit `use()` callback supplied at the registration site. Loader definitions from `createLoader()` accept a `.use` too, limited to `revalidate` and `cache` (see "Loaders" below).
 
 This lets handlers be **self-contained, reusable units** — a page brings its own loader, a layout brings its own middleware, a parallel slot brings its own data + skeleton — without forcing every caller to wire the same items at every mount site.
 
@@ -53,11 +53,14 @@ Now `ProductPage` carries its loader, loading state, and response-header middlew
 
 | Mount site                                        | Allowed item types                                                                                                                                                                        |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path()` / `route()`                              | `layout`, `parallel`, `intercept`, `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `cache`, `transition`                                            |
-| `layout()`                                        | All of the above, plus `route`, `include`                                                                                                                                                 |
+| `path()`                                          | `layout`, `parallel`, `intercept`, `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `cache`, `transition`                                            |
+| `layout()`                                        | All of the above, plus `route` (nested `path()` items) and `include`                                                                                                                      |
 | `parallel()` (per slot)                           | `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `transition`                                                                                                      |
 | `intercept()`                                     | `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `layout`, `route`, `transition` (conditional activation is config-only: `intercept(..., { when })`) |
 | Response routes (`path.json()`, `path.text()`, …) | `middleware`, `cache`                                                                                                                                                                     |
+| `loader()` (a `createLoader()` definition)        | `revalidate`, `cache`                                                                                                                                                                     |
+
+`route` is the item type a `path()` call produces.
 
 For per-item semantics see the dedicated skills: [middleware](../middleware/SKILL.md), [loader](../loader/SKILL.md), [parallel](../parallel/SKILL.md), [intercept](../intercept/SKILL.md), [layout](../layout/SKILL.md), [view-transitions](../view-transitions/SKILL.md).
 
@@ -68,7 +71,9 @@ handler.use() returned middleware() which is not valid inside parallel().
 Allowed types: revalidate, loader, loading, errorBoundary, notFoundBoundary, transition.
 ```
 
-The narrowest contract is `parallel()` — slots cannot bring their own middleware or layout; only data, loading, error/notFound boundaries, revalidation, and transitions.
+The narrowest contract for a handler is `parallel()` — slots cannot bring their own middleware or layout; only data, loading, error/notFound boundaries, revalidation, and transitions.
+
+This runtime check applies to items returned by `handler.use()`. Items in an explicit mount-site `use()` callback are constrained by the TypeScript use-item types (e.g. a `parallel()` callback is typed to parallel items), not by this runtime allow-list.
 
 ## Composition with explicit `use()`
 
@@ -295,6 +300,30 @@ QuickViewModal.use = () => [
 ];
 ```
 
+### Loaders (`loader()`)
+
+A loader definition can carry its own cache and revalidation defaults. They are
+merged into every `loader(Def)` registration, before the explicit
+`loader(Def, () => [...])` items:
+
+```typescript
+import { cache, createLoader, revalidate } from "@rangojs/router";
+import * as CatalogActions from "./actions/catalog";
+
+export const CategoriesLoader = createLoader(async () => fetchCategories());
+CategoriesLoader.use = () => [
+  cache({ ttl: 300 }),
+  // Loaders re-run after every action by default. Re-run this one only for
+  // catalog actions; on navigation, undefined keeps the default.
+  revalidate((ctx) =>
+    ctx.isAction() ? ctx.isAction(CatalogActions) : undefined,
+  ),
+];
+
+// Mount sites get the cache + revalidation defaults with no extra wiring.
+layout(<ShopLayout />, () => [loader(CategoriesLoader) /* … */]);
+```
+
 ## `loading()` is a single-assignment item — scope it correctly
 
 Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different — it mutates `entry.loading` directly, last call wins ([dsl-helpers.ts `loading`](../../src/route-definition/dsl-helpers.ts)).
@@ -310,7 +339,7 @@ Cart.use = () => [loader(CartLoader), loading(<CartSkeleton />)];
 const Notifs: Handler = async (ctx) => { /* … */ };
 Notifs.use = () => [loader(NotifsLoader), loading(<NotifsSkeleton />)];
 
-// ✅ @cart gets a custom skeleton; @notifs keeps its handler.use default.
+// @cart gets a custom skeleton; @notifs keeps its handler.use default.
 parallel({
   "@cart": {
     handler: Cart,
@@ -319,7 +348,7 @@ parallel({
   "@notifs": Notifs,
 });
 
-// ✅ Opt one slot out of streaming while siblings still stream the broadcast.
+// Opt one slot out of streaming while siblings still stream the broadcast.
 parallel(
   {
     "@cart": { handler: Cart, use: () => [loading(false)] },
@@ -333,7 +362,7 @@ Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-
 
 Other things to keep in mind about `loading()`:
 
-- Any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming by default. To opt back out, pass `loading(false)` at the mount site (`loading: false` handling in [match-middleware/segment-resolution.ts](../../src/router/match-middleware/segment-resolution.ts)) — use the slot descriptor form for parallel slots so the opt-out doesn't broadcast.
+- Any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming by default. To opt back out, pass `loading(false)` at the mount site (`loading === false` handling in [segment-resolution/fresh.ts](../../src/router/segment-resolution/fresh.ts)) — use the slot descriptor form for parallel slots so the opt-out doesn't broadcast.
 
 Rule of thumb: only put `loading()` in `handler.use` if you genuinely want every mount site to stream by default. Use the slot descriptor's `use` for any per-slot intent at a `parallel()` call.
 
@@ -343,10 +372,13 @@ Rule of thumb: only put `loading()` in `handler.use` if you genuinely want every
 - **Branded handlers** — `Static()`, `Prerender()`, and `Passthrough()` are positional constructors (not object-arg). Construct first, then attach `.use` to the returned definition:
 
   ```typescript
-  const ProductPage = Prerender(async (ctx) => {
-    const product = await fetchProduct(ctx.params.slug);
-    return <ProductView product={product} />;
-  });
+  const ProductPage = Prerender(
+    async () => [{ slug: "shoes" }, { slug: "jacket" }], // getParams
+    async (ctx) => {
+      const product = await fetchProduct(ctx.params.slug);
+      return <ProductView product={product} />;
+    },
+  );
   ProductPage.use = () => [loader(ProductLoader)];
   ```
 

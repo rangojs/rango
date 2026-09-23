@@ -61,10 +61,10 @@ it("runs a custom 'last wins' collect", () => {
 ```ts
 // loader-reads-handle.test.ts — a loader reading accumulated handle data after the barrier
 import { it, expect } from "vitest";
-import { runLoader } from "@rangojs/router/testing";
+import { runLoader, type TestLoaderContext } from "@rangojs/router/testing";
 import { RenderedProducts } from "../src/handles"; // a createHandle(...)
 
-const livePricesBody = async (ctx) => {
+const livePricesBody = async (ctx: TestLoaderContext) => {
   await ctx.rendered(); // barrier: handle data is now readable
   const ids = ctx.get(RenderedProducts) as string[];
   return ids.map((id) => ({ id, price: 9.99 }));
@@ -85,10 +85,13 @@ it("reads the accumulated handle value (seed the OUTPUT, mock the barrier)", asy
 ```ts
 // loader-writes-handle.test.ts — a loader PUSHING meta/breadcrumbs (handler parity)
 import { it, expect } from "vitest";
-import { runLoaderResult } from "@rangojs/router/testing";
-import { Meta } from "../src/handles";
+import {
+  runLoaderResult,
+  type TestLoaderContext,
+} from "@rangojs/router/testing";
+import { Meta } from "@rangojs/router";
 
-const productBody = async (ctx) => {
+const productBody = async (ctx: TestLoaderContext) => {
   const product = { name: "Widget", slug: "widget" };
   ctx.use(Meta)({ title: `${product.name} — Shop` });
   return product;

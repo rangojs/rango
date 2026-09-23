@@ -4,7 +4,9 @@ description: Server-Sent Events via path.stream and WebSocket upgrades via path.
 type: guide
 ---
 
-You need to push live updates to the browser — a ticker, a chat room, an agent session. Response routes can return long-lived responses: SSE streams via `path.stream()` and WebSocket upgrades via `path.any()`. Both return a `Response` that the router forwards through the middleware chain without reconstruction.
+You need to push live updates to the browser — a ticker, a chat room, an agent session. [Response routes](/docs/rango/features/response-routes) can return long-lived responses: Server-Sent Events (SSE) via `path.stream()` and WebSocket upgrades via `path.any()`. This page covers both, how middleware treats them, and which runtimes support them.
+
+Three rules up front: keep SSE routes outside every `cache()` scope, clean up your stream source when the client disconnects, and don't rely on cookies set on a WebSocket upgrade.
 
 ## Choosing a shape
 
@@ -27,11 +29,12 @@ export const urlpatterns = urls(({ path }) => [
     "/events/ticks",
     (ctx) => {
       const encoder = new TextEncoder();
+      let interval: ReturnType<typeof setInterval> | undefined;
 
       const stream = new ReadableStream({
-        async start(controller) {
+        start(controller) {
           let count = 0;
-          const interval = setInterval(() => {
+          interval = setInterval(() => {
             controller.enqueue(
               encoder.encode(`event: tick\ndata: ${++count}\n\n`),
             );
@@ -40,8 +43,16 @@ export const urlpatterns = urls(({ path }) => [
           // Honor client disconnect — signal comes from ctx.request.signal
           ctx.request.signal.addEventListener("abort", () => {
             clearInterval(interval);
-            controller.close();
+            try {
+              controller.close();
+            } catch {
+              // already closed or cancelled
+            }
           });
+        },
+        // The runtime cancels the stream when the reader goes away
+        cancel() {
+          clearInterval(interval);
         },
       });
 
@@ -69,8 +80,8 @@ source.addEventListener("tick", (e) => console.log("tick", e.data));
 
 ### SSE pitfalls
 
-- **Never wrap SSE routes in `cache()`** — a cached `ReadableStream` is read once and would replay an empty body on the next hit. `path.stream` is already excluded from response-route caching, but don't layer a custom `cache()` middleware on top.
-- **Honor `ctx.request.signal`.** Without wiring abort to your source (timer, DB cursor, upstream fetch), the stream leaks when the client disconnects.
+- **Never put an SSE route inside a `cache()` scope.** Response-route `cache()` does not special-case `path.stream`: an SSE response is a `200` like any other, so a `cache()` above it would try to store an endless stream. Keep SSE routes outside every `cache()` boundary, and don't layer a custom caching middleware on top either.
+- **Honor `ctx.request.signal` and `cancel()`.** Without wiring disconnect to your source (timer, DB cursor, upstream fetch), the stream leaks when the client goes away. Clean up in both places: depending on the runtime, a disconnect surfaces as the request signal aborting, the stream being cancelled, or both. Guard `controller.close()` with a `try`, because the stream may already be cancelled.
 - **Disable Nginx/CDN buffering** via `x-accel-buffering: no` and ensure no intermediate proxy rebuffers. On Cloudflare Workers this is a non-issue.
 - **Middleware is fine.** Global and route middleware rewrap the SSE `Response` as `new Response(response.body, { status, headers })` to merge stub headers — the `ReadableStream` body is passed by reference, not consumed, so the client sees the stream unchanged. (WebSocket upgrades are the exception; see below.)
 
@@ -113,6 +124,8 @@ export const urlpatterns = urls(({ path }) => [
 For connections that need a stateful owner, route into a Durable Object and forward its 101 response unchanged:
 
 ```tsx
+import { urls } from "@rangojs/router";
+
 export const urlpatterns = urls(({ path }) => [
   path.any(
     "/rooms/:roomId",
@@ -152,7 +165,7 @@ export const urlpatterns = urls(({ path }) => [
 When a middleware matches the upgrade URL, it still runs **before** `next()` — but the Response from `next()` is forwarded as-is rather than re-wrapped. That preserves the 101 status (which would otherwise throw `RangeError: Responses may only be constructed with status codes in the range 200 to 599, inclusive` on standards-compliant runtimes) and the Cloudflare `webSocket` property (which `new Response(body, ...)` would silently drop on workerd).
 
 ```tsx
-// This works — logger runs, but the 101 flows through unchanged.
+// This works — the logger runs, and the 101 flows through unchanged.
 router.use(async (ctx, next) => {
   console.log("ws request", ctx.url.pathname);
   return next();
@@ -173,8 +186,10 @@ router.use(async (ctx, next) => {
 **Don't set cookies on an upgrade.** Stub cookie/header writes made before `await next()` land on the upgrade response only best-effort — and a browser completing a WS handshake never reads them regardless. Don't rely on this for auth or state propagation: set cookies via a prior HTTP request (e.g. during login), then read them at upgrade time:
 
 ```tsx
+import { cookies } from "@rangojs/router";
+
 path.any("/ws", (ctx) => {
-  const session = parseCookie(ctx.request.headers.get("cookie"))?.session;
+  const session = cookies().get("session")?.value;
   if (!verify(session)) return new Response("unauthorized", { status: 401 });
   // ...upgrade
 });
@@ -182,7 +197,7 @@ path.any("/ws", (ctx) => {
 
 ## Caching
 
-- **SSE** — do not combine with `cache()`; streams can't be replayed.
+- **SSE** — do not place under `cache()`: it is a cacheable `200`, and an endless stream cannot be stored or replayed.
 - **WebSocket** — `cache()` is inert because only `status === 200` is cacheable.
 
 ## Runtime support

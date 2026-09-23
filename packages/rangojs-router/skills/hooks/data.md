@@ -59,6 +59,13 @@ function ProductPrice() {
 
 **Precondition**: Loader must be registered on route via `loader()` helper.
 
+**`load()` / `refetch` need a fetchable loader.** `load()`, `refetch`, and
+`useRefreshLoaders()` call the loader through the `_rsc_loader` endpoint, which
+only serves loaders created with `createLoader(fn, true)` or
+`createLoader(fn, { middleware })`. A plain `createLoader(fn)` answers 403 there;
+it re-runs only as part of a render (navigation, `router.refresh()`, or the
+revalidation after a server action). See `/loader` → "Fetchable Loaders".
+
 Loaders can also be passed as props from server to client components:
 
 ```tsx
@@ -114,6 +121,7 @@ reading the same loader id. Layout, page, and parallel-slot reads
 all converge on the new value:
 
 ```tsx
+// CartLoader = createLoader(fn, true), registered with loader(CartLoader).
 // Layout button calls load() — the page read below sees the update too.
 function Layout() {
   const { data, load } = useLoader(CartLoader);
@@ -268,9 +276,11 @@ server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.fo
 
 ```tsx
 "use client";
+import { useRef } from "react";
 import { useFetchLoader } from "@rangojs/router/client";
 import { FileUploadLoader } from "../loaders/upload";
 
+// Needs JavaScript: the form action is a client function, not a server action.
 function FileUploader() {
   const { data, load, isLoading } = useFetchLoader(FileUploadLoader);
   const formRef = useRef<HTMLFormElement>(null);

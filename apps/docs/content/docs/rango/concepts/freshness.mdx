@@ -11,23 +11,23 @@ Most caching pain in frameworks is one conflation: "is the stored value still go
 | **Stored-value freshness**  | Is a cached value still good?                                    | `"use cache"` (function), `cache()` (segment), loader `cache()` |
 | **Client-update selection** | Should this segment re-run and stream on this navigation/action? | `revalidate()`                                                  |
 
-They compose without touching each other: a segment selected by `revalidate()` still consults its cache (a hit means no recompute), a cache bust does **not** force a client update, and `revalidate()` never reads, writes, or expires a cached value. If you know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. Everything below is axis 1; axis 2 lives in [Loaders](/docs/rango/features/loaders) and [Segments & Rendering](/docs/rango/concepts/segments-and-rendering).
+They compose without touching each other: a segment selected by `revalidate()` still consults its cache (a hit means no recompute), a cache bust does **not** force a client update, and `revalidate()` never reads, writes, or expires a cached value. If you know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. Everything below is axis 1; axis 2 lives in [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate) and [Segments & Rendering](/docs/rango/concepts/segments-and-rendering).
 
 ## cache() vs "use cache"
 
-Both share the same backing store and cache profiles, and both accept `tags`. They differ in scope, key, and execution model:
+Both use the app-level cache store (`createRouter({ cache: { store } })`) and both can be tagged. Named cache profiles apply to `"use cache"` only; `cache()` takes its options object directly. Without a store, a `cache()` boundary renders live and a `"use cache"` function runs uncached. They differ in scope, key, and execution model:
 
-|                      | `cache()` DSL                                        | `"use cache"` directive                           |
-| -------------------- | ---------------------------------------------------- | ------------------------------------------------- |
-| **Scope**            | Route segment tree (handler + children + parallels)  | Single function return value                      |
-| **Cache key**        | Request type + pathname + params (+ optional custom) | Function identity + serialized non-tainted args   |
-| **Execution on hit** | All-or-nothing: entire handler skipped               | Partial: function body skipped, calling code runs |
-| **Runtime control**  | `condition` to disable, custom `key` function        | None — if the directive is present, it caches     |
-| **Loaders**          | Always fresh — excluded, opt-in per loader           | Can be used inside loaders                        |
+|                      | `cache()` DSL                                       | `"use cache"` directive                           |
+| -------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels) | Single function return value                      |
+| **Cache key**        | Request type + host + pathname + params + search    | Function identity + serialized non-tainted args   |
+| **Execution on hit** | All-or-nothing: entire handler skipped              | Partial: function body skipped, calling code runs |
+| **Runtime control**  | `condition` to disable, custom `key` function       | None — if the directive is present, it caches     |
+| **Loaders**          | Always fresh — excluded, opt-in per loader          | Can be used inside loaders                        |
 
 The fast choice: caching a whole route or group, needing runtime conditions (skip for authed users, key by locale), or skipping expensive subtree rendering — `cache()`. Caching a data fetch shared across routes, or needing separate entries per function argument — `"use cache"`.
 
-The `cache()` key is `{requestType}:{pathname}:{params}`, where the request type is one of `doc:`, `partial:`, or `intercept:` — the same URL is cached separately for full document loads, client navigations, and intercept navigations. The `"use cache"` key is `use-cache:{functionId}:{serializedArgs}` — a stable function identity (module path + export name) plus the serialized arguments, with tainted `ctx`/`env`/`req` arguments excluded.
+The default `cache()` key is `{requestType}:{host}{pathname}[:params][?search]`, where the request type is one of `doc`, `partial`, or `intercept` — the same URL is cached separately for full document loads, client navigations, and intercept navigations. The search part is sorted, excludes the router's internal params, and honors `createRouter({ cache: { searchParams } })`. A custom `key` function replaces the whole default key. The `"use cache"` key is `use-cache:{functionId}:{serializedArgs}` — a stable function identity (module path + export name) plus the serialized arguments. Tainted `ctx`/`env`/`req` arguments are excluded, but the route fields read off a passed `ctx` (host, route name, pathname, params, search) are folded into the key.
 
 The execution model is the distinction that bites. `cache()` is all-or-nothing: on a hit the entire pipeline short-circuits and no handler code runs. `"use cache"` is partial: only the wrapped body is skipped, the calling code still runs — which is exactly why side effects inside a cached body are forbidden (they would silently disappear on a hit). For data that must survive the hit, use `ctx.use(Handle)` — handle data is captured on miss and replayed on hit.
 
@@ -35,6 +35,7 @@ They compose naturally:
 
 ```tsx
 // urls.tsx — route-level cache for the rendered segment tree
+// (inside urls(({ path, cache }) => [ ... ]))
 cache({ ttl: 60 }, () => [
   path("/product/:slug", ProductPage, { name: "product" }),
 ]);
@@ -51,8 +52,8 @@ export async function getProductData(slug: string) {
 SWR is a first-class cache behavior where the store supports it: inside the SWR window the cache serves the **stale value instantly** and refreshes it in the background, so users never wait on a recompute for a merely-aging entry.
 
 - `"use cache"` resolves to the `default` profile `{ ttl: 900, swr: 1800 }` — a 30-minute SWR window out of the box. Tune or add profiles via `createRouter({ cacheProfiles: { … } })`; `"use cache: short"` selects the `short` profile.
-- `cache()` and loader caches take an explicit `swr` in seconds: `cache({ ttl: 60, swr: 300 })` means fresh for 60s, stale-served from 60–360s, a miss after 360s.
-- Store support is layer-specific. `CFCacheStore` supports SWR for segment, document/response, and `"use cache"` entries. `MemorySegmentCacheStore` supports it for response and `"use cache"` entries, but its route-segment entries expire at TTL with no background revalidation — don't read the memory store's dev behavior as proof segment SWR is active.
+- `cache()` and loader caches take an explicit `swr` in seconds (or inherit the store's `defaults.swr`): `cache({ ttl: 60, swr: 300 })` means fresh for 60s, stale-served from 60–360s, a miss after 360s.
+- Store support is layer-specific. `CFCacheStore` and `VercelCacheStore` support SWR for segment, document/response, item (`"use cache"` and cached loaders), and PPR shell entries. `MemorySegmentCacheStore` supports it for response, item, and shell entries, but its route-segment entries expire at TTL with no background revalidation — don't read the memory store's dev behavior as proof segment SWR is active.
 
 SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build has no stale entry to serve (see version-segmented keys below).
 
@@ -77,18 +78,18 @@ That loader exemption is also the default contract of `cache()`: cached UI plus 
 
 Rango's caches are built so a hit can't serve another user's data or lose a response side effect. Two guard models, both blocking anything that would be wrong on a hit:
 
-- **`cache()` boundary guard** — fires while the handler runs on a miss. `cookies()` and `headers()` throw (request-scoped data would bake into the shared shell); response side effects throw even on a miss (`ctx.header()`, `ctx.setCookie()`, `ctx.setStatus()`, `ctx.onResponse()`) because they'd be skipped on a hit and produce inconsistent responses. `ctx.set()` of a cacheable var is allowed — children are cached too and can read it.
-- **`"use cache"` exec guard** — the same request-scoped APIs throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`.
+- **`cache()` boundary guard** — fires while the handler runs on a miss. `cookies()` and `headers()` throw (request-scoped data would bake into the shared shell); response side effects such as `ctx.headers.set()` and cookie writes throw even on a miss, because they'd be skipped on a hit and produce inconsistent responses. `ctx.set()` of a cacheable var is allowed — children are cached too and can read it.
+- **`"use cache"` exec guard** — the same request-scoped APIs and response writes throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`. The guard runs only on the cached path: with no store configured the function runs uncached and nothing throws.
 
 Loaders are exempt from both — they always run fresh, so read request data there. Headers that must appear on every response belong in middleware, outside any boundary.
 
-Context variables get a third, targeted guard. `createVar({ cache: false })` (or a `ctx.set(var, value, { cache: false })` write — least cacheable wins) taints a value as request-scoped, and a **direct** `ctx.get()` of it inside a `cache()` boundary throws — the guard against serving user A's data to user B. The guarantee is deliberately narrow: a value _derived_ from a tainted var outside the boundary and cached later is not tracked. Don't read this as "you can't cache user data" — the safe pattern is the natural one: **read tainted context at the point of use, in the path that needs it (a loader or live segment) — never extract user data into a plain value and cache that.**
+Context variables get a third, targeted guard. `createVar({ cache: false })` (or a `ctx.set(var, value, { cache: false })` write — least cacheable wins) taints a value as request-scoped, and a **direct** `ctx.get()` of it inside a `cache()` boundary throws — the guard against serving user A's data to user B. This guard belongs to the `cache()` boundary; it does not fire inside a `"use cache"` function body. The guarantee is deliberately narrow: a value _derived_ from a tainted var outside the boundary and cached later is not tracked. Don't read this as "you can't cache user data" — the safe pattern is the natural one: **read tainted context at the point of use, in the path that needs it (a loader or live segment) — never extract user data into a plain value and cache that.**
 
 ## Version-segmented store keys
 
 `CFCacheStore` prefixes every physical store key with the build version (auto-generated per build, overridable via the store's `version` option). A new deploy reads under a new prefix, so it can never see a previous build's entries — no cross-deploy shape drift, no dead client-chunk references baked into cached RSC.
 
-The tradeoff: loader/data caches use the same store, so every deploy is a **cold data cache**, and SWR can't soften it — no stale entry exists under the new key. Decide deliberately: accept the deploy-time origin warm-up (correctness over hit-rate), or split the policy — let the render cache auto-version while a separate data store gets a stable `version` so its entries survive deploys.
+The tradeoff: loader/data caches use the same store, so every deploy is a **cold data cache**, and SWR can't soften it — no stale entry exists under the new key. Decide deliberately: accept the deploy-time origin warm-up (correctness over hit-rate), or split the policy — let the render cache auto-version while a separate data store gets a stable `version` so its entries survive deploys. `VercelCacheStore` does not version automatically; pass a per-deploy namespace or its `version` option. `MemorySegmentCacheStore` is per-process and starts cold on every restart anyway.
 
 ## Coming from Next.js or Remix (false friends)
 

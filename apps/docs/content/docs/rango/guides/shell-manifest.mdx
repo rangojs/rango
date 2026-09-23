@@ -19,9 +19,9 @@ The shell manifest closes the gap with a consistency guarantee: the loader reads
 
 Three features composed:
 
-1. **Handles record data at render time.** The handler pushes to a handle (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on the cache miss for `cache()`.
+1. **Handles record data at render time.** The handler pushes to a handle (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on the cache miss for `cache()`. Loaders can push handles too, but a loader push is request-time data and is not part of the replayed artifact; a manifest handle must be pushed by the code that is frozen with the shell.
 2. **Replay on every hit.** Handle data is stored with the Flight payload and replayed into the handle store on cache/prerender hits — handler code does not re-run, but its pushes do.
-3. **Loaders read after the render barrier.** A DSL loader can `await ctx.rendered()` (waits for all non-loader segments to settle — fresh render or replay alike); after that, `ctx.use(Handle)` returns the collected handle data.
+3. **Loaders read after the render barrier.** A DSL loader can `await ctx.rendered()` (waits for all non-loader segments to settle — fresh render or replay alike); after that, `ctx.get(Handle)` returns the collected handle data. In a loader, `ctx.use(Handle)` is the write (it returns the push function); reads go through `ctx.get`.
 
 Loaders are live by default, so the read happens on every request even when the shell is a hit.
 
@@ -75,8 +75,8 @@ import { RenderedProducts } from "../handles/rendered-products";
 
 export const PriceLoader = createLoader(async (ctx) => {
   await ctx.rendered();
-  const ids = ctx.use(RenderedProducts);
-  return db.pricesFor(ids); // Map<string, number> keyed by product id
+  const ids = ctx.get(RenderedProducts);
+  return db.pricesFor(ids); // Record<string, number> keyed by product id
 });
 ```
 
@@ -84,8 +84,14 @@ Wire the route, and consume the loader in the live hole:
 
 ```tsx
 // urls.tsx
-path("/products/:category", ProductList, { name: "products" }, () => [
-  loader(PriceLoader),
+import { urls } from "@rangojs/router";
+import { ProductList } from "./routes/products";
+import { PriceLoader } from "./loaders/prices";
+
+export const urlpatterns = urls(({ path, loader }) => [
+  path("/products/:category", ProductList, { name: "products" }, () => [
+    loader(PriceLoader),
+  ]),
 ]);
 ```
 
@@ -117,11 +123,11 @@ cache({ ttl: 600, tags: ["products"] }, () => [
 
 ## Contract and gotchas
 
-- **The manifest is exactly as fresh as the shell.** Replayed handle data is frozen with the payload. To change _which_ products render, invalidate the shell — `updateTag("products")`, TTL expiry, rebuild — never treat the loader as the refresh path for the list itself. This is the point: shell and holes cannot desync because they share one artifact.
+- **The manifest is exactly as fresh as the shell.** Replayed handle data is frozen with the payload. To change _which_ products render, refresh the shell: for `cache()`, `updateTag("products")` or TTL expiry; for `Prerender`, a rebuild (tag invalidation does not reach build-time payloads). Never treat the loader as the refresh path for the list itself. This is the point: shell and holes cannot desync because they share one artifact.
 - **No request-scoped data in a manifest handle.** The handle data is baked into a shared artifact — the same cross-user rule as any cached content. Ids, slugs, slot names, variant keys: yes. Anything derived from `cookies()`/`headers()`: no.
-- **`ctx.rendered()` is experimental and DSL-loaders-only.** It throws in fetchable/standalone loader calls that run outside a route render.
+- **`ctx.rendered()` is experimental and DSL-loaders-only.** It throws in fetchable/standalone loader calls that run outside a route render, in handler-invoked loaders (a handler already awaiting the loader via `ctx.use()` would deadlock), and in loaders registered with `{ ssr: false }` (the document render awaits those before the barrier).
 - **The reading loader serializes after the shell.** `await ctx.rendered()` deliberately gives up loader/render parallelism — on a miss the loader waits for segment resolution; on a hit (the common case for a cached shell) replay is immediate and the wait is negligible. A `debugPerformance` waterfall shows this loader after the render bar; for this pattern that is the contract, not a regression.
-- **`ctx.use(Handle)` before `await ctx.rendered()` throws** in a loader, with an error saying to await the barrier first.
+- **`ctx.get(Handle)` before `await ctx.rendered()` throws** in a loader, with an error saying to await the barrier first. `ctx.use(Handle)` — the push — is legal anywhere in the loader body.
 - **Deferred handle values are resolved before storage** (resolve-by-default), so the manifest read always sees plain values, never promises.
 
 ## Testing the loader

@@ -76,17 +76,24 @@ describe("api routes via dispatch", () => {
 });
 ```
 
-`dispatch` also covers trailing-slash/redirect targets (`findMatch`) — a redirected path returns a 308 with the `Location` (query preserved). Pass `env` via `{ env }`.
+`dispatch` also covers, with production code paths:
+
+- trailing-slash/redirect targets (`findMatch`) — a redirected path returns a 308 with the `Location` (query preserved);
+- the open-redirect guard on browser-followed redirects (a cross-origin `Location` is rewritten to the basename root unless `redirect(url, { external: true })`);
+- content-negotiated routes (`Vary: Accept` appended);
+- cached response routes (`cache({ ... })` around a `path.json` etc.): hit, SWR, and tag writes. The cache write is scheduled via `waitUntil` (a microtask in tests), so flush microtasks between the seeding `dispatch` and the one that asserts the hit;
+- `createRouter({ telemetry })` `request.start` / `request.end` / `request.error` events, and `createRouter({ onError })` for cache-read/write failures.
 
 ## Caveats
 
 - Hitting a COMPONENT (RSC) route throws a clear directive error: `dispatch` is for response routes + redirects + 404 + content negotiation, plus the global + route-level middleware guard stack on RESPONSE routes — it never renders React. Use Flight primitives or e2e to exercise component rendering.
 - A COMPONENT route's guard stack cannot run here. Assert it at e2e, or extract the middleware fn and unit-test it with `runMiddleware` (see `./middleware.md`).
-- JSON serialization is bare, applied in `response-route-handler.ts`: a `path.json` handler that returns a value is serialized verbatim (`JSON.stringify(value)`, status 200, `application/json`) — no envelope. Returning or throwing a `Response` (e.g. `Response.json(x)`) uses the same control-flow path. Any other thrown error yields an RFC 9457 problem+json body `{ title, status, detail, code }` (`application/problem+json`) with the error's status (`RouterError.status`, else 500, or a non-200 `ctx.res.status` already set upstream in the request pipeline); `code` is the `RouterError.code`, else `"INTERNAL"`. The `type` member is omitted this phase. Assert the shape matching what your handler returns.
+- JSON serialization is bare, applied in `response-route-handler.ts`: a `path.json` handler that returns a value is serialized verbatim (`JSON.stringify(value)`, status 200, `application/json`) — no envelope. Returning or throwing a `Response` (e.g. `Response.json(x)`) uses the same control-flow path. Any other thrown error takes the error's status (`RouterError.status`, else 500, or a non-200 status already set upstream in the request pipeline). On a `path.json` route the body is an RFC 9457 problem+json object `{ title, status, detail, code }` (`application/problem+json;charset=utf-8`), where `code` is the `RouterError.code`, else `"INTERNAL"`, and the `type` member is omitted. On text/html/xml/md routes the body is `text/plain`: the `RouterError` message, the error message in dev, or `"Internal Server Error"` in production. Assert the shape matching what your handler returns.
 - Setup: needs the preset (alias + virtual stubs) or a Vite-RSC env (see `./setup.md`); a bare router import throws on Vite virtuals.
 - A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`). Importing the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules) — build from a focused include (your API routes) for whole-router dispatch.
 - A `_rsc_partial` request to a response route runs global middleware first (an auth gate can still 401/redirect), then returns `X-RSC-Reload` — route-level middleware is skipped, exactly like production.
-- `dispatch` does NOT execute server actions (`?_rsc_action`), but it DOES run the global middleware chain on an action request — middleware can still 401/redirect it, and any 3xx redirect on a partial OR action request becomes a `204` + `X-RSC-Redirect` (fetch-safe interception), the raw `Location` dropped.
+- `dispatch` does NOT execute server actions (`?_rsc_action`), but it DOES run the global middleware chain on an action request — middleware can still 401/redirect it, and any 3xx redirect on a partial OR action request becomes a `204` + `X-RSC-Redirect` (fetch-safe interception), the raw `Location` dropped. Location state carried on such a redirect is dropped too (production embeds it in a Flight payload); cover that at e2e.
+- `createRouter({ onError })` is NOT invoked for a thrown non-Response HANDLER error here (the typed error Response still matches production), and `cache.decision` / `loader.*` telemetry never fires (no RSC render runs). Cover both at e2e.
 
 ## See also
 

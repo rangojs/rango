@@ -4,12 +4,13 @@ description: See where request time goes with the debugPerformance waterfall, th
 type: guide
 ---
 
-A request feels slow and you need to see where the time went — or you're heading to production and need durable request events and traces. Rango covers both with two complementary surfaces, and both cost nothing until you turn them on.
+A request feels slow and you need to see where the time went — or you're heading to production and need durable request events and traces. Rango covers both with three complementary surfaces, all off by default.
 
-| Surface                                   | What it gives you                                                    | Reach for it when                                    |
-| ----------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
-| Performance timeline (`debugPerformance`) | A per-request waterfall in the console plus a `Server-Timing` header | Debugging one slow request, locally or targeted      |
-| Structured telemetry (`telemetry`)        | Lifecycle events sent to a pluggable sink                            | Production monitoring, OpenTelemetry, custom metrics |
+| Surface                                   | What it gives you                                                                 | Reach for it when                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Performance timeline (`debugPerformance`) | A per-request waterfall in the console plus a `Server-Timing` header              | Debugging one slow request, locally or targeted      |
+| Structured telemetry (`telemetry`)        | Discrete lifecycle events sent to a pluggable sink                                | Production monitoring, OpenTelemetry, custom metrics |
+| Tracing (`tracing`)                       | The same phases as the timeline, as spans in OpenTelemetry, Cloudflare, or Vercel | Production traces next to your platform's own spans  |
 
 ## The performance waterfall
 
@@ -18,14 +19,14 @@ Enable it globally while you investigate:
 ```tsx
 import { createRouter } from "@rangojs/router";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   debugPerformance: true,
 });
 ```
 
-Or flip it on per request from [middleware](/docs/rango/features/middleware) — only for the route, user, or query param you're chasing:
+Or flip it on per request from [middleware](/docs/rango/features/middleware) (route `middleware()` inside `urls()`, or `router.use()` for every request) — only for the route, user, or query param you're chasing:
 
 ```ts
 middleware(async (ctx, next) => {
@@ -43,9 +44,11 @@ Call `ctx.debugPerformance()` before `await next()`. That request then prints a 
 The rows are intervals on one shared axis:
 
 - `handler:total` is the whole router request.
-- `render:total` / `ssr-render-html` show the render pass.
-- `loader:*` rows should overlap the render work. A loader that starts only after the render bar is serialized latency — that's your finding.
-- Cache, route matching, middleware pre/post, RSC serialization, and SSR phases appear as separate spans, so the slow phase is visible without guessing.
+- `render:total:<routeName>` (or `render:total` for unnamed routes) and `ssr:render-html` show the render pass.
+- `loader:<id>` rows should overlap the render work. A loader that starts only after the render bar is serialized latency — that's your finding.
+- Route matching (`match:*`), middleware (`middleware:<name>:pre` / `:post`), actions (`action:<id>`), cache, RSC serialization, and SSR setup appear as separate rows, so the slow phase is visible without guessing.
+
+The console waterfall uses these labels as written. In the `Server-Timing` header, colons become hyphens, other non-alphanumeric characters are dropped, and names are lowercased (`ssr:render-html` becomes `ssr-render-html`, `handler:total` becomes `handler-total`); nested rows get a `d<depth>-` prefix.
 
 ### Caveat: deployed Cloudflare Workers
 
@@ -58,7 +61,7 @@ Use telemetry when you want durable production events rather than a one-request 
 ```tsx
 import { createRouter, createConsoleSink } from "@rangojs/router";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   telemetry: createConsoleSink(),
@@ -70,7 +73,7 @@ A custom sink is just an object with `emit(event)`:
 ```tsx
 import { createRouter } from "@rangojs/router";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   telemetry: {
@@ -85,7 +88,12 @@ Events include `request.start/end/error`, `loader.start/end/error`, `handler.err
 
 ## Tracing: phase spans
 
-Phase spans live in a separate `tracing` slot on the router; `telemetry` stays independent (events only, no phase spans). Every tracing factory emits the same phases, co-emitted from the same site as the `debugPerformance` timeline: `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`, `rango.render`, `rango.ssr`. Each factory returns a `RouterTracingConfig`, and off-platform (no Cloudflare tracing destination, no OTel SDK) every span call is a transparent pass-through — the request behaves as if tracing were off.
+Phase spans live in a separate `tracing` slot on the router; `telemetry` stays independent (events only, no phase spans). Every tracing factory emits the same phases, co-emitted from the same site as the `debugPerformance` timeline: `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, and `rango.background`. Each factory returns a `RouterTracingConfig`, and off-platform (no Cloudflare tracing destination, no OTel SDK) every span call is a transparent pass-through — the request behaves as if tracing were off.
+
+Two of these are span-only, with no timeline row:
+
+- `rango.response` marks the handoff: at most one per request, wrapping only response finalization and ending just before the response is returned to the host. For requests that render nothing (fetchable loader calls, response routes, middleware short-circuits) it shows the trace is complete rather than truncated. Disable it at volume with `spans: { response: false }`.
+- `rango.background` wraps detached `waitUntil` work — PPR shell captures and SWR background revalidations — that runs after the foreground spans end, so it does not show up as orphan KV/fetch spans later in the trace. `rango.background.kind` names the lane. Disable it with `spans: { background: false }`.
 
 ### OpenTelemetry
 
@@ -101,7 +109,7 @@ import { trace } from "@opentelemetry/api";
 
 const tracer = trace.getTracer("my-app");
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   tracing: createOTelTracing(tracer), // request/loader/render/… phase spans
@@ -111,13 +119,13 @@ const router = createRouter({
 
 ### Cloudflare Workers
 
-Use `createCloudflareTracing` for the `tracing` slot instead — it emits the same phases as native Cloudflare custom spans (they appear in the Workers trace waterfall next to the automatic KV/D1/fetch spans), with no `@opentelemetry/api` dependency:
+Use `createCloudflareTracing` for the `tracing` slot instead — it emits the same phases as native Cloudflare custom spans (they appear in the Workers trace waterfall next to the automatic KV/D1/fetch spans), with no `@opentelemetry/api` dependency. It reads the tracer from the `ctx` your Worker passes to `router.fetch(request, { env, ctx })`, and is a pass-through when Workers tracing is not enabled for the Worker:
 
 ```tsx
 import { createRouter } from "@rangojs/router";
 import { createCloudflareTracing } from "@rangojs/router/cloudflare";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   tracing: createCloudflareTracing(), // all phases on by default
@@ -143,7 +151,11 @@ export const tracing = createVercelTracing(); // { enabled, spans, tracerName, t
 import { createRouter } from "@rangojs/router";
 import { tracing } from "./instrumentation.js";
 
-const router = createRouter({ document: Document, urls: urlpatterns, tracing });
+export const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  tracing,
+});
 ```
 
 See [Deploy to Vercel](/docs/rango/guides/deploy-vercel) for the full deployment story around this.
@@ -155,7 +167,7 @@ When the question is stale UI or an unexpected partial render, run the waterfall
 ```tsx
 import { createConsoleSink, createRouter } from "@rangojs/router";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   debugPerformance: true,
@@ -172,7 +184,7 @@ Then inspect:
 
 ## What it costs when off
 
-Nothing. `debugPerformance` is off by default, and `telemetry` emits nothing unless a sink is configured. Per-request `ctx.debugPerformance()` lets you scope the waterfall to exactly the traffic you're investigating.
+Nothing. `debugPerformance` is off by default, `telemetry` emits nothing unless a sink is configured, and with `tracing` unset every span call runs the work directly. Per-request `ctx.debugPerformance()` lets you scope the waterfall to exactly the traffic you're investigating.
 
 <Cards>
   <Card href="/docs/rango/guides/bundle-analysis" title="Bundle Analysis">

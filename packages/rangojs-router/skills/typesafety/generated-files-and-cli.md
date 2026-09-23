@@ -5,23 +5,23 @@
 ```typescript
 // router.tsx
 import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
 import { urlpatterns } from "./urls";
+import type { AppBindings } from "./env";
 
-const router = createRouter<AppBindings>({
+export const router = createRouter<AppBindings>({
   document: Document,
 }).routes(urlpatterns);
 
 // Server-side named-route reverse (type-safe via routeMap)
 export const reverse = router.reverse;
-
-export default router;
 ```
 
 ### Which global type should I use?
 
 Use the generated route map by default. Manual `RegisteredRoutes` augmentation
 is only needed when you want the richer `typeof router.routeMap` shape
-available globally.
+available globally — in practice, for `Rango.PathResponse`.
 
 - `GeneratedRouteMap` — auto-registered by `router.named-routes.gen.ts`
   Use for `Handler<"name">` (type annotation), `Prerender<"name">(...)` (function
@@ -95,18 +95,26 @@ instance in the same TypeScript program:
 }
 ```
 
-Then generate the route types from the router file:
+The Vite plugin writes `src/router.named-routes.gen.ts` (next to the router
+file) automatically: before the dev server starts, again when route files
+change, and during build. To produce it without starting Vite (a fresh clone,
+a CI typecheck step), run the CLI against the router file:
 
 ```bash
 npx rango generate src/router.tsx
 ```
 
-This creates `src/router.named-routes.gen.ts`, which augments
-`Rango.GeneratedRouteMap`. Keep that generated file committed with the router
+The file augments `Rango.GeneratedRouteMap`. Keep it committed with the router
 source. The `files` entry keeps `router.tsx` in the program even when nothing
 imports it directly, so `Rango.Env`, `Rango.Vars`, and optional
 `Rango.RegisteredRoutes` augmentation are visible to handlers, loaders, actions,
 and client helpers.
+
+CLI flags: the default mode fails (and writes nothing) when an `include()` cannot
+be resolved statically (factory functions, dynamic expressions); `--static`
+accepts partial output with warnings; `--runtime` uses Vite-based discovery for
+full coverage (needs `vite` and `@vitejs/plugin-rsc`, optional
+`--config <path>`). Passing a directory scans it for router and `urls()` files.
 
 ### Named Routes, `$$routeNames`, And `router.routeMap`
 
@@ -299,7 +307,9 @@ export const urlpatterns = urls(({ path, layout, loader }) => [
 ]);
 
 // 3. router.tsx - Create router and export reverse
-const router = createRouter<AppBindings>({
+import { createRouter } from "@rangojs/router";
+
+export const router = createRouter<AppBindings>({
   document: Document,
 }).routes(urlpatterns);
 
@@ -312,10 +322,10 @@ declare global {
 }
 
 export const reverse = router.reverse;
-export default router;
 
-// 4. Run `npx rango generate src/router.tsx` to generate
-//    router.named-routes.gen.ts (auto-registers GeneratedRouteMap globally).
+// 4. router.named-routes.gen.ts is written by the Vite plugin (dev + build);
+//    run `npx rango generate src/router.tsx` to produce it without Vite.
+//    It auto-registers GeneratedRouteMap globally.
 //    No manual RegisteredRoutes declaration is needed for named-route handlers,
 //    ctx.reverse, prerender, href(), or Rango.Path. Add `RegisteredRoutes
 //    extends AppRoutes` (an alias of typeof router.routeMap) when global
@@ -323,10 +333,12 @@ export default router;
 //    router.routeMap metadata.
 
 // 5. loaders/*.ts - Type-safe loaders
+import { createLoader } from "@rangojs/router";
+
 export const ProductLoader = createLoader(async (ctx) => {
-  // ctx.params: { slug: string }
-  // ctx.get("user"): User | undefined  (from Rango.Vars)
-  // ctx.env.DB: D1Database  (plain bindings from Rango.Env)
+  // ctx.params.slug: string | undefined  (a loader is not bound to one route)
+  // ctx.get("user"): AppVariables["user"]  (from Rango.Vars)
+  // ctx.env: any  (createLoader does not apply Rango.Env; cast if you need types)
   return { product: await fetchProduct(ctx.params.slug) };
 });
 

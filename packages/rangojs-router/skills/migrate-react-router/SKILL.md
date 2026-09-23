@@ -6,7 +6,12 @@ argument-hint: path-to-react-router-app
 
 # Migrate from React Router to @rangojs/router
 
-Covers React Router v7 (framework mode and library mode), v6, and Remix v2.
+Covers React Router v7 (framework mode and library mode), v6, and Remix v2:
+choosing a target shape per route group, replacing imports, route mapping,
+loaders and actions, middleware, error/loading states, navigation, metadata,
+resource routes, theming, and Workers deployment. Use it when porting one of
+those apps to Rango. For Next.js apps see `/migrate-nextjs`; for a feature
+comparison rather than a port see `/comparison`.
 
 ## Why Rango
 
@@ -109,19 +114,19 @@ unsupported behavior until runtime, and keep the old packages in the dependency
 graph. Replace every `react-router` / `react-router-dom` / `@remix-run/*`
 import at its call site:
 
-| React Router import                           | Replace with                                                                                                         |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`, see §6)                            |
-| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                                               |
-| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                                                 |
-| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()` (same `[params, setParams]` tuple), `useParams()` from `@rangojs/router/client` |
-| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes (see §3)              |
-| `useActionData`                               | `useActionState` (standard React, see §3)                                                                            |
-| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                                               |
-| `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()`                                   |
-| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>` (see §5)                                                                        |
-| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                                               |
-| `useRouteError`                               | the `error` prop of `errorBoundary()` (see §5)                                                                       |
+| React Router import                           | Replace with                                                                                                                                                                       |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Link`, `NavLink`                             | `Link` from `@rangojs/router/client` (`NavLink` active state via `usePathname()`, see §6)                                                                                          |
+| `Outlet`                                      | `Outlet` from `@rangojs/router/client`                                                                                                                                             |
+| `useNavigate`                                 | `useRouter()` from `@rangojs/router/client` (see §6)                                                                                                                               |
+| `useLocation`, `useSearchParams`, `useParams` | `usePathname()`, `useSearchParams()` (same `[params, setParams]` tuple), `useParams()` from `@rangojs/router/client`; `location.state` → typed `useLocationState()` (see `/hooks`) |
+| `useLoaderData`                               | merge the loader into the handler; `useLoader()` for live client data or `clientUrls()` routes (see §3)                                                                            |
+| `useActionData`                               | `useActionState` (standard React, see §3)                                                                                                                                          |
+| `Form`                                        | `<form action={serverAction}>` with a `"use server"` function (see §3)                                                                                                             |
+| `useFetcher`                                  | submits → server actions + `useActionState`/`useOptimistic`; reads → `useLoader()` / `useFetchLoader()` (see `/hooks`)                                                             |
+| `defer` / `Await`                             | `loading()` DSL / plain `<Suspense>` (see §5)                                                                                                                                      |
+| `json()`, `redirect()`                        | plain return values; `redirect` from `@rangojs/router`                                                                                                                             |
+| `useRouteError`                               | the `error` prop of `errorBoundary()` (see §5)                                                                                                                                     |
 
 If an import has no row here and no obvious Rango equivalent, stop and surface
 it to the user — do not mock it to keep the build green.
@@ -142,17 +147,17 @@ Each numbered step's full walkthrough lives in a companion file linked below.
 
 ## 11. Key Conceptual Differences
 
-| Concept             | React Router                        | Rango                                  |
-| ------------------- | ----------------------------------- | -------------------------------------- |
-| Rendering           | Client-side by default, SSR opt-in  | Server components by default (RSC)     |
-| Data loading        | `loader()` + `useLoaderData()`      | Direct fetch in server components      |
-| Form actions        | Route-scoped `action()`             | Function-scoped `"use server"`         |
-| Route definition    | File-based or `createBrowserRouter` | `urls()` DSL with `path()`, `layout()` |
-| Middleware          | Not built-in (use loaders)          | `router.use()` + DSL `middleware()`    |
-| Parallel routes     | Not built-in                        | `parallel()` DSL                       |
-| Intercepting routes | Not built-in                        | `intercept()` DSL                      |
-| Caching             | Not built-in                        | `cache()` DSL, `"use cache"`           |
-| Type-safe routes    | Partial (v7 framework mode)         | Full: params, names, href, reverse     |
+| Concept             | React Router                                                                | Rango                                  |
+| ------------------- | --------------------------------------------------------------------------- | -------------------------------------- |
+| Rendering           | Client-side by default, SSR opt-in                                          | Server components by default (RSC)     |
+| Data loading        | `loader()` + `useLoaderData()`                                              | Direct fetch in server components      |
+| Form actions        | Route-scoped `action()`                                                     | Function-scoped `"use server"`         |
+| Route definition    | File-based or `createBrowserRouter`                                         | `urls()` DSL with `path()`, `layout()` |
+| Middleware          | v7: route `middleware` export; v6 / Remix v2: none (guards live in loaders) | `router.use()` + DSL `middleware()`    |
+| Parallel routes     | Not built-in                                                                | `parallel()` DSL                       |
+| Intercepting routes | Not built-in                                                                | `intercept()` DSL                      |
+| Caching             | Not built-in                                                                | `cache()` DSL, `"use cache"`           |
+| Type-safe routes    | Partial (v7 framework mode)                                                 | Full: params, names, href, reverse     |
 
 ## Migration Checklist
 
@@ -161,7 +166,8 @@ Each numbered step's full walkthrough lives in a companion file linked below.
 3. [ ] Create `router.tsx` with `createRouter()`
 4. [ ] Convert route config / file routes to `urls()` DSL
 5. [ ] Migrate layouts — keep `<Outlet />` (import from `@rangojs/router/client`)
-6. [ ] Merge loaders + components into handler functions (fetch + render in one place)
+6. [ ] Merge loaders + components into handler functions (fetch + render in one place),
+       or port hook-heavy groups with `clientUrls()` (see "Two target shapes")
 7. [ ] Convert React Router actions to `"use server"` functions
 8. [ ] Migrate auth guards from loaders to `router.use()`
 9. [ ] Replace `react-router-dom` Link/navigation with `@rangojs/router/client`
@@ -173,17 +179,22 @@ Each numbered step's full walkthrough lives in a companion file linked below.
         returns nothing, no mock modules or aliases exist, and the packages are
         out of `package.json`
 
-**Cloudflare Workers (if migrating an RR7-on-Workers app):**
+**Cloudflare Workers (if migrating an RR7-on-Workers app):** the linked
+sections are in [`../cloudflare/references/streaming-and-deploy.md`](../cloudflare/references/streaming-and-deploy.md).
 
-14. [ ] Audit the custom worker entry — the `router.fetch()` response must pass
+15. [ ] Audit the custom worker entry — the `router.fetch()` response must pass
         through as a **stream** (`new Response(response.body, response)`); remove
         any `.text()`/`.arrayBuffer()`/`HTMLRewriter` buffering from the Rango
-        path (keep it only on legacy/proxy branches). See §10a.
-15. [ ] Switch local dev to `vite dev` / `vite preview` (they stream + load
+        path (keep it only on legacy/proxy branches). See
+        [Keep streamed responses intact](../cloudflare/references/streaming-and-deploy.md#keep-streamed-responses-intact).
+16. [ ] Switch local dev to `vite dev` / `vite preview` (they stream + load
         `.dev.vars` + provide bindings); stop using `wrangler dev` for local
-        verification — it gzip-buffers and kills streaming. See §10b.
-16. [ ] Move build output paths from RR7's `build/` to vite's `dist/` in
-        `wrangler.toml` (`assets` → `./dist/client/`) and cleanup scripts. See §10d.
-17. [ ] Fix deploy to use the built config `dist/<env>/wrangler.json`
-        (`no_bundle: true`), not a root `wrangler deploy` against the source
-        worker entry (which can't bundle Rango's virtual modules). See §10e.
+        verification — its local gzip can buffer and hide streaming. See
+        [Use Vite for local RSC work](../cloudflare/references/streaming-and-deploy.md#use-vite-for-local-rsc-work).
+17. [ ] Move build output paths from RR7's `build/` to vite's `dist/`: client
+        assets land in `dist/client/`; update cleanup scripts to match.
+18. [ ] Deploy with the generated config (`wrangler deploy -c dist/rsc/wrangler.json`,
+        or `dist/<name>/wrangler.json` for a custom RSC environment name), not a
+        root `wrangler deploy` against the source worker entry (Wrangler cannot
+        rebuild Rango's Vite virtual modules). See
+        [Deploy the built Worker](../cloudflare/references/streaming-and-deploy.md#deploy-the-built-worker).

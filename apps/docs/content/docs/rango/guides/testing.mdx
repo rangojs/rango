@@ -1,0 +1,571 @@
+---
+title: Testing
+description: Set up Vitest and Playwright for a Rango app, then test loaders, middleware, response routes, actions, handlers, client components, and full flows in dev and production.
+type: guide
+---
+
+This guide sets up the test runners for a Rango app and gives one working recipe per layer: loaders, middleware, response routes, server actions, route handlers and Server Components, client components, generated route types, caching, and end-to-end flows. The [Testing overview](/docs/rango/features/testing) explains why the primitives are split the way they are. For every option of every helper, see the [testing skill on GitHub](https://github.com/rangojs/rango/tree/main/packages/rangojs-router/skills/testing).
+
+## Pick the layer first
+
+What a behavior touches decides where it can be tested. A loader's data logic is a plain Node test. An async Server Component needs a real Flight render, which only loads under the `react-server` condition, so it can't be a plain Node test at all.
+
+| Layer                       | Runs under                                     | Entry                                                                       | Main helpers                                                                                                          |
+| --------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Unit and integration (node) | Vitest, default project                        | `@rangojs/router/testing`                                                   | `runLoader`, `runLoaderResult`, `runMiddleware`, `runInRequestContext`, `dispatch`, `assertGeneratedRoutesMatch`      |
+| Flight (RSC)                | Vitest, `react-server` project                 | `@rangojs/router/testing/flight`, `@rangojs/router/testing/flight-matchers` | `renderHandler`, `renderServerTree`, `renderToFlightString`, `findElements`, `findClientBoundaries`, `flightMatchers` |
+| DOM                         | Vitest, default project with a DOM environment | `@rangojs/router/testing/dom`                                               | `renderRoute`                                                                                                         |
+| End-to-end                  | Playwright                                     | `@rangojs/router/testing/e2e`                                               | `createRangoE2E`, `parityDescribe`, `expectParity`, `assertCacheStatus`                                               |
+| Config                      | `vitest.config.ts`, `vitest.rsc.config.ts`     | `@rangojs/router/testing/vitest`                                            | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`                                   |
+
+Host-router pattern helpers live separately at `@rangojs/router/host/testing`; see the [host router guide](/docs/rango/guides/host-router).
+
+## Install
+
+```bash
+pnpm add -D vitest @testing-library/react @testing-library/dom happy-dom @playwright/test
+```
+
+`@testing-library/react` and a DOM environment (`happy-dom` or `jsdom`) are only needed for `renderRoute`. `@playwright/test` is only needed for end-to-end tests. The `@rangojs/router/testing` barrel references neither, so a suite that only tests loaders and middleware can skip them.
+
+## Vitest setup: two projects
+
+Real Flight rendering needs the `react-server` condition, and that condition switches React to its server build, which has no client hooks. So the Flight tests get their own Vitest config, and everything else runs in the default one.
+
+The default project covers unit, integration, and DOM tests:
+
+```ts
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+import { rangoTestConfig } from "@rangojs/router/testing/vitest";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ["test/**/*.test.{ts,tsx}"],
+    environment: "node", // renderRoute files opt into happy-dom with a pragma
+    // "cloudflare" also stubs the cloudflare:workers and cloudflare:email modules.
+    ...rangoTestConfig({ preset: "cloudflare" }), // or { preset: "node" }
+  },
+});
+```
+
+`rangoTestConfig()` returns two things, spread into `test`:
+
+- **Aliases.** Outside the `react-server` condition, the bare `@rangojs/router` import resolves to stubs that throw. The alias points only that specifier at the real server implementation and leaves React on its client build. It also stubs the build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` modules, so no `vi.mock` is needed.
+- **`server.deps.inline`.** Rango ships TypeScript source. Without inlining, Vitest hands those files to Node, which refuses to type-strip `.ts` under `node_modules` on Node 23 and later.
+
+The Flight project uses the lower-level pieces directly:
+
+```ts
+// vitest.rsc.config.ts
+import { defineConfig } from "vitest/config";
+import {
+  rangoInlineDeps,
+  rangoTestAliases,
+  rangoUseClientTransform,
+} from "@rangojs/router/testing/vitest";
+
+// Required. Dev React crashes in the bare worker and adds volatile rows to Flight output.
+process.env.NODE_ENV = "production";
+
+export default defineConfig({
+  plugins: [rangoUseClientTransform()], // discovers "use client" islands
+  resolve: {
+    conditions: ["react-server"],
+    // Without it, getRequestContext() and cookies() resolve to throwing stubs.
+    alias: rangoTestAliases({ preset: "cloudflare" }),
+  },
+  test: {
+    globals: true,
+    include: ["test/**/*.rsc-test.{ts,tsx}"],
+    pool: "forks",
+    execArgv: ["--conditions=react-server"], // Vitest 4 top-level option
+    server: { deps: { inline: rangoInlineDeps } },
+  },
+});
+```
+
+Run the two projects with `vitest run` and `vitest run --config vitest.rsc.config.ts`, for example as `test:unit` and `test:unit:rsc` scripts. If the Flight project's alias is missing, `renderHandler`, `renderServerTree`, and `renderToFlightString` reject with a message that names `rangoTestAliases`.
+
+## Loaders
+
+`runLoader` runs a loader against a real request context in plain Node. Cookies, headers, `ctx.get()`, and `ctx.reverse()` all resolve; you seed the params, env, vars, and route map. Pass the registered `createLoader()` definition directly, or a raw `(ctx) => data` function.
+
+```ts
+// src/loaders/product.ts
+import { createLoader, notFound } from "@rangojs/router";
+
+export type Product = { id: string; name: string };
+
+export const ProductLoader = createLoader(async (ctx) => {
+  const key = `product:${ctx.params.id}`;
+  const product = await ctx.env.CATALOG.get<Product>(key, "json");
+  if (!product) notFound("Product not found");
+  return { product, backHref: ctx.reverse("products") };
+});
+```
+
+`runLoader` returns the data and discards everything else. When the loader's output is a cookie, a header, or a thrown `redirect()`, use `runLoaderResult` instead. It takes the same options and returns `{ result, thrown, response, cookies, headers, locationState, stateCookieName, handlePushes }`. A thrown redirect is captured on `thrown` rather than re-thrown, so the test needs no `try`/`catch`:
+
+```ts
+// test/loaders.test.ts
+import { expect, it } from "vitest";
+import { runLoader, runLoaderResult } from "@rangojs/router/testing";
+import { ProductLoader } from "../src/loaders/product";
+import { SessionLoader } from "../src/loaders/session"; // sets a cookie, then throw redirect("/")
+
+it("loads the product and links back to the listing", async () => {
+  const data = await runLoader(ProductLoader, {
+    params: { id: "42" },
+    env: { CATALOG: { get: async () => ({ id: "42", name: "Widget" }) } },
+    routeMap: { products: "/products" }, // ctx.reverse throws without it
+  });
+  expect(data.product).toEqual({ id: "42", name: "Widget" });
+  expect(data.backHref).toBe("/products");
+});
+
+it("sets the session cookie and redirects home", async () => {
+  const { thrown, cookies, response } = await runLoaderResult(SessionLoader, {
+    request: new Request("https://app.test/login?token=ok"),
+  });
+  expect((thrown as Response).headers.get("Location")).toBe("/");
+  expect(cookies.session).toBeDefined();
+  expect(
+    response.headers.getSetCookie().some((c) => c.startsWith("session=")),
+  ).toBe(true);
+});
+```
+
+The options you'll reach for most:
+
+| Option                 | Seeds                                                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `params`               | `ctx.params` (and `ctx.routeParams`)                                                                              |
+| `search`, `searchData` | `search` sets the raw `ctx.searchParams`; `searchData` sets the typed `ctx.search` object, which defaults to `{}` |
+| `env`                  | `ctx.env`, which is where your binding doubles go                                                                 |
+| `vars`                 | `ctx.get()`, as `{ key: value }` or `[[SomeVar, value]]` tuples keyed by `createVar()` handles                    |
+| `request`              | The backing `Request`. There is no cookies option; pass a `Request` with a `Cookie` header                        |
+| `routeMap`             | The name-to-pattern map `ctx.reverse()` resolves against                                                          |
+| `loaders`              | `ctx.use(OtherLoader)`, as `[[OtherLoader, data]]`. Seeded dependencies are not executed                          |
+| `rendered`, `handles`  | A mocked `ctx.rendered()` barrier and the accumulated handle value `ctx.get(SomeHandle)` returns after it         |
+
+Rango ships no doubles for platform bindings such as D1, KV, R2, or Durable Objects. Build your own and pass them through `env`, which every primitive accepts. Match the driver's contract, not just the binding's public API: `drizzle-orm/d1`, for example, reads rows through `.raw()` as positional arrays in column order and writes through `.run()`, so a double has to model both.
+
+## Middleware
+
+`runMiddleware` runs one middleware, or an array in order, through the router's own middleware executor. `next()`, short-circuits by returning or throwing a `Response`, and the cookie and header merge behave as in production. Here `requireUser` redirects to `/login` unless the `CurrentUser` var (a `createVar()` handle) is set, and marks passing responses `cache-control: private`:
+
+```ts
+// test/require-user.test.ts
+import { expect, it } from "vitest";
+import { runMiddleware } from "@rangojs/router/testing";
+import { CurrentUser, requireUser } from "../src/middleware/require-user";
+
+it("redirects anonymous requests", async () => {
+  const { response, nextCalled } = await runMiddleware(requireUser, {
+    request: "/account",
+  });
+  expect(nextCalled).toBe(0);
+  expect(response.headers.get("location")).toBe("/login");
+});
+
+it("passes signed-in requests through as private", async () => {
+  const { nextCalled, headers } = await runMiddleware(requireUser, {
+    request: "/account",
+    vars: [[CurrentUser, { id: "u1", name: "Ada" }]],
+  });
+  expect(nextCalled).toBe(1);
+  expect(headers["cache-control"]).toBe("private");
+});
+```
+
+The result carries `response`, `nextCalled` (`0` on a short-circuit, `1` on pass-through), and the effective `cookies`, `headers`, and `locationState`, plus `dynamic`, which reports whether the chain called `ctx.dynamic()`. Pass `next` to model the downstream response; the default is an empty `200`. `ctx.reverse()` inside middleware is map-only, as in production, so seed `routeMap` when the middleware builds URLs.
+
+## Response routes with dispatch
+
+`dispatch` sends a request through the router's real matching and its global and route-level middleware, and returns the `Response`. It never renders React, which makes it the tool for response routes, redirects, and 404s.
+
+Your full router file usually imports page modules the node project can't load, so build a router from an importable group of response routes instead:
+
+```ts
+// test/api.test.ts
+import { expect, it } from "vitest";
+import { createRouter } from "@rangojs/router";
+import { dispatch } from "@rangojs/router/testing";
+// path.json() routes; /api/products/:id throws a 404 RouterError for unknown ids
+import { apiPatterns } from "../src/api/urls";
+
+const router = createRouter().routes(apiPatterns);
+const env = { CATALOG: { get: async () => null } };
+
+it("serializes the handler's return value", async () => {
+  const res = await dispatch(router, { request: "/api/health", env });
+  expect(await res.json()).toEqual({ status: "ok" });
+});
+
+it("maps a RouterError to problem+json", async () => {
+  const res = await dispatch(router, { request: "/api/products/999", env });
+  expect(res.status).toBe(404);
+  expect(res.headers.get("content-type")).toBe(
+    "application/problem+json;charset=utf-8",
+  );
+  expect((await res.json()).code).toBe("NOT_FOUND");
+});
+```
+
+A JSON route's return value is serialized as-is, with no envelope. An unmatched path returns `404`, trailing-slash redirects come back as `308` with the query preserved, and cookies or headers the handler sets appear on the returned `Response`. `dispatch` throws on a component route and does not execute server actions; use the Flight helpers or an end-to-end test for those.
+
+## Server actions
+
+An action is a function that reads the request through `getRequestContext()` or `cookies()` and produces effects. `runInRequestContext` builds a real request context, enters it, runs your function, and snapshots what it did, whether it returned or threw.
+
+```ts
+// src/actions/newsletter.ts
+"use server";
+import { cookies, getRequestContext, redirect } from "@rangojs/router";
+
+export async function subscribe(_prev: unknown, formData: FormData) {
+  const email = String(formData.get("email") ?? "");
+  if (!email.includes("@")) return { error: "Enter a valid email address." };
+  await getRequestContext().env.SUBSCRIBERS.put(email, "1");
+  cookies().set("subscribed", "1", { path: "/" });
+  throw redirect("/thanks");
+}
+```
+
+```ts
+// test/newsletter.test.ts
+import { expect, it } from "vitest";
+import { runInRequestContext } from "@rangojs/router/testing";
+import { subscribe } from "../src/actions/newsletter";
+
+const emailForm = (email: string) => {
+  const fd = new FormData();
+  fd.set("email", email);
+  return fd;
+};
+
+it("returns a validation error without side effects", async () => {
+  const { result, thrown } = await runInRequestContext(() =>
+    subscribe(null, emailForm("nope")),
+  );
+  expect(result).toEqual({ error: "Enter a valid email address." });
+  expect(thrown).toBeUndefined();
+});
+
+it("stores the subscriber, sets a cookie, and redirects", async () => {
+  const saved: string[] = [];
+  const put = async (key: string) => void saved.push(key);
+  const { thrown, headers, cookies } = await runInRequestContext(
+    () => subscribe(null, emailForm("ada@example.com")),
+    { env: { SUBSCRIBERS: { put } } },
+  );
+  expect(thrown).toBeInstanceOf(Response);
+  expect(headers.location).toBe("/thanks");
+  expect(cookies.subscribed).toBe("1");
+  expect(saved).toEqual(["ada@example.com"]);
+});
+```
+
+The snapshot is the same envelope `runLoaderResult` returns, minus `handlePushes`. `result` is the return value, or `undefined` if the function threw. `thrown` holds what it threw, captured rather than re-thrown. `response` merges the status, headers, and every `Set-Cookie`, including a thrown redirect's `Location`. `cookies` is the effective cookie view (request cookies plus the run's changes), `headers` is a lowercased object without `set-cookie`, and `locationState` is the flash state set through `ctx.setLocationState()` or `redirect(url, { state })`. Pass `request` as a `Request` with a `Cookie` header to seed request cookies.
+
+Client-cache directives produce their real server-side effect here. An action that calls `invalidateClientCache()` rotates the state cookie, so `response.headers.getSetCookie()` contains an entry starting with `stateCookieName`. One that calls `keepClientCache()` sets `headers["x-rango-keep-cache"]` to `"1"`.
+
+What re-renders after the action, and whether the form works with JavaScript off, are end-to-end questions; see [JS on and JS off](#js-on-and-js-off).
+
+## Route handlers and Server Components
+
+These tests run in the Flight project. Name them `*.rsc-test.tsx` and run `pnpm test:unit:rsc`.
+
+### renderHandler
+
+A route handler is the `(ctx) => rsc` function you pass to `path()`. `renderHandler` calls it with a real handler context, serializes what it returns to Flight, and deserializes that back into a tree you can query. Loaders are seeded, not run.
+
+```tsx
+// src/pages/product.tsx
+import { Meta, type Handler } from "@rangojs/router";
+import { ProductLoader } from "../loaders/product";
+import { AddToCart } from "../components/add-to-cart"; // "use client"
+
+export const ProductPage: Handler<"product"> = async (ctx) => {
+  const { product } = await ctx.use(ProductLoader);
+  ctx.use(Meta)({ title: `${product.name} - Shop` });
+  return (
+    <article>
+      <h1>{product.name}</h1>
+      <AddToCart productId={product.id} />
+    </article>
+  );
+};
+```
+
+```tsx
+// test/product-page.rsc-test.tsx
+import { expect, it } from "vitest";
+import { Meta } from "@rangojs/router";
+import {
+  findClientBoundaries,
+  findElements,
+  renderHandler,
+} from "@rangojs/router/testing/flight";
+import { ProductLoader } from "../src/loaders/product";
+import { ProductPage } from "../src/pages/product";
+
+const widget = { id: "42", name: "Widget" };
+
+it("renders the product, its island, and its title", async () => {
+  const { tree, handles } = await renderHandler(ProductPage, {
+    params: { id: "42" },
+    loaders: [[ProductLoader, { product: widget, backHref: "/products" }]],
+  });
+  expect(findElements(tree, "h1")[0].text).toBe("Widget");
+  const [addToCart] = findClientBoundaries(tree, "AddToCart");
+  expect(addToCart.props.productId).toBe("42");
+  expect(handles.get(Meta)).toEqual([{ title: "Widget - Shop" }]);
+});
+```
+
+`renderHandler` accepts the same `params`, `env`, `vars`, `request`, `routeMap`, and `routeName` seeds as `runLoader`, plus `headers` for request cookies. An unseeded `ctx.use(SomeLoader)` rejects with a setup error. The result is `{ tree, flight, thrown, response, cookies, headers, locationState, handles, dynamic, stateCookieName }`: the effects match `runInRequestContext`, a thrown redirect lands on `thrown` with `tree` undefined, and `handles` maps each handle to the values the handler pushed. A handler that calls a `"use cache"` function runs it uncached unless you pass `cacheStore` (for example `new MemorySegmentCacheStore()` from `@rangojs/router/cache`) and, for named profiles, `cacheProfiles`.
+
+`findElements` returns the host elements your server code produced, such as `<h1>` or `<article>`; server components themselves don't survive serialization, so you query what they rendered. `findClientBoundaries` returns client islands with their props deserialized to real values, so a `Date` prop comes back as a `Date`. Both return arrays in document order and take a string (a tag, or an island's export name) or an object selector such as `{ tag: "article", text: /in stock/i }`, `{ testId: "price" }`, or `{ name: "AddToCart", props: { productId: "42" } }`. `textContent(tree)`, from the same entry, concatenates the rendered text.
+
+To render an element rather than a handler, use `renderServerTree(<Component />, options)`, which returns `{ flight, tree }` and takes the same request-context seeds. Without `rangoUseClientTransform()` in the config, list your islands explicitly with `{ clientComponents: { AddToCart } }`.
+
+### Pinning the Flight payload
+
+To pin the raw wire output, render to a string and assert with the Flight matchers:
+
+```tsx
+// test/price-summary.rsc-test.tsx
+import { expect, it } from "vitest";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
+import { PriceSummary } from "../src/components/price-summary"; // async server component
+
+expect.extend(flightMatchers);
+
+it("renders the total into the Flight payload", async () => {
+  const flight = await renderToFlightString(<PriceSummary cartId="c1" />);
+  expect(flight).toMatchFlight("Total");
+  expect(flight).toMatchFlightSnapshot();
+});
+```
+
+`toMatchFlight` checks that the normalized payload contains a substring; `toMatchFlightSnapshot` snapshots it. Keep these to leaf server components: a client island in the tree appears only as a module reference row, which is why `renderServerTree` and `renderHandler` are the better fit for pages.
+
+## Client components with renderRoute
+
+`renderRoute` mounts the router's real navigation provider around a synthetic route chain you describe, so client hooks such as `useParams`, `useReverse`, `useLoader`, `useHandle`, and `Outlet` resolve against production context. Nothing runs on a server: loader data, location state, and handle output are seeded.
+
+```tsx
+// test/product-view.test.tsx
+// @vitest-environment happy-dom
+import { afterEach, expect, it } from "vitest";
+import { cleanup } from "@testing-library/react";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { Outlet, useLoader, useParams } from "@rangojs/router/client";
+import { ProductLoader } from "../src/loaders/product";
+
+afterEach(cleanup);
+
+const ShopLayout = () => (
+  <main data-testid="shop">
+    <Outlet />
+  </main>
+);
+
+function ProductView() {
+  const { id } = useParams<{ id: string }>();
+  const { data } = useLoader(ProductLoader);
+  return <h1 data-testid="title">{`${data.product.name} #${id}`}</h1>;
+}
+
+it("renders inside the layout with seeded loader data", async () => {
+  const { getByTestId, router } = await renderRoute(
+    [
+      { path: "/shop", Component: ShopLayout }, // layouts first, root to leaf
+      { path: "/shop/products/:id", Component: ProductView }, // the leaf is last
+    ],
+    {
+      request: "/shop/products/42",
+      loaders: [[ProductLoader, { product: { id: "42", name: "Widget" } }]],
+    },
+  );
+  expect(getByTestId("shop").contains(getByTestId("title"))).toBe(true);
+  expect(getByTestId("title").textContent).toBe("Widget #42");
+
+  await router.navigate("/shop/products/7");
+  expect(router.params()).toEqual({ id: "7" });
+});
+```
+
+| Option                                 | Seeds                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `request`                              | The initial URL; the leaf pattern is matched against it for params                           |
+| `params`                               | Params merged over the matched ones                                                          |
+| `loaders`                              | `useLoader()` data, as `[[Loader, data]]` pairs matched by reference                         |
+| `locationState`                        | `useLocationState()` values, as `[[StateDef, value]]` pairs                                  |
+| `handles`                              | `useHandle()` input, as `[[Handle, pushedValues]]`; the handle's real `collect` runs on them |
+| `mount`                                | An `include()` prefix, so `useMount()`, `useHref()`, and `useReverse()` resolve under it     |
+| `basename`, `theme`, `defaultPrefetch` | The matching `createRouter()` options; `useTheme()` throws without `theme`                   |
+| `outletPending`                        | The `pending` flag `useOutlet()` reports                                                     |
+
+Two limits to know. `router.navigate()` re-resolves the same routes without running the navigation lifecycle, so `useNavigation()`, `useLinkStatus()`, and `useAction()` stay idle; test pending and streaming states end to end. And a Suspense retry after a plain resolving promise doesn't flush in this environment, so for content read with `use(promise)`, assert the fallback with a never-resolving promise, and for the resolved state pass a promise that already carries `status: "fulfilled"` and `value`.
+
+## Generated route types
+
+For a router in `src/router.tsx`, `rango generate src/` writes `src/router.named-routes.gen.ts` next to it (see the [CLI reference](/docs/rango/reference/cli)). That file exports the route map as the named export `NamedRoutes`; it has no default export. `assertGeneratedRoutesMatch` compares it to the router's runtime route map and fails when a route was added, removed, renamed, or re-patterned without regenerating:
+
+```ts
+// test/routes.test.ts
+import { it } from "vitest";
+import { assertGeneratedRoutesMatch } from "@rangojs/router/testing";
+import { router } from "../src/router";
+import { NamedRoutes } from "../src/router.named-routes.gen";
+
+it("the generated route map matches the router", async () => {
+  await assertGeneratedRoutesMatch(router, NamedRoutes);
+});
+```
+
+The check is async: it first expands lazy `include()` groups, importing their modules, so every route is in the runtime map before the diff. Without `await`, those routes read as missing. On drift it rejects with every missing, extra, and mismatched name. `diffGeneratedRoutes(router, NamedRoutes)` resolves to the same diff as `{ missing, extra, mismatch, ok }` if you'd rather inspect it. This test imports your whole router file, so every page module it pulls in has to load in the node project.
+
+The types those files produce are a contract too: a wrong route name or a missing param should fail to compile. Pin that with `@ts-expect-error` above a deliberate misuse, such as `reverse("post", {})` for a route that needs `:slug`. The directive errors once the line below it starts compiling, and `tsc --noEmit` runs the check, not Vitest.
+
+## Cache and prerender
+
+The router reports each response's cache decision in an `X-Rango-Cache` header, but only when the debug gate is on: `createRouter({ debugCacheSignal: true })`, or `RANGO_TEST_SIGNALS=1` in `process.env` when the router is created. It is off by default and adds nothing to production output. With the gate on in the app under test, a runtime cache shows up as a `miss` followed by a `hit` across two requests.
+
+A pre-rendered route is served from a Flight payload stored at build time, exactly like a cache hit, so the browser can't tell the difference. Assert it through the same signal rather than the DOM, and only against a production build, because the stored payloads exist only after `pnpm build`:
+
+```ts
+// e2e/cache.spec.ts
+import type { APIResponse } from "@playwright/test";
+import { assertCacheStatus } from "@rangojs/router/testing/e2e";
+import { parityDescribe, test } from "./rango";
+
+// Playwright's headers() returns a plain object; the helper wants Headers.
+const signal = (res: APIResponse) => ({ headers: new Headers(res.headers()) });
+
+parityDescribe("caching", (f) => {
+  test("the second product request is a cache hit", async ({ request }) => {
+    const url = f.url("/products/42");
+    // The key is the route name, not the URL pattern.
+    assertCacheStatus(signal(await request.get(url)), "product", "miss");
+    assertCacheStatus(signal(await request.get(url)), "product", "hit");
+  });
+
+  test("docs pages come from the build-time cache", async ({ request }) => {
+    test.skip(f.mode === "dev", "prerendered payloads need a build");
+    const res = await request.get(f.url("/docs/getting-started"));
+    assertCacheStatus(signal(res), "docs.page", "prerendered");
+  });
+});
+```
+
+The statuses are `hit`, `miss`, `stale`, and `prerendered`, reported per route; a route that passes through prerendering reports `miss`. Import the helper from `/testing/e2e` in Playwright, since the `/testing` barrel pulls in a build-only module a plain Playwright runner can't resolve. If a dev-mode cache test sees a miss where it expects a hit, pass `{ isolatedServer: true }` as the third argument to `parityDescribe` so the dev server is warmed up before the tests run.
+
+When your test owns the router instance that serves the request, `createCacheSink()` wired through `createRouter({ telemetry: sink })` and `assertCacheDecision()` read the same decision from telemetry, with no header. `dispatch` never renders, so it produces neither signal. See the [prerender guide](/docs/rango/guides/prerender) and [caching](/docs/rango/features/caching) for the behavior being tested.
+
+## End-to-end: dev, production, and JS off
+
+The end-to-end harness starts your real app and drives a real browser, and `parityDescribe` runs each suite against both the dev server and a production build. Wire it once around your Playwright `test` and `expect`:
+
+```ts
+// e2e/rango.ts
+import { expect, test } from "@playwright/test";
+import { createRangoE2E } from "@rangojs/router/testing/e2e";
+
+// defaultRoot is the app root, relative to where Playwright runs.
+export const { parityDescribe, expectParity, waitForHydration } =
+  createRangoE2E({ test, expect, defaultRoot: "." });
+
+export { expect, test };
+```
+
+The harness starts the servers itself (`pnpm dev`, and `pnpm build` followed by `pnpm preview`), so the Playwright config needs no `webServer` entry for the app. Override the commands with the `command` and `buildCommand` options when your scripts differ.
+
+### parityDescribe
+
+`parityDescribe(name, body)` registers two describes from one body: `name` against the dev server, and `name (production)` against the build. The body receives a fixture whose `url(path)` resolves against whichever server is running and whose `mode` is `"dev"` or `"build"`.
+
+```ts
+// e2e/navigation.spec.ts
+import { expect, parityDescribe, test, waitForHydration } from "./rango";
+
+parityDescribe("product navigation", (f) => {
+  test("client-navigates to a product", async ({ page }) => {
+    await page.goto(f.url("/"));
+    await waitForHydration(page); // fails on hydration errors
+    await page.getByTestId("product-link").click();
+    await expect(page).toHaveURL(/\/products\/42$/);
+  });
+});
+```
+
+Hand-writing a separate production describe invites drift, and a build-mode describe whose title lacks `(production)` can quietly end up in the wrong bucket of a suite split by title. `parityDescribe` generates the suffix, so neither happens.
+
+### JS on and JS off
+
+`expectParity` applies one intent twice: on your page with JavaScript, and in a fresh context with JavaScript disabled. It then asserts that the observed test ids' text, the final URL (pathname, search, and hash), and `document.cookie` match.
+
+```ts
+// e2e/newsletter.spec.ts
+import { expectParity, parityDescribe, test } from "./rango";
+
+const data = { email: "ada@example.com" };
+
+parityDescribe("newsletter signup", (f) => {
+  test("works the same with and without JavaScript", async ({ page }) => {
+    await page.goto(f.url("/newsletter"));
+    await expectParity(
+      page,
+      { submit: { testId: "newsletter-form", data } },
+      { observe: ["signup-status"] },
+    );
+  });
+});
+```
+
+A `submit` intent fills `data` into the named inputs under the element with that `data-testid` and submits it; `{ navigate: "/path" }` is the other intent. Things to know before writing one:
+
+- **The form must be a real `form`.** With JavaScript off, the browser does a native POST to the action, which is what [progressive enhancement](/docs/rango/concepts/progressive-enhancement) relies on.
+- **The action runs twice against one server.** The no-JS pass submits again. A counter that is shared across sessions reads 2 after the first pass and 4 after the second, and the comparison fails. Keep the observed state per session, or test non-idempotent actions outside `expectParity`.
+- **Cookies are compared as whole jars.** Cookies the JS page picked up before the intent (consent banners, analytics) are compared against a context that starts empty. Start from a fresh page, or list volatile names in `ignoreCookies`. Only non-`HttpOnly` cookies are visible to the comparison; the router's own state cookie is always excluded.
+- **Slow effects.** For a submit, the helper waits for a navigation or a change in an observed test id. Pass `waitFor: async (page) => ...` to wait for something else.
+
+The factory also returns `testNoJs` (a `test` with JavaScript disabled), `useFixture` (the single-mode fixture `parityDescribe` builds on), `rangoMatchers` (adds `toHaveRangoPathname` through `expect.extend`), and page helpers including `waitForNavigation`, `goBack`, `goForward`, `expectNoReload`, and `expectNoPageError`.
+
+To run one suite locally, grep for a fragment of its title without regex metacharacters, such as `pnpm exec playwright test --grep "newsletter signup"`; `--grep` is a regular expression, and `(production)` is a group. If your Playwright config has project dependencies, add `--no-deps`, because `--grep` doesn't filter dependency projects.
+
+## Where each layer stops
+
+The unit and Flight helpers test the pieces. These behaviors look unit-testable but aren't, and a green unit test for them proves nothing:
+
+| Behavior                                                              | Why the lower layer can't prove it                                                     | Test it with                                                      |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Pending, streaming, or action states from navigation and action hooks | `renderRoute`'s `navigate()` skips the navigation lifecycle                            | End-to-end                                                        |
+| A component route's middleware stack                                  | `dispatch` refuses component routes; `renderHandler` and `renderRoute` skip middleware | `runMiddleware` on each middleware, plus end-to-end               |
+| `"use cache"` hits, misses, and stale reads                           | Without `cacheStore`, cached functions run uncached                                    | `cacheStore` for in-process logic; `assertCacheStatus` end to end |
+| What re-renders after an action                                       | Needs the real action round trip                                                       | End-to-end, with `expectParity` for forms                         |
+| Hydration and clicks on client islands                                | `renderServerTree` returns inert boundaries                                            | End-to-end                                                        |
+| A loader that awaits `ctx.rendered()` and reads handle data           | `runLoader` seeds the handle value instead of running the barrier                      | Seed `rendered` and `handles`; cover the wiring end to end        |
+| Typed search schema parsing                                           | `searchData` is seeded as-is                                                           | End-to-end                                                        |
+
+Other unit helpers not covered above: `collectHandle` runs a handle's `collect` function on per-segment values, `runTransitionWhen` evaluates a `transition({ when })` gate, and `runClientRevalidate` evaluates a `clientUrls()` revalidation predicate. The [testing skill](https://github.com/rangojs/rango/tree/main/packages/rangojs-router/skills/testing) documents each with its full options.
+
+<Cards>
+  <Card href="/docs/rango/features/testing" title="Testing overview">
+    The testing entries and what each primitive exercises.
+  </Card>
+  <Card href="/docs/rango/guides/server-actions" title="Server Actions">
+    Forms, validation, revalidation, and client-cache control.
+  </Card>
+  <Card href="/docs/rango/features/loaders" title="Loaders">
+    Loader registration, composition, and revalidation.
+  </Card>
+  <Card href="/docs/rango/features/middleware" title="Middleware">
+    Middleware scope, ordering, and short-circuits.
+  </Card>
+</Cards>

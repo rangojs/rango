@@ -4,7 +4,16 @@ description: Wire the Rango Vite plugin, define a route tree, create the router,
 type: guide
 ---
 
-A Rango app is four files: a Vite config with the plugin, a `urls.tsx` route tree, a `router.tsx` that creates the router, and an entry that hands requests to `router.fetch`. This page walks through each, targeting Cloudflare Workers; the Vercel differences are one option at the end.
+A Rango app needs a Vite config with the `rango()` plugin, a `urls.tsx` route tree, and a `router.tsx` that creates the router. On Cloudflare Workers you also write the Worker entry that hands requests to `router.fetch`; on the Node and Vercel presets, `rango()` generates the server entry for you. This page walks through a Cloudflare Workers app. The Node and Vercel differences are at the end.
+
+## Install
+
+Rango requires Node 24 or newer, React 19.2.8 or newer, and Vite 8.
+
+```bash
+npm install @rangojs/router react react-dom
+npm install -D vite @cloudflare/vite-plugin wrangler
+```
 
 ## Vite config
 
@@ -12,12 +21,10 @@ A Rango app is four files: a Vite config with the plugin, a `urls.tsx` route tre
 // vite.config.ts
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { rango } from "@rangojs/router/vite";
-import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [
-    react(),
     rango({ preset: "cloudflare" }),
     cloudflare({
       configPath: "./wrangler.json",
@@ -27,7 +34,9 @@ export default defineConfig({
 });
 ```
 
-The `rango()` plugin owns RSC wiring, route discovery, and route-type generation. The preset matches your deployment target: `"cloudflare"` or `"vercel"`.
+The `rango()` plugin owns the RSC wiring (it bundles `@vitejs/plugin-rsc`), route discovery, and route-type generation. `preset` picks the deployment target: `"node"` (the default), `"cloudflare"`, or `"vercel"`. On Cloudflare, `cloudflare()` comes after `rango()`, and its `viteEnvironment` must name the `rsc` environment with `ssr` as a child.
+
+`@vitejs/plugin-react` is optional. Add `react()` before `rango()` only if you want Fast Refresh or the [React Compiler](/docs/rango/guides/react-compiler).
 
 ## The route tree
 
@@ -49,7 +58,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 ]);
 ```
 
-Handlers are async server components — they receive a context and return JSX. Fetch where you render:
+Handlers are server components: they receive a context and return JSX, and they can be async. Fetch where you render:
 
 ```tsx
 // src/pages/product.tsx
@@ -65,6 +74,8 @@ export const ProductPage: Handler<"product"> = async (ctx) => {
 
 ## The router
 
+Export the router by name. The Node and Vercel presets import the named `router` export, and a default-only export is not picked up.
+
 ```tsx
 // src/router.tsx
 import { createRouter } from "@rangojs/router";
@@ -76,32 +87,38 @@ export const router = createRouter({
   document: Document,
   urls: urlpatterns,
 });
-
-export default router;
 ```
 
-The `Document` is the HTML frame around every page:
+The `Document` is the HTML frame around every page and every error state. It must be a client component, and it should render `<MetaTags />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Scripts />`:
 
 ```tsx
 // src/document.tsx
+"use client";
+
 import type { ReactNode } from "react";
+import { MetaTags, Scripts } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <MetaTags />
+        <Scripts />
       </head>
-      <body>{children}</body>
+      <body>
+        <Scripts position="body" />
+        {children}
+      </body>
     </html>
   );
 }
 ```
 
+`document` is optional. When you omit it, the router uses a default document with exactly this structure. See [createRouter](/docs/rango/reference/create-router) for every router option.
+
 ## Serving requests
 
-On Cloudflare Workers, the fetch handler delegates to the router:
+On Cloudflare Workers, your Worker entry passes the request to the router together with `env` and `ctx`:
 
 ```ts
 // src/worker.ts
@@ -114,11 +131,13 @@ export default {
 };
 ```
 
-`pnpm vite dev` runs the app in miniflare; `pnpm vite build` produces the production worker; `wrangler deploy` ships it.
+Don't write `export default { fetch: router.fetch }`. Workers call `fetch(request, env, ctx)`, while `router.fetch` takes `(request, { env, ctx })`, so handlers would see an empty `ctx.env` and the `ExecutionContext` would be lost.
+
+Run `npx vite dev` to serve the app from the Workers runtime locally, and `npx vite build` to produce the production Worker. Then `npx wrangler deploy` ships the build output.
 
 ## Typed environment
 
-Pass your bindings as the router's type parameter and register them globally, so `ctx.env` is typed in every handler, loader, and middleware:
+Pass your bindings as the router's type parameter and register them globally, so `ctx.env` is typed in every handler and middleware:
 
 ```ts
 interface AppBindings {
@@ -138,26 +157,33 @@ declare global {
 }
 ```
 
+`createLoader()` types `ctx.env` as `any`, so cast or annotate it inside loaders. See [Type Safety](/docs/rango/concepts/typesafety).
+
 ## Route types
 
-Named-route typing (`ctx.reverse("product")`, `Handler<"product">`) comes from generated `.gen.ts` files. The Vite plugin regenerates the router-level map during `dev` and `build`; the CLI generates everything on demand:
+Named-route typing (`ctx.reverse("product")`, `Handler<"product">`, `href()`) comes from generated `.gen.ts` files. The Vite plugin writes the router-level `src/router.named-routes.gen.ts` itself: before the dev server starts, again when route files change, and during `build`. Run the CLI when you need the files without starting Vite (a fresh clone, a CI typecheck) or want the per-module `*.gen.ts` files that `useReverse()` imports:
 
 ```bash
 npx rango generate src/
 ```
 
-Commit the generated files — they are the compile-time route map.
+Commit the generated files and don't edit them by hand. See the [CLI reference](/docs/rango/reference/cli).
 
-## Deploying to Vercel
+## Node and Vercel
 
-Swap the preset and drop the Cloudflare plugin:
+On the `node` and `vercel` presets, `rango()` generates the server entry and imports your named `router` export, so there is no entry file to write and no `cloudflare()` plugin:
 
 ```ts
 // vite.config.ts
+import { rango } from "@rangojs/router/vite";
+import { defineConfig } from "vite";
+
 export default defineConfig({
-  plugins: [react(), rango({ preset: "vercel" })],
+  plugins: [rango()], // or rango({ preset: "vercel" })
 });
 ```
+
+The `vercel` preset also needs `@vercel/functions` installed. `vite build` writes a `.vercel/output` directory that you deploy with `vercel deploy --prebuilt` or through Git integration. See [Deploy to Vercel](/docs/rango/guides/deploy-vercel).
 
 ## Next
 

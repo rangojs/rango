@@ -21,6 +21,7 @@ import react from "@vitejs/plugin-react";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
+  // react() is optional; keep it ahead of rango() if you use @vitejs/plugin-react
   plugins: [react(), rango({ preset: "vercel" })],
 });
 ```
@@ -34,7 +35,7 @@ vite build                # produces .vercel/output
 vercel deploy --prebuilt  # or deploy via Git integration
 ```
 
-Under the hood the preset builds like the `node` preset (Vercel runs Node Functions, not Workers): Rango owns the RSC entry, folds `process.env.NODE_ENV` for the SSR/RSC build, and assembles `.vercel/output` from `dist/` after `vite build`.
+Under the hood the preset builds like the `node` preset (Vercel runs Node Functions, not Workers): Rango owns the RSC entry and imports the named `router` export of your `createRouter()` module, so export it as `export const router = createRouter(...)`. The preset also folds `process.env.NODE_ENV` for the SSR/RSC build, bundles every server dependency into the function (there is no `node_modules` at runtime), and assembles `.vercel/output` from `dist/` after `vite build`. The generated routing serves files first — hashed assets get `Cache-Control: public, max-age=31536000, immutable` — and sends everything else to the function.
 
 ## What runs where
 
@@ -63,14 +64,16 @@ Per-function knobs go under `vercel` and are written into `.vc-config.json`:
 rango({
   preset: "vercel",
   vercel: {
-    runtime: "nodejs22.x", // default
+    runtime: "nodejs24.x", // default
     maxDuration: 30, // seconds, default
     memory: 1024, // MB (platform default when omitted)
     regions: ["fra1"], // pin regions (platform default when omitted)
-    functionName: "index", // the <name>.func dir + config.json route
+    functionName: "index", // the <name>.func dir + config.json route (default)
   },
 });
 ```
+
+`runtime` must be a `nodejs*` runtime. The preset emits a Node serverless function, so the build fails on any other value; the Edge runtime is not supported.
 
 ## Runtime Cache
 
@@ -107,7 +110,9 @@ function resolveCache() {
 export const router = createRouter({ cache: resolveCache }).routes(/* ... */);
 ```
 
-The cache factory receives `(env, ctx)`; on Vercel `env` is `process.env` and `ctx` is `{ waitUntil }`.
+The cache factory receives `(env, ctx)`; on Vercel `env` is `process.env` and `ctx` is `{ waitUntil }`, and off-platform `ctx` is `undefined`.
+
+`VercelCacheStore` indexes entries by tag, so `updateTag()` / `revalidateTag()` work as on the other built-in stores. Unlike `CFCacheStore`, it does not version its keys automatically: the per-deploy `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })` above (or the store's `version` option) is what keeps one deploy from reading another deploy's entries. See [Caching & Revalidation](/docs/rango/features/caching) and [Freshness](/docs/rango/concepts/freshness) for cache semantics.
 
 ## Multi-app host routers
 
@@ -135,7 +140,7 @@ export default hostRouter; // the instance
 
 ## Tracing
 
-Vercel exposes tracing through OpenTelemetry. `createVercelTracing()` (from `@rangojs/router/vercel`) emits the router's `rango.*` phase spans (`rango.request/middleware/action/loader/render/ssr`) onto the global OTel tracer that `@vercel/otel`'s `registerOTel()` installs:
+Vercel exposes tracing through OpenTelemetry. `createVercelTracing()` (from `@rangojs/router/vercel`) emits the router's `rango.*` phase spans onto the global OTel tracer that `@vercel/otel`'s `registerOTel()` installs:
 
 ```tsx
 // instrumentation.ts — install the provider, then export the tracing config so
@@ -148,11 +153,12 @@ registerOTel({ serviceName: "my-app" });
 export const tracing = createVercelTracing();
 
 // router.tsx — importing `tracing` runs instrumentation.ts (and registerOTel)
+import { createRouter } from "@rangojs/router";
 import { tracing } from "./instrumentation.js";
 export const router = createRouter({ tracing }).routes(/* ... */);
 ```
 
-`createVercelTracing(opts?)` takes `{ enabled, spans, tracerName, tracer }` — the same phase set as `createCloudflareTracing`. Caveats:
+`createVercelTracing(opts?)` takes `{ enabled, spans, tracerName, tracer }` (`tracerName` defaults to `"rango"`; `tracer` overrides the global tracer) and emits the same phases as `createCloudflareTracing`: `rango.request`, `rango.middleware`, `rango.action`, `rango.loader`, `rango.handler`, `rango.render`, `rango.ssr`, `rango.response`, and `rango.background`. Caveats:
 
 - Node-runtime only — Vercel custom spans are unsupported on the Edge runtime.
 - `registerOTel()` must run before the first request.
@@ -163,7 +169,7 @@ See [Observability](/docs/rango/guides/observability) for the cross-platform tra
 
 ## Previewing locally without deploying
 
-`vite preview` serves the static client assets only — it will not exercise the RSC function. To preview the function, serve the assembled `.vercel/output` behind filesystem-then-function routing. The `vercel-basic` example in the `@rangojs/router` repository ships scripts for this: `scripts/preview.mjs` (run as `pnpm preview:vercel`) serves it in place, and `scripts/smoke.mjs` serves it from a temp directory outside the repo for a faithful deploy test (isolated filesystem, ESM, self-contained bundle).
+`vite preview` does not run the assembled function. To preview it, serve `.vercel/output` with filesystem-then-function routing (static files first, everything else to `functions/<name>.func/index.mjs`). The `examples/vercel-basic` app in the Rango repository ships scripts for this: `scripts/preview.mjs` (run as `pnpm preview:vercel`) serves it in place, and `scripts/smoke.mjs` serves it from a temp directory outside the repo for a faithful deploy test (isolated filesystem, ESM, self-contained bundle).
 
 <Cards>
   <Card href="/docs/rango/guides/host-router" title="Host Router">

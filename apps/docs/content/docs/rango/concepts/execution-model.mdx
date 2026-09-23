@@ -4,11 +4,11 @@ description: The exact order of middleware, actions, and rendering per request �
 type: concept
 ---
 
-Almost every "why is this value undefined" and "why didn't my guard run" question resolves to the same thing: knowing exactly what runs on a request, and in what order. This page is that order. Once you have it, the behavior of middleware, actions, `ctx.set()`, and revalidation stops being surprising — it's all downstream of four short diagrams.
+Almost every "why is this value undefined" and "why didn't my guard run" question resolves to the same thing: knowing exactly what runs on a request, and in what order. This page is that order: the request shapes, what the render pass contains, the one ordering guarantee inside it, and which segments re-run after an action or navigation. Once you have it, the behavior of middleware, actions, `ctx.set()`, and revalidation stops being surprising.
 
 ## The request lifecycle
 
-There are three request shapes you'll deal with daily, plus intercepts:
+There are three request shapes you'll deal with daily, plus intercepts and fetchable-loader calls:
 
 ```
 Normal request (no action):
@@ -22,6 +22,9 @@ No-JS form POST (progressive enhancement):
 
 Intercept request:
   global middleware → route middleware → intercept middleware → intercept handler / loaders
+
+Fetchable loader call (useFetchLoader / load()):
+  global middleware → per-loader middleware → loader   (route middleware does not run)
 ```
 
 Two facts fall out of these diagrams, and they matter more than anything else on this page:
@@ -29,13 +32,13 @@ Two facts fall out of these diagrams, and they matter more than anything else on
 - **Global middleware (`router.use(...)`) wraps the entire request** — including server action execution and the render that follows.
 - **Route middleware (`middleware(...)` in the `urls()` tree) wraps render passes only.** It wraps normal renders, post-action revalidation renders, and no-JS re-renders — but it does **not** wrap action execution. Actions run before route middleware.
 
-The consequence for auth is blunt: route middleware cannot guard a server action. Use pattern-scoped global middleware (`router.use("/admin/*", requireAuth)`) or check inside the action body. This is a hard contract boundary, not an accident — it's also what lets route middleware observe state the action just set (cookies, context variables, headers) when it wraps the render that follows. See [Middleware](/docs/rango/features/middleware) for the placement patterns.
+The consequence for auth is blunt: route middleware cannot guard a server action. Load identity in global middleware, which does wrap actions, and check authorization inside the action body. A pattern-scoped `router.use("/admin/*", requireAuth)` is not an action guard either: an action is identified by its ID, not by a URL, so any URL that matches a route can carry it. This is a hard contract boundary, not an accident — it's also what lets route middleware observe state the action just set (cookies, context variables, headers) when it wraps the render that follows. See [Middleware](/docs/rango/features/middleware) for the placement patterns and [Server Actions](/docs/rango/guides/server-actions#auth-inside-actions) for checks inside the action.
 
 The two levels also differ in context scope. Bindings set by global middleware are **request-scoped**: visible to subsequent global middleware, route middleware, handlers, layouts, parallel slots, loaders, server actions, and async server components — including after `await` and inside streamed children. Bindings set by route middleware are **render-scoped**: visible to everything in the render pass, but not to actions, because actions run outside it.
 
 ## What the render pass actually is
 
-The last box in each diagram — "render pass" — is not a handler-then-loaders sequence. The render pass resolves the route handler, layouts, orphan layouts, parallel slots, and loaders **together**:
+The render step in these diagrams — "render pass" — is not a handler-then-loaders sequence. The render pass resolves the route handler, layouts, orphan layouts, parallel slots, and loaders **together**:
 
 - **Loaders run concurrently and stream.** They kick off right after middleware and resolve alongside rendering, so data latency overlaps first paint instead of blocking it. They are live by default — fresh on every request, even inside a cached render — unless explicitly cached via `loader(Fn, () => [cache({ ttl })])`. See [Loaders](/docs/rango/features/loaders) and [Caching](/docs/rango/features/caching).
 - **Parallel slots with `loading()` are independent streaming units.** Their loaders run without blocking the parent layout or sibling routes — the skeleton renders immediately on SSR while data streams in. Without `loading()`, a parallel slot's loaders block the parent.
@@ -45,6 +48,9 @@ The last box in each diagram — "render pass" — is not a handler-then-loaders
 Within a full render pass, one ordering is guaranteed: **a route handler runs before its child/orphan layouts and its parallel children.** That's what makes this pattern safe — the handler writes, its own subtree reads:
 
 ```tsx
+import { Outlet } from "@rangojs/router/client";
+
+// inside urls(({ path, layout }) => [ ... ])
 path(
   "/product/:slug",
   async (ctx) => {
@@ -83,7 +89,7 @@ Handler data never crosses a sibling boundary, and parallel slots do not share a
 
 ## Partial revalidation, briefly
 
-After a server action, the router does not re-render the world. Revalidation is **segment-scoped**: only selected segments recompute. The defaults, when no `revalidate()` rule is configured:
+After a server action or a client navigation, the router does not re-render the world. Revalidation is **segment-scoped**: only selected segments recompute. The action defaults, when no `revalidate()` rule is configured:
 
 | Segment                                          | Re-runs by default | Trace reason               |
 | ------------------------------------------------ | ------------------ | -------------------------- |
@@ -92,7 +98,11 @@ After a server action, the router does not re-render the world. Revalidation is 
 | The entry's children (orphan layouts, parallels) | yes                | `action:belongs-to-route`  |
 | Parent-chain segments (outer layouts, parallels) | no                 | `action:parent-chain-skip` |
 
-So a route entry re-runs **as a unit** on actions, with handler-first ordering preserved — handler `ctx.set()` data consumed by the entry's own children needs no configuration at all. Outer layouts are the opposite: skipped by default.
+So a route entry re-runs **as a unit** on actions, with handler-first ordering preserved — handler `ctx.set()` data consumed by the entry's own children needs no configuration at all. Every loader re-runs too, including loaders attached to outer layouts. Outer layouts themselves are the opposite: skipped by default.
+
+Navigation defaults are narrower. The route segment and the segments inside its `path()` re-run only when params or search change, and layouts and loaders above the route are not re-run, even when params change. A segment the client doesn't hold yet always renders.
+
+A `revalidate()` predicate overrides these defaults per segment. Returning `true` or `false` is a hard decision, returning `undefined` defers to the default, and the callback must be synchronous. See [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate) for the predicate API.
 
 The non-guarantee is the part that bites: non-revalidated ancestors do **not** re-run just to rebuild their `ctx.set()` state, and the router does not preserve a prior-pass snapshot for you. A revalidated child reading a skipped ancestor's context variable gets `undefined`. The full safest-first strategy for this lives in [Data Flow](/docs/rango/concepts/data-flow).
 
@@ -100,7 +110,7 @@ The non-guarantee is the part that bites: non-revalidated ancestors do **not** r
 
 Everything above holds identically in `pnpm dev` and in a production build: both modes match requests against the same route trie and build the tree through the same builder — there is no dev-only routing path that quietly behaves differently.
 
-That parity is not on the honor system. Each guarantee on this page is pinned by a row in the router's semantic matrix e2e suite, which runs against dev **and** production builds. A semantic change to the model must update the guarantee, its matrix row, and the docs together — so if a behavior you observe in dev disagrees with this page, or production disagrees with dev, that's a bug in the router, not a mode difference to code around.
+Each guarantee on this page is pinned by a row in the router's semantic matrix e2e suite, which runs against dev **and** production builds. If a behavior you observe in dev disagrees with this page, or production disagrees with dev, that's a bug in the router, not a mode difference to code around.
 
 <Cards>
   <Card href="/docs/rango/concepts/data-flow" title="Data Flow">

@@ -10,6 +10,9 @@ Start with one question: **does the request reach Rango before shared bytes are
 served?** That boundary decides whether middleware runs, whether loaders stay
 live, and which invalidation system owns the result.
 
+This skill is about where each cache sits relative to your deployment platform.
+To choose between the in-app layers themselves, start at `/cache-guide`.
+
 ## The execution matrix
 
 | Mechanism                         | Stored artifact                                 | Function/worker runs on a hit? |                                   Rango middleware on a hit? | What stays live?                     |
@@ -173,4 +176,6 @@ provably public and shared.
 - `/document-cache` — store-backed complete-response middleware
 - `/vercel` — Vercel Build Output preset and Runtime Cache wiring
 - `/cloudflare` — Worker deployment and bindings
-- `/cache-guide` — function, loader, and segment cache selection
+- `/cache-guide` — choosing between the in-app cache layers
+- `/caching` — `cache()` segments, stores, and tag invalidation
+- `/use-cache` — function-level `"use cache"`

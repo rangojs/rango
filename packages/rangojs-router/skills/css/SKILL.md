@@ -7,9 +7,10 @@ argument-hint:
 # CSS imports
 
 Document/app CSS in Rango lives in the Document `<head>`, loaded with Vite's
-`?url` import and a `precedence`-managed `<link rel="stylesheet">`. This page is
-the why and the one cross-app caveat; `/tailwind` is the concrete setup, `/theme`
-is dark mode, `/fonts` is fonts.
+`?url` import and a `precedence`-managed `<link rel="stylesheet">`. This page
+explains that pattern, when a side-effect `import "./x.css"` is fine, and how CSS
+behaves across host-router apps. `/tailwind` is the concrete Tailwind setup,
+`/theme` is dark mode, `/fonts` is fonts.
 
 ## The pattern
 
@@ -50,14 +51,10 @@ A client-side navigation that crosses an app boundary is a **full document load*
 (the server returns `X-RSC-Reload` on an app switch — see `/host-router`), so the
 target app's entire document — its stylesheets, theme, meta — is re-established
 by the target app's own load. Each app owns its document; how one app renders a
-stylesheet has no effect on another.
-
-(This replaced an earlier soft cross-app swap. Under it, a stylesheet shared
-across apps by `href` — classically every app's `@import "tailwindcss"` compiling
-to one hashed asset — could be silently dropped by React's by-`href` resource
-dedup when the apps disagreed on `precedence` (one unmanaged, one managed). The
-full reload removes that footgun entirely, which is the main reason cross-app
-navigation is a hard boundary.)
+stylesheet has no effect on another. In particular, apps may disagree on
+`precedence` for a stylesheet they share by `href` (for example every app's
+`@import "tailwindcss"` compiling to one hashed asset) without React's by-`href`
+dedup dropping it.
 
 ## Side-effect imports vs `?url`
 

@@ -6,13 +6,21 @@ argument-hint: [setup]
 
 # Store-backed Document Cache
 
-Caches complete HTTP responses (HTML/RSC) in the app-level cache store based on
-`Cache-Control`. Routes opt in by setting `s-maxage`.
+Caches complete HTTP responses (HTML documents and RSC payloads) in the
+app-level cache store. Routes opt in by sending a `Cache-Control` header with
+`s-maxage`; `stale-while-revalidate` adds a stale window. On a hit, nothing
+below the middleware runs — no route middleware, handlers, or loaders.
+
+Use it for pages whose **whole** response is public and identical for every
+visitor sharing a URL, when you want the reuse to happen inside the app (so
+outer middleware still runs and invalidation stays in Rango's tag system).
 
 This middleware runs **inside** the worker/function. It is not itself a platform
-CDN cache. With `CFCacheStore` the response family can use Cloudflare's edge/KV
-tiers; with `VercelCacheStore` it uses Vercel Runtime Cache. The request still
-reaches Rango before the middleware can return a store hit.
+CDN cache. It works with every built-in store: with `CFCacheStore` the response
+family uses Cloudflare's Cache API (and KV when configured), with
+`VercelCacheStore` it uses Vercel Runtime Cache, and `MemorySegmentCacheStore`
+keeps responses in process memory. The request still reaches Rango before the
+middleware can return a store hit.
 
 ## Not this skill if…
 
@@ -27,9 +35,9 @@ reaches Rango before the middleware can return a store hit.
 ## Setup
 
 Document caching is a middleware. Add `createDocumentCacheMiddleware()` to the
-router with `.use()`. The cache store it reads from is the app-level store you
-configure on `createRouter({ cache })` (available on the request context as
-`requestCtx._cacheStore`), not a store passed to the middleware.
+router with `.use()`. It reads and writes the app-level store you configure on
+`createRouter({ cache })`; the store is not a middleware option. Without an app
+store, the middleware passes every request through.
 
 ```typescript
 import { createRouter } from "@rangojs/router";
@@ -39,7 +47,7 @@ import {
 } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls";
 
-const router = createRouter<AppBindings>({
+export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
   // App-level cache store. The document cache middleware uses this store's
@@ -53,13 +61,14 @@ router.use(
     debug: process.env.NODE_ENV === "development",
   }),
 );
-
-export default router;
 ```
+
+Middleware registered before it runs on every request, hits included; everything
+after it (and all route middleware) runs only on a miss.
 
 ## Route Opt-In with Cache-Control
 
-Routes opt-in to document caching by setting a `Cache-Control` response header
+Routes opt in to document caching by setting a `Cache-Control` response header
 with `s-maxage`. The middleware caches responses whose `Cache-Control` includes
 `s-maxage`; `stale-while-revalidate` enables background revalidation (SWR).
 
@@ -86,6 +95,21 @@ function BlogPostHandler(ctx) {
 // Dashboard sets no Cache-Control header, so it is never document-cached.
 ```
 
+A handler inside a `cache()` boundary or on a `ppr` route cannot write response
+headers (the write throws). Set the header from route middleware instead — it
+runs on every request that reaches the route:
+
+```typescript
+cache({ ttl: 60 }, () => [
+  path("/blog", BlogIndex, { name: "blog" }, () => [
+    middleware(async (ctx, next) => {
+      ctx.header("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
+      await next();
+    }),
+  ]),
+]);
+```
+
 ## Document Cache Options
 
 `createDocumentCacheMiddleware(options?)` accepts:
@@ -95,10 +119,11 @@ createDocumentCacheMiddleware({
   // Skip specific paths (matched by pathname prefix)
   skipPaths: ["/api", "/admin"],
 
-  // Custom cache key generator
-  keyGenerator: (url) => url.pathname,
+  // Custom cache key base. Replaces host + pathname + search entirely, so
+  // include the host yourself when one deployment serves several domains.
+  keyGenerator: (url) => `${url.host}${url.pathname}`,
 
-  // Conditional caching, evaluated per request
+  // Conditional caching, evaluated per request (receives the middleware ctx)
   isEnabled: (ctx) => !ctx.request.headers.has("x-preview"),
 
   // Debug logging (HIT, MISS, STALE, REVALIDATED)
@@ -150,18 +175,26 @@ header or logs to identify an actual CDN hit.
 
 ## Cache Key Generation
 
-Default keys differentiate:
+The default key is the host, pathname, and sorted search string (internal
+`_rsc*` params removed, `cache.searchParams` filtering applied), followed by
+suffixes that separate response variants:
 
-- HTML requests: `{pathname}:html`
-- RSC partials: `{pathname}:{segmentHash}:rsc`
+- HTML document requests: `{host}{pathname}[?search]:html`
+- RSC requests (client navigations and full-document Flight fetches):
+  `{host}{pathname}[?search]:rsc`
+- Client navigations additionally add a hash of the segments the client already
+  has (`:{segmentHash}`), so navigations from pages with different layouts get
+  different cached payloads, and a `:fragments` marker when the client accepts
+  fragment envelopes.
 
-Segment hash ensures different cached responses for navigations from different source pages (with different layouts).
+A custom `keyGenerator(url)` replaces only the `{host}{pathname}[?search]` part;
+the variant suffixes are still appended.
 
 ## What Gets Cached
 
 - Full HTML responses (document requests)
 - RSC payloads (client navigation)
-- Only 200 OK responses whose `Cache-Control` includes `s-maxage`
+- Only `GET` 200 responses whose `Cache-Control` includes `s-maxage`
 
 ## What's NOT Cached
 
@@ -169,7 +202,26 @@ Segment hash ensures different cached responses for navigations from different s
 - Loader requests (`_rsc_loader`)
 - Non-GET requests
 - Responses without an `s-maxage` `Cache-Control` directive
+- Responses whose `Cache-Control` also contains `private`, `no-store`, or an
+  unqualified `no-cache` (those win over `s-maxage` in a shared cache)
+- Responses carrying `Set-Cookie` (a per-client value must not be replayed to
+  everyone)
 - Non-200 responses
+
+## Invalidation
+
+Entries expire by `s-maxage` (+ `stale-while-revalidate`). They are also tagged
+with the request's tag set, so `updateTag()`/`revalidateTag()` evict them:
+
+- a render-callable `cacheTag("...")` in any server component on the page;
+- tags of `cache()` segments, cached loaders, and `"use cache"` functions the
+  render read.
+
+Tags are snapshotted after the response body has fully streamed, so tags from
+Suspense-streamed content are included. A `Prerender()` route's build-time
+segments contribute no tags (only its live loaders can), so such an entry
+usually expires by TTL only.
+See `/caching` → "Tag-Based Invalidation".
 
 ## Complete Example
 
@@ -179,7 +231,7 @@ import { createRouter } from "@rangojs/router";
 import { createDocumentCacheMiddleware, CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls";
 
-const router = createRouter<AppBindings>({
+export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
   cache: (_env, ctx) => ({ store: new CFCacheStore({ ctx: ctx! }) }),
@@ -192,7 +244,6 @@ router.use(
   }),
 );
 
-export default router;
 
 // urls.tsx
 import { urls } from "@rangojs/router";
@@ -225,14 +276,18 @@ function BlogPost(ctx) {
 }
 ```
 
+Note that `BlogPostLoader` output is frozen into the cached response along with
+everything else.
+
 ## Document Cache vs Segment Cache
 
-| Feature      | Document Cache             | Segment Cache         |
-| ------------ | -------------------------- | --------------------- |
-| Granularity  | Full response              | Individual segments   |
-| Opt-in       | `Cache-Control` `s-maxage` | `cache({ ttl, swr })` |
-| Use case     | Static pages               | Dynamic compositions  |
-| Key includes | URL + segment hash         | Route params          |
+| Feature      | Document Cache                        | Segment Cache (`cache()`)         |
+| ------------ | ------------------------------------- | --------------------------------- |
+| Granularity  | Full response                         | Individual segments               |
+| Opt-in       | `Cache-Control` `s-maxage`            | `cache({ ttl, swr })`             |
+| Loaders      | Frozen with the response              | Always run fresh                  |
+| Use case     | Static pages                          | Dynamic compositions              |
+| Key includes | host + URL + variant (+ segment hash) | host + pathname + params + search |
 
 Use document cache for mostly-static pages. Use segment cache when different parts of a page have different cache requirements.
 

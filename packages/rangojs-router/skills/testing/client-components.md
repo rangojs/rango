@@ -2,7 +2,7 @@
 
 **Layer:** unit (DOM) · **Import:** `@rangojs/router/testing/dom` · **DSL it tests:** a client component reading router context (see `/hooks`)
 
-RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter`). It mounts the router's REAL `NavigationProvider` plus a synthetic segment tree built from the `routes` you pass, so client hooks resolve against production context — no server, no Vite build, no Flight round-trip. Loader data, location state, and handle output are SEEDED into client context; nothing is executed.
+`renderRoute(routes, options?)` is an RTL-style stub (peer of React Router's `createRoutesStub` / Expo's `renderRouter`), and it is async — `await` it. It mounts the router's REAL `NavigationProvider` plus a synthetic segment tree built from the `routes` you pass, so client hooks resolve against production context — no server, no Vite build, no Flight round-trip. Loader data, location state, and handle output are SEEDED into client context; nothing is executed.
 
 ## API
 
@@ -118,7 +118,7 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
   keep that transition in dev + production e2e.
 - CATCH — streaming `use(promise)` Suspense content (e.g. an async breadcrumb `content: Promise<ReactNode>`): a plain `Promise.resolve(node)` does NOT flush its Suspense retry in RTL/happy-dom, so the DOM stays on the fallback. Assert the PENDING fallback with `new Promise(() => {})`; for the ARRIVED state pass an already-settled promise so `use()` reads it synchronously: `const p = Promise.resolve(node) as any; p.status = "fulfilled"; p.value = node;`. The real pending->resolved transition is an e2e concern.
 - ARIA gotcha — an explicit `role` on a `<Link>` (e.g. `<Link role="tab">` in a tablist) OVERRIDES the implicit `link` role, so `getByRole("link")` finds nothing. Query the explicit role (`getByRole("tab")`) or fall back to `getByText` / `getByTestId` and assert `getAttribute("href")`.
-- `ctx.theme` is undefined unless `theme` is passed; the typed `ctx.search` defaults to `{}` (seed `searchData` on `runLoader`, not here).
+- `useTheme()` throws unless `theme` is passed (it needs the `ThemeProvider` that option mounts). Search state comes only from the `request` URL — there is no typed-search seed here (that is `runLoader`'s `searchData`).
 - Use `mount` only for an `include()` prefix. An OPTIONAL param in the matched pattern (`/:locale?/c/:group` at `/en/c/wine`) auto-fills `locale` from the match — production parity, `useReverse` merges `useParams()` — so no `mount` is needed; a locale "dropping" from a reversed URL is usually a missing `mount` seed, not an auto-fill gap.
 - Needs a DOM env (`// @vitest-environment happy-dom`, or jsdom) and `@testing-library/react` (optional peers).
 - Don't hand-roll a `NavigationProvider`/router-context mock to test a client component — `renderRoute` mounts the REAL provider, so a hand-mock both duplicates effort and drifts from the production context shape.

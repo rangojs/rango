@@ -4,11 +4,11 @@ description: Share a shop shell across routes with layout() and switch to client
 type: tutorial
 ---
 
-**Where we are:** three typed routes — `/`, `/shop`, `/shop/:slug` — with server-generated links, but no shared chrome and a full page load on every click.
+**Where we are:** three typed routes (`/`, `/shop`, `/shop/:slug`) with server-generated links, but no shared chrome and a full page load on every click.
 
 ## Wrap the shop routes in a layout
 
-The shop grid and the product pages should share a nav. In Rango that's `layout()` — wrap the routes in the tree:
+The shop grid and the product pages should share a nav. In Rango that's `layout()`, which wraps routes in the tree:
 
 ```tsx
 // src/urls.tsx
@@ -27,13 +27,13 @@ export const urlpatterns = urls(({ path, layout }) => [
 ]);
 ```
 
-The important thing about `layout()`: it contributes nothing to the URL. `path()` defines URLs; `layout()` only wraps the routes declared inside its callback. `/shop` and `/shop/:slug` are exactly the addresses they were before — the layout is presentation structure, not URL structure. That also means no codegen re-run: route types regenerate when patterns change, and no pattern changed.
+The important thing about `layout()`: it contributes nothing to the URL. `path()` defines URLs; `layout()` only wraps the routes declared inside its callback. `/shop` and `/shop/:slug` are exactly the addresses they were before, because the layout is presentation structure, not URL structure. The generated route types don't change either: no name or pattern changed.
 
-The home page stays outside the layout on purpose — it's a landing page with its own look.
+The home page stays outside the layout on purpose: it's a landing page with its own look.
 
 ## The layout component
 
-A layout renders its own chrome and places child routes with `<Outlet />`, imported from `@rangojs/router/client`:
+A layout is a server component. It renders its own chrome and places child routes with `<Outlet />`, imported from `@rangojs/router/client`:
 
 ```tsx
 // src/layouts/shop-layout.tsx
@@ -52,7 +52,7 @@ export function ShopLayout() {
 }
 ```
 
-Whichever child route matches — the grid or a product page — renders where `<Outlet />` sits. Layouts persist during navigation within their scope: moving from `/shop` to a product page swaps the outlet content while the layout around it stays put.
+Whichever child route matches, the grid or a product page, renders where `<Outlet />` sits. Layouts persist during navigation within their scope: moving from `/shop` to a product page swaps the outlet content while the layout around it stays put.
 
 ## The nav
 
@@ -79,13 +79,13 @@ export function ShopNav() {
 
 Three things going on here:
 
-- **`Link`** performs client-side navigation — the router fetches just what changed and updates in place, no document reload.
-- **`href()`** is the client-side helper for static paths. There's no handler context in the browser, so `ctx.reverse()` isn't available here; for fixed addresses like `/` and `/shop`, `href()` is the right tool, and it validates the path at compile time against your route patterns. A typo like `href("/shpo")` fails the build instead of shipping a dead link.
+- **`Link`** performs client-side navigation: the router fetches just what changed and updates in place, with no document reload.
+- **`href()`** is the client-side helper for static paths. There's no handler context in the browser, so `ctx.reverse()` isn't available here. For fixed addresses like `/` and `/shop`, `href()` is the right tool, and it checks the path against your route patterns at compile time: a typo like `href("/shpo")` is a type error, flagged by your editor and by `pnpm exec tsc`, instead of a dead link.
 - **`prefetch="viewport"`** starts fetching a link's target when the link scrolls into view. Bare Links use this strategy automatically in production; development stays quiet so local navigation traffic is easier to inspect. The response is often already in the prefetch cache by the time the user clicks. Set `prefetch="none"` on a Link (or `defaultPrefetch: "none"` on `createRouter` for app-wide manual mode) to opt out in production.
 
 ## Upgrade the product grid links
 
-Product links are dynamic — one per slug — so `href()` doesn't apply. The pattern: generate the URL on the server with `ctx.reverse()`, hand the string to `Link`:
+Product links are dynamic, one per slug, so `href()` doesn't apply. The pattern: generate the URL on the server with `ctx.reverse()`, and hand the string to `Link`:
 
 ```tsx
 // src/pages/shop.tsx
@@ -114,12 +114,12 @@ export const ShopPage: Handler<"shop"> = (ctx) => {
 };
 ```
 
-This division of labor is the house style: the server knows the full route map, so URL _generation_ happens there with `ctx.reverse()`; the client handles the _navigation_ via `Link`. You can give the home page's "Browse the shop" link the same treatment — swap the `<a>` for a `Link` around `ctx.reverse("shop")`. For the full menu of URL-generation APIs on each side, see [Named Routes](/docs/rango/features/named-routes).
+This division of labor is the house style: the server knows the full route map, so URL _generation_ happens there with `ctx.reverse()`; the client handles the _navigation_ via `Link`. You can give the home page's "Browse the shop" link the same treatment: swap the `<a>` for a `Link` around `ctx.reverse("shop")`. For the full menu of URL-generation APIs on each side, see [Named Routes](/docs/rango/features/named-routes).
 
 ## Try it
 
-Run `pnpm dev` and open `/shop`. The nav appears on the grid and on every product page, and clicking between them no longer reloads the document — the layout stays mounted while the content inside `<Outlet />` swaps. Scroll the grid and the product pages prefetch as their links come into view, so clicking through feels immediate. The home page, outside the layout, keeps its standalone look.
+Run `pnpm dev` and open `/shop`. The nav appears on the grid and on every product page, and clicking between them no longer reloads the document: the layout stays mounted while the content inside `<Outlet />` swaps. Scroll the grid and the product pages prefetch as their links come into view, so clicking through feels immediate. The home page, outside the layout, keeps its standalone look.
 
-The storefront now looks like an app. But the catalog is still read at render time straight from an array, and there's no loading state anywhere — time to make the data layer real.
+The storefront now looks like an app. But everything is still read at render time straight from an array, and there's no loading state anywhere. Time to make the data layer real.
 
 Next: [4. Live Data with Loaders](/docs/rango/tutorial/live-data-with-loaders)

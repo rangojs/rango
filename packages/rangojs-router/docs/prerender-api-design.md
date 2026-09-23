@@ -17,7 +17,7 @@ route was pre-rendered.
 
 ### Completed
 
-- **Prerender handler** - `Prerender(getParams, handler, opts)` API
+- **Prerender handler** - `Prerender(handler, opts?)` (static) and `Prerender(getParams, handler, opts?)` (dynamic); `opts.concurrency` (default 1) renders param sets in parallel
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
 - **Flight payload storage** - Serialized segments stored in lazily-loaded prerender manifest
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
@@ -49,7 +49,8 @@ route was pre-rendered.
 ### Build Time
 
 ```
-  Vite closeBundle
+  Vite buildStart: discoverRouters() -> expandPrerenderRoutes()
+  (in-process, through the RSC module runner of a temp Vite server)
        |
        v
   For each Prerender route:
@@ -60,7 +61,11 @@ route was pre-rendered.
        c. Serialize segments via RSC Flight protocol
        d. Walk manifest for intercepts targeting this route
        e. If found: resolve intercept handler, serialize intercept segments
-       f. Store entries in prerender manifest (lazy-loaded module):
+       f. Keep the entries in memory
+       |
+       v
+  Vite closeBundle (rsc environment): evict handlers, stage assets, and write
+  the prerender manifest (lazy-loaded module):
           - "routeName/paramHash"     -> asset specifier (main segments + handles)
           - "routeName/paramHash/i"   -> asset specifier (main + intercept segments + handles)
 ```
@@ -195,8 +200,8 @@ type advertises a `meta` contract only the dev implementation honors.
 
 ### Dev Mode (`__PRERENDER_DEV_URL`)
 
-Set by the Vite plugin for non-Node.js RSC runtimes (workerd, Deno). The
-prerender store fetches on-demand from the Vite dev server:
+Set by the Vite plugin in dev (the route-manifest virtual module injects it).
+The prerender store fetches on-demand from the Vite dev server:
 
 ```
 GET /__rsc_prerender?pathname=/blog/hello-world&routeName=blog.post
@@ -242,18 +247,29 @@ Handlers receive `BuildContext` at build time. It is a subset of `HandlerContext
 with request-dependent fields replaced by descriptive error throwers:
 
 ```typescript
+// Public type: `BuildContext` from "@rangojs/router" (src/prerender.ts)
 interface BuildContext<TParams> {
   params: TParams;
   build: true; // Always true at build time
   dev: boolean; // true in Vite dev mode, false during production build
-  use: <T>(handle: Handle<T>) => (data: T) => void;
+  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
+  get(varOrKey): unknown; // variables set by getParams or a parent handler
+  set(varOrKey, value): void; // readable by child layouts and parallels
+  use: <T>(handle: Handle<T>) => HandlePush<T>; // handle push, incl. .defer()
   url: URL; // Synthetic: pattern + params
   pathname: string;
-  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
-  // These always throw descriptive errors:
-  // request, headers, cookies, ctx.redirect, etc.
+  searchParams: URLSearchParams; // always empty
+  search: {}; // always {}
+  reverse: ReverseFunction; // URL generation by route name
+  passthrough: () => PrerenderPassthroughResult; // Passthrough() routes only
 }
+// At runtime the object also carries request-only members (request, headers,
+// res, ...) whose getters throw a descriptive error during pre-rendering.
 ```
+
+`getParams()` receives the smaller `GetParamsContext` (`build`, `dev`, `env`,
+`set`, `reverse`), and `Static()` handlers receive `StaticBuildContext`
+(`build`, `dev`, `env`, `get`, `set`, `use`).
 
 When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
 provides the build-time bindings (e.g., KV, D1). This is NOT the live request
@@ -318,7 +334,8 @@ produces the route's complete PPR shell entry (`ShellCacheEntry`: HTML prelude,
 postponed resume state, snapshot, tag union), so the FIRST request after a
 deploy serves `x-rango-shell: HIT` with zero runtime capture. One entry format,
 two producers (runtime capture / build), one consumer — the worker cannot tell
-where an entry came from. Design: `docs/design/shell-fast-path.md`.
+where an entry came from. Design:
+[shell-fast-path.md](../../../docs/design/shell-fast-path.md).
 
 ### Build flow
 
@@ -655,7 +672,7 @@ At runtime, the cache-lookup middleware uses these flags:
 | `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
 | `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
 | `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
-| `src/cache/cache-scope.ts`                                                                                                                                           | RSC serialize/deserialize for segments                                                                                                                   |
+| `src/cache/segment-codec.ts` (`serializeSegments`, `deserializeSegments`)                                                                                            | RSC serialize/deserialize for segments                                                                                                                   |
 | `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |
 | `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                   |
 | `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()` |

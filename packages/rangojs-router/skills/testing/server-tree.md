@@ -18,6 +18,8 @@
 | `vars`             | `VarsInit`                | Context variables visible via `ctx.get(...)`, as a prior middleware would have set them. Object form (`{ user }`) or `[key, value]` tuples.                                                                                                                                                                                            |
 | `clientComponents` | `Record<string, unknown>` | The `"use client"` components reachable from the tree, keyed by the boundary name to register each as a client reference (in place) so it serializes as an `I` row. Omit when `rangoUseClientTransform()` auto-discovers them, or for pure server-only trees. First-wins per worker; already-registered references are left untouched. |
 
+It also accepts the rest of `RenderToFlightStringOptions` — `routeMap`, `theme`, `cacheStore`, `cacheProfiles` — with the same meaning as in [`./flight.md`](./flight.md).
+
 ### Context — what your code receives
 
 A server component rendered here runs under a real request context: `getRequestContext()` resolves, `ctx.params`/`ctx.routeName`/`ctx.env` reflect the options, `ctx.get(MyVar)` reads a seeded `var`, and cookies come off the request. Same seeding as the handler-test primitives — you render an **element** you build (`<Page />`); to run a route **handler** `(ctx) => rsc` use `renderHandler` (see `./render-handler.md`).
@@ -64,6 +66,10 @@ Every SERVER/HOST element a server component produced (`<article>`, `<h2>`), in 
 
 Concatenates every string/number leaf of a node's subtree in document order — the clean way to assert rendered text, instead of `JSON.stringify(tree).toContain(...)`.
 
+#### `assertFlightTreeRuntimeAvailable()`
+
+Throws a descriptive error when a `@vitejs/plugin-rsc` subpath the round trip relies on (the vendored client deserializer or `registerClientReference`) no longer exports the expected function — the counterpart of `assertFlightRuntimeAvailable()` in `./flight.md`. Call it in a `beforeAll` to fail fast after a plugin-rsc upgrade.
+
 ## Recipe
 
 ```tsx
@@ -74,7 +80,10 @@ import {
   findElements,
   textContent,
 } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 import { PriceTag } from "./PriceTag.js"; // a "use client" component (any filename)
+
+expect.extend(flightMatchers); // for toMatchFlight below
 
 async function ProductPanel({ amount, asOf }: { amount: number; asOf: Date }) {
   await Promise.resolve();
