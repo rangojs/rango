@@ -224,8 +224,6 @@ export type InterceptUseItem =
   | MiddlewareItem
   | LoaderItem
   | LoadingItem
-  | ErrorBoundaryItem
-  | NotFoundBoundaryItem
   | LayoutItem
   | RouteItem
   | TransitionItem;

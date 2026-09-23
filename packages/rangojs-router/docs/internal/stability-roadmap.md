@@ -57,7 +57,9 @@ These rules should stay consistent across code, tests, docs, and warnings:
 - Loaders are live by default unless caching is explicitly configured.
 - Prerendered handlers may be frozen while loaders remain live.
 - Intercepts follow the same segment rules as normal routes; their
-  revalidation is per-loader (no segment-level `revalidate()`).
+  revalidation is per-loader (no segment-level `revalidate()`), and they have
+  no boundaries of their own (loader errors resolve against the declaring
+  layout/path).
 
 ## Phase 1: Lock Down Semantics — Complete
 
