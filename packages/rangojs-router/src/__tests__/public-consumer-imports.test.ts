@@ -126,6 +126,7 @@ import type {
   OTelTracer,
   OTelActiveSpanTracer,
   OTelTracingOptions,
+  SerializedManifest,
 } from "@rangojs/router";
 
 void createLoader;
@@ -135,6 +136,11 @@ void urls;
 void createConsoleSink;
 type _ActionRef = ActionRef;
 type _IsActionFn = IsActionFn;
+
+// debugManifest() is on the public router type (no cast) and its result type
+// is nameable from the root entry.
+const manifest: Promise<SerializedManifest> = createRouter().debugManifest();
+void manifest;
 
 // Pin the server-only observability export surface the docs/JSDoc promise:
 // the tracing slot (createOTelTracing) and the event sink (createOTelSink)

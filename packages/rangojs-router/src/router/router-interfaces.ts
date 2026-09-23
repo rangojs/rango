@@ -178,6 +178,23 @@ export interface Rango<
   readonly routeMap: TRoutes;
 
   /**
+   * Serialize the route manifest for inspection: every route and layout the
+   * router's `.routes()` / `urls` mounts register, with shortCodes, parent
+   * links, and loader/middleware/error-boundary/parallel/intercept flags.
+   *
+   * Server-only development aid. It re-evaluates each mount's `urls()` tree.
+   * Groups mounted with `include()` are lazy and are not expanded: their
+   * routes are absent from the result.
+   *
+   * @example
+   * ```typescript
+   * const manifest = await router.debugManifest();
+   * console.log(manifest.totalRoutes, Object.keys(manifest.routes));
+   * ```
+   */
+  debugManifest(): Promise<SerializedManifest>;
+
+  /**
    * Handle an RSC request.
    *
    * Uses the router's configuration (nonce, version, cache) automatically.

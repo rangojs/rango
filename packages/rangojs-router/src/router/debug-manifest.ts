@@ -5,8 +5,9 @@ import MapRootLayout from "../server/root-layout.js";
 import type { RouteEntry, TrailingSlashMode } from "../types";
 
 /**
- * Build a serialized manifest from all route entries for debug inspection.
- * Used by the `debugManifest()` method on the router instance.
+ * Build a serialized manifest from the eager route entries for debug
+ * inspection. Used by the `debugManifest()` method on the router instance.
+ * include() children are not expanded (lazy placeholders are skipped).
  */
 export async function buildDebugManifest<TEnv = any>(
   routesEntries: RouteEntry<TEnv>[],
@@ -14,6 +15,13 @@ export async function buildDebugManifest<TEnv = any>(
   const manifest = new Map<string, EntryData>();
 
   for (const entry of routesEntries) {
+    // Lazy include placeholders are not mounts: a top-level one carries the
+    // parent urls() handler (router.ts routes()), so re-running it re-registers
+    // the parent's routes into the shared manifest (path() duplicate-name
+    // invariant). A nested one (lazy-includes.ts runExpansion()) is only valid
+    // under its captured include context.
+    if (entry.lazy) continue;
+
     const Store = {
       manifest,
       namespace: `debug.M${entry.mountIndex}`,

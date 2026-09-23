@@ -189,6 +189,9 @@ export {
   type RouterRequestInput,
 } from "./router.js";
 
+// Route manifest snapshot returned by router.debugManifest()
+export type { SerializedManifest } from "./debug.js";
+
 // RSC handler types (server-side)
 export type { HandlerCacheConfig } from "./rsc/types.js";
 export {
