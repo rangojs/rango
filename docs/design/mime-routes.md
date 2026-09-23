@@ -299,7 +299,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   searchParams: URLSearchParams; // system params filtered
   url: URL;
   pathname: string;
-  reverse: ReverseFunction;
+  reverse: GlobalReverseFunction; // global names only: no include() scope, no param auto-fill
   // No ctx.use() — no loaders
   // No ctx.res — handler creates its own Response
   // No ctx.set() — response routes can read middleware variables via ctx.get()
@@ -383,7 +383,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
   env: TEnv;
-  reverse: ReverseFunction;
+  reverse: GlobalReverseFunction;
 }
 
 // --- Tag function implementations ---

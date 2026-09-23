@@ -180,7 +180,7 @@ it("passes signed-in requests through as private", async () => {
 });
 ```
 
-The result carries `response`, `nextCalled` (`0` on a short-circuit, `1` on pass-through), and the effective `cookies`, `headers`, and `locationState`, plus `dynamic`, which reports whether the chain called `ctx.dynamic()`. Pass `next` to model the downstream response; the default is an empty `200`. `ctx.reverse()` inside middleware is map-only, as in production, so seed `routeMap` when the middleware builds URLs.
+The result carries `response`, `nextCalled` (`0` on a short-circuit, `1` on pass-through), and the effective `cookies`, `headers`, and `locationState`, plus `dynamic`, which reports whether the chain called `ctx.dynamic()`. Pass `next` to model the downstream response; the default is an empty `200`. `ctx.reverse()` inside middleware is map-only, as in production: global names only, no param auto-fill, and a dot-local `.name` is a type error. Seed `routeMap` when the middleware builds URLs.
 
 ## Response routes with dispatch
 

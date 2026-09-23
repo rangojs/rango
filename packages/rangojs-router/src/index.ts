@@ -334,6 +334,7 @@ export type { BreadcrumbItem } from "./handles/breadcrumbs.js";
 export type {
   ScopedReverseFunction,
   ReverseFunction,
+  GlobalReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
 } from "./reverse.js";

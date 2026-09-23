@@ -11,7 +11,7 @@ typed path (client), and to keep links correct when a module is mounted under
 a different `include()` prefix. For route typing setup see `/typesafety`; for
 links to JSON/text endpoints see `/response-routes`.
 
-**Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills params from the current request, and resolves local (`.name`) and global (`name`) names.
+**Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills params from the current request, and resolves local (`.name`) and global (`name`) names. In middleware and response routes it takes global names only (see below).
 
 **On the client, two patterns:**
 
@@ -27,6 +27,11 @@ middleware and loader contexts, and on `getRequestContext()` inside server
 actions. Resolves named routes using the full route map. This is the default
 way to generate URLs on the server. Patterns in the map already include the
 router `basename`, so results are basename-prefixed.
+
+Middleware and response routes (`path.json()`, `path.text()`, …) get a
+global-only `ctx.reverse` (`GlobalReverseFunction`): no `include()` scope and no
+param auto-fill, so pass the fully qualified name and every param. A dot-local
+`.name` is a type error there. See `/middleware` and `/response-routes`.
 
 ```typescript
 import { urls } from "@rangojs/router";
@@ -131,7 +136,7 @@ path("/search", (ctx) => {
 
 ### scopedReverse() - type-safe ctx.reverse
 
-Wraps `ctx.reverse` with the module's local route types for autocomplete and validation. Runtime behavior is identical to `ctx.reverse` — `scopedReverse` is a type-only cast, and it also works on loader and middleware contexts. Always call local names with the dot: the returned function is typed only against the module's local map, so an unprefixed local name (`reverse("cart")`) type-checks but is resolved as a global name at runtime — it throws `Unknown route` unless a global route of that exact name happens to exist.
+Wraps `ctx.reverse` with the module's local route types for autocomplete and validation. Runtime behavior is identical to `ctx.reverse` — `scopedReverse` is a type-only cast, and it also works on loader contexts. Don't use it on middleware or response-route contexts: their `ctx.reverse` has no `include()` scope, so the local names it types would throw `Unknown route`. Always call local names with the dot: the returned function is typed only against the module's local map, so an unprefixed local name (`reverse("cart")`) type-checks but is resolved as a global name at runtime — it throws `Unknown route` unless a global route of that exact name happens to exist.
 
 ```typescript
 import { scopedReverse } from "@rangojs/router";

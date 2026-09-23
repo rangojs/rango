@@ -36,7 +36,7 @@ The `ctx` your middleware reads. Notable fields:
 | `env`                       | `TEnv`                  | Bindings from `opts.env`.                                                          |
 | `get` / `set`               | fns                     | Read/write context vars (shared with handlers); `get` resolves what `vars` seeded. |
 | `header(name, value)`       | fn                      | Queue a response header before `next()`, or set it directly after.                 |
-| `reverse`                   | `ScopedReverseFunction` | URL-from-name. Map-only (no auto-fill); needs `routeMap`.                          |
+| `reverse`                   | `GlobalReverseFunction` | Global names only: no auto-fill, `.name` is a type error. Needs `routeMap`.        |
 | `setLocationState(entries)` | fn                      | Attach flash/location state to the response.                                       |
 | `theme` / `setTheme`        | `Theme` / fn            | Current theme; `undefined` unless `theme` is passed.                               |
 | `routeName`                 | `string`                | Matched route name (from `opts.routeName`).                                        |
@@ -93,7 +93,7 @@ Pass an array to run several in order. Cookies set inside middleware via the sta
 
 - No `handles`/`rendered` option by design: the middleware context has no handle APIs in production — no push (`ctx.use(Handle)` is a handler/loader API) and no post-barrier read (`ctx.get(handle)` is loader-only, and middleware runs BEFORE the render barrier anyway). Read handle data in a loader and test it with `runLoader`; assert loader pushes via `runLoaderResult(...).handlePushes` (see `./handles.md`).
 - A COMPONENT route's guard stack cannot be exercised through `dispatch` (it throws on component routes), and `renderToFlightString`/`renderRoute` don't run route middleware. Extract the middleware fn and unit-test it here, or assert the guard stack at e2e.
-- Middleware-phase `ctx.reverse` is map-only (no auto-fill from current params), matching production — enable it with `routeMap`. `routeName` only feeds `ctx.routeName`; it does NOT scope `.name` reverse (the chain reverse stays map-only by design).
+- Middleware-phase `ctx.reverse` is map-only (global names only, no auto-fill from current params), matching production — enable it with `routeMap`. `routeName` only feeds `ctx.routeName`; it does NOT scope `.name` reverse (the chain reverse stays map-only by design, and `MiddlewareContext["reverse"]` rejects `.name` at compile time).
 - `ctx.theme` is `undefined` unless `theme` is passed; `redirect()` does no basename prefixing unless `basename` is seeded.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 
