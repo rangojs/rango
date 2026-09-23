@@ -4,7 +4,7 @@ import type {
   DefaultRouteName,
   DefaultVars,
 } from "../types/global-namespace.js";
-import type { ScopedReverseFunction } from "../reverse.js";
+import type { GlobalReverseFunction } from "../reverse.js";
 import type { Theme } from "../theme/types.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import type { RequestScope } from "../types/request-scope.js";
@@ -74,10 +74,8 @@ export interface MiddlewareContext<
 
   setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
-  reverse: ScopedReverseFunction<
-    Record<string, string>,
-    DefaultReverseRouteMap
-  >;
+  /** Global route names only; see {@link GlobalReverseFunction}. */
+  reverse: GlobalReverseFunction<DefaultReverseRouteMap>;
 }
 
 export type MiddlewareFn<

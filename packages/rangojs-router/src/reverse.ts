@@ -208,6 +208,43 @@ export type ScopedReverseFunction<
 };
 
 /**
+ * Reverse function that resolves global route names only: no include() scope,
+ * no param auto-fill.
+ *
+ * This is the `ctx.reverse` of middleware (`MiddlewareContext`) and
+ * response-route handlers (`ResponseHandlerContext`). On a live request both
+ * get `createReverseFunction(routeMap)` with no route name or params (the
+ * middleware callers in rsc/handler.ts and rsc/loader-fetch.ts,
+ * handleResponseRoute, router/intercept-resolution.ts; mirrored by
+ * testing/run-middleware.ts and testing/dispatch.ts), so a dot-local `.name`
+ * has no scope to resolve against and throws `Unknown route`. Build-time PPR
+ * shell capture (prerender/build-shell-capture.ts) does pass a scoped reverse
+ * to route middleware, but the live request for the same route does not.
+ *
+ * - Route map with a string index signature (no generated map, the permissive
+ *   `Record<string, string>` fallback): any name except a dot-prefixed literal.
+ *   `Exclude` is required because `keyof` collapses to `string` there, so the
+ *   global overloads of `ScopedReverseFunction` would accept `.name` too.
+ * - Concrete route map: the global overloads of `ScopedReverseFunction`, with
+ *   name and param validation. The empty local map (`{}`) leaves no dot-prefixed
+ *   overload that can match.
+ *
+ * @example
+ * ```typescript
+ * reverse("blog.post", { slug: "hello" }) // ok: global route + params
+ * reverse(".post", { slug: "hello" })     // compile error: no include() scope
+ * ```
+ */
+export type GlobalReverseFunction<TGlobalRoutes> =
+  string extends keyof TGlobalRoutes
+    ? <TName extends string>(
+        name: Exclude<TName, `.${string}`>,
+        params?: Record<string, string>,
+        search?: Record<string, unknown>,
+      ) => string
+    : ScopedReverseFunction<{}, TGlobalRoutes>;
+
+/**
  * Extract local routes type from UrlPatterns
  * Used with scopedReverse() to get the routes type from patterns
  */

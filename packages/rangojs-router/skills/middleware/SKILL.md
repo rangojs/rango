@@ -236,7 +236,7 @@ export const myMiddleware: Middleware = async (ctx, next) => {
   ctx.header("X-Frame-Options", "DENY"); // set one response header
   ctx.headers; // response Headers (stub before next(), the real response after)
   ctx.setLocationState(FlashMessage({ text: "Saved" })); // history state for the client
-  ctx.reverse("home"); // URL for a named route
+  ctx.reverse("home"); // URL for a global route name (no ".name", no param auto-fill)
 
   // Opt the current request out of PPR shell lookup/capture.
   ctx.dynamic();

@@ -511,8 +511,9 @@ it("sets a session cookie and passes through", async () => {
 capture pass). The
 returned `ctx` is the underlying `RequestContext`. The request the chain runs
 under is `opts.request`. Seed prior state with `vars`, model the downstream route
-with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production —
-`routeName` only feeds `ctx.routeName`, it does not scope `.name` reverse), pass
+with `next`, enable `ctx.reverse` with `routeMap` (map-only, matching production:
+global names only, and `.name` is a type error; `routeName` only feeds
+`ctx.routeName`, it does not scope `.name` reverse), pass
 an array to run several in order.
 
 ### Reverse and components

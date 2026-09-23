@@ -254,6 +254,7 @@ export type {
 export type {
   ScopedReverseFunction,
   ReverseFunction,
+  GlobalReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
 } from "./reverse.js";

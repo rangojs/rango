@@ -44,7 +44,9 @@ export const ProductHandler: Handler<"shop.product"> = (ctx) => {
 ```
 
 Without a local route map, `.name` calls accept any string (the include scope
-is only known at runtime). Global names are checked against the generated
+is only known at runtime). Middleware and response-route handlers are the
+exception: their `ctx.reverse` (`GlobalReverseFunction`) has no include scope,
+so it takes global names only and a `.name` call there is a type error. Global names are checked against the generated
 map once it exists. For type-safe local names, generate a route types file with
 `npx rango generate urls/shop.tsx` and pass its `routes` type as the second
 generic to `Handler` or `Prerender`. With a local map, local names also

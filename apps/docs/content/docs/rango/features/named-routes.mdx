@@ -43,6 +43,8 @@ ctx.reverse(".settings"); // "/tenant/acme/settings" (tenantId auto-filled)
 ctx.reverse(".settings", { tenantId: "other" }); // "/tenant/other/settings"
 ```
 
+Middleware and response routes (`path.json()`, `path.text()`, …) are the exception: their `ctx.reverse` takes global names only. It has no `include()` scope and fills no params from the current request, so pass the fully qualified name and every param. A dot-local `.name` there is a type error.
+
 Routes with a `search` schema take a typed search object as the third argument:
 
 ```tsx
@@ -107,6 +109,8 @@ import { href, Link } from "@rangojs/router/client";
 | ---------------- | ------------------------------- | ------------------------------------------------ |
 | Server handler   | `ctx.reverse("name")`           | Default server-side URL generation               |
 | Server handler   | `scopedReverse<T>(ctx.reverse)` | Type-checked local `.name` routes                |
+| Middleware       | `ctx.reverse("name")`           | Global names only, every param passed            |
+| Response route   | `ctx.reverse("name")`           | Global names only, every param passed            |
 | Client component | `useReverse(routes)`            | Typed in-module URLs without a server round-trip |
 | Client component | URL passed as prop/loader data  | Cross-module URLs or one-off names               |
 | Client component | `href("/path")`                 | Static paths, compile-time validated             |

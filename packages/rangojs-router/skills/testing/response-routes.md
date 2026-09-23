@@ -25,7 +25,7 @@ The lightweight context a RESPONSE-route handler reads (mirrors the production `
 | `searchParams`        | `URLSearchParams`        | Query params with internal `_rsc*` params stripped.                                                         |
 | `url`                 | `URL`                    | Cleaned request URL (internal `_rsc*` params removed).                                                      |
 | `pathname`            | `string`                 | Matched pathname.                                                                                           |
-| `reverse`             | `ReverseFunction`        | URL-from-name. Map-only (NO auto-fill from current params), matching the production response-route handler. |
+| `reverse`             | `GlobalReverseFunction`  | Global names only (NO auto-fill, `.name` is a type error), matching the production response-route handlers. |
 | `get`                 | fn                       | Read context vars set by prior middleware.                                                                  |
 | `header(name, value)` | fn                       | Set a response header; surfaces on the returned `Response`.                                                 |
 | `waitUntil`           | fn                       | Register a deferred task (no-op fidelity in tests).                                                         |

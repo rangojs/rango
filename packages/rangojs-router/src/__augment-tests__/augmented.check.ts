@@ -6,7 +6,13 @@
  * turns these into tsc errors. Run via tsconfig.augment-check.json.
  */
 import "./augment.js";
-import type { Handler, RouteParams, RouteSearchParams } from "../index.js";
+import type {
+  Handler,
+  MiddlewareContext,
+  ResponseHandlerContext,
+  RouteParams,
+  RouteSearchParams,
+} from "../index.js";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import { href } from "../href-client.js";
 import type { Money, TestBindings } from "./augment.js";
@@ -38,6 +44,25 @@ const varsHandler: Handler<"home"> = (ctx) => {
   return null;
 };
 void varsHandler;
+
+// Response-route and middleware ctx.reverse resolve global names only (no
+// include() scope): generated names and params are validated, `.name` is not.
+function responseReverse(ctx: ResponseHandlerContext): void {
+  ctx.reverse("home");
+  ctx.reverse("blog.post", { slug: "hello" });
+  // @ts-expect-error - dot-local name; no include() scope to resolve it
+  ctx.reverse(".home");
+  // @ts-expect-error - unknown global name is rejected
+  ctx.reverse("nope");
+}
+void responseReverse;
+
+function middlewareReverse(ctx: MiddlewareContext): void {
+  ctx.reverse("blog.post", { slug: "hello" });
+  // @ts-expect-error - dot-local name; no include() scope to resolve it
+  ctx.reverse(".home");
+}
+void middlewareReverse;
 
 // routeName narrows to the generated route names.
 type _routeName = Expect<

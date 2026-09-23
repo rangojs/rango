@@ -131,7 +131,7 @@ ctx.reverse("menu.category", { locale: "en", slug: "breads" }); // → "/en/c/br
 ctx.reverse("menu.category", { slug: "breads" }); // → "/c/breads" on an unprefixed request
 ```
 
-`ctx.reverse()` fills missing params from the current request, so the last call returns `/en/c/breads` when the current URL is under `/en`. That is what you want for links that stay in the current locale. To switch locale, pass it explicitly: `{ locale: "fr" }`, or `undefined` / `""` for the bare default.
+`ctx.reverse()` fills missing params from the current request, so the last call returns `/en/c/breads` when the current URL is under `/en`. That is what you want for links that stay in the current locale. To switch locale, pass it explicitly: `{ locale: "fr" }`, or `undefined` / `""` for the bare default. Middleware and response routes are the exception: their `ctx.reverse` fills nothing from the request, so pass `locale` there explicitly.
 
 If your URL strategy hides the default locale (`"en"` → `/`, others → `/<locale>`), normalize before calling `ctx.reverse()`:
 

@@ -18,7 +18,7 @@ export const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-The only use items a response route accepts are `middleware()` and `cache()` — no `loader`, `loading`, `layout`, or `parallel`. The handler gets a lighter context: params, env, the request, `ctx.reverse` (global names only), `ctx.get` for middleware variables, and `ctx.header()` for response headers. Client navigation to a response route becomes a hard navigation.
+The only use items a response route accepts are `middleware()` and `cache()` — no `loader`, `loading`, `layout`, or `parallel`. The handler gets a lighter context: params, env, the request, `ctx.reverse` (global names only; a dot-local `.name` is a type error), `ctx.get` for middleware variables, and `ctx.header()` for response headers. Client navigation to a response route becomes a hard navigation.
 
 That design buys two things most React frameworks don't have.
 

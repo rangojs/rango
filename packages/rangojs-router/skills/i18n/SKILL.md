@@ -162,7 +162,9 @@ ctx.reverse("menu.category", { slug: "breads" }); // → "/c/breads" on an unpre
 `ctx.reverse()` auto-fills missing params from the current request, so the
 last call returns `/en/c/breads` when the current URL is `/en/...`. That is
 what you want for in-locale links; to leave the locale, pass it explicitly
-(`{ locale: "fr" }`, or `undefined`/`""` for the bare default).
+(`{ locale: "fr" }`, or `undefined`/`""` for the bare default). Middleware and
+response routes are the exception: their `ctx.reverse` fills nothing from the
+request, so pass `locale` there explicitly.
 
 If the active locale is the app default and your URL strategy hides it
 (`"en"` → `/`, others → `/<locale>`), normalize before calling reverse:

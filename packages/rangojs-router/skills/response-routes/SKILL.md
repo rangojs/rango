@@ -102,7 +102,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
     name: string,
     params?: Record<string, string>,
     search?: Record<string, unknown>,
-  ) => string; // global names only
+  ) => string; // GlobalReverseFunction: global names only, ".name" is a type error
   get: GetVariableFn; // Read middleware variables (string key or createVar token)
   header: (name: string, value: string) => void;
   // Use cookies().set(name, value, opts) for cookie mutations (standalone API)
@@ -541,8 +541,9 @@ path.json(
 );
 ```
 
-A dot-local name (`ctx.reverse(".comments")`) type-checks here but throws
-`Unknown route` at runtime.
+A dot-local name (`ctx.reverse(".comments")`) is a type error here. The
+runtime reverse has no scope to resolve it against, so untyped (JS) code that
+calls it throws `Unknown route` and the route answers 500.
 
 ## Content Negotiation
 
