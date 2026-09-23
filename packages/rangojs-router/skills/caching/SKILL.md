@@ -62,6 +62,13 @@ awaiting a loader with `ctx.use()` and rendering the result in a cached handler
 silently bakes per-request data into the shared entry (see "Cache purity &
 tainted objects" below).
 
+Handle pushes follow the same split. Handler pushes (`ctx.use(Meta)`,
+`ctx.use(Breadcrumbs)`, custom handles) are stored with the segments and
+replayed on a hit. Pushes from a `loader()` body are not stored: the loader
+re-runs on the hit and pushes again, so each value appears once. A loader that
+runs only because a cached handler awaited it with `ctx.use(Loader)` does not
+re-run on a hit, so its pushes are stored with the handler's.
+
 Pre-rendering (`/prerender`) is the build-time counterpart: it stores the same
 kind of segment payload at build time instead of on first request. Both feed the
 segment system identically, and loaders always run fresh at request time.

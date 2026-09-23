@@ -824,6 +824,10 @@ the fetched data usually does not. When it MUST be in the document, use
 `ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —
 they are replayed from the entry (see "Opting a Loader into Caching").
 
+Under `cache()`, loader pushes are not stored with the cached segments: the
+loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
+settled `ssr: false` pushes in the shell record — see `/ppr`.)
+
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
 loader first does `await ctx.rendered()` (DSL-registered loaders only —
 handler-invoked loaders cannot use `rendered()`, and a handler already

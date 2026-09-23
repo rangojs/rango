@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createHandleStore } from "../handle-store";
+import { runInsideLoaderScope } from "../context.js";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -362,5 +363,36 @@ describe("HandleStore two-lane settlement (loader handle writes)", () => {
     const lateYields: unknown[] = [];
     for await (const d of store.streamLate()) lateYields.push(d);
     expect(lateYields).toHaveLength(0);
+  });
+});
+
+describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
+  it("getDataForSegment(id, true) drops DSL-loader pushes by position, primitives included", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", { label: "handler-a" });
+    runInsideLoaderScope(() => {
+      store.push("crumbs", "seg1", { label: "loader" });
+      store.push("crumbs", "seg1", "loader-string");
+      // A handle with only loader pushes is omitted entirely.
+      store.push("meta", "seg1", { title: "t" });
+    });
+    store.push("crumbs", "seg1", "handler-b");
+
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: [{ label: "handler-a" }, "handler-b"],
+    });
+    // Default read (render snapshot, prerender) sees every push.
+    expect(store.getDataForSegment("seg1").crumbs).toHaveLength(4);
+  });
+
+  it("replayed values are untagged; a later loader push is tagged", () => {
+    const store = createHandleStore();
+    runInsideLoaderScope(() => store.push("crumbs", "seg1", "stale-loader"));
+    store.replaySegmentData("seg1", { crumbs: ["recorded"] });
+    runInsideLoaderScope(() => store.push("crumbs", "seg1", "live-loader"));
+
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: ["recorded"],
+    });
   });
 });

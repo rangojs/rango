@@ -1,3 +1,5 @@
+import { isInsideLoaderScope } from "./context.js";
+
 /**
  * Handle data structure: handleName -> segmentId -> entries[]
  *
@@ -151,8 +153,14 @@ export interface HandleStore {
   /**
    * Get handle data for a specific segment (for caching).
    * Returns data in format: { handleName: [values...] }
+   *
+   * `excludeLoaderPushes` drops values pushed inside a DSL loader scope
+   * (isInsideLoaderScope() at push time); see captureHandles.
    */
-  getDataForSegment(segmentId: string): Record<string, unknown[]>;
+  getDataForSegment(
+    segmentId: string,
+    excludeLoaderPushes?: boolean,
+  ): Record<string, unknown[]>;
 
   /**
    * Replay cached handle data back into the store (for cache hits).
@@ -186,6 +194,10 @@ export interface HandleStore {
  */
 export function createHandleStore(): HandleStore {
   const data: HandleData = {};
+  // Positions of DSL-loader pushes, keyed by the per-handle/segment array.
+  // Positional (not value identity) so primitive values are covered too.
+  // replaySegmentData installs fresh arrays, so replayed values are untagged.
+  const loaderPushIndices = new WeakMap<unknown[], Set<number>>();
 
   // Settlement barriers: `settled` (handler lane) resolves when sealed AND
   // handler inflight === 0. `fullySettled` additionally waits for the
@@ -333,7 +345,13 @@ export function createHandleStore(): HandleStore {
       if (!data[handleName][segmentId]) {
         data[handleName][segmentId] = [];
       }
-      data[handleName][segmentId].push(value);
+      const values = data[handleName][segmentId];
+      values.push(value);
+      if (isInsideLoaderScope()) {
+        let indices = loaderPushIndices.get(values);
+        if (!indices) loaderPushIndices.set(values, (indices = new Set()));
+        indices.add(values.length - 1);
+      }
 
       // Bump the version; each consumer's cursor decides when to clone+yield.
       version++;
@@ -417,12 +435,23 @@ export function createHandleStore(): HandleStore {
       }
     },
 
-    getDataForSegment(segmentId: string): Record<string, unknown[]> {
+    getDataForSegment(
+      segmentId: string,
+      excludeLoaderPushes?: boolean,
+    ): Record<string, unknown[]> {
       const result: Record<string, unknown[]> = {};
       for (const handleName in data) {
-        if (data[handleName][segmentId]) {
-          result[handleName] = [...data[handleName][segmentId]];
+        const values = data[handleName][segmentId];
+        if (!values) continue;
+        const skip = excludeLoaderPushes
+          ? loaderPushIndices.get(values)
+          : undefined;
+        if (!skip) {
+          result[handleName] = [...values];
+          continue;
         }
+        const kept = values.filter((_, i) => !skip.has(i));
+        if (kept.length > 0) result[handleName] = kept;
       }
       return result;
     },

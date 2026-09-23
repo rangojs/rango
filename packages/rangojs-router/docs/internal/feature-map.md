@@ -473,7 +473,8 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   progressively by `processHandles`. `stream: 'navigation'` (planned knob)
   upgrades a loader's handles to guaranteed-SSR. Userland:
   `runLoaderResult().handlePushes` records writes; `runLoader` seeds reads via
-  `{ handles }` + `ctx.get`.
+  `{ handles }` + `ctx.get`. `cache()` records exclude DSL-loader pushes
+  (`handle-store.ts` push-time tagging; see `docs/design/caching.md`).
 
 ### Revalidation
 
