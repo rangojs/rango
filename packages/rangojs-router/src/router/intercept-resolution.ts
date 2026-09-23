@@ -26,8 +26,10 @@ import {
   warnOnStreamedResponse,
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
+import { catchSegmentError } from "./segment-resolution/helpers.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
+import { getRouterContext } from "./router-context.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -140,6 +142,36 @@ export function findInterceptForRoute(
   }
 
   return null;
+}
+
+/**
+ * An intercept handler's throw or notFound() renders the declaring entry's
+ * boundary as the slot component (catchSegmentError, as for route handlers on
+ * partial navigations: 500/404 status, onError "handler"). Responses and every
+ * error on the background re-render (skipMiddleware) rethrow, so a failed
+ * re-render aborts its cache write instead of storing the fallback.
+ */
+function renderInterceptHandlerError<TEnv>(
+  error: unknown,
+  parentEntry: EntryData,
+  params: Record<string, string>,
+  context: HandlerContext<any, TEnv>,
+  deps: SegmentResolutionDeps<TEnv>,
+  skipMiddleware: boolean | undefined,
+): ReactNode {
+  if (error instanceof Response || skipMiddleware) throw error;
+  return catchSegmentError(
+    error,
+    parentEntry,
+    params,
+    deps,
+    {
+      ...buildLoaderErrorContext(context),
+      isPartial: true,
+      telemetry: getRouterContext()?.telemetry,
+    },
+    context.pathname,
+  ).component;
 }
 
 /**
@@ -284,10 +316,22 @@ export async function resolveInterceptEntry<TEnv>(
     );
   }
 
-  const handlerResult =
-    typeof interceptEntry.handler === "function"
-      ? handleHandlerResult(interceptEntry.handler(context))
-      : interceptEntry.handler;
+  let handlerResult: ReactNode;
+  try {
+    handlerResult =
+      typeof interceptEntry.handler === "function"
+        ? handleHandlerResult(interceptEntry.handler(context))
+        : interceptEntry.handler;
+  } catch (error) {
+    handlerResult = renderInterceptHandlerError(
+      error,
+      parentEntry,
+      params,
+      context,
+      deps,
+      options?.skipMiddleware,
+    );
+  }
 
   let layoutElement: ReactNode | undefined;
   if (interceptEntry.layout) {
@@ -304,6 +348,14 @@ export async function resolveInterceptEntry<TEnv>(
 
   let component: ReactNode;
   let loaderDataPromise: Promise<any[]> | any[] | undefined;
+  // A streamed (loading()) handler resolves after the 200 has started, so its
+  // rejection stays with the client; track it like route handlers do
+  // (onError report, handle-store completion).
+  const trackStreamedHandler = (promise: Promise<unknown>): ReactNode =>
+    deps.trackHandler(promise, {
+      segmentId: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+      segmentType: "parallel",
+    }) as ReactNode;
 
   if (interceptEntry.loading && loaderPromises.length > 0) {
     if (handlerResult instanceof Promise) {
@@ -314,20 +366,30 @@ export async function resolveInterceptEntry<TEnv>(
     }
     component =
       handlerResult instanceof Promise
-        ? handlerResult
+        ? trackStreamedHandler(handlerResult)
         : (Promise.resolve(handlerResult) as ReactNode);
     loaderDataPromise = Promise.all(loaderPromises);
-  } else if (loaderPromises.length > 0) {
-    loaderDataPromise = await Promise.all(loaderPromises);
-    component =
-      handlerResult instanceof Promise ? await handlerResult : handlerResult;
+  } else if (interceptEntry.loading && handlerResult instanceof Promise) {
+    component = trackStreamedHandler(handlerResult);
   } else {
-    component =
-      interceptEntry.loading && handlerResult instanceof Promise
-        ? handlerResult
-        : handlerResult instanceof Promise
-          ? await handlerResult
-          : handlerResult;
+    if (loaderPromises.length > 0) {
+      loaderDataPromise = await Promise.all(loaderPromises);
+    }
+    component = handlerResult;
+    if (handlerResult instanceof Promise) {
+      try {
+        component = await handlerResult;
+      } catch (error) {
+        component = renderInterceptHandlerError(
+          error,
+          parentEntry,
+          params,
+          context,
+          deps,
+          options?.skipMiddleware,
+        );
+      }
+    }
   }
 
   const interceptSegment = {
