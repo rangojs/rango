@@ -406,7 +406,11 @@ const parsed = SignupSchema.safeParse(ctx.body);
 When an action mutates data, the matched route tree may need to partially
 re-render so the UI updates. Rango runs the action, then evaluates
 `revalidate()` on matched segments and loaders. Each path, layout, parallel,
-intercept, or loader rule decides whether that piece re-renders/re-resolves.
+or loader rule decides whether that piece re-renders/re-resolves. An open
+intercept's handler re-runs on each action render (a prerendered intercept
+variant reuses its stored output); its loaders carry their own rules
+(`loader(Def, () => [revalidate(...)])` — an intercept-level `revalidate()`
+throws at definition time).
 
 Use `ctx.isAction()` for specific actions or modules. It accepts one action,
 several actions, or a namespace import (`import * as CartActions`). Wrap it by

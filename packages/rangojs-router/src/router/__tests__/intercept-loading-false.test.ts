@@ -75,7 +75,6 @@ function makeInterceptEntry(
     routeName: "test",
     handler: null as any,
     middleware: [],
-    revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [

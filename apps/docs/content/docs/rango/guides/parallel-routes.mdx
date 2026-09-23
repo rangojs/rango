@@ -230,7 +230,7 @@ parallel({ "@cart": () => <CartSummary /> }, () => [
 
 A `revalidate()` in the slot's `use()` decides whether the **slot component** re-renders. It does not gate the slot's loaders: each `loader()` is revalidated separately, with its own `revalidate()` items and the loader defaults (loaders re-run after every action by default). To scope a loader, give it its own rule, as in `loader(CategoriesLoader, () => [revalidate(() => false)])`.
 
-A `revalidate()` callback may return a hard `boolean`, a soft `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` / `undefined`) to defer to the next revalidator. It is the same contract as `loader()`, `path()`, `layout()`, and `intercept()`; see [Loaders](/docs/rango/features/loaders). Callbacks must be synchronous: a returned Promise is ignored and dev logs a warning.
+A `revalidate()` callback may return a hard `boolean`, a soft `{ defaultShouldRevalidate }` object, or nothing (`void` / `null` / `undefined`) to defer to the next revalidator. It is the same contract as `loader()`, `path()`, and `layout()`; see [Loaders](/docs/rango/features/loaders). Callbacks must be synchronous: a returned Promise is ignored and dev logs a warning.
 
 `revalidate()` decides whether to _re_-render a slot, never whether to render it the first time. A slot the browser has not rendered yet always renders, so `revalidate(() => false)` means "render once, then keep", never "don't appear".
 

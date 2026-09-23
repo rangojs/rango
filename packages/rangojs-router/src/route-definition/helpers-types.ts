@@ -180,10 +180,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   intercept("@modal", "card", () => <CardModal />),
    * ])
    *
-   * // With loaders and revalidation
+   * // With loaders and revalidation (revalidate() goes on the loader;
+   * // an intercept-level revalidate() throws)
    * intercept("@modal", "card", () => <CardModal />, () => [
-   *   loader(CardModalLoader),
-   *   revalidate(() => false),
+   *   loader(CardModalLoader, () => [revalidate(() => false)]),
    * ])
    *
    * // Conditional activation via the config object's `when` selector
@@ -205,7 +205,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param handler - Component or handler for intercepted render
    * @param config - Optional InterceptConfig (e.g. `{ when }`), or the use
    *   callback directly when there is no config
-   * @param use - Optional callback for loaders, middleware, revalidate, etc.
+   * @param use - Optional callback for loaders, middleware, loading, layout, etc.
    */
   intercept: {
     // Local: dot-prefixed, params inferred from local route definition
@@ -285,6 +285,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   ({ defaultShouldRevalidate: true })
    * )
    * ```
+   * Not valid directly inside intercept() use() (throws at definition time):
+   * intercepts only revalidate their loaders, so attach it there with
+   * `loader(Def, () => [revalidate(...)])`.
    * @param fn - Function returning either:
    *   - `boolean` (hard decision — short-circuits the chain),
    *   - `{ defaultShouldRevalidate: boolean }` (soft — updates the suggestion

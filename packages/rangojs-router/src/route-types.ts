@@ -222,7 +222,6 @@ export type ParallelUseItem =
   | TransitionItem;
 export type InterceptUseItem =
   | MiddlewareItem
-  | RevalidateItem
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem

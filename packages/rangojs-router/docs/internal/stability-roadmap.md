@@ -56,7 +56,8 @@ These rules should stay consistent across code, tests, docs, and warnings:
 - Parallel and orphan scopes are structural, not globally shared state.
 - Loaders are live by default unless caching is explicitly configured.
 - Prerendered handlers may be frozen while loaders remain live.
-- Intercepts follow the same segment/revalidation rules as normal routes.
+- Intercepts follow the same segment rules as normal routes; their
+  revalidation is per-loader (no segment-level `revalidate()`).
 
 ## Phase 1: Lock Down Semantics — Complete
 

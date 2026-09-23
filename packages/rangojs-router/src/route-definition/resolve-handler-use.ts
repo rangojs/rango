@@ -91,6 +91,8 @@ const MOUNT_SITE_ALLOWED_TYPES: Record<string, Set<string>> = {
     "notFoundBoundary",
     "transition",
   ]),
+  // "revalidate" passes here so intercept() (dsl-helpers.ts) rejects it with
+  // the loader-level pointer on both the explicit use() and handler.use paths.
   intercept: new Set([
     "middleware",
     "revalidate",
