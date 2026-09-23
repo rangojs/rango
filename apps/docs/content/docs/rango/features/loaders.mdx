@@ -117,6 +117,8 @@ export const ProductLoader = createLoader(async (ctx) => {
 
 Because loaders stream, a push that settles after the page's non-loader segments have rendered misses the server HTML; it streams to the client and is applied after hydration. When the push must be in the first HTML — `<head>` metadata for crawlers, say — register the loader with `loader(ProductLoader, { ssr: false })` so document renders await it. See [Breadcrumbs](/docs/rango/guides/breadcrumbs) and [Metadata & Handles](/docs/rango/features/metadata).
 
+Inside `cache()`, loader pushes are not stored with the cached segments. The loader re-runs on every hit and pushes again, so each value appears once.
+
 ## When to reach for a loader
 
 If the data can be a loader, make it a loader. Loaders resolve fresh every time they run — full renders, cache hits, and every action revalidation — so there is nothing to keep in sync. Handler fetching is right when the data belongs to the shell and should freeze with it; a loader is right when the data must outlive the shell's freshness. [Data Flow](/docs/rango/concepts/data-flow) covers how loaders compare with the other ways of passing data down the tree.

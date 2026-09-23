@@ -541,6 +541,19 @@ On cache HIT:
 4. handleStore.stream() emits replayed data to client
 ```
 
+**Loader pushes are not recorded.** A DSL loader body can push handles too, and
+its pushes land in the owning route/layout segment's bucket. A HIT runs
+loaders exactly as an uncached render of the same request would (after the
+replay), so a recorded copy would show up twice for any handle that does not
+dedupe by key. The store tags each push made inside a DSL
+loader scope (`isInsideLoaderScope()` at push time, by array position so
+primitive values are covered), and `captureHandles` reads with
+`getDataForSegment(id, true)` to leave them out. A loader that only a handler
+consumed (`await ctx.use(Loader)` from the handler body) is skipped with its
+handler on a HIT, so its pushes stay in the record. PPR shell captures keep
+their own exclusion set (`_shellCaptureLoaderHandleValues`, see
+`docs/design/shell-fast-path.md`).
+
 ## Stale-While-Revalidate (SWR)
 
 ### Design Goals

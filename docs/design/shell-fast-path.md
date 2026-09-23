@@ -260,6 +260,11 @@ document-visible freshness. Partial navigations keep loaders fresh while
 replaying an eligibility-checked shell snapshot; a cold partial can schedule a
 navigation-only capture to produce one. Action revalidations remain untouched.
 
+A route's own `cache()` records written outside a capture carry no loader
+pushes at all (`captureHandles` drops every DSL-loader push, bake lane
+included), so on a plain `cache()` HIT every loader-pushed handle comes only
+from the re-run. The bake-lane replay in the table is capture-only.
+
 Replay is byte-identical by construction, which is STRONGER than the full
 tail's re-render-and-pin approach: a handler that computes something the
 snapshot doesn't pin (a timestamp, a random id) drifts today; replayed it

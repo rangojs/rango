@@ -30,6 +30,8 @@ cache({ ttl: 600 }, () => [
 ]);
 ```
 
+Handle pushes follow the same split: a handler's pushes are stored and replayed on a hit, while a loader's pushes come from its re-run.
+
 `cache()` needs a store. Configure one on the router, and every `cache()` boundary, cached loader, and `"use cache"` function uses it; without a store, a boundary renders live:
 
 ```tsx

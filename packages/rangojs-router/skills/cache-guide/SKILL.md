@@ -200,7 +200,7 @@ local/dev behavior, not as proof that segment SWR is active.
 | **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs |
 | **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches     |
 | **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw      |
-| **Handle data**      | Captured and replayed                                 | Captured and replayed when it receives `ctx`      |
+| **Handle data**      | Handler pushes replayed; loader pushes re-run live    | Captured and replayed when it receives `ctx`      |
 | **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                        |
 | **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached |
 
