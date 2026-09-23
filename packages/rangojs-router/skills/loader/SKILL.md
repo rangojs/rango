@@ -830,6 +830,9 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]),
 ```
 
+The options object is typed as `LoaderOptions`
+(`import type { LoaderOptions } from "@rangojs/router"`).
+
 The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off
 for this loader, so nothing of it is left to stream in the document:
 document renders await this loader before first flush — data is settled

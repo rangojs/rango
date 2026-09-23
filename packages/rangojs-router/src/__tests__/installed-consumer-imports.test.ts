@@ -82,6 +82,7 @@ import type {
   OTelTracingOptions,
   TelemetrySink,
   TelemetryEvent,
+  LoaderOptions,
 } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
@@ -131,6 +132,7 @@ type _OTelInstallTypes = [
   TelemetrySink,
   TelemetryEvent,
 ];
+type _LoaderInstallTypes = [LoaderOptions];
 void Link;
 void MemorySegmentCacheStore;
 void createCloudflareTracing;
@@ -159,6 +161,7 @@ void flightMatchers;
 
 const options: RangoOptions = { preset: "cloudflare" };
 void options;
+
 `,
     });
 

@@ -18,6 +18,12 @@ Use the root entrypoint for:
 The root entrypoint is conditionally resolved through the `react-server`
 export condition. Do not treat it as a generic client/runtime barrel.
 
+Its two export lists are maintained by hand: `src/index.ts` (default) and
+`src/index.rsc.ts` (`react-server`). The root `types` condition resolves to the
+emitted `index.rsc.d.ts`, so a type exported only from `index.ts` is invisible
+to installed consumers. Export every public type from both;
+`public-export-boundaries.test.ts` checks the parity.
+
 ### `@rangojs/router/client`
 
 Use `./client` for:
