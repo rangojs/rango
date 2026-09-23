@@ -150,8 +150,14 @@ path("/product/:slug", async (ctx) => {
 ])
 ```
 
-When you register with `loader()` in the DSL, `ctx.use()` returns the
-same memoized result — loaders never run twice per request.
+`ctx.use(Loader)` is a live read, memoized for the request: however many
+times it is called, and whether or not the loader is also registered with
+`loader()`, it runs once per request. It never reads or writes the loader
+store cache on its own: a loader's `cache()` belongs to its DSL binding
+(`loader(Def, () => [cache()])` on a route, layout or intercept). A handler
+read of a cached binding gets the binding's (possibly cached) result once the
+binding has started (a read from its own entry's handler or from later in
+the tree).
 
 **Limitations of ctx.use(Loader):**
 
@@ -563,6 +569,10 @@ To cache a specific loader's data, attach a `cache()` child:
 ```typescript
 loader(ProductLoader, () => [cache({ ttl: 300 })]),
 ```
+
+This works wherever the DSL binding is declared, an intercept's `use()`
+included. A handler's `ctx.use(Loader)` read never caches by itself (see
+"ctx.use(Loader) — escape hatch").
 
 The loader's data is cached independently from the route's segment cache,
 using the same `SegmentCacheStore` (app-level or per-loader override).

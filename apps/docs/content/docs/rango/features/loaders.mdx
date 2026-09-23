@@ -40,7 +40,7 @@ export function Stock() {
 }
 ```
 
-A first read whose data hasn't streamed in yet suspends to the nearest `<Suspense>` or `loading()` boundary; `isLoading` covers later refetches. Handlers can also read a loader with `await ctx.use(StockLoader)`, but that value is baked into the handler's output — inside a cached route it freezes with the shell. Prefer `useLoader()` for data that must stay live.
+A first read whose data hasn't streamed in yet suspends to the nearest `<Suspense>` or `loading()` boundary; `isLoading` covers later refetches. Handlers can also read a loader with `await ctx.use(StockLoader)`, but that value is baked into the handler's output — inside a cached route it freezes with the shell. Prefer `useLoader()` for data that must stay live. `ctx.use()` is a live read memoized for the request (the loader runs once however many times it is read); it never uses the loader store cache itself. A loader's `cache()` belongs to its `loader()` binding, on a route, layout or intercept.
 
 ## Live by default, even inside caches
 
