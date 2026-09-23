@@ -2,11 +2,12 @@
  * E2E: Origin guard (CSRF protection).
  *
  * Verifies that cross-origin requests to server actions, loader fetches,
- * and PE form submissions are rejected with 403.
+ * and PE form submissions are rejected with 403, and that a rejected request
+ * to a REAL action does not run it (the guard fires before execution).
  * Same-origin requests and regular page navigations are unaffected.
  */
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { expect, test, type APIRequestContext } from "@playwright/test";
+import { useFixture, type Fixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,92 @@ function crossOriginHeaders(accept = "text/x-component") {
 }
 
 // ---------------------------------------------------------------------------
+// Real-action cases: /progressive-enhancement renders a <form> bound to
+// submitNameAction, which stores the submitted name and renders it back
+// (pe-result-name). A probe value that never appears proves the action did
+// not run; the same-origin control proves the same submission would have.
+// ---------------------------------------------------------------------------
+async function peFormActionId(
+  request: APIRequestContext,
+  url: string,
+): Promise<string> {
+  // React renders the bound action's id as a hidden field; it is hashed in
+  // production builds, so read it from the page instead of hard-coding it.
+  const html = await (await request.get(url)).text();
+  const match = html.match(/name="\$ACTION_ID_([^"]+)"/);
+  expect(match, "PE form's hidden $ACTION_ID_ field").not.toBeNull();
+  return match![1]!;
+}
+
+function uniqueProbe(label: string): string {
+  return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function realActionCases(f: Fixture) {
+  test("a cross-origin form post to a real action is rejected and the action does not run", async ({
+    request,
+  }) => {
+    const pageUrl = f.url("/progressive-enhancement");
+    const actionId = await peFormActionId(request, pageUrl);
+
+    // Control: the same submission from the same origin runs the action; the
+    // PE response re-renders the page with the submitted name.
+    // Urlencoded, a cross-site HTML form's default encoding (the guard does
+    // not look at the body). Not `multipart`: Playwright < 1.62 drops the
+    // empty `$ACTION_ID_` field (#885).
+    const control = uniqueProbe("same-origin");
+    const allowed = await request.post(pageUrl, {
+      headers: { Accept: "text/html" },
+      form: { [`$ACTION_ID_${actionId}`]: "", name: control },
+    });
+    expect(allowed.status()).toBe(200);
+    expect(await allowed.text()).toContain(control);
+
+    const probe = uniqueProbe("cross-site");
+    const rejected = await request.post(pageUrl, {
+      headers: { Accept: "text/html", Origin: "https://evil.com" },
+      form: { [`$ACTION_ID_${actionId}`]: "", name: probe },
+    });
+    expect(rejected.status()).toBe(403);
+    expect(rejected.headers()["x-rango-origin-check"]).toBe("failed");
+
+    const after = await (await request.get(pageUrl)).text();
+    expect(after).not.toContain(probe);
+  });
+
+  test("a cross-origin RSC call to a real action is rejected and the action does not run", async ({
+    request,
+  }) => {
+    const pageUrl = f.url("/progressive-enhancement");
+    const actionId = await peFormActionId(request, pageUrl);
+
+    const probe = uniqueProbe("cross-site-rsc");
+    const rejected = await request.post(
+      f.url(
+        `/progressive-enhancement?_rsc_action=${encodeURIComponent(actionId)}`,
+      ),
+      {
+        headers: {
+          ...crossOriginHeaders(),
+          "rsc-action": actionId,
+          // The page the call is made from, as the client runtime sends it.
+          "X-RSC-Router-Client-Path": pageUrl,
+        },
+        // encodeReply([formData]): `0` carries the args JSON and `_1_<field>`
+        // the FormData argument, so without the guard the action would
+        // decode its FormData and store the probe.
+        multipart: { "0": '["$K1"]', _1_name: probe },
+      },
+    );
+    expect(rejected.status()).toBe(403);
+    expect(rejected.headers()["x-rango-origin-check"]).toBe("failed");
+
+    const after = await (await request.get(pageUrl)).text();
+    expect(after).not.toContain(probe);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Dev
 // ---------------------------------------------------------------------------
 test.describe("origin guard", () => {
@@ -30,6 +117,8 @@ test.describe("origin guard", () => {
   });
 
   test.setTimeout(30000);
+
+  realActionCases(f);
 
   test("cross-origin loader fetch is rejected with 403", async ({
     request,
@@ -131,6 +220,8 @@ test.describe("origin guard (production)", () => {
     const json = await res.json();
     loaderIds = json;
   });
+
+  realActionCases(f);
 
   test("cross-origin loader fetch is rejected with 403", async ({
     request,
