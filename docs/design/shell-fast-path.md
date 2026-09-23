@@ -123,10 +123,13 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    consumption lane, #672 — its "fresh per serve" slot value would freeze
    under replay) sets the flag: those holes only a handler re-run can fill,
    so the serve side declines the fast path and keeps today's full tail.
-   DSL-loader pushes never disqualify — loaders re-run on every HIT — and
-   their captured values are filtered OUT of the snapshot's handle records
+   DSL-loader pushes never disqualify — loaders re-run on every HIT. A live
+   loader's captured values are filtered OUT of the snapshot's handle records
    (they would duplicate the fresh push and stall the Flight handle encode on
-   their masks).
+   their masks). A bake-lane (`ssr: false`) loader's settled, thenable-free
+   pushes are kept, because the prelude rendered them; its re-run pushes them
+   again, so on the fast path they appear twice unless the handle dedupes by
+   key (`Meta`, `Breadcrumbs` by `href`).
 
 ## Why the original splice framing was dropped
 
@@ -244,7 +247,8 @@ narrower, in fact:
 | Handler-pushed handles (settled)             | re-pushed by handler re-run                | replayed from the entry                          |
 | Handler-pushed handles (nested promise)      | live via handler re-run                    | **entry ineligible** → full tail                 |
 | Handler-invoked `ctx.use(loader)` (#672)     | re-consumed by handler re-run              | **entry ineligible** → full tail                 |
-| Loader-pushed handles                        | re-pushed by loader re-run                 | re-pushed by loader re-run (identical)           |
+| Loader-pushed handles (bake lane, settled)   | re-pushed by loader re-run                 | replayed from the entry **and** re-pushed        |
+| Loader-pushed handles (all others)           | re-pushed by loader re-run                 | re-pushed by loader re-run (identical)           |
 | Per-request metadata (theme/locationState/…) | rebuilt per request                        | rebuilt per request (buildFullPayload)           |
 
 Plain (non-promise) loader values stay PINNED to the capture on document HITs
