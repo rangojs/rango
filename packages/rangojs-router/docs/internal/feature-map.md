@@ -210,6 +210,11 @@ include.
 Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
+- `.debugManifest()` -> `Promise<SerializedManifest>` (type exported from
+  `.`): dev-only snapshot of each `.routes()` / `urls`
+  mount's routes and layouts. Lazy `include()` groups are not expanded
+  (`router/debug-manifest.ts` skips their placeholder entries), so included
+  routes are absent.
 - `clientUrls()` definitions mount through `include()` in the canonical
   `urls()` tree; `.routes(ClientUrlPatterns)` is the pure-client shorthand
   that normalizes to a root include (`include("/", def, { name: "" })`). The
@@ -259,7 +264,6 @@ Public API (`Rango` interface):
 Internal API (`RangoInternal`, not exported):
 
 - `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
-- `debugManifest()`
 
 ### URL Typing and Generation
 

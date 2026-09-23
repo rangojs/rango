@@ -8,31 +8,35 @@ argument-hint:
 
 Dump the route manifest the router builds from your `urls()` tree to verify
 parent relationships, shortCodes, and which segments carry loaders, middleware,
-error boundaries, parallel slots, or intercepts. This is a development aid: the
-method and the diff helpers are internal and may change between releases.
+error boundaries, parallel slots, or intercepts. This is a development aid; the
+diff helpers below are internal and may change between releases.
 
 ## Programmatic access
 
-The router instance has an async `debugManifest()` method. It is not part of
-the public `Rango` type, so TypeScript needs a cast:
+The router returned by `createRouter()` has an async `debugManifest()` method:
 
 ```typescript
-import type { SerializedManifest } from "@rangojs/router/__internal";
 import { router } from "./router.js";
 
 // Development only
 if (process.env.NODE_ENV !== "production") {
-  const manifest = await (
-    router as unknown as { debugManifest(): Promise<SerializedManifest> }
-  ).debugManifest();
+  const manifest = await router.debugManifest();
   console.log(JSON.stringify(manifest, null, 2));
 }
 ```
 
 Run it on the server side (for example from a dev-only route handler), since
-it evaluates your `urls()` tree. Groups mounted with `include()` are registered
-lazily as their own mounts, so check included routes against a running app as
-well rather than relying on this dump alone.
+it evaluates your `urls()` tree. The result type is `SerializedManifest`
+(`import type { SerializedManifest } from "@rangojs/router"`).
+
+### `include()` groups are not expanded
+
+`include()` groups are lazy: the router evaluates one on the first request that
+matches its prefix. `debugManifest()` does not evaluate them. It lists the
+routes and layouts declared directly in each `.routes()` / `urls` mount, so the
+routes inside an included group are missing from `routes` and `totalRoutes`.
+For their names and patterns, read the generated `*.named-routes.gen.ts` file,
+which lists every route including those in `include()` groups.
 
 ## Manifest structure
 
@@ -110,17 +114,11 @@ shortCode such as `M0L0I0R0`.
 import {
   compareManifests,
   formatManifestDiff,
-  type SerializedManifest,
 } from "@rangojs/router/__internal";
 
-const debugManifest = () =>
-  (
-    router as unknown as { debugManifest(): Promise<SerializedManifest> }
-  ).debugManifest();
-
-const oldManifest = await debugManifest();
+const oldManifest = await router.debugManifest();
 // ... make changes ...
-const newManifest = await debugManifest();
+const newManifest = await router.debugManifest();
 
 const diff = compareManifests(oldManifest, newManifest);
 console.log(formatManifestDiff(diff));

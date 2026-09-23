@@ -448,6 +448,7 @@ A debug sink for PPR shell capture (routes with the `ppr` path option). `true` l
 | `.use(pattern, middleware)`       | Adds middleware matched against a path pattern (basename-aware); `ctx.params` is typed from the pattern.                           |
 | `reverse(name, params?, search?)` | Type-safe URL builder for registered route names.                                                                                  |
 | `routeMap`                        | The accumulated route map, for `type AppRoutes = typeof router.routeMap`.                                                          |
+| `debugManifest()`                 | `SerializedManifest` snapshot for debugging; `include()` groups are not expanded ([guide](/docs/rango/guides/debug-manifest)).     |
 | `id`, `basename`                  | The resolved router id and basename.                                                                                               |
 
 ```typescript
