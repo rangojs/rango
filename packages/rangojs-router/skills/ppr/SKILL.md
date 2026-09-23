@@ -668,6 +668,16 @@ response's critical path. To avoid it, give the loader its own cache —
 `loader(Def, { ssr: false }, () => [cache({ ttl })])` — so the background run
 reads through the loader cache.
 
+**Handle pushes from a bake-lane loader appear twice unless the handle dedupes.**
+The capture records the loader's settled, thenable-free handle pushes (the
+prelude rendered them), and a HIT that replays the handler layer from the
+record restores them. The loader still re-runs, so its settled pushes are
+pushed again. The built-in handles dedupe by key — `Meta` by key (title, name,
+property) and `Breadcrumbs` by `href` — so they are unaffected; a custom handle (or a crumb
+without an `href`) pushed from an `ssr: false` loader on a `ppr` route should
+dedupe in its collector. Deferred and promise-carrying pushes are never
+recorded; the re-run is their only producer.
+
 Four hard edges (each e2e/unit-pinned):
 
 - **Header writes throw (issue #713).** ppr is a document-scoped `cache()`:

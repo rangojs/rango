@@ -1515,14 +1515,16 @@ export function deriveShellCaptureContext(
   //    getDataForSegment consumer (the render-barrier snapshot, prerender)
   //    sees every push.
   //    EXCEPTION — bake-lane { ssr: false } loaders: they execute at capture
-  //    and never re-run on a HIT, so neither exclusion rationale applies. The
-  //    capture awaits them (fresh.ts), their pushes are in the captured HTML
-  //    (<head> title/meta, useHandle echoes), and the stored snapshot MUST
-  //    carry the same values or HIT hydration mismatches against its own
-  //    prelude (server text present, client handle empty). Only their
-  //    settled, thenable-free pushes qualify — a deferred (thenable) push or
-  //    one with masked nested promises keeps the exclusion so the handle
-  //    encode cannot stall on a never-resolving mask.
+  //    (fresh.ts awaits them), their pushes are in the captured HTML (<head>
+  //    title/meta, useHandle echoes), and the stored snapshot carries the same
+  //    values so a HIT's handle data is guaranteed to match its own prelude.
+  //    They still re-run on every HIT (resolveLoaderData, loader-cache.ts), so
+  //    on a HIT that replays this record their settled re-pushes append to the
+  //    restored copies: handles pushed from bake-lane loaders must dedupe by
+  //    key (Meta, Breadcrumbs by href). Only settled, thenable-free pushes
+  //    qualify — a deferred (thenable) push or one with masked nested promises
+  //    keeps the exclusion so the handle encode cannot stall on a
+  //    never-resolving mask.
   const handleLiveness = {
     holes: false,
     pendingPushes: 0,

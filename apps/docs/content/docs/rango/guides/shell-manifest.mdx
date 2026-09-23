@@ -19,7 +19,7 @@ The shell manifest closes the gap with a consistency guarantee: the loader reads
 
 Three features composed:
 
-1. **Handles record data at render time.** The handler pushes to a handle (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on the cache miss for `cache()`. Loaders can push handles too, but a loader push is request-time data and is not part of the replayed artifact; a manifest handle must be pushed by the code that is frozen with the shell.
+1. **Handles record data at render time.** The handler pushes to a handle (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on the cache miss for `cache()`. Loaders can push handles too, but a live loader's push is request-time data and is not part of the replayed artifact; a manifest handle must be pushed by the code that is frozen with the shell. An `ssr: false` loader on a `ppr` route is the exception: its settled pushes are recorded and replayed, and pushed again by its re-run (see [PPR](/docs/rango/guides/ppr)).
 2. **Replay on every hit.** Handle data is stored with the Flight payload and replayed into the handle store on cache/prerender hits — handler code does not re-run, but its pushes do.
 3. **Loaders read after the render barrier.** A DSL loader can `await ctx.rendered()` (waits for all non-loader segments to settle — fresh render or replay alike); after that, `ctx.get(Handle)` returns the collected handle data. In a loader, `ctx.use(Handle)` is the write (it returns the push function); reads go through `ctx.get`.
 
