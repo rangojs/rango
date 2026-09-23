@@ -103,7 +103,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import {
   getRequestContext,
-  runWithRequestContext,
+  type RequestContext,
 } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
@@ -111,6 +111,7 @@ import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
+import { rerenderAndCacheRoute } from "./background-revalidation.js";
 
 /**
  * Creates cache store middleware
@@ -159,13 +160,9 @@ export function withCacheStore<TEnv>(
       return;
     }
 
-    const {
-      createHandlerContext,
-      setupLoaderAccess,
-      resolveAllSegments,
-      resolveInterceptEntry,
-      createHandleStore,
-    } = getRouterContext<TEnv>();
+    // Read synchronously in the pipeline: the proactive write runs in
+    // waitUntil, where the router-context ALS may be gone.
+    const routerCtx = getRouterContext<TEnv>();
 
     // On a fresh intercept miss the intercept slot segments flow through
     // `source` into allSegments AND are also recorded on state.interceptSegments.
@@ -223,84 +220,17 @@ export function withCacheStore<TEnv>(
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
-          const originalHandleStore = requestCtx._handleStore;
-          requestCtx._handleStore = createHandleStore();
           try {
-            const proactiveHandlerContext = createHandlerContext(
-              ctx.matched.params,
-              ctx.request,
-              ctx.url.searchParams,
-              ctx.pathname,
-              ctx.url,
-              ctx.env,
-              ctx.routeMap,
-              ctx.matched.routeKey,
-              ctx.matched.responseType,
-              ctx.matched.pt === true,
-            );
-            const proactiveLoaderPromises = new Map<string, Promise<any>>();
-
-            setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
-
-            const Store = ctx.Store;
-            // Re-establish the request-context ALS around the re-render. Store
-            // is a different ALS (DSL build context); on workerd a waitUntil
-            // task runs detached from the request's I/O context, so a handler/
-            // component that reads the ambient getRequestContext() during this
-            // background re-render would otherwise throw "called outside of a
-            // request context".
-            const freshSegments = await runWithRequestContext(requestCtx, () =>
-              Store.run(() =>
-                resolveAllSegments(
-                  ctx.entries,
-                  ctx.routeKey,
-                  ctx.matched.params,
-                  proactiveHandlerContext,
-                  proactiveLoaderPromises,
-                  { skipLoaders: true },
-                ),
-              ),
-            );
-
-            let freshInterceptSegments: ResolvedSegment[] = [];
-            if (ctx.interceptResult) {
-              freshInterceptSegments = await runWithRequestContext(
-                requestCtx,
-                () =>
-                  Store.run(() =>
-                    resolveInterceptEntry(
-                      ctx.interceptResult!.intercept,
-                      ctx.interceptResult!.entry,
-                      ctx.matched.params,
-                      proactiveHandlerContext,
-                      true, // belongsToRoute
-                      // No revalidationContext = render fresh
-                      undefined,
-                      // Skip intercept middleware: the foreground already ran it
-                      // before the response was sent. Re-running here (post-
-                      // response, background) would fire side effects twice and a
-                      // short-circuit Response would silently abort this write.
-                      { skipMiddleware: true },
-                    ),
-                  ),
-              );
-            }
-
-            const completeSegments = [
-              ...freshSegments,
-              ...freshInterceptSegments,
-            ];
-            requestCtx._handleStore.seal();
-            await cacheScope.cacheRoute(
-              ctx.pathname,
-              ctx.matched.params,
-              completeSegments,
-              ctx.isIntercept,
+            const count = await rerenderAndCacheRoute<TEnv>(
+              ctx,
+              requestCtx as RequestContext<TEnv>,
+              cacheScope,
+              routerCtx,
             );
             if (INTERNAL_RANGO_DEBUG) {
               const dur = performance.now() - start;
               console.log(
-                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${count}`,
               );
             }
             debugLog("cacheStore", "proactive caching complete", {
@@ -318,7 +248,6 @@ export function withCacheStore<TEnv>(
               error: String(error),
             });
           } finally {
-            requestCtx._handleStore = originalHandleStore;
             ctx.Store.metrics = savedMetrics;
           }
         });
