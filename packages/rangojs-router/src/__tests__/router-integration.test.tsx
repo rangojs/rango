@@ -1054,6 +1054,44 @@ describe("route tree inspection", () => {
     }).toThrow(/intercept\(\) cannot be used inside parallel/);
   });
 
+  it("revalidate directly inside intercept throws", () => {
+    // Intercepts only evaluate their loaders' revalidate(); an intercept-level
+    // one was stored and never read. Kept on one line so the directive covers
+    // the whole overloaded call.
+    const skip = () => false;
+    const patterns = urls(({ path, intercept, revalidate }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error revalidate is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [revalidate(skip)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /revalidate\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*loader\(YourLoader, \(\) => \[revalidate\(\.\.\.\)\]\)/,
+    );
+  });
+
+  it("revalidate on an intercept's loader is accepted and stays on the loader", () => {
+    const revalidateFn = () => false;
+    const tree = buildRouteTree(
+      urls(({ path, layout, intercept, loader, revalidate }) => [
+        layout(ShopLayout, () => [
+          path("/products", ProductList, { name: "products" }),
+          path("/products/:id", ProductDetail, { name: "product.detail" }),
+          intercept("@modal", ".product.detail", ProductModal, () => [
+            loader(PostLoader, () => [revalidate(revalidateFn)]),
+          ]),
+        ]),
+      ]),
+    );
+
+    const layoutEntry = tree.entry("products")!.parent!;
+    expect(layoutEntry.intercept[0].loader[0].revalidate).toEqual([
+      revalidateFn,
+    ]);
+    // Nothing leaks onto the enclosing layout's revalidate chain.
+    expect(layoutEntry.revalidate).toHaveLength(0);
+  });
+
   it("path inside parallel throws", () => {
     expect(() => {
       buildRouteTree(

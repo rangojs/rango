@@ -714,13 +714,12 @@ const intercept = (
   const prefixedRouteName =
     isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
 
-  // Create intercept entry with its own loaders/revalidate/middleware/when
+  // Create intercept entry with its own loaders/middleware/when
   const entry: InterceptEntry = {
     slotName: slotName as `@${string}`,
     routeName: prefixedRouteName,
     handler,
     middleware: [],
-    revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [],
@@ -739,17 +738,23 @@ const intercept = (
   const handlerUseFn = resolveHandlerUse(handler);
   const mergedUse = mergeHandlerUse(handlerUseFn, useFn, "intercept");
 
-  // Run merged use callback to collect loaders, revalidate, middleware, etc.
+  // Run merged use callback to collect loaders, middleware, etc.
   if (mergedUse) {
     // Capture layout() calls into a temporary array
     const capturedLayouts: EntryData[] = [];
 
-    // Temporary parent so middleware/loader/revalidate/when attach to the
-    // intercept entry; the loading get/set accessor mirrors writes onto `entry`.
+    // revalidate() calls in this scope (explicit use() or handler.use()) land
+    // here instead of the spread parent's revalidate[], and are rejected below:
+    // an intercept only evaluates its loaders' revalidate()
+    // (router/intercept-resolution.ts).
+    const rejectedRevalidate: unknown[] = [];
+
+    // Temporary parent so middleware/loader attach to the intercept entry;
+    // the loading get/set accessor mirrors writes onto `entry`.
     const tempParent = {
       ...ctx.parent,
       middleware: entry.middleware,
-      revalidate: entry.revalidate,
+      revalidate: rejectedRevalidate,
       errorBoundary: entry.errorBoundary,
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
@@ -764,6 +769,13 @@ const intercept = (
 
     const result = withParent(ctx, tempParent as EntryData, () =>
       mergedUse()?.flat(3),
+    );
+
+    invariant(
+      rejectedRevalidate.length === 0,
+      `revalidate() is not valid inside intercept("${slotName}", "${routeName}") use() (including the handler's .use): ` +
+        "an intercept only revalidates its loaders. Attach it to the loader instead: " +
+        "loader(YourLoader, () => [revalidate(...)]).",
     );
 
     // Extract layout from captured layouts (use first one if multiple)

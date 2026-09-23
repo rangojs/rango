@@ -74,7 +74,6 @@ function makeInterceptEntry(middleware: MiddlewareFn[]): InterceptEntry {
     routeName: "test",
     handler: "modal-content" as any,
     middleware,
-    revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [],

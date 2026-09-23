@@ -182,7 +182,7 @@ After an action finishes, Rango runs a server-side revalidation render for the m
 - The matched route's own entry re-runs — its handler plus the layouts and parallels that belong to it.
 - Outer layouts are skipped. A layout that shows data the action changed has to opt in.
 
-The control point is `revalidate((ctx) => ...)` on the segment that owns the data — it works on `path()`, `layout()`, `parallel()`, `intercept()`, and loader registrations. See [Segments and Rendering](/docs/rango/concepts/segments-and-rendering) for how the re-run set is chosen.
+The control point is `revalidate((ctx) => ...)` on the segment that owns the data — it works on `path()`, `layout()`, `parallel()`, and loader registrations. For an `intercept()`, put it on the intercept's loaders; an intercept-level `revalidate()` throws at definition time. See [Segments and Rendering](/docs/rango/concepts/segments-and-rendering) for how the re-run set is chosen.
 
 Match specific actions by imported reference with `ctx.isAction()` — it accepts one action, several, or a namespace import, and survives renames as type errors instead of silent string drift. On a loader or the route's own segments, which already re-run after every action, narrow with `ctx.isAction() ? ctx.isAction(CartActions) : undefined`; `|| undefined` changes nothing there (see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate)). On a layout the default skips, pair it with `|| undefined`, so the layout re-renders after matching actions and defers to the default otherwise:
 

@@ -416,7 +416,7 @@ A `revalidate()` callback may return a hard `boolean`, a soft
 `undefined`) to defer to the next revalidator. See
 [loader/SKILL.md#revalidate-return-shapes](../loader/SKILL.md#revalidate-return-shapes)
 for the full contract — it's the same across `loader()`, `path()`,
-`layout()`, `parallel()`, and `intercept()`.
+`layout()`, and `parallel()`.
 
 A route-scoped slot revalidates on ANY params or search change by default —
 including query-only navigations (`?tab=…`) its content doesn't depend on. If

@@ -127,10 +127,40 @@ If an intercept depends on data established by an outer layout/handler,
 revalidate that outer segment too or reload/guard the data inside the
 intercept.
 
+### Revalidating an Intercept
+
+An intercept has no segment-level `revalidate()`. Its handler and layout
+re-render every time the intercept resolves live — each intercepted
+navigation, and each action submitted while the modal is open. When the
+segment cache or a prerendered intercept variant serves the modal, the stored
+handler output is reused and only the loaders run. Each loader decides for
+itself through its own `revalidate()`, with the normal loader defaults.
+
+A `revalidate()` placed directly in the intercept's `use()` (or returned from
+its handler's `.use`) throws at definition time. Attach it to the loader:
+
+```typescript
+// Throws: revalidate() is not valid inside intercept("@modal", "product") use()
+intercept("@modal", "product", <ProductModal />, () => [
+  revalidate(() => false),
+  loader(ProductLoader),
+]);
+
+// Correct: the loader owns the decision
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader, () => [revalidate(() => false)]),
+]);
+```
+
 ### Revalidation Contracts for Intercept Dependencies
 
-Use named revalidation contracts on both the outer producer and the intercept
-consumer when they share `ctx.set()` data:
+When an outer layout produces `ctx.set()` data that the intercept reads, the
+producer is the side that needs a contract: outer layouts are skipped during
+partial action revalidation unless they opt in. The intercept side needs none
+by default — its handler re-renders on every action while the modal is open,
+and its loaders re-run after every action. If you narrow an intercept loader
+with its own `revalidate()`, compose the producer's contract into it so the
+two stay in step:
 
 ```typescript
 import type { Revalidate } from "@rangojs/router";
@@ -142,8 +172,10 @@ export const revalidateProductShell: Revalidate = (ctx) =>
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns
   intercept("@modal", "product", <ProductModal />, () => [
-    revalidate(revalidateProductShell), // consumer reruns
-    loader(ProductLoader),
+    loader(ProductLoader, () => [
+      revalidate(revalidateProductShell), // reruns with the producer
+      revalidate(() => false), // otherwise keep the loaded data
+    ]),
   ]),
 ]);
 ```
@@ -163,8 +195,7 @@ export const revalidateProduct = () => [
 layout(ProductLayout, () => [
   revalidateProduct(),
   intercept("@modal", "product", <ProductModal />, () => [
-    revalidateProduct(),
-    loader(ProductLoader),
+    loader(ProductLoader, () => [revalidateProduct(), revalidate(() => false)]),
   ]),
 ]);
 ```

@@ -158,9 +158,28 @@ intercept("@modal", "product", <ProductModal />, () => [
 
 See [Middleware](/docs/rango/features/middleware) and [Loaders](/docs/rango/features/loaders).
 
+### Revalidating an intercept
+
+An intercept has no segment-level `revalidate()`. Its handler and layout re-render every time the intercept resolves live: each intercepted navigation, and each action submitted while the modal is open. When the segment cache or a prerendered intercept variant serves the modal, the stored handler output is reused and only the loaders run. Each loader decides for itself through its own `revalidate()`, with the normal loader defaults.
+
+A `revalidate()` placed directly in the intercept's `use()` (or returned from its handler's `.use`) throws at definition time. Attach it to the loader:
+
+```tsx
+// Throws: revalidate() is not valid inside intercept("@modal", "product") use()
+intercept("@modal", "product", <ProductModal />, () => [
+  revalidate(() => false),
+  loader(ProductLoader),
+]);
+
+// Correct: the loader owns the decision
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader, () => [revalidate(() => false)]),
+]);
+```
+
 ### Revalidation across entries
 
-Handler and layout `ctx.set()` data follows the same rule as elsewhere: intercepts see data produced in the current render pass, but a partial action revalidation only recomputes segments that actually revalidate. If the intercept depends on data established by an outer layout or handler, put a named revalidation contract on both sides, or reload or guard the data inside the intercept:
+Handler and layout `ctx.set()` data follows the same rule as elsewhere: intercepts see data produced in the current render pass, but a partial action revalidation only recomputes segments that actually revalidate. If the intercept depends on data established by an outer layout or handler, the producer is the side that needs a contract, because outer layouts are skipped during partial action revalidation unless they opt in. The intercept side needs none by default: its handler re-renders on every action while the modal is open, and its loaders re-run after every action. If you narrow an intercept loader with its own `revalidate()`, compose the producer's contract into it so the two stay in step:
 
 ```tsx
 import type { Revalidate } from "@rangojs/router";
@@ -172,8 +191,10 @@ export const revalidateProductShell: Revalidate = (ctx) =>
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns
   intercept("@modal", "product", <ProductModal />, () => [
-    revalidate(revalidateProductShell), // consumer reruns
-    loader(ProductLoader),
+    loader(ProductLoader, () => [
+      revalidate(revalidateProductShell), // reruns with the producer
+      revalidate(() => false), // otherwise keep the loaded data
+    ]),
   ]),
 ]);
 ```

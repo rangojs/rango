@@ -40,10 +40,14 @@ Guard locations below are relative to `src/`: `path()` guards live in
 
 ### intercept()
 
-| Rule                          | Example                              | Guard location                    |
-| ----------------------------- | ------------------------------------ | --------------------------------- |
-| Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition/dsl-helpers.ts` |
-| Needs a parent entry          | `intercept()` at root level          | `route-definition/dsl-helpers.ts` |
+| Rule                                                 | Example                                      | Guard location                                                                                |
+| ---------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Cannot be inside `parallel()`                        | `parallel({ "@a": intercept(...) })`         | `route-definition/dsl-helpers.ts`                                                             |
+| Needs a parent entry                                 | `intercept()` at root level                  | `route-definition/dsl-helpers.ts`                                                             |
+| No `revalidate()` in `use()` or the handler's `.use` | `intercept(s, r, H, () => [revalidate(fn)])` | `route-definition/dsl-helpers.ts`, `route-definition/resolve-handler-use.ts` (handler `.use`) |
+
+An intercept only revalidates its loaders: put the rule on the loader,
+`loader(Def, () => [revalidate(fn)])`.
 
 ### `when` (intercept config)
 
@@ -228,6 +232,7 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - `when` is the `intercept()` config field (`InterceptConfig`), not a use-item — it cannot appear in any use callback
 - `parallel()` is not in `ParallelUseItem` — cannot nest
 - `intercept()` is not in `ParallelUseItem` — cannot be inside parallel
+- `revalidate()` is not in `InterceptUseItem` — direct revalidate-in-intercept caught
 
 ### Runtime-only guards (TS cannot catch)
 
@@ -236,6 +241,8 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - Orphan layout containing another orphan layout — both are `LayoutItem` (valid)
 - `layout()` inside `parallel()` — `LayoutItem` is not in `ParallelUseItem` at
   the type level, but the runtime guard provides the error message
+- `revalidate()` from a handler's `.use` mounted via `intercept()` — `.use` is
+  typed `HandlerUseItem`, which is mount-agnostic
 
 Runtime guards use ancestor walks and context checks to catch these nested
 violations at route tree build time.

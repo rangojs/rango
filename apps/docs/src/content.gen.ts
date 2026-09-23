@@ -1419,6 +1419,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
+        "id": "revalidating-an-intercept",
+        "text": "Revalidating an intercept"
+      },
+      {
+        "depth": 3,
         "id": "revalidation-across-entries",
         "text": "Revalidation across entries"
       },

@@ -501,7 +501,7 @@ layout(<ShopLayout />, () => [
 A click from the list renders `ProductQuickView` into `@modal` and preserves the
 list behind it. A direct visit or reload renders the canonical full page. Back
 closes the modal and restores the preserved background. The intercept can own its
-middleware, layout, loaders, loading/error policy, loader-level caching, and
+middleware, layout, loaders, loading/error policy, and loader-level caching and
 `revalidate()` rules; the `when` config selector (the 4th argument to
 `intercept()`) can choose by navigation source.
 
