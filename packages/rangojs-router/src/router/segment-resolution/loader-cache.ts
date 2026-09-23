@@ -31,7 +31,11 @@ import {
   startHandleCapture,
   type HandleCapture,
 } from "../../cache/handle-capture.js";
-import { encodeHandles, decodeHandles } from "../../cache/handle-snapshot.js";
+import {
+  appendHandles,
+  encodeHandles,
+  decodeHandles,
+} from "../../cache/handle-snapshot.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import {
   getRequestContext,
@@ -136,12 +140,8 @@ function getLoaderStore(
 /**
  * Replay a loader-cache entry's recorded handle pushes on a HIT.
  *
- * Appends via push() rather than restoreHandles (which REPLACES a segment's
- * per-handle array): a DSL loader pushes into its owning route/layout
- * segment, the same bucket the entry's handler and sibling loaders push
- * into, so a replace would drop their values. Values go to the CURRENT
- * owning segment (the recorded ids are the MISS request's), in recorded
- * order.
+ * appendHandles to the CURRENT owning segment (the recorded ids are the MISS
+ * request's), in recorded order.
  *
  * Deliberately NOT inside the loader's body scope: a stale hit's background
  * revalidation of the same loader can be running with a diverting capture
@@ -157,14 +157,7 @@ async function replayLoaderHandles(
   segmentId: string,
 ): Promise<void> {
   const recorded = await decodeHandles(encoded);
-  if (!recorded) return;
-  for (const segmentHandles of Object.values(recorded)) {
-    for (const [handleName, values] of Object.entries(segmentHandles)) {
-      for (const value of values) {
-        handleStore.push(handleName, segmentId, value);
-      }
-    }
-  }
+  if (recorded) appendHandles(recorded, handleStore, segmentId);
 }
 
 /**

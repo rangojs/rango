@@ -26,19 +26,47 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { _setCacheExecScopeProbe } from "./taint.js";
 
-const cacheExecStorage = new AsyncLocalStorage<true>();
+/**
+ * One "use cache" execution. Identity matters: the execution's handle capture
+ * (cache-runtime.ts) records only pushes from its own chain, including cached
+ * functions it calls (`parent` links them), not concurrent pushes into the
+ * same request store.
+ */
+export interface CacheExecScope {
+  readonly parent?: CacheExecScope;
+}
+
+const cacheExecStorage = new AsyncLocalStorage<CacheExecScope>();
 
 /**
  * Run fn with the "use cache" execution scope active. Continuations spawned
  * from fn's synchronous kickoff inherit the scope; parallel chains do not.
+ * Pass `scope` (createCacheExecScope) to test membership with
+ * isInCacheExecChain.
  */
-export function runWithCacheExecScope<T>(fn: () => T): T {
-  return cacheExecStorage.run(true, fn);
+export function runWithCacheExecScope<T>(
+  fn: () => T,
+  scope: CacheExecScope = createCacheExecScope(),
+): T {
+  return cacheExecStorage.run(scope, fn);
+}
+
+/** A scope nested in the calling chain's current one, if any. */
+export function createCacheExecScope(): CacheExecScope {
+  return { parent: cacheExecStorage.getStore() };
 }
 
 /** True when the calling async chain is inside a "use cache" body. */
 export function isInsideCacheExecScope(): boolean {
-  return cacheExecStorage.getStore() === true;
+  return cacheExecStorage.getStore() !== undefined;
+}
+
+/** True when the calling async chain runs inside `scope`, at any depth. */
+export function isInCacheExecChain(scope: CacheExecScope): boolean {
+  for (let s = cacheExecStorage.getStore(); s; s = s.parent) {
+    if (s === scope) return true;
+  }
+  return false;
 }
 
 // Wire the ambient ctx-method guards (assertNotInsideCacheExec in taint.ts)

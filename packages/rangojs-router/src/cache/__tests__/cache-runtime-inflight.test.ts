@@ -42,9 +42,9 @@ vi.mock("../segment-codec.js", () => ({
   deserializeResult: vi.fn(async (v: string) => JSON.parse(v)),
 }));
 
-const mockRestoreHandles = vi.fn();
+const mockAppendHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({
-  restoreHandles: (...args: any[]) => mockRestoreHandles(...args),
+  appendHandles: (...args: any[]) => mockAppendHandles(...args),
   encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
   decodeHandles: vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
@@ -230,7 +230,7 @@ describe('"use cache" in-flight dedup (C1)', () => {
     expect(store.setItem).toHaveBeenCalledTimes(1);
     expect(store.setItem.mock.calls[0][2].handles).toBeDefined();
     // The follower replayed the same encoded handles into its handle store.
-    expect(mockRestoreHandles).toHaveBeenCalled();
+    expect(mockAppendHandles).toHaveBeenCalled();
   });
 
   // Wedged-leader guard (production pilot incident): a leader that never settles —
