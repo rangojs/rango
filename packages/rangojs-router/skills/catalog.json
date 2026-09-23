@@ -203,7 +203,7 @@
     },
     {
       "name": "response-routes",
-      "description": "Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.",
+      "description": "Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, asking how to return raw JSON instead of RSC from a route, or protecting a state-changing endpoint from CSRF.",
       "argumentHint": "[json|text|html|xml|md|image|stream]",
       "path": "skills/response-routes/SKILL.md"
     },
@@ -227,7 +227,7 @@
     },
     {
       "name": "server-actions",
-      "description": "Define and call server actions (`\"use server\"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, and client-cache control (keepClientCache). Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, or needing optimistic UI after a mutation.",
+      "description": "Define and call server actions (`\"use server\"`) — forms, useActionState, useOptimistic, validation, error handling, redirects, post-action revalidation, client-cache control (keepClientCache), and the default CSRF origin check. Use when handling a form submission on the server, calling a server function from a client component, choosing what re-renders after a mutation, needing optimistic UI after a mutation, or asking how actions are protected from CSRF.",
       "argumentHint": "[action]",
       "path": "skills/server-actions/SKILL.md"
     },

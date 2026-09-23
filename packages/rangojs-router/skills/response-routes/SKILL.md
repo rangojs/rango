@@ -1,6 +1,6 @@
 ---
 name: response-routes
-description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, or asking how to return raw JSON instead of RSC from a route.
+description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses. Use when building a JSON/text API endpoint alongside your pages, asking how to return raw JSON instead of RSC from a route, or protecting a state-changing endpoint from CSRF.
 argument-hint: [json|text|html|xml|md|image|stream]
 ---
 
@@ -427,6 +427,80 @@ Response-route `cache()` stores whole `Response`s. The serve leaf
 | **GET/HEAD only**      | Non-GET/HEAD methods skip the cache (handler runs uncached).                                                                                                                            |
 | **Per-client signals** | A response with `Set-Cookie` or `x-rango-keep-cache` is returned live but **not** stored (MISS + SWR revalidation also skip put).                                                       |
 | **Default key**        | `response:{type}:{cacheKeyBase(host, path, searchParams)}` — sorted search, reserved `_rsc*` / allowlisted `__*` params excluded. Custom `key()` / store `keyGenerator` still override. |
+
+## CSRF
+
+The router's built-in `originCheck` guards server actions, fetchable loaders,
+and progressive-enhancement form posts (`/server-actions` → "CSRF
+Protection"). Response routes are **outside** that gate: the check is never
+consulted for them, not even a custom `originCheck` function.
+
+That matters for a response route that changes state **and** authenticates
+with cookies. Another site can make the victim's browser send a POST to it —
+an HTML form (`urlencoded`, `multipart`, or `text/plain`) or a `no-cors`
+`fetch()` — and the browser attaches the session cookie. Being a "JSON API" is
+no protection: `path.json()` does not parse the request body, and
+`await ctx.request.json()` parses a `text/plain` body just as happily. Routes
+authenticated only by an `Authorization` header are not exposed, because a
+cross-site request cannot set it.
+
+Guard state-changing response routes with middleware that applies the same
+rule as `originCheck`:
+
+```typescript
+import type { Middleware } from "@rangojs/router";
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Mirrors the built-in originCheck: Origin (or Referer) must equal the request
+// protocol + Host; no Origin/Referer means a non-browser client; "null" and a
+// missing Host fail closed.
+export const requireSameOrigin: Middleware = async (ctx, next) => {
+  if (SAFE_METHODS.has(ctx.request.method)) return next();
+
+  const headers = ctx.request.headers;
+  let origin = headers.get("origin");
+  if (!origin) {
+    const referer = headers.get("referer");
+    if (referer) {
+      try {
+        origin = new URL(referer).origin;
+      } catch {
+        // Malformed Referer: treat as absent
+      }
+    }
+  }
+  if (!origin) return next();
+
+  const host = headers.get("host");
+  const expected = host ? `${ctx.url.protocol}//${host}` : null;
+  if (!expected || origin.toLowerCase() !== expected.toLowerCase()) {
+    throw new Response("Forbidden", { status: 403 });
+  }
+  return next();
+};
+```
+
+Attach it with a pattern-scoped `router.use()` to cover a whole API prefix, or
+as a `middleware()` use item on a single route:
+
+```typescript
+// router.tsx — every response route under the API prefix
+const router = createRouter()
+  .use("/api/*", requireSameOrigin)
+  .routes(urlpatterns);
+
+// urls.tsx — one route
+path.json("/api/cart", updateCart, { name: "cart" }, () => [
+  middleware(requireSameOrigin),
+]);
+```
+
+Server-to-server callers (signed webhooks, cron, other backends) send no
+`Origin`, so they pass this check; verify their signature or credentials in the
+handler. Behind a proxy that rewrites `Host`, derive `expected` from the header
+your proxy sets, as with a custom `originCheck` (`/router-setup` → "Origin
+check").
 
 ## Mountable Module Pattern
 
