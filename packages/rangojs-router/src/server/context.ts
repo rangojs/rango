@@ -838,16 +838,17 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
 // does NOT affect isInsideLoaderScope(), so rendered()/barrier/deadlock
 // gating (which must distinguish DSL from handler-invoked loaders) is
 // unchanged.
+interface LoaderBodyScope {
+  active: true;
+  loaderId?: string;
+  handlerInvoked?: boolean;
+  /** The body scope this one was entered from (a ctx.use(Loader) chain). */
+  parent?: LoaderBodyScope;
+}
 const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
-const loaderBodyScopeALS: AsyncLocalStorage<{
-  active: true;
-  loaderId?: string;
-  handlerInvoked?: boolean;
-}> = ((globalThis as any)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<{
-  active: true;
-  loaderId?: string;
-  handlerInvoked?: boolean;
-}>());
+const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
+  globalThis as any
+)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<LoaderBodyScope>());
 
 /**
  * Check if the current execution is inside a cache() DSL boundary.
@@ -1051,7 +1052,15 @@ export function runInsideLoaderBodyScope<T>(
   loaderId?: string,
   handlerInvoked?: boolean,
 ): T {
-  return loaderBodyScopeALS.run({ active: true, loaderId, handlerInvoked }, fn);
+  return loaderBodyScopeALS.run(
+    {
+      active: true,
+      loaderId,
+      handlerInvoked,
+      parent: loaderBodyScopeALS.getStore(),
+    },
+    fn,
+  );
 }
 
 /**
@@ -1064,6 +1073,19 @@ export function runInsideLoaderBodyScope<T>(
  */
 export function getCurrentLoaderBodyId(): string | undefined {
   return loaderBodyScopeALS.getStore()?.loaderId;
+}
+
+/**
+ * True while `loaderId`'s body, or a loader it awaits via ctx.use at any
+ * depth, is executing. The loader-level cache records these pushes
+ * (loader-cache.ts): on a HIT neither the cached body nor its ctx.use deps
+ * run, so the entry must replay the deps' pushes too.
+ */
+export function isInsideLoaderBody(loaderId: string): boolean {
+  for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {
+    if (s.loaderId === loaderId) return true;
+  }
+  return false;
 }
 
 /**

@@ -571,6 +571,20 @@ Values are serialized through RSC Flight, so loaders can return ReactNode,
 Promises, null, and any RSC-serializable type — all round-trip correctly
 through the cache.
 
+Handle pushes the body makes (`ctx.use(Meta)(...)`, breadcrumbs — see
+"Writing Handles from Loaders"), including those of loaders it awaits via
+`ctx.use`, are stored with the value and replayed on every hit, stale hits
+included: appended to the loader's segment in push order, so a cached
+loader's title or crumb stays on the page. Relative to the handler's and
+sibling loaders' pushes, the replay lands when the cache read completes —
+the same race a live loader push has. A pending push
+(a promise, an async callback, a `.defer()` slot) is recorded once it settles,
+as in `"use cache"`: the background write waits up to 5 s, and a value Flight
+cannot serialize or a push still pending at 5 s drops that entry's handle
+record (the data is still cached; its hits replay no pushes). Entries written
+before handles were recorded replay none until they are rewritten (expiry or
+SWR revalidation).
+
 ### Cache Key
 
 The default cache key is `loader:{loaderId}:{host}{pathname}:{sortedParams}`
@@ -807,7 +821,8 @@ barrier ride the SSR handle snapshot (in the SSR'd document — `<MetaTags />`,
 on document loads (`metadata.handlesLate`) or progressively on navigations.
 A push before your slow fetch usually beats the barrier; a push derived from
 the fetched data usually does not. When it MUST be in the document, use
-`ssr: false` below.
+`ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —
+they are replayed from the entry (see "Opting a Loader into Caching").
 
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
 loader first does `await ctx.rendered()` (DSL-registered loaders only —

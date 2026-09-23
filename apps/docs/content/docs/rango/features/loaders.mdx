@@ -60,6 +60,8 @@ A cache hit streams the stored UI instantly while `StockLoader` resolves fresh a
 loader(ProductLoader, () => [cache({ ttl: 60 })]),
 ```
 
+A hit skips the loader body, so the handle pushes it made on the miss (a `Meta` title, `Breadcrumbs`) are stored with the data and replayed on every hit, stale hits included.
+
 Which loaders re-run on a client update is the other axis. After an action every loader re-runs by default; on a navigation, loaders inside the matched `path()` re-run when params or search change and loaders above the route don't. A `revalidate()` inside the loader's use callback adjusts that — see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate).
 
 ## Skeletons are a choice, not the default

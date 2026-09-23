@@ -701,7 +701,15 @@ When serving cached segments:
 This requires separating:
 
 - **Segment cache**: Component structure, layouts, handles
-- **Loader cache**: Individual loader results (opt-in)
+- **Loader cache**: Individual loader results (opt-in), plus the handle pushes
+  the loader body made. A hit skips the body, so `loader-cache.ts` records the
+  pushes of the body and of the loaders it awaits via `ctx.use` on the miss
+  (`startHandleCapture` with an `accept` predicate on the loader body scope,
+  `isInsideLoaderBody` — the handler and sibling loaders push into the same
+  store concurrently) into the item's `handles` blob, and every hit, stale
+  included, appends them to the current owning segment. A stale hit's
+  background revalidation diverts its fresh pushes into the refreshed entry
+  only, so the live response carries each push once.
 
 ---
 
