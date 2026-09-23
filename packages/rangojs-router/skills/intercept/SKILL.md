@@ -90,6 +90,18 @@ intercept(
 
 Only the first `layout()` in an intercept's `use()` is applied.
 
+### Handler Errors
+
+When the intercept handler throws, or calls `notFound()`, the modal slot renders
+the `errorBoundary()` / `notFoundBoundary()` of the layout or path that declares
+the intercept (or the nearest ancestor that has one). The modal layout and the
+background page stay mounted, and the response status is 500 / 404. A thrown
+`Response` (`redirect()`) still short-circuits the navigation.
+
+With `loading()`, an async handler streams after the response has started, so
+its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
+in a client error boundary.
+
 ## Intercept Middleware
 
 Intercepts support their own middleware chain via the use callback. The full chain for an intercept request is:

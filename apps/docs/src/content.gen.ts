@@ -1408,6 +1408,11 @@ export const pageMeta: PageMeta[] = [
         "text": "Modal chrome and closing"
       },
       {
+        "depth": 3,
+        "id": "handler-errors",
+        "text": "Handler errors"
+      },
+      {
         "depth": 2,
         "id": "conditional-intercepts-with-when",
         "text": "Conditional intercepts with when"
