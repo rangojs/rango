@@ -882,7 +882,7 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Identity-guard negative: a bake-lane loader (no loading()) that reads
+    // Identity-guard negative: a bake-lane loader (ssr: false) that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.
     path(
@@ -892,7 +892,7 @@ export const shellCachePatterns = urls(
         name: "shellCacheGuard",
         ppr: true,
       },
-      () => [loader(ShellIdentityLoader)],
+      () => [loader(ShellIdentityLoader, { ssr: false })],
     ),
     // Slot-hole escape: see ShellSlotChromeLayout above.
     layout(ShellSlotChromeLayout, () => [

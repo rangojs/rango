@@ -342,9 +342,9 @@ path("/products/:id", ProductPage, {
   ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
 });
 
-// Step 2 (optional refinement) — promote the fetch to a loader for a
-// guaranteed hole: loaders are masked at capture and fresh on every serve,
-// even when the value resolves instantly. loading() is the loader's hole boundary.
+// Step 2 (optional refinement) — promote the fetch to a live loader (no
+// ssr: false) for a guaranteed hole, even when the value resolves instantly.
+// loading() is the loader's hole boundary.
 path(
   "/products/:id",
   ProductPage,
@@ -355,9 +355,9 @@ path(
 
 Differences that matter during migration:
 
-- **The Suspense/promise model carries over.** Awaited or settled data bakes into the shell; a promise nested inside your data stays a live hole. For loaders, `loading()` selects the lane: present means guaranteed live (masked at capture, fresh every serve — prefer it for per-request data); absent means the loader's settled result bakes into the shell.
+- **The Suspense/promise model carries over.** Awaited or settled data bakes into the shell; a promise nested inside your data stays a live hole. For loaders, `ssr: false` selects the lane, not `loading()` — see [the loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane).
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` / `revalidateTag()` drop the shell (`revalidate()` does not — it selects what re-renders and never touches shell HTML).
-- **`cookies()`/`headers()` in shell material throw during capture** (in Next they silently force dynamic rendering). Per-user reads must move behind a `loading()` boundary or into a nested promise, so the problem surfaces during migration instead of in production.
+- **`cookies()`/`headers()` in shell material throw during capture** (in Next they silently force dynamic rendering). Per-user reads must move into a live loader (no `ssr: false`); a nested promise does not help, because its body still runs during capture. The problem surfaces during migration instead of in production.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })` store (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`). Without one the route stays fully dynamic and logs a warning once per key.
 - **Middleware still guards every serve.** Auth middleware runs before any shell byte on a cache hit and a miss alike, so there is no "PPR bypasses middleware" caveat to migrate around.
 

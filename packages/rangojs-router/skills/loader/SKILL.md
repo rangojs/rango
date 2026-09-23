@@ -863,13 +863,10 @@ The costs and constraints:
   document render awaits the loader before the render barrier resolves, so
   that wait is a cycle by construction; it throws a deadlock error naming the
   fix.
-- PPR capture is the BAKE lane for flagged loaders (`/ppr`): the capture
-  render awaits them too, and the settled result's non-promise data — handle
-  pushes included — freezes into the stored shell; promises nested in plain
-  objects/arrays of the result stay live holes. Unflagged loaders stay masked
-  as live holes and need a boundary (`loading()` or an inline `<Suspense>`).
-  The `progressiveChunkSize` auto-raise is live-document only; captured
-  shells outline per the explicit option or React's default.
+- Under PPR the flag is also the bake lane: the settled non-promise data
+  (handle pushes included) freezes into the stored shell — see `/ppr` → The
+  loader lane rule. The `progressiveChunkSize` auto-raise is live-document
+  only; captured shells outline per the explicit option or React's default.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.

@@ -68,8 +68,8 @@ function warnNoTagStore(fn: string, tags: string[]): void {
   console.warn(
     `[${fn}] No tag-capable cache store is configured; tags ` +
       `[${tags.join(", ")}] were not invalidated. The configured store must ` +
-      `implement invalidateTags() (the built-in MemorySegmentCacheStore and ` +
-      `CFCacheStore do).`,
+      `implement invalidateTags() (the built-in MemorySegmentCacheStore, ` +
+      `CFCacheStore, and VercelCacheStore do).`,
   );
 }
 
@@ -98,7 +98,8 @@ function warnPartialTagStore(fn: string, incapable: number): void {
   console.warn(
     `[${fn}] ${incapable} configured cache store(s) do not implement ` +
       `invalidateTags(); their tagged entries were NOT invalidated. Use a ` +
-      `tag-capable store (e.g. MemorySegmentCacheStore / CFCacheStore) for any ` +
+      `tag-capable store (MemorySegmentCacheStore / CFCacheStore / ` +
+      `VercelCacheStore) for any ` +
       `cache({ store }) boundary whose entries you invalidate by tag.`,
   );
 }

@@ -290,11 +290,14 @@ export type { RouteResponse } from "./urls.js";
  * Get a locally-typed reverse function from ctx.reverse for composable modules.
  *
  * This is a type-only cast - ctx.reverse already resolves names at runtime.
- * Provides type safety: `.name` validates against local routes,
- * `name` validates against global named-routes.
+ * Only the module's LOCAL routes are typed: `.name` and bare `name` both
+ * validate against the local map (the global map parameter defaults to it).
+ * Always dot-prefix local names — a bare name type-checks against the local
+ * map but resolves as a global name at runtime. For global names, call
+ * ctx.reverse directly.
  *
  * @param reverse - The ctx.reverse function from HandlerContext
- * @returns The same reverse function, typed with local + global routes
+ * @returns The same reverse function, typed with the module's local routes
  *
  * @example
  * ```typescript
@@ -305,7 +308,7 @@ export type { RouteResponse } from "./urls.js";
  *
  *     reverse(".index");              // ✓ Local route
  *     reverse(".post", { slug: "x" }); // ✓ Local with params
- *     reverse("shop.cart");           // ✓ Global route
+ *     ctx.reverse("shop.cart");       // Global route: use ctx.reverse
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),

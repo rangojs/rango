@@ -20,7 +20,8 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
   - a `clientUrls()` group segment (`segment.clientGroup` set) -> ONE wrapper
     shape per group mount, with no LoaderBoundary/RouteContentWrapper
     (`ClientUrlsRoot` renders `loading()` itself); the server-side `loading`
-    value still drives PPR masking and SSR
+    value still drives SSR (PPR masking is per loader, not per `loading` —
+    see [`/ppr` → The loader lane rule](../skills/ppr/SKILL.md#the-loader-lane-rule))
 
   Segment `key` derivation (the per-segment `key` that flows into the
   LoaderBoundary/OutletProvider/Suspense keys), gated on `inTransitionScope`

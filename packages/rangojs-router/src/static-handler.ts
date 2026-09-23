@@ -21,11 +21,14 @@
  * ```ts
  * export const DocsNav = Static((ctx) => <Nav docs={readDocsSync()} />);
  * export const DocShell = Static((ctx) => <Shell />);
+ * // Prerender/Static must be exported consts; an inline call inside path()
+ * // gets no build-injected $$id and throws.
+ * export const DocPage = Prerender(getParams, DocPageHandler);
  *
  * urls(({ path, layout }) => [
  *   layout(DocsNav, () => [
  *     path("/getting-started", DocShell, { name: "doc.gs" }),
- *     path("/:slug", Prerender(getParams, DocPageHandler)),
+ *     path("/:slug", DocPage),
  *   ]),
  * ]);
  * ```

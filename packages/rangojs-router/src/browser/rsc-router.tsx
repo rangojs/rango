@@ -655,7 +655,7 @@ export interface RangoProps {}
  *
  * @example
  * ```tsx
- * import { initBrowserApp, Rango } from "rsc-router/browser";
+ * import { initBrowserApp, Rango } from "@rangojs/router/browser";
  * import { rscStream } from "rsc-html-stream/client";
  * import * as rscBrowser from "@vitejs/plugin-rsc/browser";
  *

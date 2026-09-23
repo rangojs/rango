@@ -396,9 +396,9 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   slowest bake source (a top-level pushed handle promise or a bake-lane loader
   container) held the capture gate — in dev, past 2s, the source is also named
   once per key in a console warning with the remedies (nest the promise /
-  `cache()` the work / add `loading()`). In dev, with `debugPerformance` on,
-  the last capture outcome for a key also rides the next document GET's
-  `Server-Timing` as `ppr-capture;desc="…"`.
+  `cache()` the work / drop the loader's `ssr: false`). In dev, with
+  `debugPerformance` on, the last capture outcome for a key also rides the
+  next document GET's `Server-Timing` as `ppr-capture;desc="…"`.
 - For deployed Cloudflare tier diagnostics, build with
   `INTERNAL_RANGO_DEBUG=1` and run `wrangler tail`. `[CFCacheStore][shell]`
   JSON events distinguish L1 hit/miss, KV fallback/promotion, tier writes, and
@@ -687,7 +687,9 @@ Four hard edges (each e2e/unit-pinned):
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Drop the loader's
   `ssr: false` flag (the live lane is exempt; give it a boundary) or move the
-  identity-dependent part into a nested promise. The guard's scope is EXACTLY those two calls:
+  identity-dependent part into a separate loader without `ssr: false`. A
+  nested promise does not help here: its body still runs during capture and
+  trips the guard. The guard's scope is EXACTLY those two calls:
   per-user state read from a middleware-provided object (`ctx.get("session")`)
   does NOT refuse — it bakes silently as the capturing user's data (see
   Pitfalls: the session-object bake trap).
@@ -713,7 +715,9 @@ their data should bake vs stay live. Your levers, in order of preference:
    per-request data returns as NESTED promises consumed under the widget's own
    `<Suspense>` (live holes). No `loading()`, no restructuring. One wall: a
    bake-lane loader that reads `cookies()`/`headers()` refuses the capture —
-   identity belongs in a nested promise or on the live lane.
+   identity belongs on the live lane (a separate unflagged loader); a nested
+   promise inside the flagged loader still runs during capture and trips the
+   guard.
 2. **Do NOT use `loading()` on the layout itself as the live loaders'
    boundary** — any live read without an inline `<Suspense>` of its own
    suspends to it, and the LoaderBoundary fallback wraps the layout's ENTIRE
@@ -765,7 +769,9 @@ their data should bake vs stay live. Your levers, in order of preference:
 
 The identity rule, stated once: per-user data on a PPR page lives in a NESTED
 promise (a hole, fresh per request) or in a live-lane loader (no `ssr: false`)
-consumed CLIENT-side under `loading()` or an inline `<Suspense>`. Reading
+consumed CLIENT-side under `loading()` or an inline `<Suspense>`. A nested
+promise's body still runs at capture, so it must not call `cookies()`/`headers()`
+itself — identity reads belong in the live-lane loader. Reading
 `cookies()`/`headers()` where the value would bake as SEGMENT material —
 handler/render code or a bake-lane loader container — refuses the capture by
 construction. The one exemption is
@@ -977,8 +983,9 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
 
 - **A bake-lane loader that reads `cookies()`/`headers()`**: the capture is
   REFUSED (deterministic, once-per-key warned) — the route stays on axis 1.
-  Move identity into a nested promise or onto the live lane (drop
-  `ssr: false`; give the reader a boundary).
+  Move identity onto the live lane (drop `ssr: false`, or split the read into
+  a separate unflagged loader; give the reader a boundary). A nested promise
+  does not help here: its body still runs during capture.
 - **A bake-lane container that must be fresh per document GET**: it is
   snapshot-pinned for the shell's lifetime by design. Use the live lane
   (no `ssr: false`) or a nested promise instead.

@@ -715,8 +715,9 @@ const matrixRows: SemanticMatrixRow[] = [
   // (mirroring the cache() purity allowance), so the capture is never refused;
   // the value freezes as a capture-time copy wherever it renders as
   // unshielded shell material. DSL segment lanes are unchanged — a loader
-  // ALSO registered live-lane (loader()+loading()) still masks at capture and
-  // keeps its boundary a live hole. Client-side useLoader is the live lane.
+  // ALSO registered live-lane (loader() without ssr: false; the slot's
+  // loading() is its boundary) still masks at capture and keeps that boundary
+  // a live hole. Client-side useLoader is the live lane.
   {
     id: "PPR3",
     contract:

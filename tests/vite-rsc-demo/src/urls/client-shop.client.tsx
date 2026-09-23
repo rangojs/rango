@@ -625,15 +625,15 @@ function PprMetaEcho() {
 }
 
 /**
- * The /ssr shape with a shell declaration (ppr path option). No loading():
- * that is the loader-container-bake composition — the route's loaders sit on
- * the BAKE lane, so at shell capture BOTH execute and their settled values
- * freeze into the stored shell (the sidecar included; contrast the test-app's
- * /ppr group route, where a loading() keeps its plain loader a live hole).
- * First document = MISS: behaves exactly like /ssr (flagged loader awaited,
- * sidecar streams) while capture runs in the background. Later documents =
- * HIT: the whole page — both sections and the baked Meta title in <head> —
- * serves from the shell with no skeletons and no loader execution.
+ * The /ssr shape with a shell declaration (ppr path option), no loading().
+ * The lane is per loader, not per loading(): the { ssr: false } product loader
+ * is on the BAKE lane (executes at capture; its settled data and Meta push
+ * freeze into the stored shell), while the unflagged sidecar is LIVE (masked
+ * at capture; its inline <Suspense> is the hole). First document = MISS:
+ * behaves exactly like /ssr (flagged loader awaited, sidecar streams) while
+ * capture runs in the background. Later documents = HIT: the product sections
+ * and the baked Meta title in <head> serve from the shell; the sidecar
+ * skeleton is in the prelude and its value streams fresh per request.
  */
 function ClientShopPprPage() {
   return (

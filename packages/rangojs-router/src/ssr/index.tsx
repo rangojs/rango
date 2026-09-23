@@ -877,11 +877,10 @@ export function createShellCaptureHandler<TEnv = unknown>(
 
       // Sanity gate: a prelude with no `<body` is the no-shell failure mode.
       // Return null and store nothing; the request falls back to axis 1 and a
-      // later request re-captures. The dominant real-world cause is a loader
-      // route WITHOUT a route-level loading() boundary: renderSegments' loading-
-      // less branch awaits loader data at TREE-BUILD, so the masked loader pins
-      // the whole tree above <body> (root postpone). Root-postponing layouts and
-      // hung handles degrade the same way. shell-capture.ts logs a once-per-key
+      // later request re-captures. The dominant real-world cause is a masked
+      // live-loader read with no boundary above it (lane rule: see
+      // resolveLoaderData, loader-cache.ts), which root-postpones above
+      // <body>. Root-postponing layouts and hung handles degrade the same way. shell-capture.ts logs a once-per-key
       // warning so the eternal-MISS shape is diagnosable.
       if (!new TextDecoder().decode(prelude).includes("<body")) {
         return null;

@@ -971,7 +971,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     expect(secondHtml).toContain("Live price:");
   });
 
-  // /shell-cache/guard: the identity wall. A bake-lane loader (no loading())
+  // /shell-cache/guard: the identity wall. A bake-lane loader (ssr: false)
   // reads cookies() — during capture the guard throws inside the loader, the
   // context flag makes the capture REFUSE deterministically, and the route
   // stays MISS forever. Axis 1 keeps serving the per-user value normally.

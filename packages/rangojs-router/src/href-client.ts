@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { href } from "rsc-router/client";
+ * import { href } from "@rangojs/router/client";
  *
  * href("/blog/my-post");           // ✓ matches /blog/:slug
  * href("/shop/product/widget");    // ✓ matches /shop/product/:slug

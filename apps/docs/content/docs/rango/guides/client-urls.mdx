@@ -299,7 +299,7 @@ By default every loader streams, so nothing a slow loader produces is guaranteed
 
 ### Shell caching with `ppr`
 
-A group route with the `ppr` path option caches its shell the same way a server [PPR](/docs/rango/guides/ppr) route does. When the shell is captured, a loader flagged `ssr: false` is baked into the shell: it runs, and its settled return value is frozen into the stored shell (promises nested in the return value still load live). Every other loader stays live. It doesn't run during capture, so its read needs a boundary above it, either `loading()` or an inline `<Suspense>`. If a live read has no boundary, the capture refuses to store the shell. A route whose loaders are all flagged needs no `loading()`. The search string is part of the shell's identity, so each query string gets its own shell.
+A group route with the `ppr` path option caches its shell the same way a server [PPR](/docs/rango/guides/ppr) route does, with the same [loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane): only a loader flagged `ssr: false` is baked into the shell, and every other loader stays live behind `loading()` or an inline `<Suspense>`. The search string is part of the shell's identity, so each query string gets its own shell.
 
 ### Fetchable loaders
 

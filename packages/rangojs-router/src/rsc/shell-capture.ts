@@ -28,6 +28,7 @@ import {
   enqueueSerializedCapture,
 } from "./capture-queue.js";
 import {
+  PPR_LANE_HINT,
   SHELL_CAPTURE_MAX_WAIT_MS,
   SHELL_CAPTURE_TASK_HARD_CAP_MS,
 } from "./shell-capture-constants.js";
@@ -257,10 +258,11 @@ function releaseCaptureGuard(key: string, token: CaptureGuardToken): void {
  * mode's ceiling (60s in production, {@link REFUSED_CAPTURE_DEV_MAX_MS} in dev).
  *
  * Why exponential and not a flat 60s: a flat long window conflates two very
- * different failures. A STRUCTURALLY ineligible route (no loading(), a cookie
- * reader) fails forever and wants the long 60s cap. But a cold-but-ELIGIBLE route
- * can also fail the in-place retry under a truly cold graph (dev module transform,
- * or a cold worker under parallel load) — and it must recover FAST, on the next
+ * different failures. A STRUCTURALLY ineligible route (a boundary-less live
+ * loader read, a cookie reader) fails forever and wants the long 60s cap. But a
+ * cold-but-ELIGIBLE route can also fail the in-place retry under a truly cold
+ * graph (dev module transform, or a cold worker under parallel load) — and it
+ * must recover FAST, on the next
  * request or two, not be frozen for 60s (that would re-break the very cold-start DX
  * the retry fixes; it bit the cloudflare dev e2e). Escalating from 1s means the
  * eligible route re-probes almost immediately (warm now → HIT and clear), while the
@@ -366,9 +368,8 @@ const warnedNullCaptures = new Set<string>();
  * usually healed, so a firing warning leans toward the structural cause — but we
  * still name both so a cold-start straggler is not misdiagnosed.
  *
- * The pointer is shipped-path-safe (a05c8251 convention): the /ppr skill ships in
- * the npm tarball, but docs/design/ is repo-only, so link it by absolute GitHub URL
- * rather than a relative path that dead-ends for consumers.
+ * The pointer is the shared PPR_LANE_HINT: the /ppr skill ships in the npm
+ * tarball, so the path resolves for consumers (a05c8251 convention).
  */
 function warnNullCaptureOnce(key: string): void {
   if (warnedNullCaptures.has(key)) return;
@@ -379,18 +380,13 @@ function warnNullCaptureOnce(key: string): void {
       "by whether the route ever flips to HIT:\n" +
       "  1. Cold-start warmup (dev module transform, or a cold worker): the capture raced " +
       "an unfinished shell render. This SELF-HEALS — the route flips to HIT once a later " +
-      "request warms the modules. Usually nothing to do.\n" +
+      "request warms the modules.\n" +
       "  2. Something suspends above <body> with no Suspense boundary and never settles " +
-      "within the capture window: a slower-than-the-capture-guard bake-lane loader " +
-      "(loaders on entries WITHOUT loading() execute at capture and their containers " +
-      "bake — the boundary-less await must settle for a shell to exist), or a pending " +
-      "promise consumed without a <Suspense> above it. The boundary belongs on the " +
-      "entry/component that OWNS the data: loading() on the entry that registers the " +
-      "loader (a child route's loading() does not unpin a parent layout's loaders), or " +
-      "a <Suspense> above the consuming component.\n" +
-      'See the /ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md), "The hole ' +
-      'doctrine" and "The layout-with-loaders playbook", or the design docs: ' +
-      "https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/design/ppr-shell-resume.md",
+      "within the capture window: a live loader (no ssr: false) read without loading() or " +
+      "an inline <Suspense>; a loader(Def, { ssr: false }) or top-level push (e.g. Meta) " +
+      "slower than ppr.captureTimeout; or a pending promise with no Suspense above it. The " +
+      "boundary belongs to the entry or component that owns the data.\n" +
+      PPR_LANE_HINT,
   );
 }
 
@@ -399,19 +395,23 @@ const warnedRefusedCaptures = new Set<string>();
 
 /**
  * Warn once per key that the capture was REFUSED for a deterministic reason
- * (identity-guard trip or a rejected bake-lane loader). Distinct from
- * warnNullCaptureOnce: these are not cold-start shapes, the retry is skipped,
- * and the message carries the concrete cause instead of a differential.
+ * (identity-guard trip, a rejected or signal-settled bake-lane loader, a store
+ * refusal). Distinct from warnNullCaptureOnce: these are not cold-start
+ * shapes, the retry is skipped, and the message carries the concrete cause
+ * instead of a differential. Lane-dependent causes pass PPR_LANE_HINT as the
+ * trailing pointer; the rest keep the plain skill pointer.
  */
-function warnCaptureRefusedOnce(key: string, reason: string): void {
+function warnCaptureRefusedOnce(
+  key: string,
+  reason: string,
+  pointer: string = "See the /ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md).",
+): void {
   if (warnedRefusedCaptures.has(key)) return;
   warnedRefusedCaptures.add(key);
   console.warn(
     `[rango] Shell capture for "${key}" was refused: ${reason}\n` +
       "The route stays on MISS (axis 1) — the page keeps working, only the shell " +
-      "cache is off. See the /ppr skill " +
-      "(node_modules/@rangojs/router/skills/ppr/SKILL.md) and " +
-      "docs/design/loader-container-bake.md.",
+      `cache is off. ${pointer}`,
   );
 }
 
@@ -489,13 +489,11 @@ function warnBakeCostOnce(key: string, source: string, ms: number): void {
     `[rango] Shell capture for "${key}" waited ${ms}ms for ${source} to ` +
       "settle before the shell could freeze. This cost recurs on every capture " +
       "of the route and occupies the per-isolate capture queue; the served " +
-      "response never shows it. Top-level promises BAKE by design (the " +
-      "container settles; nested promises stay live). To make the value " +
-      "per-request instead, nest it ({ data: promise }) and read it with use() " +
-      "under Suspense; to keep it baked but cheap, wrap the work in cache() " +
-      "(the capture replays the cached value); for a segment loader, add a " +
-      "loading() boundary to its entry (live lane, masked at capture). See the " +
-      "/ppr skill (node_modules/@rangojs/router/skills/ppr/SKILL.md).",
+      "response never shows it. To make the value per-request, nest it " +
+      "({ data: promise }) and read it with use() under Suspense; to keep it " +
+      "baked but cheap, wrap the work in cache(); for a loader(Def, { ssr: false }), " +
+      "drop ssr: false to move it to the live lane. " +
+      PPR_LANE_HINT,
   );
 }
 
@@ -1328,8 +1326,9 @@ async function runShellCapture(
   if (second !== "no-shell") return second;
 
   // Both attempts came back with no usable shell. Cold-start would have healed by
-  // now, so the eternal-MISS structural shape (a loader route without loading()) is
-  // the likely cause — warn once per key. Ordering matters: because the retry
+  // now, so the eternal-MISS structural shape (a boundary-less live-loader read;
+  // lane rule: see resolveLoaderData, loader-cache.ts) is the likely cause —
+  // warn once per key. Ordering matters: because the retry
   // absorbs cold-start, cold-start routes almost never reach this warning. The
   // caller (scheduleShellCapture) reads this `no-shell` return to back the key off.
   log(
@@ -1794,13 +1793,12 @@ async function captureAndStoreShell(
       : "handler/render code (no loader body was executing)";
     warnCaptureRefusedOnce(
       capture.key,
-      `${origin} called ${fnName}() during capture. Identity must not bake into a shared shell. ` +
-        "For a segment loader (bake lane, no loading()): give its entry a loading() boundary " +
-        "(the live lane, masked at capture) or move the identity-dependent part into a nested " +
-        "promise. For handler/render code: keep the value live by consuming a loader " +
-        'client-side (useLoader in a "use client" component). Note: `await ctx.use(loader)` ' +
-        "inside a HANDLER is exempt from this guard — its value bakes into the shared shell " +
-        "as a capture-time copy, mirroring cache() semantics (the consumption-lane rule).",
+      `${origin} called ${fnName}() during capture; identity must not bake into the shared shell. ` +
+        "Segment loader: drop ssr: false and read it under loading() or an inline <Suspense> " +
+        "(a nested promise does not help: its body still runs at capture). Handler/render " +
+        "code: read it in a live loader and consume it with useLoader. Exception: " +
+        "await ctx.use(loader) in a HANDLER bakes as a capture-time copy.",
+      PPR_LANE_HINT,
     );
     return "refused";
   };
@@ -1835,9 +1833,9 @@ async function captureAndStoreShell(
     // null = sanity gate refused (trivial/empty prelude, no <body>). Store nothing
     // and report `no-shell` so the caller (runShellCapture) can retry once and, if
     // that also fails, warn once per key. On a cold render this is the shell not
-    // yet finished; on a loader route WITHOUT a route-level loading() boundary it is
-    // the structural eternal-MISS shape (the masked loader pins the tree above
-    // <body> at tree-build). The caller's warning names both.
+    // yet finished; a boundary-less live-loader read (lane rule: see
+    // resolveLoaderData, loader-cache.ts) is the structural eternal-MISS shape.
+    // The caller's warning names both.
     // Guard check first — BEFORE the trivial-prelude retry path. A guard trip
     // is deterministic (retrying re-trips it), and when the tripping loader's
     // error UI still completed a shell, storing it would bake the failure into
@@ -1938,7 +1936,8 @@ async function captureAndStoreShell(
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" rejected during capture; its error UI must not bake into the shared shell. ` +
-              "Fix the loader, or give its entry a loading() boundary so it stays on the live lane.",
+              "Fix the loader, or drop its ssr: false to move it to the live lane.",
+            PPR_LANE_HINT,
           );
           return "refused";
         }
@@ -1954,7 +1953,8 @@ async function captureAndStoreShell(
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" settled with redirect()/notFound() during capture; a request-specific signal must not bake into the shared shell. ` +
-              "Give its entry a loading() boundary so it stays on the live lane, or move the decision into middleware.",
+              "Drop its ssr: false to move it to the live lane, or move the decision into middleware.",
+            PPR_LANE_HINT,
           );
           return "refused";
         }

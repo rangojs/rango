@@ -131,6 +131,33 @@ function getLoaderStore(
  * (observePhase; see instrument.ts). A cache HIT returns without calling ctx.use,
  * so it emits no loader phase (the loader did not execute; the hit is only a
  * LoaderCache debug log).
+ *
+ * PPR loader lane rule — the canonical source statement; other sites point
+ * here (consumer docs: skills/ppr/SKILL.md "The loader lane rule";
+ * docs/design/loader-container-bake.md). This is the single funnel every
+ * loader segment path routes through (fresh resolveLoaders, cache-hit
+ * resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation), so the
+ * lane is decided here, per LOADER, never by the entry's loading():
+ *
+ * - BAKE lane: `loader(Def, { ssr: false })` (awaitBeforeFlush) with a
+ *   `bakeSegmentKey` from the caller. The loader EXECUTES at capture (the
+ *   flag's "data in the HTML before first flush" maps to the frozen prelude)
+ *   and its settled non-promise data bakes into the shell. Promises nested in
+ *   plain objects/arrays are masked (mask-nested.ts) and stay live holes at
+ *   the consumer's own Suspense — per-request material must be promise-shaped
+ *   (the #692 cross-session scar). The masked container registers on
+ *   `_shellCaptureLoaderRecords`: it holds the capture gate (bounded by
+ *   `ppr.captureTimeout`) and pins into the snapshot's loader family, and on a
+ *   HIT the recorded container is overlaid onto the fresh run (below) so the
+ *   payload matches the frozen prelude byte-for-byte. cookies()/headers() in
+ *   its body (nested promise bodies included) trip the capture guard.
+ * - LIVE lane: every other loader, whatever its entry's loading(). Never
+ *   executes at capture: the slot gets a never-resolving promise
+ *   (loader-mask.ts) and postpones at the reader's boundary — loading() or an
+ *   inline Suspense — then streams fresh per request. A masked read with NO
+ *   boundary above it root-postpones and the <body> sanity gate refuses the
+ *   shell (eternal-MISS warning). A route whose loaders are ALL `ssr: false`
+ *   needs no loading(): nothing masks.
  */
 export function resolveLoaderData<TEnv>(
   loaderEntry: LoaderEntry,
@@ -141,42 +168,8 @@ export function resolveLoaderData<TEnv>(
   // One ALS read serves the capture check, the record registration, and the
   // seed lookup — this runs for every loader on every request.
   const reqCtx = _getRequestContext();
-  // PPR shell capture policy — gated here, the single funnel every loader
-  // segment path routes through (fresh resolveLoaders, cache-hit
-  // resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation).
-  //
-  // Two lanes (docs/design/loader-container-bake.md):
-  // - LIVE lane (entry has renderable loading(); no `bakeSegmentKey`): never
-  //   execute during capture. The slot gets a never-resolving promise so the
-  //   LoaderBoundary postpones (a hole). See loader-mask.ts.
-  // - BAKE lane (no renderable loading(); callers pass `bakeSegmentKey`):
-  //   execute during capture exactly like axis 1 — the settled container bakes
-  //   into the prelude, nested pending promises postpone at the consumer's own
-  //   Suspense. The container promise is registered on the derived context so
-  //   captureAndStoreShell pins it into the snapshot's loader family; on a
-  //   shell HIT the recorded container is overlaid onto the fresh run so the
-  //   payload matches the frozen prelude byte-for-byte.
   if (isShellCaptureActive(reqCtx)) {
-    // Capture lane, per LOADER (not per entry):
-    //
-    // - `ssr: false` (awaitBeforeFlush) — the BAKE lane. The flag's
-    //   document promise is "this loader's data is in the HTML before first
-    //   flush"; under ppr the pre-flush HTML IS the frozen prelude, so the
-    //   loader executes at capture and its SETTLED return bakes into the
-    //   shell. Nested-promise SHAPE stays the liveness declaration: nested
-    //   thenables are masked so their subtrees postpone as holes (per-request
-    //   material must be promise-shaped — the #692 cross-session scar). The
-    //   masked container registers on _shellCaptureLoaderRecords: it holds
-    //   the capture gate (bounded by ppr.captureTimeout) and pins into the
-    //   shell snapshot, so a HIT tail replays the baked value and the
-    //   hydration payload matches the frozen prelude byte-for-byte.
-    // - Every other loader — LIVE unconditionally: masked with a
-    //   never-resolving promise, postponed at its boundary (loading() or an
-    //   inline Suspense), streamed fresh per request. A masked reader with NO
-    //   boundary above it root-postpones and the <body> sanity gate refuses
-    //   the shell (eternal-MISS warning) — the degrade for boundary-less ppr
-    //   routes. A route whose loaders are ALL flagged therefore needs no
-    //   loading() at all: nothing masks, the shell captures complete.
+    // Lane rule: see this function's JSDoc. Flagged = bake, else masked.
     if (loaderEntry.awaitBeforeFlush && bakeSegmentKey) {
       const containerPromise = executeLoaderData(loaderEntry, ctx, pathname);
       // Pre-attach a no-op catch: a bake-lane rejection during capture must

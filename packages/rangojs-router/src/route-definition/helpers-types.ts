@@ -352,16 +352,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * ```typescript
    * errorBoundary(<ErrorFallback />)
    *
-   * // With dynamic error handler
-   * errorBoundary(({ error, reset }) => (
+   * // With dynamic error handler (server fallback: receives only { error })
+   * errorBoundary(({ error }) => (
    *   <div>
    *     <h2>Something went wrong</h2>
    *     <p>{error.message}</p>
-   *     <button onClick={reset}>Try again</button>
+   *     <a href="/">Go home</a>
    *   </div>
    * ))
    * ```
-   * @param fallback - Static JSX or handler receiving error info and reset function
+   * @param fallback - Static JSX or handler receiving `{ error }`
    */
   errorBoundary: (
     fallback: ReactNode | ErrorBoundaryHandler,

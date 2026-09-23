@@ -300,7 +300,7 @@ interface ErrorBoundaryState {
  * @example
  * ```tsx
  * "use client";
- * import { ErrorBoundary } from "rsc-router/client";
+ * import { ErrorBoundary } from "@rangojs/router/client";
  *
  * function MyComponent() {
  *   return (

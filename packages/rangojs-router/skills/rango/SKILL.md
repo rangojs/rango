@@ -130,8 +130,8 @@ stated, greppable contract.
   freezes into the shared artifact (a documented footgun; see `/caching` →
   "Cache purity & tainted objects"). Client-side consumption (`useLoader` in
   a `"use client"` component) is the LIVE lane. DSL `loader()` segments
-  follow their lane machinery (live under renderable `loading()`, bake
-  otherwise). Pinned by semantic-matrix row PPR3.
+  follow their PPR lane (only `ssr: false` bakes; see `/ppr` → The loader
+  lane rule). Pinned by semantic-matrix row PPR3.
 - Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
   is captured on miss and replayed on hit. (The non-cacheable read guard is a

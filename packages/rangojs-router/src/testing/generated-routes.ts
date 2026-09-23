@@ -158,10 +158,10 @@ export async function diffGeneratedRoutes(
  *
  * @example
  * ```ts
- * import generated from "./router.named-routes.gen";
+ * import { NamedRoutes } from "./router.named-routes.gen";
  * import { router } from "./router";
  *
- * await assertGeneratedRoutesMatch(router, generated);
+ * await assertGeneratedRoutesMatch(router, NamedRoutes);
  * ```
  */
 export async function assertGeneratedRoutesMatch(

@@ -426,14 +426,9 @@ global map entirely.
   route carries the option on its manifest entry, the capture freezes the
   group's static markup (its `useSearchParams` read included — search is
   shell identity, so the frozen value matches the URL the shell serves),
-  and `loading()` subtrees stay the live holes. Per-loader capture
-  policy: a `loader(Def, { ssr: false })` BAKES — it executes at
-  capture and its settled return is shell material (frozen for the shell's
-  lifetime, snapshot-pinned so HIT hydration agrees; nested promises in
-  the return stay live holes), while every other loader is live and needs
-  a boundary — `loading()` or an inline Suspense — or the capture refuses
-  (eternal MISS). A route whose loaders are ALL flagged therefore needs no
-  `loading()` at all. Actions/PE/nonce requests take the live axis;
+  and live loaders stay the holes, per the same lane rule as a server
+  route ([`/ppr` → The loader lane rule](../skills/ppr/SKILL.md#the-loader-lane-rule)).
+  Actions/PE/nonce requests take the live axis;
 - server `createLoader()` definitions, including non-fetchable loaders — with
   the full loader body contract: thrown `notFound()`/`redirect()` authority
   signals, handle writes (`ctx.use(Meta)({ title })`, handler parity), and
