@@ -569,7 +569,7 @@ function useLoaderInternal<T>(
  * @example Basic usage - accessing route loader data
  * ```tsx
  * "use client";
- * import { useLoader } from "rsc-router/client";
+ * import { useLoader } from "@rangojs/router/client";
  * import { CartLoader } from "../loaders/cart";
  *
  * // In route definition: loader(CartLoader)
@@ -617,7 +617,7 @@ export function useLoader<T>(
  * @example On-demand fetching
  * ```tsx
  * "use client";
- * import { useFetchLoader } from "rsc-router/client";
+ * import { useFetchLoader } from "@rangojs/router/client";
  * import { SearchLoader } from "../loaders/search";
  *
  * export function SearchResults() {
@@ -679,7 +679,7 @@ export function useFetchLoader<T>(
  * @example
  * ```tsx
  * "use client";
- * import { useLoader, useRefreshLoaders } from "rsc-router/client";
+ * import { useLoader, useRefreshLoaders } from "@rangojs/router/client";
  *
  * function Profile() {
  *   const { data } = useLoader(ProfileLoader, { key: userId, refreshGroup: "account" });

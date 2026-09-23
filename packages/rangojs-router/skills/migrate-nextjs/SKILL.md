@@ -456,10 +456,9 @@ path("/products/:id", ProductPage, {
   ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
 });
 
-// Rango, step 2 (optional refinement) — promote the fetch to a loader for a
-// GUARANTEED hole: loaders are masked at capture and fresh on every serve,
-// even when the value resolves instantly (a raw promise that settles fast
-// would bake into the shell). loading() is the loader's hole boundary.
+// Rango, step 2 (optional refinement) — promote the fetch to a live loader
+// (no ssr: false) for a GUARANTEED hole, even when the value resolves
+// instantly; loading() is its boundary (/ppr → The loader lane rule).
 path(
   "/products/:id",
   ProductPage,
@@ -475,20 +474,18 @@ Differences that matter during migration:
   postpones at capture and becomes a hole — existing Next PPR trees keep
   working as-is, no `loading()` required. One container rule everywhere
   (handlers, handles, loaders): awaited/settled data bakes into the shell; a
-  promise nested inside your data stays a live hole. For loaders, `loading()`
-  selects the lane: present = guaranteed live (masked at capture, fresh every
-  serve, immune to fast resolution — prefer it for per-request data); absent =
-  the bake lane (the settled container bakes and is snapshot-pinned per shell,
-  nested promises stay live). Identity reads (`cookies()`/`headers()`) where
-  the value would bake refuse the capture by construction.
+  promise nested inside your data stays a live hole. For loaders, `ssr: false`
+  (not `loading()`) selects the lane — see `/ppr` → The loader lane rule.
+  Identity reads (`cookies()`/`headers()`) where the value would bake refuse
+  the capture by construction.
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
   `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
   lever and never touches shell HTML).
 - **`cookies()`/`headers()` in shell material THROW during capture** (in Next
-  they silently force dynamic rendering). Per-user reads must move behind a
-  `loading()` boundary (the live loader lane) or into a nested promise — the
-  refusal surfaces at migration time, which is the point.
+  they silently force dynamic rendering). Per-user reads must move into a live
+  loader (no `ssr: false`; a nested promise does not help). The refusal
+  surfaces at migration time, which is the point.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })`
   store to implement the shell family (`MemorySegmentCacheStore`,
   `CFCacheStore`, `VercelCacheStore`). Without one the route quietly stays
@@ -522,7 +519,8 @@ renders into). Then invalidate by tag:
 `updateTag` is awaitable and immediate; `revalidateTag` is fire-and-forget. Both
 hard-purge (the next read re-renders fresh); the only difference is awaitability —
 despite the Next.js name, `revalidateTag` here is NOT stale-while-revalidate.
-Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) index by tag. Next's
+Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`)
+index by tag. Next's
 `revalidatePath` has no path-based equivalent — tag the relevant entries instead.
 
 **2. Partial-render selection (which segments re-run after an action).** This is

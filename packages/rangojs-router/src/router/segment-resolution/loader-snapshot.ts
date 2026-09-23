@@ -2,9 +2,9 @@
  * Loader-family capture snapshot: elide + overlay for bake-lane loader
  * containers (docs/design/loader-container-bake.md).
  *
- * A loader on an entry with NO renderable loading() executes during shell
- * capture; its settled container bakes into the prelude while every promise
- * still pending at the quiet window postpones as a hole. To keep a HIT's fresh
+ * A bake-lane loader (lane rule: see resolveLoaderData, loader-cache.ts)
+ * executes during shell capture; its settled container bakes into the prelude
+ * while nested promises postpone as holes. To keep a HIT's fresh
  * payload byte-identical to that frozen prelude, the capture pins the container
  * in the shell snapshot:
  *
@@ -31,9 +31,9 @@
 import { isThenable } from "../../handles/is-thenable.js";
 
 // Capture-side nested-thenable masking lives in the LEAF module mask-nested.ts
-// (request-context also needs it for handle pushes and cannot import through
-// loader-mask without a cycle). Re-exported here so loader-cache and the unit
-// tests keep one import site for the snapshot family.
+// (shared with the capture handle-store push wrap in rsc/shell-capture.ts).
+// Re-exported here so loader-cache and the unit tests keep one import site for
+// the snapshot family.
 export { maskNestedContainerThenables } from "./mask-nested.js";
 
 /**

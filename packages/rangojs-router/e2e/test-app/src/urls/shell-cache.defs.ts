@@ -289,8 +289,8 @@ export const ShellBadgeLoader = createLoader(async (): Promise<string> => {
   return `badge-${shellBadgeSeq}`;
 });
 
-// Identity-guard negative (loader-container-bake): a BAKE-lane loader (no
-// loading() on its entry) that reads cookies(). During capture the identity
+// Identity-guard negative (loader-container-bake): a BAKE-lane loader
+// (registered with ssr: false) that reads cookies(). During capture the identity
 // guard throws inside the loader, wrapLoaderPromise swallows it into error UI,
 // and the guard's context flag makes the capture REFUSE — deterministically,
 // once-per-key warned, MISS forever. On axis 1 (and every serve) the same read

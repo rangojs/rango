@@ -179,7 +179,7 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
  * When an error occurs during rendering of this segment or its children,
  * the fallback will be rendered instead. The fallback can be:
  * - A static ReactNode (e.g., <ErrorPage />)
- * - A handler function that receives error info and reset function
+ * - A handler function that receives `{ error }` (server fallbacks get no reset)
  *
  * Error boundaries catch errors from:
  * - Middleware execution
@@ -195,11 +195,11 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
  *
  * // Or with handler for dynamic error UI:
  * route("products.detail", ProductDetail, () => [
- *   errorBoundary(({ error, reset }) => (
+ *   errorBoundary(({ error }) => (
  *     <div>
  *       <h2>Product failed to load</h2>
  *       <p>{error.message}</p>
- *       <button onClick={reset}>Retry</button>
+ *       <a href="/products">Back to products</a>
  *     </div>
  *   )),
  * ])

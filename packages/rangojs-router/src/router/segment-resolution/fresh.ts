@@ -120,12 +120,8 @@ export async function resolveLoaders<TEnv>(
   // loading-disabled entries consult it), so normal requests are unchanged.
   const emitStreaming = !loadingDisabled || isShellCaptureActive();
 
-  // PPR lane decision for this entry's loaders (loader-container-bake): an
-  // entry WITHOUT renderable loading() puts its loaders on the BAKE lane —
-  // executed at capture (container bakes, nested pending promises hole at the
-  // consumer's Suspense) and overlay-pinned from the shell snapshot on a HIT.
-  // Renderable loading() keeps the LIVE lane (masked at capture, always
-  // fresh). Computed per entry; resolveLoaderData applies the policy.
+  // PPR bake/seed key input only; lane rule: see resolveLoaderData
+  // (loader-cache.ts). Unflagged loaders mask at capture regardless of the key.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
@@ -146,9 +142,9 @@ export async function resolveLoaders<TEnv>(
     // barrier), and the loader body can call rendered() before the await below
     // is reached.
     //
-    // Shell-capture renders await too: flagged loaders BAKE at capture
-    // (loader-mask masks only LIVE-lane loaders). Capture must await them so
-    // bake-lane handle pushes land in the prelude.
+    // Shell-capture renders await too: flagged loaders execute at capture
+    // (lane rule: see resolveLoaderData, loader-cache.ts), so their handle
+    // pushes must land in the prelude.
     const awaitedIndices = registerAwaitBeforeFlushIds(loaderEntries);
 
     // Streaming loaders: promises kick off now, settle during RSC serialization.

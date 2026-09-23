@@ -75,13 +75,11 @@ global middleware
 - Loaders are live by default unless explicitly cached via `cache()` in their
   use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
   semantic matrix rows.
-- Under PPR shell capture, `loading()` selects the loader lane
-  (docs/design/loader-container-bake.md): present = live lane (masked at
-  capture, fresh on every serve); absent = bake lane (the loader EXECUTES at
-  capture, its settled container bakes into the shell and is snapshot-pinned
-  on HITs, promises nested in the container stay live at the consumer's own
-  Suspense). Identity reads inside a bake-lane loader refuse the capture.
-  Axis 1 is unchanged in both lanes.
+- Under PPR shell capture, only `loader(Def, { ssr: false })` executes and
+  bakes; every other loader is masked and live, whatever its `loading()`
+  ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);
+  source: `resolveLoaderData` in `loader-cache.ts`). Identity reads inside a
+  bake-lane loader refuse the capture. Axis 1 is unchanged in both lanes.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
@@ -258,11 +256,10 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
     artifact tiers.
   - Client-side consumption (`useLoader` in a `"use client"` component) is the
     LIVE lane: fresh per request, per visitor.
-  - DSL `loader()` segments follow their lane machinery: renderable
-    `loading()` = live (masked at capture — and the mask also keeps a
-    same-loader handler consumption's subtree a live hole when it sits under
-    that boundary), otherwise bake (executes at capture WITH the identity
-    guard active).
+  - DSL `loader()` segments follow their PPR lane (lane rule above; the bake
+    lane runs WITH the identity guard active). The live lane's mask also keeps
+    a same-loader handler consumption's subtree a live hole when it sits under
+    the loader's boundary.
     Pinned by the `[PPR3]` semantic matrix row and
     `e2e/shell-cache.test.ts` (slot-use cases); cache()-tier precedent pinned
     by the blog-cache suites (frozen sidebar on ring-3 hits).

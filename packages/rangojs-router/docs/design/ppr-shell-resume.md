@@ -419,16 +419,18 @@ to Rango's rings. The core invariant, which you should be able to recite:
 > performed; replaying them on a HIT reproduces the shell content
 > byte-identically; everything not recorded stays live.
 
-This self-aligns with the hole doctrine. LIVE-lane loaders (behind `loading()`)
+This self-aligns with the hole doctrine. LIVE-lane loaders (every loader
+without `ssr: false`, postponing at `loading()` or an inline `<Suspense>`)
 are MASKED at capture (never executed), so their reads are never recorded and
 stay fresh on hits. Content that baked into the shell is, by definition,
 content whose reads happened at capture. So "record what the capture read" and
 "everything under a hole stays live" are the same rule seen from two sides.
 
 The LOADER family (docs/design/loader-container-bake.md) extends the same
-invariant to BAKE-lane loaders (no `loading()` on their entry): they EXECUTE
-during capture (the flight gate's holdUntil covers their real latency), their
-settled containers are promise-elided and recorded as
+invariant to BAKE-lane loaders (`loader(Def, { ssr: false })`, whatever the
+entry's `loading()`; before #813 the trigger was a missing `loading()`): they
+EXECUTE during capture (the flight gate's holdUntil covers their real
+latency), their settled containers are promise-elided and recorded as
 `{ family: "loader", key: <loader segment id>, value: <Flight string> }`, and
 on a HIT `serveShellHit` deserializes them into `_shellLoaderSeed` so
 `resolveLoaderData` overlays the recorded container onto the fresh run —
@@ -593,9 +595,10 @@ The expiry invariant holds BY CONSTRUCTION, no filtering logic:
 
 - **tagged bake ⇒ evicts** — a component/loader that bakes into the shell executes
   during capture, so any `cacheTag()` call records and rides onto the entry.
-- **hole ⇒ fresh** — a subtree behind a renderable `loading()` is masked during
-  capture (its loaders never run), so nothing under a hole can tag the shell; it
-  stays live and re-renders per request regardless of tag invalidation.
+- **hole ⇒ fresh** — a live loader's subtree (behind `loading()` or an inline
+  `<Suspense>`) is masked during capture (its loaders never run), so nothing
+  under a hole can tag the shell; it stays live and re-renders per request
+  regardless of tag invalidation.
 
 Timing: the tag snapshot sits at the putShell WRITE BARRIER (`captureAndStoreShell`,
 right before it builds the `ShellCacheEntry`), not at stream construction. By the
@@ -631,8 +634,9 @@ resolveDeferredHandleValues)`), because a pushed promise with real latency
 - `push({ x: promise })` NESTED: preserved by FlightSerialize, streams to the
   consumer, who must Suspense it — a hole under capture.
 
-The one asymmetry versus loaders, stated once: a LOADER container is a hole via
-`loading()` (the entire loader value is the live lane), while a HANDLE
+The one asymmetry versus loaders, stated once: a live (non-`ssr: false`)
+LOADER container is a hole at its boundary (the entire loader value is the
+live lane), while a HANDLE
 container is shell via root consumption (the handles generator drains before
 SSR). The unified rule: **a promise nested inside your data is never baked;
 the container settles.** Related `cache()` fact, orthogonal to ppr: the segment
@@ -901,15 +905,18 @@ error is NOT retried — it propagates to `reportCacheError`.
 The two changes compose: cold-start now heals inside one background task, so the
 once-per-key "no usable shell" warning fires only AFTER the in-place retry also
 failed. That makes the warning meaningful again — by the time it fires, cold-start
-has usually healed, so it points at the structural cause (a loader route without
-`loading()`), and its text names both causes with the distinguishing signal (does
-the route ever flip to HIT). Under `descriptor.debug` (INTERNAL_RANGO_DEBUG)
-each attempt emits one concise breadcrumb instead of a stack dump.
+has usually healed, so it points at the structural cause (a live loader read
+with no `loading()` or inline `<Suspense>` above it; before #813, any loader
+route without `loading()`), and its text names both causes with the
+distinguishing signal (does the route ever flip to HIT). Under
+`descriptor.debug` (INTERNAL_RANGO_DEBUG) each attempt emits one concise
+breadcrumb instead of a stack dump.
 
 ### Refused-capture backoff (declaring ppr on an ineligible route)
 
-An ineligible route — a loader route without `loading()`, or a cookie-reading
-handler whose capture throws — refuses on every request. Without a memory of
+An ineligible route — a live (non-`ssr: false`) loader read with no
+`loading()` or inline `<Suspense>` above it, or a cookie-reading handler whose
+capture throws — refuses on every request. Without a memory of
 that, a `ppr`-declared route in that shape would schedule a doomed background
 render on EVERY request it serves. `scheduleShellCapture`
 keeps a module-level negative cache (`refusedCaptures`): a key enters backoff only
@@ -1016,6 +1023,13 @@ Flight-side renderer.
 
 ### The hole contract: a hole needs a loading() boundary
 
+> _Superseded in part:_ this section predates streaming `useLoader` (#813).
+> The loading-less tree-build await it describes is gone for streaming lanes:
+> a live loader's reader now suspends to the nearest `loading()` OR inline
+> `<Suspense>`, so either boundary makes a hole, and only a boundary-less read
+> still refuses the capture. `loader(Def, { ssr: false })` loaders bake
+> instead of masking. The diagnosis below is kept as history.
+
 This started as "the capture prerender hangs" — the HIT e2e was `test.fixme` and
 the leading suspects were exotic: the live Flight wire staying open on the
 pending masked row, the handles generator, backpressure from the quiet-monitor
@@ -1071,13 +1085,15 @@ separately instrumented in v1.
 
 ## Loaders and handles under PPR
 
-Loaders are the live lane — always fresh, never cached — and that is exactly
-what makes them the holes. Capture masks them (never executed, never-resolving
-values), so a loader-consuming subtree BEHIND a `loading()` boundary suspends
-and postpones there (see "The hole contract" above — without `loading()` the
-await happens at tree-build and there is no hole, only a refused capture).
-Serve runs them fresh through the unchanged execution path; `resume` streams
-their output into the frozen shell's holes. Fetchable loaders and refresh
+Loaders without `ssr: false` are the live lane — always fresh, never cached —
+and that is exactly what makes them the holes. Capture masks them (never
+executed, never-resolving values), so a loader-consuming subtree behind a
+`loading()` or inline `<Suspense>` boundary suspends and postpones there
+(with no boundary above the read there is no hole, only a refused capture;
+see "The hole contract" above for the pre-#813 history). `ssr: false`
+loaders are the bake lane instead (docs/design/loader-container-bake.md).
+Serve runs the live ones fresh through the unchanged execution path; `resume`
+streams their output into the frozen shell's holes. Fetchable loaders and refresh
 groups are `_rsc_loader` requests and never touch the PPR serve path.
 
 ### Handler-side consumption: the consumption-lane rule
@@ -1097,9 +1113,9 @@ shell — HOW a loader is consumed decides its lane:
   purity allowance for handler-consumed loader values.
 - **Client-side consumption** (`useLoader` in a `"use client"` component) is
   the LIVE lane: fresh per request, per visitor.
-- **DSL `loader()` segments** keep their lane machinery unchanged: renderable
-  `loading()` = live (masked at the `resolveLoaderData` funnel), otherwise
-  bake (executes at capture WITH the identity guard active). Corollary worth
+- **DSL `loader()` segments** keep their lane machinery unchanged:
+  `ssr: false` = bake (executes at capture WITH the identity guard active),
+  otherwise live (masked at the `resolveLoaderData` funnel). Corollary worth
   stating: when a handler consumes a loader that is ALSO registered live-lane
   on the same subtree (the parallel-slot shape: `loader()+loading()` plus
   `await ctx.use(...)` in the slot handler), the segment's masked

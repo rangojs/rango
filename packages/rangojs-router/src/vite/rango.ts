@@ -100,7 +100,7 @@ export { hasUseClientDirective };
  *   plugins: [
  *     react(),
  *     rango({ preset: 'cloudflare' }),
- *     cloudflare({ viteEnvironment: { name: 'rsc' } }),
+ *     cloudflare({ viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] } }),
  *   ],
  * });
  * ```

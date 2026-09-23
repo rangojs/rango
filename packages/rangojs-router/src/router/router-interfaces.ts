@@ -187,7 +187,13 @@ export interface Rango<
    * ```tsx
    * import { router } from "./router";
    *
-   * export default { fetch: router.fetch };
+   * // Workers call fetch(request, env, ctx); `{ fetch: router.fetch }` would
+   * // drop env and ctx.
+   * export default {
+   *   fetch(request, env, ctx) {
+   *     return router.fetch(request, { env, ctx });
+   *   },
+   * } satisfies ExportedHandler;
    * ```
    *
    * @example Direct export

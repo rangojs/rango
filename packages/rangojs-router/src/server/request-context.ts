@@ -250,13 +250,12 @@ export interface RequestContext<
   /**
    * @internal Bake-lane loader containers collected DURING a shell capture:
    * segment-key -> the loader's (pre-wrap) result promise. Populated by
-   * resolveLoaderData for loaders on entries with no renderable loading() (the
-   * bake lane — they execute at capture instead of being masked; see
-   * docs/design/loader-container-bake.md). Drained by captureAndStoreShell
-   * after the shell quiesces: settled containers are promise-elided,
-   * Flight-serialized, and pinned into the snapshot's loader family; a
-   * REJECTED container refuses the capture (error UI must never bake into the
-   * shared shell). Own property of the capture's derived context only.
+   * resolveLoaderData for bake-lane loaders (lane rule: see its JSDoc in
+   * loader-cache.ts). Drained by captureAndStoreShell after the shell
+   * quiesces: settled containers are promise-elided, Flight-serialized, and
+   * pinned into the snapshot's loader family; a REJECTED container refuses
+   * the capture (error UI must never bake into the shared shell). Own
+   * property of the capture's derived context only.
    */
   _shellCaptureLoaderRecords?: Map<string, Promise<unknown>>;
 

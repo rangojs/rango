@@ -127,15 +127,15 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 
 ## Helpers: what exists inside clientUrls()
 
-| Helper         | Notes                                                                                                                                                                                                                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr`; a loader without `ssr: false` is live and needs `loading()` or an inline `<Suspense>` or capture refuses); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
-| `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                                                                                                            |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                                                                                                              |
-| `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                                                                                                               |
-| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                                                                                                                  |
-| `transition()` | Inside a `path()` use callback only (at most one). Data-only ViewTransition config — no `when`; same-route navs in a group already hold previous content without it                                                                                                                 |
-| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                                                                                                                                               |
+| Helper         | Notes                                                                                                                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr` → The loader lane rule); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
+| `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                         |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                           |
+| `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
+| `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                               |
+| `transition()` | Inside a `path()` use callback only (at most one). Data-only ViewTransition config — no `when`; same-route navs in a group already hold previous content without it                              |
+| `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                                                            |
 
 At the top level of the builder only `path()`, `layout()` and `intercept()`
 are accepted, and the builder must define at least one `path()`. Any helper
@@ -306,10 +306,8 @@ Constraints:
   construction. It throws a deadlock error naming the fix.
 - `intercept()` loaders reject the flag — intercepts render on client
   navigations only, so a document-render await can never apply.
-- Under a `ppr` group route the flag is the BAKE lane: the loader executes at
-  shell capture and its settled return (handle pushes included) freezes into
-  the stored shell; nested promises stay live holes. Unflagged loaders stay
-  masked as live holes (`/ppr`).
+- Under a `ppr` group route the flag is the bake lane, exactly as on a server
+  route (`/ppr` → The loader lane rule).
 
 Every document load pays the flagged loader's latency before first byte —
 that is the point, but it is a real cost. Keep flagged loaders fast (existence

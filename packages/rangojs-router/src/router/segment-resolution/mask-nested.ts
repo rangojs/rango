@@ -1,12 +1,12 @@
 /**
  * Capture-side nested-thenable masking — the mechanism behind "nested-promise
  * shape is the liveness declaration" for BOTH bake-lane loader containers
- * (loader-cache.ts) and pushed handle containers (request-context.ts
- * createUseFunction).
+ * (loader-cache.ts) and pushed handle containers (the capture handle store's
+ * push wrap in rsc/shell-capture.ts).
  *
- * Deliberately a LEAF module: request-context needs the mask for handle
- * pushes, and loader-mask (the other natural home) imports request-context —
- * importing from there would cycle. This module imports only is-thenable.
+ * Deliberately a LEAF module: loader-mask (the other natural home) imports
+ * request-context, so any funnel importing the mask from there inherits that
+ * graph. This module imports only is-thenable.
  */
 
 import { isThenable } from "../../handles/is-thenable.js";
@@ -33,8 +33,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Deep-copy a container with every NESTED thenable replaced by a masked
  * (never-resolving) promise. Applied during shell capture to (a) bake-lane
  * loader containers (loader-cache.ts) and (b) pushed handle containers
- * (createUseFunction) — the two rango-owned funnels where consumers declare
- * per-request data by promise SHAPE.
+ * (shell-capture.ts capture store push wrap) — the two rango-owned funnels
+ * where consumers declare per-request data by promise SHAPE.
  *
  * Why: a nested promise that happened to SETTLE before the capture's quiet
  * window closed used to bake its value into the SHARED shell (and, for

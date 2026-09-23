@@ -201,7 +201,8 @@ export interface RangoOptions<TEnv = any> {
 
   /**
    * Default not-found boundary fallback used when no notFoundBoundary is defined in the route tree
-   * If not provided, DataNotFoundError will be treated as a regular error
+   * If not provided, notFound() renders the `notFound` option, else a plain
+   * `<h1>Not Found</h1>` (status 404)
    */
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
@@ -211,7 +212,7 @@ export interface RangoOptions<TEnv = any> {
    * This is rendered within your document/app shell with a 404 status code.
    * Use this for a custom 404 page that maintains your app's look and feel.
    *
-   * If not provided, a default "Page not found" component is rendered.
+   * If not provided, a plain `<h1>Not Found</h1>` is rendered.
    *
    * Can be a static ReactNode or a function receiving the pathname.
    *

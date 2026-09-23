@@ -424,9 +424,8 @@ export type DocumentShellCacheEntry = ShellCacheEntry & {
 /**
  * The families a shell snapshot pins. The item/segment/response families are
  * cache-store reads/writes (recorded by RecordingShellStore); the loader family
- * pins the settled CONTAINER of a bake-lane loader (a loader on an entry with
- * no renderable loading(), executed during capture — see
- * docs/design/loader-container-bake.md). Excludes the shell family itself
+ * pins the settled CONTAINER of a bake-lane loader (lane rule: see
+ * resolveLoaderData, loader-cache.ts). Excludes the shell family itself
  * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
  * it would be self-referential.
  */

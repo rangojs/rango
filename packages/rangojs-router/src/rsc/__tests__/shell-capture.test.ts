@@ -477,6 +477,8 @@ describe("captureAndStoreShell", () => {
       expect(warnings).toHaveLength(1);
       expect(warnings[0][0]).toContain("cookies()");
       expect(warnings[0][0]).toContain("refused");
+      expect(warnings[0][0]).toContain("drop ssr: false");
+      expect(warnings[0][0]).toContain("The loader lane rule");
     } finally {
       warnSpy.mockRestore();
     }
@@ -802,12 +804,15 @@ describe("captureAndStoreShell", () => {
       expect(String(bakeWarnings[0]![0])).toContain(
         'bake-lane segment loader "products.list"',
       );
-      // Remedy ladder is present: nest / cache() / loading().
+      // Remedy ladder is present: nest / cache() / drop ssr: false, plus the
+      // shared lane hint (loading() or an inline <Suspense>).
       expect(String(bakeWarnings[0]![0])).toContain(
         "nest it ({ data: promise })",
       );
       expect(String(bakeWarnings[0]![0])).toContain("cache()");
+      expect(String(bakeWarnings[0]![0])).toContain("drop ssr: false");
       expect(String(bakeWarnings[0]![0])).toContain("loading()");
+      expect(String(bakeWarnings[0]![0])).toContain("The loader lane rule");
 
       // Once per key: a second expensive capture of the SAME key stays silent.
       now = 0;
@@ -1611,11 +1616,12 @@ describe("runShellCapture", () => {
       );
       // Deduped to once per key across all three runs.
       expect(keyWarnings).toHaveLength(1);
-      // The message names BOTH causes with the distinguishing signal, and the
-      // boundary-ownership rule (a child route's loading() does not unpin a
-      // parent layout's loaders).
+      // The message names BOTH causes with the distinguishing signal, the
+      // boundary-ownership rule, and the shared lane hint.
       expect(keyWarnings[0][0]).toContain("Suspense boundary");
-      expect(keyWarnings[0][0]).toContain("does not unpin");
+      expect(keyWarnings[0][0]).toContain("owns the data");
+      expect(keyWarnings[0][0]).toContain("a live loader (no ssr: false)");
+      expect(keyWarnings[0][0]).toContain("The loader lane rule");
       expect(keyWarnings[0][0]).toContain("Cold-start");
       expect(keyWarnings[0][0]).toContain("SELF-HEALS");
     } finally {

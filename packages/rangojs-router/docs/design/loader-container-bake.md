@@ -11,9 +11,17 @@ UNCHANGED machinery below: execute at capture, nested-thenable mask (shape
 is liveness), `_shellCaptureLoaderRecords` registration (capture gate hold,
 bounded by `ppr.captureTimeout`), snapshot pinning, HIT-tail seed overlay
 (pin-first when hole-free). A route whose loaders are ALL flagged needs no
-loading() and captures a complete shell. Pinned by the "stream:navigation
-loader bakes into the shell", "fully-baked route needs no loading()", and
-group-ppr baked-value probes (shell-cache.test.ts, dev+prod).
+loading() and captures a complete shell. Pinned by the "ssr:false loader
+bakes into the shell", "fully-baked route needs no loading()", and group-ppr
+baked-value probes (shell-cache.test.ts, dev+prod). (The flag was
+`stream: "navigation"` until #820 renamed it.)
+
+Read the rest of this doc with that substitution: wherever it says "no
+`loading()`" / "WITHOUT `loading()`" selects the bake lane, the trigger is
+now `ssr: false`, and `loading()` present is no longer what makes a loader
+live — every unflagged loader is live and needs `loading()` or an inline
+`<Suspense>` above its reader. Passages below are marked where they state
+the old trigger.
 
 Status: IMPLEMENTED (same branch). The former trap tests flipped red->green as
 planned; the bake-lane contract is e2e-pinned in both the test-app suite and
@@ -30,6 +38,10 @@ Implementation notes (deltas from the sketch below, all deliberate):
   manifest) = BAKE lane** — the mask decision is "renderable loading only"
   (`entryLoadingMasksLoaders`, mirroring segment-system's
   isRenderableLoading), resolving open question 1 toward "absent".
+  _Superseded (see the addendum):_ the mask decision is now per loader in
+  `resolveLoaderData` — `ssr: false` bakes, everything else masks.
+  `entryLoadingMasksLoaders` only decides whether an unflagged loader's
+  segment key rides as the bake/seed key, which is inert at capture.
 - **Guard refusal is flag-based**: `assertNotInsideShellCapture` stamps
   `_shellCaptureGuardTripped` on the capture context BEFORE throwing, because
   the throw is swallowed by wrapLoaderPromise (boundary UI) or rejects the
@@ -123,6 +135,13 @@ Loaders are the exception, and the exception has two faces:
   child route does not help — the await lives at the entry that REGISTERS the
   loaders. Both facts are e2e-pinned (`/shell-cache/layout-loader`).
 
+> _Superseded (see the addendum):_ both faces describe the pre-#813 tree.
+> Streaming `useLoader` (#813) removed the tree-build await for streaming
+> lanes, so an unflagged loader is live on every entry shape and its reader
+> postpones at the nearest `loading()` or inline `<Suspense>`; only a
+> boundary-less read still refuses the capture. The bake lane is opted into
+> per loader with `ssr: false`.
+
 The kicker: on axis 1, a no-`loading()` loader ALREADY follows the container
 rule. The tree-build await settles the CONTAINER; a promise nested inside it
 passes through Flight verbatim and streams into the consumer's own `<Suspense>`
@@ -131,6 +150,13 @@ container rule breaks is the capture's blanket loader mask. This design makes
 capture match axis 1.
 
 ## The contract
+
+> _Superseded trigger (see the addendum):_ this section, the semantics
+> matrix, and "Mechanics" below key the bake lane on an entry WITHOUT
+> `loading()`. The contract now applies to `loader(Def, { ssr: false })`
+> loaders on any entry shape (with nested promises masked regardless of
+> settle timing, per the implementation notes); an unflagged loader is live
+> whether or not its entry has `loading()`.
 
 For a loader on an entry WITHOUT `loading()`, under shell capture:
 
@@ -206,6 +232,14 @@ Two sub-edges:
   already a hole; on serve the promise re-runs with real identity.
 - The guard applies only DURING CAPTURE. The same loader on axis 1 and on every
   HIT reads identity freely (it always did).
+
+> _Superseded (see the implementation notes, "Guard refusal is flag-based"):_
+> the shipped guard stamps `_shellCaptureGuardTripped` before throwing, and
+> the capture refuses whenever the flag is set, so an identity read inside a
+> nested promise that runs during capture refuses too; the first sub-edge does
+> not hold. The shipped refusal warning (`refuseOnGuardTrip` in
+> `shell-capture.ts`) therefore advises dropping `ssr: false` (the live lane)
+> or moving the read into a separate unflagged loader, not a nested promise.
 
 ### 3. HIT parity: extend the capture data snapshot with a loader family
 

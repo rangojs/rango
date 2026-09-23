@@ -1,7 +1,7 @@
 /**
  * RSC-environment version of client exports
  *
- * This file is used when importing "rsc-router/client" from RSC (server components).
+ * This file is used when importing "@rangojs/router/client" from RSC (server components).
  * It re-exports the server's createLoader so that loader definitions work in both
  * environments with the same import.
  *

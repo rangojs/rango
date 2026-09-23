@@ -15,6 +15,7 @@ import {
   isInsideHandlerInvokedLoaderBody,
 } from "./context.js";
 import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
+import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
 
 /**
  * A single cookie entry returned by get() and getAll().
@@ -193,12 +194,12 @@ function assertNotInsideShellCapture(ctx: unknown, fnName: string): void {
     )._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
     throw new Error(
       `${fnName}() cannot be called while capturing a shared shell ` +
-        `(shell-cache middleware). The captured shell is served to every user ` +
+        `(ppr shell capture). The captured shell is served to every user ` +
         `of this URL, so request-scoped data read here would leak one user's ` +
         `${fnName === "cookies" ? "cookies" : "headers"} to others. Read it ` +
-        `inside a loader instead — loaders are never captured and always run ` +
-        `fresh per request:\n\n` +
-        `  loader("user", () => getUser(cookies().get("session")?.value));`,
+        `inside a loader without ssr: false and consume it with useLoader, e.g. ` +
+        `createLoader(async () => getUser(cookies().get("session")?.value)). ` +
+        PPR_LANE_HINT,
     );
   }
 }

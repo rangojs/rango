@@ -347,7 +347,7 @@ export function buildRunSnapshot<TEnv>(
  *
  * @example
  * ```ts
- * const { result, cookies, response, thrown } = await runInRequestContext(
+ * const { cookies, headers, response, thrown } = await runInRequestContext(
  *   () => loginAction(input), // sets a session cookie, then `throw redirect("/app")`
  *   {
  *     env,

@@ -64,7 +64,7 @@ Which loaders re-run on a client update is the other axis. After an action every
 
 ## Skeletons are a choice, not the default
 
-On a document request, a segment without `loading()` waits for its loaders — the HTML arrives with data in place, a ready page. Declaring `loading()` (or your own Suspense boundary) opts that segment into skeleton-then-stream. Two knobs force settled output when you need it: `loader(Def, { ssr: false })` makes document renders await that one loader before the first byte (the options object is typed `LoaderOptions`, exported from `@rangojs/router`), and a per-request `createRouter({ ssr: { resolveStreaming } })` resolver can return `"allReady"` for bots and crawlers ([reference](/docs/rango/reference/create-router#ssrresolvestreaming)).
+On a document request, a segment without `loading()` waits for its loaders — the HTML arrives with data in place, a ready page. Declaring `loading()` (or your own Suspense boundary) opts that segment into skeleton-then-stream. Two knobs force settled output when you need it: `loader(Def, { ssr: false })` makes document renders await that one loader before the first byte (the options object is typed `LoaderOptions`, exported from `@rangojs/router`), and a per-request `createRouter({ ssr: { resolveStreaming } })` resolver can return `"allReady"` for bots and crawlers ([reference](/docs/rango/reference/create-router#ssrresolvestreaming)). On a route with the `ppr` path option, `ssr: false` also selects the bake lane ([loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane)).
 
 ## Fetchable on demand
 

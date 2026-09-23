@@ -43,3 +43,16 @@ export const SHELL_CAPTURE_MAX_WAIT_MS = 15_000;
  * check on the stampede guard, keyed off the same constant.
  */
 export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;
+
+/**
+ * Shared PPR loader-lane hint, appended to every capture warning or error
+ * whose fix depends on the lane (shell-capture.ts warnings, the cookie-store.ts
+ * capture guard). Lives in this import-free leaf so cookie-store.ts can import
+ * it without pulling the capture orchestration module. Source anchor for the
+ * rule: resolveLoaderData (router/segment-resolution/loader-cache.ts).
+ */
+export const PPR_LANE_HINT: string =
+  "Lane rule: only loader(Def, { ssr: false }) executes at capture and bakes its " +
+  "non-promise data; every other loader is live (masked at capture, fresh per " +
+  "request) and needs loading() or an inline <Suspense> above its reader. See the " +
+  '/ppr skill, "The loader lane rule" (node_modules/@rangojs/router/skills/ppr/SKILL.md).';

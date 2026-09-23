@@ -28,9 +28,10 @@ import type { RequestScope } from "./request-scope.js";
  *   return await db.cart.get(user.id);
  * });
  *
- * // With typed params:
- * const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
- *   const { slug } = ctx.params;  // slug is typed as string
+ * // createLoader's one type parameter is the data type; params are
+ * // Record<string, string | undefined>:
+ * const ProductLoader = createLoader<Product>(async (ctx) => {
+ *   const { slug } = ctx.params;  // string | undefined
  *   return await db.products.findBySlug(slug);
  * });
  * ```
@@ -243,9 +244,10 @@ export type LoadOptions =
  *   return await db.cart.get(ctx.get("user").id);
  * });
  *
- * // With typed params:
- * export const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
- *   const { slug } = ctx.params;  // slug is typed as string
+ * // createLoader's one type parameter is the data type; params are
+ * // Record<string, string | undefined>:
+ * export const ProductLoader = createLoader<Product>(async (ctx) => {
+ *   const { slug } = ctx.params;  // string | undefined
  *   return await db.products.findBySlug(slug);
  * });
  *

@@ -2,13 +2,10 @@
  * PPR shell-capture loader masking.
  *
  * During a shell CAPTURE re-render (Axis 2, see docs/design/ppr-shell-resume.md)
- * route loaders are the "live lane": they must NOT execute — no side effects, no
- * cost, no cache round-trips. Instead every loader segment's value slot receives
- * a never-resolving promise, so the loader-consuming Suspense subtree stays
- * pending and React's static `prerender` marks it as a postponed hole. The frozen
- * shell (prelude) captures only the fallback; the resumed serve pass runs the
- * loaders fresh through the unchanged execution path and streams their output
- * into the holes.
+ * live-lane loaders (lane rule: see resolveLoaderData, loader-cache.ts) must
+ * NOT execute; their value slot gets a never-resolving promise so the
+ * consuming Suspense subtree postpones as a hole, and the serve pass runs them
+ * fresh into it.
  *
  * Capture mode is signalled by `requestCtx._shellCaptureRun`, set to true ONLY on
  * the derived request context of the background capture task (shell-capture.ts) —
@@ -36,24 +33,17 @@ export function isShellCaptureActive(
   return reqCtx?._shellCaptureRun === true;
 }
 
-// createMaskedLoaderPromise moved to the leaf module mask-nested.ts (shared
-// with the handle-push funnel in request-context, which cannot import THIS
-// module without a cycle). Re-exported to keep the mask API in one place.
+// createMaskedLoaderPromise lives in the leaf module mask-nested.ts, beside
+// maskNestedContainerThenables (also used by the capture handle-store push
+// wrap in rsc/shell-capture.ts). Re-exported to keep the mask API in one place.
 export { createMaskedLoaderPromise } from "./mask-nested.js";
 
 /**
- * Entry-level lane input for an entry's loaders under PPR (the loading()
- * value; docs/design/loader-container-bake.md). The CAPTURE decision itself
- * is per LOADER in loader-cache.ts: an `ssr: false`
- * (awaitBeforeFlush) loader BAKES at capture regardless of this value — the
- * flag's document promise ("data in the HTML before first flush") maps to
- * the frozen prelude — while every other loader is LIVE (masked at capture,
- * fresh on every serve), postponing at loading() or an inline Suspense.
- * This helper still gates which entries pass a bake segment key for the
- * legacy loading()-less shape and the HIT-tail seed overlay.
- *
- * Mirrors segment-system's isRenderableLoading so the mask decision and the
- * tree's boundary placement can never disagree.
+ * True when the entry's loading() is renderable (mirrors segment-system's
+ * isRenderableLoading). Not the lane decision (lane rule: see
+ * resolveLoaderData, loader-cache.ts): callers only use it to decide whether
+ * an unflagged loader's segment key rides as the bake/seed key, which is inert
+ * at capture.
  */
 export function entryLoadingMasksLoaders(loading: unknown): boolean {
   return loading !== undefined && loading !== null && loading !== false;
