@@ -75,8 +75,6 @@ function makeInterceptEntry(
     routeName: "test",
     handler: null as any,
     middleware: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
     loader: [
       {
         loader: { $$id: "test-loader" } as any,

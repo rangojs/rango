@@ -205,7 +205,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param handler - Component or handler for intercepted render
    * @param config - Optional InterceptConfig (e.g. `{ when }`), or the use
    *   callback directly when there is no config
-   * @param use - Optional callback for loaders, middleware, loading, layout, etc.
+   * @param use - Optional callback for loader(), middleware(), loading(),
+   *   transition() and a layout() modal chrome without use() items.
+   *   revalidate() (goes on the loader), errorBoundary()/notFoundBoundary()
+   *   (go on the enclosing layout) and cache() (goes on the target route)
+   *   throw here.
    */
   intercept: {
     // Local: dot-prefixed, params inferred from local route definition
@@ -364,6 +368,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   </div>
    * ))
    * ```
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept has no boundary of its own, and its loader errors resolve
+   * against the enclosing layout/path boundary.
    * @param fallback - Static JSX or handler receiving `{ error }`
    */
   errorBoundary: (
@@ -382,6 +389,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   </div>
    * ))
    * ```
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept has no boundary of its own, and notFound() from its loaders
+   * resolves against the enclosing layout/path boundary.
    * @param fallback - Static JSX or handler receiving not-found info
    */
   notFoundBoundary: (
@@ -398,6 +408,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * Note: Loaders are NOT cached by default. Use cache() inside loader()
    * to explicitly opt-in to loader caching.
+   *
+   * Not valid inside intercept() use() (throws at definition time): an
+   * intercept navigation is cached under the target route's cache() scope.
    *
    * ```typescript
    * // Using app-level defaults (ttl inherited from store.defaults)

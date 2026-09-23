@@ -88,19 +88,9 @@ intercept(
 )
 ```
 
-Only the first `layout()` in an intercept's `use()` is applied.
-
-### Handler Errors
-
-When the intercept handler throws, or calls `notFound()`, the modal slot renders
-the `errorBoundary()` / `notFoundBoundary()` of the layout or path that declares
-the intercept (or the nearest ancestor that has one). The modal layout and the
-background page stay mounted, and the response status is 500 / 404. A thrown
-`Response` (`redirect()`) still short-circuits the navigation.
-
-With `loading()`, an async handler streams after the response has started, so
-its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
-in a client error boundary.
+Only the first `layout()` in an intercept's `use()` is applied. It is modal
+chrome only: a `layout(Chrome, () => [...])` with its own `use()` items throws.
+Attach loaders and the rest to the intercept itself.
 
 ## Intercept Middleware
 
@@ -275,6 +265,64 @@ intercept(
     loader(RecommendationsLoader),
   ]
 )
+```
+
+## What an Intercept's `use()` Accepts
+
+An intercept's `use()` (and its handler's `.use`) accepts:
+
+- `loader()`, with its own `revalidate()` and `cache()` inside it
+- `middleware()`
+- `loading()`
+- `layout(Chrome)`: the modal chrome, without `use()` items of its own
+- `transition()`
+
+Everything else throws at definition time with a pointer to where it goes:
+`revalidate()` onto the loader, `errorBoundary()` / `notFoundBoundary()` onto
+the enclosing layout (see below), and `cache()` onto the target route.
+
+## Caching an Intercept
+
+To cache a modal, put `cache()` on the target route (or a layout above it).
+An intercept navigation is cached under that scope with its own `intercept:`
+key, so it never collides with the full-page render of the same URL. For
+finer control, use `"use cache"` in the intercept handler, or cache the
+intercept's loader: `loader(ProductLoader, () => [cache()])`.
+
+## Errors in an Intercept
+
+An intercept has no boundary of its own. When the intercept's handler or one
+of its loaders throws, or calls `notFound()`, the modal slot renders the
+`errorBoundary()` / `notFoundBoundary()` of the layout or path that declares the
+intercept, or the nearest ancestor that has one. The intercepted route's own
+boundaries are not consulted: the modal renders in the declaring layout's slot,
+not in the route. On a handler error the modal layout and the background page
+stay mounted, and the status is 500 / 404. A thrown `Response` (`redirect()`)
+still short-circuits the navigation.
+
+With `loading()`, an async handler streams after the response has started, so
+its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
+in a client error boundary.
+
+An `errorBoundary()` or `notFoundBoundary()` placed directly in the intercept's
+`use()` (or returned from its handler's `.use`) throws at definition time. Put
+it on the enclosing layout:
+
+```typescript
+// Throws: errorBoundary() is not valid inside intercept("@modal", "product") use()
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader),
+  errorBoundary(<ModalError />),
+]);
+
+// Correct: the declaring layout's boundaries handle the intercept's handler and loaders
+layout(<ShopLayout />, () => [
+  errorBoundary(<ShopError />),
+  notFoundBoundary(<ProductNotFound />),
+  intercept("@modal", "product", <ProductModal />, () => [
+    loader(ProductLoader),
+  ]),
+]);
 ```
 
 ## Closing the Modal
@@ -452,7 +500,7 @@ export const shopPatterns = urls(({
 
 ## Handler-attached `.use`
 
-Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`.)
+Intercept handlers can carry their own middleware, loaders, loading state, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`; boundaries go on the enclosing layout, see [Errors in an Intercept](#errors-in-an-intercept).)
 
 ```typescript
 import { layout, loader, loading, type Handler } from "@rangojs/router";

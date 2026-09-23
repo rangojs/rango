@@ -187,8 +187,6 @@ export type InterceptEntry = {
   routeName: string; // e.g., "card"
   handler: ReactNode | Handler<any, any, any>;
   middleware: MiddlewareFn<any, any>[];
-  errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
-  notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   transition?: TransitionConfig;

@@ -44,7 +44,11 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { RouteHelpers } from "./helpers-types.js";
-import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
+import {
+  resolveHandlerUse,
+  mergeHandlerUse,
+  validateInterceptUseItems,
+} from "./resolve-handler-use.js";
 import { ALL_USE_ITEM_TYPES } from "./use-item-types.js";
 
 /**
@@ -720,8 +724,6 @@ const intercept = (
     routeName: prefixedRouteName,
     handler,
     middleware: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
     loader: [],
     when: [], // Selector conditions for conditional interception
   };
@@ -734,31 +736,42 @@ const intercept = (
     entry.when.push(...selectors);
   }
 
-  // Merge handler.use defaults with explicit use
+  // Merge handler.use defaults with explicit use. mountSite null: the merged
+  // items are validated once below, so both sources get the same message.
   const handlerUseFn = resolveHandlerUse(handler);
-  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, "intercept");
+  const mergedUse = mergeHandlerUse(handlerUseFn, useFn, null);
 
   // Run merged use callback to collect loaders, middleware, etc.
   if (mergedUse) {
     // Capture layout() calls into a temporary array
     const capturedLayouts: EntryData[] = [];
 
-    // revalidate() calls in this scope (explicit use() or handler.use()) land
-    // here instead of the spread parent's revalidate[], and are rejected below:
-    // an intercept only evaluates its loaders' revalidate()
-    // (router/intercept-resolution.ts).
-    const rejectedRevalidate: unknown[] = [];
-
     // Temporary parent so middleware/loader attach to the intercept entry;
-    // the loading get/set accessor mirrors writes onto `entry`.
+    // the loading get/set accessor mirrors writes onto `entry`. It is a
+    // shallow spread of the enclosing entry, so every field a rejected helper
+    // writes to points at a throwaway here: a helper called but not returned
+    // from use() never lands on the enclosing layout. cache() writes into
+    // `layout` (capturedLayouts).
+    //
+    // Why an intercept rejects these (validateInterceptUseItems):
+    // - revalidate(): an intercept only evaluates its loaders' revalidate()
+    //   (router/intercept-resolution.ts).
+    // - errorBoundary()/notFoundBoundary(): error lookup walks EntryData
+    //   parent chains (router/error-handling.ts), which never include an
+    //   InterceptEntry; intercept loader errors resolve against the declaring
+    //   entry's boundaries instead.
+    // - cache(): an intercept navigation is cached under the target route's
+    //   cache() scope, with its own "intercept:" key (cache/cache-scope.ts).
     const tempParent = {
       ...ctx.parent,
       middleware: entry.middleware,
-      revalidate: rejectedRevalidate,
-      errorBoundary: entry.errorBoundary,
-      notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
-      layout: capturedLayouts, // Capture layout() calls
+      layout: capturedLayouts,
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      parallel: {},
+      intercept: [],
       get loading() {
         return entry.loading;
       },
@@ -767,26 +780,29 @@ const intercept = (
       },
     };
 
-    const result = withParent(ctx, tempParent as EntryData, () =>
-      mergedUse()?.flat(3),
+    const result = validateUseItems(
+      withParent(ctx, tempParent as EntryData, () => mergedUse()?.flat(3)),
+      namespace,
+      "intercept",
+      "use",
+    );
+    validateInterceptUseItems(
+      result,
+      capturedLayouts,
+      slotName,
+      routeName,
+      tempParent,
     );
 
-    invariant(
-      rejectedRevalidate.length === 0,
-      `revalidate() is not valid inside intercept("${slotName}", "${routeName}") use() (including the handler's .use): ` +
-        "an intercept only revalidates its loaders. Attach it to the loader instead: " +
-        "loader(YourLoader, () => [revalidate(...)]).",
-    );
-
-    // Extract layout from captured layouts (use first one if multiple)
-    // Layout inside intercept should always be ReactNode or Handler, not Record slots
-    if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
-      entry.layout = capturedLayouts[0].handler as
-        | ReactNode
-        | Handler<any, any, any>;
+    // The modal chrome is the first returned layout() item. Match it by id so
+    // an entry pushed into capturedLayouts without being returned is never
+    // taken as the chrome. It carries no use() items (validated above).
+    const chromeItem = result.find((item) => item?.type === "layout");
+    const chrome =
+      chromeItem && capturedLayouts.find((l) => l.id === chromeItem.name);
+    if (chrome) {
+      entry.layout = chrome.handler as ReactNode | Handler<any, any, any>;
     }
-
-    validateUseItems(result, namespace, "intercept", "use");
   }
 
   ctx.parent.intercept.push(entry);

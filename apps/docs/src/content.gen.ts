@@ -1408,11 +1408,6 @@ export const pageMeta: PageMeta[] = [
         "text": "Modal chrome and closing"
       },
       {
-        "depth": 3,
-        "id": "handler-errors",
-        "text": "Handler errors"
-      },
-      {
         "depth": 2,
         "id": "conditional-intercepts-with-when",
         "text": "Conditional intercepts with when"
@@ -1431,6 +1426,21 @@ export const pageMeta: PageMeta[] = [
         "depth": 3,
         "id": "revalidation-across-entries",
         "text": "Revalidation across entries"
+      },
+      {
+        "depth": 2,
+        "id": "what-an-intercepts-use-accepts",
+        "text": "What an intercept's use() accepts"
+      },
+      {
+        "depth": 3,
+        "id": "caching-an-intercept",
+        "text": "Caching an intercept"
+      },
+      {
+        "depth": 2,
+        "id": "errors-in-an-intercept",
+        "text": "Errors in an intercept"
       },
       {
         "depth": 2,

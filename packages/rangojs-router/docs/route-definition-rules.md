@@ -40,14 +40,28 @@ Guard locations below are relative to `src/`: `path()` guards live in
 
 ### intercept()
 
-| Rule                                                 | Example                                      | Guard location                                                                                |
-| ---------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Cannot be inside `parallel()`                        | `parallel({ "@a": intercept(...) })`         | `route-definition/dsl-helpers.ts`                                                             |
-| Needs a parent entry                                 | `intercept()` at root level                  | `route-definition/dsl-helpers.ts`                                                             |
-| No `revalidate()` in `use()` or the handler's `.use` | `intercept(s, r, H, () => [revalidate(fn)])` | `route-definition/dsl-helpers.ts`, `route-definition/resolve-handler-use.ts` (handler `.use`) |
+| Rule                                                                                                          | Example                                                    | Guard location                                                                                     |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Cannot be inside `parallel()`                                                                                 | `parallel({ "@a": intercept(...) })`                       | `route-definition/dsl-helpers.ts`                                                                  |
+| Needs a parent entry                                                                                          | `intercept()` at root level                                | `route-definition/dsl-helpers.ts`                                                                  |
+| `use()` and the handler's `.use` hold only `middleware`, `loader`, `loading`, `layout`, `route`, `transition` | `intercept(s, r, H, () => [revalidate(fn)])`               | `route-definition/resolve-handler-use.ts` (`validateInterceptUseItems`, called from `intercept()`) |
+| A nested `layout()` is the modal chrome only: no `use()` items of its own                                     | `intercept(s, r, H, () => [layout(C, () => [loader(L)])])` | `route-definition/resolve-handler-use.ts`                                                          |
 
-An intercept only revalidates its loaders: put the rule on the loader,
-`loader(Def, () => [revalidate(fn)])`.
+Each rejected item gets a pointer to where it goes instead:
+
+- `revalidate()`: on the intercept's loader, `loader(Def, () => [revalidate(fn)])`.
+- `errorBoundary()` / `notFoundBoundary()`: on the layout or path that
+  declares the intercept (or an ancestor). Errors and `notFound()` from the
+  intercept's loaders resolve there; the intercepted target route's boundaries
+  are not consulted.
+- `cache()`: on the target route (an intercept navigation gets its own
+  `intercept:` cache key under the target route's scope), or `"use cache"` in
+  the handler. A `cache()` called in the scope is rejected even when it is not
+  returned.
+
+`intercept()`'s temporary parent points every field a rejected helper writes
+to at a throwaway, so a helper called but not returned from `use()` never
+lands on the enclosing layout.
 
 ### `when` (intercept config)
 
@@ -233,6 +247,8 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - `parallel()` is not in `ParallelUseItem` — cannot nest
 - `intercept()` is not in `ParallelUseItem` — cannot be inside parallel
 - `revalidate()` is not in `InterceptUseItem` — direct revalidate-in-intercept caught
+- `errorBoundary()` / `notFoundBoundary()` are not in `InterceptUseItem` — direct boundary-in-intercept caught
+- `cache()` is not in `InterceptUseItem` — direct cache-in-intercept caught
 
 ### Runtime-only guards (TS cannot catch)
 
@@ -241,8 +257,11 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - Orphan layout containing another orphan layout — both are `LayoutItem` (valid)
 - `layout()` inside `parallel()` — `LayoutItem` is not in `ParallelUseItem` at
   the type level, but the runtime guard provides the error message
-- `revalidate()` from a handler's `.use` mounted via `intercept()` — `.use` is
-  typed `HandlerUseItem`, which is mount-agnostic
+- `revalidate()`, `errorBoundary()`, `notFoundBoundary()` or `cache()` from a
+  handler's `.use` mounted via `intercept()` — `.use` is typed
+  `HandlerUseItem`, which is mount-agnostic
+- A `layout()` with its own `use()` items inside `intercept()` — `LayoutItem`
+  is a valid `InterceptUseItem`
 
 Runtime guards use ancestor walks and context checks to catch these nested
 violations at route tree build time.

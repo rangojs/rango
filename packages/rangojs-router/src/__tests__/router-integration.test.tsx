@@ -1070,6 +1070,127 @@ describe("route tree inspection", () => {
     );
   });
 
+  // Why intercept() rejects these items: see intercept() in
+  // route-definition/dsl-helpers.ts.
+  it("errorBoundary directly inside intercept throws", () => {
+    const F = ErrorFallback;
+    const patterns = urls(({ path, intercept, errorBoundary }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error errorBoundary is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [errorBoundary(F)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /errorBoundary\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put it on the enclosing layout or path/,
+    );
+  });
+
+  it("notFoundBoundary directly inside intercept throws", () => {
+    const F = NotFoundFallback;
+    const patterns = urls(({ path, intercept, notFoundBoundary }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error notFoundBoundary is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [notFoundBoundary(F)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /notFoundBoundary\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put it on the enclosing layout or path/,
+    );
+  });
+
+  it("cache directly inside intercept throws", () => {
+    const patterns = urls(({ path, intercept, cache }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error cache is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [cache()]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put cache\(\) on the target route/,
+    );
+  });
+
+  it("layout() with its own use() items inside intercept throws", () => {
+    // Only the nested layout's component becomes the modal chrome; its use()
+    // items used to be dropped silently.
+    const patterns = urls(({ path, layout, intercept, loader }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      intercept("@modal", ".detail", ProductModal, () => [
+        layout(ShopLayout, () => [loader(PostLoader)]),
+      ]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /layout\(\) with its own use\(\) items is not valid inside intercept\("@modal", "\.detail"\) use\(\).*put the modal chrome in the layout component/,
+    );
+  });
+
+  // tempParent is a shallow spread of the enclosing entry: a rejected helper
+  // called without being returned lands in a throwaway field and still throws.
+  it.each([
+    ["revalidate()", (h: any) => h.revalidate(() => false)],
+    ["errorBoundary()", (h: any) => h.errorBoundary(ErrorFallback)],
+    ["notFoundBoundary()", (h: any) => h.notFoundBoundary(NotFoundFallback)],
+    ["parallel()", (h: any) => h.parallel({ "@side": Sidebar })],
+    [
+      "intercept()",
+      (h: any) => h.intercept("@other", ".products", ProductModal),
+    ],
+  ])("%s called but not returned from intercept use() throws", (name, call) => {
+    expect(() =>
+      buildRouteTree(
+        urls((h) => [
+          h.layout(ShopLayout, () => [
+            h.path("/products", ProductList, { name: "products" }),
+            h.path("/products/:id", ProductDetail, { name: "product.detail" }),
+            h.intercept("@modal", ".product.detail", ProductModal, () => {
+              call(h);
+              return [h.loader(PostLoader)];
+            }),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      `${name} is not valid inside intercept("@modal", ".product.detail") use()`,
+    );
+  });
+
+  it("an unreturned layout() inside intercept use() neither leaks nor displaces the chrome", () => {
+    const tree = buildRouteTree(
+      urls((h) => [
+        h.layout(ShopLayout, () => [
+          h.path("/products", ProductList, { name: "products" }),
+          h.path("/products/:id", ProductDetail, { name: "product.detail" }),
+          h.intercept("@modal", ".product.detail", ProductModal, () => {
+            h.layout(BlogLayout);
+            return [h.layout(RootLayout), h.loader(PostLoader)];
+          }),
+        ]),
+      ]),
+    );
+
+    const layoutEntry = tree.entry("products")!.parent!;
+    expect(layoutEntry.intercept).toHaveLength(1);
+    expect(layoutEntry.intercept[0].layout).toBe(RootLayout);
+    expect(layoutEntry.intercept[0].loader).toHaveLength(1);
+  });
+
+  it("cache() called but not returned from intercept use() still throws", () => {
+    // Its orphan form would re-parent the following siblings onto the cache
+    // entry, silently dropping them from the intercept.
+    const patterns = urls((h) => [
+      h.path("/detail", AboutPage, { name: "detail" }),
+      h.intercept("@modal", ".detail", ProductModal, () => {
+        h.cache();
+        return [h.loader(PostLoader)];
+      }),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
   it("revalidate on an intercept's loader is accepted and stays on the loader", () => {
     const revalidateFn = () => false;
     const tree = buildRouteTree(
