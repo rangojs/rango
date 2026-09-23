@@ -10,17 +10,17 @@ import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
 
 /**
- * Scoping for one capture (loader-level cache, loader-cache.ts): a loader
- * body runs concurrently with the handler and sibling loaders that push into
- * the same store.
+ * Scoping for one capture of a cached unit (a loader's own cache(),
+ * loader-cache.ts; a "use cache" function, cache-runtime.ts) that runs
+ * concurrently with live pushes into the same store.
  */
 export interface HandleCaptureOptions {
   /** Push-time predicate; a rejected push is not recorded by this capture. */
   accept?: () => boolean;
   /**
-   * Recorded pushes do not reach the store. A stale-hit loader revalidation:
-   * the foreground already replayed the entry's pushes, so the fresh body's
-   * pushes belong only to the refreshed entry.
+   * Recorded pushes do not reach the store. A stale hit's background
+   * revalidation: the foreground already replayed the entry's pushes, so the
+   * fresh body's pushes belong only to the refreshed entry.
    */
   divert?: boolean;
 }

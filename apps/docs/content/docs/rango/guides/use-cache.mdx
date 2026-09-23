@@ -93,7 +93,7 @@ export async function getProductData(ctx) {
 // On hit: return value restored, breadcrumb replayed.
 ```
 
-`ctx.use(Handle)` is the sanctioned way to pass data out of a cached function.
+`ctx.use(Handle)` is the sanctioned way to pass data out of a cached function. Only the function's own pushes are recorded, not the handler's or loaders' pushes into the same request, and a hit appends them to the calling segment after what the page already pushed, as if the body had run.
 
 ## What throws inside "use cache"
 

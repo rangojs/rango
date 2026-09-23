@@ -57,10 +57,10 @@ vi.mock("../segment-codec.js", () => ({
 // Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
 // codec: encode produces the stored string, decode reverses it. decode tolerates
 // a raw object too, so existing fixtures that set `handles` as a Record still
-// drive restoreHandles with the same reference.
-const mockRestoreHandles = vi.fn();
+// drive appendHandles with the same reference.
+const mockAppendHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({
-  restoreHandles: (...args: any[]) => mockRestoreHandles(...args),
+  appendHandles: (...args: any[]) => mockAppendHandles(...args),
   encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
   decodeHandles: vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
@@ -89,6 +89,8 @@ describe("use cache stale revalidation handle preservation", () => {
       params: { id: "1" },
       pathname: "/test",
       searchParams: new URLSearchParams(),
+      // The calling segment a hit replays into.
+      _currentSegmentId: "caller-seg",
     };
   }
 
@@ -160,10 +162,11 @@ describe("use cache stale revalidation handle preservation", () => {
     const result = await cached(taintedCtx);
     expect(result).toBe("stale-result");
 
-    // Verify stale handles were restored
-    expect(mockRestoreHandles).toHaveBeenCalledWith(
+    // Verify stale handles were replayed
+    expect(mockAppendHandles).toHaveBeenCalledWith(
       staleHandles,
       mockHandleStore,
+      "caller-seg",
     );
     expect(spans).toHaveLength(0);
 
@@ -381,6 +384,9 @@ describe("use cache stale revalidation handle preservation", () => {
       settled: Promise.resolve(),
       getDataForSegment: vi.fn().mockReturnValue({}),
     };
+    // The revalidation's capture wraps push; the original is what reaches
+    // the live store.
+    const livePush = liveHandleStore.push;
 
     const taintedCtx = makeTaintedCtx();
 
@@ -407,8 +413,9 @@ describe("use cache stale revalidation handle preservation", () => {
     });
     const fn = async (_ctx: any) => {
       // Push via the AMBIENT context, the way loader/handle plumbing reads
-      // the store (static-store.ts / loader-resolution.ts) — must resolve to
-      // the ISOLATED background store, never the live one.
+      // the store (static-store.ts / loader-resolution.ts): it lands in the
+      // request's store, where the revalidation's capture records it and
+      // keeps it out of the live data.
       mockGetRequestContext()._handleStore.push("test#H", "seg-bg", "bg-value");
       await gate;
       return "fresh-result";
@@ -426,16 +433,14 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(requestCtxObj._handleStore).toBe(liveHandleStore);
     expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
 
-    // A foreground handle push inside the window reaches the LIVE store.
+    // A foreground handle push inside the window reaches the LIVE store; the
+    // background's push does not.
     requestCtxObj._handleStore.push("test#H", "seg-fg", "fg-value");
-    expect(liveHandleStore.push).toHaveBeenCalledWith(
-      "test#H",
-      "seg-fg",
-      "fg-value",
-    );
+    expect(livePush).toHaveBeenCalledWith("test#H", "seg-fg", "fg-value");
 
     releaseGate();
     await Promise.all(backgroundTasks);
+    expect(livePush).not.toHaveBeenCalledWith("test#H", "seg-bg", "bg-value");
 
     // The revalidated entry carries the background's push, not the
     // foreground's (no cross-contamination).
@@ -486,10 +491,11 @@ describe("use cache stale revalidation handle preservation", () => {
     const result = await cached(taintedCtx);
     expect(result).toBe("cached-result");
 
-    // Fresh hit restores handles
-    expect(mockRestoreHandles).toHaveBeenCalledWith(
+    // Fresh hit replays handles
+    expect(mockAppendHandles).toHaveBeenCalledWith(
       freshHandles,
       mockHandleStore,
+      "caller-seg",
     );
 
     // No background revalidation should be queued
@@ -602,63 +608,6 @@ describe("use cache stale revalidation handle preservation", () => {
     // After both are done, the symbol should be fully cleaned up
     expect((taintedCtx as any)[INSIDE]).toBeUndefined();
     expect((requestCtxObj as any)[INSIDE]).toBeUndefined();
-  });
-
-  it("stale background revalidation uses isolated handle store, not the live request store", async () => {
-    const waitUntilFns: Array<() => Promise<void>> = [];
-
-    const mockStore = {
-      getItem: vi.fn(),
-      setItem: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const liveHandleStore = {
-      push: vi.fn(),
-      settled: Promise.resolve(),
-      getDataForSegment: vi.fn().mockReturnValue({}),
-    };
-
-    const taintedCtx = makeTaintedCtx();
-
-    const requestCtxObj = {
-      _cacheStore: mockStore,
-      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
-      _handleStore: liveHandleStore,
-      waitUntil: (fn: () => Promise<void>) => {
-        waitUntilFns.push(fn);
-      },
-    };
-    mockGetRequestContext.mockReturnValue(requestCtxObj);
-
-    // Return stale cache entry
-    mockStore.getItem.mockResolvedValueOnce({
-      value: JSON.stringify("stale-result"),
-      handles: {},
-      shouldRevalidate: true,
-    });
-
-    // Track whether the handle store was swapped during background execution
-    let bgHandleStoreIsLive: boolean | undefined;
-    const fn = async (_ctx: any) => {
-      // Check if the request context's handle store is the live one
-      const bgReqCtx = mockGetRequestContext();
-      bgHandleStoreIsLive = bgReqCtx._handleStore === liveHandleStore;
-      return "fresh-result";
-    };
-
-    const cached = registerCachedFunction(fn, "test-fn-iso", "default");
-    await cached(taintedCtx);
-
-    // Run the background revalidation
-    expect(waitUntilFns).toHaveLength(1);
-    await waitUntilFns[0]();
-
-    // During background execution, the handle store must have been replaced
-    // with an isolated one (not the live request's store)
-    expect(bgHandleStoreIsLive).toBe(false);
-
-    // After background execution, the original store must be restored
-    expect(requestCtxObj._handleStore).toBe(liveHandleStore);
   });
 
   it("reports stale background revalidation errors via _reportBackgroundError", async () => {

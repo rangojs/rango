@@ -125,7 +125,8 @@ export function captureHandles(
 
 /**
  * Restore handle data from a cached snapshot into the handle store.
- * Used when serving cached segments to replay their handle data.
+ * Used when serving cached segments to replay their handle data: a route
+ * cache() record owns its segments' arrays, so it REPLACES them.
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
@@ -134,6 +135,27 @@ export function restoreHandles(
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length > 0) {
       handleStore.replaySegmentData(segId, segHandles);
+    }
+  }
+}
+
+/**
+ * Append recorded handle pushes to the store, in recorded order, via push()
+ * so active captures and loader-scope tagging see them like live pushes. For
+ * a cached unit that shares its segments with live pushes ("use cache", a
+ * loader's own cache()); restoreHandles would wipe those. `segmentId`
+ * redirects every value to one segment (the loader's current owning segment).
+ */
+export function appendHandles(
+  handles: Record<string, SegmentHandleData>,
+  handleStore: HandleStore,
+  segmentId?: string,
+): void {
+  for (const [segId, segHandles] of Object.entries(handles)) {
+    for (const [handleName, values] of Object.entries(segHandles)) {
+      for (const value of values) {
+        handleStore.push(handleName, segmentId ?? segId, value);
+      }
     }
   }
 }

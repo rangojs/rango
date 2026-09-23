@@ -142,8 +142,13 @@ When detected:
 1. **Excluded from cache key** -- request-scoped, not meaningful for keying.
    (The route-identifying fields read off `ctx` are still folded in -- see
    "Route context is folded into the key" above.)
-2. **Handle data captured on miss** -- side effects via `ctx.use(Handle)` are recorded.
-3. **Handle data replayed on hit** -- restored into the current request's HandleStore.
+2. **Handle data captured on miss** -- side effects via `ctx.use(Handle)` are recorded:
+   the function's own pushes (and those of cached functions it calls), not the
+   handler's or loaders' pushes into the same request.
+3. **Handle data replayed on hit** -- appended to the calling segment, after what
+   the handler and loaders already pushed, as if the body had run (a layout and
+   its page calling the same function each get their copy). A
+   stale hit's background refresh records its pushes into the refreshed entry only.
 
 ```typescript
 export async function getProductData(ctx) {

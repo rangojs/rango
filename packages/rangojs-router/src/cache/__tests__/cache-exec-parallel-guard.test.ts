@@ -51,7 +51,7 @@ vi.mock("../segment-codec.js", () => ({
 }));
 
 vi.mock("../handle-snapshot.js", () => ({
-  restoreHandles: vi.fn(),
+  appendHandles: vi.fn(),
   encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
   decodeHandles: vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
