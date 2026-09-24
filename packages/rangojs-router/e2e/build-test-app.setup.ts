@@ -104,7 +104,7 @@ test("build test-app", async () => {
     }
   };
 
-  // Check for a recent build. The webServer command runs `pnpm build` before
+  // Check for a recent build. The webServer command runs `vite build` before
   // starting the dev server on cold starts. Rebuilding here would overwrite
   // node_modules/.vite/deps, corrupting the running dev server's optimizer cache.
   const markerPath = path.join(cwd, "dist", "ssr", "index.js");

@@ -73,7 +73,11 @@ export default defineConfig({
       // production preview below serves — both dev and (production) describes of
       // render-timeout-stage.test.ts get the 15s deadline + onTimeout. It is off
       // on every non-e2e build.
-      command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
+      //
+      // vite directly, not `pnpm <script>`: pnpm's verifyDepsBeforeRun can run
+      // `pnpm install` first, which aborts in a git worktree with symlinked
+      // node_modules (issue #886).
+      command: `./node_modules/.bin/vite build && rm -rf node_modules/.vite && ./node_modules/.bin/vite dev --port ${DEV_PORT}`,
       port: DEV_PORT,
       reuseExistingServer,
       env: {
@@ -87,7 +91,7 @@ export default defineConfig({
       // server (which includes the build step) so dist/ is guaranteed to exist.
       // RANGO_E2E_RENDER_TIMEOUT=1 kept in sync with the dev webServer above so
       // a preview-triggered rebuild bakes in the same render-timeout fixture.
-      command: `pnpm preview --port ${PREVIEW_PORT}`,
+      command: `./node_modules/.bin/vite preview --port ${PREVIEW_PORT}`,
       port: PREVIEW_PORT,
       reuseExistingServer,
       env: { ...process.env, RANGO_E2E_RENDER_TIMEOUT: "1" },
