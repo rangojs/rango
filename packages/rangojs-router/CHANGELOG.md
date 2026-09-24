@@ -134,6 +134,13 @@ absent from the result.
 - `import type { LoaderOptions } from "@rangojs/router"` failed for installed
   consumers: the root `types` condition resolves to the `react-server` entry,
   which did not export it ([#870](https://github.com/rangojs/rango/pull/870)).
+- A layout above a `cache()` boundary was stored in the route's cache entry and
+  replayed on every hit: it ran 0 times, its output was the miss render's, and
+  a header it wrote was missing from every hit. The entry now holds only the
+  boundary's subtree, and a hit renders the segments above the boundary on
+  every request, document and partial alike, as the `cache()` docs describe.
+  A `ppr` route keeps whole-chain coverage: its chain bakes into the shell
+  ([#906](https://github.com/rangojs/rango/issues/906)).
 
 ### Docs
 

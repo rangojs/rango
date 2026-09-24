@@ -92,6 +92,15 @@ global middleware
   source: `resolveLoaderData` in `loader-cache.ts`). Identity reads inside a
   bake-lane loader refuse the capture. Axis 1 is unchanged in both lanes.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
+- Route-level `cache()` stores only its boundary's subtree. The entries above
+  the outermost enabled `cache()` entry of the chain are never written to the
+  entry, and a hit (document or partial) resolves them as an uncached render
+  would: their handlers, parallels and loaders run, their `ctx.set()` values
+  reach the loaders below, and their header writes land (`CacheScope.covers`,
+  `withCacheLookup`). A `ppr` route is the exception: its scope covers the whole
+  chain, which bakes into the shell. Pinned by
+  `match-middleware/__tests__/cache-outer-layout.test.ts` and
+  `e2e/cache-outer-live.test.ts` (test-app and cloudflare-basic).
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.

@@ -62,6 +62,7 @@ export const NamedRoutes = {
   "mixedClientAsync.detail": "/mixed-client-async/:slug",
   "mixedClientAsync.index": "/mixed-client-async",
   orphanFetch: "/orphan-fetch",
+  outerLive: "/outer-live",
   "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
   "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",
   pprBakeSlow: "/ppr-shell/bake-slow",

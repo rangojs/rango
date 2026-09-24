@@ -22,7 +22,7 @@ bundle instead.
 | -------------------- | ---------------------------------------------- | ------------------------------------- | ---------------------------------------------------- | --------------------- |
 | Function / component | `"use cache"`                                  | one function's return value           | everything around the call                           | `/use-cache`          |
 | Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                   | other loaders, handlers, rendering                   | `/caching`, `/loader` |
-| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree | middleware, loaders, HTML render                     | `/caching`            |
+| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree | middleware, segments above it, loaders, HTML render  | `/caching`            |
 | Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build     | middleware, loaders, HTML render                     | `/prerender`          |
 | HTML shell           | `ppr` path option                              | HTML prelude + React postponed state  | middleware, handlers, loaders; only the holes resume | `/ppr`                |
 | Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store       | middleware above it; nothing below                   | `/document-cache`     |
@@ -233,12 +233,13 @@ This is the most important distinction.
 ### cache() — all-or-nothing
 
 On cache hit, the cache-lookup middleware short-circuits segment resolution for
-the boundary: no handler inside it runs. On miss, all handlers execute normally
-and segments are stored.
+the boundary: no handler inside it runs. Segments above the boundary are not in
+the entry and resolve as on an uncached render. On miss, all handlers execute
+normally and the boundary's segments are stored.
 
 ```
-HIT  → cached segments served, loaders resolved fresh, no handler in the boundary runs
-MISS → all handlers run, segments cached, response built normally
+HIT  → segments above the boundary resolved, cached segments served, loaders resolved fresh, no handler in the boundary runs
+MISS → all handlers run, the boundary's segments cached, response built normally
 ```
 
 `ctx.set()` calls are safe: every handler that could read the value is inside the
@@ -468,14 +469,14 @@ every request.
 
 ## Loaders Are Always Fresh
 
-Loaders are **never cached** by route-level `cache()`. Even on a full cache hit
-where all UI segments are served from cache, loaders are re-resolved fresh on
-every request. This is enforced at two levels:
+Loaders are **never cached** by route-level `cache()`. Even on a cache hit
+where the boundary's UI segments are served from cache, loaders are re-resolved
+fresh on every request. This is enforced at two levels:
 
-1. **Storage**: `cacheRoute()` filters out loader segments before serialization
-   (`segments.filter(s => s.type !== "loader")`).
-2. **Retrieval**: On cache hit, `resolveLoadersOnly()` runs after yielding cached
-   UI segments, ensuring fresh data regardless of cache state.
+1. **Storage**: `cacheRoute()` filters out loader segments before serialization.
+2. **Retrieval**: On cache hit, `resolveLoadersOnly()` runs the boundary's
+   loaders after yielding its cached UI segments (the loaders above the boundary
+   run with their live segments), ensuring fresh data regardless of cache state.
 
 This means `cache()` gives you cached UI + fresh data by default. To also cache
 a loader's data, explicitly opt in with `loader(Fn, () => [cache({...})])`.
@@ -503,25 +504,26 @@ served from cache. On miss: all handlers run, all segments cached together.
 ### Uncached layout with cached children
 
 The cache boundary only covers what's inside it. Parent segments above the
-boundary are not cached and always re-render:
+boundary are not cached and always re-render, cache hits included:
 
 ```typescript
 layout(RootLayout, () => [
   // RootLayout is NOT cached — runs every request
-  path("/products/:slug", ProductPage, { name: "product" }, () => [
-    cache({ ttl: 300 }),
-    layout(ProductSidebar),
-    parallel("@reviews", ReviewsPanel),
-    parallel("@related", RelatedProducts),
+  cache({ ttl: 300 }, () => [
+    path("/products/:slug", ProductPage, { name: "product" }, () => [
+      parallel("@reviews", ReviewsPanel),
+      parallel("@related", RelatedProducts),
+    ]),
   ]),
 ]),
 ```
 
-RootLayout renders fresh every request. ProductPage, ProductSidebar,
-ReviewsPanel, and RelatedProducts are all inside the cache boundary and
-served from cache on hit. This is useful when the root layout depends on
-request-specific data (user session, theme) but the product content is
-cacheable.
+RootLayout renders fresh every request, and a header it writes lands on every
+response. ProductPage, ReviewsPanel, and RelatedProducts are inside the cache
+boundary and served from cache on hit. This is useful when the root layout
+depends on request-specific data (user session, theme) but the product content
+is cacheable. On a `ppr` route the whole chain bakes into the shell, so there
+`cache()` covers RootLayout too.
 
 ### Loader-level caching
 

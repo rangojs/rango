@@ -45,6 +45,7 @@ vi.mock("../../server/context", () => ({
     })),
     runWithStore: vi.fn((_s: any, _ns: any, _p: any, fn: any) => fn()),
   })),
+  isPprEntry: vi.fn(() => false),
   EntryData: {},
   LoaderEntry: {},
   InterceptSelectorContext: {},

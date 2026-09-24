@@ -15,8 +15,8 @@
  *   - perf metrics: the foreground's `_metricsStore` feeds its Server-Timing.
  *   - response writes: header/setCookie/setStatus/onResponse are closures over
  *     (or `this`-reads of) the live request's stub response and callback list.
- *     A layout above the cache() boundary is cached with the route but is not
- *     latched by the header guard, so the refresh re-runs its writes; an error
+ *     A layout above the cache() boundary is not latched by the header guard,
+ *     so the refresh re-runs its writes next to the HIT's own; an error
  *     boundary in the refresh sets a status the same way.
  *   - the cache write: a re-render that resolves an error or notFound boundary
  *     is not written, as a non-200 MISS is not (cache-store.ts), so the entry
@@ -225,22 +225,23 @@ beforeAll(async () => {
         ],
       ),
     ]),
-    // Above the cache() boundary: its writes are allowed on a MISS (the guard
-    // latches at the boundary), and its segment is cached with the route, so
-    // a HIT skips it.
+    // Above the cache() boundary: its writes are allowed (the guard latches at
+    // the boundary), and it is live, so a HIT runs it in the foreground and
+    // the refresh runs it again. Each call writes its own number, which tells
+    // the refresh's writes apart from the foreground's.
     layout(
       (ctx: any) => {
+        const call = ++writerLayoutCalls;
         const reqCtx = getRequestContext();
-        reqCtx.header("x-bg", "1");
-        ctx.headers.set("x-bg-handler", "1");
-        cookies().set("bg", "1");
+        reqCtx.header("x-bg", String(call));
+        ctx.headers.set("x-bg-handler", String(call));
+        cookies().set("bg", String(call));
         cookies().delete("bg-gone");
-        reqCtx.setStatus(203);
+        reqCtx.setStatus(200 + call);
         reqCtx.onResponse((res: Response) => {
           bgOnResponseCalls++;
           return res;
         });
-        writerLayoutCalls++;
         return createElement("div", null, "writer-layout");
       },
       () => [
@@ -386,13 +387,15 @@ describe("background re-render of a stale cached route", () => {
     serveStale = false;
     expect(metricsHandlerCalls).toBe(2);
 
-    // The HIT runs no handler, so a handler or handler-invoked loader metric
-    // could only come from the refresh.
+    // The HIT runs no handler inside the cache() boundary (the router's root
+    // layout sits above it and resolves live), so a handler or handler-invoked
+    // loader metric from below the root could only come from the refresh.
     const labels = lastReqCtx._metricsStore!.metrics.map((m) => m.label);
     expect(
       labels.filter(
         (l) =>
-          l.startsWith("handler:") || l === `loader:${HandlerOnlyLoader.$$id}`,
+          (l.startsWith("handler:") && !l.endsWith(".$root")) ||
+          l === `loader:${HandlerOnlyLoader.$$id}`,
       ),
     ).toEqual([]);
   });
@@ -405,30 +408,32 @@ describe("background re-render of a stale cached route", () => {
     serveStale = true;
     let response!: Response;
     await serve("/bg-writes/a", async () => {
-      // The HIT skips the layout, so this call is the refresh's. The
-      // foreground builds its Response after it (an HTML response waits on
-      // SSR first).
-      await vi.waitFor(() => expect(writerLayoutCalls).toBe(2));
+      // Call 2 is the HIT's own (the layout is live), call 3 the refresh's.
+      // The foreground builds its Response after it (an HTML response waits
+      // on SSR first).
+      await vi.waitFor(() => expect(writerLayoutCalls).toBe(3));
       response = createResponseWithMergedHeaders(null, { status: 200 });
     });
     serveStale = false;
 
+    // Only the foreground's writes, once each.
     expect({
       status: response.status,
       header: response.headers.get("x-bg"),
       handlerHeader: response.headers.get("x-bg-handler"),
-      setCookie: response.headers.getSetCookie(),
+      setCookie: response.headers.getSetCookie().map((c) => c.split(";")[0]),
       onResponseCalls: bgOnResponseCalls - onResponseBefore,
-      // Nothing left on the live request for a later merge point either.
+      // Nothing of the refresh's left on the live request for a later merge
+      // point either.
       stubHeader: lastReqCtx.res.headers.get("x-bg"),
       pendingCallbacks: lastReqCtx._onResponseCallbacks.length,
     }).toEqual({
-      status: 200,
-      header: null,
-      handlerHeader: null,
-      setCookie: [],
-      onResponseCalls: 0,
-      stubHeader: null,
+      status: 202,
+      header: "2",
+      handlerHeader: "2",
+      setCookie: ["bg=2", "bg-gone="],
+      onResponseCalls: 1,
+      stubHeader: "2",
       pendingCallbacks: 0,
     });
   });

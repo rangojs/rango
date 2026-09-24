@@ -54,6 +54,21 @@ cache({ ttl: 60, swr: 300 }, () => [
 ]);
 ```
 
+`cache()` covers only its own subtree. A layout declared above the boundary is
+not stored: it renders on every request, hits included, with its parallels and
+loaders, so a per-request shell or a header it writes stays live. On a `ppr`
+route the whole chain bakes into the shell, so there `cache()` covers the whole
+chain.
+
+```typescript
+layout(AccountShell, () => [
+  // live: runs on every request, cache hits included
+  cache({ ttl: 60 }, () => [
+    path("/products/:id", ProductPage, { name: "product" }), // cached
+  ]),
+]);
+```
+
 The consumer rule: **want it cached? render it inline. Want it live? put it in a
 loader and read it with `useLoader()` in a client component.** Anything read
 with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader

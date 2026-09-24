@@ -1267,6 +1267,35 @@ export const urlpatterns = urls(
           ]),
         ]),
 
+        // A layout ABOVE a cache() boundary is live: it renders and writes its
+        // header on every request, cache HITs included. Only the route inside
+        // the boundary replays from the store (issue #906).
+        layout(
+          (ctx) => {
+            const token = crypto.randomUUID();
+            ctx.headers.set("x-outer-live-layout", token);
+            return (
+              <div data-testid="outer-live-layout">
+                <p data-testid="outer-live-layout-token">{token}</p>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            cache({ ttl: 60 }, () => [
+              path(
+                "/outer-live",
+                () => (
+                  <p data-testid="outer-live-route-token">
+                    {crypto.randomUUID()}
+                  </p>
+                ),
+                { name: "outerLive" },
+              ),
+            ]),
+          ],
+        ),
+
         // PPR'd DUPLICATE of the blog: the realistic PPR shape (sidebar
         // parallel, ring-3 cache() segment with a rendered timestamp) under the
         // SAME components/loaders as /blog, but with the `ppr` path option. The

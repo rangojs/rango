@@ -1,5 +1,5 @@
 import { urls } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
@@ -41,12 +41,57 @@ import {
   CacheNullNonCachedHandler,
 } from "./cache.handlers.js";
 
+// Render counts for /cache-test/outer-live (issue #906). A cache HIT skips the
+// route handler, so its count holds; the layout above the boundary re-runs.
+let outerLiveLayoutRenders = 0;
+let outerLiveRouteRenders = 0;
+
 /**
  * Cache test routes URL patterns
  * Routes: cacheTest.*
  */
 export const cachePatterns = urls(
   ({ path, layout, intercept, loader, cache, notFoundBoundary }) => [
+    // A layout ABOVE a cache() boundary is live: it renders and writes its
+    // header on every request, cache HITs included. Only the route inside the
+    // boundary replays from the cache. The entry page sits outside the layout,
+    // so its link is a partial navigation that needs the layout rendered.
+    path(
+      "/cache-test/outer-live-entry",
+      () => (
+        <Link to="/cache-test/outer-live" data-testid="outer-live-link">
+          Outer live
+        </Link>
+      ),
+      { name: "cacheTest.outerLiveEntry" },
+    ),
+    layout(
+      (ctx) => {
+        const count = ++outerLiveLayoutRenders;
+        ctx.headers.set("x-outer-live-layout", String(count));
+        return (
+          <div data-testid="outer-live-layout">
+            <p data-testid="outer-live-layout-count">{count}</p>
+            <Outlet />
+          </div>
+        );
+      },
+      () => [
+        cache({ ttl: 600 }, () => [
+          path(
+            "/cache-test/outer-live",
+            () => (
+              <p data-testid="outer-live-route-count">
+                {++outerLiveRouteRenders}
+              </p>
+            ),
+            { name: "cacheTest.outerLive" },
+          ),
+        ]),
+      ],
+    ),
+
+    // Route with NON-cached loader (default behavior)
     // Route with NON-cached loader (default behavior)
     path(
       "/cache-test/non-cached-loader",

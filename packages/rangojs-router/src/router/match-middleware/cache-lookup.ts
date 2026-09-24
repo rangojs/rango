@@ -103,7 +103,10 @@ import {
   _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
+import {
+  createShellImplicitDocScope,
+  type CacheScope,
+} from "../../cache/cache-scope.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 
@@ -160,6 +163,7 @@ async function ensurePrerenderDeps() {
 // awaits before reaching this point (workerd can disrupt ALS mid-pipeline).
 async function* resolveFreshLoadersAndYield<TEnv>(
   ctx: MatchContext<TEnv>,
+  entries: EntryData[],
   state: MatchPipelineState,
   pipelineStart: number,
   ms: MatchContext<TEnv>["metricsStore"],
@@ -171,7 +175,7 @@ async function* resolveFreshLoadersAndYield<TEnv>(
   if (ctx.isFullMatch) {
     if (resolveLoadersOnly) {
       const loaderSegments = await ctx.Store.run(() =>
-        resolveLoadersOnly(ctx.entries, ctx.handlerContext),
+        resolveLoadersOnly(entries, ctx.handlerContext),
       );
       state.matchedIds = state.cachedMatchedIds!;
       for (const segment of loaderSegments) {
@@ -184,7 +188,7 @@ async function* resolveFreshLoadersAndYield<TEnv>(
     if (resolveLoadersOnlyWithRevalidation) {
       const loaderResult = await ctx.Store.run(() =>
         resolveLoadersOnlyWithRevalidation(
-          ctx.entries,
+          entries,
           ctx.handlerContext,
           ctx.clientSegmentSet,
           ctx.prevParams,
@@ -301,6 +305,7 @@ async function* yieldFromStore<TEnv>(
   // Resolve loaders fresh (loaders are never pre-rendered/cached).
   yield* resolveFreshLoadersAndYield(
     ctx,
+    ctx.entries,
     state,
     pipelineStart,
     ctx.metricsStore,
@@ -448,6 +453,8 @@ export function withCacheLookup<TEnv>(
       buildEntryRevalidateMap,
       resolveLoadersOnlyWithRevalidation,
       resolveLoadersOnly,
+      resolveAllSegments,
+      resolveAllSegmentsWithRevalidation,
     } = getRouterContext<TEnv>();
 
     if (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request)) {
@@ -520,6 +527,8 @@ export function withCacheLookup<TEnv>(
     );
     let cacheResult =
       explicitLookup.status === "hit" ? explicitLookup.result : null;
+    // The scope whose record answered decides which entries it covers.
+    let hitScope: CacheScope = ctx.cacheScope;
 
     // PPR navigation replay composed with a route-derived cache() scope. The
     // explicit tier stays authoritative: its hit serves under its own
@@ -553,9 +562,12 @@ export function withCacheLookup<TEnv>(
         // no-eligible-snapshot path purely for truthful status) inert: a
         // store-less marker minting a doc scope here would resolve the APP
         // store and read the REAL doc: partition — a cross-partition serve.
-        cacheResult = await createShellImplicitDocScope(
-          replayMarker,
-        ).lookupRoute(ctx.pathname, ctx.matched.params, ctx.isIntercept);
+        hitScope = createShellImplicitDocScope(replayMarker);
+        cacheResult = await hitScope.lookupRoute(
+          ctx.pathname,
+          ctx.matched.params,
+          ctx.isIntercept,
+        );
       } else if (explicitLookup.status === "bypass") {
         // condition() refused at lookup time (the gate only pre-decides the
         // static cache(false) case) — report cache-disabled truthfully.
@@ -578,11 +590,64 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
+    // Entries above the cache() boundary are not in the record: resolve them
+    // fresh, exactly as an uncached render of this request would.
+    const boundaryIndex =
+      hitScope.boundary === undefined
+        ? 0
+        : Math.max(
+            0,
+            ctx.entries.findIndex((e) => e.shortCode === hitScope.boundary),
+          );
+    let liveSegments: ResolvedSegment[] = [];
+    let liveMatchedIds: string[] = [];
+    if (boundaryIndex > 0) {
+      const liveEntries = ctx.entries.slice(0, boundaryIndex);
+      const live: { segments: ResolvedSegment[]; matchedIds: string[] } =
+        await ctx.Store.run(async () => {
+          if (!ctx.isFullMatch) {
+            return resolveAllSegmentsWithRevalidation(
+              liveEntries,
+              ctx.routeKey,
+              ctx.matched.params,
+              ctx.handlerContext,
+              ctx.clientSegmentSet,
+              ctx.prevParams,
+              ctx.request,
+              ctx.prevUrl,
+              ctx.url,
+              ctx.actionContext,
+              ctx.interceptResult,
+              ctx.localRouteName,
+              ctx.pathname,
+              ctx.stale,
+            );
+          }
+          const segments = await resolveAllSegments(
+            liveEntries,
+            ctx.routeKey,
+            ctx.matched.params,
+            ctx.handlerContext,
+            ctx.loaderPromises,
+          );
+          return { segments, matchedIds: segments.map((s) => s.id) };
+        });
+      // An orphan cache() entry also sits in its declaring layout's orphan
+      // list, so the live pass resolves it too; the record supplies it.
+      liveSegments = live.segments.filter(
+        (s) => !hitScope.covers(s.id, s.namespace),
+      );
+      liveMatchedIds = live.matchedIds.filter((id) => !hitScope.covers(id));
+    }
+
     state.cacheHit = true;
     state.cacheSource = "runtime";
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
-    state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
+    state.cachedMatchedIds = [
+      ...liveMatchedIds,
+      ...cacheResult.segments.map((s) => s.id),
+    ];
     const pprTransitionDecisions = pipelineReqCtx?._pprTransitionDecisions;
 
     const canCheckSegmentRevalidation =
@@ -592,6 +657,8 @@ export function withCacheLookup<TEnv>(
     const entryRevalidateMap = canCheckSegmentRevalidation
       ? buildEntryRevalidateMap(ctx.entries)
       : undefined;
+
+    yield* liveSegments;
 
     for (const segment of cacheResult.segments) {
       if (!ctx.clientSegmentSet.has(segment.id)) {
@@ -708,13 +775,19 @@ export function withCacheLookup<TEnv>(
       if (barrierReqCtx._treeHasStreaming === undefined) {
         barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
       }
-      barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
+      barrierReqCtx._resolveRenderBarrier(
+        liveSegments.length > 0
+          ? [...liveSegments, ...cacheResult.segments]
+          : cacheResult.segments,
+      );
     }
 
     // Resolve loaders fresh (loaders are never cached). Shared with the
-    // prerender-store path via resolveFreshLoadersAndYield.
+    // prerender-store path via resolveFreshLoadersAndYield. The live pass
+    // already resolved the loaders of the entries above the boundary.
     yield* resolveFreshLoadersAndYield(
       ctx,
+      ctx.entries.slice(boundaryIndex),
       state,
       pipelineStart,
       ms,

@@ -15,6 +15,7 @@
 import type { CacheScope } from "../cache/cache-scope.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import type { EntryData, MetricsStore } from "../server/context.js";
+import { isPprEntry } from "../server/context.js";
 import { loadManifest } from "./manifest.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
@@ -222,10 +223,19 @@ function buildEntriesAndCacheScope(manifestEntry: EntryData): {
   cacheScope: CacheScope | null;
 } {
   const entries = [...traverseBack(manifestEntry)];
+  // A cache() boundary keeps the entries above it live. A ppr route is a
+  // document-scoped cache(): its whole chain bakes into the shell, and the
+  // shell HIT tail must replay it to match the prelude, so its scope covers
+  // the whole chain.
+  const wholeChain = isPprEntry(manifestEntry);
   let cacheScope: CacheScope | null = null;
   for (const entry of entries) {
     if (entry.cache) {
-      cacheScope = createCacheScope(entry.cache, cacheScope);
+      cacheScope = createCacheScope(
+        entry.cache,
+        cacheScope,
+        wholeChain ? undefined : entry.shortCode,
+      );
     }
   }
   return { entries, cacheScope };
