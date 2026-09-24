@@ -125,9 +125,10 @@ export function restoreHandles(
 /**
  * Append recorded handle pushes to the store, in recorded order, via push()
  * so active captures and loader-scope tagging see them like live pushes. For
- * a cached unit that shares its segments with live pushes ("use cache", a
- * loader's own cache()); restoreHandles would wipe those. `segmentId`
- * redirects every value to one segment (the loader's current owning segment).
+ * a cached unit that shares its segments with live pushes ("use cache");
+ * restoreHandles would wipe those. `segmentId` redirects every value to one
+ * segment (the caller's). A loader's own cache() replays per loader through
+ * HandleStore.pushReplayed instead (loader-cache.ts replayLoaderHandles).
  */
 export function appendHandles(
   handles: Record<string, SegmentHandleData>,

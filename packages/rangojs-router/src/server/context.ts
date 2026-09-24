@@ -1087,8 +1087,8 @@ export function getCurrentLoaderBodyId(): string | undefined {
 /**
  * True while `loaderId`'s body, or a loader it awaits via ctx.use at any
  * depth, is executing. The loader-level cache records these pushes
- * (loader-cache.ts): on a HIT neither the cached body nor its ctx.use deps
- * run, so the entry must replay the deps' pushes too.
+ * (loader-cache.ts): a HIT skips the cached body, so a dep that no other
+ * reader runs in that request only reaches the page through the replay.
  */
 export function isInsideLoaderBody(loaderId: string): boolean {
   for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {

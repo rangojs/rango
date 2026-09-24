@@ -23,6 +23,11 @@ export interface HandleCaptureOptions {
    * fresh body's pushes belong only to the refreshed entry.
    */
   divert?: boolean;
+  /**
+   * Record key for an accepted push, in place of its segment id. A loader's
+   * own cache() groups pushes by the loader body that made them.
+   */
+  key?: () => string;
 }
 
 export interface HandleCapture extends HandleCaptureOptions {
@@ -62,13 +67,14 @@ function ensureInterceptorInstalled(handleStore: HandleStore): void {
     for (const capture of captures) {
       if (capture.accept && !capture.accept()) continue;
       if (capture.divert) diverted = true;
-      if (!capture.data[segmentId]) {
-        capture.data[segmentId] = {};
+      const key = capture.key ? capture.key() : segmentId;
+      if (!capture.data[key]) {
+        capture.data[key] = {};
       }
-      if (!capture.data[segmentId][handleName]) {
-        capture.data[segmentId][handleName] = [];
+      if (!capture.data[key][handleName]) {
+        capture.data[key][handleName] = [];
       }
-      capture.data[segmentId][handleName].push(value);
+      capture.data[key][handleName].push(value);
     }
     if (!diverted) originalPush(handleName, segmentId, value);
   };

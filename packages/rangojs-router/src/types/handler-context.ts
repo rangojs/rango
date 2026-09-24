@@ -455,6 +455,20 @@ export type InternalHandlerContext<
    * table (so a loader cannot await its own in-flight memoized promise).
    */
   _loaderCacheOriginalUse?: (item: any) => any;
+  /**
+   * @internal A loader-cache HIT asks before replaying a loader's recorded
+   * pushes: true when that loader has not run in this request and no other
+   * replay delivered it; its later run then replaces the replayed values
+   * (HandleStore.pushReplayed). One copy per loader per request. See
+   * setupLoaderAccess.
+   */
+  _claimLoaderPushes?: (loaderId: string) => boolean;
+  /**
+   * @internal Run a loader on a fresh executor (own memo map): a loader-cache
+   * stale refresh, whose diverted pushes must not take a dependency's run
+   * from the page. See setupLoaderAccess.
+   */
+  _runLoaderIsolated?: (loader: any) => Promise<any>;
 };
 
 /**

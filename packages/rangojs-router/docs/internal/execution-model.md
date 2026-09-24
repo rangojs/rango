@@ -75,6 +75,17 @@ global middleware
 - Loaders are live by default unless explicitly cached via `cache()` in their
   use params: `loader(Fn, () => [cache({ ttl })])`. Pinned by the `[C1]`/`[C2]`
   semantic matrix rows.
+- A loader-cache HIT skips only the cached body. It replays the handle pushes
+  of that body and of the loaders it awaited via `ctx.use` on the MISS, each
+  loader's pushes at most once per request: a dependency that a sibling loader
+  or the handler already ran keeps its live pushes, and a dependency that
+  runs after the replay replaces its replayed values with its live pushes,
+  in their position (handle output stays live like the data). A stale hit's
+  background refresh runs on its own loader executor, so it never takes the
+  page's run of a dependency. Source: `replayLoaderHandles` in
+  `loader-cache.ts`, `_claimLoaderPushes` in `loader-resolution.ts`
+  (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
+  `loader-cache-handles.test.ts` and `handle-store.test.ts`.
 - Under PPR shell capture, only `loader(Def, { ssr: false })` executes and
   bakes; every other loader is masked and live, whatever its `loading()`
   ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);

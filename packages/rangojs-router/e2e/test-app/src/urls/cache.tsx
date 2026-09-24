@@ -3,6 +3,8 @@ import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
+  DepCrumbProductLoader,
+  DepCrumbSiblingLoader,
   InterceptCacheTestLoader,
   ReactNodeTestLoader,
   NullTestLoader,
@@ -19,6 +21,7 @@ import {
 import {
   CacheNonCachedLoaderHandler,
   CacheCachedLoaderHandler,
+  CacheCachedLoaderDepHandler,
   CacheHandlerConsumedHandler,
   CacheInterceptIndexHandler,
   CacheInterceptDetailHandler,
@@ -58,6 +61,22 @@ export const cachePatterns = urls(
       CacheCachedLoaderHandler,
       { name: "cacheTest.cachedLoader" },
       () => [loader(CachedTestLoader, () => [cache({ ttl: 600 })])],
+    ),
+
+    // A cached loader's ctx.use dependency, also read by an uncached sibling
+    // loader: its crumb appears once on the MISS and on the HIT, where the
+    // sibling's live run replaces the replayed crumb. ssr: false puts every
+    // push in the document.
+    path(
+      "/cache-test/cached-loader-dep",
+      CacheCachedLoaderDepHandler,
+      { name: "cacheTest.cachedLoaderDep" },
+      () => [
+        loader(DepCrumbProductLoader, { ssr: false }, () => [
+          cache({ ttl: 600 }),
+        ]),
+        loader(DepCrumbSiblingLoader, { ssr: false }),
+      ],
     ),
 
     // Consumption-lane rule, cache() tier: a route-level cache() scope whose

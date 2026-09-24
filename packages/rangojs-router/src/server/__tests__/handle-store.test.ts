@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createHandleStore } from "../handle-store";
-import { runInsideLoaderScope } from "../context.js";
+import { runInsideLoaderBodyScope, runInsideLoaderScope } from "../context.js";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -407,5 +407,96 @@ describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
     expect(store.getDataForSegment("seg1", true)).toEqual({
       crumbs: ["recorded"],
     });
+  });
+});
+
+describe("HandleStore.pushReplayed (loader-cache HIT replay)", () => {
+  // A live push by loader `id` runs inside its body scope, as the loader
+  // executor does (runInsideLoaderBodyScope); DSL loaders add the loader scope.
+  const livePush = (
+    store: ReturnType<typeof createHandleStore>,
+    id: string,
+    segmentId: string,
+    value: unknown,
+  ) =>
+    runInsideLoaderScope(() =>
+      runInsideLoaderBodyScope(
+        () => store.push("crumbs", segmentId, value),
+        id,
+      ),
+    );
+
+  it("the loader's first live push takes the replayed slot's position; later live pushes follow it", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+    runInsideLoaderScope(() => {
+      store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+      store.pushReplayed("crumbs", "seg1", "own-cached", "Own");
+    });
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "handler",
+      "dep-cached",
+      "own-cached",
+    ]);
+
+    livePush(store, "Dep", "seg1", "dep-live-1");
+    livePush(store, "Other", "seg1", "other-live");
+    livePush(store, "Dep", "seg1", "dep-live-2");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "handler",
+      "dep-live-1",
+      "dep-live-2",
+      "own-cached",
+      "other-live",
+    ]);
+    // Loader tagging follows the moved positions: only the handler push is
+    // kept for a cache() record.
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: ["handler"],
+    });
+  });
+
+  it("a live push to another segment removes the replayed slots and lands where it is pushed", () => {
+    const store = createHandleStore();
+    store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+    store.pushReplayed("crumbs", "seg1", "own-cached", "Own");
+
+    livePush(store, "Dep", "seg2", "dep-live");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["own-cached"]);
+    expect(store.getDataForSegment("seg2").crumbs).toEqual(["dep-live"]);
+  });
+
+  it("a push outside the replayed loader's body does not touch its replayed slots", () => {
+    const store = createHandleStore();
+    store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+    store.push("crumbs", "seg1", "handler");
+    livePush(store, "Other", "seg1", "other-live");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "dep-cached",
+      "handler",
+      "other-live",
+    ]);
+  });
+
+  it("the replacement reaches stream consumers as a full per-segment snapshot", async () => {
+    const store = createHandleStore();
+    // The live loader body holds the auxiliary lane open, as the executor does.
+    let release!: () => void;
+    store.trackAuxiliary(new Promise<void>((r) => (release = r)));
+    store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+    const yields: unknown[] = [];
+    const consumer = (async () => {
+      for await (const d of store.stream()) yields.push(d.crumbs?.seg1);
+    })();
+    await delay(5);
+    livePush(store, "Dep", "seg1", "dep-live");
+    release();
+    await consumer;
+
+    expect(yields.at(0)).toEqual(["dep-cached"]);
+    expect(yields.at(-1)).toEqual(["dep-live"]);
   });
 });
