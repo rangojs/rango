@@ -213,9 +213,6 @@ export function withCacheStore<TEnv>(
 
       if (hasNullComponents) {
         requestCtx.waitUntil(async () => {
-          const savedMetrics = ctx.Store.metrics;
-          ctx.Store.metrics = undefined;
-
           const start = performance.now();
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
@@ -247,8 +244,6 @@ export function withCacheStore<TEnv>(
               pathname: ctx.pathname,
               error: String(error),
             });
-          } finally {
-            ctx.Store.metrics = savedMetrics;
           }
         });
       } else {
