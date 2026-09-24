@@ -120,6 +120,7 @@ Key points:
 - The encoded string is the RSC flight format (text-based, streamable)
 - Revival produces a React element identical to the original
 - Cached elements render correctly in both RSC stream and HTML output
+- A component that is still a promise (a route, parallel slot or intercept handler streamed under `loading()`) is awaited before encoding (`serializeSegments` in `src/cache/segment-codec.ts`); if it rejects, the serialize step throws and `cacheRoute` writes nothing, so a handler that fails after the 200 has gone out, which the MISS gate's `response.status !== 200` check in `withCacheStore` cannot see, never replaces an entry
 
 ## API
 
