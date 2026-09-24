@@ -207,6 +207,15 @@ the variant suffixes are still appended.
 - Responses carrying `Set-Cookie` (a per-client value must not be replayed to
   everyone)
 - Non-200 responses
+- A 200 whose render reported an error: a component that threw after the
+  response started streaming, such as an async server component whose fetch
+  failed. The status is already 200, so the body carries the error (an error
+  row in the RSC payload, an errored Suspense boundary in the HTML). The write
+  is skipped and logged as `[DocumentCache] cache write`; the error goes to
+  `onError` as `cache-write` unless the router already reported that same
+  error during the render. The current request still gets the errored render,
+  the next request renders fresh, and on a stale refresh the stale entry keeps
+  serving.
 
 ## Invalidation
 

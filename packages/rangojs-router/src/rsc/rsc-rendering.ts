@@ -1534,6 +1534,10 @@ function serveShellHit(
         search: shellSearchSeed(url, reqCtx._searchParamsFilter),
         // The HIT request's origin — same host as the capture's (key-scoped).
         origin: url.origin,
+        // The document cache reads the list before storing this composite.
+        onError: (error) => {
+          reqCtx._renderErrors?.push(error);
+        },
       }),
     );
   };

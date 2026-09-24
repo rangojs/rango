@@ -1078,6 +1078,17 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   500/redirect after the first shell byte — error UI renders inline via
   Suspense/error boundaries (the same property any streamed SSR page has after
   its shell flushes).
+- **A shell component that throws during capture refuses it**: an async
+  server component (or a client component during SSR) inside a Suspense
+  boundary that throws does not fail the capture render, so its errored
+  boundary would bake into the shared prelude. The capture stores nothing
+  instead, logs `[ShellCache] capture` with the error (it goes to `onError`
+  as `cache-write` unless the router already reported that same error during
+  the render), and backs the key off like any refused capture; the next
+  capture after the window stores normally. The request that triggered the
+  capture is served as before. Only a throw during the capture counts: a
+  component that failed in the live render and succeeds when captured is
+  stored.
 
 ## Related
 

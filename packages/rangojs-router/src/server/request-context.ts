@@ -643,6 +643,17 @@ export interface RequestContext<
   _reportedErrors: WeakSet<object>;
 
   /**
+   * @internal Errors this response's Flight or Fizz render reported through
+   * onError: a component that threw does not fail the stream, which completes
+   * with an error row or an errored Suspense boundary. Whole-response captures
+   * (document-cache.ts, captureAndStoreShell) store nothing while it is
+   * non-empty (issue #915). An array so a render under a derived context (the
+   * shell HIT tail) pushes into the request's own list through the prototype;
+   * deriveShellCaptureContext gives the capture its own.
+   */
+  _renderErrors?: unknown[];
+
+  /**
    * @internal Report a non-fatal background error through the router's
    * onError callback. Wired by the RSC handler / router during request
    * creation. Cache-runtime and other subsystems call this to surface
@@ -761,6 +772,7 @@ export type PublicRequestContext<
   | "_gateFormData"
   | "_inActionRevalidation"
   | "_reportedErrors"
+  | "_renderErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"
   | "_renderBarrierSegmentOrder"
@@ -1329,6 +1341,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _renderErrors: [],
     _metricsStore: undefined,
     _renderForeground: undefined,
     _activeRoutine: undefined,

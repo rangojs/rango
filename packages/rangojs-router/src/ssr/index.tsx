@@ -27,6 +27,7 @@ interface RenderToReadableStreamOptions {
   nonce?: string;
   formState?: unknown;
   progressiveChunkSize?: number;
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -124,6 +125,13 @@ export interface SSRRenderOptions {
    * prerender pass (host-agnostic bare captures).
    */
   origin?: string;
+
+  /**
+   * Called for each error Fizz reports through its onError: a component that
+   * threw inside a Suspense boundary, which leaves the boundary errored in an
+   * otherwise completed document. React's default console.error is kept.
+   */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -407,6 +415,12 @@ interface ShellCaptureOptions {
    * capture, resume, and browser hydration.
    */
   origin?: string;
+  /**
+   * Called for each component error the prerender reports (an errored
+   * boundary in the prelude), never for the capture's own abort. The caller
+   * refuses to store the shell (issue #915).
+   */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -437,6 +451,8 @@ interface ShellResumeOptions {
   search?: string;
   /** The HIT request's origin — same host as the capture's (key-scoped). */
   origin?: string;
+  /** Called for each component error the resumed holes report. */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -601,7 +617,14 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, streamMode, search, origin } = options ?? {};
+    const {
+      nonce,
+      formState,
+      streamMode,
+      search,
+      origin,
+      onError: onRenderError,
+    } = options ?? {};
 
     try {
       // Tee the stream:
@@ -659,6 +682,13 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           formState,
           nonce,
           ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
+          ...(onRenderError && {
+            onError: (error: unknown) => {
+              onRenderError(error);
+              // What React's default onError does (it only logs).
+              console.error(error);
+            },
+          }),
         }),
       );
 
@@ -797,6 +827,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
           if (error === abortReason) {
             return;
           }
+          opts.onError?.(error);
           reportRenderError(onError, error);
         },
       });
@@ -981,7 +1012,10 @@ export function createShellResumeHandler<TEnv = unknown>(
           // resumed stream and need the per-request nonce.
           const resumed = await runWithPreinitNonce(nonce, () =>
             resume(<SsrRoot />, JSON.parse(postponed), {
-              onError: (error) => reportRenderError(onError, error),
+              onError: (error) => {
+                opts.onError?.(error);
+                reportRenderError(onError, error);
+              },
               nonce,
             }),
           );
