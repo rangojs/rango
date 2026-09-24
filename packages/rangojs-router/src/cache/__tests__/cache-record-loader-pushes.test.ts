@@ -38,10 +38,10 @@ import { createLoader } from "../../loader.rsc.js";
 import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../../rsc/manifest-init.js";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
-import { captureHandles } from "../handle-snapshot.js";
-import { createHandleStore } from "../../server/handle-store.js";
-import { runInsideLoaderScope } from "../../server/context.js";
-import type { ResolvedSegment } from "../../types.js";
+import { decodeHandles } from "../handle-snapshot.js";
+import { deriveShellCaptureContext } from "../../rsc/shell-capture.js";
+import type { RecordingShellStore } from "../shell-snapshot.js";
+import type { CachedEntryData } from "../types.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -97,6 +97,62 @@ const CachedLoader = (createLoader as Function)(
   "test#CacheRecordCachedLoader",
 );
 
+// PPR shell capture fixture. An unflagged (live-lane) DSL loader never executes
+// at capture (loader-cache.ts resolveLoaderData masks it). An ssr:false
+// (bake-lane) loader does, and so does every loader it awaits via ctx.use; on a
+// HIT that replays the record the bake-lane loader re-runs and the awaited
+// loader re-runs with it.
+const shellLiveLoaderBody = vi.fn(async (ctx: any) => {
+  ctx.use(Crumbs)("live-string");
+  return { live: true };
+});
+const ShellLiveLoader = (createLoader as Function)(
+  shellLiveLoaderBody,
+  undefined,
+  "test#ShellRecordLiveLoader",
+);
+
+const ShellAwaitedLoader = (createLoader as Function)(
+  async (ctx: any) => {
+    ctx.use(Crumbs)("awaited-string");
+    ctx.use(Crumbs)({ label: "awaited-object" });
+    return { awaited: true };
+  },
+  undefined,
+  "test#ShellRecordAwaitedLoader",
+);
+
+const ShellBakedLoader = (createLoader as Function)(
+  async (ctx: any) => {
+    ctx.use(Crumbs)("baked-string");
+    ctx.use(Crumbs)({ label: "baked-object" });
+    await ctx.use(ShellAwaitedLoader);
+    return { baked: true };
+  },
+  undefined,
+  "test#ShellRecordBakedLoader",
+);
+
+// Bake-lane loader with its own cache(): once the foreground MISS has written
+// its loader-cache entry, the capture replays the recorded pushes
+// (loader-cache.ts replayLoaderHandles) instead of running the body, and a HIT
+// replays them again from the loader's re-run.
+const shellCachedBakedLoaderBody = vi.fn(async (ctx: any) => {
+  ctx.use(Crumbs)("cached-baked-string");
+  ctx.use(Crumbs)({ label: "cached-baked-object" });
+  return { cachedBaked: true };
+});
+const ShellCachedBakedLoader = (createLoader as Function)(
+  shellCachedBakedLoaderBody,
+  undefined,
+  "test#ShellRecordCachedBakedLoader",
+);
+
+const shellPageHandler = (ctx: any) => {
+  ctx.use(Crumbs)("handler-string");
+  return createElement("div", null, "ppr-page");
+};
+
 const RootLayout = () => createElement("div", null, "layout");
 
 let router: any;
@@ -105,7 +161,27 @@ let store: MemorySegmentCacheStore;
 beforeAll(async () => {
   store = new MemorySegmentCacheStore();
   router = createRouter({} as any);
-  router.routes(({ layout, path, loader, cache }: any) => [
+  router.routes(({ layout, path, loader, loading, cache }: any) => [
+    path(
+      "/ppr-crumbs",
+      shellPageHandler,
+      { name: "shellRecordCrumbs", ppr: true },
+      () => [
+        loader(ShellBakedLoader, { ssr: false }),
+        loader(ShellLiveLoader),
+        loading(createElement("span", null, "loading")),
+      ],
+    ),
+    path(
+      "/ppr-cached-crumbs",
+      shellPageHandler,
+      { name: "shellRecordCachedCrumbs", ppr: true },
+      () => [
+        loader(ShellCachedBakedLoader, { ssr: false }, () => [
+          cache({ ttl: 60, store: new MemorySegmentCacheStore() }),
+        ]),
+      ],
+    ),
     cache({ ttl: 60, store }, () => [
       layout(RootLayout, () => [
         path("/crumbs", pageHandler, { name: "cacheRecordCrumbs" }, () => [
@@ -209,23 +285,82 @@ describe("cache() record vs a loader with its own cache()", () => {
   });
 });
 
-describe("captureHandles exclusion source", () => {
-  const segs = [{ id: "seg1" }] as ResolvedSegment[];
+/**
+ * Run the real PPR capture match (deriveShellCaptureContext + router.match),
+ * fire its onResponse callbacks as captureAndStoreShell does, and return the
+ * Crumbs values in the doc segment record that a fast-path HIT replays.
+ */
+async function captureDocRecordCrumbs(pathname: string): Promise<unknown[]> {
+  const request = new Request(`https://example.com${pathname}`, {
+    headers: { accept: "text/html" },
+  });
+  const reqCtx = createRequestContext({
+    env: {},
+    request,
+    url: new URL(request.url),
+    variables: {},
+  } as any) as RequestContext<any>;
+  reqCtx._cacheStore = new MemorySegmentCacheStore();
+  const { derivedCtx } = deriveShellCaptureContext(reqCtx, {
+    ttl: 60,
+    swr: 0,
+  });
+  await runWithRequestContext(derivedCtx, async () => {
+    await router.match(request, { env: {} });
+    derivedCtx._handleStore.seal();
+    for (const cb of derivedCtx._onResponseCallbacks) {
+      cb(new Response(null, { status: 200 }));
+    }
+  });
+  const recording = derivedCtx._cacheStore as RecordingShellStore;
+  await recording.settleWrites(5000);
+  const doc = recording
+    .drainSnapshot()
+    ?.find((r) => r.family === "segment" && r.key.startsWith("doc:"));
+  expect(doc, "capture wrote the doc segment record").toBeDefined();
+  const handles = await decodeHandles((doc!.value as CachedEntryData).handles);
+  return Object.values(handles ?? {}).flatMap(
+    (segHandles) => segHandles[Crumbs.$$id] ?? [],
+  );
+}
 
-  it("uses only the shell-capture identity set when one is passed (PPR unchanged)", () => {
-    const handleStore = createHandleStore();
-    const baked = { label: "bake-lane" };
-    const live = { label: "live-lane" };
-    handleStore.push("crumbs", "seg1", "handler");
-    runInsideLoaderScope(() => {
-      handleStore.push("crumbs", "seg1", baked);
-      handleStore.push("crumbs", "seg1", live);
-    });
-    // shell-capture.ts adds every loader push except settled bake-lane ones.
-    const exclude = new WeakSet<object>([live]);
+describe("PPR shell capture record vs loader handle pushes", () => {
+  let recorded: unknown[];
 
-    expect(captureHandles(segs, handleStore, exclude)).toEqual({
-      seg1: { crumbs: ["handler", baked] },
-    });
+  beforeAll(async () => {
+    recorded = await captureDocRecordCrumbs("/ppr-crumbs");
+  });
+
+  it("an unflagged (live-lane) loader does not execute at capture", () => {
+    expect(shellLiveLoaderBody).not.toHaveBeenCalled();
+    expect(recorded).not.toContain("live-string");
+  });
+
+  it("records the handler push", () => {
+    expect(recorded).toContain("handler-string");
+  });
+
+  it("records a bake-lane (ssr: false) loader's own pushes, primitive and object", () => {
+    expect(recorded).toContain("baked-string");
+    expect(withLabel(recorded, "baked-object")).toHaveLength(1);
+  });
+
+  it("does not record an object pushed by a loader the bake-lane loader awaits", () => {
+    expect(withLabel(recorded, "awaited-object")).toHaveLength(0);
+  });
+
+  it("does not record a primitive pushed by a loader the bake-lane loader awaits", () => {
+    expect(recorded).not.toContain("awaited-string");
+  });
+
+  it("does not record a bake-lane loader's pushes replayed from its own cache(), primitive or object", async () => {
+    // Foreground MISS writes the loader-cache entry; the capture then hits it.
+    await serve("/ppr-cached-crumbs");
+    const cached = await captureDocRecordCrumbs("/ppr-cached-crumbs");
+
+    expect(shellCachedBakedLoaderBody).toHaveBeenCalledTimes(1);
+    expect(cached).toContain("handler-string");
+    expect(cached).not.toContain("cached-baked-string");
+    expect(withLabel(cached, "cached-baked-object")).toHaveLength(0);
   });
 });

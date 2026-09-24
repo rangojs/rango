@@ -488,8 +488,10 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   snapshot. The earlier `stream` option throws at definition time
   (`loader()` in `route-definition/dsl-helpers.ts`). Userland:
   `runLoaderResult().handlePushes` records writes; `runLoader` seeds reads via
-  `{ handles }` + `ctx.get`. `cache()` records exclude DSL-loader pushes
-  (`handle-store.ts` push-time tagging; see `docs/design/caching.md`).
+  `{ handles }` + `ctx.get`. `cache()` and PPR shell records exclude DSL-loader
+  pushes (`handle-store.ts` push-time positional tagging; the shell capture
+  untags an `ssr: false` loader's own settled pushes; see
+  `docs/design/caching.md`).
 
 ### Revalidation
 

@@ -1506,14 +1506,17 @@ export function deriveShellCaptureContext(
   //    re-run can fill, so the entry must not serve handler-free
   //    (ShellCacheEntry.handlerLiveHoles). Still-pending top-level handler
   //    pushes at the putShell barrier count too — their liveness is unknowable.
-  //  - loaderScopedPushValues: DSL-loader pushes re-run fresh on every HIT, so
-  //    their captured values must NOT enter a segment record's handle snapshot
+  //  - loader-push tag: DSL-loader pushes re-run fresh on every HIT, so their
+  //    captured values must NOT enter a segment record's handle snapshot
   //    (replay would duplicate the fresh push, and their masked nested
-  //    promises would stall the Flight handle encode to its timeout). The set
-  //    rides the derived context (_shellCaptureLoaderHandleValues) and is
-  //    applied ONLY at the captureHandles cache-write call site — every other
-  //    getDataForSegment consumer (the render-barrier snapshot, prerender)
-  //    sees every push.
+  //    promises would stall the Flight handle encode to its timeout). The
+  //    store tags them by array position (HandleStore.push loaderPush), which
+  //    covers primitives, and only the captureHandles cache-write call site
+  //    excludes tagged pushes — every other getDataForSegment consumer (the
+  //    render-barrier snapshot, prerender) sees every push. Unflagged loaders
+  //    never execute at capture; the tagged pushes come from loaders an
+  //    ssr:false loader awaits via ctx.use and from loader-cache replays
+  //    (loader-cache.ts replayLoaderHandles), both re-run on a HIT.
   //    EXCEPTION — bake-lane { ssr: false } loaders: they execute at capture
   //    (fresh.ts awaits them), their pushes are in the captured HTML (<head>
   //    title/meta, useHandle echoes), and the stored snapshot carries the same
@@ -1530,7 +1533,6 @@ export function deriveShellCaptureContext(
     pendingPushes: 0,
     handlerInvokedLoader: false,
   };
-  const loaderScopedPushValues = new WeakSet<object>();
   const rawCapturePush = freshHandleStore.push.bind(freshHandleStore);
   freshHandleStore.push = (
     handleName: string,
@@ -1551,39 +1553,29 @@ export function deriveShellCaptureContext(
       return masked;
     };
     let masked: unknown;
+    let loaderPush = pushedInLoaderScope;
     if (isThenable(value)) {
       if (!pushedInLoaderScope) {
         handleLiveness.pendingPushes++;
         const settle = () => handleLiveness.pendingPushes--;
         value.then(settle, settle);
       }
-      masked = value.then(maskWithLiveness);
-      // Deferred (thenable) loader pushes always keep the exclusion — the
+      // Deferred (thenable) loader pushes always keep the tag — the
       // bake-lane carve-out below is for settled values only.
-      if (pushedInLoaderScope) {
-        loaderScopedPushValues.add(masked as object);
-      }
+      masked = value.then(maskWithLiveness);
     } else {
       masked = maskWithLiveness(value);
-      if (
-        pushedInLoaderScope &&
-        typeof masked === "object" &&
-        masked !== null
-      ) {
+      if (loaderPush && !maskedNestedThenable) {
         // Bake-lane { ssr: false } loader pushes are shell material (see the
-        // funnel comment above): keep them IN the stored snapshot when
-        // settled and thenable-free; everything else stays excluded.
+        // funnel comment above): untagged, the stored snapshot keeps them
+        // when settled and thenable-free; everything else stays tagged.
         const bodyLoaderId = getCurrentLoaderBodyId();
-        const baked =
-          bodyLoaderId !== undefined &&
-          !maskedNestedThenable &&
-          derivedCtx._awaitBeforeFlushLoaderIds?.has(bodyLoaderId) === true;
-        if (!baked) {
-          loaderScopedPushValues.add(masked);
-        }
+        loaderPush =
+          bodyLoaderId === undefined ||
+          derivedCtx._awaitBeforeFlushLoaderIds?.has(bodyLoaderId) !== true;
       }
     }
-    rawCapturePush(handleName, segmentId, masked);
+    rawCapturePush(handleName, segmentId, masked, loaderPush);
   };
 
   const derivedCtx: RequestContext = Object.assign(Object.create(reqCtx), {
@@ -1605,7 +1597,6 @@ export function deriveShellCaptureContext(
   // also resets _treeHasStreaming (recomputed for the capture's tree) and the
   // deadlock-guard fields as own properties.
   wireRenderBarrier(derivedCtx, freshHandleStore);
-  derivedCtx._shellCaptureLoaderHandleValues = loaderScopedPushValues;
   derivedCtx._requestTags = new Set<string>();
   // Own explicit-store registry: cache-store resolutions during the capture
   // (the implicit scope's SnapshotOnlySegmentStore, any per-capture explicit

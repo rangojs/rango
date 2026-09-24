@@ -559,9 +559,10 @@ loader scope (`isInsideLoaderScope()` at push time, by array position so
 primitive values are covered), and `captureHandles` reads with
 `getDataForSegment(id, true)` to leave them out. A loader that only a handler
 consumed (`await ctx.use(Loader)` from the handler body) is skipped with its
-handler on a HIT, so its pushes stay in the record. PPR shell captures keep
-their own exclusion set (`_shellCaptureLoaderHandleValues`, see
-`docs/design/shell-fast-path.md`).
+handler on a HIT, so its pushes stay in the record. PPR shell captures use
+the same tag: the capture's push wrapper passes `loaderPush: false` to
+`HandleStore.push` for an `ssr: false` loader's own settled pushes, which its
+record keeps (see `docs/design/shell-fast-path.md`).
 
 ## Stale-While-Revalidate (SWR)
 

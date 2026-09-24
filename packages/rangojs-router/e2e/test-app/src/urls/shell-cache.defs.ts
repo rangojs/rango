@@ -84,6 +84,22 @@ export const ShellBakedOnlyLoader = createLoader(async () => {
   return `baked-only-${bakedOnlySeq}`;
 });
 
+// Issue #888 fixture: a string handle pushed by an unflagged loader that an
+// ssr:false loader awaits. Both run at capture and re-run on every HIT, so the
+// push must stay out of the doc record the fast-path HIT replays. Default
+// (identity) collect: a duplicate push shows up as a second value.
+export const ShellWarnings = createHandle<string>();
+
+export const ShellStockLoader = createLoader(async (ctx) => {
+  ctx.use(ShellWarnings)("Low stock");
+  return { lowStock: true };
+});
+
+export const ShellStorefrontLoader = createLoader(async (ctx) => {
+  const stock = await ctx.use(ShellStockLoader);
+  return { lowStock: stock.lowStock };
+});
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.

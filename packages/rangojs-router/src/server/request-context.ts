@@ -382,18 +382,6 @@ export interface RequestContext<
   };
 
   /**
-   * @internal Handle values pushed from a DSL loader scope DURING a shell
-   * capture (identity set; populated by the capture push wrapper in
-   * shell-capture.ts). cacheRoute threads it into captureHandles so those
-   * values stay out of cache-write handle records — loaders re-run fresh on
-   * every HIT, so replaying their captured (masked) values would duplicate
-   * the fresh push and stall the Flight handle encode. Own property of the
-   * capture's derived context only; render-time handle consumers are
-   * unaffected (the exclusion applies only at the captureHandles call site).
-   */
-  _shellCaptureLoaderHandleValues?: WeakSet<object>;
-
-  /**
    * @internal Set (to the offending fn name) by the cookies()/headers()
    * capture guard when it throws DURING a capture render. Load-bearing for the
    * bake lane: a guard throw inside an executing loader is swallowed by
@@ -753,7 +741,6 @@ export type PublicRequestContext<
   | "_shellLoaderSeed"
   | "_shellCaptureLoaderRecords"
   | "_shellCaptureHandleLiveness"
-  | "_shellCaptureLoaderHandleValues"
   | "_shellFragmentPayload"
   | "_shellCaptureGuardTripped"
   | "_shellCaptureGuardTrippedLoaderId"

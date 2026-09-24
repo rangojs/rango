@@ -200,6 +200,22 @@ export function makePprStaleReplayData(id: string): Promise<string> {
   );
 }
 
+// Issue #888 fixture: a string handle pushed by an unflagged loader that an
+// ssr:false loader awaits. Both run at capture and re-run on every HIT, so the
+// push must stay out of the doc record the fast-path HIT replays. Default
+// (identity) collect: a duplicate push shows up as a second value.
+export const PprWarnings = createHandle<string>();
+
+export const PprStockLoader = createLoader(async (ctx) => {
+  ctx.use(PprWarnings)("Low stock");
+  return { lowStock: true };
+});
+
+export const PprStorefrontLoader = createLoader(async (ctx) => {
+  const stock = await ctx.use(PprStockLoader);
+  return { lowStock: stock.lowStock };
+});
+
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
 // the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer
 // module counters; the DSL loader (live lane) reports the snapshot per serve,

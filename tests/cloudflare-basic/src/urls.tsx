@@ -57,6 +57,7 @@ import {
   PprExecBadgeSlot,
   PprExecPage,
   PprStaleReplayPage,
+  PprWarningsPage,
   PprScopedChromeLayout,
   PprScopedHomePage,
   PprScopedOptOutPage,
@@ -91,6 +92,7 @@ import {
   PprBadgeLoader,
   PprBakeSlowLoader,
   PprBakeHoleLoader,
+  PprStorefrontLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import {
@@ -759,6 +761,15 @@ export const urlpatterns = urls(
           name: "pprStaleReplay",
           ppr: { ttl: 4, swr: 120 },
         }),
+        // Issue #888: the ssr:false loader awaits an unflagged loader that
+        // pushes a string handle. A fast-path HIT replays the doc record,
+        // which must not carry the push (see pages/ppr-shell.tsx).
+        path(
+          "/ppr-warnings",
+          PprWarningsPage,
+          { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprStorefrontLoader, { ssr: false })],
+        ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the
         // real store-app shape — an app-wide cache() wrapping the tree).
         // Navigation replay COMPOSES with the explicit tier on CFCacheStore:

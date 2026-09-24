@@ -37,6 +37,7 @@ import {
 } from "../components/PprShellExecMatrix.js";
 import { PprPrerenderSeq } from "../components/PprPrerenderSeq.js";
 import { PprStaleReplay } from "../components/PprStaleReplay.js";
+import { PprWarningsView } from "../components/PprWarningsView.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -95,6 +96,17 @@ export function PprShellPricePage() {
 // whether the route carries loading() (see urls.tsx).
 export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
+}
+
+// Issue #888 page: no promise-carrying handler push (no handlerLiveHoles), so
+// HITs take the fast path and replay the doc record.
+export function PprWarningsPage() {
+  return (
+    <main data-testid="ppr-warnings-page">
+      <p>Warnings static shell</p>
+      <PprWarningsView />
+    </main>
+  );
 }
 
 // Settled-marker regression page (storefront PDP #438): bake-lane loader whose

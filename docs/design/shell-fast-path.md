@@ -123,13 +123,22 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    consumption lane, #672 — its "fresh per serve" slot value would freeze
    under replay) sets the flag: those holes only a handler re-run can fill,
    so the serve side declines the fast path and keeps today's full tail.
-   DSL-loader pushes never disqualify — loaders re-run on every HIT. A live
-   loader's captured values are filtered OUT of the snapshot's handle records
-   (they would duplicate the fresh push and stall the Flight handle encode on
-   their masks). A bake-lane (`ssr: false`) loader's settled, thenable-free
-   pushes are kept, because the prelude rendered them; its re-run pushes them
-   again, so on the fast path they appear twice unless the handle dedupes by
-   key (`Meta`, `Breadcrumbs` by `href`).
+   DSL-loader pushes never disqualify — loaders re-run on every HIT. Loader
+   pushes made during the capture are filtered OUT of the snapshot's handle
+   records (they would duplicate the fresh push and stall the Flight handle
+   encode on their masks). Unflagged loaders never execute at capture, so
+   these pushes come from a loader an `ssr: false` loader awaits via
+   `ctx.use` and from loader-cache replays. The filter is the store's
+   positional tag, the same one `cache()` records use: `HandleStore.push`
+   tags a loader-scope push by array index and `captureHandles` reads with
+   `getDataForSegment(id, true)`. It was an identity `WeakSet` until issue
+   #888, and a string or number cannot enter a `WeakSet`, so a primitive
+   pushed by an awaited loader was recorded and showed twice on a HIT. The
+   capture's push wrapper passes `loaderPush: false` for a bake-lane loader's
+   own settled, thenable-free pushes, so they are kept, because the prelude
+   rendered them; its re-run pushes them again, so on the fast path they
+   appear twice unless the handle dedupes by key (`Meta`, `Breadcrumbs` by
+   `href`).
 
 ## Why the original splice framing was dropped
 

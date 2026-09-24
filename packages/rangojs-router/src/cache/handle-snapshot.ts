@@ -89,36 +89,19 @@ export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
  * resolveFreshLoadersAndYield), so replaying a recorded copy would duplicate
  * the live push. Handler pushes, including
  * handler-invoked ctx.use(Loader) bodies (skipped with their handler on a
- * HIT), are kept. Outside a shell capture the store's push-time tagging
- * (getDataForSegment excludeLoaderPushes) does this.
- *
- * `exclude` (shell captures: RequestContext._shellCaptureLoaderHandleValues)
- * replaces that tagging with the capture's own identity set, which keeps
- * settled bake-lane pushes and drops the rest (their masked nested promises
- * would stall the Flight handle encode to its timeout). Threaded as an
- * explicit argument so every other getDataForSegment consumer (the
- * render-barrier snapshot, prerender) provably sees every push.
+ * HIT), are kept. The store tags loader pushes by array position at push
+ * time, so primitive values are covered. A PPR shell capture untags the
+ * settled bake-lane pushes its record keeps (shell-capture.ts). Only this
+ * call site passes excludeLoaderPushes; every other getDataForSegment
+ * consumer (the render-barrier snapshot, prerender) sees every push.
  */
 export function captureHandles(
   segments: ResolvedSegment[],
   handleStore: HandleStore,
-  exclude?: WeakSet<object>,
 ): Record<string, SegmentHandleData> {
   const handles: Record<string, SegmentHandleData> = {};
   for (const seg of segments) {
-    const data = handleStore.getDataForSegment(seg.id, !exclude);
-    if (!exclude) {
-      handles[seg.id] = data;
-      continue;
-    }
-    const filtered: SegmentHandleData = {};
-    for (const [handleName, values] of Object.entries(data)) {
-      const kept = values.filter(
-        (v) => typeof v !== "object" || v === null || !exclude.has(v),
-      );
-      if (kept.length > 0) filtered[handleName] = kept;
-    }
-    handles[seg.id] = filtered;
+    handles[seg.id] = handleStore.getDataForSegment(seg.id, true);
   }
   return handles;
 }
