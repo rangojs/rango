@@ -69,6 +69,8 @@ export const NamedRoutes = {
   "cacheTest.nonCachedLoader": "/cache-test/non-cached-loader",
   "cacheTest.nullCached": "/cache-test/null-cached",
   "cacheTest.nullNonCached": "/cache-test/null-non-cached",
+  "cacheTest.outerLive": "/cache-test/outer-live",
+  "cacheTest.outerLiveEntry": "/cache-test/outer-live-entry",
   "cacheTest.reactNodeCached": "/cache-test/react-node-cached",
   "cacheTest.reactNodeNonCached": "/cache-test/react-node-non-cached",
   "cacheTest.responseTypeJson": "/cache-response-type/data/:id",

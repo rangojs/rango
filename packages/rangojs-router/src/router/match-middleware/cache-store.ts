@@ -175,17 +175,20 @@ export function withCacheStore<TEnv>(
       ...state.interceptSegments.filter((s) => !seenSegmentIds.has(s.id)),
     ];
 
+    const cacheScope = ctx.cacheScope;
+
+    // Only the segments the entry stores count: a null layout above the
+    // boundary (the client kept it) is never written, so it needs no re-render.
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
         s.component === null &&
         s.type !== "loader" &&
-        ctx.clientSegmentSet.has(s.id),
+        ctx.clientSegmentSet.has(s.id) &&
+        cacheScope.covers(s.id, s.namespace),
     );
 
     const requestCtx = getRequestContext();
     if (!requestCtx) return;
-
-    const cacheScope = ctx.cacheScope;
 
     // Record the route's segment-DSL cache tags into the request tag union NOW,
     // synchronously in the pipeline. The actual store write (cacheRoute) runs in

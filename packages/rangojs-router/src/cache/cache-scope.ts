@@ -149,11 +149,37 @@ export class CacheScope {
     config: PartialCacheOptions | false,
     parent: CacheScope | null = null,
     private readonly defaultKeyPrefix?: "doc",
+    /**
+     * @internal shortCode of the outermost cache() entry of this scope's
+     * enabled chain (createCacheScope). Entries above it are live: their
+     * segments are not stored and resolve fresh on a hit (withCacheLookup).
+     * Undefined covers the whole matched chain (the implicit shell doc scope,
+     * a ppr route).
+     */
+    readonly boundary?: string,
   ) {
     this.config = config;
     this.parent = parent;
     // Extract and store explicit store reference
     this.explicitStore = config !== false ? config.store : undefined;
+  }
+
+  /**
+   * @internal Whether a segment belongs to this scope's cache entry. ShortCodes are
+   * hierarchical (server/context.ts getShortCode: parent shortCode + include
+   * scope + type letter + counter), so the boundary's subtree is every id that
+   * extends the boundary shortCode at a non-digit (`C1` must not claim `C10`).
+   * Intercept slot segments ride the target route's entry wherever the
+   * intercept is declared.
+   */
+  covers(id: string, namespace?: string): boolean {
+    const boundary = this.boundary;
+    if (boundary === undefined) return true;
+    if (id.startsWith(boundary)) {
+      const next = id.charCodeAt(boundary.length);
+      return !(next >= 48 && next <= 57);
+    }
+    return namespace?.startsWith("intercept:") === true;
   }
 
   /**
@@ -424,6 +450,14 @@ export class CacheScope {
         return { status: "miss" };
       }
 
+      // A record from a whole-chain writer (a previous build on an unversioned
+      // store) can hold segments above the boundary. withCacheLookup resolves
+      // those fresh, so replaying them too would duplicate them and their
+      // handle pushes.
+      if (this.boundary !== undefined) {
+        segments = segments.filter((s) => this.covers(s.id, s.namespace));
+      }
+
       // A hit serves content that was tagged at write time, so the document
       // tag union must include this entry's tags for updateTag()/revalidateTag()
       // to invalidate any full-page entry built on top of it. The write path
@@ -438,6 +472,12 @@ export class CacheScope {
       if (handleStore && cached.handles) {
         const handlesRecord = await decodeHandles(cached.handles);
         if (handlesRecord) {
+          if (this.boundary !== undefined) {
+            const kept = new Set(segments.map((s) => s.id));
+            for (const id of Object.keys(handlesRecord)) {
+              if (!kept.has(id)) delete handlesRecord[id];
+            }
+          }
           restoreHandles(handlesRecord, handleStore);
         }
       }
@@ -515,8 +555,11 @@ export class CacheScope {
     if (!handleStore || !requestCtx) return;
 
     // Exclude loader segments - loaders are always fresh by default
-    // Loaders can opt-in to caching with their own cache() config
-    const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
+    // Loaders can opt-in to caching with their own cache() config.
+    // Segments above the boundary are live and never stored.
+    const nonLoaderSegments = segments.filter(
+      (s) => s.type !== "loader" && this.covers(s.id, s.namespace),
+    );
     if (nonLoaderSegments.length === 0) return;
 
     const ttl = this.ttl;
@@ -643,14 +686,18 @@ export class CacheScope {
 }
 
 /**
- * Create a cache scope from entry's cache config
+ * Create a cache scope from entry's cache config. `shortCode` is the cache()
+ * entry's: a scope nested in an enabled parent keeps the parent's boundary
+ * (one entry covers both), any other opens its own at this entry.
  */
 export function createCacheScope(
   config: { options: PartialCacheOptions | false } | undefined,
   parent: CacheScope | null = null,
+  shortCode?: string,
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
-  return new CacheScope(config.options, parent);
+  const boundary = parent?.enabled ? parent.boundary : shortCode;
+  return new CacheScope(config.options, parent, undefined, boundary);
 }
 
 type ShellImplicitCacheMarker = NonNullable<

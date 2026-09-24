@@ -292,8 +292,10 @@ runs under a derived DSL store with `metrics` unset, so neither `track()` nor
 loader phase metrics reach the foreground's perf timeline. Its response writes
 (headers, cookies, status, `onResponse()` callbacks) go to a throwaway context
 and are dropped, not stored with the segments, because they would otherwise
-reach a response the handler never ran for: a layout above the `cache()`
-boundary is outside the header guard, and an error boundary sets a 500.
+reach the live response: a layout above the `cache()` boundary is outside the
+header guard (the refresh would repeat the writes the HIT made itself, and
+proactive caching would add writes the partial navigation skipped), and an
+error boundary sets a 500.
 
 **Scope:**
 
@@ -310,6 +312,23 @@ cache({ ttl: 60 }, () => [
 ```
 
 Segments outside cache boundaries are not affected - they render fresh on every request.
+
+That holds on a hit too. The route's entry stores only the boundary's subtree:
+`cacheRoute` drops every segment whose id does not extend the boundary entry's
+shortCode (`CacheScope.covers`; shortCodes are hierarchical). On a hit,
+`withCacheLookup` resolves the entries above the boundary as an uncached render
+would (`resolveAllSegments`, or `resolveAllSegmentsWithRevalidation` for a
+partial), then replays the record and runs the loaders below the boundary. So
+an outer layout's header write lands on every response, and the `ctx.set()`
+values it produces reach the loaders inside the boundary. Nested enabled
+`cache()` entries share the outermost one's boundary. The exception is a `ppr`
+route: it is a document-scoped `cache()`, its whole chain bakes into the shell,
+and the shell HIT tail must replay that chain to match the prelude, so its scope
+covers the whole chain.
+
+Before issue #906 the entry held the whole matched chain, so a hit replayed the
+layouts above the boundary too: they ran 0 times and a header they wrote was
+missing from every hit.
 
 ## Partial Request Handling
 
