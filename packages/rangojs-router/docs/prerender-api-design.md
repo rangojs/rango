@@ -30,8 +30,9 @@ route was pre-rendered.
 - **Dev mode** - On-demand rendering via `/__rsc_prerender` endpoint
 - **Intercept pre-rendering** - Intercept variants stored under `/i` key
 - **Render-error handling** - a build-time render throw surfaces to the build (fail
-  by default, or `prerender.onError: "warn"` to skip the URL); `throw new Skip()`
-  in a render fn skips one URL. See [Render Errors](#render-errors).
+  by default, or `prerender.onError: "warn"` to skip the URL), including a
+  component that throws while the tree is encoded; `throw new Skip()` in a render
+  fn skips one URL. See [Render Errors](#render-errors).
 - **Build-time PPR shells (producer B, #699)** - a `Prerender` route that also
   declares the `ppr` path option gets its complete PPR shell entry (HTML prelude +
   postponed state) produced at `vite build` and served from the very first
@@ -294,11 +295,24 @@ instead of converted into an error segment, so it reaches the build loop
 (`expandPrerenderRoutes`). The live request path leaves the flag unset, so runtime
 error boundaries are unchanged.
 
+`throwOnError` only sees what the handler itself throws. A component in the tree
+it returns can still throw later, while the tree is encoded: say an async server
+component whose fetch fails at build. Flight doesn't reject there. It reports the
+error through `onError` and finishes normally, writing an error row
+(`1:E{"digest":""}`) that throws wherever the decoded tree renders. Until #914 the
+build logged `OK` for that too, and the route served its error boundary until the
+next build. So `matchForPrerender` and `renderStaticSegment` pass an `onError` to
+every encode (segments, intercept segments, handles) and re-throw the first error
+collected. A main-route error is thrown before any intercept handler runs, as a
+handler throw would be. From there it takes the handler-throw path: the policy
+below applies, and a `Skip` thrown by such a component skips the URL.
+
 What the build then does is `prerender.onError` (a rango() plugin option):
 
 | build handler outcome             | `"fail"` (default)                      | `"warn"`                  |
 | --------------------------------- | --------------------------------------- | ------------------------- |
 | render throws                     | build fails, names the URL + the error  | warn, skip baking the URL |
+| a component throws while encoding | build fails, names the URL + the error  | warn, skip baking the URL |
 | `throw new Skip()` in the render  | URL skipped (logged `SKIP`)             | URL skipped               |
 | `ctx.passthrough()` (Passthrough) | defer to the live handler (no artifact) | defer to the live handler |
 

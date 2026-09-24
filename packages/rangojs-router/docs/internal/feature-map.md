@@ -551,7 +551,9 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
   keys; `x-rango-prerender-cache: HIT | MISS` response header
 - Build-time render errors surface to the build instead of baking an error page
   (issue #587): `ResolveSegmentOptions.throwOnError` (set only by the prerender
-  path) re-throws through `matchForPrerender`. `prerender.onError` Vite plugin
+  path) re-throws through `matchForPrerender`; a component that throws while
+  the tree is encoded is collected through Flight `onError` and re-thrown the
+  same way (issue #914). `prerender.onError` Vite plugin
   option (`"fail"` default | `"warn"`) chooses fail-the-build vs. warn-and-skip;
   `throw new Skip()` inside a render fn skips a single URL/handler
 

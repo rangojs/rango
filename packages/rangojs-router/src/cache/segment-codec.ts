@@ -159,8 +159,9 @@ export const deserializeComponent: (encoded: string) => Promise<unknown> =
  * `onError` goes to every Flight encode. A component that throws while
  * encoding (e.g. an async server component in the tree) does not reject the
  * encode: Flight reports it through onError and writes an error row
- * (`1:E{...}`) that throws when the decoded tree renders. cacheRoute passes it
- * to refuse such an entry; without it (prerender) the encode is unchanged.
+ * (`1:E{...}`) that throws when the decoded tree renders. cacheRoute and the
+ * prerender producers (prerender-match.ts) pass it to refuse such an entry;
+ * without it the encode is unchanged.
  */
 export async function serializeSegments(
   segments: ResolvedSegment[],

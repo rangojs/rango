@@ -51,7 +51,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
  * `onError` reaches the Flight encode (see serializeResult). A cache writer
  * passes the collector it gives the value's encode, so a handle value that
  * fails to encode (a rejected pushed promise) refuses the whole entry like a
- * failed value does; prerender passes none and keeps the error row.
+ * failed value does; prerender (prerender-match.ts) passes one too and
+ * hands the error to its prerender.onError policy.
  */
 export async function encodeHandles(
   handles: HandleRecord,

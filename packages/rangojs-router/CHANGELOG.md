@@ -64,6 +64,28 @@ these are now checked against it, as middleware reverse already was. Without
 a generated map, any name except a dot-prefixed literal is accepted. Runtime
 behavior is unchanged. Pass the fully qualified name and every param.
 
+### Breaking: a component that throws while a route is prerendered fails the build ([#917](https://github.com/rangojs/rango/pull/917))
+
+A `Prerender()` route or `Static()` handler could return normally while its
+tree held a component that threw during the build-time render, such as an
+async server component whose fetch failed. Flight encoded that component as an
+error row, the build logged `OK`, and the route served its error boundary
+until the next build. The error now takes the same path as a handler throw:
+
+- `prerender.onError: "fail"` (the default) fails the build and names the URL
+  and the error.
+- `"warn"` logs `WARN` and skips the URL.
+- A `Skip` thrown by the component skips the URL.
+- The router's `onError` receives it with phase `"prerender"` or `"static"`.
+
+Intercept variants and handle values are checked the same way. In dev, the
+`/__rsc_prerender` endpoint falls through to a live render for such a route
+instead of serving a payload that holds the error row.
+
+Migration: a build that passed with such a route now fails. Fix the component,
+`throw new Skip()` for URLs that cannot render at build time, or set
+`rango({ prerender: { onError: "warn" } })` to skip them.
+
 ### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
 
 `debugManifest()` was typed only on the internal router interface, so calling

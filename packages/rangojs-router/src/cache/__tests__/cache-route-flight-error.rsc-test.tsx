@@ -188,7 +188,7 @@ describe("serializeSegments onError (real Flight)", () => {
     ]);
   });
 
-  it("without onError (prerender) still encodes the error row and resolves", async () => {
+  it("without onError still encodes the error row and resolves", async () => {
     failReviews = true;
     const [serialized] = await serializeSegments([segment]);
     expect(errorRows([serialized])).toEqual(['1:E{"digest":""}']);

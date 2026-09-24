@@ -259,10 +259,13 @@ A handler that throws a non-`Skip` error is surfaced to the build — never bake
 | `return ctx.passthrough()`  | No entry, logged `PASS`                | No entry, `PASS`                 |
 | `throw new Skip("reason")`  | No entry, logged `SKIP`, build goes on | No entry, `SKIP`, build goes on  |
 | `throw new Error("reason")` | Logged `FAIL`, the build stops         | Logged `WARN`, URL left un-baked |
+| A child component throws    | Logged `FAIL`, the build stops         | Logged `WARN`, URL left un-baked |
 
 ```ts
 rango({ prerender: { onError: "warn" } });
 ```
+
+The last row is a handler that returns fine while an async server component in its tree throws during the build-time render, for example because its fetch fails. It goes through the same policy instead of being baked as an error, and a `Skip` thrown there skips the URL.
 
 `"warn"` is a build-unblock, not a runtime contract: the un-baked route falls through to normal resolution and may render live or 404 depending on the rest of the build. For defined runtime behavior use `Passthrough()` or `throw new Skip()`; otherwise keep the default. Both `Skip` and hard errors also reach the router's `onError` callback with phase `"prerender"` or `"static"`.
 
