@@ -11,7 +11,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
-    "@playwright/test": "^1.49.1"
+    "@playwright/test": "^1.62.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

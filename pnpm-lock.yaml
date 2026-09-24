@@ -240,8 +240,8 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260711.1
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -283,8 +283,8 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260711.1
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -329,8 +329,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/node':
         specifier: ^24.10.0
         version: 24.10.4
@@ -369,8 +369,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/node':
         specifier: ^24.10.0
         version: 24.10.4
@@ -442,8 +442,8 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0(@opentelemetry/api@1.9.1)
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@shared/e2e':
         specifier: workspace:*
         version: link:../../tests/shared-e2e
@@ -667,8 +667,8 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260711.1
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@shared/e2e':
         specifier: workspace:*
         version: link:../shared-e2e
@@ -728,8 +728,8 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260711.1
       '@playwright/test':
-        specifier: ^1.57.0
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/autocannon':
         specifier: ^7.12.7
         version: 7.12.7
@@ -774,8 +774,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       tinyexec:
         specifier: ^0.3.2
         version: 0.3.2
@@ -802,8 +802,8 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260711.1
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -845,8 +845,8 @@ importers:
   tests/shared-e2e:
     dependencies:
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
     devDependencies:
       '@types/node':
         specifier: ^24.10.1
@@ -871,8 +871,8 @@ importers:
         version: 19.3.0(react@19.3.0)
     devDependencies:
       '@playwright/test':
-        specifier: ^1.49.1
-        version: 1.57.0
+        specifier: ^1.62.0
+        version: 1.63.0
       '@testing-library/react':
         specifier: ^16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1969,9 +1969,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@playwright/test@1.57.0':
-    resolution: {integrity: sha512-6TyEnHgd6SArQO8UO2OMTxshln3QMWBtPGrOCgs3wVEmQmwyuNtB10IZMfmYDE0riwNR1cu4q+pPcxMVtaG3TA==}
-    engines: {node: '>=18'}
+  '@playwright/test@1.63.0':
+    resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
+    engines: {node: '>=20'}
     hasBin: true
 
   '@poppinss/colors@4.1.6':
@@ -4132,11 +4132,6 @@ packages:
       react-dom:
         optional: true
 
-  fsevents@2.3.2:
-    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
-    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
-    os: [darwin]
-
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -4984,14 +4979,14 @@ packages:
   player.style@0.3.4:
     resolution: {integrity: sha512-5O9bkbq0APQIkhptyZwp0gUgheCeImGPFo4hvPF2M5xBmgsUYzsUPHCfMye2xyeRE1zvQBKtziaC3jPgnHE1tw==}
 
-  playwright-core@1.57.0:
-    resolution: {integrity: sha512-agTcKlMw/mjBWOnD6kFZttAAGHgi/Nw0CZ2o6JqWSbMlI219lAFLZZCyqByTsvVAJq5XA5H8cA6PrvBRpBWEuQ==}
-    engines: {node: '>=18'}
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.57.0:
-    resolution: {integrity: sha512-ilYQj1s8sr2ppEJ2YVadYBN0Mb3mdo9J0wQ+UuDhzYqURwSoW4n1Xs5vs7ORwgDGmyEh33tRMeS8KhdkMoLXQw==}
-    engines: {node: '>=18'}
+  playwright@1.63.0:
+    resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
+    engines: {node: '>=20'}
     hasBin: true
 
   points-on-curve@0.2.0:
@@ -6553,9 +6548,9 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.50.0':
     optional: true
 
-  '@playwright/test@1.57.0':
+  '@playwright/test@1.63.0':
     dependencies:
-      playwright: 1.57.0
+      playwright: 1.63.0
 
   '@poppinss/colors@4.1.6':
     dependencies:
@@ -8721,9 +8716,6 @@ snapshots:
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
-  fsevents@2.3.2:
-    optional: true
-
   fsevents@2.3.3:
     optional: true
 
@@ -9883,13 +9875,11 @@ snapshots:
     transitivePeerDependencies:
       - react
 
-  playwright-core@1.57.0: {}
+  playwright-core@1.63.0: {}
 
-  playwright@1.57.0:
+  playwright@1.63.0:
     dependencies:
-      playwright-core: 1.57.0
-    optionalDependencies:
-      fsevents: 2.3.2
+      playwright-core: 1.63.0
 
   points-on-curve@0.2.0: {}
 
