@@ -108,6 +108,7 @@ import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import {
+  createRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
@@ -134,6 +135,10 @@ import {
  *     (track() reads that one), so nothing lands on the foreground's perf
  *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
  *     needs its own run.
+ *   - response writes (headers, cookies, status, onResponse callbacks) go to
+ *     a throwaway context and are dropped: a layout above the cache()
+ *     boundary is outside the header guard and an error boundary sets a
+ *     status, so they would otherwise reach the live response.
  * runWithRequestContext also re-establishes the request ALS, which a waitUntil
  * task on workerd loses; the DSL store is a different ALS (build context).
  */
@@ -144,12 +149,32 @@ export async function rerenderAndCacheRoute<TEnv>(
   routerCtx: RouterContext<TEnv>,
 ): Promise<number> {
   const handleStore = routerCtx.createHandleStore();
+  // Response writes land in a throwaway context nothing merges or drains. Its
+  // mutators are closures over its own stub, and they keep the same guards.
+  const sink = createRequestContext({
+    env: ctx.env,
+    request: ctx.request,
+    url: ctx.url,
+    variables: {},
+    themeConfig: requestCtx._themeConfig,
+  });
   const renderCtx: RequestContext<TEnv> = Object.assign(
-    Object.create(requestCtx),
+    Object.create(requestCtx, {
+      res: Object.getOwnPropertyDescriptor(sink, "res")!,
+    }),
     {
       _handleStore: handleStore,
       _transitionWhen: [],
       _metricsStore: undefined,
+      _onResponseCallbacks: [],
+      header: sink.header,
+      setCookie: sink.setCookie,
+      deleteCookie: sink.deleteCookie,
+      setStatus: sink.setStatus,
+      _setStatus: sink._setStatus,
+      setTheme: sink.setTheme,
+      _rotateStateCookie: sink._rotateStateCookie,
+      _setKeepCacheDirective: sink._setKeepCacheDirective,
     },
   );
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
