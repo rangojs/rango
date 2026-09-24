@@ -22,7 +22,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.44.0",
     "@cloudflare/workers-types": "^5.20260708.1",
-    "@playwright/test": "^1.57.0",
+    "@playwright/test": "^1.62.0",
     "@types/autocannon": "^7.12.7",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",

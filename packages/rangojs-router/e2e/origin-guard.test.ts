@@ -42,37 +42,58 @@ function uniqueProbe(label: string): string {
   return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// No-JS form encodings: urlencoded is a hand-written cross-site <form>'s
+// default; multipart is what React renders for a server-action <form>. The
+// multipart case needs Playwright >= 1.62: earlier versions drop the empty
+// `$ACTION_ID_` field, so the same-origin control would not run the action
+// (#885).
+const PE_FORM_ENCODINGS = ["urlencoded", "multipart"] as const;
+
+function peFormBody(
+  encoding: (typeof PE_FORM_ENCODINGS)[number],
+  fields: Record<string, string>,
+): { form: Record<string, string> } | { multipart: Record<string, string> } {
+  return encoding === "multipart" ? { multipart: fields } : { form: fields };
+}
+
 function realActionCases(f: Fixture) {
-  test("a cross-origin form post to a real action is rejected and the action does not run", async ({
-    request,
-  }) => {
-    const pageUrl = f.url("/progressive-enhancement");
-    const actionId = await peFormActionId(request, pageUrl);
+  for (const encoding of PE_FORM_ENCODINGS) {
+    test(`a cross-origin ${encoding} form post to a real action is rejected and the action does not run`, async ({
+      request,
+    }) => {
+      const pageUrl = f.url("/progressive-enhancement");
+      const actionId = await peFormActionId(request, pageUrl);
 
-    // Control: the same submission from the same origin runs the action; the
-    // PE response re-renders the page with the submitted name.
-    // Urlencoded, a cross-site HTML form's default encoding (the guard does
-    // not look at the body). Not `multipart`: Playwright < 1.62 drops the
-    // empty `$ACTION_ID_` field (#885).
-    const control = uniqueProbe("same-origin");
-    const allowed = await request.post(pageUrl, {
-      headers: { Accept: "text/html" },
-      form: { [`$ACTION_ID_${actionId}`]: "", name: control },
+      // Control: the same submission from the same origin runs the action;
+      // the PE response re-renders the page with the submitted name. Without
+      // it, the cross-site assertions below pass even if the body never
+      // reached the action.
+      const control = uniqueProbe("same-origin");
+      const allowed = await request.post(pageUrl, {
+        headers: { Accept: "text/html" },
+        ...peFormBody(encoding, {
+          [`$ACTION_ID_${actionId}`]: "",
+          name: control,
+        }),
+      });
+      expect(allowed.status()).toBe(200);
+      expect(await allowed.text()).toContain(control);
+
+      const probe = uniqueProbe("cross-site");
+      const rejected = await request.post(pageUrl, {
+        headers: { Accept: "text/html", Origin: "https://evil.com" },
+        ...peFormBody(encoding, {
+          [`$ACTION_ID_${actionId}`]: "",
+          name: probe,
+        }),
+      });
+      expect(rejected.status()).toBe(403);
+      expect(rejected.headers()["x-rango-origin-check"]).toBe("failed");
+
+      const after = await (await request.get(pageUrl)).text();
+      expect(after).not.toContain(probe);
     });
-    expect(allowed.status()).toBe(200);
-    expect(await allowed.text()).toContain(control);
-
-    const probe = uniqueProbe("cross-site");
-    const rejected = await request.post(pageUrl, {
-      headers: { Accept: "text/html", Origin: "https://evil.com" },
-      form: { [`$ACTION_ID_${actionId}`]: "", name: probe },
-    });
-    expect(rejected.status()).toBe(403);
-    expect(rejected.headers()["x-rango-origin-check"]).toBe("failed");
-
-    const after = await (await request.get(pageUrl)).text();
-    expect(after).not.toContain(probe);
-  });
+  }
 
   test("a cross-origin RSC call to a real action is rejected and the action does not run", async ({
     request,

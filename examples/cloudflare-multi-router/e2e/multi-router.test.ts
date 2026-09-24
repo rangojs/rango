@@ -318,7 +318,12 @@ test.describe("multi-router (dev)", () => {
       const adminRequests: string[] = [];
       page.removeAllListeners("request");
       page.on("request", (req) => {
-        if (req.url().includes("_rsc_partial")) {
+        // Admin host only: a site prefetch still in flight can fire after the
+        // listener swap and carries the site's routerId.
+        if (
+          req.url().includes("_rsc_partial") &&
+          new URL(req.url()).hostname.startsWith("admin.")
+        ) {
           adminRequests.push(req.url());
         }
       });
@@ -936,7 +941,12 @@ test.describe("multi-router (production)", () => {
       const adminRequests: string[] = [];
       page.removeAllListeners("request");
       page.on("request", (req) => {
-        if (req.url().includes("_rsc_partial")) {
+        // Admin host only: a site prefetch still in flight can fire after the
+        // listener swap and carries the site's routerId.
+        if (
+          req.url().includes("_rsc_partial") &&
+          new URL(req.url()).hostname.startsWith("admin.")
+        ) {
           adminRequests.push(req.url());
         }
       });
