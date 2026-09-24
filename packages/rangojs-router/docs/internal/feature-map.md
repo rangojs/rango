@@ -222,8 +222,9 @@ Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `.debugManifest()` -> `Promise<SerializedManifest>` (type exported from
-  `.`): dev-only snapshot of each `.routes()` / `urls`
-  mount's routes and layouts. Lazy `include()` groups are not expanded
+  `.`): snapshot of each `.routes()` / `urls` mount's routes and layouts. A
+  development aid, but not gated: `router.ts` wires it unconditionally, so it
+  also works in a production build. Lazy `include()` groups are not expanded
   (`router/debug-manifest.ts` skips their placeholder entries), so included
   routes are absent.
 - `clientUrls()` definitions mount through `include()` in the canonical
@@ -481,8 +482,11 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   hydration-commit barrier in `rsc-router.tsx` (applying earlier mutates state
   `useHandle` initializers read mid-hydration — mismatch). Nav/action lanes:
   the payload `handles` generator now streams to `fullySettled`, applied
-  progressively by `processHandles`. `stream: 'navigation'` (planned knob)
-  upgrades a loader's handles to guaranteed-SSR. Userland:
+  progressively by `processHandles`. `loader(Def, { ssr: false })` upgrades
+  a loader's handles to guaranteed-SSR: document renders await it before first
+  flush (`LoaderEntry.awaitBeforeFlush`), so its pushes beat the barrier
+  snapshot. The earlier `stream` option throws at definition time
+  (`loader()` in `route-definition/dsl-helpers.ts`). Userland:
   `runLoaderResult().handlePushes` records writes; `runLoader` seeds reads via
   `{ handles }` + `ctx.get`. `cache()` records exclude DSL-loader pushes
   (`handle-store.ts` push-time tagging; see `docs/design/caching.md`).

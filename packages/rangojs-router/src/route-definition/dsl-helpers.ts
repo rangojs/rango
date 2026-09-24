@@ -135,14 +135,18 @@ const isOrphan = (result: AllUseItems[]): boolean =>
  * pointer so it leaves the middleware/parent-pointer chain (LOAD-BEARING — see
  * docs/tree-structure.md) and push it onto the parent's layout[] so it renders
  * as a wrapper. Used by cache()/middleware()/transition(); layout() runs extra
- * validation and registers inline.
+ * validation and registers inline. `orphanOwner` keeps the owner reachable for
+ * boundary lookup only (router/error-handling.ts).
  */
 const attachOrphanSibling = (
   parent: EntryData | null,
   entry: EntryData,
 ): void => {
   entry.parent = null;
-  if (parent && "layout" in parent) parent.layout.push(entry);
+  if (parent && "layout" in parent) {
+    parent.layout.push(entry);
+    entry.orphanOwner = parent;
+  }
 };
 
 /**
