@@ -13,6 +13,11 @@
  *     `_transitionWhen`, which the foreground's gateTransitions reads after the
  *     match. A stale HIT collects none (it replays the stored transition).
  *   - perf metrics: the foreground's `_metricsStore` feeds its Server-Timing.
+ *   - response writes: header/setCookie/setStatus/onResponse are closures over
+ *     (or `this`-reads of) the live request's stub response and callback list.
+ *     A layout above the cache() boundary is cached with the route but is not
+ *     latched by the header guard, so the refresh re-runs its writes; an error
+ *     boundary in the refresh sets a status the same way.
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
@@ -53,8 +58,11 @@ import { createHandle } from "../../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import { MemorySegmentCacheStore } from "../../../cache/memory-segment-store.js";
 import { gateTransitions } from "../../../rsc/transition-gate.js";
+import { createResponseWithMergedHeaders } from "../../../rsc/helpers.js";
+import { cookies } from "../../../server/cookie-store.js";
 import {
   createRequestContext,
+  getRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../../server/request-context.js";
@@ -81,6 +89,10 @@ let handlerCalls = 0;
 let layoutCalls = 0;
 let transitionHandlerCalls = 0;
 let metricsHandlerCalls = 0;
+let writerLayoutCalls = 0;
+let bgOnResponseCalls = 0;
+let failStatusRoute = false;
+let statusHandlerCalls = 0;
 let layoutGate: ReturnType<typeof gate> | undefined;
 let handlerGate: ReturnType<typeof gate> | undefined;
 let loaderGate: ReturnType<typeof gate> | undefined;
@@ -160,7 +172,45 @@ beforeAll(async () => {
         },
         { name: "bgRenderStaleMetrics" },
       ),
+      path(
+        "/stale-status",
+        () => {
+          statusHandlerCalls++;
+          if (failStatusRoute) throw new Error("upstream down");
+          return createElement("div", null, "s");
+        },
+        { name: "bgRenderStaleStatus" },
+      ),
     ]),
+    // Above the cache() boundary: its writes are allowed on a MISS (the guard
+    // latches at the boundary), and its segment is cached with the route, so
+    // a HIT skips it.
+    layout(
+      (ctx: any) => {
+        const reqCtx = getRequestContext();
+        reqCtx.header("x-bg", "1");
+        ctx.headers.set("x-bg-handler", "1");
+        cookies().set("bg", "1");
+        cookies().delete("bg-gone");
+        reqCtx.setStatus(203);
+        reqCtx.onResponse((res: Response) => {
+          bgOnResponseCalls++;
+          return res;
+        });
+        writerLayoutCalls++;
+        return createElement("div", null, "writer-layout");
+      },
+      () => [
+        cache({ ttl: 60, store }, () => [
+          path("/bg-writes/a", () => createElement("div", null, "a"), {
+            name: "bgRenderWritesA",
+          }),
+          path("/bg-writes/b", () => createElement("div", null, "b"), {
+            name: "bgRenderWritesB",
+          }),
+        ]),
+      ],
+    ),
   ]);
   await buildRouterTrieFromUrlpatterns(router);
 });
@@ -302,5 +352,92 @@ describe("background re-render of a stale cached route", () => {
           l.startsWith("handler:") || l === `loader:${HandlerOnlyLoader.$$id}`,
       ),
     ).toEqual([]);
+  });
+
+  it("the refresh's header, cookie, status and onResponse writes stay off the stale HIT's response", async () => {
+    await serve("/bg-writes/a");
+    expect(writerLayoutCalls).toBe(1);
+    const onResponseBefore = bgOnResponseCalls;
+
+    serveStale = true;
+    let response!: Response;
+    await serve("/bg-writes/a", async () => {
+      // The HIT skips the layout, so this call is the refresh's. The
+      // foreground builds its Response after it (an HTML response waits on
+      // SSR first).
+      await vi.waitFor(() => expect(writerLayoutCalls).toBe(2));
+      response = createResponseWithMergedHeaders(null, { status: 200 });
+    });
+    serveStale = false;
+
+    expect({
+      status: response.status,
+      header: response.headers.get("x-bg"),
+      handlerHeader: response.headers.get("x-bg-handler"),
+      setCookie: response.headers.getSetCookie(),
+      onResponseCalls: bgOnResponseCalls - onResponseBefore,
+      // Nothing left on the live request for a later merge point either.
+      stubHeader: lastReqCtx.res.headers.get("x-bg"),
+      pendingCallbacks: lastReqCtx._onResponseCallbacks.length,
+    }).toEqual({
+      status: 200,
+      header: null,
+      handlerHeader: null,
+      setCookie: [],
+      onResponseCalls: 0,
+      stubHeader: null,
+      pendingCallbacks: 0,
+    });
+  });
+
+  it("proactive caching's re-render writes nothing to the live response", async () => {
+    await serve("/bg-writes/a");
+    const layoutIds = lastSegments
+      .filter((s) => s.type === "layout")
+      .map((s) => s.id);
+    const callsBefore = writerLayoutCalls;
+    const onResponseBefore = bgOnResponseCalls;
+
+    await serve(
+      "/bg-writes/b",
+      // The client has the layout, so only the proactive re-render calls it.
+      () => vi.waitFor(() => expect(writerLayoutCalls).toBe(callsBefore + 1)),
+      { clientSegments: layoutIds },
+    );
+
+    expect(writerLayoutCalls).toBe(callsBefore + 1);
+    // serve() drains onResponse again after the re-render, like the
+    // post-middleware finalizeResponse in rsc/handler.ts; the middleware
+    // merge re-reads the stub (router/middleware.ts mergeReqCtxStub).
+    expect({
+      onResponseCalls: bgOnResponseCalls - onResponseBefore,
+      status: lastReqCtx.res.status,
+      header: lastReqCtx.res.headers.get("x-bg"),
+      handlerHeader: lastReqCtx.res.headers.get("x-bg-handler"),
+      setCookie: lastReqCtx.res.headers.getSetCookie(),
+    }).toEqual({
+      onResponseCalls: 0,
+      status: 200,
+      header: null,
+      handlerHeader: null,
+      setCookie: [],
+    });
+  });
+
+  it("an error boundary in the refresh leaves the stale HIT's status alone", async () => {
+    await serve("/stale-status");
+    serveStale = true;
+    failStatusRoute = true;
+    let response!: Response;
+    await serve("/stale-status", async () => {
+      await vi.waitFor(() => expect(statusHandlerCalls).toBe(2));
+      // The boundary sets the status once the throw unwinds.
+      await new Promise((r) => setTimeout(r, 0));
+      response = createResponseWithMergedHeaders(null, { status: 200 });
+    });
+    serveStale = false;
+    failStatusRoute = false;
+
+    expect([response.status, lastReqCtx.res.status]).toEqual([200, 200]);
   });
 });

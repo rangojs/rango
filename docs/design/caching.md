@@ -287,7 +287,11 @@ missing from the page. The derived context also owns an empty
 foreground's post-match gate must never evaluate the refresh's
 `transition({ when })` predicates. It has no `_metricsStore`, and the render
 runs under a derived DSL store with `metrics` unset, so neither `track()` nor
-loader phase metrics reach the foreground's perf timeline.
+loader phase metrics reach the foreground's perf timeline. Its response writes
+(headers, cookies, status, `onResponse()` callbacks) go to a throwaway context
+and are dropped, not stored with the segments, because they would otherwise
+reach a response the handler never ran for: a layout above the `cache()`
+boundary is outside the header guard, and an error boundary sets a 500.
 
 **Scope:**
 
