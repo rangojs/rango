@@ -385,6 +385,19 @@ describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
     expect(store.getDataForSegment("seg1").crumbs).toHaveLength(4);
   });
 
+  it("push's loaderPush argument overrides the loader-scope tag", () => {
+    const store = createHandleStore();
+    runInsideLoaderScope(() => {
+      store.push("crumbs", "seg1", "untagged-in-scope", false);
+      store.push("crumbs", "seg1", "tagged-in-scope");
+    });
+    store.push("crumbs", "seg1", "tagged-out-of-scope", true);
+
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: ["untagged-in-scope"],
+    });
+  });
+
   it("replayed values are untagged; a later loader push is tagged", () => {
     const store = createHandleStore();
     runInsideLoaderScope(() => store.push("crumbs", "seg1", "stale-loader"));

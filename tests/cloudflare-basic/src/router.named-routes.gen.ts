@@ -91,6 +91,7 @@ export const NamedRoutes = {
   pprShortMeta: "/ppr-short-meta",
   pprSlowMeta: "/ppr-slow-meta",
   pprStaleReplay: "/ppr-stale-replay/:id",
+  pprWarnings: "/ppr-warnings",
   "prerenderCtx.detail": "/prerender-ctx/:slug",
   proactiveCache: "/proactive-cache",
   proactiveCacheItemA: "/proactive-cache/item-a",

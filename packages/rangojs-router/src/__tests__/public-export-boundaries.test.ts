@@ -5,7 +5,6 @@ import type { PublicRequestContext } from "../server/request-context.js";
 
 type InternalOnlyContextKey =
   | "_pendingBackgroundTasks"
-  | "_shellCaptureLoaderHandleValues"
   | "_shellCaptureGuardTripped"
   | "_tracing";
 

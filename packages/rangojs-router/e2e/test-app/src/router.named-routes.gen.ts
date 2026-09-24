@@ -385,6 +385,7 @@ export const NamedRoutes = {
   shellCacheSnapshotCap: "/shell-cache/snapshot-cap",
   shellCacheStaleReplay: "/shell-cache/stale-replay/:id",
   shellCacheStream: "/shell-cache/stream",
+  shellCacheWarnings: "/shell-cache/warnings",
   shellSecure: "/shell-secure",
   shellSecureDsl: "/shell-secure-dsl",
   shellSecureRuns: "/shell-secure-runs",

@@ -1759,6 +1759,31 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-badge-value")).toContainText(/badge-\d/);
   });
 
+  // Issue #888. The ssr:false loader awaits an unflagged loader that pushes a
+  // string handle; both run at capture and re-run on every HIT. The push must
+  // stay out of the doc record a fast-path HIT replays, or the HIT shows it
+  // twice (an object push was already left out; a primitive was recorded).
+  test("fast-path HIT renders a string handle pushed by a loader an ssr:false loader awaits once", async ({
+    page,
+  }) => {
+    await warmFragmentGraph(page.request);
+    const url = f.url("/shell-cache/warnings?probe=warnings");
+    await warmToHit(page.request, url);
+
+    // Fast path, not the full tail: the tail replayed the doc record.
+    const res = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    expect(splitPrelude(await res.text()).resumed).toContain("__rangoFragment");
+
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const nav = await page.goto(url);
+    expect(nav?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+
+    await expect(testId(page, "shell-warning")).toHaveText(["Low stock"]);
+  });
+
   test("a warm fragment prefetch expands its client chunk before the click", async ({
     page,
     request,

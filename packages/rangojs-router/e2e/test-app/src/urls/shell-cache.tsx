@@ -31,6 +31,7 @@ import {
   ShellBakedNavLoader,
   ShellBakedSiblingLoader,
   ShellBakedOnlyLoader,
+  ShellStorefrontLoader,
 } from "./shell-cache.defs.js";
 import {
   ShellBakedView,
@@ -46,6 +47,7 @@ import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
 import { ShellHandleView } from "../components/ShellHandleView.js";
+import { ShellWarningsView } from "../components/ShellWarningsView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
 import { ShellStaleReplay } from "../components/ShellStaleReplay.js";
@@ -128,6 +130,17 @@ function ShellBakedPage() {
 
 function ShellBakedOnlyPage() {
   return <ShellBakedOnlyView loader={ShellBakedOnlyLoader} />;
+}
+
+// No promise-carrying handler push (no handlerLiveHoles): HITs take the fast
+// path and replay the doc record.
+function ShellWarningsPage() {
+  return (
+    <main data-testid="shell-warnings-page">
+      <p>Warnings static shell</p>
+      <ShellWarningsView />
+    </main>
+  );
 }
 
 // Static-part useSearchParams read above the live price hole: the probe's
@@ -789,6 +802,15 @@ export const shellCachePatterns = urls(
       ShellSettledPage,
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
+    ),
+    // Issue #888: the ssr:false loader awaits an unflagged loader that pushes
+    // a string handle. Outside ShellCacheLayout so a HIT takes the fast path
+    // (see ShellWarningsPage); the replayed record must not carry the push.
+    path(
+      "/shell-cache/warnings",
+      ShellWarningsPage,
+      { name: "shellCacheWarnings", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellStorefrontLoader, { ssr: false })],
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",

@@ -676,7 +676,12 @@ pushed again. The built-in handles dedupe by key — `Meta` by key (title, name,
 property) and `Breadcrumbs` by `href` — so they are unaffected; a custom handle (or a crumb
 without an `href`) pushed from an `ssr: false` loader on a `ppr` route should
 dedupe in its collector. Deferred and promise-carrying pushes are never
-recorded; the re-run is their only producer.
+recorded; the re-run is their only producer. The record keeps only the pushes
+made by the `ssr: false` loader's own body. A loader it awaits with
+`ctx.use()` re-runs with it on a HIT, so that loader's pushes are not recorded
+and appear once, whatever the value type (a string is left out the same way as
+an object). The same holds for pushes the capture replays from the loader's
+own `cache()` entry.
 
 Four hard edges (each e2e/unit-pinned):
 

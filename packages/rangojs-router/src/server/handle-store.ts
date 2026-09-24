@@ -118,8 +118,18 @@ export interface HandleStore {
    * Push handle data for a specific handle and segment.
    * Multiple pushes to the same handle/segment accumulate in an array.
    * Each push triggers an emission on the stream.
+   *
+   * `loaderPush` overrides the push-time DSL-loader tag
+   * (isInsideLoaderScope()) that getDataForSegment(id, true) excludes. The
+   * PPR shell capture passes false for the bake-lane pushes its record keeps
+   * (shell-capture.ts deriveShellCaptureContext).
    */
-  push(handleName: string, segmentId: string, data: unknown): void;
+  push(
+    handleName: string,
+    segmentId: string,
+    data: unknown,
+    loaderPush?: boolean,
+  ): void;
 
   /**
    * Get all collected handle data after all handlers have settled.
@@ -154,8 +164,8 @@ export interface HandleStore {
    * Get handle data for a specific segment (for caching).
    * Returns data in format: { handleName: [values...] }
    *
-   * `excludeLoaderPushes` drops values pushed inside a DSL loader scope
-   * (isInsideLoaderScope() at push time); see captureHandles.
+   * `excludeLoaderPushes` drops values tagged as DSL-loader pushes at push
+   * time (see push); see captureHandles.
    */
   getDataForSegment(
     segmentId: string,
@@ -332,7 +342,12 @@ export function createHandleStore(): HandleStore {
       });
     },
 
-    push(handleName: string, segmentId: string, value: unknown): void {
+    push(
+      handleName: string,
+      segmentId: string,
+      value: unknown,
+      loaderPush?: boolean,
+    ): void {
       if (completed) {
         const error = createLateHandlePushError(handleName, segmentId);
         if (this.onError) this.onError(error);
@@ -347,7 +362,7 @@ export function createHandleStore(): HandleStore {
       }
       const values = data[handleName][segmentId];
       values.push(value);
-      if (isInsideLoaderScope()) {
+      if (loaderPush ?? isInsideLoaderScope()) {
         let indices = loaderPushIndices.get(values);
         if (!indices) loaderPushIndices.set(values, (indices = new Set()));
         indices.add(values.length - 1);

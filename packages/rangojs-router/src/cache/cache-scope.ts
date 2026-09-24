@@ -585,11 +585,7 @@ export class CacheScope {
       }
 
       // Collect handle data for non-loader segments only
-      const handles = captureHandles(
-        nonLoaderSegments,
-        handleStore,
-        requestCtx._shellCaptureLoaderHandleValues,
-      );
+      const handles = captureHandles(nonLoaderSegments, handleStore);
 
       try {
         if (INTERNAL_RANGO_DEBUG) {
