@@ -155,9 +155,12 @@ function createFlightStage<TEnv>(
   if (input.ctx.devDiscoveryEpoch !== undefined && input.payload.metadata) {
     input.payload.metadata.devDiscoveryEpoch = input.ctx.devDiscoveryEpoch;
   }
+  // Read once here: onError can fire outside the ALS frame.
+  const renderErrors = _getRequestContext()?._renderErrors;
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      renderErrors?.push(error);
       input.ctx.callOnError(error, "rendering", {
         request: input.request,
         url: input.url,

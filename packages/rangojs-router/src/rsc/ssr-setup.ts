@@ -82,11 +82,11 @@ export interface SsrHtmlStageOptions<TEnv> {
   /** Metrics store for ssr:module-load / ssr:stream-mode timing (per call site). */
   metricsStore: MetricsStore | undefined;
   /**
-   * renderHTML options minus streamMode (the stage resolves streamMode). Carries
-   * the per-site nonce and, for the PE action re-render, formState. Spread
-   * verbatim so each call site's exact key set is preserved.
+   * renderHTML options minus streamMode and onError (the stage owns both).
+   * Carries the per-site nonce and, for the PE action re-render, formState.
+   * Spread verbatim so each call site's exact key set is preserved.
    */
-  render: Omit<SSRRenderOptions, "streamMode">;
+  render: Omit<SSRRenderOptions, "streamMode" | "onError">;
   /** ResponseInit merged into the prepared render (e.g. content-type). */
   init?: ResponseInit;
 }
@@ -109,6 +109,7 @@ export function createSsrHtmlStage<TEnv>(
       options.url,
       options.metricsStore,
     );
+    const renderErrors = _getRequestContext()?._renderErrors;
     return {
       render: () =>
         // search: the LIVE request's query string, threaded out-of-band into
@@ -124,6 +125,12 @@ export function createSsrHtmlStage<TEnv>(
           // so origin-dependent markup (Link's data-external) agrees with the
           // browser's window.location across hydration.
           origin: options.url.origin,
+          // A component that throws inside a Suspense boundary leaves an
+          // errored boundary in a completed document; the document cache
+          // reads the list before storing it.
+          onError: (error) => {
+            renderErrors?.push(error);
+          },
         }),
       ...(options.init && { init: options.init }),
     };

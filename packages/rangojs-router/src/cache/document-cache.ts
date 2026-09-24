@@ -129,6 +129,19 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
   return parseCacheControl(cacheControl);
 }
 
+/**
+ * Throw the first error the drained render reported through Flight or Fizz
+ * onError. A component that throws after the 200 committed does not fail the
+ * stream: it completes with an error row or an errored Suspense boundary, and
+ * every hit would serve it (issue #915). The caller's catch reports the skipped
+ * write as cache-write. Read only after the body is fully drained, when both
+ * renders have finished.
+ */
+function throwIfRenderErrored(requestCtx: RequestContext | undefined): void {
+  const errors = requestCtx?._renderErrors;
+  if (errors && errors.length > 0) throw errors[0];
+}
+
 // ============================================================================
 // Response Helpers
 // ============================================================================
@@ -404,6 +417,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   // drain the fresh render fully before snapshotting tags
                   // (same render-complete barrier as the miss path).
                   const body = await new Response(fresh.body).arrayBuffer();
+                  throwIfRenderErrored(requestCtx);
                   await store.putResponse!(
                     cacheKey,
                     new Response(body, fresh),
@@ -468,6 +482,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // unaffected) is the render-complete barrier that keeps the cached
             // body and its tag set consistent.
             const body = await new Response(cacheStream).arrayBuffer();
+            throwIfRenderErrored(requestCtx);
             await store.putResponse!(
               cacheKey,
               new Response(body, originalResponse),

@@ -121,6 +121,10 @@ import {
 } from "./pages/proactive-cache.js";
 import { DocumentCachePage } from "./pages/document-cache.js";
 import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
+import {
+  DocumentCacheRenderErrorPage,
+  PprRenderErrorPage,
+} from "./pages/capture-render-error.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
@@ -1344,6 +1348,15 @@ export const urlpatterns = urls(
         // request despite the accompanying s-maxage.
         path("/document-cache-no-cache", DocumentCacheNoCachePage, {
           name: "documentCacheNoCache",
+        }),
+
+        // Issue #915: a 200 whose async server component threw after the
+        // commit must not be stored by the document cache or the PPR shell
+        // capture (pages/capture-render-error.tsx). Unnamed: the e2e navigates
+        // by URL, no gen-file entry.
+        path("/document-cache-render-error", DocumentCacheRenderErrorPage),
+        path("/ppr-render-error", PprRenderErrorPage, {
+          ppr: { ttl: 300, swr: 120 },
         }),
 
         // Tagged document cache route: the full-page response is document-cached

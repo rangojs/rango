@@ -492,9 +492,12 @@ describe("captureAndStoreShell", () => {
     try {
       const putShell = makePutShell();
       const reqCtx = makeReqCtx(putShell);
-      const rejected = Promise.reject(new Error("loader boom"));
+      const loaderError = new Error("loader boom");
+      const rejected = Promise.reject(loaderError);
       rejected.catch(() => {});
       reqCtx._shellCaptureLoaderRecords = new Map([["M0D0.app/x#L", rejected]]);
+      // A render error recorded alongside does not preempt this refusal (#915).
+      reqCtx._renderErrors = [loaderError];
 
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
@@ -1011,6 +1014,61 @@ describe("captureAndStoreShell", () => {
       ),
     ).rejects.toThrow("shell component blew up");
     expect(putShell).not.toHaveBeenCalled();
+  });
+
+  // Issue #915: a component that throws inside a Suspense boundary does not
+  // reject the prerender. Fizz reports it through onError and the prelude
+  // carries the errored boundary; storing it would serve that on every HIT.
+  it("does not store a shell whose prerender reported a component error; rethrows it (#915)", async () => {
+    const store = new MemorySegmentCacheStore();
+    const key = "/fizz-error:shell";
+    const shellError = new Error("shell widget threw");
+    const erroredModule = {
+      renderHTML: vi.fn(),
+      captureShellHTML: vi.fn(
+        async (
+          _stream: ReadableStream<Uint8Array>,
+          opts: { onError?: (error: unknown) => void },
+        ) => {
+          opts.onError?.(shellError);
+          return {
+            prelude: enc(
+              "<html><body>shell<!--$!--><template></template><!--/$--></body></html>",
+            ),
+            postponed: null,
+          };
+        },
+      ),
+    } as unknown as SSRModule;
+    const reqCtx = makeReqCtx();
+    reqCtx._cacheStore = store;
+    reqCtx._renderErrors = [];
+
+    await expect(
+      captureAndStoreShell(
+        erroredModule,
+        emptyStream(),
+        createHandleStore(),
+        reqCtx,
+        { key, buildVersion: "test-build", ttl: 300 },
+      ),
+    ).rejects.toBe(shellError);
+    expect(await store.getShell(key)).toBeNull();
+
+    // A later clean capture of the same key stores normally.
+    const cleanCtx = makeReqCtx();
+    cleanCtx._cacheStore = store;
+    cleanCtx._renderErrors = [];
+    expect(
+      await captureAndStoreShell(
+        makeShellSsrModule(),
+        emptyStream(),
+        createHandleStore(),
+        cleanCtx,
+        { key, buildVersion: "test-build", ttl: 300 },
+      ),
+    ).toBe("stored");
+    expect(await store.getShell(key)).not.toBeNull();
   });
 
   it("does not throw and routes putShell failures through reportCacheError", async () => {
@@ -1575,6 +1633,82 @@ describe("runShellCapture", () => {
         descriptor,
       );
       expect(captured).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  // Issue #915: a shell component that throws in the capture's Flight render
+  // does not reject it (Flight reports through onError and completes with an
+  // error row), so the prerender resolves with a prelude.
+  it("does not store a shell whose capture Flight render reported an error; reports it and backs off (#915)", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = new MemorySegmentCacheStore();
+      const key = "/flight-error:shell";
+      const shellError = new Error("reviews upstream down");
+      let failFlight = true;
+      const captureShellHTML = vi.fn(async () => ({
+        prelude: enc("<html><body>shell</body></html>"),
+        postponed: null,
+      }));
+      const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML as any);
+      vi.mocked(ctx.renderToReadableStream).mockImplementation(((
+        _payload: unknown,
+        options?: { onError?: (error: unknown) => void },
+      ) => {
+        if (failFlight) options?.onError?.(shellError);
+        return emptyStream();
+      }) as any);
+      const captured: Array<() => Promise<void>> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+        captured.push(task);
+      };
+      const request = new Request("http://localhost/flight-error");
+      const url = new URL("http://localhost/flight-error");
+      const descriptor = {
+        key,
+        buildVersion: "test-build",
+        ttl: 300,
+        store,
+      };
+
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      await captured[0]!();
+
+      expect(await store.getShell(key)).toBeNull();
+      expect(captureShellHTML).toHaveBeenCalledTimes(1); // no retry
+      expect(reqCtx._reportBackgroundError).toHaveBeenCalledWith(
+        shellError,
+        "cache-write",
+      );
+      // The capture's error stays on its own derived context.
+      expect(reqCtx._renderErrors).toEqual([]);
+      expect(isCaptureBackedOff(key)).toBe(true);
+
+      // A later clean capture stores normally.
+      clearCaptureBackoff(key);
+      failFlight = false;
+      scheduleShellCapture(
+        ctx,
+        request,
+        {},
+        url,
+        reqCtx,
+        ssrModule,
+        descriptor,
+      );
+      await captured[1]!();
+      expect(await store.getShell(key)).not.toBeNull();
     } finally {
       errSpy.mockRestore();
     }

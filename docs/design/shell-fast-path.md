@@ -67,6 +67,15 @@ branches), you cannot bake them" dissolves because capture eligibility
 already encodes the purity contract:
 
 - We only capture 200s. A 404/redirect decision never becomes a shell entry.
+- We only capture renders that reported no error. A shell component that
+  throws inside a Suspense boundary does not fail the capture render: Flight
+  writes an error row, Fizz leaves the boundary errored in the prelude, and
+  both report through `onError`. Those reports land on the capture context's
+  own `_renderErrors` list (`deriveShellCaptureContext`), and
+  `captureAndStoreShell` throws the first one before `putShell`, the same
+  outcome as a fatal shell error: `reportCacheError` (`cache-write`), no
+  retry, key backed off (issue #915). The document cache applies the same
+  rule to a whole response.
 - The identity guard refuses captures whose render reads request identity
   (`cookies()`/`headers()`), so an entry never encodes a handler that
   branches on the requester.

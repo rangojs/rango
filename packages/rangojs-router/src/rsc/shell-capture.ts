@@ -1607,6 +1607,9 @@ export function deriveShellCaptureContext(
   // context; module-singleton stores stay registered by normal renders.
   derivedCtx._explicitTaggedStores = new Set();
   derivedCtx._transitionWhen = [];
+  // Own list: the capture's render errors refuse the capture only, and the
+  // foreground's never reach it.
+  derivedCtx._renderErrors = [];
   derivedCtx._shellCaptureRun = true;
   // Own-property reset: an inherited flag would make serializeSegments store
   // a double-encoded fragment. No current arming site reaches a capture
@@ -1811,6 +1814,9 @@ async function captureAndStoreShell(
           // static-part search reads bake what the key names.
           search: capture.searchSeed,
           origin: capture.originSeed,
+          onError: (error) => {
+            reqCtx._renderErrors?.push(error);
+          },
         }),
       );
     } catch (error) {
@@ -1978,6 +1984,15 @@ async function captureAndStoreShell(
         }
       }
     }
+
+    // A shell component that threw inside a Suspense boundary does not reject
+    // the capture: Flight and Fizz report it through onError and the prelude
+    // carries the errored boundary, which every HIT would serve (issue #915).
+    // After the loader drain so a rejected bake-lane loader keeps its specific
+    // refusal. Thrown like a fatal shell error: no retry, reportCacheError and
+    // backoff in scheduleShellCapture.
+    const renderErrors = reqCtx._renderErrors;
+    if (renderErrors && renderErrors.length > 0) throw renderErrors[0];
 
     // Snapshot size guard (issue #651): the snapshot duplicates every pinned
     // cache value inside the shell entry, so a page over a large cache()

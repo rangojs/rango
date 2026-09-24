@@ -193,6 +193,13 @@ export interface SSRRenderOptions {
    * the browser across hydration. Absent on host-agnostic build captures.
    */
   origin?: string;
+
+  /**
+   * Called for each error Fizz reports through its onError: a component that
+   * threw inside a Suspense boundary, which leaves the boundary errored in an
+   * otherwise completed document. React's default console.error is kept.
+   */
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -219,6 +226,8 @@ export interface SSRModule {
       maxWaitMs?: number;
       search?: string;
       origin?: string;
+      /** Each component error the prerender reports (never the capture's own abort). */
+      onError?: (error: unknown) => void;
     },
   ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
 
@@ -237,6 +246,8 @@ export interface SSRModule {
       nonce?: string;
       search?: string;
       origin?: string;
+      /** Each component error the resumed holes report. */
+      onError?: (error: unknown) => void;
     },
   ) => Promise<ReadableStream<Uint8Array>>;
 }
