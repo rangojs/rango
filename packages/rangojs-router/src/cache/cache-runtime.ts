@@ -549,11 +549,24 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     ),
                   ];
                   recordRequestTags(freshTags, requestCtx);
-                  const serialized = await serializeResult(freshResult);
+                  const flightErrors: unknown[] = [];
+                  const onFlightError = (error: unknown): void => {
+                    flightErrors.push(error);
+                  };
+                  const serialized = await serializeResult(
+                    freshResult,
+                    onFlightError,
+                  );
                   if (serialized !== null) {
                     const encodedHandles = bgCapture
-                      ? await encodeHandles(bgCapture.capture.data)
+                      ? await encodeHandles(
+                          bgCapture.capture.data,
+                          onFlightError,
+                        )
                       : undefined;
+                    // An error row would replace the stale entry; the catch
+                    // below reports it and the stale entry keeps serving.
+                    if (flightErrors.length > 0) throw flightErrors[0];
                     await store.setItem!(cacheKey, serialized, {
                       handles: encodedHandles,
                       ttl: profile.ttl,
@@ -735,11 +748,19 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const finalizeAndWrite = async (): Promise<void> => {
       let serialized: string | null;
       let encodedHandles: string | undefined;
+      const flightErrors: unknown[] = [];
+      const onFlightError = (error: unknown): void => {
+        flightErrors.push(error);
+      };
       try {
-        serialized = await serializeResult(result);
+        serialized = await serializeResult(result, onFlightError);
         encodedHandles = capture
-          ? await encodeHandles(capture.capture.data)
+          ? await encodeHandles(capture.capture.data, onFlightError)
           : undefined;
+        // Flight encodes an async component that throws, or a rejected
+        // promise in the result or a handle value, as an error row and
+        // completes normally; stored, every hit would serve that error.
+        if (flightErrors.length > 0) throw flightErrors[0];
       } catch (buildError) {
         // Serialize/handle-encode failed: no envelope for followers (they run
         // fresh) and nothing to write.

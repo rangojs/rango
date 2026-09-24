@@ -581,6 +581,14 @@ Values are serialized through RSC Flight, so loaders can return ReactNode,
 Promises, null, and any RSC-serializable type — all round-trip correctly
 through the cache.
 
+A value Flight cannot encode cleanly is not cached: a promise in it that
+rejects, an async component that throws, a function or a class instance.
+Storing it would bake the failure into every hit until expiry. Instead the
+write is skipped and reported to `onError` (phase `"cache"`, category
+`cache-write`, or `stale-revalidation` for a background refresh): a miss still
+returns the loader's live result, the next request runs the loader again, and
+a stale entry keeps serving.
+
 Handle pushes the body makes (`ctx.use(Meta)(...)`, breadcrumbs — see
 "Writing Handles from Loaders"), including those of loaders it awaits via
 `ctx.use`, are stored with the value and replayed on every hit, stale hits
@@ -594,9 +602,10 @@ ones. If it ran before the replay, the replay skips its recorded pushes; if
 it runs after, its pushes replace the replayed ones in their position (after
 hydration, when it lands after the document's handle snapshot). A pending push
 (a promise, an async callback, a `.defer()` slot) is recorded once it settles,
-as in `"use cache"`: the background write waits up to 5 s, and a value Flight
-cannot serialize or a push still pending at 5 s drops that entry's handle
-record (the data is still cached; its hits replay no pushes). Entries written
+as in `"use cache"`: the background write waits up to 5 s, and a push still
+pending at 5 s drops that entry's handle record (the data is still cached; its
+hits replay no pushes). A pushed value Flight cannot encode (a promise that
+rejects) skips the whole entry, as above. Entries written
 before handles were recorded replay none until they are rewritten (expiry or
 SWR revalidation).
 

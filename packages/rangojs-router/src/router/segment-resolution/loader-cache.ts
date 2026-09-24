@@ -458,14 +458,26 @@ function executeLoaderData<TEnv>(
       }
     };
 
+    // Flight encodes a rejected promise in the value or a handle push as an
+    // error row and completes normally. setItem runs after serialize and
+    // throws instead of storing it, into readThroughItem's cache-write /
+    // stale-revalidation report; a stale entry keeps serving.
+    const flightErrors: unknown[] = [];
+    const onFlightError = (error: unknown): void => {
+      flightErrors.push(error);
+    };
+
     const data = await readThroughItem({
       getItem: (k) => store.getItem!(k),
       // Handles ride the entry like "use cache" (encodeHandles: Flight, pending
-      // pushes awaited up to its timeout, the whole blob dropped on failure).
-      // Encoded here, inside the deferred write, so a MISS response never
-      // waits on it.
+      // pushes awaited up to its timeout, the whole blob dropped on a timeout
+      // or a thrown encode). Encoded here, inside the deferred write, so a
+      // MISS response never waits on it.
       setItem: async (k, v, o) => {
-        const handles = capture ? await encodeHandles(capture.data) : "";
+        const handles = capture
+          ? await encodeHandles(capture.data, onFlightError)
+          : "";
+        if (flightErrors.length > 0) throw flightErrors[0];
         await store.setItem!(k, v, handles ? { ...o, handles } : o);
       },
       key,
@@ -483,7 +495,7 @@ function executeLoaderData<TEnv>(
           observePhase(PHASES.background("loader-revalidation"), run),
         );
       },
-      serialize: (d) => codec.serializeResult(d),
+      serialize: (d) => codec.serializeResult(d, onFlightError),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
       onHit: (cached) => onCachedRead("HIT", cached),

@@ -267,7 +267,7 @@ containment" in [ppr-shell-resume.md](./design/ppr-shell-resume.md).
 ### Serialization
 
 - Serialization: RSC Flight protocol (`renderToReadableStream` / `createFromReadableStream`). Handles JSX, client references, Promises, plain data.
-- Non-serializable results: skip caching, return uncached. No error. `serializeResult()` returns `null` and the caller gates the write on `serialized !== null`. There is no JSON fallback path.
+- Non-serializable results: skip caching, return the live result. Flight does not throw for a value it cannot encode (a function, a class instance, a local symbol, a promise that rejects, an async component that throws): it calls `onError` and writes an error row. So the leader and the stale-hit refresh pass one `onError` collector to `serializeResult()` and `encodeHandles()` and, if it fires, write nothing and report `cache-write` or `stale-revalidation` (issue #913). An encode that throws still makes `serializeResult()` return `null`, and the caller gates the write on `serialized !== null`. There is no JSON fallback path.
 
 ### Dev mode
 

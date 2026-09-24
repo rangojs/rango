@@ -642,15 +642,16 @@ export class CacheScope {
         // values survive a JSON-serializing store — see encodeHandles.
         const { serializeSegments } = await import("./segment-codec.js");
         const flightErrors: unknown[] = [];
+        const onFlightError = (error: unknown): void => {
+          flightErrors.push(error);
+        };
         const [serializedSegments, encodedHandles] = await Promise.all([
-          serializeSegments(nonLoaderSegments, (error) => {
-            flightErrors.push(error);
-          }),
-          encodeHandles(handles),
+          serializeSegments(nonLoaderSegments, onFlightError),
+          encodeHandles(handles, onFlightError),
         ]);
         // Flight encodes a component that throws (an async server component in
-        // the tree) as an error row and completes normally; stored, every HIT
-        // would render that error until expiry.
+        // the tree) or a rejected handle value as an error row and completes
+        // normally; stored, every HIT would render that error until expiry.
         if (flightErrors.length > 0) throw flightErrors[0];
 
         const data: CachedEntryData = {

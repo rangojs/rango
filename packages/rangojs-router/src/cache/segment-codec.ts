@@ -106,10 +106,16 @@ export async function rscDeserialize<T>(
  *
  * Returns null only on serialization failure.
  */
-export async function serializeResult(value: unknown): Promise<string | null> {
+export async function serializeResult(
+  value: unknown,
+  onError?: (error: unknown) => void,
+): Promise<string | null> {
   try {
     const temporaryReferences = createTemporaryReferenceSet();
-    const stream = renderToReadableStream(value, { temporaryReferences });
+    const stream = renderToReadableStream(value, {
+      temporaryReferences,
+      onError,
+    });
     return await streamToString(stream);
   } catch (error) {
     // Returning null silently turns a non-serializable cache value into a
