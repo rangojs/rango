@@ -18,6 +18,9 @@
  *     A layout above the cache() boundary is cached with the route but is not
  *     latched by the header guard, so the refresh re-runs its writes; an error
  *     boundary in the refresh sets a status the same way.
+ *   - the cache write: a re-render that resolves an error or notFound boundary
+ *     is not written, as a non-200 MISS is not (cache-store.ts), so the entry
+ *     it would replace keeps serving.
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
@@ -60,6 +63,7 @@ import { MemorySegmentCacheStore } from "../../../cache/memory-segment-store.js"
 import { gateTransitions } from "../../../rsc/transition-gate.js";
 import { createResponseWithMergedHeaders } from "../../../rsc/helpers.js";
 import { cookies } from "../../../server/cookie-store.js";
+import { notFound } from "../../../errors.js";
 import {
   createRequestContext,
   getRequestContext,
@@ -93,9 +97,21 @@ let writerLayoutCalls = 0;
 let bgOnResponseCalls = 0;
 let failStatusRoute = false;
 let statusHandlerCalls = 0;
+let refreshMode: "ok" | "error" | "notFound" = "ok";
+let refreshContent = "v1";
+let refreshHandlerCalls = 0;
+let proactiveLayoutFail = false;
+let proactiveRouteCalls = 0;
 let layoutGate: ReturnType<typeof gate> | undefined;
 let handlerGate: ReturnType<typeof gate> | undefined;
 let loaderGate: ReturnType<typeof gate> | undefined;
+
+function refreshHandler() {
+  refreshHandlerCalls++;
+  if (refreshMode === "error") throw new Error("upstream down");
+  if (refreshMode === "notFound") notFound();
+  return createElement("div", null, refreshContent);
+}
 
 const CrumbLoader = (createLoader as Function)(
   async (ctx: any) => {
@@ -108,8 +124,12 @@ const CrumbLoader = (createLoader as Function)(
 );
 
 let router: any;
-let lastSegments: Array<{ id: string; type: string; transition?: unknown }> =
-  [];
+let lastSegments: Array<{
+  id: string;
+  type: string;
+  transition?: unknown;
+  component?: any;
+}> = [];
 let lastReqCtx: RequestContext<any>;
 let store: MemorySegmentCacheStore;
 let serveStale = false;
@@ -180,6 +200,29 @@ beforeAll(async () => {
           return createElement("div", null, "s");
         },
         { name: "bgRenderStaleStatus" },
+      ),
+      path("/refresh-error", refreshHandler, { name: "bgRenderRefreshError" }),
+      path("/refresh-not-found", refreshHandler, {
+        name: "bgRenderRefreshNotFound",
+      }),
+      layout(
+        () => {
+          if (proactiveLayoutFail) throw new Error("upstream down");
+          return createElement("div", null, "pro-layout");
+        },
+        () => [
+          path("/pro/a", () => createElement("div", null, "a"), {
+            name: "bgRenderProA",
+          }),
+          path(
+            "/pro/b",
+            () => {
+              proactiveRouteCalls++;
+              return createElement("div", null, "b");
+            },
+            { name: "bgRenderProB" },
+          ),
+        ],
       ),
     ]),
     // Above the cache() boundary: its writes are allowed on a MISS (the guard
@@ -439,5 +482,85 @@ describe("background re-render of a stale cached route", () => {
     failStatusRoute = false;
 
     expect([response.status, lastReqCtx.res.status]).toEqual([200, 200]);
+  });
+});
+
+describe("a background re-render that resolves an error or notFound boundary", () => {
+  function served() {
+    return {
+      segments: lastSegments.map((s) => `${s.type}:${s.id}`),
+      route: lastSegments.find((s) => s.type === "route")?.component?.props
+        ?.children,
+    };
+  }
+
+  // MISS, then a stale HIT whose refresh resolves `mode`, then a HIT.
+  async function failRefresh(pathname: string, mode: "error" | "notFound") {
+    await serve(pathname);
+    const miss = served();
+    serveStale = true;
+    refreshMode = mode;
+    await serve(pathname);
+    serveStale = false;
+    refreshMode = "ok";
+    const callsBefore = refreshHandlerCalls;
+    await serve(pathname);
+    return {
+      miss,
+      hit: served(),
+      handlerRan: refreshHandlerCalls !== callsBefore,
+    };
+  }
+
+  it("a refresh that throws leaves the stale entry serving", async () => {
+    const { miss, hit, handlerRan } = await failRefresh(
+      "/refresh-error",
+      "error",
+    );
+    expect(miss.route).toBe("v1");
+    expect({ hit, handlerRan }).toEqual({ hit: miss, handlerRan: false });
+
+    // Nothing left by the failed refresh blocks the next one.
+    refreshContent = "v2";
+    serveStale = true;
+    await serve("/refresh-error");
+    serveStale = false;
+    await serve("/refresh-error");
+    refreshContent = "v1";
+    expect(served().route).toBe("v2");
+  });
+
+  it("a refresh that calls notFound() leaves the stale entry serving", async () => {
+    const { miss, hit, handlerRan } = await failRefresh(
+      "/refresh-not-found",
+      "notFound",
+    );
+    expect(miss.route).toBe("v1");
+    expect({ hit, handlerRan }).toEqual({ hit: miss, handlerRan: false });
+  });
+
+  it("proactive caching writes nothing when only its re-render throws", async () => {
+    await serve("/pro/a");
+    const layoutIds = lastSegments
+      .filter((s) => s.type === "layout")
+      .map((s) => s.id);
+
+    // The client has the layout, so the foreground skips it and only the
+    // proactive re-render throws.
+    proactiveLayoutFail = true;
+    await serve("/pro/b", undefined, { clientSegments: layoutIds });
+    proactiveLayoutFail = false;
+    const errorSegments = () =>
+      served().segments.filter((s) => s.startsWith("error:"));
+    expect(errorSegments()).toEqual([]);
+
+    // A client without the layout: a HIT would serve a written error segment
+    // in the layout's place; a MISS renders it and runs the route handler.
+    const callsBefore = proactiveRouteCalls;
+    await serve("/pro/b", undefined, { clientSegments: [] });
+    expect({
+      errors: errorSegments(),
+      handlerRan: proactiveRouteCalls !== callsBefore,
+    }).toEqual({ errors: [], handlerRan: true });
   });
 });

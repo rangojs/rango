@@ -591,6 +591,8 @@ State:    |  FRESH   |    STALE      |  EXPIRED    |
 Action:   |  serve   | serve+reval   |  miss       |
 ```
 
+A route refresh that resolves an error or notFound boundary is not written, the same way the MISS gate in `cache-store.ts` skips a non-200 response, so the stale entry keeps serving until a later refresh succeeds or the entry expires (`rerenderAndCacheRoute` in `match-middleware/background-revalidation.ts`; proactive caching goes through the same gate).
+
 ### Data Structures
 
 This POC sketch carried `createdAt`/`staleAt`/`revalidationContext` and a

@@ -118,6 +118,13 @@ import {
  * cacheScope.cacheRoute: the stale-hit refresh below and proactive caching
  * (cache-store.ts). Returns the number of segments written.
  *
+ * A render whose status is not 200 (an error or notFound boundary resolved)
+ * is not written and returns 0, as a non-200 MISS is not cached
+ * (cache-store.ts): the entry it would replace keeps serving until a later
+ * refresh succeeds or it expires. Nothing is held in process; a store's own
+ * revalidation marker (CFCacheStore's REVALIDATING) re-arms after
+ * MAX_REVALIDATION_INTERVAL, as after a refresh that throws.
+ *
  * Runs on a DERIVED request context that owns the per-render state the
  * foreground reads while it is still producing the page (a stale HIT re-runs
  * its loaders; a proactive render starts once the Response exists, while its
@@ -136,9 +143,10 @@ import {
  *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
  *     needs its own run.
  *   - response writes (headers, cookies, status, onResponse callbacks) go to
- *     a throwaway context and are dropped: a layout above the cache()
- *     boundary is outside the header guard and an error boundary sets a
- *     status, so they would otherwise reach the live response.
+ *     a throwaway context (whose status gates the write, above) and are
+ *     dropped: a layout above the cache() boundary is outside the header
+ *     guard and an error boundary sets a status, so they would otherwise
+ *     reach the live response.
  * runWithRequestContext also re-establishes the request ALS, which a waitUntil
  * task on workerd loses; the DSL store is a different ALS (build context).
  */
@@ -231,6 +239,15 @@ export async function rerenderAndCacheRoute<TEnv>(
     }
 
     handleStore.seal();
+    // Boundaries set 500/404 through _setStatus (catchSegmentError), which
+    // lands on the sink.
+    if (sink.res.status !== 200) {
+      debugLog("backgroundRevalidation", "skipping cache for non-200 render", {
+        status: sink.res.status,
+        pathname: ctx.pathname,
+      });
+      return 0;
+    }
     await cacheScope.cacheRoute(
       ctx.pathname,
       ctx.matched.params,
