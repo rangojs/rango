@@ -275,6 +275,7 @@ An intercept's `use()` (and its handler's `.use`) accepts:
 - `middleware()`
 - `loading()`
 - `layout(Chrome)`: the modal chrome, without `use()` items of its own
+- `route`, the item type a `path()` call produces
 - `transition()`
 
 Everything else throws at definition time with a pointer to where it goes:
@@ -294,7 +295,9 @@ intercept's loader: `loader(ProductLoader, () => [cache()])`.
 An intercept has no boundary of its own. When the intercept's handler or one
 of its loaders throws, or calls `notFound()`, the modal slot renders the
 `errorBoundary()` / `notFoundBoundary()` of the layout or path that declares the
-intercept, or the nearest ancestor that has one. The intercepted route's own
+intercept, or the nearest ancestor that has one. That holds when the declaring
+layout has no routes of its own, too: the lookup continues at the layout that
+holds it and that layout's ancestors. The intercepted route's own
 boundaries are not consulted: the modal renders in the declaring layout's slot,
 not in the route. On a handler error the modal layout and the background page
 stay mounted, and the status is 500 / 404. A thrown `Response` (`redirect()`)

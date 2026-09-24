@@ -52,8 +52,11 @@ Each rejected item gets a pointer to where it goes instead:
 - `revalidate()`: on the intercept's loader, `loader(Def, () => [revalidate(fn)])`.
 - `errorBoundary()` / `notFoundBoundary()`: on the layout or path that
   declares the intercept (or an ancestor). Errors and `notFound()` from the
-  intercept's loaders resolve there; the intercepted target route's boundaries
-  are not consulted.
+  intercept's handler (since #878) and from its loaders resolve there, as the
+  modal slot's content; the intercepted target route's boundaries are not
+  consulted. When the declaring layout has no routes of its own (an orphan),
+  the lookup continues at the layout that holds it and that layout's
+  ancestors (see "How orphan layouts work").
 - `cache()`: on the target route (an intercept navigation gets its own
   `intercept:` cache key under the target route's scope), or `"use cache"` in
   the handler. A `cache()` called in the scope is rejected even when it is not
@@ -108,7 +111,15 @@ their parent's `layout[]` array.
    `layout(Shell, () => [transition(cfg, () => [path(...)])])` is NOT an orphan
    (scar tissue: before the `transition` case existed, that shape was pushed
    onto the parent's `layout[]` and Shell wrapped every sibling route)
-2. Orphan layouts get `parent = null` and are pushed to `parent.layout[]`
+2. Orphan layouts get `parent = null` and are pushed to `parent.layout[]`.
+   `orphanOwner` records that parent (`attachOrphanSibling`), and only the
+   boundary walkers in `router/error-handling.ts` follow it: an error lookup
+   that starts at the orphan (its own loaders, an intercept it declares)
+   continues at the owner and the owner's ancestors. Before issue #898 that
+   walk stopped at the orphan, so an ancestor's `errorBoundary()` never
+   handled those errors. `parent` itself stays null: `matchError`'s
+   matched-id stack (`router/match-api.ts`) starts at the entry that holds
+   the boundary, which can be an orphan, and must stop there
 3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout
 4. `collectRouteMiddleware()` recursively processes orphan layouts for middleware
 5. The segment system renders orphan layout components as wrappers around route content

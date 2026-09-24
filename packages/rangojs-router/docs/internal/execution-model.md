@@ -610,9 +610,15 @@ the value is non-cacheable.
 DSL loaders (registered with `loader()`) and handler-called loaders
 (`ctx.use(Loader)`) have different cache-safety guarantees:
 
-- **DSL `loader()` + client `useLoader()`** — the recommended path. DSL
-  loaders are always resolved fresh (never cached), even inside `cache()`
-  boundaries. Because they always re-execute:
+- **DSL `loader()` + client `useLoader()`** — the recommended path. A
+  segment `cache()` never stores DSL loader data: DSL loaders re-execute on
+  every request, even inside `cache()` boundaries. The one opt-in is the
+  binding's own `cache()`, `loader(Def, () => [cache({ ttl })])`, which reads
+  through the loader store (`executeLoaderData` in
+  `segment-resolution/loader-cache.ts`). A hit skips the loader body and
+  replays its recorded handle pushes. It applies on every DSL loader path —
+  fresh, revalidation and intercept (#884) — and never to a handler's
+  `ctx.use(Loader)` read. Because a segment cache never captures them:
   - `ctx.get()` bypasses non-cacheable read guards (unguarded context).
   - Global helpers that touch the response (`cookies().set()`,
     `cookies().delete()`, `headers()`) are allowed inside loader

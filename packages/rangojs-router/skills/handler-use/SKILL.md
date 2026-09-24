@@ -73,7 +73,11 @@ Allowed types: revalidate, loader, loading, errorBoundary, notFoundBoundary, tra
 
 The narrowest contract for a handler is `parallel()` — slots cannot bring their own middleware or layout; only data, loading, error/notFound boundaries, revalidation, and transitions.
 
-This runtime check applies to items returned by `handler.use()`. Items in an explicit mount-site `use()` callback are constrained by the TypeScript use-item types (e.g. a `parallel()` callback is typed to parallel items), not by this runtime allow-list.
+This runtime check applies to items returned by `handler.use()`. Items in an explicit mount-site `use()` callback are constrained by the TypeScript use-item types (e.g. a `parallel()` callback is typed to parallel items), not by this runtime allow-list. `intercept()` is the exception: it checks its merged items, explicit `use()` and `handler.use()` together, against the same list at runtime (`validateInterceptUseItems`), and a rejected item throws with a pointer instead:
+
+```
+errorBoundary() is not valid inside intercept("@modal", "product") use() (including the handler's .use): put it on the enclosing layout or path; it handles the intercept's handler and loader errors.
+```
 
 ## Composition with explicit `use()`
 
@@ -286,7 +290,7 @@ AdminLayout.use = () => [
 
 ### Intercepts (`intercept()`)
 
-Intercept handlers can carry their own middleware chain, loaders, and even nested layouts/routes for the modal shell.
+Intercept handlers can carry their own middleware chain, loaders, `loading()`, and the modal chrome: a `layout(Chrome)` with no `use()` items of its own. Boundaries, `cache()` and `revalidate()` throw here (see the table above and [intercept](../intercept/SKILL.md)).
 
 ```typescript
 const QuickViewModal: Handler = async (ctx) => {

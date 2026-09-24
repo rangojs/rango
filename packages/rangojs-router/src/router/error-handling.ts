@@ -109,6 +109,11 @@ export function invokeOnError<TEnv = any>(
  * Find the nearest error boundary by walking up the entry chain
  * Also checks sibling layouts (orphan layouts) for error boundaries
  * Returns the first fallback found, or the default error boundary if configured
+ *
+ * An orphan's parent is null, so from an orphan the walk continues at its
+ * orphanOwner (EntryData). Without that step, errors from an intercept declared
+ * in a routeless layout, or from that layout's loaders, stopped at the orphan
+ * and skipped every ancestor boundary (#898).
  */
 export function findNearestErrorBoundary(
   entry: EntryData | null,
@@ -129,7 +134,7 @@ export function findNearestErrorBoundary(
       }
     }
 
-    current = current.parent;
+    current = current.parent ?? current.orphanOwner ?? null;
   }
 
   // Return default error boundary if configured
@@ -162,7 +167,8 @@ export function findNearestNotFoundBoundary(
       }
     }
 
-    current = current.parent;
+    // Orphan: continue at its owner, as findNearestErrorBoundary does.
+    current = current.parent ?? current.orphanOwner ?? null;
   }
 
   // Return default notFound boundary if configured

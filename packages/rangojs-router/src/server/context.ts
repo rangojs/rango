@@ -65,6 +65,17 @@ export type EntryPropCommon = {
   id: string;
   shortCode: string; // Short identifier for network efficiency (e.g., "L0", "P1", "R2")
   parent: EntryData | null;
+  /**
+   * Orphan siblings only (attachOrphanSibling in
+   * route-definition/dsl-helpers.ts): the entry whose `layout[]` holds this
+   * one. `parent` stays null on an orphan (matchError's matched-id stack in
+   * router/match-api.ts starts at the boundary-holding entry, possibly an
+   * orphan, and must stop there), so the boundary walkers in
+   * router/error-handling.ts follow this instead. A lookup that starts at an
+   * orphan (its loaders, an intercept it declares) then reaches the owner's
+   * boundaries and the owner's ancestors.
+   */
+  orphanOwner?: EntryData;
   /** Cache configuration for this entry (set by cache() DSL) */
   cache?: EntryCacheConfig;
   /** URL prefix from include() scope, used for MountContext on client */
