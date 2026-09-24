@@ -89,6 +89,8 @@ re-renders the segments, so an async server component whose fetch fails there
 would otherwise be stored as an error and rendered on every hit. Instead the
 write is skipped and reported to `onError` (phase `"cache"`, category
 `cache-write`): the next request renders fresh, and a stale entry keeps serving.
+The same applies to a stored handle push whose value fails to encode, such as a
+rejected promise: the whole entry is skipped, not just its handles.
 
 Pre-rendering (`/prerender`) is the build-time counterpart: it stores the same
 kind of segment payload at build time instead of on first request. Both feed the

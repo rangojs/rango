@@ -63,6 +63,16 @@ export async function ProductCard({ id }: { id: string }) {
 }
 ```
 
+### Results that are not cached
+
+A result Flight cannot encode cleanly is not cached: an async child component
+that throws, a promise in the result or in a handle push that rejects, a
+function or a class instance. Storing it would bake the failure into every hit
+until expiry. Instead the write is skipped and reported to `onError` (phase
+`"cache"`, category `cache-write`, or `stale-revalidation` for a background
+refresh): a miss still returns the live result, the next call runs the
+function again, and a stale entry keeps serving.
+
 ## Named Cache Profiles
 
 Define profiles in createRouter. Profile names map to `"use cache: <name>"` in

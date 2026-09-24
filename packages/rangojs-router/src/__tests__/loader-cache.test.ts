@@ -432,7 +432,7 @@ describe("loader-cache", () => {
 
       expect(result).toBeNull();
       // serializeResult should have been called with null
-      expect(serializeResult).toHaveBeenCalledWith(null);
+      expect(serializeResult).toHaveBeenCalledWith(null, expect.any(Function));
       // The mock returns "null" (JSON.stringify(null)), which is not null,
       // so setItem should be called
       expect(store.setItem).toHaveBeenCalledWith(

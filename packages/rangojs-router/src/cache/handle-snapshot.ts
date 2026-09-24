@@ -47,19 +47,31 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: T): Promise<T> {
   ]);
 }
 
-export async function encodeHandles(handles: HandleRecord): Promise<string> {
+/**
+ * `onError` reaches the Flight encode (see serializeResult). A cache writer
+ * passes the collector it gives the value's encode, so a handle value that
+ * fails to encode (a rejected pushed promise) refuses the whole entry like a
+ * failed value does; prerender passes none and keeps the error row.
+ */
+export async function encodeHandles(
+  handles: HandleRecord,
+  onError?: (error: unknown) => void,
+): Promise<string> {
   if (!hasHandleData(handles)) return "";
-  return encodeHandleValue(handles);
+  return encodeHandleValue(handles, onError);
 }
 
 export function decodeHandles(encoded: string): Promise<HandleRecord | null> {
   return decodeHandleValue<HandleRecord>(encoded);
 }
 
-export async function encodeHandleValue(value: unknown): Promise<string> {
+export async function encodeHandleValue(
+  value: unknown,
+  onError?: (error: unknown) => void,
+): Promise<string> {
   const { serializeResult } = await import("./segment-codec.js");
   const encoded = await withTimeout(
-    serializeResult(value),
+    serializeResult(value, onError),
     HANDLE_ENCODE_TIMEOUT_MS,
     null,
   );
