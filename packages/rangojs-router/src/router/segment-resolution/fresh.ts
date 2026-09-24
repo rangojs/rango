@@ -756,8 +756,9 @@ export async function resolveAllSegments<TEnv>(
     // Set ALS flag when entering a cache() boundary so that ctx.get()
     // can guard non-cacheable variable reads. Also latch the header-write
     // scope (response-level side effects — headers/cookies/status).
-    // Persists for all descendant entries.
-    if (entry.type === "cache") {
+    // Persists for all descendant entries. A route entry carries `cache` when
+    // cache() is among its own children (dsl-helpers.ts cache()).
+    if (entry.cache) {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
       latchCachedHeaderScope("cache", routeKey);

@@ -140,7 +140,8 @@ function rejectInterceptItem(
  *   handler), so it may not carry use() items of its own;
  * - a cache entry in `capturedLayouts` means cache() ran in the scope even if
  *   it was not returned; its orphan form re-parents the following siblings
- *   onto that entry, so it is rejected the same way.
+ *   onto that entry, so it is rejected the same way. Inside a path, cache()
+ *   writes `sinks.cache` instead (dsl-helpers.ts cache()).
  */
 export function validateInterceptUseItems(
   items: AllUseItems[],
@@ -153,6 +154,8 @@ export function validateInterceptUseItems(
     readonly notFoundBoundary: readonly unknown[];
     readonly intercept: readonly unknown[];
     readonly parallel: Readonly<Record<string, unknown>>;
+    /** Set by cache() when the intercept is declared inside a path. */
+    readonly cache?: unknown;
   },
 ): void {
   const allowed = MOUNT_SITE_ALLOWED_TYPES.intercept!;
@@ -203,7 +206,10 @@ export function validateInterceptUseItems(
       routeName,
     );
   }
-  if (capturedLayouts.some((l) => l.type === "cache")) {
+  if (
+    capturedLayouts.some((l) => l.type === "cache") ||
+    sinks.cache !== undefined
+  ) {
     rejectInterceptItem(
       "cache()",
       INTERCEPT_REJECTION_HINTS.cache!,

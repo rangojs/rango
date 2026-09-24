@@ -1325,7 +1325,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    if (entry.type === "cache") {
+    // Same latch as resolveAllSegments (fresh.ts), route-level cache() included.
+    if (entry.cache) {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
       latchCachedHeaderScope("cache", routeKey);

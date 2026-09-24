@@ -46,6 +46,11 @@ import {
 let outerLiveLayoutRenders = 0;
 let outerLiveRouteRenders = 0;
 
+// Render counts for /cache-test/path-children (issue #912).
+let pathChildrenShellRenders = 0;
+let pathChildrenRouteRenders = 0;
+let pathChildrenChromeRenders = 0;
+
 /**
  * Cache test routes URL patterns
  * Routes: cacheTest.*
@@ -88,6 +93,51 @@ export const cachePatterns = urls(
             { name: "cacheTest.outerLive" },
           ),
         ]),
+      ],
+    ),
+
+    // A cache() among a path's own children caches that path: the route and
+    // the layout declared after the cache() replay from the cache, and the
+    // layout above the path stays live.
+    path(
+      "/cache-test/path-children-entry",
+      () => (
+        <Link to="/cache-test/path-children" data-testid="path-children-link">
+          Path children
+        </Link>
+      ),
+      { name: "cacheTest.pathChildrenEntry" },
+    ),
+    layout(
+      () => (
+        <div data-testid="path-children-shell">
+          <p data-testid="path-children-shell-count">
+            {++pathChildrenShellRenders}
+          </p>
+          <Outlet />
+        </div>
+      ),
+      () => [
+        path(
+          "/cache-test/path-children",
+          () => (
+            <p data-testid="path-children-route-count">
+              {++pathChildrenRouteRenders}
+            </p>
+          ),
+          { name: "cacheTest.pathChildren" },
+          () => [
+            cache({ ttl: 600 }),
+            layout(() => (
+              <div data-testid="path-children-chrome">
+                <p data-testid="path-children-chrome-count">
+                  {++pathChildrenChromeRenders}
+                </p>
+                <Outlet />
+              </div>
+            )),
+          ],
+        ),
       ],
     ),
 

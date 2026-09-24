@@ -402,6 +402,33 @@ describe("dispatch", () => {
       expect(cached?.response.status).toBe(200);
     });
 
+    it("caches a response route whose cache() is among its own children (#912)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache }) => [
+          path.json(
+            "/cached-child",
+            () => ({ ts: Date.now() + Math.random() }),
+            { name: "cachedChild.json" },
+            () => [cache({ ttl: 600 })],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-child" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-child" })
+      ).json();
+
+      expect(second).toEqual(first);
+      expect(
+        await store.getResponse("response:json:localhost/cached-child"),
+      ).not.toBeNull();
+    });
+
     it("does not cache a non-GET/HEAD method (POST miss, no store write)", async () => {
       const store = new MemorySegmentCacheStore();
       const putSpy = vi.spyOn(store, "putResponse");

@@ -163,6 +163,16 @@ Inside a `loader()` use callback, `cache()` is not a structural entry: it sets
 that loader's own cache config (`loader(Def, () => [cache({ ttl: 60 })])`) and
 does not change `ctx.parent`. A `cache()` **with** children is rejected there.
 
+Among a `path()`'s children, `cache()` is not a structural entry either: both
+forms set the route entry's own `cache` config and leave `ctx.parent` on the
+route, and the wrapper form's children attach to the route as if listed after
+it. The route then carries its own cache scope with itself as the boundary
+(`buildEntriesAndCacheScope` in `router/route-snapshot.ts`), so the route
+segment and its own layouts and parallels are the cached unit. Before issue
+#912 it created an orphan cache entry here. That entry was never an ancestor
+of the route, so no scope was built, and a `layout()` declared after it nested
+under the entry, where `resolveOrphanLayout()` never rendered it.
+
 ## include() Behavior
 
 `include()` items are treated as containing routes by `hasRoutesInItem()`. This

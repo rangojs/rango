@@ -1191,6 +1191,24 @@ describe("route tree inspection", () => {
     );
   });
 
+  it("cache() called but not returned from the use() of an intercept declared in a path still throws", () => {
+    // Inside a path, cache() writes the route's cache config instead of
+    // pushing an orphan entry; the intercept's temporary parent catches it.
+    const patterns = urls((h) => [
+      h.path("/detail", AboutPage, { name: "detail" }),
+      h.path("/list", ProductList, { name: "list" }, () => [
+        h.intercept("@modal", ".detail", ProductModal, () => {
+          h.cache();
+          return [h.loader(PostLoader)];
+        }),
+      ]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
   it("revalidate on an intercept's loader is accepted and stays on the loader", () => {
     const revalidateFn = () => false;
     const tree = buildRouteTree(

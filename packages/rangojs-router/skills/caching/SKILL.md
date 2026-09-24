@@ -69,6 +69,20 @@ layout(AccountShell, () => [
 ]);
 ```
 
+A `cache()` among a path's own children caches that one path: its handler and
+its own layouts and parallels. Every other item in the list still attaches to
+the path, and everything above the path stays live:
+
+```typescript
+layout(AccountShell, () => [
+  // live
+  path("/products/:id", ProductPage, { name: "product" }, () => [
+    cache({ ttl: 60 }), // caches ProductPage and ProductChrome
+    layout(ProductChrome),
+  ]),
+]);
+```
+
 The consumer rule: **want it cached? render it inline. Want it live? put it in a
 loader and read it with `useLoader()` in a client component.** Anything read
 with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader

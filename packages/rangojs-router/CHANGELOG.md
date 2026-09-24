@@ -141,6 +141,16 @@ absent from the result.
   every request, document and partial alike, as the `cache()` docs describe.
   A `ppr` route keeps whole-chain coverage: its chain bakes into the shell
   ([#906](https://github.com/rangojs/rango/issues/906)).
+- A `cache()` among a path's children, as in
+  `path("/p", Page, { name: "p" }, () => [cache({ ttl: 60 }), layout(<Chrome />)])`,
+  cached nothing, and a `layout()` declared after it never rendered. It now
+  caches that path: the handler and the path's own layouts and parallels are
+  stored and replayed, and everything above the path stays live. The same form
+  caches a response route (`path.json(..., () => [cache({ ttl })])`), and
+  `cache(false)` there opts the path out of an enclosing `cache()`. The path's
+  handler now runs under the `cache()` guards, so a header write or a
+  `cookies()` read in it throws
+  ([#919](https://github.com/rangojs/rango/pull/919)).
 
 ### Docs
 
