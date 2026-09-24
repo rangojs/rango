@@ -18,6 +18,10 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
+import {
+  DepCrumbProductLoader,
+  DepCrumbSiblingLoader,
+} from "./loaders/loader-cache-dep.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
@@ -121,6 +125,7 @@ import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
+import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
@@ -1370,6 +1375,22 @@ export const urlpatterns = urls(
         cache({ ttl: 60, swr: 300 }, () => [
           path("/cached-handles", CachedHandlesPage, { name: "cachedHandles" }),
         ]),
+
+        // A cached loader's ctx.use dependency, also read by an uncached
+        // sibling loader: its crumb appears once on the MISS and on the HIT,
+        // where the sibling's live run replaces the replayed crumb. ssr: false
+        // puts every push in the document.
+        path(
+          "/loader-cache-dep",
+          LoaderCacheDepPage,
+          { name: "loaderCacheDep" },
+          () => [
+            loader(DepCrumbProductLoader, { ssr: false }, () => [
+              cache({ ttl: 600 }),
+            ]),
+            loader(DepCrumbSiblingLoader, { ssr: false }),
+          ],
+        ),
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),

@@ -1,4 +1,4 @@
-import { isInsideLoaderScope } from "./context.js";
+import { getCurrentLoaderBodyId, isInsideLoaderScope } from "./context.js";
 
 /**
  * Handle data structure: handleName -> segmentId -> entries[]
@@ -46,6 +46,22 @@ function createLateHandlePushError(
   error.name = "LateHandlePushError";
   return error;
 }
+
+/**
+ * Per-slot flags, parallel to one handle/segment values array. Allocated on
+ * the array's first flagged slot; positions past its length are unflagged.
+ */
+interface SlotTag {
+  /** Pushed inside a DSL loader scope; captureHandles drops it. */
+  loader?: boolean;
+  /** A loader-cache replay of this loader's recorded push (pushReplayed). */
+  replayOf?: string;
+  /** Pushed by this loader's live run after it replaced its replayed slots. */
+  liveOf?: string;
+}
+
+// Shared by every plain DSL-loader push; tags are never mutated in place.
+const LOADER_SLOT: SlotTag = Object.freeze({ loader: true });
 
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
@@ -132,6 +148,20 @@ export interface HandleStore {
   ): void;
 
   /**
+   * push() a loader-cache HIT's replayed value, recorded from `loaderId`'s
+   * body (loader-cache.ts replayLoaderHandles). If that loader then runs live
+   * in this request, its first push removes every value replayed for it and
+   * takes the first one's position (later live pushes follow it), so the
+   * handle output stays live without a duplicate.
+   */
+  pushReplayed(
+    handleName: string,
+    segmentId: string,
+    data: unknown,
+    loaderId: string,
+  ): void;
+
+  /**
    * Get all collected handle data after all handlers have settled.
    * Waits for `settled` (handler lane), then returns the data at that point.
    */
@@ -204,10 +234,88 @@ export interface HandleStore {
  */
 export function createHandleStore(): HandleStore {
   const data: HandleData = {};
-  // Positions of DSL-loader pushes, keyed by the per-handle/segment array.
-  // Positional (not value identity) so primitive values are covered too.
-  // replaySegmentData installs fresh arrays, so replayed values are untagged.
-  const loaderPushIndices = new WeakMap<unknown[], Set<number>>();
+  // SlotTag arrays, keyed by the per-handle/segment values array. Positional
+  // (not value identity) so primitive values are covered too.
+  // replaySegmentData installs fresh arrays, so restored values are untagged.
+  const slotTags = new WeakMap<unknown[], (SlotTag | undefined)[]>();
+  // Replayed loaders that have not pushed live yet: loaderId -> the arrays
+  // holding their replayed slots.
+  const pendingReplays = new Map<string, Set<unknown[]>>();
+  // Replayed loaders whose live run already replaced those slots.
+  const replacedReplays = new Set<string>();
+
+  // Aligned to `values` so a mid-array insert or removal keeps positions.
+  function tagsFor(values: unknown[]): (SlotTag | undefined)[] {
+    let tags = slotTags.get(values);
+    if (!tags) slotTags.set(values, (tags = []));
+    if (tags.length < values.length) tags.length = values.length;
+    return tags;
+  }
+
+  function insertSlot(
+    values: unknown[],
+    at: number | undefined,
+    value: unknown,
+    tag: SlotTag | undefined,
+  ): void {
+    if (at === undefined || at >= values.length) {
+      values.push(value);
+      if (tag) tagsFor(values)[values.length - 1] = tag;
+      return;
+    }
+    const tags = tagsFor(values);
+    values.splice(at, 0, value);
+    tags.splice(at, 0, tag);
+  }
+
+  // Remove `loaderId`'s replayed slots; returns the first one's position.
+  function removeReplayedSlots(
+    values: unknown[],
+    loaderId: string,
+  ): number | undefined {
+    const tags = slotTags.get(values);
+    if (!tags) return undefined;
+    let first: number | undefined;
+    let kept = 0;
+    for (let i = 0; i < values.length; i++) {
+      if (tags[i]?.replayOf === loaderId) {
+        first ??= kept;
+        continue;
+      }
+      values[kept] = values[i];
+      tags[kept] = tags[i];
+      kept++;
+    }
+    values.length = kept;
+    tags.length = kept;
+    return first;
+  }
+
+  // Where a live push by a replayed loader lands in `values`: its first push
+  // removes all of its replayed slots and takes the first one's position in
+  // this array; later pushes follow its previous live push. undefined appends.
+  function liveReplacementIndex(
+    loaderId: string,
+    values: unknown[],
+  ): number | undefined {
+    const pending = pendingReplays.get(loaderId);
+    if (pending) {
+      pendingReplays.delete(loaderId);
+      replacedReplays.add(loaderId);
+      let at: number | undefined;
+      for (const replayed of pending) {
+        const first = removeReplayedSlots(replayed, loaderId);
+        if (replayed === values) at = first;
+      }
+      return at;
+    }
+    const tags = slotTags.get(values);
+    if (!tags) return undefined;
+    for (let i = tags.length - 1; i >= 0; i--) {
+      if (tags[i]?.liveOf === loaderId) return i + 1;
+    }
+    return undefined;
+  }
 
   // Settlement barriers: `settled` (handler lane) resolves when sealed AND
   // handler inflight === 0. `fullySettled` additionally waits for the
@@ -361,16 +469,51 @@ export function createHandleStore(): HandleStore {
         data[handleName][segmentId] = [];
       }
       const values = data[handleName][segmentId];
-      values.push(value);
-      if (loaderPush ?? isInsideLoaderScope()) {
-        let indices = loaderPushIndices.get(values);
-        if (!indices) loaderPushIndices.set(values, (indices = new Set()));
-        indices.add(values.length - 1);
+      const loader = (loaderPush ?? isInsideLoaderScope()) || undefined;
+      let at: number | undefined;
+      let liveOf: string | undefined;
+      if (pendingReplays.size > 0 || replacedReplays.size > 0) {
+        const bodyId = getCurrentLoaderBodyId();
+        if (
+          bodyId !== undefined &&
+          (pendingReplays.has(bodyId) || replacedReplays.has(bodyId))
+        ) {
+          at = liveReplacementIndex(bodyId, values);
+          liveOf = bodyId;
+        }
       }
+      insertSlot(
+        values,
+        at,
+        value,
+        liveOf ? { loader, liveOf } : loader ? LOADER_SLOT : undefined,
+      );
 
       // Bump the version; each consumer's cursor decides when to clone+yield.
       version++;
       signalEmission();
+    },
+
+    pushReplayed(
+      handleName: string,
+      segmentId: string,
+      value: unknown,
+      loaderId: string,
+    ): void {
+      const before = data[handleName]?.[segmentId]?.length ?? 0;
+      // Through this.push: active captures see the replay like a live push.
+      this.push(handleName, segmentId, value);
+      const values = data[handleName]?.[segmentId];
+      // A diverting capture kept it out of the store.
+      if (!values || values.length !== before + 1) return;
+      const tags = tagsFor(values);
+      tags[values.length - 1] = {
+        ...tags[values.length - 1],
+        replayOf: loaderId,
+      };
+      let arrays = pendingReplays.get(loaderId);
+      if (!arrays) pendingReplays.set(loaderId, (arrays = new Set()));
+      arrays.add(values);
     },
 
     getData(): Promise<HandleData> {
@@ -458,14 +601,12 @@ export function createHandleStore(): HandleStore {
       for (const handleName in data) {
         const values = data[handleName][segmentId];
         if (!values) continue;
-        const skip = excludeLoaderPushes
-          ? loaderPushIndices.get(values)
-          : undefined;
-        if (!skip) {
+        const tags = excludeLoaderPushes ? slotTags.get(values) : undefined;
+        if (!tags) {
           result[handleName] = [...values];
           continue;
         }
-        const kept = values.filter((_, i) => !skip.has(i));
+        const kept = values.filter((_, i) => !tags[i]?.loader);
         if (kept.length > 0) result[handleName] = kept;
       }
       return result;

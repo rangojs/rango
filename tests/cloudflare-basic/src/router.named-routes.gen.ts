@@ -55,6 +55,7 @@ export const NamedRoutes = {
   inlineIndex: "/inline",
   inlinePricing: "/inline/pricing",
   itemDetail: "/item/:itemId/detail",
+  loaderCacheDep: "/loader-cache-dep",
   localeInfo: "/:locale(en|fr)/info",
   "mixedClient.detail": "/mixed-client-routes/:slug",
   "mixedClient.index": "/mixed-client-routes",

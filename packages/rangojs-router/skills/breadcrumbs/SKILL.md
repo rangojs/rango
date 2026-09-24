@@ -107,7 +107,9 @@ see `/loader` → "Writing Handles from Loaders". Under `cache()` loader crumbs
 are not stored with the cached segments; the loader re-pushes them on every
 hit, so they appear once even without an `href`. A loader with its own
 `cache()` keeps its crumbs on its own hits too: they are replayed from the
-loader's cache entry.
+loader's cache entry. A crumb from a loader it awaits appears once even when
+a sibling loader or the handler reads that loader too; that live run's crumb
+replaces the cached one in the trail.
 
 ## Async Content
 

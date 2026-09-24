@@ -62,6 +62,7 @@ export const NamedRoutes = {
   "cacheTag.cacheTagItem": "/cache-tag-test/item/:id",
   "cacheTag.cacheTagRevalidate": "/cache-tag-test/revalidate/:tag",
   "cacheTest.cachedLoader": "/cache-test/cached-loader",
+  "cacheTest.cachedLoaderDep": "/cache-test/cached-loader-dep",
   "cacheTest.handlerConsumed": "/cache-test/handler-consumed",
   "cacheTest.interceptDetail": "/cache-test/intercept/:itemId",
   "cacheTest.interceptIndex": "/cache-test/intercept",

@@ -741,6 +741,21 @@ export function setupLoaderAccess<TEnv>(
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
+  // Loader-cache HIT replay (loader-cache.ts replayLoaderHandles): a cached
+  // entry records its ctx.use dependencies' pushes too, and a dependency is
+  // memoized here and shared with live readers. A loader that already ran
+  // here keeps its live pushes; otherwise one replay delivers its recorded
+  // pushes, and a later run here replaces them (HandleStore.pushReplayed).
+  const claimed = new Set<string>();
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
+  internal._claimLoaderPushes = (loaderId) => {
+    if (loaderPromises.has(loaderId) || claimed.has(loaderId)) return false;
+    claimed.add(loaderId);
+    return true;
+  };
+  internal._runLoaderIsolated = (loader) =>
+    createLoaderExecutor(ctx, new Map())(loader, null);
+
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
       const handle = item;

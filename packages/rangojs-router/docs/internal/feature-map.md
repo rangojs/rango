@@ -341,7 +341,13 @@ server projection.
   predicate on the loader body scope, `isInsideLoaderBody`) into
   the item's `handles` blob (`encodeHandles`, as `"use cache"`) and appended
   to the current owning segment on every HIT, stale included; a stale
-  revalidation's fresh pushes are diverted into the refreshed entry only.
+  revalidation runs on its own loader executor and its fresh pushes are
+  diverted into the refreshed entry only. The record is grouped by the loader
+  body that pushed, and the replay delivers each loader's group at most once
+  per request (`_claimLoaderPushes`, `setupLoaderAccess`): a dependency a
+  sibling loader or the handler already ran keeps its live pushes, and a
+  later run of a replayed dependency replaces the replayed values in place
+  (`HandleStore.pushReplayed`).
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

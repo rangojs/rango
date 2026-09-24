@@ -743,6 +743,60 @@ This requires separating:
   background revalidation diverts its fresh pushes into the refreshed entry
   only, so the live response carries each push once.
 
+  **A dependency's pushes reach the page once per request.** The dependency
+  is memoized per request and shared with live readers: a sibling DSL loader
+  or the handler can read it on the same request as the cached loader's hit,
+  and loaders stay live, so it runs. The record is therefore grouped by the
+  loader body that pushed (the capture's `key` option, `recordOwnerKey`:
+  run-length `${seq}:${loaderId}` groups, which keep push order across
+  bodies), and the hit replay asks `ctx._claimLoaderPushes(loaderId)`
+  (installed by `setupLoaderAccess`) for each group:
+
+  | When the replay reaches the group                      | Result                                                                           |
+  | ------------------------------------------------------ | -------------------------------------------------------------------------------- |
+  | The loader already ran in this request (a live reader) | Group skipped; the live run's pushes stand                                       |
+  | Another cached loader's replay already delivered it    | Group skipped                                                                    |
+  | Neither                                                | Group replayed; a later run of that loader in this request replaces those values |
+
+  **A live run after the replay replaces the replayed values.** Loaders stay
+  live, so their handle output does too. The replay pushes each value through
+  `HandleStore.pushReplayed(handleName, segmentId, value, loaderId)`, which
+  tags the slot with its loader. When that loader's live run pushes (the
+  store reads the innermost loader body, `getCurrentLoaderBodyId()`), its
+  first push removes every slot replayed for it and takes the first one's
+  position in that handle/segment array, and its later pushes follow the
+  previous one. A live push to another segment (the dependency's owning
+  segment is its kickoff's `_currentSegmentId`) removes the replayed slots
+  and lands where it is pushed.
+
+  Why the position and not an append: the common shape is a cached loader
+  that pushes its own crumb after awaiting the dependency. On the miss the
+  dependency's crumb comes first; an append would put the live crumb after
+  the cached loader's replayed crumb and reorder the trail on every hit.
+
+  Why it can be replaced at all: every consumer receives full per-segment
+  arrays, never deltas. `stream()` and `streamLate()` yield
+  `cloneHandleData(data)`; the client's `setHandleData` replaces the whole
+  state on a document or late update and assigns each segment's array on a
+  partial one (an emptied array is sent as `[]`). A replacement after the
+  handler barrier reaches the document through `metadata.handlesLate`, so the
+  SSR HTML shows the replayed value and the client swaps in the live one after
+  hydration, like any late loader push. The render-barrier snapshot that
+  `ctx.rendered()` readers see is taken once and keeps whichever value was
+  there.
+
+  The live pushes go through `push()`, so a capture that accepts them sees
+  them: another cached loader whose miss reads the same dependency records
+  them. A live run that pushes nothing leaves the replayed values in place.
+
+  The stale revalidation runs on its own loader executor
+  (`ctx._runLoaderIsolated`, a fresh memo map). Sharing the request's
+  executor made a diverted refresh take the dependency's only run: the live
+  reader got the memoized result and the page lost the push (#896). The
+  refresh's pushes are diverted before they reach the store, so they never
+  replace anything on the page. The cost is one extra dependency run on a
+  stale hit when a live reader also reads it.
+
 ---
 
 ## cache() DSL Design

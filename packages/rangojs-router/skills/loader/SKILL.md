@@ -587,7 +587,12 @@ Handle pushes the body makes (`ctx.use(Meta)(...)`, breadcrumbs — see
 included: appended to the loader's segment in push order, so a cached
 loader's title or crumb stays on the page. Relative to the handler's and
 sibling loaders' pushes, the replay lands when the cache read completes —
-the same race a live loader push has. A pending push
+the same race a live loader push has. A loader the cached body awaited can
+still run on a hit, because a sibling loader or the handler also reads it
+(loaders stay live); its pushes still appear once, and they are the live
+ones. If it ran before the replay, the replay skips its recorded pushes; if
+it runs after, its pushes replace the replayed ones in their position (after
+hydration, when it lands after the document's handle snapshot). A pending push
 (a promise, an async callback, a `.defer()` slot) is recorded once it settles,
 as in `"use cache"`: the background write waits up to 5 s, and a value Flight
 cannot serialize or a push still pending at 5 s drops that entry's handle

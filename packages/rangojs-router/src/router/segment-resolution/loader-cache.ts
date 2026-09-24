@@ -18,12 +18,18 @@
  * On miss: executes loader, schedules non-blocking cache write.
  *
  * Handle pushes (`ctx.use(Handle)(...)` in the loader body) are a side effect
- * the HIT must reproduce: the MISS records the body's own pushes into the
- * entry's `handles` blob (the "use cache" capture/encode), and every HIT —
- * stale included — replays them. See replayLoaderHandles.
+ * the HIT must reproduce: the MISS records the pushes of the body and of the
+ * loaders it awaits via ctx.use into the entry's `handles` blob (the
+ * "use cache" capture/encode), and every HIT — stale included — replays
+ * them, each loader's pushes at most once per request (a dependency another
+ * reader already ran keeps its live pushes). See replayLoaderHandles.
  */
 
-import { isInsideLoaderBody, type LoaderEntry } from "../../server/context.js";
+import {
+  getCurrentLoaderBodyId,
+  isInsideLoaderBody,
+  type LoaderEntry,
+} from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import type { CacheItemResult } from "../../cache/types.js";
@@ -31,11 +37,7 @@ import {
   startHandleCapture,
   type HandleCapture,
 } from "../../cache/handle-capture.js";
-import {
-  appendHandles,
-  encodeHandles,
-  decodeHandles,
-} from "../../cache/handle-snapshot.js";
+import { encodeHandles, decodeHandles } from "../../cache/handle-snapshot.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import {
   getRequestContext,
@@ -140,13 +142,22 @@ function getLoaderStore(
 /**
  * Replay a loader-cache entry's recorded handle pushes on a HIT.
  *
- * appendHandles to the CURRENT owning segment (the recorded ids are the MISS
+ * Pushed to the CURRENT owning segment (the recorded ids are the MISS
  * request's), in recorded order.
+ *
+ * One delivery per loader per request: each recorded group is one loader
+ * body's pushes (recordOwnerKey), and `claim` (setupLoaderAccess
+ * _claimLoaderPushes) skips a group whose loader already ran in this request
+ * — a sibling loader or the handler read the dependency, and its live pushes
+ * stand — or that another replay delivered. A claimed loader that runs later
+ * (loaders stay live) replaces its replayed values with its live pushes
+ * (HandleStore.pushReplayed).
  *
  * Deliberately NOT inside the loader's body scope: a stale hit's background
  * revalidation of the same loader can be running with a diverting capture
  * keyed on that body scope (executeLoaderData), which would swallow the
- * replay.
+ * replay; and the store reads the body scope to tell a live push from a
+ * replayed one.
  * Outside it, a PPR shell capture classifies replayed pushes as
  * loader-scoped and unbaked (shell-capture.ts), so a shell HIT gets them
  * from the loader's own re-run, not twice.
@@ -155,9 +166,44 @@ async function replayLoaderHandles(
   encoded: string,
   handleStore: HandleStore,
   segmentId: string,
+  claim: ((loaderId: string) => boolean) | undefined,
 ): Promise<void> {
   const recorded = await decodeHandles(encoded);
-  if (recorded) appendHandles(recorded, handleStore, segmentId);
+  if (!recorded) return;
+  const delivers = new Map<string, boolean>();
+  for (const key in recorded) {
+    const owner = key.slice(key.indexOf(":") + 1);
+    let deliver = delivers.get(owner);
+    if (deliver === undefined) {
+      deliver = claim ? claim(owner) : true;
+      delivers.set(owner, deliver);
+    }
+    if (!deliver) continue;
+    for (const [handleName, values] of Object.entries(recorded[key])) {
+      for (const value of values) {
+        handleStore.pushReplayed(handleName, segmentId, value, owner);
+      }
+    }
+  }
+}
+
+/**
+ * Record key for the MISS capture: run-length groups by the innermost loader
+ * body, `${seq}:${loaderId}` — the cached loader or a dependency it awaits
+ * via ctx.use. Groups keep push order across bodies; the owner lets the
+ * replay deliver each loader's pushes at most once per request.
+ */
+function recordOwnerKey(cachedLoaderId: string): () => string {
+  let seq = 0;
+  let owner: string | undefined;
+  return () => {
+    const current = getCurrentLoaderBodyId() ?? cachedLoaderId;
+    if (current !== owner) {
+      owner = current;
+      seq++;
+    }
+    return `${seq}:${current}`;
+  };
 }
 
 /**
@@ -356,8 +402,9 @@ function executeLoaderData<TEnv>(
   const handleStore = _getRequestContext()?._handleStore;
   const owningSegmentId = internal._currentSegmentId;
   // Record only pushes from THIS loader's body and the loaders it awaits via
-  // ctx.use (none of them run on a HIT): the handler and sibling loaders push
-  // into the same store concurrently.
+  // ctx.use: the handler and sibling loaders push into the same store
+  // concurrently. A dependency can still run on a HIT for another reader
+  // (memoized per request); the replay's claim keeps its pushes to one copy.
   const isOwnBodyPush = () => isInsideLoaderBody(loaderId);
 
   const dataPromise = (async () => {
@@ -390,17 +437,22 @@ function executeLoaderData<TEnv>(
       debugLoaderCacheLog(`[LoaderCache] ${label}: ${key}`);
     };
     const execute = async (): Promise<any> => {
-      if (!handleStore) return runMiss(loaderEntry.loader);
+      // A stale-hit revalidation runs on its own executor: it diverts its
+      // pushes (below), so sharing the page's memoized run of a dependency
+      // would take that dependency's pushes off the page.
+      const run = (revalidating && internal._runLoaderIsolated) || runMiss;
+      if (!handleStore) return run(loaderEntry.loader);
       // A stale-hit revalidation diverts the body's pushes: the foreground
       // already replayed the stale entry's, so the fresh ones belong only to
       // the refreshed entry (not a duplicate in the live response).
       const c = startHandleCapture(handleStore, {
         accept: isOwnBodyPush,
         divert: revalidating,
+        key: recordOwnerKey(loaderId),
       });
       capture = c.capture;
       try {
-        return await runMiss(loaderEntry.loader);
+        return await run(loaderEntry.loader);
       } finally {
         c.stop();
       }
@@ -443,7 +495,12 @@ function executeLoaderData<TEnv>(
 
     // An entry written before handles were recorded has none: no replay.
     if (hitHandles && handleStore && owningSegmentId) {
-      await replayLoaderHandles(hitHandles, handleStore, owningSegmentId);
+      await replayLoaderHandles(
+        hitHandles,
+        handleStore,
+        owningSegmentId,
+        internal._claimLoaderPushes,
+      );
     }
     return data;
   })();

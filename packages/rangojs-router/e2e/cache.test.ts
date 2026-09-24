@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, blockPrefetch } from "./helper";
 
@@ -75,6 +75,46 @@ function getCacheLogs(stdout: string): {
     cached: lines.filter((line) => line.includes("[CacheScope] Cached:")),
     stale: lines.filter((line) => line.includes("[CacheScope] STALE:")),
   };
+}
+
+/**
+ * /cache-test/cached-loader-dep: a loader with its own cache() awaits a
+ * dependency that an uncached sibling loader also reads. The dependency's
+ * crumb (a per-run id) appears once on the MISS and once on each HIT, and on
+ * a HIT it is the sibling's live run's crumb, replacing the replayed one.
+ */
+async function expectDepCrumbOnceAcrossLoaderCacheHit(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const oneCrumb = /^Category [0-9a-f]{8}$/;
+  const load = async () => {
+    await page.goto(url("/cache-test/cached-loader-dep"));
+    await waitForHydration(page);
+    return {
+      stamp: await page.getByTestId("loaded-at").textContent(),
+      crumbs: await page.getByTestId("dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load();
+  expect(first.crumbs).toMatch(oneCrumb);
+
+  // An unchanged stamp is the cached loader value: a loader-cache HIT.
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load()).stamp, {
+      timeout: 8000,
+      message: "Expected a loader-cache HIT (unchanged loaded-at stamp)",
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toMatch(oneCrumb);
+
+  // Each HIT shows the live run's crumb, not the replayed copy.
+  const next = await load();
+  expect(next.stamp).toBe(first.stamp);
+  expect(next.crumbs).toMatch(oneCrumb);
+  expect(next.crumbs).not.toBe(hit.crumbs);
 }
 
 /**
@@ -352,6 +392,13 @@ test.describe("cache-loader-behavior", () => {
       });
   });
 
+  test("loader cache(): a dependency also read by a sibling loader shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDepCrumbOnceAcrossLoaderCacheHit(page, (p) => f.url(p));
+  });
+
   // Consumption-lane rule, cache() tier (docs/internal/execution-model.md;
   // the PPR twin is semantic matrix row PPR3): a route-level cache() scope
   // whose HANDLER consumes an UNCACHED loader via `await ctx.use(...)` serves
@@ -458,6 +505,13 @@ test.describe("cache-loader-behavior (production)", () => {
         count: firstCount,
         loadedAt: firstLoadedAt,
       });
+  });
+
+  test("loader cache(): a dependency also read by a sibling loader shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectDepCrumbOnceAcrossLoaderCacheHit(page, (p) => f.url(p));
   });
 
   // Consumption-lane rule, cache() tier — production counterpart of the dev
