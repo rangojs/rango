@@ -32,6 +32,17 @@ const OkLoader = (createLoader as Function)(
   "test#InterceptHandlerOkLoader",
 );
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const SlowLoader = (createLoader as Function)(
+  async () => {
+    await sleep(30);
+    return "slow";
+  },
+  undefined,
+  "test#InterceptHandlerSlowLoader",
+);
+
 const onError = vi.fn();
 let router: any;
 
@@ -53,7 +64,15 @@ beforeAll(async () => {
         path("/", <div>home</div>, { name: "ihHome" }),
         // Target routes carry their own boundaries; the intercept does not
         // use them.
-        ...["Sync", "Async", "AsyncLoader", "Gone", "AsyncGone"].map((n) =>
+        ...[
+          "Sync",
+          "Async",
+          "AsyncLoader",
+          "SlowLoader",
+          "SlowLayout",
+          "Gone",
+          "AsyncGone",
+        ].map((n) =>
           path(
             `/${n.toLowerCase()}/:id`,
             <div>{n}</div>,
@@ -86,6 +105,28 @@ beforeAll(async () => {
             throw new Error("async loader-branch modal failed");
           },
           () => [loader(OkLoader)],
+        ),
+        // The handler rejects while a loader / an async layout is still pending.
+        intercept(
+          "@modal",
+          "ihSlowLoader",
+          async () => {
+            throw new Error("modal failed before its loader");
+          },
+          () => [loader(SlowLoader)],
+        ),
+        intercept(
+          "@modal",
+          "ihSlowLayout",
+          async () => {
+            throw new Error("modal failed before its layout");
+          },
+          () => [
+            layout(async () => {
+              await sleep(30);
+              return <ModalChrome />;
+            }),
+          ],
         ),
         intercept("@modal", "ihGone", () => notFound("no such item")),
         intercept("@modal", "ihAsyncGone", async () => notFound("gone async")),
@@ -199,6 +240,28 @@ describe("intercept handler errors render the declaring layout's boundary", () =
     );
     expect(nav.modal.loaderIds).toEqual(["test#InterceptHandlerOkLoader"]);
   });
+
+  // Issue #897: the handler promise is awaited only after the intercept layout
+  // and loaders, so a rejection while either was pending went unhandled (a
+  // crash under Node's default --unhandled-rejections=throw).
+  it.each([
+    ["a loader", "/slowloader/1", "modal failed before its loader"],
+    ["an async layout", "/slowlayout/1", "modal failed before its layout"],
+  ])(
+    "an async throw while %s is pending renders the errorBoundary with no unhandledRejection",
+    async (_, pathname, message) => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const nav = await navigate(pathname);
+        expectModalFallback(nav, LayoutError, 500, message);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+      expect(unhandled).toEqual([]);
+    },
+  );
 
   it("notFound() renders the notFoundBoundary with a 404", async () => {
     const nav = await navigate("/gone/1");

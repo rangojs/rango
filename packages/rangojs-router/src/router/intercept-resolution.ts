@@ -337,6 +337,10 @@ export async function resolveInterceptEntry<TEnv>(
       options?.skipMiddleware,
     );
   }
+  // Consumed only after the layout and loader awaits below; a rejection in that
+  // window would be an unhandledRejection (process crash on Node's default
+  // mode). The later await / trackHandler still observes it.
+  if (handlerResult instanceof Promise) handlerResult.catch(() => {});
 
   let layoutElement: ReactNode | undefined;
   if (interceptEntry.layout) {
