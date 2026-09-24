@@ -57,6 +57,10 @@ function ProductPrice() {
 }
 ```
 
+Unit-test the indicator with `renderRoute` (`/testing`, client-components.md
+"Held navigation"): a `transition` spec plus a pending seed in
+`router.navigate(url, { loaders })`.
+
 **Precondition**: Loader must be registered on route via `loader()` helper.
 
 **`load()` / `refetch` need a fetchable loader.** `load()`, `refetch`, and

@@ -43,7 +43,9 @@ function toScrollPayload(
   return { enabled: scroll !== false ? scroll : false };
 }
 
-function shouldStartViewTransition(segments: ResolvedSegment[]): boolean {
+export function shouldStartViewTransition(
+  segments: ResolvedSegment[],
+): boolean {
   let hasIntercept = false;
   let hasTransition = false;
   for (const s of segments) {
@@ -51,6 +53,29 @@ function shouldStartViewTransition(segments: ResolvedSegment[]): boolean {
     else if (s.transition) hasTransition = true;
   }
   return !hasIntercept && hasTransition;
+}
+
+/**
+ * Transition commit. Every held commit announces the loader streams the
+ * committed tree is still receiving (loader-store.ts announcePendingStreams)
+ * so held useLoader readers pin isLoading:true until this transition lands;
+ * settled/cached segments make it a no-op. Urgent commits call onUpdate
+ * directly: nothing is held there, a reader of a pending stream suspends to
+ * its fallback. Also used by renderRoute's navigate() (testing/render-route.tsx).
+ */
+export function commitInTransition(
+  onUpdate: UpdateSubscriber,
+  segments: readonly ResolvedSegment[],
+  update: NavigationUpdate,
+  transitionTypes: readonly string[],
+): void {
+  startTransition(() => {
+    loaderStore.announcePendingStreams(segments);
+    if (addTransitionType) {
+      for (const type of transitionTypes) addTransitionType(type);
+    }
+    onUpdate(update);
+  });
 }
 
 /**
@@ -139,28 +164,6 @@ export function createPartialUpdater(
     const currentKey = store.getHistoryKey();
     const cached = store.getCachedSegments(currentKey);
     return cached?.segments || [];
-  }
-
-  /**
-   * Transition commit. Every held commit announces the loader streams the
-   * committed tree is still receiving (loader-store.ts announcePendingStreams)
-   * so held useLoader readers pin isLoading:true until this transition lands;
-   * settled/cached segments make it a no-op. Urgent commits call onUpdate
-   * directly: nothing is held there, a reader of a pending stream suspends to
-   * its fallback.
-   */
-  function commitInTransition(
-    segments: readonly ResolvedSegment[],
-    update: NavigationUpdate,
-    transitionTypes: readonly string[],
-  ): void {
-    startTransition(() => {
-      loaderStore.announcePendingStreams(segments);
-      if (addTransitionType) {
-        for (const type of transitionTypes) addTransitionType(type);
-      }
-      onUpdate(update);
-    });
   }
 
   async function fetchPartialUpdate(
@@ -374,7 +377,9 @@ export function createPartialUpdater(
           };
 
           if (shouldStartViewTransition(existingSegments)) {
-            commitInTransition(existingSegments, cachedUpdate, ["navigation"]);
+            commitInTransition(onUpdate, existingSegments, cachedUpdate, [
+              "navigation",
+            ]);
           } else {
             onUpdate(cachedUpdate);
           }
@@ -614,12 +619,14 @@ export function createPartialUpdater(
       };
       if (mode.type === "action" || mode.type === "stale-revalidation") {
         commitInTransition(
+          onUpdate,
           reconciled.mainSegments,
           update,
           hasTransition ? ["action"] : [],
         );
       } else if (hasTransition) {
         commitInTransition(
+          onUpdate,
           reconciled.mainSegments,
           update,
           optimisticPresented
@@ -650,6 +657,7 @@ export function createPartialUpdater(
         // segment reconciles in place (clientGroup key), so a read that still
         // suspends must hold the presented content, not flash a fallback.
         commitInTransition(
+          onUpdate,
           reconciled.mainSegments,
           update,
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
@@ -713,18 +721,20 @@ export function createPartialUpdater(
           return;
         }
         commitInTransition(
+          onUpdate,
           segments,
           fullUpdate,
           fullHasTransition ? ["action"] : [],
         );
       } else if (mode.type === "action") {
         commitInTransition(
+          onUpdate,
           segments,
           fullUpdate,
           fullHasTransition ? ["action"] : [],
         );
       } else if (fullHasTransition) {
-        commitInTransition(segments, fullUpdate, ["navigation"]);
+        commitInTransition(onUpdate, segments, fullUpdate, ["navigation"]);
       } else {
         onUpdate(fullUpdate);
       }

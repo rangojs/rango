@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { cleanup } from "@testing-library/react";
+import { Suspense } from "react";
+import { act, cleanup } from "@testing-library/react";
 import { Outlet, useOutlet } from "../../client.js";
 import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
 import { useParams } from "../../browser/react/use-params.js";
@@ -580,7 +581,7 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
 });
 
 describe("renderRoute navigation lifecycle is frozen at idle", () => {
-  // navigate() commits synchronously (no server fetch / Flight stream), so the
+  // navigate() never starts the navigation lifecycle (no server fetch), so the
   // transition state useNavigation/useLinkStatus/useAction read never leaves
   // "idle". A test that asserts a non-idle state would silently pass; the helper
   // warns once so that false-confidence trap is loud.
@@ -610,6 +611,94 @@ describe("renderRoute navigation lifecycle is frozen at idle", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("renderRoute held navigation (transition() + pending loader seed)", () => {
+  // Consumer contract (#861): a stale indicator rendered from
+  // useLoader().isLoading on a transition() route. navigate() commits through
+  // the production commitInTransition, so the reader React keeps on screen is
+  // pinned isLoading:true until the commit that swaps its data.
+  const ProductLoader = { __brand: "loader" } as unknown as LoaderDefinition<{
+    name: string;
+  }>;
+
+  function dedupe(list: string[]): string[] {
+    return list.filter((v, i) => i === 0 || list[i - 1] !== v);
+  }
+
+  it("renders the held reader fresh -> stale -> fresh across a navigation whose loader is still streaming", async () => {
+    const renders: string[] = [];
+    function ProductPrice() {
+      const { data, isLoading } = useLoader(ProductLoader);
+      const status = `${isLoading ? "stale" : "fresh"}:${data.name}`;
+      renders.push(status);
+      return <p data-testid="price">{status}</p>;
+    }
+
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/products/:id", Component: ProductPrice, transition: {} }],
+      {
+        request: "/products/1",
+        loaders: [[ProductLoader, { name: "Product 1" }]],
+      },
+    );
+    expect(getByTestId("price").textContent).toBe("fresh:Product 1");
+
+    let resolve!: (value: { name: string }) => void;
+    const next = new Promise<{ name: string }>((r) => (resolve = r));
+    await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+
+    expect(router.pathname()).toBe("/products/2");
+    expect(getByTestId("price").textContent).toBe("stale:Product 1");
+
+    await act(async () => {
+      resolve({ name: "Product 2" });
+    });
+
+    expect(getByTestId("price").textContent).toBe("fresh:Product 2");
+    expect(dedupe(renders)).toEqual([
+      "fresh:Product 1",
+      "stale:Product 1",
+      "fresh:Product 2",
+    ]);
+  });
+
+  it("commits urgently without transition(): the pending read suspends to its Suspense fallback", async () => {
+    function Shell() {
+      return (
+        <Suspense fallback={<p data-testid="price">skeleton</p>}>
+          <Outlet />
+        </Suspense>
+      );
+    }
+    function ProductPrice() {
+      const { data, isLoading } = useLoader(ProductLoader);
+      return (
+        <p data-testid="price">{`${isLoading ? "stale" : "fresh"}:${data.name}`}</p>
+      );
+    }
+
+    const { getByTestId, router } = await renderRoute(
+      [
+        { path: "/products", Component: Shell },
+        { path: "/products/:id", Component: ProductPrice },
+      ],
+      {
+        request: "/products/1",
+        loaders: [[ProductLoader, { name: "Product 1" }]],
+      },
+    );
+
+    let resolve!: (value: { name: string }) => void;
+    const next = new Promise<{ name: string }>((r) => (resolve = r));
+    await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+    expect(getByTestId("price").textContent).toBe("skeleton");
+
+    await act(async () => {
+      resolve({ name: "Product 2" });
+    });
+    expect(getByTestId("price").textContent).toBe("fresh:Product 2");
   });
 });
 
