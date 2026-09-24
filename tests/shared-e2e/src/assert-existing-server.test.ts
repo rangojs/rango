@@ -9,9 +9,10 @@ import {
 const LISTEN_SCRIPT = `
 const http = require("node:http");
 const body = process.env.RANGO_E2E_PROBE_BODY || "";
-const server = http.createServer((_req, res) => {
+const server = http.createServer((req, res) => {
   res.writeHead(200);
-  res.end(body);
+  // "{host}" echoes the request's Host header.
+  res.end(body.replace("{host}", String(req.headers.host)));
 });
 server.listen(0, "127.0.0.1", () => {
   process.stdout.write(String(server.address().port));
@@ -135,6 +136,25 @@ describe("assertExistingServerIsOurs", () => {
           port: server.port,
           marker: 'data-testid="home-page"',
           label: "cf-basic",
+        }),
+      ).not.toThrow();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  // The suites reach every server as http://localhost:<port>. A host-routed
+  // fixture (e2e/test-app/.host-fixture) answers by Host, and its hostOverride
+  // cookie is rejected on 127.0.0.1, so a probe sending that Host classifies
+  // this checkout's own server as foreign (issue #886).
+  it("sends Host localhost:<port>, the Host the suites send", async () => {
+    const server = await startMarkerServer("<p>host=[{host}]</p>");
+    try {
+      expect(() =>
+        assertExistingServerIsOurs({
+          port: server.port,
+          marker: `host=[localhost:${server.port}]`,
+          label: "host-fixture dev",
         }),
       ).not.toThrow();
     } finally {

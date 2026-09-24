@@ -6,8 +6,8 @@ import process from "node:process";
  * port is open (`checkPortOnly`). A foreign Vite server on this checkout's
  * port is reused silently and the suite runs against the wrong app (issue
  * #863). Call this before enabling reuse: if the port is taken, GET the URL
- * and require `marker` in the body; otherwise throw with `lsof` so the
- * listener is named.
+ * (Host: localhost:<port>) and require `marker` in the body; otherwise throw
+ * with `lsof` so the listener is named.
  */
 
 export type ExistingServerKind = "free" | "ours" | "foreign";
@@ -99,7 +99,14 @@ export function assertExistingServerIsOurs(
   identity: ExistingServerIdentity,
 ): void {
   const url = `http://127.0.0.1:${identity.port}${identity.path ?? "/"}`;
-  const probe = probeHttp(url, identity.headers);
+  // Connect on 127.0.0.1 but send the Host the suites send
+  // (http://localhost:<port>). Host-routed fixtures answer by Host, and
+  // hostOverride rejects its cookie on 127.0.0.1 (issue #886). node:http
+  // honors a caller-set Host; fetch would drop it.
+  const probe = probeHttp(url, {
+    host: `localhost:${identity.port}`,
+    ...identity.headers,
+  });
   const kind = classifyExistingServer({
     reachable: probe.reachable,
     body: probe.body,

@@ -21,16 +21,17 @@ export default defineConfig({
   fullyParallel: true,
   globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60_000 : 30_000,
+  // vite directly, not `pnpm <script>` (see playwright.config.ts, issue #886).
   webServer: [
     {
-      command: `pnpm build && rm -rf ${CACHE_DIR} && pnpm dev --port ${DEV_PORT}`,
+      command: `./node_modules/.bin/vite build && rm -rf ${CACHE_DIR} && ./node_modules/.bin/vite --port ${DEV_PORT}`,
       cwd: "./e2e/test-app",
       port: DEV_PORT,
       reuseExistingServer: false,
       env: SERVER_ENV,
     },
     {
-      command: `pnpm preview --port ${PREVIEW_PORT}`,
+      command: `./node_modules/.bin/vite preview --port ${PREVIEW_PORT}`,
       cwd: "./e2e/test-app",
       port: PREVIEW_PORT,
       reuseExistingServer: false,
