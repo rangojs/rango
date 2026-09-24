@@ -69,6 +69,12 @@ re-runs on the hit and pushes again, so each value appears once. A loader that
 runs only because a cached handler awaited it with `ctx.use(Loader)` does not
 re-run on a hit, so its pushes are stored with the handler's.
 
+A component that throws while the entry is written is not cached. Writing
+re-renders the segments, so an async server component whose fetch fails there
+would otherwise be stored as an error and rendered on every hit. Instead the
+write is skipped and reported to `onError` (phase `"cache"`, category
+`cache-write`): the next request renders fresh, and a stale entry keeps serving.
+
 Pre-rendering (`/prerender`) is the build-time counterpart: it stores the same
 kind of segment payload at build time instead of on first request. Both feed the
 segment system identically, and loaders always run fresh at request time.
