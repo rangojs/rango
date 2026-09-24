@@ -483,10 +483,12 @@ a loader's data, explicitly opt in with `loader(Fn, () => [cache({...})])`.
 
 ## cache() Placement Patterns
 
-### Wrapping children of a path
+### cache() among a path's children
 
-An orphan `cache()` inside a path's children becomes the parent for all
-subsequent siblings. Everything below the cache boundary is cached as one unit:
+A `cache()` among a path's children caches that path. The path's handler and
+its own layouts and parallels are one cached unit, wherever the `cache()` sits
+in the list. Every other item still attaches to the path, and the segments
+above the path stay live:
 
 ```typescript
 path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
@@ -495,11 +497,18 @@ path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
     parallel("@stats", StatsPanel),
     parallel("@activity", ActivityFeed),
   ]),
+  loader(DashboardLoader),
 ]),
 ```
 
 On hit: DashboardPage, DashboardSidebar, StatsPanel, and ActivityFeed are all
-served from cache. On miss: all handlers run, all segments cached together.
+served from cache, and DashboardLoader runs fresh. On miss: all handlers run
+and the path's segments are cached together. DashboardPage runs inside the
+boundary, so the guards apply to it: a header write there throws. The wrapper
+form `cache({ ttl: 300 }, () => [layout(DashboardSidebar)])` inside a path
+does the same, and `cache(false)` there opts the path out of an enclosing
+`cache()`. The same form caches a response route:
+`path.json("/api/feed", handler, { name: "feed" }, () => [cache({ ttl: 60 })])`.
 
 ### Uncached layout with cached children
 

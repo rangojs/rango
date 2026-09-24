@@ -325,6 +325,28 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const name = `$${cacheIndex}`;
   const cacheConfig = { options };
 
+  // Among a path's children, cache() configures that path: the route entry
+  // carries the config, so buildEntriesAndCacheScope (router/route-snapshot.ts)
+  // makes the route the boundary and its own segments (handler, layouts,
+  // parallels) the cached unit. Both forms leave ctx.parent on the route, so
+  // every sibling and wrapped item still attaches to it. Issue #912: a cache
+  // entry here was never an ancestor of the route (no scope, no store write),
+  // and a layout() after it nested under that orphan entry, which
+  // resolveOrphanLayout (segment-resolution/fresh.ts) never renders.
+  if (ctx.parent?.type === "route") {
+    ctx.parent.cache = cacheConfig;
+    if (!children) return { name, type: "cache" } as CacheItem;
+    const uses = runAndValidateUseItems(
+      store,
+      `${ctx.namespace}.${cacheIndex}`,
+      ctx.parent,
+      children,
+      "cache",
+      "children",
+    );
+    return { name, type: "cache", uses } as CacheItem;
+  }
+
   // If no children, create an orphan cache entry (like orphan layouts)
   // This allows cache() to wrap subsequent siblings
   if (!children) {
@@ -755,7 +777,8 @@ const intercept = (
     // shallow spread of the enclosing entry, so every field a rejected helper
     // writes to points at a throwaway here: a helper called but not returned
     // from use() never lands on the enclosing layout. cache() writes into
-    // `layout` (capturedLayouts).
+    // `layout` (capturedLayouts), or into `cache` when the enclosing entry
+    // is a route.
     //
     // Why an intercept rejects these (validateInterceptUseItems):
     // - revalidate(): an intercept only evaluates its loaders' revalidate()
@@ -776,6 +799,7 @@ const intercept = (
       notFoundBoundary: [],
       parallel: {},
       intercept: [],
+      cache: undefined,
       get loading() {
         return entry.loading;
       },

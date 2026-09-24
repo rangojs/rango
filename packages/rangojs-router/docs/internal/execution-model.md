@@ -101,6 +101,14 @@ global middleware
   chain, which bakes into the shell. Pinned by
   `match-middleware/__tests__/cache-outer-layout.test.ts` and
   `e2e/cache-outer-live.test.ts` (test-app and cloudflare-basic).
+- A `cache()` among a path's children sets that route entry's own `cache`
+  config (`cache()` in `dsl-helpers.ts`), so the route is its boundary: the
+  route segment and its own layouts and parallels are stored and replayed, and
+  every entry above the route stays live. The header and non-cacheable-var
+  guards latch at the route (`entry.cache` in `resolveAllSegments` and
+  `resolveAllSegmentsWithRevalidation`). Pinned by
+  `match-middleware/__tests__/cache-path-children.test.ts` and
+  `e2e/cache-path-children.test.ts`.
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.

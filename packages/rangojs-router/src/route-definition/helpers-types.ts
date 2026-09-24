@@ -446,6 +446,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   route("archive/:year"),     // uses KV store
    * ])
    *
+   * // Among a path's children: caches that path (handler, layouts, parallels)
+   * path("/product/:id", ProductPage, { name: "product" }, () => [
+   *   cache({ ttl: 60 }),
+   *   layout(<ProductChrome />),  // cached with the path
+   * ])
+   *
    * // Opt-in loader caching
    * route("product/:id", ProductHandler, () => [
    *   loader(ProductLoader),               // NOT cached (default)
