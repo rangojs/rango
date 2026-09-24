@@ -23,10 +23,13 @@
  *     SEEDED directly into client context (see the `loaders` / `locationState` /
  *     `handles` / `outletPending` options) — nothing is executed on the server.
  *     This exercises the context read path, not the run path.
- *   - navigate() commits synchronously, so it does NOT drive the navigation
- *     lifecycle: useNavigation().state, useLinkStatus().pending, and
- *     useAction().state stay "idle". Assert pending/loading/submitting transition
- *     states with renderServerTree / e2e instead (navigate() warns once if used).
+ *   - navigate() does NOT drive the navigation lifecycle: useNavigation().state,
+ *     useLinkStatus().pending, and useAction().state stay "idle". Assert
+ *     pending/loading/submitting transition states with renderServerTree / e2e
+ *     instead (navigate() warns once if used). The one pending state it does
+ *     model is the held-navigation useLoader().isLoading: a `transition` spec
+ *     plus a pending Promise seeded via navigate(url, { loaders }) commits
+ *     through production's commitInTransition (browser/partial-update.ts).
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
@@ -48,7 +51,15 @@ import {
 } from "../browser/navigation-store.js";
 import { createEventController } from "../browser/event-controller.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
-import type { NavigationStore, NavigationBridge } from "../browser/types.js";
+import {
+  commitInTransition,
+  shouldStartViewTransition,
+} from "../browser/partial-update.js";
+import type {
+  NavigationStore,
+  NavigationBridge,
+  UpdateSubscriber,
+} from "../browser/types.js";
 import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
@@ -57,7 +68,7 @@ import {
   buildParamsFromMatch,
 } from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
-import type { LoaderDefinition } from "../types.js";
+import type { LoaderDefinition, TransitionConfig } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
@@ -130,6 +141,14 @@ export interface RenderRouteSpec {
   loaderIds?: string[];
   /** Optional route name (informational; not used for matching). */
   name?: string;
+  /**
+   * The `transition()` config this node declares (`{}` for a bare
+   * `transition()`), attached to its segment as the DSL does. Puts the chain in
+   * a transition scope: param-agnostic keys (segment-system.tsx) and a held
+   * navigate() commit, so a pending loader seed passed to
+   * `router.navigate(url, { loaders })` pins `useLoader().isLoading`.
+   */
+  transition?: TransitionConfig;
 }
 
 /**
@@ -303,8 +322,26 @@ export interface TestRouterHandle {
    * updates params + location, and re-renders the segment tree. This is a
    * client-only navigation: no server fetch occurs, so only the components in
    * `routes` can be reached.
+   *
+   * `options.loaders` seeds loader data for THIS navigation, merged over the
+   * render-time seeds (the data a real navigation's response would carry). A
+   * pending Promise suspends the read like a streaming Flight chunk. When a
+   * spec in the chain has `transition`, the commit goes through production's
+   * commitInTransition: the reader stays on screen with
+   * `useLoader().isLoading === true` until the promise settles. Settle it
+   * inside RTL's `act()` to flush the commit. Without `transition` the commit
+   * is urgent and the read suspends to the nearest Suspense boundary.
+   *
+   * @example
+   * await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+   * // reader: isLoading true, old data
+   * await act(async () => resolve({ name: "Product 2" }));
+   * // reader: isLoading false, new data
    */
-  navigate(url: string): Promise<void>;
+  navigate(
+    url: string,
+    options?: Pick<RenderRouteOptions, "loaders">,
+  ): Promise<void>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -413,6 +450,7 @@ function buildSegments(
       belongsToRoute: true,
     };
     if (mount) node.mountPath = mount;
+    if (spec.transition) node.transition = spec.transition;
     if (isLeaf && spec.layout) {
       const Layout = spec.layout;
       node.layout = <Layout />;
@@ -464,10 +502,17 @@ export async function renderRoute(
   const initialUrl = requestUrl ?? staticPrefix(leaf.path) ?? "/";
   const url = new URL(initialUrl, TEST_ORIGIN);
 
-  const loaderData: Record<string, unknown> = { ...(options.loaderData ?? {}) };
-  for (const [loader, data] of options.loaders ?? []) {
-    loaderData[ensureSyntheticId(loader as object, "$$id")] = data;
-  }
+  const seedLoaders = (
+    base: Record<string, unknown>,
+    loaders: RenderRouteOptions["loaders"],
+  ): Record<string, unknown> => {
+    const out = { ...base };
+    for (const [loader, data] of loaders ?? []) {
+      out[ensureSyntheticId(loader as object, "$$id")] = data;
+    }
+    return out;
+  };
+  const loaderData = seedLoaders(options.loaderData ?? {}, options.loaders);
 
   if (typeof window !== "undefined") {
     const stateObj: Record<string, unknown> = {};
@@ -550,25 +595,33 @@ export async function renderRoute(
   );
 
   let warnedNavLifecycle = false;
-  const navigate = async (target: string): Promise<void> => {
-    // renderRoute commits navigations synchronously (no server fetch, no Flight
-    // stream), so it never drives the navigation lifecycle. The transition state
-    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting a
-    // pending/loading/submitting state here proves nothing. Warn once (per render)
-    // under the test runner so that false-confidence trap is loud, not silent.
+  const navigate = async (
+    target: string,
+    navOptions?: Pick<RenderRouteOptions, "loaders">,
+  ): Promise<void> => {
+    // No server fetch, so the navigation lifecycle never starts: the state
+    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting
+    // a pending/loading/submitting state here proves nothing. Warn once (per
+    // render) under the test runner so that false-confidence trap is loud.
     if (isUnderTestRunner() && !warnedNavLifecycle) {
       warnedNavLifecycle = true;
       console.warn(
-        "renderRoute: navigate()/useRouter().push commit synchronously and do " +
-          "NOT drive the navigation lifecycle. useNavigation().state, " +
-          'useLinkStatus().pending, and useAction().state stay "idle" here. ' +
-          "Assert params/pathname/content after navigate(); use renderServerTree " +
-          "or e2e to assert pending/loading/submitting transition states.",
+        "renderRoute: navigate()/useRouter().push do NOT drive the navigation " +
+          "lifecycle. useNavigation().state, useLinkStatus().pending, and " +
+          'useAction().state stay "idle" here. Assert params/pathname/content ' +
+          "after navigate(); use renderServerTree or e2e to assert " +
+          "pending/loading/submitting transition states. A held " +
+          "useLoader().isLoading is modeled: see navigate(url, { loaders }).",
       );
     }
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
-    const segments = buildSegments(routes, match.params, loaderData, mount);
+    const segments = buildSegments(
+      routes,
+      match.params,
+      seedLoaders(loaderData, navOptions?.loaders),
+      mount,
+    );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
     const root = await renderSegments(segments, {
       outletPending: options.outletPending,
@@ -577,8 +630,16 @@ export async function renderRoute(
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
     store.setSegmentIds(segments.map((s) => s.id));
+    const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
-      store.emitUpdate({ root, metadata });
+      // Production's transition() lane (browser/partial-update.ts). Its
+      // same-structure / fully-prefetched / optimistic hold lanes are not
+      // modeled: without transition() the commit stays urgent.
+      if (shouldStartViewTransition(segments)) {
+        commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
+      } else {
+        emit({ root, metadata });
+      }
     });
   };
 

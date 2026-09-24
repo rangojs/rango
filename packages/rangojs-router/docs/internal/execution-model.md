@@ -490,7 +490,8 @@ by `$$id`) so a route-context reset can clear them together.
 a route-context reader whose content is HELD on screen by a transition commit
 (browser/partial-update.ts) while its loader is still streaming reports
 `isLoading: true` until that commit lands. Every transition commit goes through
-`commitInTransition` (browser/partial-update.ts), which calls
+`commitInTransition` (browser/partial-update.ts; `renderRoute`'s navigate() in
+testing/render-route.tsx reuses it for a `transition()` chain), which calls
 `loaderStore.announcePendingStreams(segments)` INSIDE its `startTransition`:
 that registers each loader segment whose data is still a pending promise
 (settled Flight chunks — cached/reused segments, forceAwait lanes — are skipped

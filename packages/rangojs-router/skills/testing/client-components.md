@@ -25,7 +25,7 @@
 | `nonce`           | `string`                                                               | CSP nonce to seed via `NonceContext`, so a component calling `useNonce()` (e.g. an analytics/GTM head script) sees it — mirroring SSR. Defaults to `undefined` (the browser default).                                                         |
 | `defaultPrefetch` | `PrefetchStrategy`                                                     | Router default for `<Link>` and eligible plain anchors. `data-prefetch="false"`/`"none"` opts out one anchor; ancestor `data-prefetch-scope="false"`/`"none"` hard-disables the subtree; `"true"` permits routed resource suffixes elsewhere. |
 
-`RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational.
+`RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational. `transition` is the `transition()` config this node declares (`{}` for a bare `transition()`), attached to its segment exactly as the DSL does — see [Held navigation](#held-navigation).
 
 ### Context — client hooks it makes resolve (what your code receives)
 
@@ -40,7 +40,7 @@
 | `usePathname`                  | Current committed pathname.                                                                   |
 | `useSearchParams`              | Search params from the `request` URL.                                                         |
 | `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                   |
-| `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path).                                                 |
+| `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below). |
 | `useLocationState`             | SEEDED `history.state` value.                                                                 |
 | `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |
 | `Outlet`                       | Renders the next segment in the chain (layout nesting).                                       |
@@ -54,7 +54,13 @@ Extends RTL's `RenderResult` (`getByTestId`, `getByText`, `getByRole`, `containe
 ```ts
 type RenderRouteResult = RenderResult & {
   router: {
-    navigate(url: string): Promise<void>; // client-only nav, re-resolves the same routes
+    // client-only nav, re-resolves the same routes; `loaders` seeds THIS nav
+    navigate(
+      url: string,
+      options?: {
+        loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+      },
+    ): Promise<void>;
     pathname(): string;
     params(): Record<string, string>;
     store: NavigationStore; // advanced
@@ -108,10 +114,57 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
 });
 ```
 
+## Held navigation
+
+A stale indicator driven by `useLoader().isLoading` (see `/hooks` data.md, "A held navigation flags the data it keeps on screen") IS unit-testable. Put `transition` on the spec that declares `transition()` in your `urls()`, and pass the next navigation's loader data to `router.navigate(url, { loaders })` as a PENDING Promise. navigate() then commits through production's `commitInTransition` (browser/partial-update.ts), which calls `loaderStore.announcePendingStreams` inside the `startTransition`. The harness does not fake the flag: React holds the reader on screen and the real `useLoader` pin reports `isLoading: true` until the promise settles.
+
+```tsx
+import { act } from "@testing-library/react";
+import { useLoader } from "@rangojs/router/client";
+import { ProductLoader } from "../loaders/product"; // path("/products/:id", ..., () => [loader(ProductLoader), transition()])
+
+function ProductPrice() {
+  const { data, isLoading } = useLoader(ProductLoader);
+  return (
+    <p data-testid="price" aria-busy={isLoading}>
+      {data.price}
+    </p>
+  );
+}
+
+it("dims the held price while the next product streams", async () => {
+  const { getByTestId, router } = await renderRoute(
+    [{ path: "/products/:id", Component: ProductPrice, transition: {} }],
+    { request: "/products/1", loaders: [[ProductLoader, { price: 10 }]] },
+  );
+
+  let resolve!: (value: { price: number }) => void;
+  const next = new Promise<{ price: number }>((r) => (resolve = r));
+  await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+  expect(getByTestId("price").getAttribute("aria-busy")).toBe("true"); // old price, stale
+
+  await act(async () => resolve({ price: 12 })); // settle INSIDE act to flush the commit
+  expect(getByTestId("price").getAttribute("aria-busy")).toBe("false");
+  expect(getByTestId("price").textContent).toBe("12");
+});
+```
+
+| Pending state                                                                                  | Under `renderRoute`                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useLoader().isLoading` on the reader a `transition` navigate() holds, pending seed            | Modeled: `true` on the OLD data until the promise settles, then `false` with the new data in the same commit.                                                  |
+| `transition` navigate(), settled seed (a plain value)                                          | `false`; the data swaps in the commit.                                                                                                                         |
+| navigate() without `transition`, pending seed                                                  | Urgent commit (production's cold-navigation lane): the read suspends to the nearest `<Suspense>` fallback (with none, React keeps the previous tree). No flag. |
+| Production's other hold lanes (same-structure search/filter nav, fully-prefetched, optimistic) | NOT modeled — without `transition` navigate() stays urgent. Assert those at e2e.                                                                               |
+| `useNavigation().state`, `useLinkStatus().pending`, `useAction().state`                        | Stay `idle` — navigate() never starts the navigation lifecycle. e2e.                                                                                           |
+
+- Per-navigation seeds merge over the render-time `loaders`/`loaderData` for THAT navigation only; a later `navigate()` without `loaders` falls back to the render-time data.
+- Pass settled data as a plain value, not `Promise.resolve(value)`: React has not observed a plain promise yet, so it counts as pending and renders one `stale` frame. (A Flight chunk that has already settled carries its status and is skipped, which a plain value mirrors.)
+- `loading()` is not a spec field: a `<Suspense>` in your layout component stands in for it.
+
 ## Caveats
 
 - Client tree ONLY. Does NOT catch server/client boundary reference-identity remount bugs, real Flight serialization errors, loader execution, middleware, or handler ordering — those are `renderServerTree` / `renderHandler` / e2e territory. Loader data is SEEDED, never run.
-- `router.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle`. `useNavigation()` / `useLinkStatus()` / `useAction()` non-idle states (loading/streaming/pending, action result/error) are NOT reachable — test those at e2e.
+- `router.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle`. `useNavigation()` / `useLinkStatus()` / `useAction()` non-idle states (loading/streaming/pending, action result/error) are NOT reachable — test those at e2e. The one modeled pending state is held-navigation `useLoader().isLoading` ([Held navigation](#held-navigation)).
 - `outletPending` seeds only the production-shaped outlet context. It is useful
   for the two settled render states of a layout that reads `useOutlet()`, but it
   does not prove the hydrated `clientUrls()` transition that toggles the value;

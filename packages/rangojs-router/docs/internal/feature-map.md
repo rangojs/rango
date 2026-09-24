@@ -54,6 +54,17 @@ and the plain-anchor `data-prefetch="false"`/`"none"` plus hard subtree
 `data-prefetch-scope="false"`/`"none"` opt-outs reachable through the public
 DOM testing primitive without mutating the process-wide browser default.
 
+`renderRoute`'s `router.navigate(url, { loaders })` seeds loader data for that
+one navigation (merged over the render-time seeds), and `RenderRouteSpec`
+takes the `transition()` config a node declares. When the chain carries one
+(`shouldStartViewTransition`), navigate() commits through production's
+`commitInTransition` (both exported from `browser/partial-update.ts` for this
+reuse), so a pending Promise seed pins the held reader's
+`useLoader().isLoading` exactly as a streaming navigation does. The navigation
+lifecycle (`useNavigation().state`, `useLinkStatus().pending`) still stays
+`idle`, and production's other hold lanes (same-structure, fully-prefetched,
+optimistic) are not modeled: without `transition` the commit stays urgent.
+
 Cache search-param key filtering is exported from both `.` and `./cache` as
 `TRACKING_SEARCH_PARAMS` and `CacheSearchParams`. The global
 `createRouter({ cache: { searchParams } })` option compiles the filter once per

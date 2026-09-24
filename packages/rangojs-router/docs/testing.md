@@ -95,6 +95,13 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | importing your real **whole router file** (`import { router }`) into a bare test                                                            | the file's page modules may pull their own deps or plugin `virtual:` modules that need the rango plugin. (Handler `$$id` is NOT the blocker — `Prerender()` / `createLoader()` / `Static()` all construct via a runtime fallback id.)                                                                                                                 | Build the router from a focused **importable include** (e.g. your API routes) for `dispatch` / `assertGeneratedRoutesMatch`; run whole-router checks at **e2e** (see Setup → "Resolving `@rangojs/router`") |
 | a loader that `await`s `ctx.rendered()` then reads accumulated handles                                                                      | `runLoader` seeds handle pushes directly — it does **not** run the real push→accumulate→barrier chain, so a loader that crashes on **empty** post-barrier handles can pass when seeded but still fail in prod                                                                                                                                         | Seed the expected `rendered`/`handles` on `runLoader`; assert the full barrier wiring at **e2e**                                                                                                            |
 
+The first row has one carve-out: the held-navigation `useLoader().isLoading`
+flag. Give the spec that declares `transition()` a `transition` field and pass a
+pending Promise to `router.navigate(url, { loaders })`; navigate() then commits
+through production's `commitInTransition`, so a stale indicator is unit-testable
+(skill `testing/client-components.md`, "Held navigation").
+`useNavigation()`/`useLinkStatus()` still stay `idle`.
+
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
 that calls `invalidateClientCache()` or `keepClientCache()` now produces its REAL
@@ -553,7 +560,7 @@ it("exposes navigation state and re-resolves on navigate()", async () => {
 });
 ```
 
-`RenderRouteSpec = { path, Component, layout?, loaderIds?, name? }`; the array is
+`RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }`; the array is
 the layout chain root-to-leaf, last entry is the leaf. Seed `useLoader` reads via
 `options.loaderData` keyed by `$$id`; route them to a layout with that spec's
 `loaderIds`. Returned RTL queries are bound to `document.body`, so they also find
