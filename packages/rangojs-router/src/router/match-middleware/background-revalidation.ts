@@ -84,8 +84,9 @@
  *
  * Background revalidation re-renders through rerenderAndCacheRoute (shared
  * with proactive caching in cache-store.ts):
- *   - Own handleStore on a derived request context (the shared field is never
- *     swapped; the foreground is still producing the page)
+ *   - Derived request context with its own handleStore, transition({ when })
+ *     predicates and no perf metrics (the shared fields are never touched;
+ *     the foreground is still producing the page)
  *   - Fresh handlerContext + loaderPromises (prevents reusing memoized
  *     loader results from the foreground pass)
  *
@@ -105,6 +106,7 @@ import type { CacheScope } from "../../cache/cache-scope.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
+import { getContext } from "../../server/context.js";
 import {
   runWithRequestContext,
   type RequestContext,
@@ -115,16 +117,25 @@ import {
  * cacheScope.cacheRoute: the stale-hit refresh below and proactive caching
  * (cache-store.ts). Returns the number of segments written.
  *
- * Runs on a DERIVED request context with its own handle store; the request's
- * shared `_handleStore` is never swapped. The foreground is still producing
- * the page (a stale HIT re-runs its loaders; a proactive render starts once
- * the Response exists, while its body streams), and it reads that field late
- * (loader pushes and aux-lane tracking in loader-resolution.ts, nested cache
- * restores and captures in cache-scope.ts), so a swap sent live pushes into
- * this render. setupLoaderAccess binds the store at setup, so it runs inside
- * the derived context too. runWithRequestContext also re-establishes the
- * request ALS, which a waitUntil task on workerd loses; ctx.Store is a
- * different ALS (DSL build context).
+ * Runs on a DERIVED request context that owns the per-render state the
+ * foreground reads while it is still producing the page (a stale HIT re-runs
+ * its loaders; a proactive render starts once the Response exists, while its
+ * body streams):
+ *   - _handleStore: read late (loader pushes and aux-lane tracking in
+ *     loader-resolution.ts, nested cache restores and captures in
+ *     cache-scope.ts), so a swap sent live pushes into this render.
+ *     setupLoaderAccess binds the store at setup, so it runs inside the
+ *     derived context too.
+ *   - _transitionWhen: fresh resolution appends transition({ when })
+ *     predicates; the foreground's gateTransitions reads the array after the
+ *     match, and a stale HIT (which replays the stored transition) must not
+ *     evaluate this render's predicates.
+ *   - _metricsStore: undefined, and the DSL store below has `metrics` unset
+ *     (track() reads that one), so nothing lands on the foreground's perf
+ *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
+ *     needs its own run.
+ * runWithRequestContext also re-establishes the request ALS, which a waitUntil
+ * task on workerd loses; the DSL store is a different ALS (build context).
  */
 export async function rerenderAndCacheRoute<TEnv>(
   ctx: MatchContext<TEnv>,
@@ -135,8 +146,20 @@ export async function rerenderAndCacheRoute<TEnv>(
   const handleStore = routerCtx.createHandleStore();
   const renderCtx: RequestContext<TEnv> = Object.assign(
     Object.create(requestCtx),
-    { _handleStore: handleStore },
+    {
+      _handleStore: handleStore,
+      _transitionWhen: [],
+      _metricsStore: undefined,
+    },
   );
+  const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
+  const runInStore = <T>(fn: () => T): T =>
+    getContext().runWithStore(
+      store,
+      store.namespace || "#router",
+      store.parent,
+      fn,
+    );
   return runWithRequestContext(renderCtx, async () => {
     const handlerContext = routerCtx.createHandlerContext(
       ctx.matched.params,
@@ -153,7 +176,7 @@ export async function rerenderAndCacheRoute<TEnv>(
     const loaderPromises = new Map<string, Promise<any>>();
     routerCtx.setupLoaderAccess(handlerContext, loaderPromises);
 
-    const segments = await ctx.Store.run(() =>
+    const segments = await runInStore(() =>
       routerCtx.resolveAllSegments(
         ctx.entries,
         ctx.routeKey,
@@ -165,7 +188,7 @@ export async function rerenderAndCacheRoute<TEnv>(
     );
     if (ctx.interceptResult) {
       segments.push(
-        ...(await ctx.Store.run(() =>
+        ...(await runInStore(() =>
           routerCtx.resolveInterceptEntry(
             ctx.interceptResult!.intercept,
             ctx.interceptResult!.entry,
@@ -228,13 +251,6 @@ export function withBackgroundRevalidation<TEnv>(
       : undefined;
 
     requestCtx?.waitUntil(async () => {
-      // Prevent background metrics from polluting foreground timeline.
-      // The foreground uses its own metricsStore reference directly (via
-      // appendMetric), so nulling Store.metrics only affects track() calls
-      // inside this background Store.run() scope.
-      const savedMetrics = ctx.Store.metrics;
-      ctx.Store.metrics = undefined;
-
       const start = performance.now();
       debugLog("backgroundRevalidation", "revalidating stale route", {
         pathname: ctx.pathname,
@@ -268,8 +284,6 @@ export function withBackgroundRevalidation<TEnv>(
           pathname: ctx.pathname,
           error: String(error),
         });
-      } finally {
-        ctx.Store.metrics = savedMetrics;
       }
     });
   };

@@ -1,13 +1,18 @@
 /**
- * A background re-render of a cached route (stale-hit revalidation) must not
- * redirect the live request's handle pushes. It runs while the foreground is
- * still resolving: on a stale route cache() HIT the DSL loaders re-run live,
- * and a loader pushes through the request context's `_handleStore` at push
- * time (loader-resolution.ts). Swapping that shared field for the background
- * store sent those pushes to the background render instead of the page.
- * Proactive caching (a partial navigation whose layout the client already
- * has) re-renders the same way once the response exists, while the body is
- * still streaming.
+ * A background re-render of a cached route (stale-hit revalidation, proactive
+ * caching) must not write into the live request's per-render state. It runs
+ * while the foreground is still producing the page:
+ *   - handle pushes: on a stale route cache() HIT the DSL loaders re-run live,
+ *     and a loader pushes through the request context's `_handleStore` at push
+ *     time (loader-resolution.ts). Swapping that shared field for the
+ *     background store sent those pushes to the background render instead of
+ *     the page. Proactive caching (a partial navigation whose layout the client
+ *     already has) re-renders the same way once the response exists, while the
+ *     body is still streaming.
+ *   - transition({ when }) predicates: fresh resolution records them on
+ *     `_transitionWhen`, which the foreground's gateTransitions reads after the
+ *     match. A stale HIT collects none (it replays the stored transition).
+ *   - perf metrics: the foreground's `_metricsStore` feeds its Server-Timing.
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
@@ -47,6 +52,7 @@ import { createLoader } from "../../../loader.rsc.js";
 import { createHandle } from "../../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import { MemorySegmentCacheStore } from "../../../cache/memory-segment-store.js";
+import { gateTransitions } from "../../../rsc/transition-gate.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -54,6 +60,14 @@ import {
 } from "../../../server/request-context.js";
 
 const Crumbs = createHandle<unknown>(undefined, "test#BgRenderCrumbs");
+
+// Invoked only from a handler, never registered with loader(): a stale HIT
+// skips the handler, so only the background re-render runs it.
+const HandlerOnlyLoader = (createLoader as Function)(
+  async () => ({ ok: true }),
+  undefined,
+  "test#BgRenderHandlerOnlyLoader",
+);
 
 function gate() {
   let open!: () => void;
@@ -65,6 +79,8 @@ function gate() {
 
 let handlerCalls = 0;
 let layoutCalls = 0;
+let transitionHandlerCalls = 0;
+let metricsHandlerCalls = 0;
 let layoutGate: ReturnType<typeof gate> | undefined;
 let handlerGate: ReturnType<typeof gate> | undefined;
 let loaderGate: ReturnType<typeof gate> | undefined;
@@ -80,7 +96,9 @@ const CrumbLoader = (createLoader as Function)(
 );
 
 let router: any;
-let lastSegments: Array<{ id: string; type: string }> = [];
+let lastSegments: Array<{ id: string; type: string; transition?: unknown }> =
+  [];
+let lastReqCtx: RequestContext<any>;
 let store: MemorySegmentCacheStore;
 let serveStale = false;
 
@@ -92,7 +110,7 @@ beforeAll(async () => {
     return hit && serveStale ? { ...hit, shouldRevalidate: true } : hit;
   };
   router = createRouter({} as any);
-  router.routes(({ path, loader, cache, layout, loading }: any) => [
+  router.routes(({ path, loader, cache, layout, loading, transition }: any) => [
     cache({ ttl: 60, store }, () => [
       layout(
         async () => {
@@ -124,6 +142,24 @@ beforeAll(async () => {
         { name: "bgRenderStaleRoute" },
         () => [loader(CrumbLoader)],
       ),
+      path(
+        "/stale-transition",
+        () => {
+          transitionHandlerCalls++;
+          return createElement("div", null, "t");
+        },
+        { name: "bgRenderStaleTransition" },
+        () => [transition({ enter: "fade", when: () => false })],
+      ),
+      path(
+        "/stale-metrics",
+        async (ctx: any) => {
+          metricsHandlerCalls++;
+          await ctx.use(HandlerOnlyLoader);
+          return createElement("div", null, "m");
+        },
+        { name: "bgRenderStaleMetrics" },
+      ),
     ]),
   ]);
   await buildRouterTrieFromUrlpatterns(router);
@@ -133,6 +169,7 @@ async function serve(
   pathname: string,
   whileServing?: () => Promise<void>,
   partial?: { clientSegments: string[] },
+  debugPerformance?: boolean,
 ): Promise<unknown[]> {
   const request = partial
     ? new Request(
@@ -153,6 +190,8 @@ async function serve(
     url: new URL(request.url),
     variables: {},
   } as any) as RequestContext<any>;
+  reqCtx._debugPerformance = debugPerformance;
+  lastReqCtx = reqCtx;
   // The live store, pinned before anything can swap the context field.
   const liveStore = reqCtx._handleStore;
   const fireOnResponse = () => {
@@ -227,5 +266,41 @@ describe("background re-render of a stale cached route", () => {
     );
 
     expect(partialNav).toEqual(["loader"]);
+  });
+
+  it("the refresh adds no transition({ when }) predicate to the stale HIT's gate", async () => {
+    await serve("/stale-transition");
+    serveStale = true;
+    await serve("/stale-transition");
+    serveStale = false;
+    // The HIT skips the handler, so the second call is the refresh's.
+    expect(transitionHandlerCalls).toBe(2);
+
+    // serve() awaited the refresh, so the gate below runs after it: the
+    // interleaving where the refresh resolves before the foreground's gate.
+    expect(lastReqCtx._transitionWhen).toEqual([]);
+    const [route] = gateTransitions(lastSegments as any, lastReqCtx).filter(
+      (s) => s.type === "route",
+    );
+    // The stale HIT replays the stored transition; the predicate never runs.
+    expect(route?.transition).toEqual({ enter: "fade" });
+  });
+
+  it("the refresh records no metrics on the foreground's perf timeline", async () => {
+    await serve("/stale-metrics");
+    serveStale = true;
+    await serve("/stale-metrics", undefined, undefined, true);
+    serveStale = false;
+    expect(metricsHandlerCalls).toBe(2);
+
+    // The HIT runs no handler, so a handler or handler-invoked loader metric
+    // could only come from the refresh.
+    const labels = lastReqCtx._metricsStore!.metrics.map((m) => m.label);
+    expect(
+      labels.filter(
+        (l) =>
+          l.startsWith("handler:") || l === `loader:${HandlerOnlyLoader.$$id}`,
+      ),
+    ).toEqual([]);
   });
 });
