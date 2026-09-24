@@ -1,5 +1,179 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: `intercept()` `use()` rejects items an intercept never applies ([#872](https://github.com/rangojs/rango/pull/872), [#879](https://github.com/rangojs/rango/pull/879))
+
+An intercept's `use()`, and the `.use` of a handler mounted with
+`intercept()`, now throw at definition time for `revalidate()`,
+`errorBoundary()`, `notFoundBoundary()`, `cache()`, `parallel()`,
+`intercept()`, `include()`, and a `layout()` with `use()` items of its own. A
+rejected helper that is called but not returned throws too. The error names
+the intercept and says where the item goes. `middleware()`, `loader()` (which
+keeps its own `revalidate()` and `cache()`), `loading()`, `transition()`, route
+items, and a `layout()` used as modal chrome stay valid.
+
+In 0.16.0 these items were dropped or misplaced without an error:
+
+- `revalidate()`, `errorBoundary()` and `notFoundBoundary()` were stored on
+  the intercept and never read, from the explicit `use()` and from the
+  handler's `.use` alike.
+- A nested `layout()`'s own `use()` items were dropped.
+- `parallel()` and `intercept()` in an explicit `use()` registered on the
+  enclosing layout.
+
+`InterceptUseItem` no longer includes `revalidate()`, `errorBoundary()` or
+`notFoundBoundary()`, so a typed explicit `use()` fails to compile with them.
+A handler's `.use` is typed for every mount site, so there the check is
+runtime only: a handler mounted with both `path()` and `intercept()` whose
+`.use` returns `errorBoundary()` still works on the `path()` mount, but route
+registration (`router.routes()`) now throws at startup.
+
+Migration: put boundaries on the layout or path that declares the intercept
+(its boundaries handle the intercept's handler and loader errors, see #878
+below), `revalidate()` on the intercept's loader, and `cache()` on the target
+route. For a handler shared between `path()` and `intercept()`, move the
+boundaries out of its `.use` into the `path()` call's own `use()`.
+
+```tsx
+// before: throws at definition time
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader),
+  errorBoundary(<ModalError />),
+]),
+// after
+layout(<ShopLayout />, () => [
+  errorBoundary(<ShopError />),
+  intercept("@modal", "product", <ProductModal />, () => [
+    loader(ProductLoader),
+  ]),
+]),
+```
+
+### Breaking: `ctx.reverse` in middleware and response routes is typed global-only ([#873](https://github.com/rangojs/rango/pull/873))
+
+`MiddlewareContext["reverse"]` and `ResponseHandlerContext["reverse"]` are now
+the new exported `GlobalReverseFunction`. Both are built from the route map
+alone at runtime, with no `include()` scope and no param auto-fill, so a
+dot-local `ctx.reverse(".name")` always threw `Unknown route` on the request;
+it is now a compile error. Response routes also lose a permissive fallback:
+when no route in the generated map had a `search` schema, 0.16.0 typed their
+reverse as `(name: string, ...)`, so an unknown name, a name held in a
+`string`, or a call missing required params compiled. With a generated map
+these are now checked against it, as middleware reverse already was. Without
+a generated map, any name except a dot-prefixed literal is accepted. Runtime
+behavior is unchanged. Pass the fully qualified name and every param.
+
+### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
+
+`debugManifest()` was typed only on the internal router interface, so calling
+it needed a cast. It is now on `Rango`, and its return type
+`SerializedManifest` is exported from `@rangojs/router`. It also threw
+`Duplicate route name` for any router that uses `include()`, because lazy
+include placeholders carried the parent `urls()` handler and re-registered its
+routes. Placeholders are now skipped, so routes mounted with `include()` are
+absent from the result.
+
+### Fixes
+
+- An intercept handler that throws or calls `notFound()` no longer fails the
+  soft navigation with a 500 that bypasses every boundary. The modal slot
+  renders the `errorBoundary()` / `notFoundBoundary()` of the layout or path
+  that declares the intercept (or the nearest ancestor with one), with a
+  500 / 404 status, as intercept loader errors already did. A thrown
+  `Response` (`redirect()`) still short-circuits; an async handler under
+  `loading()` still streams its rejection and is now reported to `onError`
+  ([#878](https://github.com/rangojs/rango/pull/878)).
+- A loader with its own `cache()` (`loader(Def, () => [cache()])`) skips its
+  body on a hit, so the body's `ctx.use(Handle)` pushes (Meta title,
+  breadcrumbs) were missing on every hit. The miss now records the pushes of
+  the body and of loaders it awaits through `ctx.use`, and every hit, stale
+  included, appends them to the owning segment. A stale revalidation's fresh
+  pushes go only into the refreshed entry
+  ([#877](https://github.com/rangojs/rango/pull/877)).
+- A route under `cache()` recorded every handle push of its segments,
+  including pushes from DSL `loader()` bodies. On a hit the record was
+  replayed and the loader re-ran and pushed again, so a handle without
+  key-based dedupe showed the value twice. DSL-loader pushes are now left out
+  of the `cache()` record; handler pushes and pushes from a handler's
+  `ctx.use(Loader)` are still recorded
+  ([#880](https://github.com/rangojs/rango/pull/880)).
+- A `"use cache"` hit replaced the calling segment's handle arrays, wiping the
+  handler's earlier pushes and concurrent loader pushes, and the miss recorded
+  every push made while the body ran. Each execution now records only its own
+  pushes (nested cached functions roll up into the caller), and a hit appends
+  them. A layout and a page calling the same cached function each keep their
+  copy, and a stale hit's background refresh no longer leaks its pushes into
+  the live response ([#882](https://github.com/rangojs/rango/pull/882)).
+- The stale-route refresh and proactive caching swapped the request's handle
+  store for a fresh one while they re-rendered in the background. The
+  foreground was still producing the page (a stale hit re-runs its loaders;
+  proactive caching starts while the body streams), so handle pushes made in
+  that window went into the background render and were missing from the page.
+  Both now render on a derived request context with its own store.
+  `RequestContext._handleStore`, an `@internal` field typed through
+  `getRequestContext()` from `@rangojs/router/rsc`, is now `readonly`
+  ([#883](https://github.com/rangojs/rango/pull/883)).
+- Intercept loaders honour the loader's own `cache()`:
+  `intercept(..., () => [loader(Def, () => [cache()])])` re-ran the loader on
+  every intercept navigation. A handler's `ctx.use(Loader)` stays a live read
+  memoized per request; `cache()` belongs to the DSL `loader()` binding
+  ([#884](https://github.com/rangojs/rango/pull/884)).
+- Build-time PPR shell capture passed global and route middleware a
+  `ctx.reverse` scoped to the previewed route (`include()` scope, param
+  auto-fill), while live requests pass the global-only map reverse, so a
+  `.name` call resolved at build and threw `Unknown route` live. Build capture
+  now uses the same global-only reverse
+  ([#876](https://github.com/rangojs/rango/pull/876)).
+- PPR capture warnings (bake cost, no usable shell, identity refusal, rejected
+  or redirecting loader) and the `cookies()`/`headers()` capture error still
+  advised `loading()` or nested promises. They now state the lane rule: only
+  `loader(Def, { ssr: false })` executes at capture, and every other loader is
+  live and needs `loading()` or an inline `<Suspense>` above its reader
+  ([#871](https://github.com/rangojs/rango/pull/871)).
+- `import type { LoaderOptions } from "@rangojs/router"` failed for installed
+  consumers: the root `types` condition resolves to the `react-server` entry,
+  which did not export it ([#870](https://github.com/rangojs/rango/pull/870)).
+
+### Docs
+
+- READMEs, every shipped skill, `packages/rangojs-router/docs`, and the docs
+  site were checked against source. Corrected examples include the intercept
+  modal wrapper rendering `<Outlet />`, server `errorBoundary()` fallbacks
+  receiving only `{ error }`, the i18n middleware no longer reading
+  `ctx.params`, and `revalidate()` examples narrowing with
+  `ctx.isAction() ? ctx.isAction(X) : undefined`. The docs site gains
+  `testing` and `client-urls` guides
+  ([#869](https://github.com/rangojs/rango/pull/869)).
+- `useLoader().isLoading` on a held navigation follows the loader family
+  (`$$id`), not the segment: a persisting layout that reads the same
+  `createLoader` reports `true` too. Documented as designed in the `hooks` and
+  `view-transitions` skills; the 0.16.0 entry below is amended
+  ([#868](https://github.com/rangojs/rango/pull/868)).
+- A bake-lane (`ssr: false`) loader re-runs on every PPR shell hit, and the
+  hit also replays its captured handle pushes, so a handle that does not
+  dedupe by key shows them twice. Documented in the `ppr` and `shell-manifest`
+  skills and guides; `Meta` and `Breadcrumbs` dedupe and are unaffected. No
+  runtime change ([#875](https://github.com/rangojs/rango/pull/875)).
+- The `server-actions` skill documents the default CSRF origin check (the
+  Origin/Referer vs Host rule, the 403 rejection, and what it does not cover);
+  the `response-routes` skill says response routes are outside it and shows a
+  `requireSameOrigin` middleware
+  ([#881](https://github.com/rangojs/rango/pull/881)).
+
+### Internal
+
+- Playwright `globalTimeout` (10 min) applies only under CI; a local full
+  dev + production run is no longer cut off behind a passing summary
+  ([#866](https://github.com/rangojs/rango/pull/866)).
+- Local e2e server reuse probes `GET /` for an app-specific marker and fails
+  with the `lsof` listener instead of reusing a foreign process on the port
+  ([#867](https://github.com/rangojs/rango/pull/867)).
+- Origin-guard e2e (dev + production) sends a cross-site no-JS form post and a
+  cross-site RSC action call to a real action: both get 403 and the action
+  never runs; a same-origin control runs it
+  ([#887](https://github.com/rangojs/rango/pull/887)).
+
 ## 0.16.0 (2026-09-20)
 
 ### `useLoader().isLoading` is true for data held on screen while a navigation re-runs its loader
