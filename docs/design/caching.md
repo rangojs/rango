@@ -121,6 +121,7 @@ Key points:
 - Revival produces a React element identical to the original
 - Cached elements render correctly in both RSC stream and HTML output
 - A component that is still a promise (a route, parallel slot or intercept handler streamed under `loading()`) is awaited before encoding (`serializeSegments` in `src/cache/segment-codec.ts`); if it rejects, the serialize step throws and `cacheRoute` writes nothing, so a handler that fails after the 200 has gone out, which the MISS gate's `response.status !== 200` check in `withCacheStore` cannot see, never replaces an entry
+- A component that throws while a segment is encoded (an async server component in a handler's tree) does not reject the encode: Flight reports it through `onError` and completes normally with an error row (`1:E{"digest":""}`) that throws wherever the decoded tree renders. `cacheRoute` passes an `onError` to `serializeSegments` (`src/cache/segment-codec.ts`) and, if it fires, writes nothing and reports the error as `cache-write`, so the next request is a MISS and a stale entry keeps serving. The encode re-runs the tree, so only a throw during the encode blocks the write. Prerender calls `serializeSegments` without `onError` and still stores the error row
 
 ## API
 
