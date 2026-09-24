@@ -12,6 +12,21 @@ export const PrerenderBoom = Prerender(async (ctx) => {
   return <div data-testid="prerender-boom">{region}</div>;
 });
 
+// A Prerender route whose handler returns normally but whose tree holds an async
+// component that throws while the build encodes it (#914). Flight reports that
+// through onError instead of rejecting, so only the encode sees the throw.
+// Registered only when RANGO_TEST_PRERENDER_CHILD_ERROR is set.
+async function ChildBoom(): Promise<never> {
+  await Promise.resolve();
+  throw new Error("async child build-time render failure (#914 fixture)");
+}
+
+export const PrerenderChildBoom = Prerender(async () => (
+  <div data-testid="prerender-child-boom">
+    <ChildBoom />
+  </div>
+));
+
 // A Static handler exercising the SAME prerender.onError policy via the
 // renderStaticHandlers loop. Static handlers are discovered by export (not route
 // registration), so it throws ONLY when RANGO_TEST_STATIC_ERROR is set and renders
@@ -35,5 +50,8 @@ export const router = createRouter({}).routes(({ path }) => [
   path("/", HomePage, { name: "home" }),
   ...(process.env.RANGO_TEST_PRERENDER_ERROR
     ? [path("/prerender-boom", PrerenderBoom)]
+    : []),
+  ...(process.env.RANGO_TEST_PRERENDER_CHILD_ERROR
+    ? [path("/prerender-child-boom", PrerenderChildBoom)]
     : []),
 ]);

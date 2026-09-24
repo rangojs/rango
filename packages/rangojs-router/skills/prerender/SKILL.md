@@ -495,6 +495,12 @@ rango({ prerender: { onError: "warn" } }); // default is "fail"
 | `return ctx.passthrough()`  | Skip entry, log PASS (Passthrough routes)    | Skip entry, log PASS             |
 | `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
 | `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+| A child component throws    | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+
+The last row covers a handler that returns fine but whose tree holds an async
+server component that throws while the page is rendered at build, for example
+because its fetch fails. That error goes through the same policy instead of being
+baked as an error row, and a `Skip` thrown there skips the URL.
 
 With `"warn"` the errored entry is logged and left un-baked (never served as a baked
 200 error page). `"warn"` is a build-unblock, not a runtime contract: the route falls

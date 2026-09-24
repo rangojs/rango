@@ -306,7 +306,18 @@ export async function matchForPrerender<TEnv = any>(
       // 12. Serialize segments using the cache serializer
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const { encodeHandles } = await import("../cache/handle-snapshot.js");
-      const serializedSegments = await serializeSegments(nonLoaderSegments);
+      // Flight encodes a component that throws (an async server component in
+      // the tree) as an error row and completes normally. Rethrown below like
+      // a handler throw, so the caller's policy decides instead of baking the
+      // error (#914).
+      const flightErrors: unknown[] = [];
+      const onFlightError = (error: unknown): void => {
+        flightErrors.push(error);
+      };
+      const serializedSegments = await serializeSegments(
+        nonLoaderSegments,
+        onFlightError,
+      );
 
       // 13. Collect handle data per segment (skip segments with no handle data).
       // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
@@ -322,7 +333,9 @@ export async function matchForPrerender<TEnv = any>(
           handlesRecord[seg.id] = await resolveSegmentHandleValues(segHandles);
         }
       }
-      const handles = await encodeHandles(handlesRecord);
+      const handles = await encodeHandles(handlesRecord, onFlightError);
+      // Before intercept resolution, as a handler throw would be.
+      if (flightErrors.length > 0) throw flightErrors[0];
 
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
@@ -427,6 +440,7 @@ export async function matchForPrerender<TEnv = any>(
           await handleStore.settled;
           interceptSegments = await serializeSegments(
             interceptResolvedSegments,
+            onFlightError,
           );
           const interceptHandlesRecord: Record<string, SegmentHandleData> = {};
           for (const seg of interceptResolvedSegments) {
@@ -439,12 +453,17 @@ export async function matchForPrerender<TEnv = any>(
           // The intercept artifact serves main + intercept segments together, so
           // encode the MERGED handle map here (the sinks no longer merge raw
           // records — they store this pre-encoded string as-is).
-          interceptHandles = await encodeHandles({
-            ...handlesRecord,
-            ...interceptHandlesRecord,
-          });
+          interceptHandles = await encodeHandles(
+            {
+              ...handlesRecord,
+              ...interceptHandlesRecord,
+            },
+            onFlightError,
+          );
         }
       }
+
+      if (flightErrors.length > 0) throw flightErrors[0];
 
       return {
         segments: serializedSegments,
@@ -576,7 +595,12 @@ export async function renderStaticSegment<TEnv = any>(
 
     const { serializeSegments } = await import("../cache/segment-codec.js");
     const { encodeHandleValue } = await import("../cache/handle-snapshot.js");
-    const [serialized] = await serializeSegments([segment]);
+    // Same error-row guard as matchForPrerender (#914).
+    const flightErrors: unknown[] = [];
+    const onFlightError = (error: unknown): void => {
+      flightErrors.push(error);
+    };
+    const [serialized] = await serializeSegments([segment], onFlightError);
 
     // Collect handle data pushed during rendering and Flight-encode it (so
     // Promise/ReactNode handle values survive the JSON build artifact). "" when
@@ -584,8 +608,13 @@ export async function renderStaticSegment<TEnv = any>(
     const segHandles = handleStore.getDataForSegment(handlerId);
     const handles =
       Object.keys(segHandles).length > 0
-        ? await encodeHandleValue(await resolveSegmentHandleValues(segHandles))
+        ? await encodeHandleValue(
+            await resolveSegmentHandleValues(segHandles),
+            onFlightError,
+          )
         : "";
+
+    if (flightErrors.length > 0) throw flightErrors[0];
 
     return { encoded: serialized.encoded, handles };
   });
