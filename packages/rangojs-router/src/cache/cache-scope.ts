@@ -754,6 +754,11 @@ export function createShellImplicitDocScope(
  * re-run path. On the navigation-replay serve path the marker still composes
  * with an explicit scope downstream (withCacheLookup's seeded fallback after
  * an explicit-tier miss) — see `onExplicitHit` on `_shellImplicitCache`.
+ *
+ * Marks the marker `routeDocScope`: the doc scope minted HERE is the one a
+ * document HIT tail of the same route consults, which is what lets a capture
+ * prune handler-only snapshot records. The explicit-scope composition sites
+ * mint the same scope without this mark.
  */
 export function resolveShellImplicitCacheScope(
   scope: CacheScope | null,
@@ -761,5 +766,6 @@ export function resolveShellImplicitCacheScope(
   if (scope) return scope;
   const marker = getRequestContext()?._shellImplicitCache;
   if (!marker) return null;
+  marker.routeDocScope = true;
   return createShellImplicitDocScope(marker);
 }

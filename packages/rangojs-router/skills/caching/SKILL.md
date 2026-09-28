@@ -564,7 +564,9 @@ prelude, the tag-marker read runs alongside the prelude read, and the capture
 snapshot behind them is read off the commit path, bounded by `kvReadTimeoutMs`.
 A snapshot read that times out lets the HIT's tail run without its pins, the
 same as a shell stored without a snapshot; a truncated or corrupt snapshot does
-the same and also evicts the entry.
+the same and also evicts the entry. The snapshot holds only what a HIT reads:
+when every HIT replays the handler layer from the captured segment record, the
+`"use cache"` items only handler code read are not stored (`/ppr`).
 
 ```typescript
 new CFCacheStore({

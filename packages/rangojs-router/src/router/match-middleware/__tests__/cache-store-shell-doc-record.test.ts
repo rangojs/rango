@@ -181,6 +181,9 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc).toHaveLength(1);
     expect(doc[0]!.key).toBe("doc:localhost/p");
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
+    // The HIT tail resolves the explicit scope, not this doc record: the
+    // capture must not prune the items that scope's handlers re-read.
+    expect(h.reqCtx._shellImplicitCache?.routeDocScope).toBeUndefined();
     // Explicit tier's own write went through (recorded AND persisted)…
     expect(await h.inner.get("consumer-key")).not.toBeNull();
     // …but the doc record stayed snapshot-only: no real-store doc entry that

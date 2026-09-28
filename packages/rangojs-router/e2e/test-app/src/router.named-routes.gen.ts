@@ -397,6 +397,7 @@ export const NamedRoutes = {
   shellCacheScopedOptOut: "/shell-cache/scoped-optout",
   shellCacheSearchRead: "/shell-cache/search-read",
   shellCacheSettled: "/shell-cache/settled",
+  shellCacheSharedKey: "/shell-cache/shared-key",
   shellCacheSlotHole: "/shell-cache/slot-hole",
   shellCacheSlotUse: "/shell-cache/slot-use",
   shellCacheSlotUseOther: "/shell-cache/slot-use/other",

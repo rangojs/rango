@@ -14,6 +14,8 @@ import {
 import {
   SeededShellStore,
   buildShellLoaderSeed,
+  countSnapshotFamilies,
+  hasDocRecord,
 } from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
 import type { MetricsStore } from "../server/context.js";
@@ -255,25 +257,8 @@ function replayableShellSnapshot(
   // (a timing-dependent snapshot-miss/no-segment-snapshot flip-flop). Entries
   // captured before the field existed read as no-segment-snapshot and heal on
   // recapture (pre-release, same treatment as the buildVersion field).
-  const docKey = entry.docKey;
   const snapshot = entry.snapshot;
-  const hasDocRecord =
-    docKey !== undefined &&
-    snapshot?.some((record) => {
-      if (
-        !record ||
-        typeof record !== "object" ||
-        record.family !== "segment" ||
-        record.key !== docKey ||
-        typeof record.value !== "object" ||
-        record.value === null
-      ) {
-        return false;
-      }
-      const segments = (record.value as { segments?: unknown }).segments;
-      return Array.isArray(segments) && segments.length > 0;
-    });
-  return hasDocRecord && snapshot
+  return snapshot && hasDocRecord(snapshot, entry.docKey)
     ? { snapshot }
     : { reason: "no-segment-snapshot" };
 }
@@ -1489,15 +1474,6 @@ function publishTailTiming(
   }
 }
 
-/** Snapshot records by family for the tail timing, e.g. `segment:1/item:5`. */
-function countSnapshotFamilies(snapshot: ShellSnapshotRecord[]): string {
-  const counts = new Map<string, number>();
-  for (const record of snapshot) {
-    counts.set(record.family, (counts.get(record.family) ?? 0) + 1);
-  }
-  return [...counts].map(([family, n]) => `${family}:${n}`).join("/");
-}
-
 /**
  * Serve a validated shell HIT: commit the stored prelude bytes NOW and run the
  * live tail behind them inside the response stream. Plain byte concatenation is
@@ -1635,6 +1611,7 @@ function serveShellHit(
       tailTiming.snapshotMs = Math.round(performance.now() - tailT0);
       if (snapshot)
         tailTiming.snapshotRecords = countSnapshotFamilies(snapshot);
+      tailTiming.snapshotPruned = entry.prunedRecords;
       const snapshotStats = document.stats?.snapshot;
       if (snapshotStats) {
         tailTiming.snapshotReadMs = Math.round(snapshotStats.readMs);
@@ -1678,6 +1655,19 @@ function serveShellHit(
           ttl: descriptor.ttl,
           swr: descriptor.swr,
           keyPrefix: "doc",
+          // A doc record that fails to decode makes this tail re-run the
+          // handlers against live values, and the capture may have pruned
+          // the items they read. Recapture so later HITs do not repeat it.
+          onCorrupt: () =>
+            scheduleShellCapture(
+              ctx,
+              request,
+              env,
+              url,
+              reqCtx,
+              ssrModule,
+              descriptor,
+            ),
         };
         if (INTERNAL_RANGO_DEBUG) {
           console.log(

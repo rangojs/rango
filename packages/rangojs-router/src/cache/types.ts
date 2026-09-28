@@ -376,6 +376,13 @@ export interface ShellCacheEntry {
    */
   snapshot?: ShellSnapshotRecord[];
   /**
+   * Records the capture dropped from `snapshot` because no reader of this
+   * entry consumes them, by family (`item:4/response:1`). Diagnostic only: the
+   * HIT tail timing reports it next to the kept records. See
+   * docs/design/shell-entry-layout.md ("Record only what a HIT reads").
+   */
+  prunedRecords?: string;
+  /**
    * The key of the CANONICAL document segment record inside `snapshot` — the
    * one navigation replay can actually consume (resolved under the implicit
    * doc namespace at capture; see CacheScope.cacheRoute). Replay eligibility

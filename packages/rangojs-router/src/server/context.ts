@@ -952,7 +952,7 @@ export function latchCachedHeaderScope(
 /** True inside ANY loader execution — DSL loader scope or a loader body
  *  (however invoked). The "loaders always re-run fresh" exemptions key off
  *  this. */
-function isInsideAnyLoaderScope(): boolean {
+export function isInsideAnyLoaderScope(): boolean {
   return (
     loaderScopeALS.getStore()?.active === true ||
     loaderBodyScopeALS.getStore()?.active === true

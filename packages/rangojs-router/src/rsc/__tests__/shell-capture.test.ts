@@ -27,6 +27,7 @@ import { resolveTracing } from "../../router/tracing.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { CacheScope } from "../../cache/cache-scope.js";
 import { cacheTag, recordRequestTags } from "../../cache/cache-tag.js";
+import { runInsideLoaderScope } from "../../server/context.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
@@ -1101,6 +1102,194 @@ describe("captureAndStoreShell", () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+// Snapshot pruning (issue #941, docs/design/shell-entry-layout.md §2): a
+// capture stores only the records a reader of its entry consumes. Each keep
+// test flips exactly one condition of the prune rule.
+describe("captureAndStoreShell: snapshot pruning", () => {
+  const DOC_KEY = "doc:host/p";
+
+  interface PruneSetup {
+    reqCtx: any;
+    recording: RecordingShellStore;
+  }
+
+  /**
+   * A capture whose recording saw what a covered document capture sees: the
+   * implicit doc record, a handler-read item, a loader-read item, a response
+   * and a bake-lane loader container. `adjust` flips one condition.
+   */
+  async function capturePrunable(
+    adjust?: (setup: PruneSetup) => void | Promise<void>,
+    options: {
+      inner?: MemorySegmentCacheStore;
+      descriptor?: Partial<Parameters<typeof captureAndStoreShell>[4]>;
+    } = {},
+  ): Promise<ShellCacheEntry> {
+    const inner = options.inner ?? new MemorySegmentCacheStore();
+    await inner.setItem("use-cache:loader", "L", { ttl: 60 });
+    const putShell = makePutShell();
+    const recording = new RecordingShellStore(inner);
+    recording.recordSegmentWrite(DOC_KEY, {
+      segments: [{ encoded: "", metadata: { id: "R0" } } as any],
+      handles: "",
+      expiresAt: Date.now() + 60_000,
+    });
+    await recording.setItem("use-cache:handler", "H", { ttl: 60 });
+    await runInsideLoaderScope(() => recording.getItem("use-cache:loader"));
+    await recording.putResponse("resp:handler", new Response("R"), 60);
+    const reqCtx: any = {
+      _cacheStore: recording,
+      _reportBackgroundError: vi.fn(),
+      _requestTags: new Set<string>(),
+      _shellImplicitCache: { docKey: DOC_KEY, routeDocScope: true },
+      _shellCaptureLoaderRecords: new Map([
+        ["M0L0D0.bake", Promise.resolve({ baked: 1 })],
+      ]),
+    };
+    await adjust?.({ reqCtx, recording });
+    const outcome = await captureAndStoreShell(
+      {
+        renderHTML: vi.fn(),
+        captureShellHTML: vi.fn(async () => ({
+          prelude: enc("<html><body>shell</body></html>"),
+          postponed: null,
+        })),
+      } as unknown as SSRModule,
+      emptyStream(),
+      createHandleStore(),
+      reqCtx,
+      {
+        key: "/p:shell",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+        ...options.descriptor,
+      },
+    );
+    expect(outcome).toBe("stored");
+    return putShell.mock.calls[0]![1];
+  }
+
+  const records = (entry: ShellCacheEntry): string[] =>
+    (entry.snapshot ?? []).map((r) => `${r.family} ${r.key}`);
+
+  const EVERY_RECORD = [
+    `segment ${DOC_KEY}`,
+    "item use-cache:handler",
+    "item use-cache:loader",
+    "response resp:handler",
+    "loader M0L0D0.bake",
+  ];
+
+  it("drops the item and response records only handler code read", async () => {
+    const entry = await capturePrunable();
+    expect(records(entry)).toEqual([
+      `segment ${DOC_KEY}`,
+      "item use-cache:loader",
+      "loader M0L0D0.bake",
+    ]);
+    expect(entry.prunedRecords).toBe("item:1/response:1");
+    expect(entry.docKey).toBe(DOC_KEY);
+  });
+
+  it("R2.4 keeps a record a loader only missed on (it joined the handler's write)", async () => {
+    const entry = await capturePrunable(async ({ recording }) => {
+      await runInsideLoaderScope(() => recording.getItem("use-cache:joined"));
+      await recording.setItem("use-cache:joined", "J", { ttl: 60 });
+    });
+    expect(records(entry)).toContain("item use-cache:joined");
+    expect(records(entry)).not.toContain("item use-cache:handler");
+  });
+
+  it("R2.1 keeps every record when the capture recorded no doc record", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      reqCtx._shellImplicitCache = { routeDocScope: true };
+    });
+    expect(records(entry)).toEqual(EVERY_RECORD);
+    expect(entry.prunedRecords).toBeUndefined();
+  });
+
+  it("R2.1 keeps every record when docKey names a record the snapshot lacks", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      reqCtx._shellImplicitCache.docKey = "doc:host/other";
+    });
+    expect(records(entry)).toEqual(EVERY_RECORD);
+    expect(entry.prunedRecords).toBeUndefined();
+  });
+
+  it("R2.1 keeps every record when handler-layer liveness declines the fast path", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      reqCtx._shellCaptureHandleLiveness = {
+        holes: false,
+        pendingPushes: 0,
+        handlerInvokedLoader: true,
+      };
+    });
+    expect(entry.handlerLiveHoles).toBe(true);
+    expect(records(entry)).toEqual(EVERY_RECORD);
+  });
+
+  it("R2.1 keeps every record when a transition({ when }) declines the fast path", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      reqCtx._transitionWhen = [{ id: "R0", when: () => true }];
+    });
+    expect(entry.transitionWhen).toBe(true);
+    expect(records(entry)).toEqual(EVERY_RECORD);
+  });
+
+  it("R2.2 keeps every record when the store has a keyGenerator", async () => {
+    const entry = await capturePrunable(undefined, {
+      inner: new MemorySegmentCacheStore({
+        keyGenerator: (_ctx, defaultKey) => defaultKey,
+      }),
+    });
+    expect(records(entry)).toEqual(EVERY_RECORD);
+  });
+
+  it("R2.5 keeps every record when the doc scope was not the route's own", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      delete reqCtx._shellImplicitCache.routeDocScope;
+    });
+    expect(records(entry)).toEqual(EVERY_RECORD);
+  });
+
+  it("keeps every record of a build-time capture (its doc key carries the build host)", async () => {
+    const entry = await capturePrunable(({ reqCtx }) => {
+      reqCtx.build = true;
+    });
+    expect(records(entry)).toEqual(EVERY_RECORD);
+  });
+
+  it("R1 keeps only segment records for a navigation-only entry", async () => {
+    const entry = await capturePrunable(
+      ({ reqCtx }) => {
+        // Even a capture that fails R2 is pruned to its segments.
+        reqCtx._shellImplicitCache = {};
+      },
+      { descriptor: { navigationOnly: true } },
+    );
+    expect(records(entry)).toEqual([`segment ${DOC_KEY}`]);
+    expect(entry.prunedRecords).toBe("item:2/response:1/loader:1");
+  });
+
+  it("applies the size cap to the pruned snapshot", async () => {
+    const entry = await capturePrunable(
+      async ({ recording }) => {
+        await recording.setItem("use-cache:big", "x".repeat(4096), {
+          ttl: 60,
+        });
+      },
+      { descriptor: { maxSnapshotBytes: 2048 } },
+    );
+    expect(records(entry)).toEqual([
+      `segment ${DOC_KEY}`,
+      "item use-cache:loader",
+      "loader M0L0D0.bake",
+    ]);
+    expect(entry.prunedRecords).toBe("item:2/response:1");
   });
 });
 

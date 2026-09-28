@@ -48,6 +48,7 @@ const PPR_WARMUP_ROUTES = [
   // quiet windows (the GH-runner rotating eternal-MISS class).
   "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
+  "/ppr-shared-key",
   "/ppr-blog",
   "/ppr-blog/getting-started-with-rsc",
 ];
@@ -62,6 +63,7 @@ const PPR_WARMUP_HIT_ROUTES = [
   "/ppr-shell/stream",
   "/ppr-shell/prerendered/alpha",
   "/ppr-drift",
+  "/ppr-shared-key",
   "/ppr-blog",
 ];
 

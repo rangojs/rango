@@ -694,6 +694,77 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     );
   });
 
+  // Issue #941, snapshot pruning: every HIT tail of /shell-cache/large replays
+  // the handler layer from the doc record, so the capture stores that record
+  // and drops the "use cache" catalog item that produced it. The HIT still
+  // hydrates cleanly with the live price hole.
+  test("large shell: the stored snapshot keeps only the doc record and the HIT hydrates", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const url = f.url("/shell-cache/large?__perf_debug=1&probe=pruned");
+    await warmToHit(page.request, url);
+    // The previous HIT's tail rides this response's Server-Timing.
+    await page.request.get(url, { headers: HTML_HEADERS });
+    const res = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
+      res.headers()["server-timing"] ?? "",
+    )?.[1];
+    expect(tail).toContain(" records=segment:1 pruned=item:1 ");
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(page.locator("[data-item]")).toHaveCount(240);
+    await expect(testId(page, "shell-price")).toContainText("Live price:");
+  });
+
+  // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
+  // decision 3): /shell-cache/shared-key's layout and its live hole read the
+  // SAME "drift" item (ttl 1s). The capture pins the layout's value inside
+  // the doc record and drops the item record, so the hole's loader reads the
+  // store: once the item expires the hole shows a newer stamp while the shell
+  // keeps the capture stamp, and the page still hydrates cleanly.
+  test("shared key: the shell keeps the capture value while the live hole reads the store", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const url = f.url("/shell-cache/shared-key?probe=shared");
+    await warmToHit(page.request, url);
+    const first = await page.request.get(url, { headers: HTML_HEADERS });
+    const captureStamp = /data-testid="shell-shared-shell">shared-(\d+)</.exec(
+      splitPrelude(await first.text()).prelude,
+    )?.[1];
+    expect(captureStamp, "the shell bakes the capture stamp").toBeTruthy();
+
+    await expect(async () => {
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const { prelude, resumed } = splitPrelude(await res.text());
+      expect(prelude).toContain(
+        `data-testid="shell-shared-shell">shared-${captureStamp}<`,
+      );
+      const holeStamp = /data-testid="shell-shared-hole">shared-(\d+)</.exec(
+        resumed,
+      )?.[1];
+      expect(Number(holeStamp)).toBeGreaterThan(Number(captureStamp));
+    }).toPass({ timeout: 10_000 });
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "shell-shared-shell")).toHaveText(
+      `shared-${captureStamp}`,
+    );
+    await expect(testId(page, "shell-shared-hole")).not.toHaveText(
+      `shared-${captureStamp}`,
+    );
+    await expect(testId(page, "shell-shared-hole")).toHaveText(/^shared-\d+$/);
+  });
+
   // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
 
   // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64 — far below the

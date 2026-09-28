@@ -43,6 +43,29 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   return `drift-${driftExecutions}`;
 }
 
+// Shared-key fixture (issue #941): the shell and a live hole read the SAME
+// "drift" item (ttl 1s). The capture pins the shell's read. The hole's loader
+// runs on every HIT and reads the store, so once the item expires the hole
+// shows a newer stamp than the frozen shell. The probe keys the item per URL.
+let sharedStampExecutions = 0;
+
+export async function getSharedStamp(probe: string): Promise<string> {
+  "use cache: drift";
+  void probe;
+  sharedStampExecutions += 1;
+  return `shared-${sharedStampExecutions}`;
+}
+
+export interface ShellSharedStampData {
+  stamp: string;
+}
+
+export const ShellSharedStampLoader = createLoader(
+  async (ctx): Promise<ShellSharedStampData> => ({
+    stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
 // Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
 // into the shell above loading(). The route caps ppr.maxSnapshotBytes far below
 // any real snapshot, so EVERY capture skips the snapshot (over cap, once-per-key

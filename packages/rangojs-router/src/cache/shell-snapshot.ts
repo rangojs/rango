@@ -18,9 +18,10 @@
  * (the holes — masked loaders were never executed at capture, so their reads
  * were never recorded) stays live.
  *
- * The invariant, verbatim: the snapshot is exactly the set of cache-store reads
- * the capture render performed; replaying them on a HIT reproduces the shell
- * content byte-identically; everything not recorded stays live.
+ * The invariant, verbatim: the snapshot is the set of cache-store reads the
+ * capture render performed that a reader of the entry can consume; replaying
+ * them on a HIT reproduces the shell content byte-identically; everything not
+ * recorded stays live. {@link pruneShellSnapshot} drops the rest.
  */
 
 import type {
@@ -39,6 +40,7 @@ import type {
 import { CACHE_READ_ERROR } from "./types.js";
 import { bufferToBase64, base64ToBuffer } from "./cf/cf-base64.js";
 import { isPerClientSignalHeader } from "../browser/cookie-name.js";
+import { isInsideAnyLoaderScope } from "../server/context.js";
 
 /** Compose the last-write-wins map key. NUL (`\u0000`) cannot appear in a cache key. */
 function recordKey(family: ShellSnapshotRecord["family"], key: string): string {
@@ -83,12 +85,21 @@ function deserializeResponse(value: ShellSnapshotResponseValue): Response {
  * — may land after the shell has quiesced. The capture collects those write
  * promises via {@link trackWrite} and awaits them ({@link settleWrites}) before
  * draining, so a MISS-at-capture value is still pinned.
+ *
+ * Loader attribution: every item/response access made inside a loader scope
+ * (hit, miss or write) marks its key in {@link loaderKeys}. A loader re-runs
+ * on every HIT, so those records stay pinned when the snapshot is pruned. A
+ * miss counts too: a loader that joins a handler's in-flight "use cache" call
+ * reads the store first (cache-runtime.ts) and finds nothing, and the record
+ * then comes from the handler's write.
  */
 export class RecordingShellStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
   private readonly records = new Map<string, ShellSnapshotRecord>();
   private readonly writes: Promise<unknown>[] = [];
+  /** Record keys ({@link recordKey}) a loader read or wrote during the capture. */
+  readonly loaderKeys: Set<string> = new Set();
 
   constructor(private readonly inner: SegmentCacheStore<TEnv>) {}
 
@@ -108,6 +119,13 @@ export class RecordingShellStore<
     value: ShellSnapshotRecord["value"],
   ): void {
     this.records.set(recordKey(family, key), { family, key, value });
+  }
+
+  private noteLoaderAccess(
+    family: ShellSnapshotRecord["family"],
+    key: string,
+  ): void {
+    if (isInsideAnyLoaderScope()) this.loaderKeys.add(recordKey(family, key));
   }
 
   /** Track a deferred cache-write promise so the capture can await it pre-drain. */
@@ -190,6 +208,7 @@ export class RecordingShellStore<
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     if (!this.inner.getResponse) return null;
+    this.noteLoaderAccess("response", key);
     const result = await this.inner.getResponse(key);
     if (result)
       this.record("response", key, await serializeResponse(result.response));
@@ -204,12 +223,14 @@ export class RecordingShellStore<
     tags?: string[],
   ): Promise<void> {
     if (!this.inner.putResponse) return;
+    this.noteLoaderAccess("response", key);
     this.record("response", key, await serializeResponse(response));
     return this.inner.putResponse(key, response, ttl, swr, tags);
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
     if (!this.inner.getItem) return null;
+    this.noteLoaderAccess("item", key);
     const result = await this.inner.getItem(key);
     if (result) {
       const value: ShellSnapshotItemValue = {
@@ -228,6 +249,7 @@ export class RecordingShellStore<
     options?: CacheItemOptions,
   ): Promise<void> {
     if (!this.inner.setItem) return;
+    this.noteLoaderAccess("item", key);
     const stored: ShellSnapshotItemValue = {
       value,
       handles: options?.handles,
@@ -264,6 +286,81 @@ export function getRecordingStore<TEnv>(
   store: SegmentCacheStore<TEnv> | undefined,
 ): RecordingShellStore<TEnv> | undefined {
   return store instanceof RecordingShellStore ? store : undefined;
+}
+
+/**
+ * True when `snapshot` carries the canonical doc segment record `docKey`
+ * names, with at least one segment: the record partial replay and a
+ * fast-path HIT tail consume.
+ */
+export function hasDocRecord(
+  snapshot: readonly ShellSnapshotRecord[] | undefined,
+  docKey: string | undefined,
+): boolean {
+  if (docKey === undefined || !snapshot) return false;
+  return snapshot.some((record) => {
+    if (
+      !record ||
+      typeof record !== "object" ||
+      record.family !== "segment" ||
+      record.key !== docKey ||
+      typeof record.value !== "object" ||
+      record.value === null
+    ) {
+      return false;
+    }
+    const segments = (record.value as { segments?: unknown }).segments;
+    return Array.isArray(segments) && segments.length > 0;
+  });
+}
+
+/**
+ * Who reads a stored snapshot beyond its segment family
+ * (docs/design/shell-entry-layout.md §2):
+ * - "segments": nobody. A navigation-only entry is read only by partial
+ *   replay, which seeds segments alone (SeededShellStore `segmentsOnly`).
+ * - "loaders": the loaders a document HIT re-runs. Every HIT tail of the
+ *   entry replays the handler layer from the implicit doc record, so the item
+ *   and response records only handler code read are dead weight.
+ */
+export type ShellSnapshotReaders = "segments" | "loaders";
+
+/**
+ * Split a capture's snapshot into what its readers consume and the rest.
+ * Segment records are always kept; with "loaders", loader-family records and
+ * the item/response records a loader touched during the capture
+ * (RecordingShellStore.loaderKeys) are kept too. The doc record stays a copy
+ * inside the entry: a reference to a separately stored record could be
+ * evicted on its own, and the HIT that then re-ran handlers would need every
+ * record this drops.
+ */
+export function pruneShellSnapshot(
+  snapshot: readonly ShellSnapshotRecord[],
+  readers: ShellSnapshotReaders,
+  loaderKeys: ReadonlySet<string>,
+): { kept: ShellSnapshotRecord[]; pruned: ShellSnapshotRecord[] } {
+  const kept: ShellSnapshotRecord[] = [];
+  const pruned: ShellSnapshotRecord[] = [];
+  for (const record of snapshot) {
+    const keep =
+      record.family === "segment" ||
+      (readers === "loaders" &&
+        (record.family === "loader" ||
+          loaderKeys.has(recordKey(record.family, record.key))));
+    (keep ? kept : pruned).push(record);
+  }
+  return { kept, pruned };
+}
+
+/** Snapshot records by family, e.g. `segment:1/item:5` (no commas: it rides a Server-Timing desc). */
+export function countSnapshotFamilies(
+  snapshot: readonly ShellSnapshotRecord[],
+): string {
+  const counts = new Map<string, number>();
+  for (const record of snapshot) {
+    counts.set(record.family, (counts.get(record.family) ?? 0) + 1);
+  }
+  return [...counts].map(([family, n]) => `${family}:${n}`).join("/");
 }
 
 /**

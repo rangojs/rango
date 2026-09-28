@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Breaking: a PPR hole reads live data for a `"use cache"` entry the shell also read ([#958](https://github.com/rangojs/rango/pull/958))
+
+When a `ppr` route's shell and one of its live holes (a loader under
+`loading()` or an inline `<Suspense>`) read the same `"use cache"` entry,
+a shell HIT used to hand the hole the value the capture read, so the hole
+matched the shell until the shell expired. The hole now
+reads the store on every HIT, like any other live read: once the entry
+changes, the hole shows the new value while the shell keeps the value it was
+captured with. Nothing changes for a route with its own `cache()` scope, a
+store with a `keyGenerator`, a route whose handlers re-run on a HIT (a
+handler that calls `ctx.use()` on a loader), or an entry an `ssr: false`
+loader also reads: those keep the captured value for the hole too.
+
+```tsx
+async function getStock(sku: string) {
+  "use cache: short"; // ttl 60
+  return fetchStock(sku);
+}
+// The layout (shell) and the loader under loading() (hole) both read it.
+// Before: after the entry refreshed, the hole still showed the captured stock.
+// After: the hole shows the refreshed stock; the shell keeps the captured one.
+```
+
+Migration: if the hole must show the shell's value, pass it down from the
+shell (a prop, or a handle the hole reads) instead of reading the entry again
+in the live loader.
+
+### A PPR shell entry stores only what a HIT reads ([#958](https://github.com/rangojs/rango/pull/958))
+
+A shell entry's capture snapshot held every cache read the capture made. When
+every HIT replays the handlers' output from the captured segment record, the
+`"use cache"` items the handlers read to produce it are never read again; the
+capture no longer stores them. A navigation-only entry (captured for partial
+navigations) stores only its segment records. On `tests/cloudflare-basic`
+`/ppr-large` the stored entry went from 3,272,863 to 1,647,811 bytes (snapshot
+2,643,864 to 1,018,799), which a HIT reads and parses after its first byte. In
+dev the same snapshot was 16,960,162 bytes, over the 8 MiB `maxSnapshotBytes`
+cap, so it was not stored at all; it now is (1,374,662 bytes). Under
+`debugPerformance` the `shell tail` line and `ppr-tail` row show what was
+dropped next to what was kept (`records=segment:1 pruned=item:5`).
+
 ### Added: a PPR shell HIT broken into `debugPerformance` rows ([#955](https://github.com/rangojs/rango/pull/955))
 
 Under `debugPerformance`, a PPR shell HIT reported one `ppr:shell-read` row.
@@ -19,6 +60,10 @@ collected when `debugPerformance` is off.
 
 ### Fixes
 
+- A PPR shell HIT whose captured segment record fails to decode now schedules
+  a recapture. The HIT reports `cache-corrupt` and re-renders the handlers;
+  before, nothing replaced the entry, so every HIT repeated that re-render
+  until the shell expired ([#958](https://github.com/rangojs/rango/pull/958)).
 - A PPR shell capture no longer gives up while a client component in the
   shell is still loading its module. The capture aborted a fixed number of
   task turns after the page payload arrived, and a client component outside
