@@ -144,6 +144,19 @@ their parent's `layout[]` array.
    #918 it rendered one level only and dropped those
 4. `collectRouteMiddleware()` recursively processes orphan layouts for middleware
 5. The segment system renders orphan layout components as wrappers around route content
+6. The lookups that scan orphans walk the nested ones too, through
+   `findInOrphans()` in `router/error-handling.ts`: the boundary walkers,
+   `matchError` (`router/match-api.ts`), `findInterceptForRoute()` and
+   `collectInterceptTargetNames()` (`router/intercept-resolution.ts`), and the
+   build's intercept scan (`router/prerender-match.ts`). At each entry of the
+   walk the order is the entry itself, then its orphans depth-first in render
+   order, then the parent (`parent ?? orphanOwner` in the boundary walkers).
+   A bare `cache()` marker in the chain is also in its layout's `layout[]`;
+   the walk skips it there, so the build does not pre-render its intercepts
+   twice. Before issue #926 these lookups read one level, so an
+   `errorBoundary()`, `notFoundBoundary()` or `intercept()` in a layout after
+   a bare `cache()` marker (for the routes before the marker) or in a
+   routeless `transition()` / `cache()` wrapper was never found
 
 ### Sibling orphan layouts vs nested
 

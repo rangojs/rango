@@ -27,6 +27,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { findInOrphans } from "./error-handling.js";
 import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
@@ -104,15 +105,20 @@ export function collectInterceptTargetNames(
   fromEntry: EntryData | null,
 ): string[] {
   const names = new Set<string>();
-  let current: EntryData | null = fromEntry;
-  while (current) {
-    // Tolerate partial entries (unit-test mocks omit the arrays); real
-    // registration always populates layout/intercept.
-    for (const source of [current, ...(current.layout ?? [])]) {
-      for (const intercept of source.intercept ?? []) {
-        names.add(intercept.routeName);
-      }
+  // Tolerate partial entries (unit-test mocks omit the arrays); real
+  // registration always populates layout/intercept.
+  const add = (source: EntryData): undefined => {
+    for (const intercept of source.intercept ?? []) {
+      names.add(intercept.routeName);
     }
+    return undefined;
+  };
+  let current: EntryData | null = fromEntry;
+  let prev: EntryData | null = null;
+  while (current) {
+    add(current);
+    findInOrphans(current, add, prev);
+    prev = current;
     current = current.parent;
   }
   return [...names];
@@ -124,21 +130,26 @@ export function findInterceptForRoute(
   selectorContext: InterceptSelectorContext | null = null,
   isAction: boolean = false,
 ): { intercept: InterceptEntry; entry: EntryData } | null {
-  let current: EntryData | null = fromEntry;
-
-  while (current) {
-    // current first, then its sibling layouts — same order as before.
-    for (const source of [current, ...current.layout]) {
-      for (const intercept of source.intercept) {
-        if (
-          intercept.routeName === targetRouteKey &&
-          evaluateInterceptWhen(intercept, selectorContext, isAction)
-        ) {
-          return { intercept, entry: source };
-        }
+  const match = (source: EntryData) => {
+    for (const intercept of source.intercept) {
+      if (
+        intercept.routeName === targetRouteKey &&
+        evaluateInterceptWhen(intercept, selectorContext, isAction)
+      ) {
+        return { intercept, entry: source };
       }
     }
+    return undefined;
+  };
+  let current: EntryData | null = fromEntry;
+  let prev: EntryData | null = null;
 
+  while (current) {
+    // current first, then its orphans (nested ones included) in render order.
+    const found = match(current) ?? findInOrphans(current, match, prev);
+    if (found) return found;
+
+    prev = current;
     current = current.parent;
   }
 

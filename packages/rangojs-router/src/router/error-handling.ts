@@ -106,6 +106,40 @@ export function invokeOnError<TEnv = any>(
 }
 
 /**
+ * First non-undefined `pick(orphan)` over the routeless entries in
+ * `entry.layout` and, recursively, in theirs: depth-first in render order
+ * (resolveOrphanLayout in segment-resolution/fresh.ts). Since #922 a routeless
+ * entry nested in another renders (a layout() after a bare cache() marker, a
+ * layout() in a routeless wrapper); a one-level scan missed the boundaries and
+ * intercepts it declares (#926).
+ *
+ * `skip` is the entry an upward walk came from. Only a bare cache() marker is
+ * both in its layout's layout[] and in the chain, and its subtree was already
+ * scanned at its chain position.
+ */
+export function findInOrphans<T>(
+  entry: EntryData,
+  pick: (orphan: EntryData) => T | undefined,
+  skip?: EntryData | null,
+): T | undefined {
+  for (const orphan of entry.layout ?? []) {
+    if (orphan === skip) continue;
+    const found = pick(orphan) ?? findInOrphans(orphan, pick);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** `findInOrphans` pick: the orphan when it declares an errorBoundary(). */
+export const withErrorBoundary = (entry: EntryData): EntryData | undefined =>
+  entry.errorBoundary && entry.errorBoundary.length > 0 ? entry : undefined;
+
+const withNotFoundBoundary = (entry: EntryData): EntryData | undefined =>
+  entry.notFoundBoundary && entry.notFoundBoundary.length > 0
+    ? entry
+    : undefined;
+
+/**
  * Find the nearest error boundary by walking up the entry chain
  * Also checks sibling layouts (orphan layouts) for error boundaries
  * Returns the first fallback found, or the default error boundary if configured
@@ -120,20 +154,17 @@ export function findNearestErrorBoundary(
   defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler,
 ): ReactNode | ErrorBoundaryHandler | null {
   let current: EntryData | null = entry;
+  let prev: EntryData | null = null;
 
   while (current) {
     if (current.errorBoundary && current.errorBoundary.length > 0) {
       return current.errorBoundary[current.errorBoundary.length - 1];
     }
 
-    if (current.layout && current.layout.length > 0) {
-      for (const orphan of current.layout) {
-        if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
-          return orphan.errorBoundary[orphan.errorBoundary.length - 1];
-        }
-      }
-    }
+    const orphan = findInOrphans(current, withErrorBoundary, prev);
+    if (orphan) return orphan.errorBoundary[orphan.errorBoundary.length - 1];
 
+    prev = current;
     current = current.parent ?? current.orphanOwner ?? null;
   }
 
@@ -150,6 +181,7 @@ export function findNearestNotFoundBoundary(
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler,
 ): ReactNode | NotFoundBoundaryHandler | null {
   let current: EntryData | null = entry;
+  let prev: EntryData | null = null;
 
   while (current) {
     if (current.notFoundBoundary && current.notFoundBoundary.length > 0) {
@@ -159,15 +191,13 @@ export function findNearestNotFoundBoundary(
     // Check orphan layouts mirroring findNearestErrorBoundary: notFoundBoundary
     // attaches identically (onto parent.notFoundBoundary), and an orphan layout
     // (parent=null) is reachable only via this scan. First sibling is "outer".
-    if (current.layout && current.layout.length > 0) {
-      for (const orphan of current.layout) {
-        if (orphan.notFoundBoundary && orphan.notFoundBoundary.length > 0) {
-          return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
-        }
-      }
+    const orphan = findInOrphans(current, withNotFoundBoundary, prev);
+    if (orphan) {
+      return orphan.notFoundBoundary[orphan.notFoundBoundary.length - 1];
     }
 
     // Orphan: continue at its owner, as findNearestErrorBoundary does.
+    prev = current;
     current = current.parent ?? current.orphanOwner ?? null;
   }
 
