@@ -35,6 +35,7 @@ import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { installNativeBase64 } from "../../cache/cf/__tests__/native-base64.js";
+import { CFCacheStore } from "../../cache/cf/cf-cache-store.js";
 import type { CachedEntryData, ShellCacheEntry } from "../../cache/types.js";
 import {
   createRequestContext,
@@ -800,6 +801,123 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
   // payload matches the frozen prelude even after the underlying entries drifted.
   // Everything not pinned falls through to the real store and stays live. See
   // cache/shell-snapshot.ts and docs/design/ppr-shell-resume.md.
+  // Issue #941: the HIT read and parsed the whole stored entry, the capture
+  // snapshot included, before its first byte. With CFCacheStore's
+  // prelude-first layout the prelude flushes while the snapshot bytes are
+  // still withheld, and the tail seeds from the snapshot once they arrive.
+  it("flushes the prelude before the store has read the snapshot, then seeds the tail from it", async () => {
+    const stored = new Map<string, { bytes: Uint8Array; init: ResponseInit }>();
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gateAt = (bytes: Uint8Array): number => bytes.length;
+    const cache = {
+      async match(request: Request): Promise<Response | undefined> {
+        const hit = stored.get(request.url);
+        if (!hit) return undefined;
+        const split = gateAt(hit.bytes);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(hit.bytes.slice(0, split));
+              await released;
+              controller.enqueue(hit.bytes.slice(split));
+              controller.close();
+            },
+          }),
+          hit.init,
+        );
+      },
+      async put(request: Request, response: Response): Promise<void> {
+        stored.set(request.url, {
+          bytes: new Uint8Array(await response.arrayBuffer()),
+          init: { status: response.status, headers: response.headers },
+        });
+      },
+      async delete(request: Request): Promise<boolean> {
+        return stored.delete(request.url);
+      },
+    };
+    vi.stubGlobal("caches", { default: cache, open: async () => cache });
+    try {
+      const pending: Promise<unknown>[] = [];
+      const store = new CFCacheStore({
+        ctx: {
+          waitUntil: (p: Promise<unknown>) => {
+            pending.push(p);
+          },
+          passThroughOnException() {},
+        } as any,
+      });
+      const snapshot: ShellSnapshotRecord[] = [
+        { family: "item", key: "it1", value: { value: "PINNED".repeat(1000) } },
+      ];
+      await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
+      await Promise.all(pending);
+      // Withhold exactly the snapshot's bytes (they close the stored body).
+      const snapshotLength = JSON.stringify(snapshot).length;
+      gateAt = (bytes) => bytes.length - snapshotLength;
+
+      const ssrModule = fullSsrModule();
+      const { ctx } = makeCtx(ssrModule, "stream");
+      const seen: (string | undefined)[] = [];
+      (ctx as any).renderToReadableStream = () => {
+        void getRequestContext()._cacheStore!.getItem!("it1").then((r) =>
+          seen.push(r?.value),
+        );
+        return new ReadableStream();
+      };
+      const request = new Request("http://localhost/p", {
+        headers: { accept: "text/html" },
+      });
+      const url = new URL(request.url);
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url,
+        variables: {},
+      }) as RequestContext<unknown>;
+      reqCtx._cacheStore = store as any;
+      (reqCtx as any)._classifiedRoute = {
+        manifestEntry: { type: "route", ppr: true },
+      };
+
+      const committed = await Promise.race([
+        runWithRequestContext(reqCtx, () =>
+          handleRscRendering(
+            ctx,
+            request,
+            {},
+            url,
+            false,
+            reqCtx._handleStore,
+            undefined,
+          ),
+        ),
+        new Promise<"stalled">((resolve) =>
+          setTimeout(() => resolve("stalled"), 500),
+        ),
+      ]);
+      expect(committed).not.toBe("stalled");
+      const response = committed as Response;
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      const reader = response.body!.getReader();
+      const first = await reader.read();
+      expect(new TextDecoder().decode(first.value)).toBe(PRELUDE_HTML);
+      expect(seen).toEqual([]);
+
+      release();
+      reader.releaseLock();
+      expect(await readAll(response.body!)).toBe("RESUMED-HOLE");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(seen).toEqual(["PINNED".repeat(1000)]);
+    } finally {
+      release();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("seeds the tail render's cache reads from the snapshot (pinned value served fresh, real store untouched)", async () => {
     const store = new MemorySegmentCacheStore();
     // The real store has NO "it1" entry — proving the SEED serves it (the capture

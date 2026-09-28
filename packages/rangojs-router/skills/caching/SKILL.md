@@ -558,6 +558,14 @@ read. A non-finite value (e.g. `Number(env.UNSET)`) falls back to the default.
 The tag-invalidation marker reads inherit these same budgets and **fail open** on
 a KV timeout — the entry is served rather than wrongly treated as invalidated.
 
+A PPR shell HIT reads its entry prelude-first: the body budget (or the KV budget
+on a KV read, counted from opening the value) covers only the entry's head and
+prelude, the tag-marker read runs alongside the prelude read, and the capture
+snapshot behind them is read off the commit path, bounded by `kvReadTimeoutMs`.
+A snapshot read that times out lets the HIT's tail run without its pins, the
+same as a shell stored without a snapshot; a truncated or corrupt snapshot does
+the same and also evicts the entry.
+
 ```typescript
 new CFCacheStore({
   ctx,

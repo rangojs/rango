@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CFCacheStore } from "../cf-cache-store";
+import {
+  ShellFrameReader,
+  encodeShellFrame,
+  shellFrameToText,
+  type ShellFrameHead,
+} from "../cf-shell-frame";
 import type { ShellCacheEntry } from "../../types";
 import {
   createRequestContext,
@@ -61,6 +67,18 @@ class MockKV {
     this.store.delete(key);
   }
 }
+
+/** Split a stored shell frame (KV string or Cache API bytes) into its parts. */
+async function readFrame(
+  stored: string | Uint8Array,
+): Promise<{ head: ShellFrameHead; prelude: Uint8Array; rest: Uint8Array }> {
+  const reader = new ShellFrameReader(new Response(stored as BodyInit).body!);
+  const head = (await reader.readHead())!;
+  const prelude = (await reader.take(head.pl))!;
+  return { head, prelude, rest: await reader.readRest() };
+}
+
+const frameText = (frame: Uint8Array): string => shellFrameToText(frame);
 
 const createMockCtx = () => ({
   waitUntil: vi.fn((p: Promise<any>) => p),
@@ -215,20 +233,26 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(hit?.entry.postponed).toBeUndefined();
   });
 
-  it("still rejects a DOCUMENT envelope missing its prelude (loosening is navigationOnly-scoped)", async () => {
+  it("still rejects a DOCUMENT frame missing its postponed state (loosening is navigationOnly-scoped)", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     await store.putShell("k", shellEntry(), 300, 30);
     await drain(mockCtx);
     mockCache.store.clear();
-    // Strip the prelude from the stored document envelope in place.
-    for (const [key, stored] of mockKV.store) {
-      const parsed = JSON.parse(stored.value);
-      if (parsed && typeof parsed === "object" && "p" in parsed) {
-        delete parsed.p;
-        mockKV.store.set(key, { ...stored, value: JSON.stringify(parsed) });
-      }
-    }
+    // Strip the postponed field from the stored document frame's head.
+    const [kvKey, stored] = [...mockKV.store].find(([key]) =>
+      key.includes("shell2:k"),
+    )!;
+    const { head, prelude, rest } = await readFrame(stored.value);
+    delete (head as { po?: unknown }).po;
+    mockKV.store.set(kvKey, {
+      ...stored,
+      value: frameText(encodeShellFrame(head, prelude, rest)),
+    });
     expect(await store.getShell("k")).toBeNull();
+    consoleError.mockRestore();
   });
 
   // docKey names the canonical doc segment record navigation replay consumes;
@@ -556,7 +580,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
     expect(await store.getShell("k")).toBeNull();
     expect(
-      [...mockKV.store.keys()].some((key) => key.includes("shell:k")),
+      [...mockKV.store.keys()].some((key) => key.includes("shell2:k")),
     ).toBe(false);
   });
 
@@ -568,7 +592,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     vi.setSystemTime(new Date(invalidatedAt + 1));
     await store.putShell(
       "k",
-      shellEntry({ prelude: "new", createdAt: invalidatedAt + 1 }),
+      shellEntry({ prelude: btoa("new"), createdAt: invalidatedAt + 1 }),
       300,
       30,
       ["home"],
@@ -576,14 +600,14 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     await drain(mockCtx);
     await store.putShell(
       "k",
-      shellEntry({ prelude: "old", createdAt: invalidatedAt - 1 }),
+      shellEntry({ prelude: btoa("old"), createdAt: invalidatedAt - 1 }),
       300,
       30,
       ["home"],
     );
     await drain(mockCtx);
 
-    expect((await store.getShell("k"))?.entry.prelude).toBe("new");
+    expect((await store.getShell("k"))?.entry.prelude).toBe(btoa("new"));
   });
 
   it("evicts and misses on a corrupt (non-JSON) KV entry", async () => {
@@ -596,7 +620,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
     // Corrupt the stored envelope in place under the shell KV key.
     const shellKvKey = [...mockKV.store.keys()].find((k) =>
-      k.includes("shell:k"),
+      k.includes("shell2:k"),
     )!;
     mockKV.store.set(shellKvKey, { value: "{not-json" });
     mockCache.store.clear();
@@ -626,6 +650,344 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect((await store.getShell("k"))?.entry).toEqual(entry);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  // Issue #941: the prelude-first read (readShellDocument) resolves with the
+  // head and the raw prelude while the snapshot bytes behind them are still
+  // arriving; only the snapshot promise waits for them.
+  describe("prelude-first read (readShellDocument)", () => {
+    const SNAPSHOT: ShellCacheEntry["snapshot"] = [
+      {
+        family: "item",
+        key: "use-cache:big",
+        value: { value: "X".repeat(4096) },
+      },
+    ];
+
+    /** Replace the stored L1 body with one that holds everything from `at` until released. */
+    function gateL1Body(at: (bytes: Uint8Array) => number) {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const [l1Key, stored] = [...mockCache.store][0]!;
+      mockCache.store.set(l1Key, stored);
+      const original = mockCache.match.bind(mockCache);
+      vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
+        const response = await original(request);
+        if (!response) return response;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        const split = at(bytes);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(bytes.subarray(0, split));
+              await released;
+              controller.enqueue(bytes.subarray(split));
+              controller.close();
+            },
+          }),
+          { status: response.status, headers: response.headers },
+        );
+      });
+      return release;
+    }
+
+    it("resolves the head and prelude before the snapshot bytes arrive", async () => {
+      vi.useRealTimers();
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      const entry = shellEntry({ snapshot: SNAPSHOT });
+      await store.putShell("k", entry, 300, 30);
+      await drain(mockCtx);
+      const snapshotLength = JSON.stringify(SNAPSHOT).length;
+      const release = gateL1Body((bytes) => bytes.length - snapshotLength);
+
+      const read = await store.readShellDocument("k");
+      expect(read).not.toBeNull();
+      expect(new TextDecoder().decode(read!.prelude)).toBe(
+        "<html><body>SHELL</body></html>",
+      );
+      expect(read!.entry.postponed).toBe(entry.postponed);
+      let snapshotSettled = false;
+      void read!.snapshot.then(() => {
+        snapshotSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(snapshotSettled).toBe(false);
+
+      release();
+      expect(await read!.snapshot).toEqual(SNAPSHOT);
+    });
+
+    it("starts the tag-marker read before the prelude bytes are read", async () => {
+      vi.useRealTimers();
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      // Only L1 can answer: drop the shell's KV copy (tag markers stay).
+      for (const key of [...mockKV.store.keys()]) {
+        if (key.includes("shell")) mockKV.store.delete(key);
+      }
+      // Withhold the body's last byte (inside the prelude) until a marker read
+      // begins: a read that parses the whole body before the marker stalls.
+      const release = gateL1Body((bytes) => bytes.length - 1);
+      const kvGet = mockKV.get.bind(mockKV);
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        if (key.includes("__tag__/home")) release();
+        return kvGet(key, options);
+      });
+
+      const read = await Promise.race([
+        store.getShell("k"),
+        new Promise<"stalled">((resolve) =>
+          setTimeout(() => resolve("stalled"), 500),
+        ),
+      ]);
+      expect(read).not.toBe("stalled");
+      expect(read).not.toBeNull();
+    });
+
+    it("an invalidated tag still rejects the read before it resolves", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      await store.invalidateTags(["home"]);
+      expect(await store.readShellDocument("k")).toBeNull();
+    });
+
+    it("a corrupt snapshot resolves undefined after the commit and evicts both tiers", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry({ snapshot: SNAPSHOT }), 300, 30);
+      await drain(mockCtx);
+      // Truncate the snapshot JSON in the stored L1 body.
+      const [l1Key, stored] = [...mockCache.store][0]!;
+      const bytes = new Uint8Array(await stored.clone().arrayBuffer());
+      mockCache.store.set(
+        l1Key,
+        new Response(bytes.subarray(0, bytes.length - 10), {
+          headers: stored.headers,
+        }),
+      );
+
+      const read = await store.readShellDocument("k");
+      expect(read).not.toBeNull();
+      expect(await read!.snapshot).toBeUndefined();
+      await drain(mockCtx);
+      expect(mockCache.store.size).toBe(0);
+      expect(
+        [...mockKV.store.keys()].some((key) => key.includes("shell2:k")),
+      ).toBe(false);
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    it("streams a KV hit prelude-first and promotes it into L1 after the snapshot", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      const entry = shellEntry({ snapshot: SNAPSHOT });
+      await store.putShell("k", entry, 300, 30);
+      await drain(mockCtx);
+      mockCache.store.clear();
+      const kvGet = mockKV.get.bind(mockKV);
+      const types: (string | undefined)[] = [];
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        types.push(options?.type);
+        const value = await kvGet(key, options);
+        return options?.type === "stream" && typeof value === "string"
+          ? new Response(value).body
+          : value;
+      });
+
+      const read = await store.readShellDocument("k");
+      expect(types).toContain("stream");
+      expect(new TextDecoder().decode(read!.prelude)).toBe(
+        "<html><body>SHELL</body></html>",
+      );
+      expect(await read!.snapshot).toEqual(SNAPSHOT);
+      await drain(mockCtx);
+      expect(mockCache.store.size).toBe(1);
+      mockKV.store.clear();
+      expect((await store.getShell("k"))?.entry).toEqual(entry);
+    });
+
+    it("never reads the pre-frame `shell:` namespace", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry(), 300, 30);
+      await drain(mockCtx);
+      expect(
+        [...mockKV.store.keys()].some((key) => key.includes("shell:k")),
+      ).toBe(false);
+      expect(
+        [...mockCache.store.keys()].every((key) => key.includes("shell2%3Ak")),
+      ).toBe(true);
+
+      // Move the entry to the old keys with an old JSON envelope body: a
+      // frame reader that looked there would report it as corrupt.
+      const envelope = JSON.stringify({
+        p: btoa("<html><body>OLD</body></html>"),
+        po: null,
+        rv: REACT_VERSION,
+        bv: "build-abc",
+        c: Date.now(),
+        s: Date.now() + 300_000,
+        e: Date.now() + 330_000,
+      });
+      for (const [key, value] of [...mockKV.store]) {
+        mockKV.store.delete(key);
+        mockKV.store.set(key.replace("shell2:k", "shell:k"), {
+          ...value,
+          value: envelope,
+        });
+      }
+      for (const [key, response] of [...mockCache.store]) {
+        mockCache.store.delete(key);
+        mockCache.store.set(
+          key.replace("shell2%3Ak", "shell%3Ak"),
+          new Response(envelope, { headers: response.headers }),
+        );
+      }
+
+      expect(await store.readShellDocument("k")).toBeNull();
+      expect(await store.getShell("k")).toBeNull();
+      expect(consoleError).not.toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    // The KV budget covers opening the value AND reading its head and
+    // prelude: two windows back to back would let a KV hit take twice
+    // kvReadTimeoutMs before the commit.
+    it("bounds a KV shell read by one kvReadTimeoutMs across open and body", async () => {
+      vi.useRealTimers();
+      const consoleWarn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        kvReadTimeoutMs: 60,
+      });
+      await store.putShell("k", shellEntry(), 300, 30);
+      await drain(mockCtx);
+      mockCache.store.clear();
+      const kvGet = mockKV.get.bind(mockKV);
+      const sleep = (ms: number) =>
+        new Promise((resolve) => setTimeout(resolve, ms));
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        const value = await kvGet(key, options);
+        if (options?.type !== "stream" || typeof value !== "string") {
+          return value;
+        }
+        // Each half fits the budget on its own; together they do not.
+        await sleep(40);
+        const bytes = new TextEncoder().encode(value);
+        return new ReadableStream<Uint8Array>({
+          async start(controller) {
+            await sleep(40);
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+      });
+
+      expect(await store.readShellDocument("k")).toBeNull();
+      expect(
+        consoleWarn.mock.calls.some(([message]) =>
+          String(message).includes("KV read exceeded"),
+        ),
+      ).toBe(true);
+      consoleWarn.mockRestore();
+    });
+
+    // A read nobody serves (a version mismatch, a render that skips the tail)
+    // never awaits the snapshot; the KV tier's promotion must still happen.
+    it("registers the snapshot read with waitUntil, so promotion runs unawaited", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry({ snapshot: SNAPSHOT }), 300, 30);
+      await drain(mockCtx);
+      mockCache.store.clear();
+      mockCtx.waitUntil.mockClear();
+
+      const read = await store.readShellDocument("k");
+      expect(read).not.toBeNull();
+      expect(mockCtx.waitUntil).toHaveBeenCalled();
+      // Drain what the read registered, repeatedly (promotion is registered
+      // from inside the snapshot read), without touching read.snapshot.
+      for (let i = 0; i < 3; i++) await drain(mockCtx);
+      expect(mockCache.store.size).toBe(1);
+    });
+
+    // A frame cut exactly at the end of the prelude parses as "no snapshot"
+    // unless the head says how long the snapshot is.
+    it("treats a frame truncated at the prelude end as corrupt: evicted, and a getShell miss", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry({ snapshot: SNAPSHOT }), 300, 30);
+      await drain(mockCtx);
+      const snapshotLength = JSON.stringify(SNAPSHOT).length;
+      const [l1Key, stored] = [...mockCache.store][0]!;
+      const bytes = new Uint8Array(await stored.clone().arrayBuffer());
+      const truncated = () =>
+        new Response(bytes.subarray(0, bytes.length - snapshotLength), {
+          headers: stored.headers,
+        });
+      mockCache.store.set(l1Key, truncated());
+
+      const read = await store.readShellDocument("k");
+      expect(read).not.toBeNull();
+      expect(await read!.snapshot).toBeUndefined();
+      await drain(mockCtx);
+      expect(mockCache.store.size).toBe(0);
+      expect(
+        [...mockKV.store.keys()].some((key) => key.includes("shell2:k")),
+      ).toBe(false);
+      expect(
+        consoleError.mock.calls.some(([label]) =>
+          String(label).includes("corrupt shell snapshot"),
+        ),
+      ).toBe(true);
+
+      // getShell has no commit to protect: the same failure is a miss.
+      mockCache.store.set(l1Key, truncated());
+      expect(await store.getShell("k")).toBeNull();
+      consoleError.mockRestore();
+    });
+
+    it("getShell misses when the snapshot read times out", async () => {
+      vi.useRealTimers();
+      const consoleWarn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        kvReadTimeoutMs: 30,
+      });
+      await store.putShell("k", shellEntry({ snapshot: SNAPSHOT }), 300, 30);
+      await drain(mockCtx);
+      const snapshotLength = JSON.stringify(SNAPSHOT).length;
+      const release = gateL1Body((bytes) => bytes.length - snapshotLength);
+
+      const read = await store.readShellDocument("k");
+      expect(read).not.toBeNull();
+      expect(await read!.snapshot).toBeUndefined();
+      expect(
+        consoleWarn.mock.calls.some(([message]) =>
+          String(message).includes(
+            "shell snapshot read exceeded 30ms; the HIT's tail runs unpinned",
+          ),
+        ),
+      ).toBe(true);
+      expect(await store.getShell("k")).toBeNull();
+      release();
+      consoleWarn.mockRestore();
+    });
   });
 
   it("does not emit shell tier decisions when internal debug is disabled", async () => {

@@ -18,7 +18,7 @@
 
 import React from "react";
 import { isLoaderDataResult } from "../types.js";
-import { bufferToBase64 } from "../cache/cf/cf-base64.js";
+import { bytesToBase64 } from "../cache/cf/cf-base64.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
 import {
@@ -2121,13 +2121,9 @@ async function captureAndStoreShell(
           ...(capture.navigationOnly
             ? {}
             : {
-                // slice() copies just this view's bytes into a fresh
-                // ArrayBuffer, so a prelude that is a subarray of a larger
-                // backing buffer encodes only its own region — bufferToBase64
-                // reads the whole ArrayBuffer it is handed.
-                prelude: bufferToBase64(
-                  result.prelude.slice().buffer as ArrayBuffer,
-                ),
+                // bytesToBase64 encodes the view's own region, so a prelude
+                // that is a subarray of a larger buffer encodes correctly.
+                prelude: bytesToBase64(result.prelude),
                 postponed: result.postponed,
               }),
           reactVersion: React.version,

@@ -24,6 +24,8 @@ import { base64ToBytes } from "../cache/cf/cf-base64.js";
 import type {
   DocumentShellCacheEntry,
   ShellCacheEntry,
+  ShellDocumentRead,
+  ShellSnapshotRecord,
   SegmentCacheStore,
 } from "../cache/types.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
@@ -196,8 +198,19 @@ export function hasIntactShellPayload(
 
 /** A document shell ready to serve: its prelude decoded exactly once. */
 export interface ShellDocument {
-  entry: DocumentShellCacheEntry;
+  entry: ShellCacheEntry;
   prelude: Uint8Array;
+  /** React's postponed state, parse-checked (null = DATA variant). */
+  postponed: string | null;
+  /**
+   * The capture snapshot: on the entry, or still arriving on its own promise
+   * after a prelude-first read (SegmentCacheStore.readShellDocument), which
+   * only the tail awaits.
+   */
+  snapshot:
+    | ShellSnapshotRecord[]
+    | undefined
+    | Promise<ShellSnapshotRecord[] | undefined>;
 }
 
 /**
@@ -209,13 +222,23 @@ export interface ShellDocument {
  * until the entry ages out. Returning null here turns a corrupt entry
  * (store-layer fault) into a plain MISS the recapture overwrites. The decoded
  * bytes are what serveShellHit enqueues, so the check costs no second decode.
+ * A prelude-first `read` already carries raw bytes and a pending snapshot.
  */
 export function openShellDocument(
   entry: ShellCacheEntry,
+  read?: Pick<ShellDocumentRead, "prelude" | "snapshot">,
 ): ShellDocument | null {
-  if (!hasIntactShellPayload(entry)) return null;
+  const postponed = entry.postponed;
+  if (postponed === undefined) return null;
+  if (!read && typeof entry.prelude !== "string") return null;
   try {
-    return { entry, prelude: base64ToBytes(entry.prelude) };
+    if (postponed !== null) JSON.parse(postponed);
+    return {
+      entry,
+      postponed,
+      prelude: read ? read.prelude : base64ToBytes(entry.prelude!),
+      snapshot: read ? read.snapshot : entry.snapshot,
+    };
   } catch {
     return null;
   }
