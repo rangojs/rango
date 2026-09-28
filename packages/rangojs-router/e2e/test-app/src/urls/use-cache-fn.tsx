@@ -9,6 +9,7 @@ import {
   type CachedInlineActionState,
 } from "../components/CachedInlineActionForm.js";
 import { buildInlineActionState } from "../inline-action-helpers.js";
+import { DepCrumbCategoryLoader } from "../loaders.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -51,6 +52,17 @@ export async function fetchWithBreadcrumbs(
     href: "/use-cache-test/with-handles",
   });
   return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * Reads DepCrumbCategoryLoader (one DepCrumbs crumb per run, with a per-run
+ * id) inside the cached body. /use-cache-test/dep-crumbs also reads the
+ * loader live, so a HIT must show that loader's crumb once: the live one.
+ */
+export async function getUseCacheDepStamp(ctx: any): Promise<number> {
+  "use cache";
+  await ctx.use(DepCrumbCategoryLoader);
+  return Date.now();
 }
 
 /**

@@ -98,6 +98,15 @@ global middleware
   ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);
   source: `resolveLoaderData` in `loader-cache.ts`). Identity reads inside a
   bake-lane loader refuse the capture. Axis 1 is unchanged in both lanes.
+- A `"use cache"` HIT appends the function's own pushes to the calling
+  segment, and replays the pushes of loaders it read via `ctx.use` under the
+  loader-cache HIT rule above: skipped when the loader already ran or was
+  replayed in this request, replaced in place when it runs after the replay.
+  Its stale refresh reads loaders on its own executor and does not claim.
+  Records written before owner keys replay in full. Source: `appendHandles` in
+  `handle-snapshot.ts`, `useCacheRecordKey` in `handle-capture.ts`,
+  `refreshView` in `cache-runtime.ts`; pinned by
+  `use-cache-handle-capture.test.ts` (#928).
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - Route-level `cache()` stores only its boundary's subtree. The entries above
   the outermost enabled `cache()` entry of the chain are never written to the

@@ -131,6 +131,7 @@ import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
+import { UseCacheDepPage } from "./pages/use-cache-dep.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
@@ -1477,6 +1478,11 @@ export const urlpatterns = urls(
             loader(DepCrumbSiblingLoader, { ssr: false }),
           ],
         ),
+
+        // A "use cache" function reads the same dependency loader, and the
+        // handler reads it live after the call: its crumb appears once on the
+        // MISS and on the HIT, where the live run replaces the replayed crumb.
+        path("/use-cache-dep", UseCacheDepPage, { name: "useCacheDep" }),
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),

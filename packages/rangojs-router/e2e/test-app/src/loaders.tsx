@@ -472,6 +472,7 @@ export const CachedTestLoader = createLoader(async () => {
  * /cache-test/cached-loader-dep: the dependency of a loader with its own
  * cache(), also read by an uncached sibling loader. Each run pushes one crumb
  * with a per-run id, so a live run's crumb differs from the cached one.
+ * /use-cache-test/dep-crumbs reads it inside a "use cache" function too.
  */
 export const DepCrumbCategoryLoader = createLoader(async (ctx) => {
   ctx.use(DepCrumbs)(`Category ${crypto.randomUUID().slice(0, 8)}`);

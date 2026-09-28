@@ -6,6 +6,7 @@
  * during segment resolution and stored alongside cached segments.
  */
 
+import { replayLoaderPush } from "./handle-capture.js";
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { HandleOwners, SegmentHandleData } from "./types.js";
@@ -191,18 +192,44 @@ export function restoreHandles(
  * so active captures and loader-scope tagging see them like live pushes. For
  * a cached unit that shares its segments with live pushes ("use cache");
  * restoreHandles would wipe those. `segmentId` redirects every value to one
- * segment (the caller's). A loader's own cache() replays per loader through
- * HandleStore.pushReplayed instead (loader-cache.ts replayLoaderHandles).
+ * segment (the caller's).
+ *
+ * Owner-keyed groups (useCacheRecordKey, `${seq}:${loaderId}`) are a loader's
+ * pushes, which reach the page once per request: `claim` (setupLoaderAccess
+ * _claimLoaderPushes) skips a loader that already ran or was replayed in this
+ * request, and a claimed loader that runs later replaces its replayed values
+ * (HandleStore.pushReplayed). `${seq}:` groups are the function's own pushes.
+ * A key without ":" is a segment id (records written before owner keys) and
+ * replays unchanged. A loader's own cache() replays through loader-cache.ts
+ * replayLoaderHandles.
  */
 export function appendHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
   segmentId?: string,
+  claim?: (loaderId: string) => boolean,
 ): void {
-  for (const [segId, segHandles] of Object.entries(handles)) {
+  let claims: Map<string, boolean> | undefined;
+  for (const [key, segHandles] of Object.entries(handles)) {
+    const colon = key.indexOf(":");
+    const owner = colon < 0 ? "" : key.slice(colon + 1);
+    if (owner) {
+      claims ??= new Map();
+      let deliver = claims.get(owner);
+      if (deliver === undefined) {
+        deliver = claim ? claim(owner) : true;
+        claims.set(owner, deliver);
+      }
+      if (!deliver) continue;
+    }
+    const target = segmentId ?? key;
     for (const [handleName, values] of Object.entries(segHandles)) {
       for (const value of values) {
-        handleStore.push(handleName, segmentId ?? segId, value);
+        if (owner) {
+          replayLoaderPush(handleStore, handleName, target, value, owner);
+        } else {
+          handleStore.push(handleName, target, value);
+        }
       }
     }
   }

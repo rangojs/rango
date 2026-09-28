@@ -40,7 +40,8 @@ import {
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
-import { startHandleCapture } from "./handle-capture.js";
+import { startHandleCapture, useCacheRecordKey } from "./handle-capture.js";
+import { isHandle } from "../handle.js";
 import { cacheKeyBase, sortedSearchString } from "./cache-key-utils.js";
 import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
@@ -58,6 +59,7 @@ import {
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
 import type { CacheItemResult } from "./types.js";
+import type { InternalHandlerContext } from "../types.js";
 
 /**
  * DJB2 hash returning an 8-char hex string. Deterministic across runtimes
@@ -332,6 +334,30 @@ function raceLeader(
   });
 }
 
+/**
+ * A stale refresh's view of a handler ctx: loader reads run on their own
+ * executor (setupLoaderAccess _runLoaderIsolated), and an inner HIT replays in
+ * full without claiming. The refresh diverts its pushes, so the request's
+ * memoized run of a loader would take that loader's live pushes off the page,
+ * and a claim would starve the page's own replay of it.
+ */
+function refreshView(arg: unknown): unknown {
+  const ctx = arg as InternalHandlerContext<any, any>;
+  const runIsolated = isTainted(arg) ? ctx._runLoaderIsolated : undefined;
+  if (!runIsolated) return arg;
+  const runs = new Map<string, Promise<any>>();
+  const use = (item: any) => {
+    if (isHandle(item)) return ctx.use(item);
+    let run = runs.get(item.$$id);
+    if (!run) runs.set(item.$$id, (run = runIsolated(item)));
+    return run;
+  };
+  return Object.create(ctx, {
+    use: { value: use },
+    _claimLoaderPushes: { value: undefined },
+  });
+}
+
 // ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
@@ -410,13 +436,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     let hasTaintedArgs = false;
     // The calling segment, read synchronously as ctx.use(Handle) does: a HIT
     // replays into it. A route's layouts and page share one handler ctx and
-    // so one key; the recorded ids are the first caller's.
+    // so one key; the recorded ids are the first caller's. Its ctx's claim
+    // keeps a replayed loader's pushes to one copy per request.
     let callerSegmentId: string | undefined;
+    let claimLoaderPushes: ((loaderId: string) => boolean) | undefined;
     for (const arg of args) {
       if (isTainted(arg)) {
         hasTaintedArgs = true;
         const ctx = arg as any;
-        callerSegmentId ??= ctx._currentSegmentId;
+        if (callerSegmentId === undefined) {
+          callerSegmentId = ctx._currentSegmentId;
+          claimLoaderPushes = ctx._claimLoaderPushes;
+        }
         if (ctx.params && typeof ctx.params === "object") {
           // Include host to prevent cross-host cache collisions (same
           // pattern as route-level cache-scope.ts key generation).
@@ -480,6 +511,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           `use the route-level cache() DSL instead.`,
       );
     }
+    // Records group pushes by owning loader (useCacheRecordKey) and replay
+    // into the caller's segment; a caller without one records segment ids.
+    const ownerKeyed = callerSegmentId !== undefined;
 
     // Generate cache key
     let cacheKey: string;
@@ -545,7 +579,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         const handleStore = requestCtx?._handleStore;
         if (handleStore) {
           const r = await decodeHandles(entry.handles);
-          if (r) appendHandles(r, handleStore, callerSegmentId);
+          if (r) {
+            appendHandles(r, handleStore, callerSegmentId, claimLoaderPushes);
+          }
         }
       }
       recordRequestTags(entry.tags, requestCtx);
@@ -579,6 +615,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       try {
         const result = await serveCached(cached);
         const liveStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
+        const recordKey = ownerKeyed ? useCacheRecordKey() : undefined;
         // Background revalidation — must capture handles if tainted args present.
         runBackground(requestCtx, async () => {
           // The background body's handle pushes belong to the refreshed entry
@@ -597,6 +634,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             ? startHandleCapture(liveStore, {
                 accept: () => isInCacheExecChain(bgScope),
                 divert: true,
+                key: recordKey,
               })
             : undefined;
 
@@ -629,8 +667,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
               observePhase(
                 PHASES.background("use-cache-revalidation"),
                 async () => {
+                  const refreshArgs = args.map(refreshView);
                   const scoped = runWithCacheTagScope(() =>
-                    runWithCacheExecScope(() => fn.apply(this, args), bgScope),
+                    runWithCacheExecScope(
+                      () => fn.apply(this, refreshArgs),
+                      bgScope,
+                    ),
                   );
                   const freshResult = await scoped.result;
                   bgCapture?.stop();
@@ -783,6 +825,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const capture = handleStore
       ? startHandleCapture(handleStore, {
           accept: () => isInCacheExecChain(execScope),
+          key: ownerKeyed ? useCacheRecordKey() : undefined,
         })
       : undefined;
 

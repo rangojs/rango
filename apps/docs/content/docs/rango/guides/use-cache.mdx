@@ -95,6 +95,8 @@ export async function getProductData(ctx) {
 
 `ctx.use(Handle)` is the sanctioned way to pass data out of a cached function. Only the function's own pushes are recorded, not the handler's or loaders' pushes into the same request, and a hit appends them to the calling segment after what the page already pushed, as if the body had run.
 
+A loader the function reads with `ctx.use(Loader)` is recorded under that loader, and its pushes reach the page once per request. Loaders stay live, so when the handler or a DSL loader also reads it, the page shows that live run's pushes: the hit skips the recorded copy if the loader already ran, and the live run replaces it in place if the loader runs after the hit.
+
 ## What throws inside "use cache"
 
 The guards are correctness-first: anything that would bake one user's request into a shared entry, or silently lose an effect on a hit, throws instead.

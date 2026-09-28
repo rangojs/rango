@@ -179,6 +179,13 @@ When a `ctx` is detected:
    the handler and loaders already pushed, as if the body had run (a layout and
    its page calling the same function each get their copy). A
    stale hit's background refresh records its pushes into the refreshed entry only.
+4. **A loader the function reads shows its pushes once** -- pushes from a loader
+   read with `ctx.use(Loader)` inside the function are recorded under that
+   loader. Loaders stay live, so if the handler or a DSL loader also reads it,
+   that live run's pushes are the ones on the page: a live run before the hit
+   makes the replay skip them, and one after it replaces the replayed values in
+   place. A loader read only inside the function is replayed once, also when
+   a layout and its page both call the function.
 
 ```typescript
 export async function getProductData(ctx) {
@@ -188,6 +195,14 @@ export async function getProductData(ctx) {
   return await db.query("SELECT * FROM products");
 }
 // On hit: return value restored, breadcrumb replayed.
+
+export async function getProduct(ctx) {
+  "use cache";
+  const category = await ctx.use(CategoryLoader); // pushes a category crumb
+  return db.product(ctx.params.id, category.id);
+}
+// Handler: `await getProduct(ctx); await ctx.use(CategoryLoader);`
+// On hit: one category crumb, from the handler's live CategoryLoader run.
 ```
 
 ## Request-Scoped Guards

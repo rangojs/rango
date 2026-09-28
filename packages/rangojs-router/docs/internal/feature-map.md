@@ -347,7 +347,9 @@ server projection.
   per request (`_claimLoaderPushes`, `setupLoaderAccess`): a dependency a
   sibling loader or the handler already ran keeps its live pushes, and a
   later run of a replayed dependency replaces the replayed values in place
-  (`HandleStore.pushReplayed`).
+  (`HandleStore.pushReplayed`). A `"use cache"` record groups the pushes of
+  loaders the function reads via `ctx.use` the same way (`useCacheRecordKey`),
+  and its hit replays them under the same claim (`appendHandles`).
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

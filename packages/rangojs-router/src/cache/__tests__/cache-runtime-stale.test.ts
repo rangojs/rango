@@ -83,6 +83,10 @@ describe("use cache stale revalidation handle preservation", () => {
     registerCachedFunction = mod.registerCachedFunction;
   });
 
+  // The caller ctx's per-request claim (setupLoaderAccess); a hit hands it
+  // to the replay so a loader's recorded pushes land once.
+  const claimLoaderPushes = () => true;
+
   function makeTaintedCtx() {
     return {
       [NOCACHE_SYMBOL]: true,
@@ -91,6 +95,7 @@ describe("use cache stale revalidation handle preservation", () => {
       searchParams: new URLSearchParams(),
       // The calling segment a hit replays into.
       _currentSegmentId: "caller-seg",
+      _claimLoaderPushes: claimLoaderPushes,
     };
   }
 
@@ -167,6 +172,7 @@ describe("use cache stale revalidation handle preservation", () => {
       staleHandles,
       mockHandleStore,
       "caller-seg",
+      claimLoaderPushes,
     );
     expect(spans).toHaveLength(0);
 
@@ -496,6 +502,7 @@ describe("use cache stale revalidation handle preservation", () => {
       freshHandles,
       mockHandleStore,
       "caller-seg",
+      claimLoaderPushes,
     );
 
     // No background revalidation should be queued
