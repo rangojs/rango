@@ -1967,7 +1967,14 @@ async function captureAndStoreShell(
           // must round-trip; serializeResult preserves it through Flight.
           serializeContainer ??= (await import("../cache/segment-codec.js"))
             .serializeResult;
-          const serialized = await serializeContainer(elided.value);
+          // A value Flight cannot encode (an async component that throws, a
+          // rejected promise the elide walk does not reach, a function, a
+          // class instance) completes with an error row instead of rejecting
+          // (issue #927). Collected with the render's errors, so the check
+          // after this drain refuses the capture.
+          const serialized = await serializeContainer(elided.value, (error) => {
+            reqCtx._renderErrors?.push(error);
+          });
           if (serialized !== null) {
             (snapshot ??= []).push({
               family: "loader",
@@ -1980,8 +1987,8 @@ async function captureAndStoreShell(
             });
           }
         } catch {
-          // Non-serializable container: leave it unpinned (it drifts on a HIT,
-          // the pre-snapshot behavior) rather than failing the capture.
+          // Codec import failed: leave it unpinned (it drifts on a HIT, the
+          // pre-snapshot behavior) rather than failing the capture.
         }
       }
     }
@@ -1989,6 +1996,7 @@ async function captureAndStoreShell(
     // A shell component that threw inside a Suspense boundary does not reject
     // the capture: Flight and Fizz report it through onError and the prelude
     // carries the errored boundary, which every HIT would serve (issue #915).
+    // The drain's container encode adds its Flight errors here too (#927).
     // After the loader drain so a rejected bake-lane loader keeps its specific
     // refusal. Thrown like a fatal shell error: no retry, reportCacheError and
     // backoff in scheduleShellCapture.
