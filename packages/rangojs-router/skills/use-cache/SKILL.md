@@ -125,7 +125,15 @@ use-cache:{functionId}:{serializedArgs}
 - `serializedArgs` -- key-generating arguments: a stable JSON encoding when every
   argument is JSON-safe, otherwise serialized via RSC `encodeReply()`.
 
-If the arguments cannot be serialized at all, the call runs uncached (no error).
+React elements (`header`, `children` slots) and client or server references
+are left out of the key: the first call's rendered slot is part of the cached
+output, and a hit returns it for any slot passed.
+
+If any other argument cannot be serialized, top-level or nested (a function, a
+class instance such as a database client, a symbol), the call runs uncached and
+warns once per function in dev. Flight's encoder writes the same placeholder
+for every such value, so keying on it would serve one caller's result to every
+other caller. Pass the serializable values the function needs.
 
 When there are no key-generating arguments, the key has no trailing colon -- it is
 just `use-cache:{functionId}`.
@@ -144,10 +152,22 @@ params excluded). The same cached function called with `ctx` on different routes
 param combinations, hosts, response types, or query variants therefore produces
 distinct cache entries -- not one shared entry.
 
-## Tainted Arguments (ctx, env, req)
+## Request-Scoped Arguments (ctx, Request, env)
 
-Request-scoped objects are branded with `Symbol.for('rango:nocache')` at creation.
-When detected:
+Three request-scoped arguments are kept out of the serialized arguments:
+
+- **`ctx`** is branded with `Symbol.for('rango:nocache')` at creation. Its route
+  fields are folded into the key, and its handle pushes are captured and
+  replayed (below).
+- **A `Request`** (such as `ctx.request`) keys by its URL: host, pathname and
+  the user-facing sorted search params, with the same internal-param exclusion
+  and `cache.searchParams` filter as the URL-keyed tiers. Headers, cookies and
+  the method are not in the key; read what you need outside and pass the values.
+- **The request's `env`** (the object `ctx.env` returns) is left out of the key:
+  it is fixed per deployment. A binding passed on its own (`env.DB`) is a class
+  instance and runs uncached; pass `env` instead.
+
+When a `ctx` is detected:
 
 1. **Excluded from cache key** -- request-scoped, not meaningful for keying.
    (The route-identifying fields read off `ctx` are still folded in -- see
