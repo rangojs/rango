@@ -155,7 +155,14 @@ export function initScrollRestoration(options?: {
     window.history.scrollRestoration = "auto";
   };
 
+  // A bfcache restore keeps the "auto" set on pagehide; take scroll back.
+  // Only here: without <Html.ScrollRestoration> the browser owns scroll.
+  const handlePageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) window.history.scrollRestoration = "manual";
+  };
+
   window.addEventListener("pagehide", handlePageHide);
+  window.addEventListener("pageshow", handlePageShow);
 
   if (IS_BROWSER_DEBUG) {
     debugLog(
@@ -167,6 +174,7 @@ export function initScrollRestoration(options?: {
   return () => {
     cancelScrollRestorationPolling();
     window.removeEventListener("pagehide", handlePageHide);
+    window.removeEventListener("pageshow", handlePageShow);
     window.history.scrollRestoration = "auto";
     initialized = false;
     savedScrollPositions = {};
@@ -403,10 +411,17 @@ export function handleNavigationEnd(options: {
   // But basic scroll-to-top and hash scrolling work without it — this
   // matters during cross-app navigation where ScrollRestoration unmounts
   // and remounts, creating a brief window where initialized is false.
-  if (restore && initialized) {
-    if (restoreScrollPosition({ retryIfStreaming: true, isStreaming })) {
+  if (restore) {
+    if (
+      initialized &&
+      restoreScrollPosition({ retryIfStreaming: true, isStreaming })
+    ) {
       return;
     }
+    // An "auto" entry (no <Html.ScrollRestoration>, or created before it mounted)
+    // is restored by the browser. A scrollTo here races that restore, and
+    // when it runs second the page lands at the top.
+    if (window.history.scrollRestoration === "auto") return;
     // Fall through to hash or top if no saved position
   }
 

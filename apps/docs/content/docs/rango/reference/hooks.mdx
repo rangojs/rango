@@ -383,7 +383,7 @@ function CatalogLayout() {
 
 ### useScrollRestoration(options?)
 
-Turns on saved scroll positions: they are stored in `sessionStorage` per history entry and restored on back/forward navigation. Scrolling to the top on a new navigation and to a hash target work without it. The default document already renders the equivalent `<Html.ScrollRestoration />`. With a custom document, call it once there or in the root layout, or render `<Html.ScrollRestoration />`.
+Turns on saved scroll positions: they are stored in `sessionStorage` per history entry and restored on back/forward navigation. Scrolling to the top on a new navigation and to a hash target work without it. The default document already renders the equivalent `<Html.ScrollRestoration />`. With a custom document, call it once there or in the root layout, or render `<Html.ScrollRestoration />`. Without it (a custom document that renders neither), back/forward scroll is left to the browser's own restoration, and the router does not scroll on back/forward.
 
 ```tsx
 "use client";
