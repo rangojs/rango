@@ -312,9 +312,21 @@ without `transition()` is not modeled.
   live value replaces the replayed one in place; if it ran first, the replay
   skips it. A replacement that lands after the document's handle snapshot
   reaches the client after hydration, like any late loader push. 0.16.0
-  showed one push; this was a regression from #877. A `"use cache"` function
-  that reads such a loader still shows the push twice on a hit
+  showed one push; this was a regression from #877
   ([#905](https://github.com/rangojs/rango/pull/905)).
+- A `"use cache"` function records the handle pushes of loaders it reads
+  through `ctx.use`. When the handler or a DSL loader also read that loader,
+  a hit appended the recorded push and the loader ran live too, so the push
+  showed twice (a crumb without `href`, or any handle that does not dedupe).
+  On a stale hit the background refresh took the loader's only run, so the
+  page kept the stale push. Each loader's pushes now reach the page once per
+  request, as with a loader's own `cache()` (#905 above): a live run after
+  the hit replaces the replayed value in place, a run before it makes the hit
+  skip it, and a loader read only inside the function is replayed once. The
+  function's own pushes replay as before. An entry written before this change
+  does not record which loader pushed, so it replays in full, and still shows
+  such a push twice, until it expires or its stale refresh rewrites it. This
+  had happened since 0.16.0 ([#938](https://github.com/rangojs/rango/pull/938)).
 - On a `ppr` route, a string, number or boolean handle value pushed during the
   shell capture by a loader that an `ssr: false` loader awaits through
   `ctx.use()`, or replayed from an `ssr: false` loader's own `cache()`, was

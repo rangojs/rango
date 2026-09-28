@@ -177,6 +177,7 @@ export const NamedRoutes = {
   "transformCases.state": "/transform-cases/state",
   txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
+  useCacheDep: "/use-cache-dep",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

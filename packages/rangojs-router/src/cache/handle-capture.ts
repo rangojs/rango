@@ -6,6 +6,7 @@
  * pulling in @vitejs/plugin-rsc/rsc dependencies.
  */
 
+import { getCurrentLoaderBodyId } from "../server/context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { SegmentHandleData } from "./types.js";
 
@@ -25,9 +26,59 @@ export interface HandleCaptureOptions {
   divert?: boolean;
   /**
    * Record key for an accepted push, in place of its segment id. A loader's
-   * own cache() groups pushes by the loader body that made them.
+   * own cache() (loader-cache.ts recordOwnerKey) and "use cache"
+   * (useCacheRecordKey) group pushes by the loader body that made them.
    */
   key?: () => string;
+}
+
+// The loader whose recorded push a "use cache" HIT is replaying
+// (replayLoaderPush), for an enclosing "use cache" MISS's record key.
+let replayingOwner: string | undefined;
+
+/**
+ * HandleStore.pushReplayed, attributed to `loaderId` for the record key of an
+ * enclosing "use cache" MISS: an outer cached function records an inner HIT's
+ * replayed loader pushes under that loader, not as its own.
+ */
+export function replayLoaderPush(
+  handleStore: HandleStore,
+  handleName: string,
+  segmentId: string,
+  value: unknown,
+  loaderId: string,
+): void {
+  const prev = replayingOwner;
+  replayingOwner = loaderId;
+  try {
+    handleStore.pushReplayed(handleName, segmentId, value, loaderId);
+  } finally {
+    replayingOwner = prev;
+  }
+}
+
+/**
+ * Record key for a "use cache" capture: run-length groups `${seq}:${owner}`,
+ * so the HIT (handle-snapshot.ts appendHandles) delivers each loader's pushes
+ * at most once per request. The owner is the loader whose body, entered
+ * inside this execution via ctx.use, made the push; empty for the function's
+ * own pushes and those of cached functions it calls. Groups keep push order
+ * across owners. Create at call time: the caller's loader body is the
+ * function's own scope.
+ */
+export function useCacheRecordKey(): () => string {
+  const callerBody = getCurrentLoaderBodyId();
+  let seq = 0;
+  let last: string | undefined;
+  return () => {
+    const body = replayingOwner ?? getCurrentLoaderBodyId();
+    const owner = body === callerBody ? "" : (body ?? "");
+    if (owner !== last) {
+      last = owner;
+      seq++;
+    }
+    return `${seq}:${owner}`;
+  };
 }
 
 export interface HandleCapture extends HandleCaptureOptions {

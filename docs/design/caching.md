@@ -827,6 +827,21 @@ This requires separating:
   replace anything on the page. The cost is one extra dependency run on a
   stale hit when a live reader also reads it.
 
+  **`"use cache"` uses the same machinery for the loaders it reads (#928).**
+  A cached function that reads a loader with `ctx.use(Loader)` records that
+  loader's pushes, and until #928 its hit appended them while the handler or
+  a DSL loader ran the same loader live, so the push showed twice. Its record
+  now groups by owner too (`useCacheRecordKey`, `src/cache/handle-capture.ts`):
+  `${seq}:${loaderId}` for a loader body entered inside the function, `${seq}:`
+  for the function's own pushes, which still append to the calling segment
+  with nested cached functions rolling up. `appendHandles`
+  (`src/cache/handle-snapshot.ts`) claims each loader group through the
+  caller ctx's `_claimLoaderPushes` and replays it through
+  `HandleStore.pushReplayed`, so the table above applies unchanged. The stale
+  refresh reads loaders through `ctx._runLoaderIsolated` and never claims
+  (`refreshView`, `src/cache/cache-runtime.ts`). Entries written before owner
+  keys carry segment-id keys (no `:`) and replay in full, as before.
+
 ---
 
 ## cache() DSL Design

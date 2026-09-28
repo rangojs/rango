@@ -5,6 +5,7 @@ import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
 import {
   getShortCachedData,
   fetchWithBreadcrumbs,
+  getUseCacheDepStamp,
   getSlowCachedData,
   getCachedReactNode,
   getCachedInlineActionShell,
@@ -23,7 +24,12 @@ import {
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
 import { swrActionRevalidate } from "../actions.js";
-import { UseCacheTestLoader, LayoutCountLoader } from "../loaders.js";
+import {
+  UseCacheTestLoader,
+  LayoutCountLoader,
+  DepCrumbCategoryLoader,
+} from "../loaders.js";
+import { DepCrumbsView } from "../components/DepCrumbsView.js";
 
 // Included routes for loader segment tracking test.
 // Mirrors real setup: handler calls a 'use cache' function internally.
@@ -142,6 +148,24 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.withHandles" },
+    ),
+
+    // A "use cache" function reads a loader that the handler also reads live
+    // after it: on a HIT the loader's crumb renders once, the live run's.
+    // `use-cache-dep-ts` is the cached value, so an unchanged stamp is a HIT.
+    path(
+      "/dep-crumbs",
+      async (ctx) => {
+        const stamp = await getUseCacheDepStamp(ctx);
+        await ctx.use(DepCrumbCategoryLoader);
+        return (
+          <div data-testid="use-cache-dep-page">
+            <span data-testid="use-cache-dep-ts">{stamp}</span>
+            <DepCrumbsView />
+          </div>
+        );
+      },
+      { name: "useCacheTest.depCrumbs" },
     ),
 
     // SWR: stale-while-revalidate test with very short TTL (2s).

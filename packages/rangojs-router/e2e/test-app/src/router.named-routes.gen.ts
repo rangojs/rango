@@ -444,6 +444,7 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.cachedInlineAction": "/use-cache-test/cached-inline-action",
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
   "useCacheTest.useCacheTest.cachedParentChildSet": "/use-cache-test/cached-parent-child-set",
+  "useCacheTest.useCacheTest.depCrumbs": "/use-cache-test/dep-crumbs",
   "useCacheTest.useCacheTest.guardCookies": "/use-cache-test/guard-cookies",
   "useCacheTest.useCacheTest.guardCookiesNoArg": "/use-cache-test/guard-cookies-no-arg",
   "useCacheTest.useCacheTest.guardCtxHeadersSet": "/use-cache-test/guard-ctx-headers-set",

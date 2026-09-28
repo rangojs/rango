@@ -1,6 +1,47 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack } from "./helper";
+
+/**
+ * /use-cache-test/dep-crumbs: a "use cache" function reads a loader that the
+ * handler also reads live after it. The loader's crumb (a per-run id) renders
+ * once on the MISS and once on each HIT, where it is the live run's crumb,
+ * replacing the replayed one (#928).
+ */
+async function expectUseCacheDepCrumbOnceAcrossHit(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const oneCrumb = /^Category [0-9a-f]{8}$/;
+  const load = async () => {
+    await page.goto(url("/use-cache-test/dep-crumbs"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("use-cache-dep-page")).toBeVisible();
+    return {
+      stamp: await page.getByTestId("use-cache-dep-ts").textContent(),
+      crumbs: await page.getByTestId("dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load();
+  expect(first.crumbs).toMatch(oneCrumb);
+
+  // An unchanged stamp is the cached value: a "use cache" HIT.
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load()).stamp, {
+      timeout: 8000,
+      message: 'Expected a "use cache" HIT (unchanged stamp)',
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toMatch(oneCrumb);
+
+  // Each HIT shows the live run's crumb, not the replayed copy.
+  const next = await load();
+  expect(next.stamp).toBe(first.stamp);
+  expect(next.crumbs).toMatch(oneCrumb);
+  expect(next.crumbs).not.toBe(hit.crumbs);
+}
 
 /**
  * Tests for the "use cache" directive — context/handles, inline use cache,
@@ -71,6 +112,13 @@ test.describe("use-cache handles", () => {
     // Breadcrumb should still appear (handle replay from cache)
     await expect(breadcrumbs).toBeVisible();
     await expect(breadcrumbs).toContainText("Cached Page");
+  });
+
+  test("a loader read inside the cached function and live shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectUseCacheDepCrumbOnceAcrossHit(page, (p) => f.url(p));
   });
 
   test("cached function returning React node serializes through cache", async ({
@@ -365,6 +413,13 @@ test.describe("use-cache handles (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
+  });
+
+  test("a loader read inside the cached function and live shows its live crumb once on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectUseCacheDepCrumbOnceAcrossHit(page, (p) => f.url(p));
   });
 
   test("tainted ctx excluded from cache key and handles replayed", async ({

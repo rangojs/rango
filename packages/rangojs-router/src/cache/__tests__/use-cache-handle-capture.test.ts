@@ -3,7 +3,9 @@
  * receives ctx records only its OWN pushes on a miss and appends them on a
  * hit, so the handler's and loaders' pushes into the same segment survive and
  * appear once. A stale hit's background refresh writes its pushes into the
- * refreshed entry, not the live response.
+ * refreshed entry, not the live response. Pushes from a loader the function
+ * reads with ctx.use are grouped by that loader and reach the page once per
+ * request; a live run of the loader wins (#928).
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
@@ -46,6 +48,8 @@ import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../../rsc/manifest-init.js";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
 import { registerCachedFunction } from "../cache-runtime.js";
+import { appendHandles } from "../handle-snapshot.js";
+import { createHandleStore } from "../../server/handle-store.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -137,6 +141,51 @@ const versionedCrumb = registerCachedFunction(
   "default",
 );
 
+// A cached function that reads loader `Dep` via ctx.use. Dep's crumb carries
+// its run count, so a live run is distinguishable from a replayed one.
+function depScenario(name: string) {
+  const dep = { runs: 0 };
+  const Dep = (createLoader as Function)(
+    async (ctx: any) => {
+      dep.runs++;
+      ctx.use(Crumbs)(`dep-v${dep.runs}`);
+      return dep.runs;
+    },
+    undefined,
+    `test#Dep_${name}`,
+  );
+  const withDep = registerCachedFunction(
+    async (ctx: any) => {
+      ctx.use(Crumbs)("pre");
+      await ctx.use(Dep);
+      ctx.use(Crumbs)("post");
+      return name;
+    },
+    `test#withDep_${name}`,
+    "default",
+  );
+  return { dep, Dep, withDep };
+}
+
+const depInside = depScenario("inside");
+const depAfter = depScenario("after");
+const depDsl = depScenario("dsl");
+const depBefore = depScenario("before");
+let readDepFirst = false;
+const depStale = depScenario("stale");
+let readDepLive = true;
+const depNested = depScenario("nested");
+const depShared = depScenario("sharedLP");
+const outerWithDep = registerCachedFunction(
+  async (ctx: any) => {
+    ctx.use(Crumbs)("outer");
+    await depNested.withDep(ctx);
+    return "outer";
+  },
+  "test#outerWithDep",
+  "default",
+);
+
 let router: any;
 let cacheStore: MemorySegmentCacheStore;
 
@@ -204,6 +253,83 @@ beforeAll(async () => {
       },
       { name: "ucConcurrent" },
       () => [loader(CrumbLoader)],
+    ),
+    path(
+      "/dep-inside",
+      async (ctx: any) => {
+        ctx.use(Crumbs)("home");
+        await depInside.withDep(ctx);
+        return createElement("div", null, "dep-inside");
+      },
+      { name: "ucDepInside" },
+    ),
+    path(
+      "/dep-after",
+      async (ctx: any) => {
+        await depAfter.withDep(ctx);
+        await ctx.use(depAfter.Dep);
+        return createElement("div", null, "dep-after");
+      },
+      { name: "ucDepAfter" },
+    ),
+    layout(
+      async (ctx: any) => {
+        await depDsl.withDep(ctx);
+        return createElement("div", null, "dep-dsl-layout");
+      },
+      () => [
+        path(
+          "/dep-dsl",
+          () => createElement("div", null, "dep-dsl"),
+          {
+            name: "ucDepDsl",
+          },
+          () => [loader(depDsl.Dep)],
+        ),
+      ],
+    ),
+    path(
+      "/dep-before",
+      async (ctx: any) => {
+        if (readDepFirst) await ctx.use(depBefore.Dep);
+        await depBefore.withDep(ctx);
+        return createElement("div", null, "dep-before");
+      },
+      { name: "ucDepBefore" },
+    ),
+    path(
+      "/dep-stale",
+      async (ctx: any) => {
+        await depStale.withDep(ctx);
+        if (readDepLive) await ctx.use(depStale.Dep);
+        return createElement("div", null, "dep-stale");
+      },
+      { name: "ucDepStale" },
+    ),
+    layout(
+      async (ctx: any) => {
+        await depShared.withDep(ctx);
+        return createElement("div", null, "l");
+      },
+      () => [
+        path(
+          "/dep-shared-lp",
+          async (ctx: any) => {
+            await depShared.withDep(ctx);
+            return createElement("div", null, "p");
+          },
+          { name: "ucDepSharedLP" },
+        ),
+      ],
+    ),
+    path(
+      "/dep-nested",
+      async (ctx: any) => {
+        await outerWithDep(ctx);
+        await ctx.use(depNested.Dep);
+        return createElement("div", null, "dep-nested");
+      },
+      { name: "ucDepNested" },
     ),
   ]);
   await buildRouterTrieFromUrlpatterns(router);
@@ -321,5 +447,160 @@ describe('"use cache" handle capture', () => {
     expect(outerBody).toHaveBeenCalledTimes(1);
     expect(miss).toEqual(["home", "outer", "product"]);
     expect(hit).toEqual(["home", "outer", "product"]);
+  });
+});
+
+/** Force the next read of `fnId`'s entry to `mode` while `run` serves. */
+async function withEntry<T>(
+  fnId: string,
+  mode: "stale" | "miss",
+  run: () => Promise<T>,
+): Promise<T> {
+  const getItem = cacheStore.getItem;
+  cacheStore.getItem = async (key: string) => {
+    if (!key.includes(fnId)) return getItem.call(cacheStore, key);
+    if (mode === "miss") return null;
+    const hit = await getItem.call(cacheStore, key);
+    return hit ? { ...hit, shouldRevalidate: true } : hit;
+  };
+  try {
+    return await run();
+  } finally {
+    cacheStore.getItem = getItem;
+  }
+}
+
+describe('"use cache" reading a loader that is also read live (#928)', () => {
+  it("a loader read only inside the cached function is replayed once on a HIT", async () => {
+    const miss = await serve("/dep-inside");
+    const hit = await serve("/dep-inside");
+    expect(depInside.dep.runs).toBe(1);
+    expect(miss).toEqual(["home", "pre", "dep-v1", "post"]);
+    expect(hit).toEqual(["home", "pre", "dep-v1", "post"]);
+  });
+
+  it("HIT, handler reads the loader after the replay: the live push replaces the replayed one", async () => {
+    const miss = await serve("/dep-after");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+    const hit = await serve("/dep-after");
+    expect(depAfter.dep.runs).toBe(2);
+    expect(hit).toEqual(["pre", "dep-v2", "post"]);
+  });
+
+  it("HIT, a DSL loader reads the loader after the replay: the live push lands once in its own segment", async () => {
+    const miss = await serveBySegment("/dep-dsl");
+    expect(Object.values(miss)).toEqual([["pre", "dep-v1", "post"]]);
+    const hit = await serveBySegment("/dep-dsl");
+    expect(depDsl.dep.runs).toBe(2);
+    expect(Object.values(hit)).toEqual([["pre", "post"], ["dep-v2"]]);
+  });
+
+  it("HIT, the loader already ran live before the replay: the replay skips its pushes", async () => {
+    readDepFirst = false;
+    const miss = await serve("/dep-before");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+    readDepFirst = true;
+    const hit = await serve("/dep-before");
+    readDepFirst = false;
+    expect(depBefore.dep.runs).toBe(2);
+    expect(hit).toEqual(["dep-v2", "pre", "post"]);
+  });
+
+  it("stale HIT: the live run wins, and the refresh records its own run of the loader", async () => {
+    const errors: unknown[] = [];
+    const miss = await serve("/dep-stale");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+
+    const stale = await withEntry("withDep_stale", "stale", () =>
+      serve("/dep-stale", errors),
+    );
+    expect(errors).toEqual([]);
+    // The refresh and the live read each run the loader.
+    expect(depStale.dep.runs).toBe(3);
+    expect(stale).toHaveLength(3);
+    expect(["dep-v2", "dep-v3"]).toContain(stale[1]);
+    expect(stale).toEqual(["pre", stale[1], "post"]);
+
+    // The refreshed entry replays the refresh's run, not the live one.
+    readDepLive = false;
+    const hit = await serve("/dep-stale");
+    readDepLive = true;
+    expect(depStale.dep.runs).toBe(3);
+    const refreshed = stale[1] === "dep-v2" ? "dep-v3" : "dep-v2";
+    expect(hit).toEqual(["pre", refreshed, "post"]);
+  });
+
+  it("a layout and its page calling the function each keep their own pushes; the loader's push lands once", async () => {
+    const miss = await serveBySegment("/dep-shared-lp");
+    const hit = await serveBySegment("/dep-shared-lp");
+    expect(depShared.dep.runs).toBe(1);
+    const once = [
+      ["pre", "dep-v1", "post"],
+      ["pre", "post"],
+    ];
+    expect(Object.values(miss)).toEqual(once);
+    expect(Object.values(hit)).toEqual(once);
+  });
+
+  it("an outer cached function records an inner HIT's replayed loader pushes under that loader", async () => {
+    const miss = await serve("/dep-nested");
+    expect(miss).toEqual(["outer", "pre", "dep-v1", "post"]);
+
+    // Outer misses, inner hits: the inner replays dep-v1, the live read
+    // replaces it, and the outer entry records the replay as Dep's.
+    const rebuilt = await withEntry("outerWithDep", "miss", () =>
+      serve("/dep-nested"),
+    );
+    expect(rebuilt).toEqual(["outer", "pre", "dep-v2", "post"]);
+
+    const hit = await serve("/dep-nested");
+    expect(depNested.dep.runs).toBe(3);
+    expect(hit).toEqual(["outer", "pre", "dep-v3", "post"]);
+
+    // Outer stale: the page's replay claims Dep; the refresh's inner HIT
+    // still records Dep's group into the refreshed outer entry.
+    const stale = await withEntry("outerWithDep", "stale", () =>
+      serve("/dep-nested"),
+    );
+    expect(stale).toEqual(["outer", "pre", "dep-v4", "post"]);
+    const refreshed = await serve("/dep-nested");
+    expect(depNested.dep.runs).toBe(5);
+    expect(refreshed).toEqual(["outer", "pre", "dep-v5", "post"]);
+  });
+});
+
+describe("appendHandles record formats", () => {
+  const H = "test#H";
+
+  it("replays a segment-keyed record (written before owner keys) in full, without claiming", () => {
+    const store = createHandleStore();
+    const claim = vi.fn(() => false);
+    appendHandles({ M0R1: { [H]: ["a", "b"] } }, store, "caller", claim);
+    appendHandles({ M0R1: { [H]: ["c"] } }, store);
+    expect(claim).not.toHaveBeenCalled();
+    expect(store.getDataForSegment("caller")[H]).toEqual(["a", "b"]);
+    expect(store.getDataForSegment("M0R1")[H]).toEqual(["c"]);
+  });
+
+  it("claims each loader once, keeps own groups, and keeps push order across groups", () => {
+    const record = {
+      "1:": { [H]: ["pre"] },
+      "2:dep#A": { [H]: ["a1"] },
+      "3:": { [H]: ["mid"] },
+      "4:dep#A": { [H]: ["a2"] },
+      "5:dep#B": { [H]: ["b"] },
+      "6:": { [H]: ["post"] },
+    };
+    const store = createHandleStore();
+    const claim = vi.fn((loaderId: string) => loaderId === "dep#A");
+    appendHandles(record, store, "caller", claim);
+    expect(claim.mock.calls).toEqual([["dep#A"], ["dep#B"]]);
+    expect(store.getDataForSegment("caller")[H]).toEqual([
+      "pre",
+      "a1",
+      "mid",
+      "a2",
+      "post",
+    ]);
   });
 });
