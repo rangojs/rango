@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { expect, test, type Page } from "@playwright/test";
+import { returnToEvictedEntry } from "@shared/e2e";
+import { useFixture, type Fixture } from "./fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -13,6 +14,28 @@ import {
  * Location state tests: redirect() with state, ctx.setLocationState(),
  * useLocationState(), and useLocationState()
  */
+// The cache-miss refetch used to replaceState a fresh history state, dropping
+// the entry's Link state.
+async function expectEvictedEntryKeepsLinkState(
+  page: Page,
+  f: Fixture,
+): Promise<void> {
+  await page.goto(f.url("/location-state/link-state"));
+  await waitForHydration(page);
+  await page.locator('[data-testid="link-plain-static"]').click();
+  await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+
+  await returnToEvictedEntry(page, (n) =>
+    f.url(`/location-state/link-state?n=${n}`),
+  );
+
+  await expect(page).toHaveURL(
+    f.url("/location-state/link-state/plain-target"),
+  );
+  await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+  await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
+}
+
 test.describe("location-state", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -316,6 +339,13 @@ test.describe("link-state-prop", () => {
     mode: "dev",
   });
 
+  test("Link state survives a back to an entry the history cache evicted", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectEvictedEntryKeepsLinkState(page, f);
+  });
+
   test("typed eager state is delivered to target page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -529,6 +559,13 @@ test.describe("link-state-prop (production)", () => {
   });
 
   test.setTimeout(120000);
+
+  test("Link state survives a back to an entry the history cache evicted in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectEvictedEntryKeepsLinkState(page, f);
+  });
 
   test("typed eager state works in production build", async ({ page }) => {
     using _ = expectNoPageError(page);

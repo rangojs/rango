@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { returnToEvictedEntry } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
@@ -107,6 +108,32 @@ function describeLocationState(mode: "dev" | "build") {
       // Wait for the page to load
       await expect(testId(page, "feature-page")).toBeVisible({ timeout: 5000 });
       await expect(testId(page, "feature-title")).toHaveText("Streaming");
+    });
+
+    // The cache-miss refetch used to replaceState a fresh history state,
+    // dropping the entry's location state and scroll key.
+    test("back to an evicted entry keeps its history state", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/about"));
+      await waitForHydration(page);
+      await page.evaluate(() =>
+        window.history.replaceState(
+          { ...window.history.state, __rsc_ls_probe: { from: "about" } },
+          "",
+        ),
+      );
+      const before = await page.evaluate(() => window.history.state);
+
+      await returnToEvictedEntry(page, (n) => f.url(`/?n=${n}`));
+
+      await expect(page).toHaveURL(f.url("/about"));
+      await expect(testId(page, "about-page")).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => window.history.state))
+        .toEqual(before);
     });
 
     test("should preserve location state across browser history", async ({

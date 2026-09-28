@@ -7,6 +7,8 @@ import {
   persistToSessionStorage,
   getSavedScrollPosition,
   getScrollKey,
+  ensureHistoryKey,
+  handleTraversalStart,
 } from "../browser/scroll-restoration.js";
 
 const SCROLL_STORAGE_KEY = "rsc-router-scroll-positions";
@@ -243,5 +245,57 @@ describe("scroll-restoration custom getKey", () => {
     const key = getScrollKey();
     expect(typeof key).toBe("string");
     expect(getSavedScrollPosition(key)).toBe(55);
+  });
+});
+
+describe("scroll-restoration traversal", () => {
+  it("saves the page being left under its own key, then tracks the destination", () => {
+    currentKey = "A";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(700);
+
+    // popstate: history (and so the scroll key) already belongs to B.
+    currentKey = "B";
+    handleTraversalStart();
+    expect(getSavedScrollPosition("A")).toBe(700);
+    expect(getSavedScrollPosition("B")).toBeUndefined();
+
+    setScrollY(120);
+    currentKey = "A";
+    handleTraversalStart();
+    expect(getSavedScrollPosition("B")).toBe(120);
+  });
+
+  it("tracks the entry a router push lands on", () => {
+    currentKey = "A";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+
+    currentKey = "C";
+    ensureHistoryKey();
+    setScrollY(40);
+    currentKey = "A";
+    handleTraversalStart();
+
+    expect(getSavedScrollPosition("C")).toBe(40);
+  });
+
+  it("keeps the destination's position when it shares the page left's key", () => {
+    // getKey by pathname: /products?page=1 and ?page=2 share one slot.
+    currentKey = "/products";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(800);
+    saveCurrentScrollPosition();
+
+    setScrollY(200);
+    handleTraversalStart();
+
+    expect(getSavedScrollPosition("/products")).toBe(800);
+  });
+
+  it("does nothing without <ScrollRestoration>", () => {
+    currentKey = "B";
+    setScrollY(700);
+    handleTraversalStart();
+    expect(getSavedScrollPosition("B")).toBeUndefined();
   });
 });

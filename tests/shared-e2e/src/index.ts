@@ -469,3 +469,36 @@ export async function fetchDocument(url: string): Promise<string> {
   expect(res.ok).toBe(true);
   return res.text();
 }
+
+/**
+ * A router navigation through the link interceptor: a same-origin anchor
+ * click that, unlike a locator click, does not scroll a link into view first.
+ */
+export async function routerNavigate(page: Page, url: string): Promise<void> {
+  await page.evaluate((href) => {
+    const a = document.createElement("a");
+    a.href = href;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, url);
+  await expect(page).toHaveURL(url);
+}
+
+/**
+ * Push enough router navigations to evict the current entry from the router's
+ * 20-entry history cache (navigation-store.ts HISTORY_CACHE_SIZE), then
+ * traverse back to it, so the return is a cache-miss refetch. Pass a
+ * `fillerUrl` on another route: the origin page reappearing then means the
+ * refetch commit has landed.
+ */
+export async function returnToEvictedEntry(
+  page: Page,
+  fillerUrl: (n: number) => string,
+): Promise<void> {
+  const fillers = 21;
+  for (let n = 1; n <= fillers; n++) {
+    await routerNavigate(page, fillerUrl(n));
+  }
+  await page.evaluate((delta) => window.history.go(-delta), fillers);
+}
