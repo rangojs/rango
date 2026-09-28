@@ -43,6 +43,40 @@ cap, so it was not stored at all; it now is (1,374,662 bytes). Under
 `debugPerformance` the `shell tail` line and `ppr-tail` row show what was
 dropped next to what was kept (`records=segment:1 pruned=item:5`).
 
+### Added: a per-isolate PPR shell memo in `CFCacheStore` and `VercelCacheStore` ([#959](https://github.com/rangojs/rango/pull/959))
+
+A warm isolate serving the same PPR shell repeatedly re-read and re-parsed the
+stored entry on every HIT. Both stores now keep the last fresh read of each
+shell for `memo.shellMs` (default 2000; `{ shellMs: 0 }` turns it off) under a
+`memo.shellMaxBytes` cap (default 16 MiB, least recently used evicted), and
+serve the next HITs from memory. On a storefront-sized shell a `CFCacheStore`
+memo hit's first byte is 0.2 ms instead of 8.3 ms (untagged) and 10.2 ms
+instead of 17.3 ms (tagged) with Cloudflare's measured I/O latencies injected;
+a `VercelCacheStore` memo hit is 0.1 ms instead of 10.8 ms and 6.9 ms instead
+of 17.9 ms with a 6 ms runtime-cache read modeled. Under `debugPerformance`
+both stores report the read as `ppr:shell-read (hit memo)` with a
+`ppr:shell-memo` row (hit or miss, and the memo's size), and a
+`VercelCacheStore` HIT now reports its store read and tag-marker read too.
+`VercelCacheReadOutcome`, the outcome the `VercelCacheStore` `debug` option
+receives, gains `"memo-hit"`.
+
+The tag-marker check still runs on every HIT, and the isolate that runs
+`updateTag()`/`revalidateTag()` drops its own memoized copies, so neither that
+request nor a later one on the same isolate gets the invalidated shell. With
+KV bound, a `CFCacheStore` memo in any isolate rejects it on the next request.
+What another isolate can still serve for up to one window: the previous
+capture of a key another isolate just recaptured; for `CFCacheStore` without
+KV in purge mode, a purged shell (the purge reaches the stored entry, not
+other isolates' memos), the mutating user's next request included when it
+lands on another isolate; for `VercelCacheStore`, a shell invalidated from
+another region (the tag markers are a regional `cache.set`; without the memo,
+`expireTag` removed the entry everywhere within about 300 ms) or by a platform
+`expireTag` issued outside rango. A purge-mode app that needs the mutating
+user's next request to read its own write sets `{ shellMs: 0 }`.
+`VercelCacheStore` keeps one memo per `cache` handle: create the
+`getCache()` handle once per process, as the updated examples do, or the
+memo never hits.
+
 ### Added: a PPR shell HIT broken into `debugPerformance` rows ([#955](https://github.com/rangojs/rango/pull/955))
 
 Under `debugPerformance`, a PPR shell HIT reported one `ppr:shell-read` row.
@@ -60,6 +94,13 @@ collected when `debugPerformance` is off.
 
 ### Fixes
 
+- A PPR shell HIT whose capture snapshot is already in memory
+  (`MemorySegmentCacheStore`, build-time shells, the new shell memo) no longer
+  starts the resumed tail's work before the prelude is written: the tail waits
+  one macrotask after the commit when the snapshot had already arrived (one
+  still arriving on I/O yields on its own). With the shell memo on local
+  workerd, a storefront-sized HIT's first byte over a trivial response went
+  from 5.9 ms to 1.3 ms ([#959](https://github.com/rangojs/rango/pull/959)).
 - A PPR shell HIT whose captured segment record fails to decode now schedules
   a recapture. The HIT reports `cache-corrupt` and re-renders the handlers;
   before, nothing replaced the entry, so every HIT repeated that re-render

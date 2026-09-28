@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { bufferToBase64, base64ToBuffer, base64ToBytes } from "../cf-base64.js";
+import {
+  base64ByteLength,
+  bufferToBase64,
+  base64ToBuffer,
+  base64ToBytes,
+} from "../cf-base64.js";
 import { installNativeBase64 } from "./native-base64.js";
 
 // Reference implementation: the original per-byte loop. Parity against this
@@ -94,5 +99,15 @@ describe("cf-base64 native Uint8Array methods", () => {
 
   it("throws on a character outside the alphabet (the corrupt-entry signal)", () => {
     expect(() => base64ToBytes("%%%not-base64%%%")).toThrow();
+  });
+});
+
+describe("base64ByteLength", () => {
+  it("is the decoded length, padded or not", () => {
+    for (let n = 0; n <= 9; n++) {
+      const encoded = bufferToBase64(makeBytes(n, (i) => i * 17));
+      expect(base64ByteLength(encoded)).toBe(n);
+      expect(base64ByteLength(encoded.replace(/=+$/, ""))).toBe(n);
+    }
   });
 });

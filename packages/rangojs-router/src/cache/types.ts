@@ -204,14 +204,25 @@ export interface SegmentCacheStore<TEnv = unknown> {
   ): Promise<"stored" | "invalidated" | "uncacheable" | void>;
 
   /**
-   * @internal Prelude-first read of a DOCUMENT shell, for built-in stores whose
-   * layout keeps the snapshot behind the prelude (CFCacheStore). The serve
-   * path prefers it over getShell: it resolves with the head and the raw
-   * prelude, and the snapshot arrives later on its own promise, so the HIT can
-   * commit before the snapshot is read (issue #941,
-   * docs/design/shell-entry-layout.md). Not part of the custom-store contract.
+   * @internal The document serve path's shell read, for built-in stores. The
+   * serve path prefers it over getShell: it resolves with the entry and the
+   * raw (decoded) prelude, the snapshot on its own promise, and the read's
+   * `debugPerformance` stats. CFCacheStore's layout keeps the snapshot behind
+   * the prelude, so its HIT can commit before the snapshot is read;
+   * VercelCacheStore reads the whole entry and decodes the prelude once per
+   * memoized shell (issue #941, docs/design/shell-entry-layout.md). Not part
+   * of the custom-store contract.
    */
   readShellDocument?(key: string): Promise<ShellDocumentRead | null>;
+
+  /**
+   * @internal Drop this isolate's memoized copy of a shell (shell-memo.ts) so
+   * the next read goes to the store. A HIT whose doc record failed to decode
+   * calls it before scheduling a recapture: the memoized copy holds the same
+   * record, while the store may already hold another isolate's recapture.
+   * Built-in stores only; not part of the custom-store contract.
+   */
+  dropShellMemo?(key: string): void;
 
   /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
@@ -468,8 +479,13 @@ export interface ShellDocumentRead {
  * cost signal there.
  */
 export interface ShellReadStats {
-  /** The tier that answered. */
-  tier: "l1" | "kv";
+  /**
+   * The tier that answered: `memo` (the store's shell memo), `l1`/`kv`
+   * (CFCacheStore), or `store` (a single-tier store, VercelCacheStore).
+   */
+  tier: "memo" | "l1" | "kv" | "store";
+  /** The per-isolate memo's outcome for this read and its size after it. */
+  memo?: { hit: boolean; bytes: number };
   /**
    * A KV read after an L1 attempt: how long the L1 attempt took and why it
    * missed. The KV fields below then restart from the KV read.
@@ -486,6 +502,8 @@ export interface ShellReadStats {
   markerMs?: number;
   /** How long the read waited for the marker after the prelude was read. */
   markerWaitMs?: number;
+  /** The marker read ran after the entry read instead of alongside it. */
+  markerSerial?: true;
   headBytes?: number;
   preludeBytes?: number;
   /** Number of the shell's tags the marker read covered. */

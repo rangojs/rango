@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CFCacheStore } from "../cf-cache-store";
+import { CFCacheStore, resetCFShellMemoForTests } from "../cf-cache-store";
 import {
   ShellFrameReader,
   encodeShellFrame,
@@ -11,6 +11,7 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../../server/request-context";
+import { createMetricsStore } from "../../../router/metrics";
 
 function makeReqCtx() {
   return createRequestContext({
@@ -110,6 +111,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetCFShellMemoForTests();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
     mockCache = new MockCache();
@@ -990,6 +992,304 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     });
   });
 
+  // Issue #941, decision 1: a fresh shell read is memoized per isolate for
+  // `memo.shellMs`; the tag-marker check still runs on every read.
+  describe("per-isolate shell memo", () => {
+    async function readTwice(store: CFCacheStore, key = "k") {
+      const first = await store.readShellDocument(key);
+      await first?.snapshot;
+      const matchSpy = vi.spyOn(mockCache, "match");
+      const kvSpy = vi.spyOn(mockKV, "get");
+      const second = await store.readShellDocument(key);
+      const shellReads =
+        matchSpy.mock.calls.length +
+        kvSpy.mock.calls.filter(([k]) => k.includes("shell2:")).length;
+      return { first, second, shellReads };
+    }
+
+    it("a memo hit skips the Cache API and KV read", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      const entry = shellEntry({
+        snapshot: [{ family: "item", key: "it", value: { value: "v" } }],
+      });
+      await store.putShell("k", entry, 300, 30);
+      await drain(mockCtx);
+      const { second, shellReads } = await readTwice(store);
+      expect(shellReads).toBe(0);
+      expect(new TextDecoder().decode(second!.prelude)).toBe(
+        "<html><body>SHELL</body></html>",
+      );
+      expect(await second!.snapshot).toEqual(entry.snapshot);
+      expect(second!.entry.buildVersion).toBe("build-abc");
+    });
+
+    it("reads the store again once the window has passed", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { shellMs: 1000 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30);
+      await drain(mockCtx);
+      await (
+        await store.readShellDocument("k")
+      )?.snapshot;
+      vi.advanceTimersByTime(1000);
+      const matchSpy = vi.spyOn(mockCache, "match");
+      expect(await store.readShellDocument("k")).not.toBeNull();
+      expect(matchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("a window of 0 disables the memo", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { shellMs: 0 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30);
+      await drain(mockCtx);
+      expect((await readTwice(store)).shellReads).toBe(1);
+    });
+
+    it("never memoizes a stale shell", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry(), 10, 300);
+      await drain(mockCtx);
+      vi.advanceTimersByTime(11_000);
+      const { first, shellReads } = await readTwice(store);
+      expect(first?.shouldRevalidate).toBe(true);
+      expect(shellReads).toBe(1);
+    });
+
+    it("updateTag in another isolate rejects a memoized shell on the next read (KV)", async () => {
+      vi.resetModules();
+      const isolateA = (await import("../cf-cache-store")).CFCacheStore;
+      vi.resetModules();
+      const isolateB = (await import("../cf-cache-store")).CFCacheStore;
+      const storeB = new isolateB({ ctx: mockCtx, kv: mockKV as any });
+      await storeB.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      await (
+        await storeB.readShellDocument("k")
+      )?.snapshot;
+      const matchSpy = vi.spyOn(mockCache, "match");
+      // Isolate B's memo serves it (no Cache API read)...
+      expect(await storeB.readShellDocument("k")).not.toBeNull();
+      expect(matchSpy).not.toHaveBeenCalled();
+
+      await new isolateA({ ctx: mockCtx, kv: mockKV as any }).invalidateTags([
+        "home",
+      ]);
+      await drain(mockCtx);
+      // ...until isolate A's updateTag: B's per-read marker check rejects it.
+      expect(await storeB.readShellDocument("k")).toBeNull();
+      expect(matchSpy).not.toHaveBeenCalled();
+      vi.resetModules();
+    });
+
+    it("the invalidating isolate drops its own memoized shells for those tags", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        tagPurge: vi.fn(async () => {}),
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      await (
+        await store.readShellDocument("k")
+      )?.snapshot;
+      await store.invalidateTags(["home"]);
+      const matchSpy = vi.spyOn(mockCache, "match");
+      await store.readShellDocument("k");
+      expect(matchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // KV-less purge mode: a HIT on the invalidating isolate while the purge
+    // call is in flight read the still-present L1 entry and memoized it after
+    // invalidateTags had dropped the memo; the memo-hit check consults only
+    // the request's own marker memo, so the mutating user's next request on
+    // this isolate got the purged shell for a whole window.
+    it("a read during the purge does not memoize the shell being purged (KV-less purge mode)", async () => {
+      let releasePurge!: () => void;
+      const tagPurge = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePurge = () => {
+              mockCache.store.clear(); // the purge evicts L1
+              resolve();
+            };
+          }),
+      );
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        baseUrl: "https://test.internal/",
+        tagPurge,
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      vi.advanceTimersByTime(10);
+
+      const mutating = runWithRequestContext(makeReqCtx(), () =>
+        store.invalidateTags(["home"]),
+      );
+      await Promise.resolve();
+      expect(tagPurge).toHaveBeenCalledTimes(1);
+      // Another user's HIT while the purge is in flight: the entry is still
+      // in L1, so it is served, but not memoized.
+      const during = await runWithRequestContext(makeReqCtx(), async () => {
+        const read = await store.readShellDocument("k");
+        await read?.snapshot;
+        return read;
+      });
+      expect(during).not.toBeNull();
+      const matchSpy = vi.spyOn(mockCache, "match");
+      await runWithRequestContext(makeReqCtx(), async () => {
+        await (
+          await store.readShellDocument("k")
+        )?.snapshot;
+      });
+      expect(matchSpy).toHaveBeenCalledTimes(1);
+
+      releasePurge();
+      await mutating;
+      vi.advanceTimersByTime(10);
+      // updateTag() has resolved: the mutating user's next request here.
+      const next = await runWithRequestContext(makeReqCtx(), () =>
+        store.readShellDocument("k"),
+      );
+      expect(next).toBeNull();
+    });
+
+    it("a shell captured after the invalidation is memoized while the record lives", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        baseUrl: "https://test.internal/",
+        tagPurge: vi.fn(async () => {
+          mockCache.store.clear();
+        }),
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      vi.advanceTimersByTime(10);
+      await runWithRequestContext(makeReqCtx(), () =>
+        store.invalidateTags(["home"]),
+      );
+      vi.advanceTimersByTime(10);
+      await store.putShell(
+        "k",
+        shellEntry({ prelude: btoa("two"), createdAt: Date.now() }),
+        300,
+        30,
+        ["home"],
+      );
+      await drain(mockCtx);
+      await runWithRequestContext(makeReqCtx(), async () => {
+        await (
+          await store.readShellDocument("k")
+        )?.snapshot;
+      });
+      const matchSpy = vi.spyOn(mockCache, "match");
+      const read = await runWithRequestContext(makeReqCtx(), () =>
+        store.readShellDocument("k"),
+      );
+      expect(new TextDecoder().decode(read!.prelude)).toBe("two");
+      expect(matchSpy).not.toHaveBeenCalled();
+    });
+
+    it("this isolate's putShell replaces its memoized generation", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      await store.putShell("k", shellEntry({ prelude: btoa("one") }), 300, 30);
+      await drain(mockCtx);
+      await (
+        await store.readShellDocument("k")
+      )?.snapshot;
+      await store.putShell("k", shellEntry({ prelude: btoa("two") }), 300, 30);
+      await drain(mockCtx);
+      const read = await store.readShellDocument("k");
+      expect(new TextDecoder().decode(read!.prelude)).toBe("two");
+    });
+
+    it("evicts under the byte cap", async () => {
+      const prelude = btoa("x".repeat(600));
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { shellMaxBytes: 1000 },
+      });
+      for (const key of ["a", "b"]) {
+        await store.putShell(key, shellEntry({ prelude }), 300, 30);
+        await drain(mockCtx);
+        await (
+          await store.readShellDocument(key)
+        )?.snapshot;
+      }
+      const matchSpy = vi.spyOn(mockCache, "match");
+      await store.readShellDocument("b");
+      expect(matchSpy).not.toHaveBeenCalled();
+      await store.readShellDocument("a");
+      expect(matchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // A pruned capture (#958) stores only the records a HIT reads: the memo
+    // keeps that stored snapshot and its prunedRecords, and counts the stored
+    // (pruned) bytes.
+    it("a memo hit keeps the stored pruned snapshot and prunedRecords, and counts the stored bytes", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        baseUrl: "https://test.internal/",
+      });
+      const snapshot: ShellCacheEntry["snapshot"] = [
+        { family: "item", key: "use-cache:kept", value: { value: "KEPT" } },
+      ];
+      await store.putShell(
+        "k",
+        shellEntry({ snapshot, prunedRecords: "item:4" }),
+        300,
+        30,
+      );
+      await drain(mockCtx);
+      const withMetrics = () => {
+        const ctx = makeReqCtx();
+        ctx._metricsStore = createMetricsStore(true);
+        return runWithRequestContext(ctx, async () => {
+          const read = await store.readShellDocument("k");
+          await read?.snapshot;
+          return read;
+        });
+      };
+      await withMetrics();
+      const hit = await withMetrics();
+      expect(hit!.stats!.tier).toBe("memo");
+      expect(hit!.entry.prunedRecords).toBe("item:4");
+      expect(await hit!.snapshot).toEqual(snapshot);
+      expect(hit!.stats!.memo).toEqual({
+        hit: true,
+        bytes:
+          "<html><body>SHELL</body></html>".length +
+          new TextEncoder().encode(JSON.stringify(snapshot)).length,
+      });
+    });
+
+    it("is partitioned by build version", async () => {
+      const v1 = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        version: "v1",
+      });
+      await v1.putShell("k", shellEntry(), 300, 30);
+      await drain(mockCtx);
+      await (
+        await v1.readShellDocument("k")
+      )?.snapshot;
+      const v2 = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        version: "v2",
+      });
+      expect(await v2.readShellDocument("k")).toBeNull();
+    });
+  });
+
   it("does not emit shell tier decisions when internal debug is disabled", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
@@ -1023,6 +1323,8 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
         ctx: mockCtx,
         kv: mockKV as any,
         baseUrl: "https://test.internal/",
+        // This test pins per-tier decisions; a memo hit would skip them.
+        memo: { shellMs: 0 },
       });
       await store.putShell("debug-key", shellEntry(), 300, 30);
       await drain(mockCtx);

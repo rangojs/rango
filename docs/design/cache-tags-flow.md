@@ -222,6 +222,19 @@ Configure `tagPurge` and the store flips the L1 contract:
   BUILD-manifest shells are declined outright on a KV-less store
   (`tagHistoryInert`): the immutable asset has no ttl and purge cannot delete
   it, so nothing could ever evict it.
+- **The PPR shell memo is not purged.** `CFCacheStore` keeps the last fresh
+  shell read per isolate for `memo.shellMs` (default 2000;
+  docs/design/shell-entry-layout.md "The shell memo"). A KV-less memo hit has
+  no marker to read: it trusts the entry like an L1 hit does, and the purge
+  cannot reach the memo. The isolate that runs `invalidateTags()` drops its
+  own memoized shells for those tags and keeps reads still in flight from
+  memoizing them again until one window after the purge settles
+  (`RecentTagInvalidations` in `shell-memo.ts`), so that request and later
+  ones on the same isolate miss. Every other isolate serves the purged shell
+  from its memo until its window passes, the mutating user's next request
+  included when it lands there. Set `memo: { shellMs: 0 }` where a mutating
+  user's next request must read its own write; with KV bound the memo hit
+  reads the markers and no such window exists.
 
 What you trade: marker mode gives read-time KV consistency; purge mode's
 cross-request invalidation latency is the purge propagation (Cloudflare quotes

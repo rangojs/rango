@@ -568,6 +568,24 @@ the same and also evicts the entry. The snapshot holds only what a HIT reads:
 when every HIT replays the handler layer from the captured segment record, the
 `"use cache"` items only handler code read are not stored (`/ppr`).
 
+**Shell memo.** After a shell read, the same isolate serves that key's next
+HITs from memory for `memo.shellMs` (default 2000; `{ shellMs: 0 }` turns it
+off), with no Cache API or KV read. The tag-marker check still runs on every
+HIT, and the isolate that runs `updateTag()`/`revalidateTag()` drops its own
+copies, so that request and later ones on the same isolate never get the
+invalidated shell; with KV bound, every isolate rejects it on its next request.
+What another isolate can serve for up to one window: the previous capture of a
+key another isolate just recaptured, and, without KV in purge mode, a purged
+shell. The purge reaches the stored entry, not other isolates' memos, so the
+mutating user's next request gets the purged shell when it lands on another
+isolate: set `{ shellMs: 0 }` where that request must read its own write.
+`memo.shellMaxBytes` (default 16 MiB, shared by every `CFCacheStore` in the
+isolate) caps what it holds; only fresh shells are kept.
+
+```typescript
+new CFCacheStore({ ctx, kv: env.CACHE_KV, memo: { shellMs: 5000 } });
+```
+
 ```typescript
 new CFCacheStore({
   ctx,
@@ -633,19 +651,32 @@ the store adds SWR, tag invalidation, and the family split on top of it.
 import { getCache, waitUntil } from "@vercel/functions";
 import { VercelCacheStore } from "@rangojs/router/cache";
 
+// A per-deploy namespace: Vercel does not reconcile entries across deploys.
+// One handle per process: the store keeps its PPR shell memo per handle.
+const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
+
 const router = createRouter({
   document: Document,
   urls: urlpatterns,
   cache: () => ({
     store: new VercelCacheStore({
-      // A per-deploy namespace: Vercel does not reconcile entries across deploys
-      cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+      cache: runtimeCache,
       waitUntil,
       defaults: { ttl: 60, swr: 300 },
     }),
   }),
 });
 ```
+
+The store keeps the same PPR shell memo as `CFCacheStore` (`memo.shellMs`,
+default 2000; `memo.shellMaxBytes`, default 16 MiB), one per `cache` handle:
+create the handle once, as above, or the memo never hits. Its per-read marker
+check sees `updateTag()`/`revalidateTag()` on the next request in the same
+region. The tag markers are a regional `cache.set` (only `expireTag` is
+global), so another region serves a shell it memoized before the invalidation
+until its window passes, where without the memo `expireTag` removes it within
+about 300 ms; a platform `expireTag` issued outside rango is likewise seen when
+the window passes.
 
 Writes over 2 MB (the platform limit, `maxItemBytes`) are skipped, and tags
 beyond the per-item cap are dropped with a warning. The official client swallows

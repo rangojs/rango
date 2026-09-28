@@ -47,6 +47,16 @@ everywhere. So `VercelCacheStore` sits much closer to `MemorySegmentCacheStore`
 in size than to `CFCacheStore` — the platform does the distribution and the tag
 fan-out for us.
 
+One exception is the store's PPR shell memo (`memo.shellMs`, default 2000,
+`docs/design/shell-entry-layout.md` "The shell memo"): a memo hit does not read
+the entry, only rango's `tm` tag markers, and those are a regional
+`cache.set`. A region that memoized a shell before an invalidation issued in
+another region finds no marker and serves the shell until its window passes;
+without the memo, `expireTag` removed it within about 300 ms. In the region
+that invalidated, the next request misses. A platform `expireTag` issued
+outside rango (not through `invalidateTags`) writes no `tm` marker at all, so
+every memo that holds the shell serves it until its window passes.
+
 The store exists to supply the three things the raw primitive does _not_ give us.
 The rest of this doc is mostly those three.
 
@@ -219,13 +229,17 @@ import { createRouter } from "@rangojs/router";
 import { VercelCacheStore } from "@rangojs/router/cache";
 import { getCache, waitUntil } from "@vercel/functions";
 
+// Bake the deployment id into the namespace so a deploy cannot serve
+// stale-shaped entries (Vercel does not reconcile across deploys). One handle
+// per process: getCache() resolves the platform cache on every call, and the
+// store keeps its PPR shell memo per handle.
+const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
+
 export const router = createRouter({
   document: Document,
   cache: () => ({
     store: new VercelCacheStore({
-      // Bake the deployment id into the namespace so a deploy cannot serve
-      // stale-shaped entries (Vercel does not reconcile across deploys).
-      cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+      cache: runtimeCache,
       waitUntil,
       defaults: { ttl: 60, swr: 300 },
     }),

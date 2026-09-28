@@ -93,12 +93,17 @@ import { getCache, waitUntil } from "@vercel/functions";
 
 const defaults = { ttl: 60, swr: 300 };
 const memoryStore = new MemorySegmentCacheStore({ defaults });
+// One handle per process: getCache() resolves the platform cache on every
+// call, and VercelCacheStore keeps its PPR shell memo per handle.
+const runtimeCache = process.env.VERCEL
+  ? getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })
+  : undefined;
 
 function resolveCache() {
-  if (process.env.VERCEL) {
+  if (runtimeCache) {
     return {
       store: new VercelCacheStore({
-        cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+        cache: runtimeCache,
         waitUntil,
         defaults,
       }),

@@ -52,6 +52,13 @@ export function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+/** The byte length `base64` decodes to (padded or not), without decoding. */
+export function base64ByteLength(base64: string): number {
+  let length = base64.length;
+  while (length > 0 && base64.charCodeAt(length - 1) === 61 /* = */) length--;
+  return Math.floor((length * 3) / 4);
+}
+
 /** Decode base64 string to ArrayBuffer. */
 export function base64ToBuffer(base64: string): ArrayBuffer {
   return base64ToBytes(base64).buffer as ArrayBuffer;

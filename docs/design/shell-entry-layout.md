@@ -2,10 +2,11 @@
 
 Status: **in progress** (issue #941). Stage 1 (decode once, native base64,
 chunked prelude enqueue), stage 2 (prelude-first CF entry, marker read in
-parallel), and the `debugPerformance` rows for a shell HIT ("Seeing it per
-request") are implemented, and so is snapshot pruning (§2). The per-isolate
-shell memo (decision 1) is specified below and lands as its own stage. All four
-decisions are made.
+parallel), the `debugPerformance` rows for a shell HIT ("Seeing it per
+request"), snapshot pruning (§2), and the per-isolate shell memo (decision 1,
+"The shell memo") are implemented. All four decisions are made; decision 2
+was revised after the memo stage (a per-isolate tag-marker memo, SWR on plain
+reads, lands as its own stage).
 
 Read `shell-fast-path.md` and `packages/rangojs-router/docs/design/ppr-shell-resume.md`
 first. This doc is about one narrow question: how many bytes, parses, and
@@ -139,13 +140,17 @@ Edge model: the Node harness with workerd's native base64 installed.
 | baseline                     | 13.2 [10.4-15.8]                      | 13.5 [11.5-15.1]                            | 21.0 [20.5-21.2]     | 29.8 [29.5-30.1]   |
 | 1. decode once, 32 KB chunks | 12.6 [9.9-14.0]                       | 12.4 [10.8-13.6]                            | 20.1 [19.5-20.6]     | 29.6 [29.2-29.9]   |
 | 2. prelude-first entry       | 3.6 [2.6-4.1]                         | 1.0 [0.6-1.3]                               | 8.3 [8.3-8.4]        | 17.5 [16.9-17.7]   |
+| shell memo hit (2 s window)  | 1.3 [0.7-2.0]                         | -0.3 [-0.8-0.2]                             | 0.2 [0.1-0.2]        | 10.2 [10.2-10.3]   |
 
 Stage 1's first-byte gain is the decode work (1.4 ms of per-byte loop in
 workerd); its compressed-first-byte gain does not show in these uncompressed
 numbers (see the compression table). Stage 2 removes the 3.4 MB read and parse
 from the first-byte path; with a tagged shell the marker read (9 ms in the
 model) now sets the floor, overlapping the match-plus-prelude read instead of
-following it.
+following it. A memo hit removes the store read as well; the tagged row is
+the marker read alone. The local workerd memo row is with the tail's
+macrotask yield ("The shell memo" below): without it, memo hits measured 5.9
+and 6.7 ms over the floor.
 
 ### Seeing it per request
 
@@ -504,14 +509,16 @@ starts after the whole body is read and parsed.
 | C. serve, then check the marker after the flush        | marker read (≈ 9 ms) on every HIT                    | at least one stale document per isolate after an invalidation; breaks `updateTag` read-your-own-writes for a following GET |
 | D. fold the tag generation into the shell key          | none by itself (the generation still has to be read) | none                                                                                                                       |
 
-**Decided: A only.** The marker read starts as soon as the head is parsed,
-runs in parallel with the prelude read, and is awaited before the commit, so
-nothing changes about what a HIT may serve. There is no per-isolate marker
-memo in any form (B), not even opt-in: with KV bound, `updateTag` /
-`revalidateTag` stay immediate across isolates. The one knob that trades
-marker freshness for latency remains the opt-in `tagCacheTtl` (a per-colo
-Cache API copy of each marker, documented as a staleness ceiling). C weakens
-the `updateTag` guarantee; D gains nothing on its own.
+**First decided: A only.** The marker read starts as soon as the head is
+parsed, runs in parallel with the prelude read, and is awaited before the
+commit, so nothing changes about what a HIT may serve. B was declined in any
+form, even opt-in, so that with KV bound `updateTag` / `revalidateTag` stay
+immediate across isolates; the one knob trading marker freshness for latency
+was the opt-in `tagCacheTtl` (a per-colo Cache API copy of each marker,
+documented as a staleness ceiling). C weakens the `updateTag` guarantee; D
+gains nothing on its own. A is built (stage 2). **Revised (decision 2):** B is
+now wanted in an SWR form, with the mutation path kept correct; see
+"Decisions for the maintainer".
 
 ## 5. Chunked prelude enqueue
 
@@ -556,6 +563,124 @@ body, and 170 ms KV budgets are already per-store options
 what the L1 body budget has to cover from the whole 3.3 MB envelope to the
 head + prelude, which is the part of this that cold colos hit.
 
+## The shell memo
+
+A warm isolate that serves the same shell many times a second re-reads and
+re-parses the same entry on every HIT. The memo (`src/cache/shell-memo.ts`)
+keeps the last fresh read per key for `memo.shellMs` and serves the next HITs
+from memory. It is on by default in `CFCacheStore` (one memo per isolate) and
+`VercelCacheStore` (one per runtime-cache handle, so the handle must be
+created once per process, not per request).
+
+What a memo hit still does, and what it may serve:
+
+- The tag-marker check runs on every read, memoized or not, and is awaited
+  before anything is returned, so with KV bound
+  `updateTag()`/`revalidateTag()` reject a memoized shell on the next request
+  in every isolate. On Vercel the check reads rango's `tm` markers, which
+  `invalidateTags` writes; a bare platform `expireTag` that skipped rango
+  writes none, so a memoized shell survives it until the window passes.
+- The isolate that invalidates drops its own copies, and keeps reads still in
+  flight from memoizing them again. That second part is scar tissue: in
+  KV-less purge mode a HIT that read the L1 entry while the purge call was
+  running memoized it after `invalidateTags` had cleared the memo, and the
+  memo-hit check (only the request's own marker memo, there being no KV)
+  let the mutating user's next request on that isolate get the purged shell.
+  `RecentTagInvalidations` records each invalidated tag from the start of
+  `invalidateTags` until one window after it settles (at least the 2 s
+  default, far above the 170 ms snapshot read budget of a read in flight);
+  while it lives, a shell tagged at or before the invalidation is neither
+  memoized nor served from the memo. It only adds rejections. Vercel has no
+  such race: every memo hit reads the markers, which land before
+  `invalidateTags` resolves (unit tests hold the marker write and the
+  `expireTag` call to show it).
+- Up to one window stale, in another isolate: a newer capture of the same key
+  (the isolate that captured replaces its copy in `putShell`); in KV-less
+  purge mode a purged shell, because the purge reaches the stored entry and
+  not other isolates' memos, and the memo hit has no marker to read. That
+  includes the mutating user's next request when it lands on another isolate
+  (the contract suite pins it: "another isolate serves a purged shell until
+  its window passes"). Until the fresh-reads cookie of the marker-memo stage
+  lands, a purge-mode app that needs cross-request read-your-own-writes sets
+  `memo: { shellMs: 0 }`. On Vercel, an invalidation from another region:
+  the `tm` markers are a regional `cache.set` and only `expireTag` is global
+  (`vercel-cache-store.md`), so a region that memoized the shell before the
+  invalidation finds no marker and serves it until its window passes, where
+  without the memo `expireTag` removed the entry within about 300 ms.
+- Only a fresh shell whose snapshot read completed is memoized; a shell that
+  turns stale is dropped and read from the store, so SWR recapture scheduling
+  stays with the store read. Different builds never share an entry (the memo
+  key carries the Cache API URL with its version path; the version gates
+  still run on the returned entry).
+- The memo holds what the store holds: after snapshot pruning (§2), the
+  pruned snapshot and `prunedRecords`, counted at their stored size. A HIT
+  whose doc record fails to decode drops the key's memo entry
+  (`SegmentCacheStore.dropShellMemo`, internal) before it schedules the
+  recapture: the memoized copy has the same record, while the store may
+  already hold another isolate's recapture.
+
+Measured before snapshot pruning, on the unpruned 3.3 MB entry
+(`CFCacheStore`: edge model with the #941 latencies and workerd's native
+base64; `VercelCacheStore`: a model of 6 ms per runtime-cache `get`, entry and
+each tag marker, not measured on Vercel, on Node without native base64):
+
+| read                                  | untagged first byte |   tagged first byte |
+| ------------------------------------- | ------------------: | ------------------: |
+| `CFCacheStore` store read (stage 2)   |    8.3 [8.2-8.5] ms | 17.3 [16.4-17.4] ms |
+| `CFCacheStore` memo hit               |    0.2 [0.1-0.2] ms | 10.2 [10.2-10.3] ms |
+| `VercelCacheStore` store read (model) | 10.8 [10.7-10.9] ms | 17.9 [17.6-18.4] ms |
+| `VercelCacheStore` memo hit (model)   |    0.1 [0.1-0.2] ms |    6.9 [6.9-6.9] ms |
+
+The Vercel store reads the whole entry, then its tag markers, so its tagged
+memo hit is one marker read; its store read includes the loop decode of the
+prelude, which a memo hit skips (the memo keeps the decoded prelude).
+
+Starting the marker read earlier on a memo hit buys nothing measurable: it is
+already the first thing the hit does, and everything after it (the integrity
+check and stream setup) is the 0.2 ms of the untagged row, so overlapping it
+could save at most that.
+
+Hit rate of the real `ShellMemo` under Poisson arrivals, per isolate and per
+key (a miss refills after a 10 ms read; 2,000 simulated seconds):
+
+| requests/s | 1 s window | 2 s window | 5 s window |
+| ---------: | ---------: | ---------: | ---------: |
+|        0.1 |       8.2% |      15.5% |      33.8% |
+|        0.5 |      31.4% |      49.3% |      69.9% |
+|          1 |      50.3% |      66.3% |      83.1% |
+|          2 |      66.4% |      79.9% |      90.6% |
+|          5 |      82.8% |      90.5% |      96.1% |
+|         10 |      90.1% |      94.8% |      97.8% |
+|         50 |      97.1% |      98.5% |      99.4% |
+
+That is `λW / (1 + λW)`. Memory (Node 22 heap, `--expose-gc`): a
+`CFCacheStore` memo holding `/ppr-large` holds 3,448 KB (2,834 KB of parsed
+snapshot on the heap plus the 614 KB prelude buffer) for 3,196 KB counted
+(prelude plus snapshot JSON), 1.08x. A `VercelCacheStore` memo keeps the
+parsed envelope (base64 prelude string, snapshot records) plus the decoded
+prelude: 3,751 KB held (3,137 KB heap plus 614 KB buffer). It counts the
+envelope JSON plus the decoded prelude's length, 4,015 KB, so it holds 0.93x
+what it counts; counting the envelope alone (3,401 KB) undercounted by 1.10x.
+Storing sweeps entries past their window, so an isolate holds at most the
+shells it read in the last window, capped by `memo.shellMaxBytes`.
+
+**Defaults: 2 s and 16 MiB.** 2 s takes a key at 1 request/s per isolate
+from 0% to 66% hits (5 s would make it 83%) while bounding the cross-isolate
+staleness above at 2 s; 16 MiB holds five storefront-sized shells (about
+17 MB of heap, an eighth of a 128 MB Workers isolate) and hundreds of small
+ones. Raise the window for pages that are hot site-wide but lukewarm per
+isolate; set it to 0 to turn the memo off.
+
+**The tail waits a macrotask.** A memo hit hands the tail a snapshot that is
+already in memory, so the tail's seed, match, and Flight render started in the
+same microtask run as the commit, ahead of the runtime writing the prelude
+(local workerd, 200 samples: 5.9 ms over the floor for `/ppr-large`, worse
+than the store read's 3.6 ms). `serveShellHit` now yields one macrotask before
+the tail's work when the snapshot had already arrived; memo hits measure
+1.3 ms. `MemorySegmentCacheStore` and build-time shells had the same in-memory
+snapshot and get the same fix. A snapshot still arriving on I/O yields on its
+own, so it gets no extra macrotask (Node clamps `setTimeout(0)` to 1 ms).
+
 ## Decisions for the maintainer
 
 1. **Per-isolate shell memo** (the issue's experimental patch): keep the last
@@ -567,11 +692,33 @@ head + prelude, which is the part of this that cold colos hit.
    marker check still runs per request, so `updateTag` stays immediate.
    **Decided:** build it as a per-store option with a byte cap, on by default
    (starting point 2 s, 16 MB), in its own stage after stage 2 so its gain is
-   measured on its own; the final defaults follow that measurement.
-2. **Per-isolate marker memo** (option B above). **Decided:** no, in any
-   form. The marker read runs in parallel with the prelude read (option A)
-   and is awaited before the commit; `tagCacheTtl` stays the only knob that
-   trades marker freshness for latency.
+   measured on its own; the final defaults follow that measurement. **Built**
+   ("The shell memo"): defaults 2 s and 16 MiB, per the measurements there.
+2. **Per-isolate marker memo** (option B above). **First decided:** no, in
+   any form; the marker read runs in parallel with the prelude read (option
+   A) and is awaited before the commit. **Revised:** on plain reads, aim for
+   SWR; after a mutation, aim for correct reads. A per-isolate marker-value
+   memo is wanted:
+   - a value within its fresh window is used; between fresh and a max-stale
+     cap it is used and refreshed in the background (`waitUntil`); past the
+     cap the read blocks on the marker;
+   - reads after a mutation stay correct in the mutating request (the
+     per-request marker memo), on the same isolate (`invalidateTags` writes
+     through to the isolate memo), and for the same user on any isolate (a
+     fresh-reads cookie, set on the response of a request that ran
+     `updateTag()`/`revalidateTag()`, makes that user's requests skip both
+     the marker memo and the shell memo for the cap);
+   - both stores, through one store-agnostic module, default on: fresh
+     window about 1 s on `CFCacheStore` (KV propagates across locations in
+     about 60 s) and about 300 ms on `VercelCacheStore` (`expireTag`
+     propagates in about 300 ms), each with a max-stale cap; the final values
+     follow measurement;
+   - the tag names a shell carries are hinted per isolate (never marker
+     values), so the marker reads start alongside the entry read; the
+     freshness check still uses the head's actual tags.
+
+   It lands as its own stage after the shell memo.
+
 3. **Pruning with live-lane loaders** (rule R2.3). Pruning when a route has
    live loaders changes "seeded everywhere" for keys the shell and a hole
    share: the hole would show live data. **Decided:** option A (drop R2.3,

@@ -224,6 +224,13 @@ path("/products/:id", Page, {
 
 `updateTag()`/`revalidateTag()` is the only lever that changes the frozen shell HTML. A captured shell carries the union of the tags recorded while it rendered as shell material — from `cache()` segments, `"use cache"` functions, a render-time `cacheTag()`, and cached loaders on the bake lane (they execute during capture) — plus `ppr.tags`. Invalidating one of those tags drops the shell for a recapture. Live-lane loader tags (every loader without `ssr: false`) never attach; those holes are already live. `revalidate()` is a data lever: it re-renders holes with fresh data but never touches the shell.
 
+`CFCacheStore` and `VercelCacheStore` keep each isolate's last fresh shell read in memory for `memo.shellMs` (default 2000) under `memo.shellMaxBytes` (default 16 MiB), so a warm isolate's next HITs skip the store read. The tag-marker check still runs on every HIT and the isolate that invalidates drops its own copies, so an invalidation is seen on the next request there, and with KV bound (`CFCacheStore`) in every isolate. Another isolate can serve an invalidated shell from its memo until its window passes in two setups: `CFCacheStore` without KV in purge mode (`tagPurge`), and `VercelCacheStore` in another region (its tag markers are regional) or after a platform `expireTag` issued outside rango. Set `memo: { shellMs: 0 }` where the next request must see the invalidation. `VercelCacheStore` keeps one memo per `cache` handle, so create the `getCache()` handle once per process ([Deploy to Vercel](/docs/rango/guides/deploy-vercel)).
+
+```ts
+new CFCacheStore({ ctx, kv: env.CACHE_KV, memo: { shellMs: 5000 } }); // longer window
+new CFCacheStore({ ctx, tagPurge: { zoneId, apiToken }, memo: { shellMs: 0 } }); // memo off
+```
+
 These fields govern the in-function shell entry. They do not emit HTTP
 `Cache-Control`. If you separately add `s-maxage`, a platform CDN may cache the
 completed response — shell, live-hole output, and hydration payload together —

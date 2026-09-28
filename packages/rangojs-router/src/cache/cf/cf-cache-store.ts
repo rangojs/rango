@@ -73,6 +73,14 @@ import {
   type ShellFrameHead,
 } from "./cf-shell-frame.js";
 import {
+  ShellMemo,
+  RecentTagInvalidations,
+  DEFAULT_SHELL_MEMO_MS,
+  isShellFresh,
+  resolveShellMemoOptions,
+  shellHasAnyTag,
+} from "../shell-memo.js";
+import {
   KV_KEY_PRESERVED_PREFIX_BYTES,
   KV_MAX_KEY_BYTES,
   KV_MIN_EXPIRATION_TTL,
@@ -299,6 +307,27 @@ const SHELL_KEY_PREFIX = "shell2:";
  */
 const snapshotReadFailures = new WeakMap<ShellDocumentRead, Promise<boolean>>();
 
+/** A memoized fresh shell read (shell-memo.ts). */
+interface CFShellMemoValue {
+  head: ShellFrameHead;
+  prelude: Uint8Array;
+  snapshot: ShellSnapshotRecord[] | undefined;
+  /** L1 response headers: the KV-less purge-mode marker check reads them. */
+  headers?: Headers;
+}
+
+/** The per-isolate shell memo shared by every CFCacheStore in the isolate. */
+const cfShellMemo = new ShellMemo<CFShellMemoValue>();
+
+/** Tags this isolate invalidated recently: they keep shells out of cfShellMemo. */
+const recentShellInvalidations = new RecentTagInvalidations();
+
+/** @internal Reset the per-isolate shell memo (tests). */
+export function resetCFShellMemoForTests(): void {
+  cfShellMemo.clear();
+  recentShellInvalidations.clear();
+}
+
 /** openShellFrame outcome: the head and prelude, or why the read failed. */
 type OpenedShellFrame =
   | {
@@ -324,6 +353,8 @@ function debugTimings(
   Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs">
 > {
   if (!stats) return NO_DEBUG_TIMINGS;
+  if (stats.tier === "memo")
+    return { markerMs: Math.round(stats.markerMs ?? 0) };
   const round = (ms: number | undefined) =>
     ms === undefined ? undefined : Math.round(ms);
   const bodyReadMs =
@@ -356,6 +387,7 @@ function shellHeadToEntry(head: ShellFrameHead): ShellCacheEntry {
 }
 
 type CFShellDebugOutcome =
+  | "memo-hit"
   | "l1-hit"
   | "l1-miss"
   | "kv-hit"
@@ -367,7 +399,7 @@ type CFShellDebugOutcome =
   | "write-invalidated";
 
 interface CFShellDebugDetails {
-  tier?: "l1" | "kv";
+  tier?: "memo" | "l1" | "kv";
   reason?:
     | "absent"
     | "timeout"
@@ -428,6 +460,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
+  private readonly shellMemoMs: number;
+  private readonly shellMemoMaxBytes: number;
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
   private readonly kv?: KVNamespace;
   /** True when constructed without KV: no durable tag history (see ctor). */
@@ -478,6 +512,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       options.kvReadTimeoutMs,
       KV_READ_TIMEOUT_MS,
     );
+    const memo = resolveShellMemoOptions(options.memo);
+    this.shellMemoMs = memo.shellMs;
+    this.shellMemoMaxBytes = memo.shellMaxBytes;
     this.debug =
       options.debug === true
         ? (event) =>
@@ -1989,8 +2026,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * recapture stampede guard.
    */
   async readShellDocument(key: string): Promise<ShellDocumentRead | null> {
+    const memoKey = this.shellMemoKey(key);
+    const memoized = cfShellMemo.get(memoKey, this.shellMemoMs);
+    if (memoized) return this.readMemoizedShell(key, memoKey, memoized);
     const stats = this.shellReadStats("l1");
     const l1StartedAt = stats ? performance.now() : 0;
+    if (stats && this.shellMemoMs > 0) {
+      stats.memo = { hit: false, bytes: cfShellMemo.size };
+    }
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`);
@@ -2068,7 +2111,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         });
         return null;
       }
-      const read = this.shellDocumentRead(key, opened, stats);
+      const read = this.shellDocumentRead(key, opened, stats, response.headers);
       if (INTERNAL_RANGO_DEBUG) {
         this.debugShell(key, "l1-hit", {
           freshness: read.shouldRevalidate ? "stale" : "fresh",
@@ -2082,6 +2125,76 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       this.debugShell(key, "l1-miss", { reason: "error" });
       return this.kvReadShellDocument(key, stats, l1StartedAt, "error");
     }
+  }
+
+  /** @internal SegmentCacheStore.dropShellMemo */
+  dropShellMemo(key: string): void {
+    cfShellMemo.delete(this.shellMemoKey(key));
+  }
+
+  /** The memo key: one per namespace, build version, base URL, and shell key. */
+  private shellMemoKey(key: string): string {
+    return `${this.namespace ?? ""}\u0000${this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`).url}`;
+  }
+
+  /**
+   * Serve a memoized shell (shell-memo.ts). The tag-marker check is the only
+   * store I/O left, so it is started first and awaited before anything is
+   * returned: nothing of an invalidated shell reaches the response. A shell
+   * that went stale since it was memoized, or that predates a tag this
+   * isolate is invalidating or just invalidated (RecentTagInvalidations), is
+   * dropped and read from the store (SWR recapture scheduling and each mode's
+   * invalidation semantics stay with the store read).
+   */
+  private async readMemoizedShell(
+    key: string,
+    memoKey: string,
+    memoized: CFShellMemoValue,
+  ): Promise<ShellDocumentRead | null> {
+    const { head } = memoized;
+    if (
+      !isShellFresh(head.s, head.e) ||
+      recentShellInvalidations.covers(head.t, head.ta)
+    ) {
+      cfShellMemo.delete(memoKey);
+      return this.readShellDocument(key);
+    }
+    const stats = this.shellReadStats("memo");
+    const markerStartedAt = stats ? performance.now() : 0;
+    const invalidated = await (this.kv
+      ? this.isGloballyInvalidated(head.t, head.ta)
+      : this.isL1Invalidated(
+          head.t,
+          head.ta,
+          memoized.headers ?? new Headers(),
+        ));
+    if (stats) {
+      // Nothing else to wait for: the marker IS the memo hit's critical path.
+      stats.markerMs = stats.markerWaitMs = performance.now() - markerStartedAt;
+      stats.tags = head.t?.length ?? 0;
+      stats.preludeBytes = memoized.prelude.length;
+    }
+    if (invalidated) {
+      cfShellMemo.delete(memoKey);
+      this.debugShell(key, "marker-invalidated", {
+        tier: "memo",
+        ...debugTimings(stats),
+      });
+      return null;
+    }
+    if (stats) stats.memo = { hit: true, bytes: cfShellMemo.size };
+    this.debugShell(key, "memo-hit", {
+      freshness: "fresh",
+      ...debugTimings(stats),
+      expiresAt: head.e,
+    });
+    return {
+      entry: shellHeadToEntry(head),
+      prelude: memoized.prelude,
+      shouldRevalidate: false,
+      snapshot: Promise.resolve(memoized.snapshot),
+      ...(stats ? { stats } : {}),
+    };
   }
 
   /**
@@ -2189,13 +2302,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * differs from the head's `sl`, or that fails to parse, evicts the entry
    * from both tiers and reports cache-corrupt. Every failure resolves
    * undefined, and a HIT's tail then runs unpinned (the existing no-snapshot
-   * path); getShell turns a failure into a miss (snapshotReadFailures).
-   * `promote` receives the snapshot bytes once they parsed.
+   * path); getShell turns a failure into a miss (snapshotReadFailures). Only
+   * a read whose snapshot parsed goes into the per-isolate memo (when still
+   * fresh), and `promote` receives its snapshot bytes (the KV tier's L1
+   * promotion). `headers` are the L1 response's, kept for the KV-less
+   * memo-hit marker check.
    */
   private shellDocumentRead(
     key: string,
     opened: Extract<OpenedShellFrame, { status: "ok" }>,
     stats: ShellReadStats | undefined,
+    headers?: Headers,
     promote?: (snapshotBytes: Uint8Array) => void,
   ): ShellDocumentRead {
     const { head, prelude, reader } = opened;
@@ -2236,6 +2353,23 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           parseMs: performance.now() - parseStartedAt,
           bytes: rest.length,
         };
+      }
+      if (
+        isShellFresh(head.s, head.e) &&
+        !recentShellInvalidations.covers(head.t, head.ta)
+      ) {
+        // A view into a larger body chunk would pin that chunk in the memo.
+        const ownPrelude =
+          prelude.byteLength === prelude.buffer.byteLength
+            ? prelude
+            : prelude.slice();
+        cfShellMemo.set(
+          this.shellMemoKey(key),
+          { head, prelude: ownPrelude, snapshot: records, headers },
+          ownPrelude.length + rest.length,
+          this.shellMemoMs,
+          this.shellMemoMaxBytes,
+        );
       }
       promote?.(rest);
       return { records, failed: false };
@@ -2305,6 +2439,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (!this.kv && !this.tagPurge && Array.isArray(tags) && tags.length > 0) {
       this.warnShellTagsNoEvictionOnce();
     }
+    // This isolate serves its own new capture from the next read on.
+    cfShellMemo.delete(this.shellMemoKey(key));
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -2521,8 +2657,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         });
         return null;
       }
-      const read = this.shellDocumentRead(key, opened, stats, (snapshotBytes) =>
-        this.promoteShellToL1(key, opened.head, opened.prelude, snapshotBytes),
+      const read = this.shellDocumentRead(
+        key,
+        opened,
+        stats,
+        undefined,
+        (snapshotBytes) =>
+          this.promoteShellToL1(
+            key,
+            opened.head,
+            opened.prelude,
+            snapshotBytes,
+          ),
       );
       if (INTERNAL_RANGO_DEBUG) {
         this.debugShell(key, "kv-hit", {
@@ -3313,6 +3459,30 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();
+    // The invalidating isolate drops its memoized shells for these tags at
+    // once; with KV every isolate's per-read marker check rejects the rest.
+    // Reads already in flight must not memoize them again while the markers
+    // and the purge are written (KV-less purge mode has no marker to reject
+    // that copy): the record holds them out until one window after this
+    // settles, at least the default window so a store with the memo off still
+    // covers another store's reads in this isolate.
+    cfShellMemo.deleteWhere((shell) => shellHasAnyTag(shell.head.t, tags));
+    recentShellInvalidations.begin(tags, invalidatedAt);
+    try {
+      await this.writeTagInvalidation(tags, invalidatedAt);
+    } finally {
+      recentShellInvalidations.settle(
+        tags,
+        Math.max(this.shellMemoMs, DEFAULT_SHELL_MEMO_MS),
+      );
+    }
+  }
+
+  /** invalidateTags' marker writes, tag purge, and hooks. */
+  private async writeTagInvalidation(
+    tags: string[],
+    invalidatedAt: number,
+  ): Promise<void> {
     const ctx = _getRequestContext();
     const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
 

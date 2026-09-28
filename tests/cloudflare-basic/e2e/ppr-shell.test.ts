@@ -723,14 +723,36 @@ function describePprShell(mode: "dev" | "build") {
     // HIT's store read, integrity check, and prelude flush are separate
     // Server-Timing rows with byte and chunk counts, and the previous HIT's
     // tail (snapshot read, seed, resume) rides the next response as ppr-tail.
+    // The first HIT after a capture reads the store (the capture's putShell
+    // cleared this isolate's memo) and fills the shell memo; the next HIT is
+    // served from it, with only the marker check.
     test("a perf-debug large shell HIT reports the read, open, commit, and tail rows with sizes", async ({
       request,
     }) => {
-      const url = f.url("/ppr-large?__perf_debug=1");
-      await warmToHit(request, url);
+      const url = f.url(`/ppr-large?__perf_debug=1&probe=${Date.now()}`);
+      let storeRead = "";
+      await expect(async () => {
+        const res = await request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        storeRead = res.headers()["server-timing"] ?? "";
+      }).toPass({ timeout: 20000 });
+      expect(storeRead).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit l1"/);
+      expect(storeRead).toMatch(
+        /d1-ppr-shell-memo;dur=[\d.]+;desc="miss size=\d+b"/,
+      );
+
       const res = await request.get(url, { headers: HTML_HEADERS });
       expect(res.headers()["x-rango-shell"]).toBe("HIT");
-      const timing = res.headers()["server-timing"] ?? "";
+      const memoHit = res.headers()["server-timing"] ?? "";
+      expect(memoHit).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit memo"/);
+      expect(memoHit).toMatch(
+        /d1-ppr-shell-memo;dur=[\d.]+;desc="hit size=\d{6,}b"/,
+      );
+      expect(memoHit).toMatch(
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms"/,
+      );
+      expect(memoHit).not.toContain("d1-ppr-shell-prelude");
+      const timing = storeRead;
       expect(timing).toContain("ppr-shell-read;dur=");
       expect(timing).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit l1"/);
       expect(timing).toMatch(
@@ -745,7 +767,8 @@ function describePprShell(mode: "dev" | "build") {
       expect(timing).toMatch(
         /ppr-shell-commit;dur=[\d.]+;desc="cpu chunks=\d{2,} prelude=\d{6,}b"/,
       );
-      expect(timing).toMatch(
+      // The store-read HIT's tail rides the memo HIT's response.
+      expect(memoHit).toMatch(
         /ppr-tail;dur=[\d.]+;desc="complete snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms /,
       );
     });
@@ -763,13 +786,18 @@ function describePprShell(mode: "dev" | "build") {
         using __ = guardHydrationErrors(page);
         const url = f.url(`${path}?__perf_debug=1&probe=pruned`);
         await warmToHit(page.request, url);
-        // The previous HIT's tail rides this response's Server-Timing.
-        await page.request.get(url, { headers: HTML_HEADERS });
-        const res = await page.request.get(url, { headers: HTML_HEADERS });
-        expect(res.headers()["x-rango-shell"]).toBe("HIT");
-        const tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
-          res.headers()["server-timing"] ?? "",
-        )?.[1];
+        // The previous HIT's tail rides each response's Server-Timing. A
+        // shell memo hit's tail has no snapshot read to report, so poll until
+        // the tail of a store read (snapshot-bytes=) comes by.
+        let tail: string | undefined;
+        await expect(async () => {
+          const res = await page.request.get(url, { headers: HTML_HEADERS });
+          expect(res.headers()["x-rango-shell"]).toBe("HIT");
+          tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
+            res.headers()["server-timing"] ?? "",
+          )?.[1];
+          expect(tail).toMatch(/ snapshot-bytes=\d+b /);
+        }).toPass({ timeout: 15000 });
         expect(tail).toContain(" records=segment:1 pruned=item:5 ");
         const snapshotBytes = Number(/snapshot-bytes=(\d+)b/.exec(tail!)?.[1]);
         expect(snapshotBytes).toBeGreaterThan(500 * 1024);
