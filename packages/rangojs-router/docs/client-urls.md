@@ -365,8 +365,8 @@ Not meaningful inside a group (structural, not missing wiring):
 `ParallelOutlet` (groups have no parallel slots), `useSegments` (the whole
 group is one server segment — its answer inside a group does not reflect
 the group's own nesting), `Html.ScrollRestoration` / `useScrollRestoration`
-(module singleton — render once in the root layout; mounting in a group
-tears down stored positions on group unmount), `Html.Meta` / `Html.Scripts` /
+(module singleton — render once, in the document; the default document
+includes it; mounting in a group tears down stored positions on group unmount), `Html.Meta` / `Html.Scripts` /
 `NavigationProvider` (document-head / app-root components).
 
 Programmatic navigation is mount-aware through RELATIVE paths:

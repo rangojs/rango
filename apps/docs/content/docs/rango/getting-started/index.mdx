@@ -89,7 +89,7 @@ export const router = createRouter({
 });
 ```
 
-The `Document` is the HTML frame around every page and every error state. It must be a client component, and it should render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Html.Scripts />`:
+The `Document` is the HTML frame around every page and every error state. It must be a client component, and it should render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script), `<Html.Scripts />` (scripts from the `Script` handle), and `<Html.ScrollRestoration />` (scroll position on back/forward):
 
 ```tsx
 // src/document.tsx
@@ -108,6 +108,7 @@ export function Document({ children }: { children: ReactNode }) {
       <body>
         <Html.Scripts position="body" />
         {children}
+        <Html.ScrollRestoration />
       </body>
     </html>
   );

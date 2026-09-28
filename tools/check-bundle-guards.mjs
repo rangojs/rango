@@ -69,7 +69,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // vs main is plugin-rsc's client-reference registration order shifting because
 // a "use client" module gained a second include() mount (+4B raw, +5B gzip).
 // The clientUrls() split above is still the real fix for the eager cost.
-const ROUTER_CHUNK_GZIP_MAX = 44 * 1024;
+//
+// Raised 44KB -> 45KB on 2026-09-28 (PR #948), measured 45002B -> 45348B
+// (+346B gzip, +1.14KB raw). A deliberate call: the default document now
+// renders Html.ScrollRestoration, and components/DefaultDocument.tsx is in
+// every app's client build (router.ts imports it as the `document` fallback),
+// so initScrollRestoration lands in the eager router chunk even for apps whose
+// own document never renders it. Keeping it out would mean lazy-loading the
+// init out of browser/scroll-restoration.ts, whose module state the
+// navigation bridge shares; judged not worth a chunk request for ~0.35KB.
+const ROUTER_CHUNK_GZIP_MAX = 45 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

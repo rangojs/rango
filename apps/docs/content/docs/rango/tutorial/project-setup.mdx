@@ -100,7 +100,7 @@ The Worker itself is described by `wrangler.json`:
 
 ## The document shell
 
-Rango renders your entire app inside a `Document` component. It owns the `<html>` element, and every route renders into `children`. The Document must be a client component, and it renders two router components: `<Html.Meta />` (the `charset` and `viewport` tags, plus per-route metadata) and `<Html.Scripts />`:
+Rango renders your entire app inside a `Document` component. It owns the `<html>` element, and every route renders into `children`. The Document must be a client component, and it renders three router components: `<Html.Meta />` (the `charset` and `viewport` tags, plus per-route metadata), `<Html.Scripts />` (scripts from the `Script` handle) and `<Html.ScrollRestoration />` (scroll position on back/forward):
 
 ```tsx
 // src/document.tsx
@@ -120,6 +120,7 @@ export function Document({ children }: { children: ReactNode }) {
       <body>
         <Html.Scripts position="body" />
         {children}
+        <Html.ScrollRestoration />
       </body>
     </html>
   );
