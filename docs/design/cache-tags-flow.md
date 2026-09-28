@@ -231,10 +231,13 @@ Configure `tagPurge` and the store flips the L1 contract:
   memoizing them again until one window after the purge settles
   (`RecentTagInvalidations` in `shell-memo.ts`), so that request and later
   ones on the same isolate miss. Every other isolate serves the purged shell
-  from its memo until its window passes, the mutating user's next request
-  included when it lands there. Set `memo: { shellMs: 0 }` where a mutating
-  user's next request must read its own write; with KV bound the memo hit
-  reads the markers and no such window exists.
+  from its memo until its window passes, except to the mutating user: the
+  response of a request that ran `updateTag()`/`revalidateTag()` sets the
+  fresh-reads cookie, and requests carrying it skip the memo
+  (shell-entry-layout.md "The tag-marker memo"). Set `memo: { shellMs: 0, markerFreshMs: 0 }`
+  where every user's next request must see the purge. With KV bound the memo
+  hit reads the markers (through the isolate marker memo, up to
+  `markerMaxStaleMs` stale for other users).
 
 What you trade: marker mode gives read-time KV consistency; purge mode's
 cross-request invalidation latency is the purge propagation (Cloudflare quotes

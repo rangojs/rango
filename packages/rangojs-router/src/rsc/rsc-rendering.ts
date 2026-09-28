@@ -492,7 +492,7 @@ function* shellServePlan<TEnv>(
   // SSR setup starts before route handling, so read the shell before joining it
   // to overlap the remaining setup work with cache I/O.
   const cached = yield* step("shell-read", () =>
-    readShellEntry(store, key, reqCtx),
+    readShellEntry(store, key, reqCtx, pprConfig.tags),
   );
 
   // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
@@ -802,12 +802,16 @@ async function readShellEntry(
   },
   key: string,
   reqCtx: ReturnType<typeof getRequestContext>,
+  tagHints: readonly string[] | undefined,
 ): Promise<ShellStoreRead | null> {
   let cached: ShellStoreRead | null = null;
   const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
   try {
     if (store.readShellDocument) {
-      const read = await store.readShellDocument(key);
+      const read = await store.readShellDocument(
+        key,
+        tagHints ? { tagHints } : undefined,
+      );
       cached = read
         ? { entry: read.entry, shouldRevalidate: read.shouldRevalidate, read }
         : null;
@@ -864,11 +868,16 @@ function recordShellReadStats(
   row("ppr:shell-head", stats.headMs, `bytes=${stats.headBytes ?? 0}`);
   at += stats.headMs ?? 0;
   row("ppr:shell-prelude", stats.preludeMs, `bytes=${stats.preludeBytes ?? 0}`);
-  row(
-    "ppr:shell-marker",
-    stats.markerMs,
-    `tags=${stats.tags ?? 0} ${stats.markerSerial ? "serial" : "parallel"} commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`,
-  );
+  let marker = `tags=${stats.tags ?? 0} ${stats.markerSerial ? "serial" : "parallel"} commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`;
+  if (stats.markerMemo) marker += ` memo=${stats.markerMemo}`;
+  if (stats.markerHinted) {
+    marker += ` hint=${stats.markerHintHits ?? 0}/${stats.markerHinted.length}`;
+    if (stats.markerLeadMs !== undefined) {
+      marker += ` lead=${stats.markerLeadMs.toFixed(2)}ms`;
+    }
+  }
+  if (stats.freshReads) marker += " fresh-reads";
+  row("ppr:shell-marker", stats.markerMs, marker);
 }
 
 /**

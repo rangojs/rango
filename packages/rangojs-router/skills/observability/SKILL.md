@@ -109,7 +109,12 @@ first-html=5ms complete=55ms prelude=628949b tail=1033762b
   no store read, only the marker check.
 - `ppr:shell-marker` is the tag-marker check, on every `CFCacheStore` read; it
   runs alongside `ppr:shell-prelude`, and `commit-wait` is how much it held the
-  commit back (with `tags=0` it resolves at once).
+  commit back (with `tags=0` it resolves at once). For a tagged shell it adds
+  `memo=` (how the per-isolate marker memo answered: `fresh`, `stale` served
+  while it refreshes, `read` from the store, `bypass` for a request carrying
+  the fresh-reads cookie), `hint=<hinted>/<tags>` with `lead=` (how long the
+  hinted marker reads ran before the entry named its tags), and `fresh-reads`
+  when the request carried the cookie.
 - `records=` counts the snapshot records the tail was seeded with, by
   family; `pruned=` counts the ones the capture dropped because no reader of
   the entry consumes them. Here every HIT tail replays the handler layer from

@@ -115,6 +115,7 @@ import {
   PprLargeHolesPage,
   PprLargeHoleLoader,
 } from "./pages/ppr-large.js";
+import { PprFreshReadsPage } from "./pages/ppr-fresh-reads.js";
 import {
   PprSlowMetaLayout,
   PprShortMetaLayout,
@@ -802,6 +803,13 @@ export const urlpatterns = urls(
           { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprStorefrontLoader, { ssr: false })],
         ),
+        // Issue #941: a tagged shell whose server action runs updateTag(); the
+        // action's fresh-reads cookie sends the same user's next requests past
+        // the stores' isolate memos (e2e/ppr-fresh-reads.test.ts).
+        path("/ppr-fresh-reads", PprFreshReadsPage, {
+          name: "pprFreshReads",
+          ppr: { ttl: 300, swr: 120 },
+        }),
         // Issue #929: the ssr:false loader pushes the string handle itself;
         // the replayed record keeps it and the loader's re-run replaces it.
         path(

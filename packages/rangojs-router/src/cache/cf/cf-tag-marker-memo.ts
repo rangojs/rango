@@ -9,6 +9,8 @@
 // keyed by the request-context object then the store INSTANCE, identical to
 // before the move.
 
+import type { MarkerMemoOutcome } from "../isolate-tag-memo.js";
+
 /**
  * Cache-API path prefix for the optional per-colo L1 cache of tag-invalidation
  * markers (enabled by tagCacheTtl). Distinct from data keys (doc:/fn:/segment)
@@ -89,6 +91,46 @@ const tagMarkerInflight = new WeakMap<
   object,
   WeakMap<object, Map<string, Promise<number | null>>>
 >();
+
+/**
+ * A request's PPR shell-read marker reads (issue #941), kept apart from the
+ * per-request memo above, HIT or MISS. A shell read may answer a marker from
+ * the isolate marker memo (isolate-tag-memo.ts), up to `markerMaxStaleMs`
+ * old; the data families must never see that value. Scar tissue: first the
+ * shell read wrote into the per-request memo, so a MISS request rendered and
+ * stored its `"use cache"` data under a stale marker; then a HIT copied its
+ * entry's tags across, which a partial navigation's matchPartial (on the same
+ * context as its replay gate's getShell) read, and a `cache()` segment it
+ * wrote kept the stale item past `markerMaxStaleMs` under a fresh taggedAt.
+ */
+export interface ShellMarkerReads {
+  /** The read of each tag, settled or in flight (collapses concurrent reads). */
+  reads: Map<string, Promise<number | null>>;
+  /** How the isolate memo answered each tag (the marker row's `memo=`). */
+  outcomes: Map<string, MarkerMemoOutcome>;
+}
+
+const shellMarkerReads = new WeakMap<
+  object,
+  WeakMap<object, ShellMarkerReads>
+>();
+
+export function getShellMarkerReads(
+  ctx: object,
+  store: object,
+): ShellMarkerReads {
+  let byStore = shellMarkerReads.get(ctx);
+  if (!byStore) {
+    byStore = new WeakMap();
+    shellMarkerReads.set(ctx, byStore);
+  }
+  let reads = byStore.get(store);
+  if (!reads) {
+    reads = { reads: new Map(), outcomes: new Map() };
+    byStore.set(store, reads);
+  }
+  return reads;
+}
 
 export function getTagMarkerInflight(
   ctx: object,

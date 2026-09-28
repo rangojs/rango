@@ -224,12 +224,23 @@ path("/products/:id", Page, {
 
 `updateTag()`/`revalidateTag()` is the only lever that changes the frozen shell HTML. A captured shell carries the union of the tags recorded while it rendered as shell material — from `cache()` segments, `"use cache"` functions, a render-time `cacheTag()`, and cached loaders on the bake lane (they execute during capture) — plus `ppr.tags`. Invalidating one of those tags drops the shell for a recapture. Live-lane loader tags (every loader without `ssr: false`) never attach; those holes are already live. `revalidate()` is a data lever: it re-renders holes with fresh data but never touches the shell.
 
-`CFCacheStore` and `VercelCacheStore` keep each isolate's last fresh shell read in memory for `memo.shellMs` (default 2000) under `memo.shellMaxBytes` (default 16 MiB), so a warm isolate's next HITs skip the store read. The tag-marker check still runs on every HIT and the isolate that invalidates drops its own copies, so an invalidation is seen on the next request there, and with KV bound (`CFCacheStore`) in every isolate. Another isolate can serve an invalidated shell from its memo until its window passes in two setups: `CFCacheStore` without KV in purge mode (`tagPurge`), and `VercelCacheStore` in another region (its tag markers are regional) or after a platform `expireTag` issued outside rango. Set `memo: { shellMs: 0 }` where the next request must see the invalidation. `VercelCacheStore` keeps one memo per `cache` handle, so create the `getCache()` handle once per process ([Deploy to Vercel](/docs/rango/guides/deploy-vercel)).
+`CFCacheStore` and `VercelCacheStore` keep each isolate's last fresh shell read in memory for `memo.shellMs` (default 2000) under `memo.shellMaxBytes` (default 16 MiB), so a warm isolate's next HITs skip the store read. The tag-marker check still runs on every HIT and the isolate that invalidates drops its own copies, so an invalidation is seen on the next request there, and with KV bound (`CFCacheStore`) in every isolate. The marker check itself reads through a per-isolate memo, stale-while-revalidate (`memo.markerFreshMs`, default 1000 on `CFCacheStore` and 300 on `VercelCacheStore`; `memo.markerMaxStaleMs`, default 10000 and 2000), so another isolate sees an invalidation once its memoized marker refreshes. Two setups keep an invalidated shell in another isolate's memo until the shell window passes: `CFCacheStore` without KV in purge mode (`tagPurge`), and `VercelCacheStore` in another region (its tag markers are regional) or after a platform `expireTag` issued outside rango. The user who made the change is not served any of these: the response of a request that ran `updateTag()`/`revalidateTag()` sets a fresh-reads cookie (`rango-state-fresh` by default, `HttpOnly`, `SameSite=Lax`, a few seconds long, shared by every router on the host with the same state cookie prefix), and requests carrying it skip both memos. Set `memo: { shellMs: 0, markerFreshMs: 0 }` where every user's next request must see the invalidation; with KV, `{ shellMs: 0 }` alone still leaves the marker memo's window. `VercelCacheStore` keeps one memo per `cache` handle, so create the `getCache()` handle once per process ([Deploy to Vercel](/docs/rango/guides/deploy-vercel)).
 
 ```ts
 new CFCacheStore({ ctx, kv: env.CACHE_KV, memo: { shellMs: 5000 } }); // longer window
-new CFCacheStore({ ctx, tagPurge: { zoneId, apiToken }, memo: { shellMs: 0 } }); // memo off
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  memo: { shellMs: 0, markerFreshMs: 0 },
+}); // memos off, no cookie
 ```
+
+What the cookie means for your responses:
+
+- A store with both memos off sets no cookie; that is also the only way to avoid it.
+- A response whose request invalidated carries a `Set-Cookie`, so the document cache, a response route's `cache()`, and CDNs that skip responses with cookies do not store it.
+- Headers leave with the response: an `updateTag()`/`revalidateTag()` from a streaming loader or render, after the response was handed off, still invalidates but cannot set the cookie (dev warns). Invalidate in a server action, a route handler, or middleware.
+- Any client can send the cookie. It only makes that client's own requests read the store, the same cost as turning the memos off, so no rate limit is needed.
 
 These fields govern the in-function shell entry. They do not emit HTTP
 `Cache-Control`. If you separately add `s-maxage`, a platform CDN may cache the

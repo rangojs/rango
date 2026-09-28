@@ -36,6 +36,7 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellDocumentReadOptions,
   ShellReadStats,
   ShellSnapshotRecord,
   CacheReadError,
@@ -76,6 +77,7 @@ import {
   ShellMemo,
   RecentTagInvalidations,
   DEFAULT_SHELL_MEMO_MS,
+  freshReadsWindowMs,
   isShellFresh,
   resolveShellMemoOptions,
   shellHasAnyTag,
@@ -94,7 +96,17 @@ import {
   TAG_MARKER_ABSENT,
   getTagMarkerMemo,
   getTagMarkerInflight,
+  getShellMarkerReads,
 } from "./cf-tag-marker-memo.js";
+import {
+  TagMarkerMemo,
+  TagNameHints,
+  hintedTags,
+  freshReadsRequired,
+  recordMarkerRow,
+  DEFAULT_CF_MARKER_FRESH_MS,
+  DEFAULT_CF_MARKER_MAX_STALE_MS,
+} from "../isolate-tag-memo.js";
 import { createCloudflareZonePurge } from "./cf-zone-purge.js";
 
 // ============================================================================
@@ -318,14 +330,20 @@ interface CFShellMemoValue {
 
 /** The per-isolate shell memo shared by every CFCacheStore in the isolate. */
 const cfShellMemo = new ShellMemo<CFShellMemoValue>();
+/** Per-isolate tag-marker values (isolate-tag-memo.ts), keyed per namespace. */
+const cfMarkerMemo = new TagMarkerMemo();
+/** Per-isolate shell-key -> tag-name hints for the marker prefetch. */
+const cfTagHints = new TagNameHints();
 
 /** Tags this isolate invalidated recently: they keep shells out of cfShellMemo. */
 const recentShellInvalidations = new RecentTagInvalidations();
 
-/** @internal Reset the per-isolate shell memo (tests). */
+/** @internal Reset the per-isolate shell and marker memos (tests). */
 export function resetCFShellMemoForTests(): void {
   cfShellMemo.clear();
   recentShellInvalidations.clear();
+  cfMarkerMemo.clear();
+  cfTagHints.clear();
 }
 
 /** openShellFrame outcome: the head and prelude, or why the read failed. */
@@ -462,6 +480,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly kvReadTimeoutMs: number;
   private readonly shellMemoMs: number;
   private readonly shellMemoMaxBytes: number;
+  private readonly markerFreshMs: number;
+  private readonly markerMaxStaleMs: number;
+  /** @internal SegmentCacheStore.freshReadsWindowMs */
+  readonly freshReadsWindowMs: number;
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
   private readonly kv?: KVNamespace;
   /** True when constructed without KV: no durable tag history (see ctor). */
@@ -512,9 +534,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       options.kvReadTimeoutMs,
       KV_READ_TIMEOUT_MS,
     );
-    const memo = resolveShellMemoOptions(options.memo);
+    const memo = resolveShellMemoOptions(options.memo, {
+      markerFreshMs: DEFAULT_CF_MARKER_FRESH_MS,
+      markerMaxStaleMs: DEFAULT_CF_MARKER_MAX_STALE_MS,
+    });
     this.shellMemoMs = memo.shellMs;
     this.shellMemoMaxBytes = memo.shellMaxBytes;
+    this.markerFreshMs = memo.markerFreshMs;
+    this.markerMaxStaleMs = memo.markerMaxStaleMs;
+    // Without KV there are no markers, so no marker memo to outwait.
+    this.freshReadsWindowMs = freshReadsWindowMs(memo, Boolean(options.kv));
     this.debug =
       options.debug === true
         ? (event) =>
@@ -2025,12 +2054,23 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * plain staleness flag; the capture scheduler's in-flight set is the
    * recapture stampede guard.
    */
-  async readShellDocument(key: string): Promise<ShellDocumentRead | null> {
+  async readShellDocument(
+    key: string,
+    options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null> {
     const memoKey = this.shellMemoKey(key);
-    const memoized = cfShellMemo.get(memoKey, this.shellMemoMs);
+    const ctx = _getRequestContext();
+    // A request after the same user's updateTag() reads past the isolate
+    // memos (isolate-tag-memo.ts freshReadsRequired).
+    const freshReads = freshReadsRequired(ctx);
+    const memoized = freshReads
+      ? undefined
+      : cfShellMemo.get(memoKey, this.shellMemoMs);
     if (memoized) return this.readMemoizedShell(key, memoKey, memoized);
     const stats = this.shellReadStats("l1");
     const l1StartedAt = stats ? performance.now() : 0;
+    if (stats && freshReads) stats.freshReads = true;
+    this.prefetchShellMarkers(memoKey, options?.tagHints, stats);
     if (stats && this.shellMemoMs > 0) {
       stats.memo = { hit: false, bytes: cfShellMemo.size };
     }
@@ -2079,7 +2119,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         "edge cache body read",
         (head) =>
           this.kv
-            ? this.isGloballyInvalidated(head.t, head.ta)
+            ? this.isGloballyInvalidated(head.t, head.ta, true)
             : this.isL1Invalidated(head.t, head.ta, response.headers),
         stats,
       );
@@ -2132,6 +2172,52 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     cfShellMemo.delete(this.shellMemoKey(key));
   }
 
+  /**
+   * Start the marker reads of the tags this shell key carried last time (and
+   * the route's static tags) alongside the entry read (readShellTagMarker),
+   * so the marker check after the head reuses them. With KV only: without it
+   * there are no markers to read. A wrong hint costs a wasted read; the check
+   * itself uses the head's tags.
+   */
+  private prefetchShellMarkers(
+    memoKey: string,
+    routeTags: readonly string[] | undefined,
+    stats: ShellReadStats | undefined,
+  ): void {
+    if (!this.kv) return;
+    const tags = hintedTags(cfTagHints.get(memoKey), routeTags);
+    if (tags.length === 0) return;
+    if (stats) {
+      stats.markerHinted = tags;
+      stats.markerHintStartedAt = performance.now();
+    }
+    for (const tag of tags) this.readShellTagMarker(tag).catch(() => {});
+  }
+
+  /**
+   * A HIT: remember the entry's tags for the next read's hints, and fill the
+   * marker row. The shell-read marker values stay in their own record: the
+   * request's data reads (the tail's, or a partial navigation's matchPartial
+   * on the same context) read their markers as before.
+   */
+  private recordShellHit(
+    key: string,
+    tags: string[] | undefined,
+    stats: ShellReadStats | undefined,
+  ): void {
+    cfTagHints.remember(this.shellMemoKey(key), tags);
+    if (!stats) return;
+    const ctx = _getRequestContext();
+    if (ctx) {
+      recordMarkerRow(stats, tags, getShellMarkerReads(ctx, this).outcomes);
+    }
+  }
+
+  /** The isolate marker memo's key for a tag: markers are per namespace and version. */
+  private markerMemoKey(tag: string): string {
+    return `${this.namespace ?? ""}\u0000${this.version ?? ""}\u0000${tag}`;
+  }
+
   /** The memo key: one per namespace, build version, base URL, and shell key. */
   private shellMemoKey(key: string): string {
     return `${this.namespace ?? ""}\u0000${this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`).url}`;
@@ -2162,7 +2248,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const stats = this.shellReadStats("memo");
     const markerStartedAt = stats ? performance.now() : 0;
     const invalidated = await (this.kv
-      ? this.isGloballyInvalidated(head.t, head.ta)
+      ? this.isGloballyInvalidated(head.t, head.ta, true)
       : this.isL1Invalidated(
           head.t,
           head.ta,
@@ -2183,6 +2269,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       return null;
     }
     if (stats) stats.memo = { hit: true, bytes: cfShellMemo.size };
+    this.recordShellHit(key, head.t, stats);
     this.debugShell(key, "memo-hit", {
       freshness: "fresh",
       ...debugTimings(stats),
@@ -2241,6 +2328,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           stats.headMs = markerStartedAt - headStartedAt;
           stats.headBytes = reader.headBytes;
           stats.tags = head.t?.length ?? 0;
+          if (stats.markerHintStartedAt !== undefined) {
+            stats.markerLeadMs = markerStartedAt - stats.markerHintStartedAt;
+          }
         }
         if (Date.now() > head.e) return { status: "expired", head };
         marker = isInvalidated(head).then((invalidated) => {
@@ -2316,6 +2406,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     promote?: (snapshotBytes: Uint8Array) => void,
   ): ShellDocumentRead {
     const { head, prelude, reader } = opened;
+    this.recordShellHit(key, head.t, stats);
     type SnapshotOutcome = { records?: ShellSnapshotRecord[]; failed: boolean };
     const outcome = (async (): Promise<SnapshotOutcome> => {
       const readStartedAt = stats ? performance.now() : 0;
@@ -2441,6 +2532,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
     // This isolate serves its own new capture from the next read on.
     cfShellMemo.delete(this.shellMemoKey(key));
+    cfTagHints.remember(this.shellMemoKey(key), tags);
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -2626,7 +2718,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         // spent (1 ms) rather than unbounded.
         this.kvReadTimeoutMs > 0 ? Math.max(1, deadline - Date.now()) : 0,
         "KV read",
-        (head) => this.isGloballyInvalidated(head.t, head.ta),
+        (head) => this.isGloballyInvalidated(head.t, head.ta, true),
         stats,
       );
       if (opened.status === "corrupt") {
@@ -3054,6 +3146,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async isGloballyInvalidated(
     tags: string[] | undefined,
     taggedAt: number | undefined,
+    isolateMemo = false,
   ): Promise<boolean> {
     // Array.isArray (not just truthiness): a non-array tags value - direct store
     // misuse like setItem(k, v, { tags: "products" }), or a skewed KV envelope -
@@ -3066,7 +3159,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const inflight = ctx ? getTagMarkerInflight(ctx, this) : undefined;
     try {
       const markers = await Promise.all(
-        tags.map((tag) => this.readTagMarker(tag, memo, inflight)),
+        tags.map((tag) =>
+          isolateMemo
+            ? this.readShellTagMarker(tag)
+            : this.readTagMarker(tag, memo, inflight),
+        ),
       );
       for (const marker of markers) {
         if (marker != null && marker >= taggedAt) return true;
@@ -3166,6 +3263,52 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * A PPR shell read's marker for `tag`: this request's own value if it has
+   * one (its invalidateTags() writes, or a store read), else through the
+   * per-isolate marker memo (isolate-tag-memo.ts, stale-while-revalidate
+   * under `markerFreshMs` / `markerMaxStaleMs`; a request carrying the
+   * fresh-reads cookie reads L1/KV). The value is kept in the request's
+   * shell-read record, never in the per-request memo the data families read,
+   * HIT or MISS. A store read still lands in the per-request memo, as any
+   * marker read does; it is not stale. A timed-out read fails open for this
+   * request and is not memoized.
+   */
+  private readShellTagMarker(tag: string): Promise<number | null> {
+    const ctx = _getRequestContext();
+    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
+    if (memo?.has(tag)) return Promise.resolve(memo.get(tag) ?? null);
+    const shell = ctx ? getShellMarkerReads(ctx, this) : undefined;
+    const pending = shell?.reads.get(tag);
+    if (pending) return pending;
+    const read = cfMarkerMemo.readThrough(
+      this.markerMemoKey(tag),
+      async (background) => {
+        const outcome = { timedOut: false };
+        const value = await this.fetchTagMarker(
+          tag,
+          background ? undefined : memo,
+          outcome,
+        );
+        return { value, memoize: !outcome.timedOut };
+      },
+      {
+        freshMs: this.markerFreshMs,
+        maxStaleMs: this.markerMaxStaleMs,
+        bypass: freshReadsRequired(ctx),
+        keepAlive: this.waitUntil
+          ? (refresh) => this.waitUntil!(() => refresh)
+          : undefined,
+        onOutcome:
+          shell && (INTERNAL_RANGO_DEBUG || ctx?._metricsStore)
+            ? (outcome) => shell.outcomes.set(tag, outcome)
+            : undefined,
+      },
+    );
+    shell?.reads.set(tag, read);
+    return read;
+  }
+
+  /**
    * Uncached body of readTagMarker: L1 (per-colo Cache API, opt-in via
    * tagCacheTtl) -> KV. Writes the resolved value back into the memo.
    * @internal
@@ -3173,6 +3316,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async fetchTagMarker(
     tag: string,
     memo: Map<string, number | null> | undefined,
+    read?: { timedOut: boolean },
   ): Promise<number | null> {
     // Write the resolved marker into the memo WITHOUT clobbering a value a
     // concurrent invalidateTags() wrote during our await. The router resolves
@@ -3233,6 +3377,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       "tag marker KV read",
     );
     if (timedOut) {
+      if (read) read.timedOut = true;
       // Memoize the fail-open result so the rest of this request is consistent
       // (and does not re-pay the timeout per segment sharing the tag).
       return memoize(null);
@@ -3550,6 +3695,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       for (const tag of tags) {
         if (failedTags.has(tag)) continue;
         memo?.set(tag, invalidatedAt);
+        // Same isolate: later requests here see the invalidation at once.
+        if (this.kv) cfMarkerMemo.store(this.markerMemoKey(tag), invalidatedAt);
         if (lookupMarkerCacheActive) {
           l1Writes.push(
             this.putTagMarkerL1(tag, invalidatedAt, { critical: true }),

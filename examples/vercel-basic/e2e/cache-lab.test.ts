@@ -243,15 +243,85 @@ function runCacheLabSpec(f: Fixture): void {
     expect(memoHit).toMatch(
       /d1-ppr-shell-memo;dur=[\d.]+;desc="hit size=\d+b"/,
     );
-    // The route's shell tag: its marker is still read on the memo hit.
+    // The route's shell tag: its marker is still checked on the memo hit,
+    // through the per-process marker memo the store read just filled.
     expect(memoHit).toMatch(
-      /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=[1-9]\d* serial commit-wait=[\d.]+ms"/,
+      /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=[1-9]\d* serial commit-wait=[\d.]+ms memo=(?:fresh|stale)[^"]*"/,
     );
     expect(memoHit).not.toContain("d1-ppr-shell-match");
 
     const invalidated = await invalidate(request, f, [TAGS.shell]);
     expect(invalidated.status()).toBe(200);
     expect((await fetchSnapshot(request, url)).shell).toBe("MISS");
+  });
+
+  // Issue #941: updateTag() sets the fresh-reads cookie on its response. The
+  // same user's HITs carrying it read the runtime cache and the tag markers
+  // (`hit store`, `memo=bypass … fresh-reads`) instead of the per-process
+  // memos, while a request without it is served from the shell memo.
+  test("updateTag sets the fresh-reads cookie, and HITs carrying it read past the memos", async ({
+    playwright,
+    request,
+  }) => {
+    test.setTimeout(60_000);
+    const url = f.url(
+      `/cache-lab?probe=${uniqueProbe("fresh-reads")}&__perf_debug=1`,
+    );
+    const warmToHit = async (headers: Record<string, string>) => {
+      await expect(async () => {
+        const response = await request.get(url, { headers });
+        expect(response.headers()["x-rango-shell"]).toBe("HIT");
+        await response.text();
+      }).toPass({ timeout: 30_000, intervals: [500, 1_000] });
+    };
+    expect((await fetchSnapshot(request, url)).shell).toBe("MISS");
+    await warmToHit(HTML_HEADERS);
+
+    // A separate client runs the mutation, so `request` never stores the
+    // cookie and its plain reads stay cookie-less.
+    const mutator = await playwright.request.newContext();
+    try {
+      const invalidated = await invalidate(mutator, f, [TAGS.shell]);
+      expect(invalidated.status()).toBe(200);
+      const setCookie = invalidated
+        .headersArray()
+        .filter((header) => header.name.toLowerCase() === "set-cookie")
+        .map((header) => header.value)
+        .find((value) => /^[^=]+-fresh=/.test(value));
+      // Max-Age: the store's longest memo staleness plus 1 s
+      // (VercelCacheStore: the 2 s shell window and marker max-stale cap).
+      expect(setCookie).toMatch(
+        /^rango-state-fresh=1; Max-Age=3; Path=\/; HttpOnly; SameSite=Lax$/,
+      );
+      const cookie = setCookie!.split(";")[0]!;
+      const withCookie = { ...HTML_HEADERS, cookie };
+
+      expect(
+        (await request.get(url, { headers: withCookie })).headers()[
+          "x-rango-shell"
+        ],
+      ).toBe("MISS");
+      await warmToHit(HTML_HEADERS);
+
+      const bypass = await request.get(url, { headers: withCookie });
+      expect(bypass.headers()["x-rango-shell"]).toBe("HIT");
+      const bypassTiming = bypass.headers()["server-timing"] ?? "";
+      await bypass.text();
+      expect(bypassTiming).toMatch(
+        /ppr-shell-read;dur=[\d.]+;desc="hit store"/,
+      );
+      expect(bypassTiming).toMatch(
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=[1-9]\d* serial commit-wait=[\d.]+ms memo=bypass[^"]* fresh-reads"/,
+      );
+
+      const plain = await request.get(url, { headers: HTML_HEADERS });
+      expect(plain.headers()["x-rango-shell"]).toBe("HIT");
+      const plainTiming = plain.headers()["server-timing"] ?? "";
+      await plain.text();
+      expect(plainTiming).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit memo"/);
+    } finally {
+      await mutator.dispose();
+    }
   });
 
   test("the cache lab remains usable on a mobile viewport", async ({

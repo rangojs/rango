@@ -573,17 +573,43 @@ HITs from memory for `memo.shellMs` (default 2000; `{ shellMs: 0 }` turns it
 off), with no Cache API or KV read. The tag-marker check still runs on every
 HIT, and the isolate that runs `updateTag()`/`revalidateTag()` drops its own
 copies, so that request and later ones on the same isolate never get the
-invalidated shell; with KV bound, every isolate rejects it on its next request.
-What another isolate can serve for up to one window: the previous capture of a
-key another isolate just recaptured, and, without KV in purge mode, a purged
-shell. The purge reaches the stored entry, not other isolates' memos, so the
-mutating user's next request gets the purged shell when it lands on another
-isolate: set `{ shellMs: 0 }` where that request must read its own write.
-`memo.shellMaxBytes` (default 16 MiB, shared by every `CFCacheStore` in the
-isolate) caps what it holds; only fresh shells are kept.
+invalidated shell. What another isolate can serve for up to one window: the
+previous capture of a key another isolate just recaptured, and, without KV in
+purge mode, a purged shell (the purge reaches the stored entry, not other
+isolates' memos). `memo.shellMaxBytes` (default 16 MiB, shared by every
+`CFCacheStore` in the isolate) caps what it holds; only fresh shells are kept.
+
+**Tag-marker memo.** With KV, PPR shell reads check their tag markers through
+a per-isolate memo, stale-while-revalidate: a marker read within
+`memo.markerFreshMs` (default 1000) is used as is, one within
+`memo.markerMaxStaleMs` (default 10000) is used while a background read
+refreshes it, an older one waits for KV. The isolate also remembers each
+shell's tag names and starts those marker reads with the Cache API match
+(`ppr.tags` are known up front). `cache()`, `"use cache"` and response entries
+keep reading their markers. `{ markerFreshMs: 0 }` turns the value memo off.
+
+**The fresh-reads cookie.** A response whose request ran `updateTag()` or
+`revalidateTag()` sets `<state cookie prefix>-fresh` (`rango-state-fresh` by
+default, shared by every router on the host with that prefix; `HttpOnly`,
+`SameSite=Lax`, `Path=/`, `Secure` on https, `Max-Age` 11 s with KV and 3 s
+without at the defaults: the longest memo staleness plus 1 s). The same
+user's requests that carry it skip both memos on every isolate, so a mutating
+user never sees a memoized shell or marker from before their write. Other
+users can, for up to `markerMaxStaleMs` (with KV) or the shell window (KV-less
+purge mode). Set `{ shellMs: 0, markerFreshMs: 0 }` where every user's next
+request must see an invalidation (with KV, `{ shellMs: 0 }` alone still leaves
+the marker memo); that also means no cookie. The cookie is not set when the
+invalidation runs after the response headers were sent (a streaming loader or
+render; dev warns): invalidate in a server action, route handler or
+middleware. Any client can send it, which only makes its own requests read
+the store.
 
 ```typescript
-new CFCacheStore({ ctx, kv: env.CACHE_KV, memo: { shellMs: 5000 } });
+new CFCacheStore({
+  ctx,
+  kv: env.CACHE_KV,
+  memo: { shellMs: 5000, markerFreshMs: 500 },
+});
 ```
 
 ```typescript
@@ -669,14 +695,17 @@ const router = createRouter({
 ```
 
 The store keeps the same PPR shell memo as `CFCacheStore` (`memo.shellMs`,
-default 2000; `memo.shellMaxBytes`, default 16 MiB), one per `cache` handle:
-create the handle once, as above, or the memo never hits. Its per-read marker
-check sees `updateTag()`/`revalidateTag()` on the next request in the same
-region. The tag markers are a regional `cache.set` (only `expireTag` is
-global), so another region serves a shell it memoized before the invalidation
-until its window passes, where without the memo `expireTag` removes it within
-about 300 ms; a platform `expireTag` issued outside rango is likewise seen when
-the window passes.
+default 2000; `memo.shellMaxBytes`, default 16 MiB) and the same tag-marker
+memo (`memo.markerFreshMs`, default 300; `memo.markerMaxStaleMs`, default
+2000), one per `cache` handle: create the handle once, as above, or the memos
+never hit. A shell read's marker check sees `updateTag()`/`revalidateTag()`
+in the process that ran it at once, and in the rest of the region once their
+marker memo refreshes. The tag markers are a regional `cache.set` (only
+`expireTag` is global), so another region serves a shell it memoized before
+the invalidation until its window passes, where without the memo `expireTag`
+removes it within about 300 ms; a platform `expireTag` issued outside rango is
+likewise seen when the window passes. The fresh-reads cookie (`Max-Age` 3 s)
+sends the mutating user's next requests past both memos.
 
 Writes over 2 MB (the platform limit, `maxItemBytes`) are skipped, and tags
 beyond the per-item cap are dropped with a warning. The official client swallows

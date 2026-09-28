@@ -723,7 +723,12 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
     it("starts the tag-marker read before the prelude bytes are read", async () => {
       vi.useRealTimers();
-      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      // No isolate marker memo: the head's own marker read, not a memo hit.
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { markerFreshMs: 0 },
+      });
       await store.putShell("k", shellEntry(), 300, 30, ["home"]);
       await drain(mockCtx);
       // Only L1 can answer: drop the shell's KV copy (tag markers stay).
@@ -812,6 +817,86 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       expect(mockCache.store.size).toBe(1);
       mockKV.store.clear();
       expect((await store.getShell("k"))?.entry).toEqual(entry);
+    });
+
+    // The tag names a shell key carried last time start their marker reads
+    // alongside the Cache API match; the check itself still uses the head.
+    it("a hinted HIT starts the marker read before the Cache API match resolves", async () => {
+      vi.useRealTimers();
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { markerFreshMs: 0 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      let matchResolved = false;
+      let markerReadBeforeMatch = false;
+      const kvGet = mockKV.get.bind(mockKV);
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        if (key.includes("__tag__/home") && !matchResolved) {
+          markerReadBeforeMatch = true;
+        }
+        return kvGet(key, options);
+      });
+      const match = mockCache.match.bind(mockCache);
+      vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const response = await match(request);
+        matchResolved = true;
+        return response;
+      });
+      expect(await store.readShellDocument("k")).not.toBeNull();
+      expect(markerReadBeforeMatch).toBe(true);
+    });
+
+    it("the route's static tags are hinted before this isolate has seen the key", async () => {
+      vi.useRealTimers();
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { markerFreshMs: 0 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["home"]);
+      await drain(mockCtx);
+      resetCFShellMemoForTests(); // no remembered hint
+      const markerGets: string[] = [];
+      const kvGet = mockKV.get.bind(mockKV);
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        if (key.includes("__tag__/")) markerGets.push(key);
+        return kvGet(key, options);
+      });
+      let matchResolved = false;
+      let markerReadBeforeMatch = false;
+      const match = mockCache.match.bind(mockCache);
+      vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        markerReadBeforeMatch = markerGets.length > 0;
+        const response = await match(request);
+        matchResolved = true;
+        return response;
+      });
+      expect(
+        await store.readShellDocument("k", { tagHints: ["home"] }),
+      ).not.toBeNull();
+      expect(matchResolved).toBe(true);
+      expect(markerReadBeforeMatch).toBe(true);
+    });
+
+    it("a wrong hint still rejects a shell invalidated under an unhinted tag", async () => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { markerFreshMs: 0 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["b"]);
+      await drain(mockCtx);
+      resetCFShellMemoForTests(); // forget the remembered ["b"]
+      vi.setSystemTime(new Date(Date.now() + 100));
+      await store.invalidateTags(["b"]);
+      expect(
+        await store.readShellDocument("k", { tagHints: ["a"] }),
+      ).toBeNull();
     });
 
     it("never reads the pre-frame `shell:` namespace", async () => {
@@ -1061,12 +1146,22 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       expect(shellReads).toBe(1);
     });
 
-    it("updateTag in another isolate rejects a memoized shell on the next read (KV)", async () => {
+    // Decision 2, revised: isolate B's memos (shell and marker) can predate
+    // isolate A's updateTag; the mutating user's next request carries the
+    // fresh-reads cookie, reads past both memos, and misses. Other users are
+    // served the memoized shell until the marker memo refreshes (the isolate
+    // memo contract suite covers that path).
+    it("updateTag in another isolate: a request with the fresh-reads cookie misses at once (KV)", async () => {
       vi.resetModules();
       const isolateA = (await import("../cf-cache-store")).CFCacheStore;
       vi.resetModules();
       const isolateB = (await import("../cf-cache-store")).CFCacheStore;
-      const storeB = new isolateB({ ctx: mockCtx, kv: mockKV as any });
+      const contextB = await import("../../../server/request-context");
+      const storeB = new isolateB({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        baseUrl: "https://test.internal/",
+      });
       await storeB.putShell("k", shellEntry(), 300, 30, ["home"]);
       await drain(mockCtx);
       await (
@@ -1077,14 +1172,146 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       expect(await storeB.readShellDocument("k")).not.toBeNull();
       expect(matchSpy).not.toHaveBeenCalled();
 
-      await new isolateA({ ctx: mockCtx, kv: mockKV as any }).invalidateTags([
-        "home",
-      ]);
+      await new isolateA({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        baseUrl: "https://test.internal/",
+      }).invalidateTags(["home"]);
       await drain(mockCtx);
-      // ...until isolate A's updateTag: B's per-read marker check rejects it.
-      expect(await storeB.readShellDocument("k")).toBeNull();
-      expect(matchSpy).not.toHaveBeenCalled();
+      // ...and still does for a request without the cookie (fresh marker memo)...
+      expect(await storeB.readShellDocument("k")).not.toBeNull();
+      // ...while the mutating user's next request reads the store and misses.
+      const request = new Request("https://test.internal/p", {
+        headers: { cookie: "rango-state-fresh=1" },
+      });
+      const fresh = contextB.createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+        stateCookieName: "rango-state_router_0",
+      });
+      expect(
+        await contextB.runWithRequestContext(fresh, () =>
+          storeB.readShellDocument("k"),
+        ),
+      ).toBeNull();
+      expect(matchSpy).toHaveBeenCalledTimes(1);
       vi.resetModules();
+    });
+
+    // The isolate marker memo serves PPR shell reads only. A shell read's
+    // memoized marker values must not reach the data families in the same
+    // request: a request whose shell read MISSED would otherwise render and
+    // store its "use cache" data under a marker up to markerMaxStaleMs old.
+    describe("shell-read marker values stay out of the request's data reads", () => {
+      const T0 = Date.UTC(2024, 0, 1);
+      /**
+       * Two isolates over one KV. `before` writes B's entries, then B
+       * memoizes marker "T" through a shell read, then A invalidates "T".
+       */
+      async function isolates(
+        before: (storeB: CFCacheStore) => Promise<void> = async () => {},
+      ) {
+        vi.resetModules();
+        const isolateA = (await import("../cf-cache-store")).CFCacheStore;
+        vi.resetModules();
+        const isolateB = (await import("../cf-cache-store")).CFCacheStore;
+        const contextB = await import("../../../server/request-context");
+        const options = {
+          ctx: mockCtx,
+          kv: mockKV as any,
+          baseUrl: "https://test.internal/",
+        };
+        const storeB = new isolateB(options);
+        await before(storeB as unknown as CFCacheStore);
+        await drain(mockCtx);
+        const inRequestB = <R>(fn: () => Promise<R>): Promise<R> =>
+          contextB.runWithRequestContext(
+            contextB.createRequestContext({
+              env: {},
+              request: new Request("https://test.internal/p"),
+              url: new URL("https://test.internal/p"),
+              variables: {},
+            }),
+            fn,
+          );
+        // Isolate B memoizes marker "T" (none yet) through a shell read.
+        await inRequestB(() =>
+          storeB.readShellDocument("warm", { tagHints: ["T"] }),
+        );
+        await drain(mockCtx);
+        vi.setSystemTime(T0 + 100);
+        // Isolate A invalidates "T".
+        await new isolateA(options).invalidateTags(["T"]);
+        await drain(mockCtx);
+        vi.setSystemTime(T0 + 200);
+        return { storeB, inRequestB };
+      }
+
+      afterEach(() => vi.resetModules());
+
+      it("a MISS with hints, then a data read of the hinted tag, reads KV", async () => {
+        const { storeB, inRequestB } = await isolates((storeB) =>
+          storeB.setItem("item", "GEN1", { ttl: 300, tags: ["T"] }),
+        );
+        const markerReads = vi.spyOn(mockKV, "get");
+        const { shell, item } = await inRequestB(async () => {
+          const shell = await storeB.readShellDocument("absent", {
+            tagHints: ["T"],
+          });
+          const item = await storeB.getItem("item");
+          return { shell, item };
+        });
+        expect(shell).toBeNull();
+        // Written before A's invalidation, so the data read misses.
+        expect(item).toBeNull();
+        expect(
+          markerReads.mock.calls.filter(([key]) => key.includes("__tag__/T")),
+        ).toHaveLength(1);
+      });
+
+      it("a HIT, then a data read of a hinted tag the shell does not carry, reads KV", async () => {
+        // The shell carries "home" only; the route also hints "T".
+        const { storeB, inRequestB } = await isolates(async (storeB) => {
+          await storeB.putShell("k", shellEntry(), 300, 30, ["home"]);
+          await storeB.setItem("item", "GEN1", { ttl: 300, tags: ["T"] });
+        });
+        const { shell, item } = await inRequestB(async () => {
+          const shell = await storeB.readShellDocument("k", {
+            tagHints: ["T"],
+          });
+          await shell?.snapshot;
+          const item = await storeB.getItem("item");
+          return { shell, item };
+        });
+        expect(shell).not.toBeNull();
+        expect(item).toBeNull();
+      });
+
+      // The shell carries "T"; B's memoized marker predates A's invalidation,
+      // so the shell is served (other users' staleness, up to
+      // markerMaxStaleMs), but a data read of "T" in the same request still
+      // reads KV and misses: nothing is carried over from the shell read.
+      it("a HIT, then a data read of the shell's own tag, reads KV", async () => {
+        const { storeB, inRequestB } = await isolates(async (storeB) => {
+          await storeB.putShell("k", shellEntry(), 300, 30, ["T"]);
+          await storeB.setItem("item", "GEN1", { ttl: 300, tags: ["T"] });
+        });
+        const markerReads = vi.spyOn(mockKV, "get");
+        const read = await inRequestB(async () => {
+          const shell = await storeB.readShellDocument("k", {
+            tagHints: ["T"],
+          });
+          await shell?.snapshot;
+          return { shell, item: await storeB.getItem("item") };
+        });
+        expect(read.shell).not.toBeNull();
+        expect(read.item).toBeNull();
+        expect(
+          markerReads.mock.calls.filter(([key]) => key.includes("__tag__/T")),
+        ).toHaveLength(1);
+      });
     });
 
     it("the invalidating isolate drops its own memoized shells for those tags", async () => {

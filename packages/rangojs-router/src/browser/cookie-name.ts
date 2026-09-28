@@ -14,6 +14,29 @@
 /** Default prefix when `stateCookiePrefix` is unset or empty after sanitization. */
 export const DEFAULT_STATE_COOKIE_PREFIX = "rango-state";
 
+/**
+ * The fresh-reads cookie: the state cookie PREFIX plus this suffix
+ * (`rango-state-fresh` by default). A response whose request ran
+ * updateTag()/revalidateTag() sets it (HttpOnly, SameSite=Lax, Path=/,
+ * Max-Age = the stores' longest memo staleness), and the same user's requests
+ * carrying it skip the stores' isolate memos (src/cache/isolate-tag-memo.ts).
+ * Keyed by prefix, not by router, so a mutation through one router also
+ * reaches the memos another router on the host reads (they often share a
+ * store); a router with its own `stateCookiePrefix` gets its own cookie.
+ */
+export const FRESH_READS_COOKIE_SUFFIX = "-fresh";
+
+/**
+ * The fresh-reads cookie name for a router's resolved state cookie name
+ * (`{prefix}_{routerId}`; the prefix never contains `_`, see
+ * router/state-cookie-name.ts).
+ */
+export function freshReadsCookieName(stateCookieName: string): string {
+  const cut = stateCookieName.indexOf("_");
+  const prefix = cut < 0 ? stateCookieName : stateCookieName.slice(0, cut);
+  return `${prefix}${FRESH_READS_COOKIE_SUFFIX}`;
+}
+
 /** Internal response header carrying the keepClientCache() directive. */
 export const KEEP_CACHE_HEADER = "x-rango-keep-cache";
 

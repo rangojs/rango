@@ -43,6 +43,54 @@ cap, so it was not stored at all; it now is (1,374,662 bytes). Under
 `debugPerformance` the `shell tail` line and `ppr-tail` row show what was
 dropped next to what was kept (`records=segment:1 pruned=item:5`).
 
+### Added: a tag-marker memo for PPR shell reads, and a fresh-reads cookie after `updateTag()`/`revalidateTag()` ([#960](https://github.com/rangojs/rango/pull/960))
+
+A tagged PPR shell HIT waited for its tag-invalidation markers before its
+first byte: on `CFCacheStore` a KV read that started once the entry's head
+named the tags, on `VercelCacheStore` a runtime-cache read after the entry
+read. Both stores now remember which tags each shell carried (and take a
+route's `ppr.tags` as known up front), start those marker reads alongside the
+entry read, and keep marker values per isolate, stale-while-revalidate: a
+value younger than `memo.markerFreshMs` (default 1000 on `CFCacheStore`, 300
+on `VercelCacheStore`) is used as is, one younger than `memo.markerMaxStaleMs`
+(default 10000 and 2000) is used while a background read refreshes it, and an
+older one waits for the store read. `{ markerFreshMs: 0 }` turns the value
+memo off. With the #941 edge latencies injected, a tagged shell's first byte
+on `CFCacheStore` is 0.1 ms instead of 10.5 ms on a shell memo hit and 8.3 ms
+instead of 17.5 ms on a store read; on `VercelCacheStore`, with a 6 ms
+runtime-cache read modeled, 0.1 ms instead of 7.0 ms and 10.8 ms instead of
+18.5 ms. Only PPR shell reads use the value memo: `cache()`, `"use cache"`
+and response entries, and the shell write gate, keep reading their markers.
+
+A mutation still gets correct reads. The request that runs `updateTag()` or
+`revalidateTag()` reads its own writes, the isolate that runs it writes the
+new marker into its memo, and its response sets the fresh-reads cookie:
+`<state cookie prefix>-fresh` (`rango-state-fresh` by default, one per prefix,
+so every router on the host that shares the prefix honors it), `HttpOnly`,
+`SameSite=Lax`, `Path=/`, `Secure` on https, with a `Max-Age` of the longest
+time the stores' memos can be stale plus 1 s (11 s for `CFCacheStore` with
+KV, 3 s for `VercelCacheStore` and for `CFCacheStore` without KV). The same
+user's requests that carry it skip both memos on every isolate. That closes,
+for the mutating user, the two cases the shell memo left open:
+`CFCacheStore` without KV in purge mode, and `VercelCacheStore` in another
+region. Other users can get a shell whose memoized marker predates an
+invalidation for up to `markerMaxStaleMs`, on top of the platform's own
+consistency (KV propagates across locations in up to about 60 s); set
+`{ shellMs: 0, markerFreshMs: 0 }` where every user's next request must see an invalidation.
+A store with both memos off (for example `MemorySegmentCacheStore` alone)
+sets no cookie. The cookie is lost when `updateTag()`/`revalidateTag()` runs
+after the response headers were sent (from a streaming loader or render; dev
+warns). Any client can send the cookie; it only makes that client's own
+requests read the store, the cost of memos off.
+
+A response whose request called `updateTag()` or `revalidateTag()` now
+carries that `Set-Cookie` when an invalidated store keeps memos, which keeps
+it out of the document cache, a response route's `cache()`, and CDNs that
+do not cache responses with cookies (Cloudflare's among them). Under `debugPerformance`
+the `ppr:shell-marker` row adds `memo=fresh|stale|read|bypass`,
+`hint=<hinted>/<tags>`, `lead=` (how long the hinted marker reads ran before
+the entry named its tags), and `fresh-reads` when the cookie was present.
+
 ### Added: a per-isolate PPR shell memo in `CFCacheStore` and `VercelCacheStore` ([#959](https://github.com/rangojs/rango/pull/959))
 
 A warm isolate serving the same PPR shell repeatedly re-read and re-parsed the
@@ -63,16 +111,20 @@ receives, gains `"memo-hit"`.
 The tag-marker check still runs on every HIT, and the isolate that runs
 `updateTag()`/`revalidateTag()` drops its own memoized copies, so neither that
 request nor a later one on the same isolate gets the invalidated shell. With
-KV bound, a `CFCacheStore` memo in any isolate rejects it on the next request.
-What another isolate can still serve for up to one window: the previous
+KV bound, a `CFCacheStore` memo in any isolate rejects it once that isolate's
+marker read sees the invalidation (see the tag-marker memo above). What
+another isolate can still serve for up to one window: the previous
 capture of a key another isolate just recaptured; for `CFCacheStore` without
 KV in purge mode, a purged shell (the purge reaches the stored entry, not
 other isolates' memos), the mutating user's next request included when it
 lands on another isolate; for `VercelCacheStore`, a shell invalidated from
 another region (the tag markers are a regional `cache.set`; without the memo,
 `expireTag` removed the entry everywhere within about 300 ms) or by a platform
-`expireTag` issued outside rango. A purge-mode app that needs the mutating
-user's next request to read its own write sets `{ shellMs: 0 }`.
+`expireTag` issued outside rango. The fresh-reads cookie (above) sends the
+mutating user's next requests past the memo; an app where every user's next
+request must see the invalidation sets `{ shellMs: 0, markerFreshMs: 0 }` (with
+KV, `CFCacheStore`'s marker memo serves other users an invalidated shell for
+up to `markerMaxStaleMs` even with the shell memo off).
 `VercelCacheStore` keeps one memo per `cache` handle: create the
 `getCache()` handle once per process, as the updated examples do, or the
 memo never hits.

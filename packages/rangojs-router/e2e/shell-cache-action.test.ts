@@ -118,6 +118,13 @@ function runActionSpec(f: Fixture): void {
     const newBanner = (
       await testId(page, "shell-action-banner-result").innerText()
     ).replace("updated: ", "");
+    // MemorySegmentCacheStore keeps no per-isolate memo, so updateTag() sets
+    // no fresh-reads cookie (issue #941; CFCacheStore and VercelCacheStore do).
+    expect(
+      (await page.context().cookies()).filter((cookie) =>
+        cookie.name.endsWith("-fresh"),
+      ),
+    ).toEqual([]);
 
     // The shell auto-carried the banner tag, so updateTag dropped it: the next hard
     // GET MISSes.

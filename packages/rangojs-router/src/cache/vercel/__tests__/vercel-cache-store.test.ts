@@ -843,7 +843,10 @@ describe("VercelCacheStore", () => {
       expect((await b.getShell("k"))?.entry.prelude).toBe("new");
     });
 
-    it("an invalidateTags in another instance rejects the memoized shell on the next read", async () => {
+    // Both memos in another instance can predate an invalidation; the
+    // mutating user's next request carries the fresh-reads cookie and reads
+    // past them (the isolate memo contract suite covers the SWR path).
+    it("an invalidateTags in another instance: a request with the fresh-reads cookie misses at once", async () => {
       const shared = makeFakeCache();
       const a = new VercelCacheStore({ cache: { ...shared.cache } });
       const b = new VercelCacheStore({ cache: { ...shared.cache } });
@@ -852,7 +855,20 @@ describe("VercelCacheStore", () => {
 
       vi.setSystemTime(new Date(T0 + 100));
       await a.invalidateTags(["home"]);
-      expect(await b.getShell("k")).toBeNull();
+      expect(await b.getShell("k")).not.toBeNull();
+      const request = new Request("https://test.internal/p", {
+        headers: { cookie: "rango-state-fresh=1" },
+      });
+      const ctx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+        stateCookieName: "rango-state_router_0",
+      });
+      expect(
+        await runWithRequestContext(ctx, () => b.getShell("k")),
+      ).toBeNull();
     });
 
     // expireTag alone (a platform purge that skipped rango's invalidateTags)
@@ -1007,6 +1023,46 @@ describe("VercelCacheStore", () => {
       expect(read!.entry.postponed).toBe(JSON.stringify({ hole: 1 }));
       expect(await read!.snapshot).toEqual(snapshot);
       expect("stats" in read!).toBe(false);
+    });
+
+    // Hinted tags (remembered from the last read/write, or the route's
+    // static ppr.tags) start their tm-marker reads alongside the entry read.
+    it("a hinted read starts the marker read before the entry read resolves", async () => {
+      vi.useRealTimers();
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({
+        cache,
+        memo: { shellMs: 0, markerFreshMs: 0 },
+      });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      let entryResolved = false;
+      let markerReadBeforeEntry = false;
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation(async (key) => {
+        if (key === "rg:tm:home" && !entryResolved) {
+          markerReadBeforeEntry = true;
+        }
+        if (key === "rg:h:k") {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const value = await get(key);
+          entryResolved = true;
+          return value;
+        }
+        return get(key);
+      });
+      expect(await s.readShellDocument("k")).not.toBeNull();
+      expect(markerReadBeforeEntry).toBe(true);
+    });
+
+    it("a wrong hint still rejects a shell invalidated under an unhinted tag", async () => {
+      const { cache } = makeFakeCache();
+      const writer = new VercelCacheStore({ cache: { ...cache } });
+      await writer.putShell("k", shellEntry(), 60, 300, ["b"]);
+      // A second handle: no remembered hint, only the (wrong) route tag.
+      const s = new VercelCacheStore({ cache: { ...cache } });
+      vi.setSystemTime(new Date(T0 + 100));
+      await writer.invalidateTags(["b"]);
+      expect(await s.readShellDocument("k", { tagHints: ["a"] })).toBeNull();
     });
 
     it("decodes a memoized shell's prelude once", async () => {

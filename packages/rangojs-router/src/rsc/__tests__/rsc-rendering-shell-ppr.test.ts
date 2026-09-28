@@ -40,6 +40,7 @@ import {
   resetCFShellMemoForTests,
 } from "../../cache/cf/cf-cache-store.js";
 import { VercelCacheStore } from "../../cache/vercel/vercel-cache-store.js";
+import type { StoreMemoOptions } from "../../cache/shell-memo.js";
 import type {
   CachedEntryData,
   ShellCacheEntry,
@@ -1005,7 +1006,8 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     afterEach(() => vi.unstubAllGlobals());
 
     it("sends nothing on a memo hit until that request's tag-marker read resolves", async () => {
-      const cf = createCfShellFixture();
+      // No marker memo: the memo hit's marker check must read KV.
+      const cf = createCfShellFixture({ markerFreshMs: 0 });
       await cf.store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
       await cf.drain();
       const warm = await run({
@@ -1042,6 +1044,173 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     // The memoized copy holds the same record, so the recapture also drops
     // it: the next HIT reads the store, which may already hold another
     // isolate's recapture, instead of the memo for the rest of its window.
+    // The isolate marker memo serves PPR shell reads only (issue #941). A MISS
+    // request's hinted shell read may answer "T" from it, up to
+    // markerMaxStaleMs old; the foreground render must still read its "use
+    // cache" data under the store's marker, or it would store the stale item
+    // inside a new cache() segment written after the invalidation.
+    it("a MISS foreground render reads its tagged data fresh, not under the shell read's memoized marker", async () => {
+      const cf = createCfShellFixture();
+      const inRequest = <R>(fn: () => Promise<R>): Promise<R> =>
+        runWithRequestContext(
+          createRequestContext({
+            env: {},
+            request: new Request("http://localhost/q"),
+            url: new URL("http://localhost/q"),
+            variables: {},
+          }),
+          fn,
+        );
+      await inRequest(() =>
+        cf.store.setItem("item", "GEN1", { ttl: 300, tags: ["T"] }),
+      );
+      await cf.drain();
+      const url = "http://localhost/q";
+      const ppr = { ttl: 300, tags: ["T"] };
+      // This isolate memoizes marker "T" through a MISS whose route hints it.
+      const warm = await run({
+        ssrModule: fullSsrModule(),
+        ppr,
+        store: cf.store,
+        url,
+      });
+      expect(warm.response.headers.get("x-rango-shell")).toBe("MISS");
+      await readAll(warm.response.body!);
+      await cf.drain();
+      // Another isolate invalidates "T".
+      vi.resetModules();
+      const { CFCacheStore: IsolateA } =
+        await import("../../cache/cf/cf-cache-store.js");
+      await new IsolateA({
+        ctx: { waitUntil() {}, passThroughOnException() {} } as any,
+        kv: cf.kv as any,
+      }).invalidateTags(["T"]);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      // The foreground render of a MISS: a cache() segment that reads the
+      // item and is stored with the render's tags.
+      const router = {
+        ...makeCtx(fullSsrModule(), "stream").ctx.router,
+        match: vi.fn(async () => {
+          const store = getRequestContext()._cacheStore!;
+          const item = await store.getItem!("item");
+          await store.set(
+            "seg",
+            {
+              segments: [],
+              handles: item?.value ?? "GEN2",
+              expiresAt: 0,
+              tags: ["T"],
+            },
+            300,
+          );
+          return { redirect: undefined, ...emptyMatchResult() };
+        }),
+      } as unknown as HandlerContext<unknown>["router"];
+      const miss = await run({
+        ssrModule: fullSsrModule(),
+        ppr,
+        store: cf.store,
+        url,
+        router,
+      });
+      expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
+      await readAll(miss.response.body!);
+      await cf.drain();
+      const segment = await inRequest(() => cf.store.get("seg"));
+      expect(
+        segment && typeof segment === "object" && "data" in segment
+          ? segment.data.handles
+          : segment,
+      ).toBe("GEN2");
+      vi.resetModules();
+    });
+
+    // A partial navigation's replay gate reads the shell (getShell) on the
+    // same request context its matchPartial then renders on. The shell read
+    // may be served under a memoized marker (other users' staleness, up to
+    // markerMaxStaleMs); the render's data reads must not inherit it, or a
+    // cache() segment it writes keeps the stale item under a fresh taggedAt,
+    // past markerMaxStaleMs, until its TTL.
+    it("a partial navigation's render reads its tagged data fresh after the replay gate's shell HIT", async () => {
+      const cf = createCfShellFixture();
+      const inRequest = <R>(fn: () => Promise<R>): Promise<R> =>
+        runWithRequestContext(
+          createRequestContext({
+            env: {},
+            request: new Request("http://localhost/p"),
+            url: new URL("http://localhost/p"),
+            variables: {},
+          }),
+          fn,
+        );
+      const ppr = { ttl: 300, tags: ["T"] };
+      await cf.store.putShell(KEY, shellEntry(), 300, 30, ["T"]);
+      await inRequest(() =>
+        cf.store.setItem("item", "GEN1", { ttl: 300, tags: ["T"] }),
+      );
+      await cf.drain();
+      // A document HIT memoizes marker "T" (none yet) in this isolate.
+      const warm = await run({
+        ssrModule: fullSsrModule(),
+        ppr,
+        store: cf.store,
+      });
+      expect(warm.response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(warm.response.body!);
+      await cf.drain();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      // Another isolate invalidates "T".
+      vi.resetModules();
+      const { CFCacheStore: IsolateA } =
+        await import("../../cache/cf/cf-cache-store.js");
+      await new IsolateA({
+        ctx: { waitUntil() {}, passThroughOnException() {} } as any,
+        kv: cf.kv as any,
+      }).invalidateTags(["T"]);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const shellReads = vi.spyOn(cf.store, "getShell");
+      const seen: unknown[] = [];
+      const partial = await run({
+        ssrModule: fullSsrModule(),
+        ppr,
+        store: cf.store,
+        partial: true,
+        matchPartial: (async () => {
+          const store = getRequestContext()._cacheStore!;
+          const item = await store.getItem!("item");
+          seen.push(item?.value ?? null);
+          await store.set(
+            "seg",
+            {
+              segments: [],
+              handles: item?.value ?? "GEN2",
+              expiresAt: 0,
+              tags: ["T"],
+            },
+            300,
+          );
+          return emptyMatchResult();
+        }) as any,
+      });
+      expect(partial.response.status).toBe(200);
+      await cf.drain();
+      // The gate's shell read was served from the memos (its marker is stale).
+      const gate = await Promise.all(
+        shellReads.mock.results.map((result) => result.value),
+      );
+      expect(gate.some((read) => read !== null)).toBe(true);
+      // The render's data read went to KV.
+      expect(seen).toEqual([null]);
+      const segment = await inRequest(() => cf.store.get("seg"));
+      expect(
+        segment && typeof segment === "object" && "data" in segment
+          ? segment.data.handles
+          : segment,
+      ).toBe("GEN2");
+      vi.resetModules();
+    });
+
     it("a doc record that fails to decode drops the memoized shell before recapturing", async () => {
       const cf = createCfShellFixture();
       await cf.store.putShell(
@@ -1086,6 +1255,66 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       expect(second.response.headers.get("x-rango-shell")).toBe("HIT");
       await readAll(second.response.body!);
       expect(cf.counts.matches).toBe(matchesBefore + 1);
+    });
+
+    /** The rows of one HIT under debugPerformance, by label. */
+    async function hitRows(
+      store: CFCacheStore,
+      arm?: (reqCtx: RequestContext<unknown>) => void,
+    ): Promise<Map<string, string | undefined>> {
+      let metrics: MetricsStore | undefined;
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+        arm: (reqCtx) => {
+          metrics = createMetricsStore(true);
+          reqCtx._metricsStore = metrics;
+          arm?.(reqCtx);
+        },
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!);
+      return new Map(metrics!.metrics.map((m) => [m.label, m.desc]));
+    }
+
+    it("reports a stale-served marker (refreshing), then a fresh one, on memo hits", async () => {
+      const cf = createCfShellFixture({ markerFreshMs: 50 });
+      await cf.store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
+      await cf.drain();
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await hitRows(cf.store);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const stale = await hitRows(cf.store);
+        expect(stale.get("ppr:shell-read")).toBe("hit memo");
+        expect(stale.get("ppr:shell-marker")).toMatch(/ memo=stale\b/);
+        await cf.drain(); // the background refresh
+        const fresh = await hitRows(cf.store);
+        expect(fresh.get("ppr:shell-marker")).toMatch(/ memo=fresh\b/);
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    it("reports a fresh-reads request's store read and bypassed marker memo", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
+      await cf.drain();
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await hitRows(cf.store); // fills both memos
+        const bypass = await hitRows(cf.store, (reqCtx) => {
+          reqCtx._freshReads = true;
+        });
+        expect(bypass.get("ppr:shell-read")).toBe("hit l1");
+        expect(bypass.has("ppr:shell-memo")).toBe(true);
+        expect(bypass.get("ppr:shell-marker")).toMatch(
+          / memo=bypass .*fresh-reads$/,
+        );
+      } finally {
+        log.mockRestore();
+      }
     });
 
     it("reports the memo outcome and size under debugPerformance", async () => {
@@ -1397,7 +1626,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
  * starting from an empty per-isolate shell memo. `counts.matches` counts
  * Cache API reads; `holdMarkerReads` gates the KV tag-marker reads.
  */
-function createCfShellFixture() {
+function createCfShellFixture(memo?: StoreMemoOptions) {
   resetCFShellMemoForTests();
   const stored = new Map<string, { bytes: Uint8Array; init: ResponseInit }>();
   const counts = { matches: 0 };
@@ -1445,9 +1674,11 @@ function createCfShellFixture() {
       passThroughOnException() {},
     } as any,
     kv: kv as any,
+    memo,
   });
   return {
     store,
+    kv,
     counts,
     drain: () => Promise.all(pending.splice(0)),
     /** Empty the Cache API tier (KV keeps its copy); delay its match. */
@@ -1517,8 +1748,11 @@ describe("handleRscRendering — integrated PPR serve: debugPerformance rows", (
       expect(rows.get("ppr:shell-prelude")?.desc).toBe(
         `bytes=${preludeLength}`,
       );
+      // The HIT's first marker read goes to KV (putShell's generation check
+      // reads KV directly, not through the isolate marker memo); putShell
+      // remembered the shell's tag, so that read started before the head.
       expect(rows.get("ppr:shell-marker")?.desc).toMatch(
-        /^tags=1 parallel commit-wait=\d+\.\d\dms$/,
+        /^tags=1 parallel commit-wait=\d+\.\d\dms memo=read hint=1\/1 lead=\d+\.\d\dms$/,
       );
       expect(rows.get("ppr:shell-open")?.desc).toBe(
         `cpu raw prelude=${preludeLength}b`,

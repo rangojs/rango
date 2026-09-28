@@ -749,7 +749,7 @@ function describePprShell(mode: "dev" | "build") {
         /d1-ppr-shell-memo;dur=[\d.]+;desc="hit size=\d{6,}b"/,
       );
       expect(memoHit).toMatch(
-        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms"/,
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms[^"]*"/,
       );
       expect(memoHit).not.toContain("d1-ppr-shell-prelude");
       const timing = storeRead;
@@ -759,7 +759,7 @@ function describePprShell(mode: "dev" | "build") {
         /d1-ppr-shell-prelude;dur=[\d.]+;desc="bytes=\d{6,}"/,
       );
       expect(timing).toMatch(
-        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms"/,
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms[^"]*"/,
       );
       expect(timing).toMatch(
         /ppr-shell-open;dur=[\d.]+;desc="cpu raw prelude=\d{6,}b"/,

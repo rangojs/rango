@@ -4,31 +4,81 @@ import {
   DEFAULT_SHELL_MEMO_MS,
   RecentTagInvalidations,
   ShellMemo,
+  freshReadsWindowMs,
   isShellFresh,
   resolveShellMemoOptions,
   shellHasAnyTag,
 } from "../shell-memo.js";
 
 describe("resolveShellMemoOptions", () => {
+  const markerDefaults = { markerFreshMs: 1000, markerMaxStaleMs: 10_000 };
+
   it("defaults missing and non-finite values; keeps finite ones, 0 and negatives included", () => {
     const defaults = {
       shellMs: DEFAULT_SHELL_MEMO_MS,
       shellMaxBytes: DEFAULT_SHELL_MEMO_MAX_BYTES,
+      ...markerDefaults,
     };
-    expect(resolveShellMemoOptions(undefined)).toEqual(defaults);
+    expect(resolveShellMemoOptions(undefined, markerDefaults)).toEqual(
+      defaults,
+    );
     expect(
-      resolveShellMemoOptions({
-        shellMs: Number.NaN,
-        shellMaxBytes: Number.POSITIVE_INFINITY,
-      }),
+      resolveShellMemoOptions(
+        {
+          shellMs: Number.NaN,
+          shellMaxBytes: Number.POSITIVE_INFINITY,
+          markerFreshMs: Number.NaN,
+        },
+        markerDefaults,
+      ),
     ).toEqual(defaults);
     expect(
-      resolveShellMemoOptions({ shellMs: null as unknown as number }),
+      resolveShellMemoOptions(
+        { shellMs: null as unknown as number },
+        markerDefaults,
+      ),
     ).toEqual(defaults);
-    expect(resolveShellMemoOptions({ shellMs: 0, shellMaxBytes: -1 })).toEqual({
+    expect(
+      resolveShellMemoOptions(
+        {
+          shellMs: 0,
+          shellMaxBytes: -1,
+          markerFreshMs: 0,
+          markerMaxStaleMs: 5,
+        },
+        markerDefaults,
+      ),
+    ).toEqual({
       shellMs: 0,
       shellMaxBytes: -1,
+      markerFreshMs: 0,
+      markerMaxStaleMs: 5,
     });
+  });
+});
+
+describe("freshReadsWindowMs", () => {
+  const on = {
+    shellMs: 2000,
+    shellMaxBytes: 1024,
+    markerFreshMs: 1000,
+    markerMaxStaleMs: 10_000,
+  };
+
+  it("is the longest either memo can hold a pre-mutation value", () => {
+    // Plus FRESH_READS_MARGIN_MS (1 s) for a background marker write.
+    expect(freshReadsWindowMs(on, true)).toBe(11_000);
+    // No marker memo (CFCacheStore without KV): the shell window alone.
+    expect(freshReadsWindowMs(on, false)).toBe(3000);
+    expect(freshReadsWindowMs({ ...on, markerFreshMs: 0 }, true)).toBe(3000);
+    // Both memos off: no cookie at all.
+    expect(freshReadsWindowMs({ ...on, shellMaxBytes: 0 }, false)).toBe(0);
+    expect(
+      freshReadsWindowMs({ ...on, shellMs: 0, markerFreshMs: 0 }, true),
+    ).toBe(0);
+    expect(
+      freshReadsWindowMs({ ...on, shellMs: 0, markerMaxStaleMs: 500 }, true),
+    ).toBe(2000);
   });
 });
 

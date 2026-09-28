@@ -376,18 +376,22 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   kvReadTimeoutMs?: number;
 
   /**
-   * Per-isolate memos ({@link StoreMemoOptions}). `shellMs` (default 2000)
-   * and `shellMaxBytes` (default 16 MiB) size the PPR shell memo, one per
-   * isolate and shared by every CFCacheStore in it. A memo HIT still runs the
-   * tag-marker check, so with KV bound `updateTag()` / `revalidateTag()`
-   * reject a memoized shell on the next request in every isolate; the isolate
-   * that invalidates drops its own copies (and keeps reads in flight from
-   * memoizing them again), and its own `putShell` replaces its copy. Without
-   * KV, in purge mode, the purge does not reach other isolates' memos: they
-   * serve the purged shell until their window passes, the mutating user's
-   * next request included when it lands on another isolate. Set
-   * `{ shellMs: 0 }` (the memo off) where that request must read its own
-   * write.
+   * Per-isolate memos ({@link StoreMemoOptions}), one set per isolate and
+   * shared by every CFCacheStore in it. `shellMs` (default 2000) and
+   * `shellMaxBytes` (default 16 MiB) size the PPR shell memo;
+   * `markerFreshMs` (default 1000) and `markerMaxStaleMs` (default 10000)
+   * the tag-marker memo PPR shell reads use with KV bound (served
+   * stale-while-revalidate). A memo HIT still runs the tag-marker check; the
+   * isolate that invalidates drops its own shell copies (and keeps reads in
+   * flight from memoizing them again) and writes the new marker into its
+   * marker memo, and its own `putShell` replaces its copy. Another isolate
+   * rejects a memoized shell once its marker memo sees the invalidation (up
+   * to `markerMaxStaleMs`). Without KV, in purge mode, the purge does not
+   * reach other isolates' memos: they serve the purged shell until their
+   * window passes. The response of a request that ran `updateTag()` /
+   * `revalidateTag()` sets the fresh-reads cookie, and the same user's
+   * requests carrying it skip both memos. `{ shellMs: 0 }` turns the shell
+   * memo off, `{ markerFreshMs: 0 }` the marker memo.
    */
   memo?: StoreMemoOptions;
 

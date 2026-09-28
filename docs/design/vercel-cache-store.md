@@ -55,7 +55,11 @@ another region finds no marker and serves the shell until its window passes;
 without the memo, `expireTag` removed it within about 300 ms. In the region
 that invalidated, the next request misses. A platform `expireTag` issued
 outside rango (not through `invalidateTags`) writes no `tm` marker at all, so
-every memo that holds the shell serves it until its window passes.
+every memo that holds the shell serves it until its window passes. The shell
+reads' marker checks go through a per-process marker memo (300 ms fresh, 2 s
+max-stale), and the user whose request ran `updateTag()` /
+`revalidateTag()` carries the fresh-reads cookie, which skips both memos
+(`docs/design/shell-entry-layout.md` "The tag-marker memo").
 
 The store exists to supply the three things the raw primitive does _not_ give us.
 The rest of this doc is mostly those three.

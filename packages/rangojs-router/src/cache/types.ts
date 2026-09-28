@@ -213,7 +213,19 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * memoized shell (issue #941, docs/design/shell-entry-layout.md). Not part
    * of the custom-store contract.
    */
-  readShellDocument?(key: string): Promise<ShellDocumentRead | null>;
+  readShellDocument?(
+    key: string,
+    options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null>;
+
+  /**
+   * @internal How long (ms) this store's isolate memos (shell, tag markers)
+   * can serve a read that predates a tag invalidation made elsewhere. After
+   * updateTag()/revalidateTag(), the response's fresh-reads cookie lasts the
+   * longest of these, and the same user's requests skip the memos meanwhile.
+   * Absent or 0: nothing to cover.
+   */
+  readonly freshReadsWindowMs?: number;
 
   /**
    * @internal Drop this isolate's memoized copy of a shell (shell-memo.ts) so
@@ -449,6 +461,15 @@ export type DocumentShellCacheEntry = ShellCacheEntry & {
   postponed: string | null;
 };
 
+/** @internal Options of {@link SegmentCacheStore.readShellDocument}. */
+export interface ShellDocumentReadOptions {
+  /**
+   * Tag names the route declares for its shell (`ppr.tags`), known before the
+   * entry is read: their marker reads can start alongside the entry read.
+   */
+  tagHints?: readonly string[];
+}
+
 /**
  * @internal Result of {@link SegmentCacheStore.readShellDocument}.
  */
@@ -504,6 +525,22 @@ export interface ShellReadStats {
   markerWaitMs?: number;
   /** The marker read ran after the entry read instead of alongside it. */
   markerSerial?: true;
+  /**
+   * How the isolate marker memo answered the shell's tags (the most
+   * store-bound outcome across them): `fresh`, `stale` (served, refreshing in
+   * the background), `read` (from the store), `bypass` (fresh-reads cookie).
+   */
+  markerMemo?: "fresh" | "stale" | "read" | "bypass";
+  /** Tags whose marker reads were started before the entry's head (hints). */
+  markerHinted?: readonly string[];
+  /** When the hinted marker reads started (performance.now()). */
+  markerHintStartedAt?: number;
+  /** How many of the shell's tags were hinted. */
+  markerHintHits?: number;
+  /** How long the hinted marker reads ran before the entry named its tags. */
+  markerLeadMs?: number;
+  /** The request carried the fresh-reads cookie: no isolate memo was used. */
+  freshReads?: true;
   headBytes?: number;
   preludeBytes?: number;
   /** Number of the shell's tags the marker read covered. */
