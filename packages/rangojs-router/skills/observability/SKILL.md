@@ -70,7 +70,9 @@ stored prelude is read, so its waterfall ends at `ppr:shell-commit`; what runs
 after the commit (the capture snapshot, the seeded tail, the resumed holes)
 prints as one `shell tail` line when it finishes, and rides the NEXT request's
 `Server-Timing` as `ppr-tail`. The store-read rows under `ppr:shell-read` come
-from `CFCacheStore`'s prelude-first read; other stores show `ppr:shell-read`,
+from the built-in stores (`CFCacheStore`'s prelude-first read shown here;
+`VercelCacheStore` reports `hit store`, one `ppr:shell-match (store)` row, and
+a `serial` marker read); other stores show `ppr:shell-read`,
 `ppr:shell-open`, and `ppr:shell-commit` only. From `vite preview` of
 `tests/cloudflare-basic` `/ppr-large/holes` (614 KB prelude, 1.0 MB capture
 snapshot), with the timeline column dropped:
@@ -102,7 +104,9 @@ first-html=5ms complete=55ms prelude=628949b tail=1033762b
 - `ppr:shell-match` then `head` then `prelude`: the store read. Only the head
   and the prelude are read before the first byte; the snapshot is read off the
   commit path (`snapshot=` in the tail line). A KV hit after a Cache API miss
-  starts with a `ppr:shell-l1-miss` row (the L1 attempt and why it missed).
+  starts with a `ppr:shell-l1-miss` row (the L1 attempt and why it missed). A
+  `ppr:shell-memo (hit …)` row means the shell came from the isolate's memo:
+  no store read, only the marker check.
 - `ppr:shell-marker` is the tag-marker check, on every `CFCacheStore` read; it
   runs alongside `ppr:shell-prelude`, and `commit-wait` is how much it held the
   commit back (with `tags=0` it resolves at once).

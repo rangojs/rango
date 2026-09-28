@@ -210,6 +210,50 @@ function runCacheLabSpec(f: Fixture): void {
     );
   });
 
+  // Issue #941: the first HIT after a capture reads the runtime cache and fills
+  // the store's shell memo; the next HIT is served from memory, and its tag
+  // marker is still read, so an invalidation is seen on the very next request.
+  test("PPR shell HITs are served from the shell memo, and a tag invalidation still MISSes next", async ({
+    request,
+  }) => {
+    test.setTimeout(60_000);
+    const url = f.url(
+      `/cache-lab?probe=${uniqueProbe("shell-memo")}&__perf_debug=1`,
+    );
+    expect((await fetchSnapshot(request, url)).shell).toBe("MISS");
+
+    let storeRead = "";
+    await expect(async () => {
+      const response = await request.get(url, { headers: HTML_HEADERS });
+      expect(response.headers()["x-rango-shell"]).toBe("HIT");
+      storeRead = response.headers()["server-timing"] ?? "";
+      await response.text();
+    }).toPass({ timeout: 30_000, intervals: [500, 1_000] });
+    expect(storeRead).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit store"/);
+    expect(storeRead).toMatch(
+      /d1-ppr-shell-memo;dur=[\d.]+;desc="miss size=\d+b"/,
+    );
+    expect(storeRead).toMatch(/d1-ppr-shell-match;dur=[\d.]+;desc="store"/);
+
+    const memoResponse = await request.get(url, { headers: HTML_HEADERS });
+    expect(memoResponse.headers()["x-rango-shell"]).toBe("HIT");
+    const memoHit = memoResponse.headers()["server-timing"] ?? "";
+    await memoResponse.text();
+    expect(memoHit).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit memo"/);
+    expect(memoHit).toMatch(
+      /d1-ppr-shell-memo;dur=[\d.]+;desc="hit size=\d+b"/,
+    );
+    // The route's shell tag: its marker is still read on the memo hit.
+    expect(memoHit).toMatch(
+      /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=[1-9]\d* serial commit-wait=[\d.]+ms"/,
+    );
+    expect(memoHit).not.toContain("d1-ppr-shell-match");
+
+    const invalidated = await invalidate(request, f, [TAGS.shell]);
+    expect(invalidated.status()).toBe(200);
+    expect((await fetchSnapshot(request, url)).shell).toBe("MISS");
+  });
+
   test("the cache lab remains usable on a mobile viewport", async ({
     page,
   }) => {

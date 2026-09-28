@@ -13,6 +13,8 @@ export { CACHE_READ_ERROR } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 
+export type { StoreMemoOptions } from "./shell-memo.js";
+
 export {
   CFCacheStore,
   type CFCacheStoreOptions,

@@ -44,7 +44,7 @@ export const router = createRouter({
 }).routes(urlpatterns);
 ```
 
-`MemorySegmentCacheStore` suits dev, tests, and single-process servers; `CFCacheStore` (Cloudflare) and `VercelCacheStore` are the distributed stores, all from `@rangojs/router/cache`. `cache({ ttl, swr, tags, key, condition, store })` options are all optional, and omitted `ttl`/`swr` fall back to the store's `defaults`.
+`MemorySegmentCacheStore` suits dev, tests, and single-process servers; `CFCacheStore` (Cloudflare) and `VercelCacheStore` are the distributed stores, all from `@rangojs/router/cache`. The two distributed stores also keep a per-isolate memo of PPR shell reads (their `memo` option; see [PPR](/docs/rango/guides/ppr#options-and-invalidation)). `cache({ ttl, swr, tags, key, condition, store })` options are all optional, and omitted `ttl`/`swr` fall back to the store's `defaults`.
 
 This is a Flight segment cache: HTML is still rendered on every request. Caching the rendered HTML shell and resuming only the holes is a separate layer, the `ppr` path option ([PPR](/docs/rango/guides/ppr)). Function-level caching uses the `"use cache"` directive ([use cache](/docs/rango/guides/use-cache)), and a loader's data caches with an explicit opt-in (`loader(Fn, () => [cache({ ttl })])`).
 

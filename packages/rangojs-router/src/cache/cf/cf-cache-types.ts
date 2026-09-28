@@ -15,6 +15,7 @@ import type { ExecutionContext } from "../../types/request-scope.js";
 import type { CacheDefaults } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
 import type { CloudflareZonePurgeOptions } from "./cf-zone-purge.js";
+import type { StoreMemoOptions } from "../shell-memo.js";
 
 /**
  * Minimal Cloudflare KV Namespace interface.
@@ -373,6 +374,22 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * <= 0) to disable and always await KV.
    */
   kvReadTimeoutMs?: number;
+
+  /**
+   * Per-isolate memos ({@link StoreMemoOptions}). `shellMs` (default 2000)
+   * and `shellMaxBytes` (default 16 MiB) size the PPR shell memo, one per
+   * isolate and shared by every CFCacheStore in it. A memo HIT still runs the
+   * tag-marker check, so with KV bound `updateTag()` / `revalidateTag()`
+   * reject a memoized shell on the next request in every isolate; the isolate
+   * that invalidates drops its own copies (and keeps reads in flight from
+   * memoizing them again), and its own `putShell` replaces its copy. Without
+   * KV, in purge mode, the purge does not reach other isolates' memos: they
+   * serve the purged shell until their window passes, the mutating user's
+   * next request included when it lands on another isolate. Set
+   * `{ shellMs: 0 }` (the memo off) where that request must read its own
+   * write.
+   */
+  memo?: StoreMemoOptions;
 
   /**
    * Emit a {@link CFCacheReadDebugEvent} per L1 read. `true` logs to console

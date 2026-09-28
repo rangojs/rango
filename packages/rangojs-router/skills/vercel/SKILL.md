@@ -89,12 +89,22 @@ import { getCache, waitUntil } from "@vercel/functions";
 
 const defaults = { ttl: 60, swr: 300 };
 const memoryStore = new MemorySegmentCacheStore({ defaults });
+// One handle per process: getCache() resolves the platform cache on every
+// call, and VercelCacheStore keeps its PPR shell memo per handle. A memoized
+// shell is rejected by updateTag() on the next request in the same region;
+// another region serves it until memo.shellMs (default 2000) passes, since
+// the tag markers are regional and only expireTag is global. A platform
+// expireTag issued outside rango writes no marker, so every memo serves the
+// shell until its window passes.
+const runtimeCache = process.env.VERCEL
+  ? getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })
+  : undefined;
 
 function resolveCache() {
-  if (process.env.VERCEL) {
+  if (runtimeCache) {
     return {
       store: new VercelCacheStore({
-        cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+        cache: runtimeCache,
         waitUntil,
         defaults,
       }),

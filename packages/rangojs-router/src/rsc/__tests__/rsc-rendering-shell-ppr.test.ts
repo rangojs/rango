@@ -35,8 +35,16 @@ import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { installNativeBase64 } from "../../cache/cf/__tests__/native-base64.js";
-import { CFCacheStore } from "../../cache/cf/cf-cache-store.js";
-import type { CachedEntryData, ShellCacheEntry } from "../../cache/types.js";
+import {
+  CFCacheStore,
+  resetCFShellMemoForTests,
+} from "../../cache/cf/cf-cache-store.js";
+import { VercelCacheStore } from "../../cache/vercel/vercel-cache-store.js";
+import type {
+  CachedEntryData,
+  ShellCacheEntry,
+  ShellDocumentRead,
+} from "../../cache/types.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -612,6 +620,78 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(await readAll(response.body!)).toBe("RESUMED-HOLE");
   });
 
+  // A snapshot already in memory (memory store, shell memo, build shells)
+  // resolves at once. Without a macrotask between the commit and the tail's
+  // work, the seed, match, and Flight render ran ahead of the runtime writing
+  // the prelude (local workerd: 5.9 ms over the floor instead of 1.3 ms).
+  it("starts the tail's work a macrotask after the commit when the snapshot is in memory", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(
+      KEY,
+      shellEntry({
+        snapshot: [{ family: "item", key: "k", value: { value: "PINNED" } }],
+      }),
+      300,
+      30,
+    );
+    const { response, ctx } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: true,
+      store,
+    });
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe(PRELUDE_HTML);
+    expect(ctx.router.match).not.toHaveBeenCalled();
+    let rest = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      rest += new TextDecoder().decode(value);
+    }
+    expect(rest).toBe("RESUMED-HOLE");
+    expect(ctx.router.match).toHaveBeenCalledTimes(1);
+  });
+
+  // A snapshot still arriving on I/O has yielded by the time it resolves, so
+  // the tail starts at once (Node clamps setTimeout(0) to 1 ms).
+  it("adds no macrotask before the tail when the snapshot arrives on I/O", async () => {
+    const records: ShellSnapshotRecord[] = [
+      { family: "item", key: "k", value: { value: "PINNED" } },
+    ];
+    const { prelude: _prelude, ...entry } = shellEntry();
+    const afterSnapshot = vi.fn();
+    const store = Object.assign(new MemorySegmentCacheStore(), {
+      async readShellDocument(): Promise<ShellDocumentRead> {
+        return {
+          entry,
+          prelude: new TextEncoder().encode(PRELUDE_HTML),
+          shouldRevalidate: false,
+          snapshot: new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(records);
+              setTimeout(afterSnapshot, 0);
+            }, 5);
+          }),
+        };
+      },
+    });
+    const { response, ctx } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: true,
+      store,
+    });
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
+    await vi.waitFor(() => expect(afterSnapshot).toHaveBeenCalledTimes(1));
+    const match = ctx.router.match as ReturnType<typeof vi.fn>;
+    expect(match).toHaveBeenCalledTimes(1);
+    expect(match.mock.invocationCallOrder[0]).toBeLessThan(
+      afterSnapshot.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("commits the composed response: prelude bytes FIRST, resumed tail behind, x-rango-shell: HIT", async () => {
     const store = new MemorySegmentCacheStore();
     await store.putShell(KEY, shellEntry(), 300, 30);
@@ -921,6 +1001,208 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     }
   });
 
+  describe("CFCacheStore per-isolate shell memo", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("sends nothing on a memo hit until that request's tag-marker read resolves", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
+      await cf.drain();
+      const warm = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+      });
+      expect(warm.response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(warm.response.body!);
+      const matchesAfterWarm = cf.counts.matches;
+
+      const release = cf.holdMarkerReads();
+      let committed = false;
+      const pending = run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+      }).then((result) => {
+        committed = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(committed).toBe(false);
+
+      release();
+      const { response } = await pending;
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
+      // Served from the memo: no Cache API read on the second request.
+      expect(cf.counts.matches).toBe(matchesAfterWarm);
+    });
+
+    // A doc record that fails to decode on a HIT schedules a recapture (#958).
+    // The memoized copy holds the same record, so the recapture also drops
+    // it: the next HIT reads the store, which may already hold another
+    // isolate's recapture, instead of the memo for the rest of its window.
+    it("a doc record that fails to decode drops the memoized shell before recapturing", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(
+        KEY,
+        shellEntry({
+          snapshot: [{ family: "item", key: "k", value: { value: "PINNED" } }],
+        }),
+        300,
+        30,
+      );
+      await cf.drain();
+      const corrupt = { onNextMatch: true };
+      const router = {
+        ...makeCtx(fullSsrModule(), "stream").ctx.router,
+        // The tail's cache lookup reporting the doc record as corrupt.
+        match: vi.fn(async () => {
+          if (corrupt.onNextMatch) {
+            corrupt.onNextMatch = false;
+            getRequestContext()._shellImplicitCache?.onCorrupt?.();
+          }
+          return { redirect: undefined, ...emptyMatchResult() };
+        }),
+      } as unknown as HandlerContext<unknown>["router"];
+
+      const first = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        router,
+      });
+      expect(first.response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(first.response.body!);
+      expect(scheduleMock).toHaveBeenCalledTimes(1);
+
+      const matchesBefore = cf.counts.matches;
+      const second = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        router,
+      });
+      expect(second.response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(second.response.body!);
+      expect(cf.counts.matches).toBe(matchesBefore + 1);
+    });
+
+    it("reports the memo outcome and size under debugPerformance", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(KEY, shellEntry(), 300, 30);
+      await cf.drain();
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const rowsOf = async () => {
+          let metrics: MetricsStore | undefined;
+          const { response } = await run({
+            ssrModule: fullSsrModule(),
+            ppr: true,
+            store: cf.store,
+            arm: (reqCtx) => {
+              metrics = createMetricsStore(true);
+              reqCtx._metricsStore = metrics;
+            },
+          });
+          await readAll(response.body!);
+          return new Map(metrics!.metrics.map((m) => [m.label, m.desc]));
+        };
+        const first = await rowsOf();
+        expect(first.get("ppr:shell-read")).toBe("hit l1");
+        expect(first.get("ppr:shell-memo")).toBe("miss size=0b");
+        const second = await rowsOf();
+        expect(second.get("ppr:shell-read")).toBe("hit memo");
+        expect(second.get("ppr:shell-memo")).toBe(
+          `hit size=${PRELUDE_HTML.length}b`,
+        );
+        expect(second.get("ppr:shell-marker")).toMatch(/^tags=0 parallel/);
+        expect(second.has("ppr:shell-match")).toBe(false);
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    // VercelCacheStore reads the whole entry (no prelude-first read), then its
+    // tag markers: the rows name the single tier and a serial marker read.
+    it("reports VercelCacheStore's store read, then its memo hit", async () => {
+      const backing = new Map<string, unknown>();
+      const store = new VercelCacheStore({
+        cache: {
+          async get(key) {
+            const value = backing.get(key);
+            return value === undefined
+              ? undefined
+              : JSON.parse(JSON.stringify(value));
+          },
+          async set(key, value) {
+            backing.set(key, JSON.parse(JSON.stringify(value)));
+          },
+          async delete(key) {
+            backing.delete(key);
+          },
+          async expireTag() {},
+        },
+      });
+      await store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const rowsOf = async () => {
+          let metrics: MetricsStore | undefined;
+          const { response } = await run({
+            ssrModule: fullSsrModule(),
+            ppr: true,
+            store: store as any,
+            arm: (reqCtx) => {
+              metrics = createMetricsStore(true);
+              reqCtx._metricsStore = metrics;
+            },
+          });
+          expect(response.headers.get("x-rango-shell")).toBe("HIT");
+          expect(await readAll(response.body!)).toBe(
+            `${PRELUDE_HTML}RESUMED-HOLE`,
+          );
+          return new Map(metrics!.metrics.map((m) => [m.label, m.desc]));
+        };
+        const first = await rowsOf();
+        expect(first.get("ppr:shell-read")).toBe("hit store");
+        expect(first.get("ppr:shell-memo")).toMatch(/^miss size=\d+b$/);
+        expect(first.get("ppr:shell-match")).toBe("store");
+        expect(first.get("ppr:shell-marker")).toMatch(/^tags=1 serial /);
+        expect(first.get("ppr:shell-open")).toBe(
+          `cpu raw prelude=${PRELUDE_HTML.length}b`,
+        );
+        const second = await rowsOf();
+        expect(second.get("ppr:shell-read")).toBe("hit memo");
+        expect(second.get("ppr:shell-memo")).toMatch(/^hit size=\d+b$/);
+        expect(second.get("ppr:shell-marker")).toMatch(/^tags=1 serial /);
+        expect(second.has("ppr:shell-match")).toBe(false);
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    it("never serves a memoized shell captured by another build", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(
+        KEY,
+        shellEntry({ buildVersion: "old-build" }),
+        300,
+        30,
+      );
+      await cf.drain();
+      for (let i = 0; i < 2; i++) {
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store: cf.store,
+        });
+        expect(response.headers.get("x-rango-shell")).toBe("MISS");
+        await readAll(response.body!);
+      }
+    });
+  });
+
   it("seeds the tail render's cache reads from the snapshot (pinned value served fresh, real store untouched)", async () => {
     const store = new MemorySegmentCacheStore();
     // The real store has NO "it1" entry — proving the SEED serves it (the capture
@@ -1110,12 +1392,19 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
   });
 });
 
-/** A CFCacheStore over Map-backed Cache API and KV stubs (caches is stubbed). */
+/**
+ * A CFCacheStore over Map-backed Cache API and KV stubs (caches is stubbed),
+ * starting from an empty per-isolate shell memo. `counts.matches` counts
+ * Cache API reads; `holdMarkerReads` gates the KV tag-marker reads.
+ */
 function createCfShellFixture() {
+  resetCFShellMemoForTests();
   const stored = new Map<string, { bytes: Uint8Array; init: ResponseInit }>();
+  const counts = { matches: 0 };
   const l1 = { matchDelayMs: 0 };
   const cache = {
     async match(request: Request): Promise<Response | undefined> {
+      counts.matches++;
       if (l1.matchDelayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, l1.matchDelayMs));
       }
@@ -1133,8 +1422,10 @@ function createCfShellFixture() {
     },
   };
   const kvValues = new Map<string, string>();
+  let gate: Promise<void> | undefined;
   const kv = {
     async get(key: string): Promise<string | null> {
+      if (gate && key.includes("__tag__/")) await gate;
       return kvValues.get(key) ?? null;
     },
     async put(key: string, value: string): Promise<void> {
@@ -1157,11 +1448,19 @@ function createCfShellFixture() {
   });
   return {
     store,
+    counts,
     drain: () => Promise.all(pending.splice(0)),
     /** Empty the Cache API tier (KV keeps its copy); delay its match. */
     l1MissFor(ms: number): void {
       stored.clear();
       l1.matchDelayMs = ms;
+    },
+    holdMarkerReads(): () => void {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
     },
   };
 }

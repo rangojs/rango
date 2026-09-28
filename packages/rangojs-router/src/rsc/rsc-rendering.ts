@@ -849,6 +849,13 @@ function recordShellReadStats(
   const row = (label: string, ms: number | undefined, desc: string): void => {
     if (ms !== undefined) appendMetric(store, label, at, ms, 1, desc);
   };
+  if (stats.memo) {
+    row(
+      "ppr:shell-memo",
+      0,
+      `${stats.memo.hit ? "hit" : "miss"} size=${stats.memo.bytes}b`,
+    );
+  }
   // A KV hit after an L1 miss: the L1 attempt first, then the KV read.
   row("ppr:shell-l1-miss", stats.l1MissMs, stats.l1MissReason ?? "miss");
   at += stats.l1MissMs ?? 0;
@@ -860,7 +867,7 @@ function recordShellReadStats(
   row(
     "ppr:shell-marker",
     stats.markerMs,
-    `tags=${stats.tags ?? 0} parallel commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`,
+    `tags=${stats.tags ?? 0} ${stats.markerSerial ? "serial" : "parallel"} commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`,
   );
 }
 
@@ -1474,6 +1481,21 @@ function publishTailTiming(
   }
 }
 
+const PENDING = Symbol("pending");
+
+/**
+ * Whether `value` is not a promise, or a promise that has already settled:
+ * racing it against an already-resolved promise, a settled one's reaction is
+ * queued first and wins.
+ */
+async function isSettled(value: unknown): Promise<boolean> {
+  if (!(value instanceof Promise)) return true;
+  return Promise.race([value, PENDING]).then(
+    (first) => first !== PENDING,
+    () => true,
+  );
+}
+
 /**
  * Serve a validated shell HIT: commit the stored prelude bytes NOW and run the
  * live tail behind them inside the response stream. Plain byte concatenation is
@@ -1606,7 +1628,13 @@ function serveShellHit(
     // untouched.
     // A prelude-first read delivers the snapshot on its own promise: the
     // prelude is already committed, so only the tail waits for it.
+    const inMemory = await isSettled(document.snapshot);
     const snapshot = await document.snapshot;
+    // A snapshot already in memory (shell memo, memory store, build shells)
+    // resolves at once, and the tail's seeding and match would run ahead of
+    // the runtime writing the prelude: one macrotask first. A snapshot still
+    // arriving on I/O has yielded by the time it resolves.
+    if (inMemory) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     if (tailTiming) {
       tailTiming.snapshotMs = Math.round(performance.now() - tailT0);
       if (snapshot)
@@ -1658,7 +1686,11 @@ function serveShellHit(
           // A doc record that fails to decode makes this tail re-run the
           // handlers against live values, and the capture may have pruned
           // the items they read. Recapture so later HITs do not repeat it.
-          onCorrupt: () =>
+          // The store's memoized copy holds the same record: drop it, so the
+          // next HIT reads the store, which may already hold another
+          // isolate's recapture.
+          onCorrupt: () => {
+            descriptor.store?.dropShellMemo?.(descriptor.key);
             scheduleShellCapture(
               ctx,
               request,
@@ -1667,7 +1699,8 @@ function serveShellHit(
               reqCtx,
               ssrModule,
               descriptor,
-            ),
+            );
+          },
         };
         if (INTERNAL_RANGO_DEBUG) {
           console.log(

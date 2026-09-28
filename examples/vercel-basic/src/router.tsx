@@ -37,6 +37,9 @@ const defaults = { ttl: 60, swr: 300 };
 const memoryStore = new MemorySegmentCacheStore({ defaults });
 
 let e2eRuntimeCache: VercelRuntimeCache | undefined;
+// One handle per process: getCache() resolves the platform cache per call, and
+// VercelCacheStore keeps its PPR shell memo per handle.
+let vercelRuntimeCache: VercelRuntimeCache | undefined;
 
 function getE2eRuntimeCache(): VercelRuntimeCache {
   if (e2eRuntimeCache) return e2eRuntimeCache;
@@ -93,7 +96,9 @@ function resolveCache() {
   if (process.env.VERCEL) {
     return {
       store: new VercelCacheStore({
-        cache: getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID }),
+        cache: (vercelRuntimeCache ??= getCache({
+          namespace: process.env.VERCEL_DEPLOYMENT_ID,
+        })),
         waitUntil,
         defaults,
       }),
@@ -133,13 +138,22 @@ const base = createRouter({
 // production deploy never exposes it. (A `.use()` middleware, not a route, so it
 // stays out of the route manifest either way.)
 const withDebug = TRACE_DEBUG
-  ? base.use(
-      "/__debug/trace",
-      () =>
-        new Response(JSON.stringify(getLastTrace()), {
-          headers: { "content-type": "application/json" },
-        }),
-    )
+  ? base
+      .use(
+        "/__debug/trace",
+        () =>
+          new Response(JSON.stringify(getLastTrace()), {
+            headers: { "content-type": "application/json" },
+          }),
+      )
+      // Test-only per-request perf-debug opt-in (?__perf_debug=1): turns on
+      // the metrics store for this request, so the e2e reads the PPR shell
+      // read rows from Server-Timing. Runs before next() so downstream phases
+      // record into the store.
+      .use(async (ctx, next) => {
+        if (ctx.url.searchParams.has("__perf_debug")) ctx.debugPerformance();
+        await next();
+      })
   : base;
 
 export const router = withDebug.routes(({ path, cache, loader }) => [

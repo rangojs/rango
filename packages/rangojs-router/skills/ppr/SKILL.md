@@ -175,12 +175,19 @@ On a document GET to a ppr route the router runs:
 3. **shell lookup** — `getShell(key)` on the app store (key =
    host+pathname+sorted search). `CFCacheStore` stores the entry prelude-first
    and the serve path reads only its head and prelude here, with the tag-marker
-   read running alongside; the capture snapshot is read off the commit path;
+   read running alongside; the capture snapshot is read off the commit path.
+   `CFCacheStore` and `VercelCacheStore` keep the last fresh read of each shell
+   in a memo for `memo.shellMs` (default 2 s): a warm isolate's next HITs skip
+   the store read, but never the tag-marker check, so `updateTag()` /
+   `revalidateTag()` still reject the shell on the next request (with KV, in
+   every isolate; KV-less purge mode and another Vercel region see it once
+   the window passes — see the caching skill);
 4. **HIT** — the composed response is committed immediately: the stored prelude
    bytes flush first (in 32 KB chunks), while segment resolution, the fresh
    Flight render (the full hydration payload — there is no Flight-side resume),
    and the fizz `resume` of just the holes run BEHIND them inside the response
-   stream;
+   stream, starting a macrotask after the commit so they cannot delay the
+   prelude's write;
 5. **MISS** — plain axis-1 serve, tagged `x-rango-shell: MISS`, plus a
    background capture (stampede-guarded, retry-in-place, exponential backoff).
 
