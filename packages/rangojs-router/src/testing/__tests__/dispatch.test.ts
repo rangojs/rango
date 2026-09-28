@@ -351,6 +351,25 @@ describe("dispatch", () => {
   // I2: dispatch wires the production response-route cache path (resolved from
   // the matched entry tree), so a cached path.json/path.text route hits/writes
   // through dispatch the way it does in production — not a fresh run every call.
+  describe("middleware() wrapper with no routes inside (#918)", () => {
+    const requireAuth: MiddlewareFn = async () =>
+      new Response("unauthorized", { status: 401 });
+
+    it("router.routes() throws when it contains a layout(), pointing to the flat form", () => {
+      expect(() =>
+        createRouter<{}>({}).routes(
+          urls(({ path, layout, middleware }) => [
+            path("/account", Home, { name: "account" }, () => [
+              middleware(requireAuth, () => [layout(Home)]),
+            ]),
+          ]),
+        ),
+      ).toThrow(
+        /cannot contain layout\(\).*middleware\(fn\), layout\(\.\.\.\)/,
+      );
+    });
+  });
+
   describe("cached response routes (cache() boundary)", () => {
     // The cache WRITE is scheduled via ctx.waitUntil (a microtask without an
     // executionContext); flush the queue so the second dispatch can observe it.
@@ -427,6 +446,31 @@ describe("dispatch", () => {
       expect(
         await store.getResponse("response:json:localhost/cached-child"),
       ).not.toBeNull();
+    });
+
+    it("caches a response route whose cache() is inside a routeless middleware() wrapper (#918)", async () => {
+      const store = new MemorySegmentCacheStore();
+      const passThrough: MiddlewareFn = async (_ctx, next) => next();
+      const router = createRouter<{}>({ cache: { store } }).routes(
+        urls(({ path, cache, middleware }) => [
+          path.json(
+            "/cached-wrapped",
+            () => ({ ts: Date.now() + Math.random() }),
+            { name: "cachedWrapped.json" },
+            () => [middleware(passThrough, () => [cache({ ttl: 600 })])],
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+      const first = await (
+        await dispatch(router, { request: "/cached-wrapped" })
+      ).json();
+      await flushWrites();
+      const second = await (
+        await dispatch(router, { request: "/cached-wrapped" })
+      ).json();
+
+      expect(second).toEqual(first);
     });
 
     it("does not cache a non-GET/HEAD method (POST miss, no store write)", async () => {

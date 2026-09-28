@@ -1300,6 +1300,41 @@ export const urlpatterns = urls(
           ],
         ),
 
+        // A layout after a bare cache() wraps every route of the enclosing
+        // layout: live on the route before the cache(), stored in the cache
+        // with the route after it (issue #918).
+        layout(
+          () => (
+            <div data-testid="marker-shell">
+              <p data-testid="marker-shell-token">{crypto.randomUUID()}</p>
+              <Outlet />
+            </div>
+          ),
+          () => [
+            path(
+              "/marker-before",
+              () => (
+                <p data-testid="marker-route-token">{crypto.randomUUID()}</p>
+              ),
+              { name: "markerBefore" },
+            ),
+            cache({ ttl: 60 }),
+            layout(() => (
+              <div data-testid="marker-promo">
+                <p data-testid="marker-promo-token">{crypto.randomUUID()}</p>
+                <Outlet />
+              </div>
+            )),
+            path(
+              "/marker-after",
+              () => (
+                <p data-testid="marker-route-token">{crypto.randomUUID()}</p>
+              ),
+              { name: "markerAfter" },
+            ),
+          ],
+        ),
+
         // PPR'd DUPLICATE of the blog: the realistic PPR shape (sidebar
         // parallel, ring-3 cache() segment with a rendered timestamp) under the
         // SAME components/loaders as /blog, but with the `ppr` path option. The

@@ -86,6 +86,29 @@ Migration: a build that passed with such a route now fails. Fix the component,
 `throw new Skip()` for URLs that cannot render at build time, or set
 `rango({ prerender: { onError: "warn" } })` to skip them.
 
+### Breaking: a `middleware()` wrapper with no routes inside rejects `layout()` ([#922](https://github.com/rangojs/rango/pull/922))
+
+`middleware(fn, () => [layout(...)])` with no route inside the callback now
+throws when `router.routes()` runs, in a path's children and in a layout's
+children alike. In 0.16.0 the nested `layout()` never rendered, while the
+middleware ran for every route of the enclosing path or layout: a wrapper with
+no routes scopes nothing. The error points to the flat form, which renders the
+layout and runs the middleware for the same routes. A wrapper with routes
+inside may still hold a `layout()`, and a routeless wrapper without one
+(`middleware(fn, () => [loader(L)])`) is unchanged.
+
+```tsx
+// before: AccountNav never rendered; now throws at definition time
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth, () => [layout(<AccountNav />)]),
+]),
+// after
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth),
+  layout(<AccountNav />),
+]),
+```
+
 ### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
 
 `debugManifest()` was typed only on the internal router interface, so calling
@@ -300,6 +323,22 @@ without `transition()` is not modeled.
   `onError`, so that render is still stored. `renderHTML` now logs Fizz errors
   with `console.error(error)`, without React's dev "[Server]" badge
   ([#920](https://github.com/rangojs/rango/pull/920)).
+- A `layout()` after a bare `cache()` in a layout's children, as in
+  `layout(<AppShell />, () => [path("/a", A, { name: "a" }), cache({ ttl: 60 }), layout(<PromoBanner />)])`,
+  never rendered on the routes before the `cache()`. It now wraps every route
+  of the layout, as it does without the `cache()`: live on the routes before
+  the `cache()`, cached with the routes after it. On a route after the
+  `cache()`, a `parallel()` after it no longer runs twice on a miss and once,
+  discarded, on a hit, and a `middleware()` after it no longer runs twice.
+  Routeless entries nested in a routeless entry, such as a `layout()` in a
+  `cache(o, () => [...])` or `transition(cfg, () => [...])` with no routes,
+  render too ([#922](https://github.com/rangojs/rango/pull/922)).
+- A `cache()` inside a routeless `layout()`, `middleware()` or `transition()`
+  wrapper in a path, as in
+  `path("/p", Page, { name: "p" }, () => [layout(<Chrome />, () => [cache({ ttl: 300 })])])`,
+  cached nothing. It now caches that path, like a `cache()` among the path's
+  own children (#919), and the path's handler runs under the `cache()` guards
+  ([#922](https://github.com/rangojs/rango/pull/922)).
 
 ### Docs
 

@@ -509,6 +509,30 @@ form `cache({ ttl: 300 }, () => [layout(DashboardSidebar)])` inside a path
 does the same, and `cache(false)` there opts the path out of an enclosing
 `cache()`. The same form caches a response route:
 `path.json("/api/feed", handler, { name: "feed" }, () => [cache({ ttl: 60 })])`.
+A `cache()` inside a `layout()` or `middleware()` wrapper in the path caches
+the path too: `layout(DashboardSidebar, () => [cache({ ttl: 300 })])` is the
+same unit as the example above, not the sidebar alone.
+
+### Bare cache() among a layout's children
+
+A `cache()` with no children callback covers the routes after it. The
+`layout()`, `parallel()`, `loader()` and `middleware()` items after it still
+wrap every route of the layout, including the routes before the `cache()`;
+they are cached only with the routes after it:
+
+```typescript
+layout(<AppShell />, () => [
+  path("/a", PageA, { name: "a" }), // PromoBanner renders live on /a
+  cache({ ttl: 60 }),
+  layout(<PromoBanner />),
+  path("/b", PageB, { name: "b" }), // PromoBanner cached with /b
+]),
+```
+
+With no route after the `cache()`, nothing is cached. To cache
+`<PromoBanner />` with PageA too, put the `cache()` before PageA's `path()`.
+A `cache()` among PageA's own children does not cover it: the banner belongs
+to the layout, above that path's boundary.
 
 ### Uncached layout with cached children
 

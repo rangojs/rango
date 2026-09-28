@@ -51,6 +51,15 @@ let pathChildrenShellRenders = 0;
 let pathChildrenRouteRenders = 0;
 let pathChildrenChromeRenders = 0;
 
+// Render counts for /cache-test/marker-* and /cache-test/layout-cache (#918).
+let markerShellRenders = 0;
+let markerBeforeRenders = 0;
+let markerAfterRenders = 0;
+let markerPromoRenders = 0;
+let layoutCacheShellRenders = 0;
+let layoutCacheRouteRenders = 0;
+let layoutCacheChromeRenders = 0;
+
 /**
  * Cache test routes URL patterns
  * Routes: cacheTest.*
@@ -136,6 +145,88 @@ export const cachePatterns = urls(
                 <Outlet />
               </div>
             )),
+          ],
+        ),
+      ],
+    ),
+
+    // A layout after a bare cache() wraps every route of the enclosing
+    // layout: live on the route before the marker, cached with the route after
+    // it. A cache() inside a routeless layout in a path caches that path.
+    path(
+      "/cache-test/orphan-entry",
+      () => (
+        <nav>
+          <Link to="/cache-test/marker-before" data-testid="marker-before-link">
+            Marker before
+          </Link>
+          <Link to="/cache-test/marker-after" data-testid="marker-after-link">
+            Marker after
+          </Link>
+          <Link to="/cache-test/layout-cache" data-testid="layout-cache-link">
+            Layout cache
+          </Link>
+        </nav>
+      ),
+      { name: "cacheTest.orphanEntry" },
+    ),
+    layout(
+      () => (
+        <div data-testid="marker-shell">
+          <p data-testid="marker-shell-count">{++markerShellRenders}</p>
+          <Outlet />
+        </div>
+      ),
+      () => [
+        path(
+          "/cache-test/marker-before",
+          () => <p data-testid="marker-route-count">{++markerBeforeRenders}</p>,
+          { name: "cacheTest.markerBefore" },
+        ),
+        cache({ ttl: 600 }),
+        layout(() => (
+          <div data-testid="marker-promo">
+            <p data-testid="marker-promo-count">{++markerPromoRenders}</p>
+            <Outlet />
+          </div>
+        )),
+        path(
+          "/cache-test/marker-after",
+          () => <p data-testid="marker-route-count">{++markerAfterRenders}</p>,
+          { name: "cacheTest.markerAfter" },
+        ),
+      ],
+    ),
+    layout(
+      () => (
+        <div data-testid="layout-cache-shell">
+          <p data-testid="layout-cache-shell-count">
+            {++layoutCacheShellRenders}
+          </p>
+          <Outlet />
+        </div>
+      ),
+      () => [
+        path(
+          "/cache-test/layout-cache",
+          () => (
+            <p data-testid="layout-cache-route-count">
+              {++layoutCacheRouteRenders}
+            </p>
+          ),
+          { name: "cacheTest.layoutCache" },
+          () => [
+            layout(
+              () => (
+                <div data-testid="layout-cache-chrome">
+                  <p data-testid="layout-cache-chrome-count">
+                    {++layoutCacheChromeRenders}
+                  </p>
+                  <Outlet />
+                </div>
+              ),
+              () => [cache({ ttl: 600 })],
+            ),
           ],
         ),
       ],

@@ -852,6 +852,7 @@ export function collectRouteMiddleware(
   params: Record<string, string>,
 ): CollectedMiddleware[] {
   const result: CollectedMiddleware[] = [];
+  const chain = [...entries];
 
   const collect = (entry: MiddlewareCollectableEntry): void => {
     // Collect entry's own middleware
@@ -860,15 +861,17 @@ export function collectRouteMiddleware(
         result.push({ handler: mw, params });
       }
     }
-    // Collect middleware from orphan layouts (recursive)
+    // Collect middleware from orphan layouts (recursive). A bare cache()
+    // marker is both its layout's orphan and a chain entry of the routes
+    // after it; it is collected once, at its chain position (issue #918).
     if (entry.layout && entry.layout.length > 0) {
       for (const orphan of entry.layout) {
-        collect(orphan);
+        if (!chain.includes(orphan)) collect(orphan);
       }
     }
   };
 
-  for (const entry of entries) {
+  for (const entry of chain) {
     collect(entry);
   }
 

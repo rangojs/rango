@@ -272,6 +272,16 @@ export interface ResolveSegmentOptions {
    * so error boundaries keep catching at request time.
    */
   throwOnError?: boolean;
+  /**
+   * The matched route's full entry chain. resolveAllSegments defaults it to
+   * its `entries`; withCacheLookup passes it when it resolves only the entries
+   * above a cache() boundary. An orphan list can hold an entry of the chain: a
+   * bare cache() marker sits in its layout's layout[] (it wraps that layout's
+   * routes) and is the parent of the routes after it. For those routes it
+   * resolves once, as a chain entry, below the cache() header latch (issue
+   * #918: resolved twice on a MISS, once and discarded on a HIT).
+   */
+  chain?: readonly EntryData[];
 }
 
 /**
@@ -345,6 +355,7 @@ export async function resolveSegment<TEnv>(
     }
 
     for (const orphan of entry.layout) {
+      if (options?.chain?.includes(orphan)) continue;
       const orphanSegments = await resolveOrphanLayout(
         orphan,
         params,
@@ -574,6 +585,26 @@ export async function resolveOrphanLayout<TEnv>(
     resolvedParallelEntries.add(parallelEntry.id);
   }
 
+  // Routeless entries nested in this one (a layout() after a bare cache()
+  // marker, a wrapper inside a routeless wrapper) wrap the same content one
+  // level deeper. Issue #918: they were never rendered. None is in the
+  // matched chain: that would put this orphan in it, and resolveSegment
+  // skips those.
+  for (const nested of orphan.layout) {
+    segments.push(
+      ...(await resolveOrphanLayout(
+        nested,
+        params,
+        context,
+        loaderPromises,
+        belongsToRoute,
+        deps,
+        options,
+        routeKey,
+      )),
+    );
+  }
+
   return segments;
 }
 
@@ -732,6 +763,10 @@ export async function resolveAllSegments<TEnv>(
 ): Promise<ResolvedSegment[]> {
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
+  const segmentOptions: ResolveSegmentOptions = {
+    ...options,
+    chain: options?.chain ?? entries,
+  };
 
   // ppr routes are document-scoped cached territory: the whole chain (root
   // layout down to the page) bakes into the shared shell, so the header-write
@@ -776,7 +811,7 @@ export async function resolveAllSegments<TEnv>(
           loaderPromises,
           deps,
           false,
-          options,
+          segmentOptions,
         ),
       (seg) => [seg],
       deps,
