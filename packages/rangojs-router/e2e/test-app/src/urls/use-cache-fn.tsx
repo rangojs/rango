@@ -10,6 +10,7 @@ import {
 } from "../components/CachedInlineActionForm.js";
 import { buildInlineActionState } from "../inline-action-helpers.js";
 import { DepCrumbCategoryLoader } from "../loaders.js";
+import { DepCrumbs } from "./dep-crumbs.handle.js";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -63,6 +64,16 @@ export async function getUseCacheDepStamp(ctx: any): Promise<number> {
   "use cache";
   await ctx.use(DepCrumbCategoryLoader);
   return Date.now();
+}
+
+/**
+ * Called by UseCacheLoaderCtxLoader with its own (loader) ctx: keyed by route
+ * and params, and the crumb pushed through it is replayed on a HIT (#940).
+ */
+export async function getLoaderCtxStamp(ctx: any): Promise<string> {
+  "use cache";
+  ctx.use(DepCrumbs)(`Item ${ctx.params.id}`);
+  return `${ctx.params.id} ${Date.now()} ${Math.random()}`;
 }
 
 /**

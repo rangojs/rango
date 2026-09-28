@@ -549,6 +549,13 @@ export const UseCacheTestLoader = createLoader(async () => {
   return getCachedLoaderData();
 });
 
+// /use-cache-test/loader-ctx/:id: passes its own ctx to a "use cache"
+// function (#940).
+export const UseCacheLoaderCtxLoader = createLoader(async (ctx) => {
+  const { getLoaderCtxStamp } = await import("./urls/use-cache-fn.js");
+  return getLoaderCtxStamp(ctx);
+});
+
 // ============================================================================
 // Loader reverse() tests
 // Test that loaders can use ctx.reverse to generate URLs

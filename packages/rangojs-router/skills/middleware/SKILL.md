@@ -333,8 +333,13 @@ Mark request-specific data (sessions, users, tokens) non-cacheable: either on
 the token (`createVar<T>({ cache: false })`) or per write
 (`ctx.set("user", user, { cache: false })`). Reading it with `ctx.get()` inside
 a `cache()` boundary or a `"use cache"` function then throws instead of baking
-one user's data into a shared entry; loaders can still read it because they
-always run fresh (a `"use cache"` function a loader calls cannot).
+one user's data into a shared entry (inside `"use cache"`, also through a
+middleware `ctx` passed in); loaders can still read it because they always run
+fresh (a `"use cache"` function a loader calls cannot). A middleware `ctx`
+passed to a `"use cache"` function keys the call by host, pathname, params and
+search, plus the route name once the route is matched (a global middleware
+before `next()` has none yet), and its `set()`, `header()` and `headers` writes
+throw inside the function (`/use-cache`).
 
 ## Build-Time PPR Middleware
 

@@ -1627,7 +1627,9 @@ export function createUseFunction<TEnv>(
       ? parseSearchParams(ctx.searchParams, searchSchema)
       : {};
 
-    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> & {
+      _routeName?: string;
+    } = {
       params: ctx.params,
       routeParams: (ctx.params ?? {}) as Record<string, string>,
       request: ctx.request,
@@ -1666,6 +1668,7 @@ export function createUseFunction<TEnv>(
           ? isRouteRootScoped(ctx._routeName, ctx._routerId)
           : undefined,
       ),
+      _routeName: ctx._routeName,
       rendered: () => {
         throw new Error(
           `ctx.rendered() is only available in DSL loaders (registered via loader() in urls()). ` +
@@ -1673,6 +1676,8 @@ export function createUseFunction<TEnv>(
         );
       },
     };
+    // "use cache" keys it by route, like the request ctx it reads (#940).
+    (loaderCtx as any)[NOCACHE_SYMBOL] = true;
 
     // Meter through the same unified phase API as the loader-resolution funnel
     // (observePhase), so a loader resolved via this base request-context ctx.use

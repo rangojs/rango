@@ -21,6 +21,7 @@ import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
 import {
   DepCrumbProductLoader,
   DepCrumbSiblingLoader,
+  LoaderCtxItemLoader,
 } from "./loaders/loader-cache-dep.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
@@ -139,6 +140,7 @@ import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { UseCacheDepPage } from "./pages/use-cache-dep.js";
+import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
@@ -1517,6 +1519,16 @@ export const urlpatterns = urls(
         // handler reads it live after the call: its crumb appears once on the
         // MISS and on the HIT, where the live run replaces the replayed crumb.
         path("/use-cache-dep", UseCacheDepPage, { name: "useCacheDep" }),
+
+        // A DSL loader passes its own ctx to a "use cache" function that
+        // pushes a crumb through it: a HIT replays the crumb once, and another
+        // id misses (#940).
+        path(
+          "/loader-ctx/:id",
+          LoaderCtxPage,
+          { name: "loaderCtxItem" },
+          () => [loader(LoaderCtxItemLoader)],
+        ),
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),

@@ -186,6 +186,60 @@ const outerWithDep = registerCachedFunction(
   "default",
 );
 
+// A DSL loader that passes its own ctx to the cached function (#940).
+function loaderCtxScenario(name: string) {
+  const scenario = depScenario(name);
+  const flags = { readFirst: false, readAfter: false };
+  const Caller = (createLoader as Function)(
+    async (ctx: any) => {
+      if (flags.readFirst) await ctx.use(scenario.Dep);
+      await scenario.withDep(ctx);
+      if (flags.readAfter) await ctx.use(scenario.Dep);
+      return name;
+    },
+    undefined,
+    `test#Caller_${name}`,
+  );
+  return { ...scenario, Caller, flags };
+}
+
+const lcInside = loaderCtxScenario("lcInside");
+const lcAfter = loaderCtxScenario("lcAfter");
+const lcBefore = loaderCtxScenario("lcBefore");
+const lcStale = loaderCtxScenario("lcStale");
+
+// outer(handler ctx) -> Mid loader -> inner(Mid's loader ctx) -> Dep: a stale
+// refresh of outer runs Mid on its own executor, where inner HITs.
+const lcRefresh = (() => {
+  const dep = { runs: 0 };
+  const flags = { readFirst: false };
+  const Dep = (createLoader as Function)(
+    async (ctx: any) => {
+      dep.runs++;
+      ctx.use(Crumbs)(`dep-v${dep.runs}`);
+      return dep.runs;
+    },
+    undefined,
+    "test#Dep_lcRefresh",
+  );
+  const inner = registerCachedFunction(
+    async (ctx: any) => ctx.use(Dep),
+    "test#inner_lcRefresh",
+    "default",
+  );
+  const Mid = (createLoader as Function)(
+    async (ctx: any) => inner(ctx),
+    undefined,
+    "test#Mid_lcRefresh",
+  );
+  const outer = registerCachedFunction(
+    async (ctx: any) => ctx.use(Mid),
+    "test#outer_lcRefresh",
+    "default",
+  );
+  return { dep, Dep, outer, flags };
+})();
+
 let router: any;
 let cacheStore: MemorySegmentCacheStore;
 
@@ -330,6 +384,23 @@ beforeAll(async () => {
         return createElement("div", null, "dep-nested");
       },
       { name: "ucDepNested" },
+    ),
+    ...[lcInside, lcAfter, lcBefore, lcStale].map((s) =>
+      path(
+        `/${s.Caller.$$id.split("_")[1]}`,
+        () => createElement("div", null, "loader-ctx"),
+        { name: `uc_${s.Caller.$$id.split("_")[1]}` },
+        () => [loader(s.Caller)],
+      ),
+    ),
+    path(
+      "/lcRefresh",
+      async (ctx: any) => {
+        if (lcRefresh.flags.readFirst) await ctx.use(lcRefresh.Dep);
+        await lcRefresh.outer(ctx);
+        return createElement("div", null, "lc-refresh");
+      },
+      { name: "uc_lcRefresh" },
     ),
   ]);
   await buildRouterTrieFromUrlpatterns(router);
@@ -566,6 +637,69 @@ describe('"use cache" reading a loader that is also read live (#928)', () => {
     const refreshed = await serve("/dep-nested");
     expect(depNested.dep.runs).toBe(5);
     expect(refreshed).toEqual(["outer", "pre", "dep-v5", "post"]);
+  });
+});
+
+describe('"use cache" called with a loader ctx (#940)', () => {
+  it("the function's pushes and a loader it reads replay once, in the calling loader's segment", async () => {
+    const miss = await serveBySegment("/lcInside");
+    const hit = await serveBySegment("/lcInside");
+    expect(lcInside.dep.runs).toBe(1);
+    expect(Object.values(miss)).toEqual([["pre", "dep-v1", "post"]]);
+    expect(hit).toEqual(miss);
+  });
+
+  it("HIT, the calling loader reads the loader after the replay: the live push replaces the replayed one", async () => {
+    const miss = await serve("/lcAfter");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+    lcAfter.flags.readAfter = true;
+    const hit = await serve("/lcAfter");
+    lcAfter.flags.readAfter = false;
+    expect(lcAfter.dep.runs).toBe(2);
+    expect(hit).toEqual(["pre", "dep-v2", "post"]);
+  });
+
+  it("HIT, the loader already ran live before the replay: the replay skips its pushes", async () => {
+    const miss = await serve("/lcBefore");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+    lcBefore.flags.readFirst = true;
+    const hit = await serve("/lcBefore");
+    lcBefore.flags.readFirst = false;
+    expect(lcBefore.dep.runs).toBe(2);
+    expect(hit).toEqual(["dep-v2", "pre", "post"]);
+  });
+
+  it("stale HIT: the live run wins, and the refresh runs the loader on its own", async () => {
+    const errors: unknown[] = [];
+    const miss = await serve("/lcStale");
+    expect(miss).toEqual(["pre", "dep-v1", "post"]);
+
+    lcStale.flags.readAfter = true;
+    const stale = await withEntry("withDep_lcStale", "stale", () =>
+      serve("/lcStale", errors),
+    );
+    lcStale.flags.readAfter = false;
+    expect(errors).toEqual([]);
+    expect(lcStale.dep.runs).toBe(3);
+    expect(["dep-v2", "dep-v3"]).toContain(stale[1]);
+    expect(stale).toEqual(["pre", stale[1], "post"]);
+  });
+
+  it("an inner HIT inside an outer stale refresh records the loader's group without claiming it", async () => {
+    const miss = await serve("/lcRefresh");
+    expect(miss).toEqual(["dep-v1"]);
+
+    // Dep runs live first, so a claim from the refresh would return false.
+    lcRefresh.flags.readFirst = true;
+    const stale = await withEntry("outer_lcRefresh", "stale", () =>
+      serve("/lcRefresh"),
+    );
+    lcRefresh.flags.readFirst = false;
+    expect(stale).toEqual(["dep-v2"]);
+
+    const hit = await serve("/lcRefresh");
+    expect(lcRefresh.dep.runs).toBe(2);
+    expect(hit).toEqual(["dep-v1"]);
   });
 });
 

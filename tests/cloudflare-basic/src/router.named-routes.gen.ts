@@ -56,6 +56,7 @@ export const NamedRoutes = {
   inlinePricing: "/inline/pricing",
   itemDetail: "/item/:itemId/detail",
   loaderCacheDep: "/loader-cache-dep",
+  loaderCtxItem: "/loader-ctx/:id",
   localeInfo: "/:locale(en|fr)/info",
   markerAfter: "/marker-after",
   markerBefore: "/marker-before",

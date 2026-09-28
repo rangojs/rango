@@ -465,6 +465,7 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.interleaveAction": "/use-cache-test/interleave-action",
   "useCacheTest.useCacheTest.interleaveSlots": "/use-cache-test/interleave-slots",
   "useCacheTest.useCacheTest.jsonCached": "/use-cache-test/json-cached/:id",
+  "useCacheTest.useCacheTest.loaderCtx": "/use-cache-test/loader-ctx/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
   "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",

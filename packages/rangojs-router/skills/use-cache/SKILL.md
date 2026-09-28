@@ -158,7 +158,14 @@ Three request-scoped arguments are kept out of the serialized arguments:
 
 - **`ctx`** is branded with `Symbol.for('rango:nocache')` at creation. Its route
   fields are folded into the key, and its handle pushes are captured and
-  replayed (below).
+  replayed (below). Every ctx is branded: handler, loader, middleware,
+  response-route and the request context. A loader ctx keys exactly like the
+  handler ctx of the same request. A middleware ctx keys by host, pathname,
+  its params and search, plus the route name once the route is matched (a
+  global middleware before `next()` has none yet). A ctx carrying a request
+  body (a fetchable loader called with `method: "POST"` and a `body` or form
+  data) runs the call uncached and warns in dev: the body is not in the key.
+  The method is not in the key either.
 - **A `Request`** (such as `ctx.request`) keys by its URL: host, pathname and
   the user-facing sorted search params, with the same internal-param exclusion
   and `cache.searchParams` filter as the URL-keyed tiers. Headers, cookies and
@@ -175,9 +182,10 @@ When a `ctx` is detected:
 2. **Handle data captured on miss** -- side effects via `ctx.use(Handle)` are recorded:
    the function's own pushes (and those of cached functions it calls), not the
    handler's or loaders' pushes into the same request.
-3. **Handle data replayed on hit** -- appended to the calling segment, after what
-   the handler and loaders already pushed, as if the body had run (a layout and
-   its page calling the same function each get their copy). A
+3. **Handle data replayed on hit** -- appended to the calling segment (for a
+   loader ctx, the segment that declares the loader), after what the handler
+   and loaders already pushed, as if the body had run (a layout and its page
+   calling the same function each get their copy). A
    stale hit's background refresh records its pushes into the refreshed entry only.
 4. **A loader the function reads shows its pushes once** -- pushes from a loader
    read with `ctx.use(Loader)` inside the function are recorded under that
@@ -203,6 +211,9 @@ export async function getProduct(ctx) {
 }
 // Handler: `await getProduct(ctx); await ctx.use(CategoryLoader);`
 // On hit: one category crumb, from the handler's live CategoryLoader run.
+
+export const ProductLoader = createLoader(async (ctx) => getProduct(ctx));
+// A loader ctx keys like the handler ctx: one entry per route, params and query.
 ```
 
 ## Request-Scoped Guards
@@ -222,7 +233,8 @@ const data = await getCachedData(locale); // locale is now in the cache key
 
 `ctx.get()` of a **non-cacheable variable** (`createVar({ cache: false })`, or
 a value written with `ctx.set(key, value, { cache: false })`) throws the same
-way, whether it goes through `getRequestContext().get()` or a `ctx` passed in.
+way, whether it goes through `getRequestContext().get()` or a `ctx` passed in
+(handler, loader, middleware or response-route).
 The key does not include the value, so the first caller's value would be
 served to later callers. Read it before the call and pass it in:
 
@@ -256,8 +268,9 @@ handler/cached-scope consumption = baked copy, client-side `useLoader` = live
 These ctx methods **throw** inside a `"use cache"` function because their effects
 are lost on cache hit (the function body is skipped):
 
-- `ctx.set()` for passing values to children
-- `ctx.headers.set()` and the other mutating `Headers` methods
+- `ctx.set()` for passing values to children (handler and middleware ctx)
+- `ctx.headers.set()` and the other mutating `Headers` methods (handler and
+  middleware ctx), and a middleware's `ctx.header()`
 - cookie writes and the request-context writers `header()`, `setCookie()`,
   `deleteCookie()`, `setStatus()`, `onResponse()`
 - `ctx.setTheme()`

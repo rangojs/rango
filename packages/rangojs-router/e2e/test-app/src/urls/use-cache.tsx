@@ -26,6 +26,7 @@ import { RevalidateButton } from "../components/RevalidateButton.js";
 import { swrActionRevalidate } from "../actions.js";
 import {
   UseCacheTestLoader,
+  UseCacheLoaderCtxLoader,
   LayoutCountLoader,
   DepCrumbCategoryLoader,
 } from "../loaders.js";
@@ -431,6 +432,24 @@ export const useCachePatterns = urls(
       },
       { name: "useCacheTest.withLoader" },
       () => [loader(UseCacheTestLoader)],
+    ),
+
+    // A DSL loader passes its own ctx to a "use cache" function that pushes a
+    // crumb through it (#940). `use-cache-loader-ctx-stamp` is the cached
+    // value: a HIT repeats it and replays the crumb once; another id misses.
+    path(
+      "/loader-ctx/:id",
+      async (ctx) => {
+        const stamp = await ctx.use(UseCacheLoaderCtxLoader);
+        return (
+          <div data-testid="use-cache-loader-ctx-page">
+            <span data-testid="use-cache-loader-ctx-stamp">{stamp}</span>
+            <DepCrumbsView />
+          </div>
+        );
+      },
+      { name: "useCacheTest.loaderCtx" },
+      () => [loader(UseCacheLoaderCtxLoader)],
     ),
 
     // Intercept: inline "use cache" in path handler vs intercept handler.

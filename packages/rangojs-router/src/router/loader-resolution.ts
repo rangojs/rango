@@ -7,7 +7,8 @@
 import type { ReactNode } from "react";
 import type { EntryData } from "../server/context";
 import { observePhase, PHASES } from "./instrument.js";
-import { contextGet } from "../context-var.js";
+import { contextGet, isNonCacheable } from "../context-var.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -43,6 +44,7 @@ import {
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
+  assertNonCacheableReadAllowed,
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
   isInsidePushCallbackScope,
@@ -394,6 +396,7 @@ function createLoaderExecutor<TEnv>(
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
   const silentHandles = executorOptions?.silentHandles === true;
+  const internal = ctx as InternalHandlerContext<any, TEnv>;
 
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
@@ -457,7 +460,7 @@ function createLoaderExecutor<TEnv>(
     pendingLoaders.add(loader.$$id);
 
     const currentLoaderId = loader.$$id;
-    const variables = (ctx as InternalHandlerContext<any, TEnv>)._variables;
+    const variables = internal._variables;
 
     // Capture whether this loader is being started from a DSL loader scope
     // (runInsideLoaderScope in fresh.ts). Handler-invoked loaders are NOT
@@ -471,18 +474,26 @@ function createLoaderExecutor<TEnv>(
     // stale. Attributing to the owning route/layout segment gives handle
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation).
-    const owningSegmentId = (ctx as InternalHandlerContext<any, TEnv>)
-      ._currentSegmentId;
+    const owningSegmentId = internal._currentSegmentId;
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
 
-    // Loader functions are always fresh (never cached), so they get an
-    // unguarded get that bypasses non-cacheable read guards. This applies
-    // to ALL loaders — DSL and handler-called — because the loader
-    // function itself always re-executes. Also handles nested deps
-    // (loaderA → use(loaderB)) since all share this unguarded get.
-    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+    // Request-scoped like the handler ctx it derives from (issue #940): the
+    // NOCACHE_SYMBOL brand below makes a "use cache" function taking it key by
+    // the route fields (_routeName, _responseType) and replay its handle
+    // pushes into the owning segment, claimed per loader like a handler ctx
+    // (_claimLoaderPushes, _runLoaderIsolated). Non-cacheable ctx.get reads
+    // run the shared guard; the body itself stays exempt (loader body scope).
+    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> &
+      Pick<
+        InternalHandlerContext<any, TEnv>,
+        | "_routeName"
+        | "_responseType"
+        | "_currentSegmentId"
+        | "_claimLoaderPushes"
+        | "_runLoaderIsolated"
+      > = {
       params: ctx.params,
       routeParams: (ctx.params ?? {}) as Record<string, string>,
       request: ctx.request,
@@ -522,6 +533,9 @@ function createLoaderExecutor<TEnv>(
             buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
           return collectHandleData(keyOrVar, snapshot, segmentOrder);
         }
+        if (isNonCacheable(variables, keyOrVar)) {
+          assertNonCacheableReadAllowed(keyOrVar);
+        }
         return contextGet(variables, keyOrVar);
       }) as typeof ctx.get,
       use: ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
@@ -557,6 +571,11 @@ function createLoaderExecutor<TEnv>(
       method: "GET",
       body: undefined,
       reverse: ctx.reverse as LoaderContext["reverse"],
+      _routeName: internal._routeName,
+      _responseType: internal._responseType,
+      _currentSegmentId: owningSegmentId,
+      _claimLoaderPushes: internal._claimLoaderPushes,
+      _runLoaderIsolated: internal._runLoaderIsolated,
       rendered: (): Promise<void> => {
         // Guard: only DSL loaders may use rendered()
         if (!isDslLoader) {
@@ -644,6 +663,7 @@ function createLoaderExecutor<TEnv>(
         return renderedPromise;
       },
     };
+    (loaderCtx as any)[NOCACHE_SYMBOL] = true;
 
     // Meter this loader once via observePhase (loader:<id> perf metric +
     // rango.loader span); loaderFn runs inside the span callback so its KV/D1/
@@ -753,8 +773,13 @@ export function setupLoaderAccess<TEnv>(
     claimed.add(loaderId);
     return true;
   };
+  // A refresh's pushes are diverted, so its loader ctxs never claim
+  // (cache-runtime.ts refreshView).
   internal._runLoaderIsolated = (loader) =>
-    createLoaderExecutor(ctx, new Map())(loader, null);
+    createLoaderExecutor(
+      Object.create(ctx, { _claimLoaderPushes: { value: undefined } }),
+      new Map(),
+    )(loader, null);
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
