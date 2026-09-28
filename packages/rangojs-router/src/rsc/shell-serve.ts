@@ -25,6 +25,7 @@ import type {
   DocumentShellCacheEntry,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellReadStats,
   ShellSnapshotRecord,
   SegmentCacheStore,
 } from "../cache/types.js";
@@ -211,6 +212,8 @@ export interface ShellDocument {
     | ShellSnapshotRecord[]
     | undefined
     | Promise<ShellSnapshotRecord[] | undefined>;
+  /** The prelude-first read's stats, when perf metrics are on. */
+  stats?: ShellReadStats;
 }
 
 /**
@@ -226,7 +229,7 @@ export interface ShellDocument {
  */
 export function openShellDocument(
   entry: ShellCacheEntry,
-  read?: Pick<ShellDocumentRead, "prelude" | "snapshot">,
+  read?: Pick<ShellDocumentRead, "prelude" | "snapshot" | "stats">,
 ): ShellDocument | null {
   const postponed = entry.postponed;
   if (postponed === undefined) return null;
@@ -238,6 +241,7 @@ export function openShellDocument(
       postponed,
       prelude: read ? read.prelude : base64ToBytes(entry.prelude!),
       snapshot: read ? read.snapshot : entry.snapshot,
+      ...(read?.stats && { stats: read.stats }),
     };
   } catch {
     return null;
@@ -275,8 +279,20 @@ export function hasShellFamily(
 export interface ShellTailTiming {
   key: string;
   outcome: "complete" | "redirect" | "error";
+  /** The capture snapshot available to the tail (read and parsed). */
+  snapshotMs?: number;
+  /** Snapshot bytes read after the commit (prelude-first stores). */
+  snapshotBytes?: number;
+  /** Snapshot bytes read after the commit, excluding the parse. */
+  snapshotReadMs?: number;
+  /** Snapshot JSON.parse CPU (reads 0 on a deployed worker: see bytes). */
+  snapshotParseMs?: number;
+  /** Snapshot records by family, e.g. `segment:1/item:5` (no commas: it rides a Server-Timing desc). */
+  snapshotRecords?: string;
   /** Loader-family seed decode (only when the entry carried a snapshot). */
   seedMs?: number;
+  /** The seed decode's own duration: Flight deserialization, CPU only. */
+  seedCpuMs?: number;
   /** Tail router.match() settled. */
   matchMs?: number;
   /** Tail stream (resume output) handed to the response stream. */
@@ -292,13 +308,32 @@ export interface ShellTailTiming {
 }
 
 /**
- * Compact single-line form for the console log and the dev Server-Timing
- * mirror's `desc`. Plain alphanumerics/`=`/`-` only — no quoted-string
- * escaping needed.
+ * Compact single-line form for the console log and the Server-Timing mirror's
+ * `desc`: alphanumerics and `=`, `-`, `:`, `/` only (records=item:5/segment:1),
+ * so no quoted-string escaping is needed. Offsets are from the commit; the
+ * `-cpu` fields are CPU-only durations.
  */
 export function describeShellTailTiming(timing: ShellTailTiming): string {
   const parts: string[] = [timing.outcome];
+  if (timing.snapshotMs !== undefined) {
+    parts.push(`snapshot=${timing.snapshotMs}ms`);
+  }
+  if (timing.snapshotReadMs !== undefined) {
+    parts.push(`snapshot-read=${timing.snapshotReadMs}ms`);
+  }
+  if (timing.snapshotBytes !== undefined) {
+    parts.push(`snapshot-bytes=${timing.snapshotBytes}b`);
+  }
+  if (timing.snapshotParseMs !== undefined) {
+    parts.push(`snapshot-parse-cpu=${timing.snapshotParseMs}ms`);
+  }
+  if (timing.snapshotRecords !== undefined) {
+    parts.push(`records=${timing.snapshotRecords}`);
+  }
   if (timing.seedMs !== undefined) parts.push(`seed=${timing.seedMs}ms`);
+  if (timing.seedCpuMs !== undefined) {
+    parts.push(`seed-cpu=${timing.seedCpuMs}ms`);
+  }
   if (timing.matchMs !== undefined) parts.push(`match=${timing.matchMs}ms`);
   if (timing.handoverMs !== undefined) {
     parts.push(`handover=${timing.handoverMs}ms`);
@@ -317,19 +352,19 @@ export function describeShellTailTiming(timing: ShellTailTiming): string {
 }
 
 /**
- * Dev-only last-tail-per-key buffer backing the `ppr:tail` Server-Timing
- * mirror: a HIT's tail finishes after its own headers are long gone, so its
- * per-stage numbers ride the NEXT ppr GET for the key when the metrics
- * surface is active (debugPerformance). Same shape and FIFO cap as the
- * capture mirror (shell-capture.ts lastCaptureEventsForTiming); dev-only so
- * production isolates never grow the map.
+ * Last-tail-per-key buffer backing the `ppr:tail` Server-Timing mirror: a
+ * HIT's tail finishes after its own headers are long gone, so its per-stage
+ * numbers ride the NEXT ppr GET for the key when the metrics surface is
+ * active (debugPerformance). Same shape and FIFO cap as the capture mirror
+ * (shell-capture.ts lastCaptureEventsForTiming). serveShellHit collects and
+ * publishes a timing only in dev or when the HIT itself collected metrics, so
+ * a production isolate without debugPerformance never grows the map.
  */
 const lastTailTimingsForServerTiming = new Map<string, ShellTailTiming>();
 const MAX_TAIL_TIMING_KEYS = 100;
 
-/** Buffer one terminal tail timing for the dev Server-Timing mirror. */
+/** Buffer one terminal tail timing for the Server-Timing mirror. */
 export function publishShellTailTiming(timing: ShellTailTiming): void {
-  if (process.env.NODE_ENV === "production") return;
   lastTailTimingsForServerTiming.delete(timing.key);
   if (lastTailTimingsForServerTiming.size >= MAX_TAIL_TIMING_KEYS) {
     const oldest = lastTailTimingsForServerTiming.keys().next().value;

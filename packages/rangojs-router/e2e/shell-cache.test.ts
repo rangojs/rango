@@ -669,6 +669,31 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-price")).toContainText("Live price:");
   });
 
+  // Issue #941: under debugPerformance (?__perf_debug=1) a HIT reports its
+  // integrity check / decode and prelude flush with byte and chunk counts, and
+  // the previous HIT's tail rides the next response as ppr-tail. The memory
+  // store has no prelude-first read, so there are no d1 read rows here.
+  test("a perf-debug large shell HIT reports the open, commit, and tail rows with sizes", async ({
+    request,
+  }) => {
+    const url = f.url("/shell-cache/large?__perf_debug=1");
+    await warmToHit(request, url);
+    const res = await request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const timing = res.headers()["server-timing"] ?? "";
+    expect(timing).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit"/);
+    expect(timing).not.toContain("d1-ppr-shell-prelude");
+    expect(timing).toMatch(
+      /ppr-shell-open;dur=[\d.]+;desc="cpu base64-decode prelude=\d{5,}b"/,
+    );
+    expect(timing).toMatch(
+      /ppr-shell-commit;dur=[\d.]+;desc="cpu chunks=\d+ prelude=\d{5,}b"/,
+    );
+    expect(timing).toMatch(
+      /ppr-tail;dur=[\d.]+;desc="complete snapshot=\d+ms records=[a-z:\d/]+ /,
+    );
+  });
+
   // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
 
   // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64 — far below the

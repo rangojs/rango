@@ -63,6 +63,56 @@ Read the timeline as intervals:
   actions (`action:<id>`), cache, RSC serialization, and SSR setup appear as
   separate rows, so the slow phase is visible without guessing.
 
+### Reading a PPR shell HIT
+
+A `ppr` route serving from its shell cache commits the response as soon as the
+stored prelude is read, so its waterfall ends at `ppr:shell-commit`; what runs
+after the commit (the capture snapshot, the seeded tail, the resumed holes)
+prints as one `shell tail` line when it finishes, and rides the NEXT request's
+`Server-Timing` as `ppr-tail`. The store-read rows under `ppr:shell-read` come
+from `CFCacheStore`'s prelude-first read; other stores show `ppr:shell-read`,
+`ppr:shell-open`, and `ppr:shell-commit` only. From `vite preview` of
+`tests/cloudflare-basic` `/ppr-large/holes` (614 KB prelude, 2.6 MB capture
+snapshot), with the timeline column dropped:
+
+```
+[RSC Perf] GET /ppr-large/holes (4.00ms)
+ start     dur  span
+1.00ms  0.00ms      middleware:*#2
+1.00ms  3.00ms    ppr:shell-read (hit l1)
+1.00ms  1.00ms      ppr:shell-match (l1)
+1.00ms  3.00ms    render:total:pprLargeHoles
+2.00ms  0.00ms      ppr:shell-head (bytes=27910)
+2.00ms  2.00ms      ppr:shell-prelude (bytes=628949)
+2.00ms  0.00ms      ppr:shell-marker (tags=0 parallel commit-wait=0.00ms)
+4.00ms  0.00ms    ppr:shell-open (cpu raw prelude=628949b)
+4.00ms  0.00ms    ppr:shell-commit (cpu chunks=20 prelude=628949b)
+0.00ms  4.00ms    handler:total
+```
+
+and, when the tail finishes, one console line (wrapped here):
+
+```
+[RSC Perf] GET /ppr-large/holes shell tail: complete snapshot=12ms
+snapshot-read=7ms snapshot-bytes=2644202b snapshot-parse-cpu=5ms
+records=item:5/segment:1 seed=12ms seed-cpu=0ms match=13ms handover=14ms
+first-html=14ms complete=64ms prelude=628949b tail=1033762b
+```
+
+- `ppr:shell-match` then `head` then `prelude`: the store read. Only the head
+  and the prelude are read before the first byte; the snapshot is read off the
+  commit path (`snapshot=` in the tail line). A KV hit after a Cache API miss
+  starts with a `ppr:shell-l1-miss` row (the L1 attempt and why it missed).
+- `ppr:shell-marker` is the tag-marker check, on every `CFCacheStore` read; it
+  runs alongside `ppr:shell-prelude`, and `commit-wait` is how much it held the
+  commit back (with `tags=0` it resolves at once).
+- `snapshot=`, `seed=`, `match=`, `first-html=` are offsets from the commit,
+  not durations; `snapshot-read=`, `snapshot-parse-cpu=` and `seed-cpu=` are
+  durations.
+- On a deployed worker the clock only moves on I/O, so the CPU-only numbers
+  (`ppr:shell-open`, `ppr:shell-commit`, `snapshot-parse-cpu`, `seed-cpu`)
+  read 0 there; the byte counts are the cost to watch.
+
 The console waterfall uses these labels as written. In the `Server-Timing`
 header, colons become hyphens and other non-alphanumeric characters are
 dropped (`ssr:render-html` → `ssr-render-html`, `handler:total` →

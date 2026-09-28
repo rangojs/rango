@@ -36,6 +36,7 @@ import type {
   CacheItemOptions,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellReadStats,
   ShellSnapshotRecord,
   CacheReadError,
 } from "../types.js";
@@ -305,13 +306,38 @@ type OpenedShellFrame =
       head: ShellFrameHead;
       prelude: Uint8Array;
       reader: ShellFrameReader;
-      bodyReadMs?: number;
-      markerMs?: number;
     }
-  | { status: "corrupt"; error: Error; bodyReadMs?: number; head?: undefined }
-  | { status: "expired"; head: ShellFrameHead; bodyReadMs?: number }
-  | { status: "timeout"; bodyReadMs?: number; head?: undefined }
-  | { status: "invalidated"; bodyReadMs?: number; markerMs?: number };
+  | { status: "corrupt"; error: Error; head?: undefined }
+  | { status: "expired"; head: ShellFrameHead }
+  | { status: "timeout"; head?: undefined }
+  | { status: "invalidated"; head?: undefined };
+
+/** debugTimings for a read without stats (nothing allocated per read). */
+const NO_DEBUG_TIMINGS: Readonly<
+  Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs">
+> = Object.freeze({});
+
+/** The `[CFCacheStore][shell]` trace's timings, from a read's stats. */
+function debugTimings(
+  stats: ShellReadStats | undefined,
+): Readonly<
+  Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs">
+> {
+  if (!stats) return NO_DEBUG_TIMINGS;
+  const round = (ms: number | undefined) =>
+    ms === undefined ? undefined : Math.round(ms);
+  const bodyReadMs =
+    stats.headMs === undefined && stats.preludeMs === undefined
+      ? undefined
+      : (stats.headMs ?? 0) + (stats.preludeMs ?? 0);
+  return {
+    ...(stats.tier === "kv"
+      ? { readMs: round(stats.matchMs) }
+      : { matchMs: round(stats.matchMs) }),
+    bodyReadMs: round(bodyReadMs),
+    markerMs: round(stats.markerMs),
+  };
+}
 
 /** The public entry shape of a frame head (no prelude, no snapshot). */
 function shellHeadToEntry(head: ShellFrameHead): ShellCacheEntry {
@@ -1962,18 +1988,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * recapture stampede guard.
    */
   async readShellDocument(key: string): Promise<ShellDocumentRead | null> {
+    const stats = this.shellReadStats("l1");
+    const l1StartedAt = stats ? performance.now() : 0;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`);
-      const matchStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+      const matchStartedAt = stats ? performance.now() : 0;
       const {
         response,
         timedOut,
         error: matchError,
       } = await this.matchWithTimeout(cache, request);
-      const matchMs = INTERNAL_RANGO_DEBUG
-        ? Date.now() - matchStartedAt
-        : undefined;
+      if (stats) stats.matchMs = performance.now() - matchStartedAt;
 
       if (!response) {
         if (matchError) {
@@ -1983,19 +2009,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             "[CFCacheStore] getShell L1 match",
           );
         }
-        this.debugShell(key, "l1-miss", {
-          reason: matchError ? "error" : timedOut ? "timeout" : "absent",
-          matchMs,
-        });
-        return this.kvReadShellDocument(key);
+        const reason = matchError ? "error" : timedOut ? "timeout" : "absent";
+        this.debugShell(key, "l1-miss", { reason, ...debugTimings(stats) });
+        return this.kvReadShellDocument(key, stats, l1StartedAt, reason);
       }
       if (response.status !== 200 || !response.body) {
         this.debugShell(key, "l1-miss", {
           reason: "non-200",
           status: response.status,
-          matchMs,
+          ...debugTimings(stats),
         });
-        return this.kvReadShellDocument(key);
+        return this.kvReadShellDocument(key, stats, l1StartedAt, "non-200");
       }
 
       // Unlike other L1 families, shells with KV always check the durable
@@ -2013,53 +2037,63 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           this.kv
             ? this.isGloballyInvalidated(head.t, head.ta)
             : this.isL1Invalidated(head.t, head.ta, response.headers),
+        stats,
       );
       if (opened.status === "corrupt") {
         this.debugShell(key, "l1-miss", {
           reason: "malformed",
-          matchMs,
-          bodyReadMs: opened.bodyReadMs,
+          ...debugTimings(stats),
         });
         return this.healCorruptL1(
           cache,
           request,
           opened.error,
           "getShell",
-          () => this.kvReadShellDocument(key),
+          () => this.kvReadShellDocument(key, stats, l1StartedAt, "malformed"),
         );
       }
       if (opened.status === "timeout" || opened.status === "expired") {
         this.debugShell(key, "l1-miss", {
           reason: opened.status,
-          matchMs,
-          bodyReadMs: opened.bodyReadMs,
+          ...debugTimings(stats),
           expiresAt: opened.head?.e,
         });
-        return this.kvReadShellDocument(key);
+        return this.kvReadShellDocument(key, stats, l1StartedAt, opened.status);
       }
       if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "l1",
-          matchMs,
-          bodyReadMs: opened.bodyReadMs,
-          markerMs: opened.markerMs,
+          ...debugTimings(stats),
         });
         return null;
       }
-      const read = this.shellDocumentRead(key, opened);
-      this.debugShell(key, "l1-hit", {
-        freshness: read.shouldRevalidate ? "stale" : "fresh",
-        matchMs,
-        bodyReadMs: opened.bodyReadMs,
-        markerMs: opened.markerMs,
-        expiresAt: opened.head.e,
-      });
+      const read = this.shellDocumentRead(key, opened, stats);
+      if (INTERNAL_RANGO_DEBUG) {
+        this.debugShell(key, "l1-hit", {
+          freshness: read.shouldRevalidate ? "stale" : "fresh",
+          ...debugTimings(stats),
+          expiresAt: opened.head.e,
+        });
+      }
       return read;
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
       this.debugShell(key, "l1-miss", { reason: "error" });
-      return this.kvReadShellDocument(key);
+      return this.kvReadShellDocument(key, stats, l1StartedAt, "error");
     }
+  }
+
+  /**
+   * Stats for one shell read, allocated only when the request collects
+   * `debugPerformance` metrics or the build has the internal shell trace on,
+   * so a normal HIT takes no timestamps for them.
+   */
+  private shellReadStats(
+    tier: ShellReadStats["tier"],
+  ): ShellReadStats | undefined {
+    return INTERNAL_RANGO_DEBUG || _getRequestContext()?._metricsStore
+      ? { tier }
+      : undefined;
   }
 
   /**
@@ -2073,11 +2107,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     budgetMs: number,
     label: string,
     isInvalidated: (head: ShellFrameHead) => Promise<boolean>,
+    stats: ShellReadStats | undefined,
   ): Promise<OpenedShellFrame> {
     const reader = new ShellFrameReader(body);
-    const startedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
     let marker: Promise<boolean> | undefined;
-    let markerMs: number | undefined;
+    let markerSettledAt = 0;
+    const headStartedAt = stats ? performance.now() : 0;
     const { value, timedOut } = await this.readWithTimeout(
       async (): Promise<OpenedShellFrame> => {
         const head = await reader.readHead();
@@ -2087,10 +2122,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             error: new Error("malformed/partial shell frame head"),
           };
         }
+        const markerStartedAt = stats ? performance.now() : 0;
+        if (stats) {
+          stats.headMs = markerStartedAt - headStartedAt;
+          stats.headBytes = reader.headBytes;
+          stats.tags = head.t?.length ?? 0;
+        }
         if (Date.now() > head.e) return { status: "expired", head };
-        const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
         marker = isInvalidated(head).then((invalidated) => {
-          if (INTERNAL_RANGO_DEBUG) markerMs = Date.now() - markerStartedAt;
+          if (stats) {
+            markerSettledAt = performance.now();
+            stats.markerMs = markerSettledAt - markerStartedAt;
+          }
           return invalidated;
         });
         marker.catch(() => {});
@@ -2101,27 +2144,39 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             error: new Error("shell frame ends inside the prelude"),
           };
         }
+        if (stats) {
+          stats.preludeMs = performance.now() - markerStartedAt;
+          stats.preludeBytes = prelude.length;
+        }
         return { status: "ok", head, prelude, reader };
       },
       budgetMs,
       label,
     );
-    const bodyReadMs = INTERNAL_RANGO_DEBUG
-      ? Date.now() - startedAt
-      : undefined;
     if (timedOut || !value) {
       reader.cancel();
-      return { status: "timeout", bodyReadMs };
+      if (stats) {
+        // The budget ran out: the whole elapsed read, split at the head.
+        const elapsed = performance.now() - headStartedAt;
+        if (stats.headMs === undefined) stats.headMs = elapsed;
+        else stats.preludeMs = elapsed - stats.headMs;
+      }
+      return { status: "timeout" };
     }
     if (value.status !== "ok") {
       reader.cancel();
-      return { ...value, bodyReadMs };
+      return value;
     }
-    if (await marker!) {
+    const preludeReadAt = stats ? performance.now() : 0;
+    const invalidated = await marker!;
+    if (stats) {
+      stats.markerWaitMs = Math.max(0, markerSettledAt - preludeReadAt);
+    }
+    if (invalidated) {
       reader.cancel();
-      return { status: "invalidated", bodyReadMs, markerMs };
+      return { status: "invalidated" };
     }
-    return { ...value, bodyReadMs, markerMs };
+    return value;
   }
 
   /**
@@ -2139,11 +2194,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private shellDocumentRead(
     key: string,
     opened: Extract<OpenedShellFrame, { status: "ok" }>,
+    stats: ShellReadStats | undefined,
     promote?: (snapshotBytes: Uint8Array) => void,
   ): ShellDocumentRead {
     const { head, prelude, reader } = opened;
     type SnapshotOutcome = { records?: ShellSnapshotRecord[]; failed: boolean };
     const outcome = (async (): Promise<SnapshotOutcome> => {
+      const readStartedAt = stats ? performance.now() : 0;
       const { value: rest, timedOut } = await this.readWithTimeout(
         () => reader.readRest(),
         this.kvReadTimeoutMs,
@@ -2154,6 +2211,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         reader.cancel();
         return { failed: true };
       }
+      const parseStartedAt = stats ? performance.now() : 0;
       let records: ShellSnapshotRecord[] | undefined;
       try {
         if (rest.length !== head.sl) {
@@ -2171,6 +2229,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         this.evictShell(key);
         return { failed: true };
       }
+      if (stats) {
+        stats.snapshot = {
+          readMs: parseStartedAt - readStartedAt,
+          parseMs: performance.now() - parseStartedAt,
+          bytes: rest.length,
+        };
+      }
       promote?.(rest);
       return { records, failed: false };
     })().catch((error: unknown): SnapshotOutcome => {
@@ -2183,6 +2248,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       prelude,
       shouldRevalidate: head.s > 0 && Date.now() > head.s,
       snapshot: outcome.then(({ records }) => records),
+      ...(stats && { stats }),
     };
     snapshotReadFailures.set(
       read,
@@ -2366,13 +2432,30 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     });
   }
 
-  /** KV shell fallback: the same prelude-first read, then L1 promotion. */
+  /**
+   * KV shell fallback: the same prelude-first read, then L1 promotion. After
+   * an L1 attempt, `stats` is that read's and gains the L1 attempt's time
+   * (`l1MissMs`) before its per-tier fields restart for KV.
+   */
   private async kvReadShellDocument(
     key: string,
+    stats?: ShellReadStats,
+    l1StartedAt = 0,
+    l1MissReason?: string,
   ): Promise<ShellDocumentRead | null> {
     if (!this.kv) return null;
+    if (stats) {
+      stats.l1MissMs = performance.now() - l1StartedAt;
+      stats.l1MissReason = l1MissReason;
+      stats.tier = "kv";
+      stats.matchMs = stats.headMs = stats.preludeMs = undefined;
+      stats.markerMs = stats.markerWaitMs = undefined;
+      stats.headBytes = stats.preludeBytes = stats.tags = undefined;
+    } else {
+      stats = this.shellReadStats("kv");
+    }
     try {
-      const readStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+      const readStartedAt = stats ? performance.now() : 0;
       // One kvReadTimeoutMs budget covers opening the value and reading its
       // head and prelude; the remainder after the open bounds the frame read.
       const deadline = Date.now() + this.kvReadTimeoutMs;
@@ -2385,13 +2468,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         this.kvReadTimeoutMs,
         "KV read",
       );
-      const readMs = INTERNAL_RANGO_DEBUG
-        ? Date.now() - readStartedAt
-        : undefined;
+      if (stats) stats.matchMs = performance.now() - readStartedAt;
       if (timedOut || raw == null) {
         this.debugShell(key, "kv-miss", {
           reason: timedOut ? "timeout" : "unavailable",
-          readMs,
+          ...debugTimings(stats),
         });
         return null;
       }
@@ -2408,6 +2489,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         this.kvReadTimeoutMs > 0 ? Math.max(1, deadline - Date.now()) : 0,
         "KV read",
         (head) => this.isGloballyInvalidated(head.t, head.ta),
+        stats,
       );
       if (opened.status === "corrupt") {
         reportCacheError(
@@ -2416,13 +2498,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           "[CFCacheStore] getShell: malformed shell frame in KV, evicting",
         );
         this.scheduleKvEvict(kvKey, "getShell");
-        this.debugShell(key, "kv-miss", { reason: "malformed", readMs });
+        this.debugShell(key, "kv-miss", {
+          reason: "malformed",
+          ...debugTimings(stats),
+        });
         return null;
       }
       if (opened.status === "timeout" || opened.status === "expired") {
         this.debugShell(key, "kv-miss", {
           reason: opened.status,
-          readMs,
+          ...debugTimings(stats),
           expiresAt: opened.head?.e,
         });
         return null;
@@ -2430,20 +2515,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "kv",
-          readMs,
-          markerMs: opened.markerMs,
+          ...debugTimings(stats),
         });
         return null;
       }
-      const read = this.shellDocumentRead(key, opened, (snapshotBytes) =>
+      const read = this.shellDocumentRead(key, opened, stats, (snapshotBytes) =>
         this.promoteShellToL1(key, opened.head, opened.prelude, snapshotBytes),
       );
-      this.debugShell(key, "kv-hit", {
-        freshness: read.shouldRevalidate ? "stale" : "fresh",
-        readMs,
-        markerMs: opened.markerMs,
-        expiresAt: opened.head.e,
-      });
+      if (INTERNAL_RANGO_DEBUG) {
+        this.debugShell(key, "kv-hit", {
+          freshness: read.shouldRevalidate ? "stale" : "fresh",
+          ...debugTimings(stats),
+          expiresAt: opened.head.e,
+        });
+      }
       return read;
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");

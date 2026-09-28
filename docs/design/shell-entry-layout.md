@@ -1,8 +1,9 @@
 # Shell entry layout: what a PPR shell HIT reads before its first byte
 
 Status: **in progress** (issue #941). Stage 1 (decode once, native base64,
-chunked prelude enqueue) and stage 2 (prelude-first CF entry, marker read in
-parallel) are implemented. The per-isolate shell memo (decision 1) and
+chunked prelude enqueue), stage 2 (prelude-first CF entry, marker read in
+parallel), and the `debugPerformance` rows for a shell HIT ("Seeing it per
+request") are implemented. The per-isolate shell memo (decision 1) and
 snapshot pruning are specified below and land as their own stages. All four
 decisions are made.
 
@@ -145,6 +146,18 @@ numbers (see the compression table). Stage 2 removes the 3.4 MB read and parse
 from the first-byte path; with a tagged shell the marker read (9 ms in the
 model) now sets the floor, overlapping the match-plus-prelude read instead of
 following it.
+
+### Seeing it per request
+
+Under `debugPerformance` the HIT's store read is broken into rows
+(`ppr:shell-match`, `-head`, `-prelude`, `-marker` under `ppr:shell-read`,
+after a `ppr:shell-l1-miss` row when a KV hit follows a Cache API miss, then
+`ppr:shell-open` and `ppr:shell-commit`), and the work after the commit
+prints as a `shell tail` line with the snapshot's bytes and records per family
+(`skills/observability` "Reading a PPR shell HIT", `docs/telemetry.md`). The
+byte and chunk counts are there because a deployed worker's clock does not
+advance during CPU work: `ppr:shell-open` and the snapshot parse read 0 ms
+there, and the sizes are what move when a stage changes them.
 
 ## What a HIT needs, and when
 

@@ -1432,14 +1432,23 @@ response's header.
 
 **HIT-tail timing mirror.** The HIT commits its 200 + headers at the prelude
 flush, so Server-Timing on the HIT response structurally cannot carry the
-live tail's numbers — all of match/loaders/Flight/resume happens inside the
-response body. In dev, `serveShellHit` records per-stage offsets from the
-commit (`seed`/`match`/`handover`/`first-html`/`complete`, plus
-prelude/tail byte counts — `ShellTailTiming`, shell-serve.ts) and buffers
-the terminal timing per key; when `debugPerformance` metrics are active it
-rides the NEXT ppr GET's Server-Timing as `ppr-tail;dur=<complete
-ms>;desc="…"` — the same consume-on-read doctrine as the `ppr-capture`
-mirror above. Production folds the collection away (`NODE_ENV` literal);
+live tail's numbers — the snapshot read and all of
+seed/match/loaders/Flight/resume happen inside the response body.
+`serveShellHit` records per-stage offsets from the commit
+(`snapshot`/`seed`/`match`/`handover`/`first-html`/`complete`, plus the
+snapshot's bytes, parse CPU, and records per family, and prelude/tail byte
+counts — `ShellTailTiming`, shell-serve.ts) and buffers the terminal timing
+per key; when `debugPerformance` metrics are active it rides the NEXT ppr
+GET's Server-Timing as `ppr-tail;dur=<complete ms>;desc="…"` — the same
+consume-on-read doctrine as the `ppr-capture` mirror above — and the HIT
+that collected metrics also prints it as a `[RSC Perf] … shell tail:` line.
+It is collected in dev, and in production only for a HIT that collected
+metrics, so a production isolate without `debugPerformance` never buffers
+one. Before the commit, the read itself is broken into rows under
+`ppr:shell-read` (match, head, prelude, and the parallel marker read) plus
+`ppr:shell-open` and `ppr:shell-commit`, with byte and chunk counts: on a
+deployed worker the clock only advances on I/O, so the counts are what show
+the cost of the CPU steps (docs/telemetry.md, skills/observability).
 `INTERNAL_RANGO_DEBUG` remains the raw console narration of the same window.
 
 **Cloudflare shell-tier trace.** A build made with `INTERNAL_RANGO_DEBUG=1`

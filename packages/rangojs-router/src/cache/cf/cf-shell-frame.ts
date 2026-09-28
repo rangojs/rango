@@ -175,6 +175,8 @@ export class ShellFrameReader {
   private chunks: Uint8Array[] = [];
   private buffered = 0;
   private done = false;
+  /** Bytes of the prefix and head, once readHead has read them. */
+  headBytes = 0;
 
   constructor(body: ReadableStream<Uint8Array>) {
     this.reader = body.getReader();
@@ -210,6 +212,7 @@ export class ShellFrameReader {
     if (!/^[0-9a-f]{8}$/.test(lengthDigits)) return null;
     const headBytes = await this.take(Number.parseInt(lengthDigits, 16));
     if (!headBytes) return null;
+    this.headBytes = PREFIX_BYTES + headBytes.length;
     let head: unknown;
     try {
       head = JSON.parse(textDecoder.decode(headBytes));

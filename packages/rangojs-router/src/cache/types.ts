@@ -446,6 +446,45 @@ export interface ShellDocumentRead {
    * Never rejects.
    */
   snapshot: Promise<ShellSnapshotRecord[] | undefined>;
+  /**
+   * Where the read's time and bytes went, for the `debugPerformance` metrics
+   * (rsc-rendering.ts) and the store's own debug trace. Present only when one
+   * of them is on for the request.
+   */
+  stats?: ShellReadStats;
+}
+
+/**
+ * @internal Sub-steps of a prelude-first shell read. Times are ms. workerd
+ * advances its clock only on I/O, so a CPU-only field
+ * (`snapshot.parseMs`) reads 0 on a deployed worker: the byte counts are the
+ * cost signal there.
+ */
+export interface ShellReadStats {
+  /** The tier that answered. */
+  tier: "l1" | "kv";
+  /**
+   * A KV read after an L1 attempt: how long the L1 attempt took and why it
+   * missed. The KV fields below then restart from the KV read.
+   */
+  l1MissMs?: number;
+  l1MissReason?: string;
+  /** Cache API match (L1) or KV get (KV) until the body was available. */
+  matchMs?: number;
+  /** Frame head read (I/O) and parse. */
+  headMs?: number;
+  /** Prelude bytes read. */
+  preludeMs?: number;
+  /** Tag-marker read, start to resolve (runs alongside the prelude read). */
+  markerMs?: number;
+  /** How long the read waited for the marker after the prelude was read. */
+  markerWaitMs?: number;
+  headBytes?: number;
+  preludeBytes?: number;
+  /** Number of the shell's tags the marker read covered. */
+  tags?: number;
+  /** Filled after the commit, once the snapshot has been read. */
+  snapshot?: { readMs: number; parseMs: number; bytes: number };
 }
 
 /**

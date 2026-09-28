@@ -719,6 +719,44 @@ function describePprShell(mode: "dev" | "build") {
       });
     }
 
+    // Issue #941: under debugPerformance (?__perf_debug=1, src/router.tsx) the
+    // HIT's store read, integrity check, and prelude flush are separate
+    // Server-Timing rows with byte and chunk counts, and the previous HIT's
+    // tail (snapshot read, seed, resume) rides the next response as ppr-tail.
+    test("a perf-debug large shell HIT reports the read, open, commit, and tail rows with sizes", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-large?__perf_debug=1");
+      await warmToHit(request, url);
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const timing = res.headers()["server-timing"] ?? "";
+      expect(timing).toContain("ppr-shell-read;dur=");
+      expect(timing).toMatch(/ppr-shell-read;dur=[\d.]+;desc="hit l1"/);
+      expect(timing).toMatch(
+        /d1-ppr-shell-prelude;dur=[\d.]+;desc="bytes=\d{6,}"/,
+      );
+      expect(timing).toMatch(
+        /d1-ppr-shell-marker;dur=[\d.]+;desc="tags=\d+ parallel commit-wait=[\d.]+ms"/,
+      );
+      expect(timing).toMatch(
+        /ppr-shell-open;dur=[\d.]+;desc="cpu raw prelude=\d{6,}b"/,
+      );
+      expect(timing).toMatch(
+        /ppr-shell-commit;dur=[\d.]+;desc="cpu chunks=\d{2,} prelude=\d{6,}b"/,
+      );
+      expect(timing).toMatch(
+        /ppr-tail;dur=[\d.]+;desc="complete snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms /,
+      );
+      // Dev Flight carries debug info, so this fixture's dev snapshot is over
+      // the 8 MiB maxSnapshotBytes cap and is stored without one (warned).
+      if (mode === "build") {
+        expect(timing).toMatch(
+          /snapshot-bytes=\d{6,}b snapshot-parse-cpu=\d+ms records=[a-z:\d/]+ /,
+        );
+      }
+    });
+
     // /ppr-blog is the realistic fixture: the SAME components/loaders/cache()
     // wrapping as the classic /blog (sidebar parallel + ring-3 cache() ttl 60
     // whose rendered content includes a per-render timestamp), duplicated under
