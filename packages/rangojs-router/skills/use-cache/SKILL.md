@@ -185,10 +185,34 @@ const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
 ```
 
-The guard does not reach into LOADER bodies consumed inside the cached
-function (`await ctx.use(loader)`): loaders always run fresh, so their reads
-are exempt — but the CONSUMED VALUE is captured into the shared cache entry
-like any other computed data. Same rule across `cache()` and the PPR shell:
+`ctx.get()` of a **non-cacheable variable** (`createVar({ cache: false })`, or
+a value written with `ctx.set(key, value, { cache: false })`) throws the same
+way, whether it goes through `getRequestContext().get()` or a `ctx` passed in.
+The key does not include the value, so the first caller's value would be
+served to later callers. Read it before the call and pass it in:
+
+```typescript
+const Tenant = createVar<string>({ cache: false });
+
+async function getNav(tenant: string) {
+  "use cache";
+  return loadNav(tenant); // tenant is part of the key
+}
+
+// in a handler or loader, outside the cached function
+const nav = await getNav(ctx.get(Tenant)!);
+```
+
+Ordinary (cacheable) variables stay readable. Calling the cached function from
+a loader does not exempt it: the loader re-runs on every request, but the
+cached body does not.
+
+The non-cacheable variable guard does not reach into LOADER bodies consumed
+inside the cached function (`await ctx.use(loader)`): loaders always run
+fresh, so their variable reads are exempt — but the CONSUMED VALUE is captured
+into the shared cache entry like any other computed data. (`cookies()` and
+`headers()` still throw there: that guard follows the cached body's whole
+async chain, loaders included.) Same rule across `cache()` and the PPR shell:
 handler/cached-scope consumption = baked copy, client-side `useLoader` = live
 (the consumption-lane rule, `/rango` → Invariants).
 
@@ -204,9 +228,9 @@ are lost on cache hit (the function body is skipped):
 - `ctx.setTheme()`
 - `ctx.setLocationState()`
 
-`ctx.get()` is **not** exec-guarded inside `"use cache"` -- it is a read, so it is
-safe. (It only throws when reading a non-cacheable variable inside the separate
-route-level `cache()` DSL boundary.)
+`ctx.get()` is a read, not a side effect: it stays allowed for ordinary
+variables and throws only for a non-cacheable one (see "Read Guards" above).
+The same non-cacheable read throws inside a route-level `cache()` boundary.
 
 The error message recommends two alternatives:
 

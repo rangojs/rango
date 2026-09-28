@@ -12,6 +12,11 @@ import type {
 } from "../types";
 import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
+import type { ContextVar } from "../context-var.js";
+import {
+  getCacheExecScope,
+  type CacheExecScope,
+} from "../cache/cache-exec-scope.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -853,6 +858,8 @@ interface LoaderBodyScope {
   handlerInvoked?: boolean;
   /** The body scope this one was entered from (a ctx.use(Loader) chain). */
   parent?: LoaderBodyScope;
+  /** The "use cache" scope the body was entered in (assertNonCacheableReadAllowed). */
+  execScope?: CacheExecScope;
 }
 const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
 const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
@@ -876,6 +883,45 @@ export function isInsideCacheScope(): boolean {
   // write drops-and-throws because it has no baked-copy semantics on a HIT.
   if (isInsideAnyLoaderScope()) return false;
   return true;
+}
+
+/**
+ * Read guard for a non-cacheable variable (`createVar({ cache: false })` or a
+ * `ctx.set(..., { cache: false })` write). Callers check isNonCacheable() first
+ * so ordinary reads never reach the scope lookups.
+ *
+ * Throws inside a "use cache" body: the key does not include the value, so the
+ * first caller's value would be stored and served to later callers (#925). A
+ * loader body entered INSIDE the cached function is exempt, the same baked-copy
+ * trade isInsideCacheScope() makes for cache(). A cached function called FROM a
+ * loader is not: the loader re-runs, the cached body does not. The body scope
+ * records the exec scope it was entered in, so the exemption holds only while
+ * that is still the innermost one.
+ */
+export function assertNonCacheableReadAllowed(
+  keyOrVar: string | ContextVar<unknown>,
+): void {
+  const execScope = getCacheExecScope();
+  if (
+    execScope !== undefined &&
+    loaderBodyScopeALS.getStore()?.execScope !== execScope
+  ) {
+    const name = typeof keyOrVar === "string" ? ` "${keyOrVar}"` : "";
+    throw new Error(
+      `ctx.get() for a non-cacheable variable${name} cannot be called inside a "use cache" function. ` +
+        `The variable was created with { cache: false } or set with { cache: false }, ` +
+        `and the cache key does not include its value, so the first caller's value ` +
+        `would be served to later callers. Read it before calling the cached function ` +
+        `and pass the value in as an argument so it becomes part of the cache key.`,
+    );
+  }
+  if (isInsideCacheScope()) {
+    throw new Error(
+      `ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary. ` +
+        `The variable was created with { cache: false } or set with { cache: false }, ` +
+        `and its value would be stale on cache hit. Move the read outside the cached scope.`,
+    );
+  }
 }
 
 /**
@@ -1067,6 +1113,7 @@ export function runInsideLoaderBodyScope<T>(
       loaderId,
       handlerInvoked,
       parent: loaderBodyScopeALS.getStore(),
+      execScope: getCacheExecScope(),
     },
     fn,
   );

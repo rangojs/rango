@@ -332,8 +332,9 @@ data; use Rango.Vars for app-wide middleware state.
 Mark request-specific data (sessions, users, tokens) non-cacheable: either on
 the token (`createVar<T>({ cache: false })`) or per write
 (`ctx.set("user", user, { cache: false })`). Reading it with `ctx.get()` inside
-a `cache()` boundary then throws instead of baking one user's data into a
-shared entry; loaders can still read it because they always run fresh.
+a `cache()` boundary or a `"use cache"` function then throws instead of baking
+one user's data into a shared entry; loaders can still read it because they
+always run fresh (a `"use cache"` function a loader calls cannot).
 
 ## Build-Time PPR Middleware
 

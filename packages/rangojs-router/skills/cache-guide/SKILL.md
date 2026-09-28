@@ -154,9 +154,10 @@ solved on the partial-render axis.
 
 `createVar({ cache: false })` (or a `ctx.set(var, v, { cache: false })` write)
 taints a value as request-scoped; reading it **directly** with `ctx.get()` inside
-a `cache()` boundary throws — the guard against the catastrophic "serve user A's
-data to user B" bug. The guarantee is precise and intentionally narrow — see
-"Context Variable Cache Safety" below for exactly what it does and does not catch.
+a `cache()` boundary or a `"use cache"` function throws — the guard against the
+catastrophic "serve user A's data to user B" bug. The guarantee is precise and
+intentionally narrow — see "Context Variable Cache Safety" below for exactly
+what it does and does not catch.
 
 ## Stale-while-revalidate
 
@@ -389,8 +390,9 @@ middleware(async (ctx, next) => {
 
 Context variables created with `createVar()` are cacheable by default and can
 be read freely inside cached scopes. A non-cacheable var throws when read
-**directly** with `ctx.get()` inside a `cache()` boundary — where the value would
-otherwise be serialized into the stored segment.
+**directly** with `ctx.get()` inside a `cache()` boundary or a `"use cache"`
+function — where the value would otherwise be serialized into the stored
+segment or entry without being part of its key.
 
 There are two ways to mark a value as non-cacheable:
 
@@ -421,16 +423,20 @@ response side effects, and non-cacheable `ctx.get()` — because each would leak
 per-request data into a shared cache entry. The `cache()` boundary tracks the
 scope via `isInsideCacheScope()`; `"use cache"` uses the exec guard and also
 excludes tainted `ctx`/`env`/`req` args from the cache key. Loaders are exempt in
-both — see "Headers and Cookies" and the precise guarantee below.)
+both — see "Headers and Cookies" and the precise guarantee below. Under `"use
+cache"` the exemption covers a loader body the cached function consumes
+(`await ctx.use(Loader)`), not a cached function a loader calls: the loader
+re-runs on every request, the cached body does not.)
 
 Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
 Enforcement happens at read time (`ctx.get()`), where ALS detects the cache
 scope and rejects non-cacheable reads.
 
-### The guarantee is precise — a direct read inside `cache()`, not propagating
+### The guarantee is precise — a direct read inside a cache scope, not propagating
 
 The guard fires on a **direct** `ctx.get(taintedVar)` **inside a `cache()`
-boundary** (the scope `isInsideCacheScope` detects). The taint lives on the
+boundary** (the scope `isInsideCacheScope` detects) **or a `"use cache"`
+function body**. The taint lives on the
 variable; a value **derived** from it and read **outside** the boundary is not
 tracked:
 
@@ -458,10 +464,11 @@ layout((ctx) => {
 So do **not** read this as "you can't cache user data" — that overstates it and
 breeds the false confidence that makes the derived leak _more_ likely. The guard
 is deliberately non-propagating (propagation would cost a wrapper per derivation
-on the hot path), and it is scoped to the `cache()` segment boundary. `"use
-cache"` functions block the same request-scoped reads (`cookies()` / `headers()`
-throw inside them) and additionally exclude tainted `ctx`/`env`/`req` args from
-the cache key. The pattern that stays safe is also the natural one:
+on the hot path), and it is scoped to the `cache()` segment boundary and the
+`"use cache"` body. `"use cache"` functions block the same request-scoped reads
+(`cookies()` / `headers()` and non-cacheable `ctx.get()` throw inside them) and
+additionally exclude tainted `ctx`/`env`/`req` args from the cache key — pass a
+non-cacheable value in as an argument so it becomes part of the key. The pattern that stays safe is also the natural one:
 **read tainted context at the point of use, in the path that needs it (a loader or
 live segment) — never extract user data into a plain value and cache that.**
 Loaders are exempt because they run outside the cache scope and resolve fresh

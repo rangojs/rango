@@ -369,6 +369,8 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
 
+Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. Loader bodies stay exempt in both scopes, but under `"use cache"` the exemption covers a loader body entered inside the cached function (`await ctx.use(Loader)`), not a cached function a loader calls: the loader re-runs on every request, the cached body does not. Each loader body scope records the exec scope it was entered in (`runInsideLoaderBodyScope`), and the exemption holds only while that exec scope is still the innermost one.
+
 ### Search param filtering (`cache.searchParams`) — shipped
 
 By default every non-reserved query param produces a distinct cache slot. That

@@ -109,6 +109,38 @@ path("/account", AccountPage, { name: "account" }, () => [
 ]),
 ```
 
+### Breaking: a `"use cache"` function that reads a `{ cache: false }` variable throws ([#935](https://github.com/rangojs/rango/pull/935))
+
+`ctx.get()` of a `createVar({ cache: false })` variable, or of a value written
+with `ctx.set(key, value, { cache: false })`, now throws inside a `"use cache"`
+function, as it already did inside a `cache()` boundary. It throws whether the
+read goes through `getRequestContext().get()`, a handler ctx or a response-route
+ctx passed in. In 0.16.0 the read returned the value, the result was stored
+under a key that did not include it, and later callers were served the first
+caller's value until the entry expired. Ordinary variables stay readable. A
+loader body the cached function consumes with `await ctx.use(Loader)` stays
+exempt, as under `cache()`; a `"use cache"` function called from a loader does
+not.
+
+Migration: read the value before calling the cached function and pass it in as
+an argument, so it becomes part of the cache key.
+
+```ts
+const Tenant = createVar<string>({ cache: false });
+
+// before: the first tenant's nav was served to every tenant; now throws
+async function getNav() {
+  "use cache";
+  return loadNav(getRequestContext().get(Tenant));
+}
+// after
+async function getNav(tenant: string) {
+  "use cache";
+  return loadNav(tenant);
+}
+const nav = await getNav(ctx.get(Tenant)!);
+```
+
 ### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
 
 `debugManifest()` was typed only on the internal router interface, so calling
