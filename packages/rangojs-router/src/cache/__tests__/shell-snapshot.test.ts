@@ -4,7 +4,14 @@ import {
   SeededShellStore,
   getRecordingStore,
   buildShellLoaderSeed,
+  countSnapshotFamilies,
+  hasDocRecord,
+  pruneShellSnapshot,
 } from "../shell-snapshot.js";
+import {
+  runInsideLoaderBodyScope,
+  runInsideLoaderScope,
+} from "../../server/context.js";
 
 // buildShellLoaderSeed lazily imports the Flight codec; the real module pulls
 // the virtual @vitejs/plugin-rsc import that unit configs cannot resolve, so
@@ -180,6 +187,35 @@ describe("RecordingShellStore", () => {
     const inner = new MemorySegmentCacheStore({ defaults: { ttl: 42 } });
     const rec = new RecordingShellStore(inner);
     expect(rec.defaults).toEqual({ ttl: 42 });
+  });
+
+  it("attributes item and response accesses made inside a loader scope (hits, misses, writes)", async () => {
+    const inner = new MemorySegmentCacheStore();
+    await inner.setItem("item-hit", "V", { ttl: 60 });
+    await inner.putResponse("resp-hit", new Response("r"), 60);
+    const rec = new RecordingShellStore(inner);
+
+    await runInsideLoaderScope(async () => {
+      await rec.getItem("item-hit");
+      await rec.getItem("item-miss");
+      await rec.setItem("item-write", "W", { ttl: 60 });
+      await rec.getResponse("resp-hit");
+      await rec.putResponse("resp-write", new Response("w"), 60);
+    });
+    // A loader body invoked outside a DSL loader scope counts too.
+    await runInsideLoaderBodyScope(() => rec.getItem("item-body"));
+    // Handler code does not.
+    await rec.getItem("item-handler");
+    await rec.setItem("item-handler-write", "H", { ttl: 60 });
+
+    expect([...rec.loaderKeys].map((k) => k.replace("\u0000", " "))).toEqual([
+      "item item-hit",
+      "item item-miss",
+      "item item-write",
+      "response resp-hit",
+      "response resp-write",
+      "item item-body",
+    ]);
   });
 
   it("getRecordingStore duck-types a RecordingShellStore, ignores others", () => {
@@ -428,5 +464,73 @@ describe("snapshot round-trip", () => {
       got!.entry.snapshot!,
     );
     expect((await seeded.getItem("it"))!.value).toBe("V");
+  });
+});
+
+describe("snapshot pruning helpers", () => {
+  const DOC: ShellSnapshotRecord = {
+    family: "segment",
+    key: "doc:host/p",
+    value: {
+      segments: [{ id: "R0" }],
+      handles: "",
+      expiresAt: 0,
+    } as unknown as CachedEntryData,
+  };
+  const HANDLER_ITEM: ShellSnapshotRecord = {
+    family: "item",
+    key: "use-cache:handler",
+    value: { value: "h" },
+  };
+  const LOADER_ITEM: ShellSnapshotRecord = {
+    family: "item",
+    key: "use-cache:loader",
+    value: { value: "l" },
+  };
+  const RESPONSE: ShellSnapshotRecord = {
+    family: "response",
+    key: "resp",
+    value: { status: 200, headers: [], body: "" },
+  };
+  const LOADER: ShellSnapshotRecord = {
+    family: "loader",
+    key: "M0L0D0.bake",
+    value: { value: "{}", holes: 0 },
+  };
+  const SNAPSHOT = [DOC, HANDLER_ITEM, LOADER_ITEM, RESPONSE, LOADER];
+  const LOADER_KEYS = new Set(["item\u0000use-cache:loader"]);
+
+  it('"loaders" keeps segments, loader containers and loader-touched records', () => {
+    const { kept, pruned } = pruneShellSnapshot(
+      SNAPSHOT,
+      "loaders",
+      LOADER_KEYS,
+    );
+    expect(kept).toEqual([DOC, LOADER_ITEM, LOADER]);
+    expect(pruned).toEqual([HANDLER_ITEM, RESPONSE]);
+    expect(countSnapshotFamilies(pruned)).toBe("item:1/response:1");
+  });
+
+  it('"segments" keeps only the segment family', () => {
+    const { kept, pruned } = pruneShellSnapshot(
+      SNAPSHOT,
+      "segments",
+      LOADER_KEYS,
+    );
+    expect(kept).toEqual([DOC]);
+    expect(countSnapshotFamilies(pruned)).toBe("item:2/response:1/loader:1");
+  });
+
+  it("hasDocRecord requires the named segment record with at least one segment", () => {
+    expect(hasDocRecord(SNAPSHOT, "doc:host/p")).toBe(true);
+    expect(hasDocRecord(SNAPSHOT, undefined)).toBe(false);
+    expect(hasDocRecord(SNAPSHOT, "doc:host/other")).toBe(false);
+    expect(hasDocRecord(undefined, "doc:host/p")).toBe(false);
+    expect(
+      hasDocRecord(
+        [{ ...DOC, value: { ...(DOC.value as object), segments: [] } as any }],
+        "doc:host/p",
+      ),
+    ).toBe(false);
   });
 });

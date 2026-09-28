@@ -24,6 +24,8 @@ import {
   makePhysicsPromise,
   makeShellStaleReplayData,
   getDriftStamp,
+  getSharedStamp,
+  ShellSharedStampLoader,
   getCapStamp,
   getShellLargeCatalog,
   outlinedRenderCounter,
@@ -47,6 +49,7 @@ import { ShellBadge } from "../components/ShellBadge.js";
 import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
+import { ShellSharedStamp } from "../components/ShellSharedStamp.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
@@ -258,6 +261,22 @@ function ShellDriftLayout(ctx: HandlerContext) {
 
 function ShellDriftPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Shared-key layout (issue #941): reads the same cached item as the page's live
+// hole. The shell keeps the capture-time stamp; the hole reads the store.
+async function ShellSharedLayout(ctx: HandlerContext) {
+  const stamp = await getSharedStamp(ctx.searchParams.get("probe") ?? "");
+  return (
+    <main data-testid="shell-shared-page">
+      <p data-testid="shell-shared-shell">{stamp}</p>
+      <Outlet />
+    </main>
+  );
+}
+
+function ShellSharedPage() {
+  return <ShellSharedStamp loader={ShellSharedStampLoader} />;
 }
 
 // Large-shell fixture page (issue #941): a cached catalog rendered into a
@@ -669,6 +688,22 @@ export const shellCachePatterns = urls(
           loader(ShellPriceLoader),
           loading(
             <div data-testid="drift-price-fallback">Loading price...</div>,
+          ),
+        ],
+      ),
+    ]),
+    // Shared-key route (issue #941): the shell layout and the live hole read
+    // the same "drift" item. Snapshot pruning drops the shell's item record,
+    // so after the item expires the hole shows a newer stamp than the shell.
+    layout(ShellSharedLayout, () => [
+      path(
+        "/shell-cache/shared-key",
+        ShellSharedPage,
+        { name: "shellCacheSharedKey", ppr: { ttl: 300, swr: 120 } },
+        () => [
+          loader(ShellSharedStampLoader),
+          loading(
+            <p data-testid="shell-shared-hole-fallback">Loading stamp...</p>,
           ),
         ],
       ),

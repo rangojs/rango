@@ -72,7 +72,7 @@ prints as one `shell tail` line when it finishes, and rides the NEXT request's
 `Server-Timing` as `ppr-tail`. The store-read rows under `ppr:shell-read` come
 from `CFCacheStore`'s prelude-first read; other stores show `ppr:shell-read`,
 `ppr:shell-open`, and `ppr:shell-commit` only. From `vite preview` of
-`tests/cloudflare-basic` `/ppr-large/holes` (614 KB prelude, 2.6 MB capture
+`tests/cloudflare-basic` `/ppr-large/holes` (614 KB prelude, 1.0 MB capture
 snapshot), with the timeline column dropped:
 
 ```
@@ -82,7 +82,7 @@ snapshot), with the timeline column dropped:
 1.00ms  3.00ms    ppr:shell-read (hit l1)
 1.00ms  1.00ms      ppr:shell-match (l1)
 1.00ms  3.00ms    render:total:pprLargeHoles
-2.00ms  0.00ms      ppr:shell-head (bytes=27910)
+2.00ms  0.00ms      ppr:shell-head (bytes=27943)
 2.00ms  2.00ms      ppr:shell-prelude (bytes=628949)
 2.00ms  0.00ms      ppr:shell-marker (tags=0 parallel commit-wait=0.00ms)
 4.00ms  0.00ms    ppr:shell-open (cpu raw prelude=628949b)
@@ -93,10 +93,10 @@ snapshot), with the timeline column dropped:
 and, when the tail finishes, one console line (wrapped here):
 
 ```
-[RSC Perf] GET /ppr-large/holes shell tail: complete snapshot=12ms
-snapshot-read=7ms snapshot-bytes=2644202b snapshot-parse-cpu=5ms
-records=item:5/segment:1 seed=12ms seed-cpu=0ms match=13ms handover=14ms
-first-html=14ms complete=64ms prelude=628949b tail=1033762b
+[RSC Perf] GET /ppr-large/holes shell tail: complete snapshot=4ms
+snapshot-read=2ms snapshot-bytes=1019145b snapshot-parse-cpu=2ms
+records=segment:1 pruned=item:5 seed=4ms seed-cpu=0ms match=4ms handover=4ms
+first-html=5ms complete=55ms prelude=628949b tail=1033762b
 ```
 
 - `ppr:shell-match` then `head` then `prelude`: the store read. Only the head
@@ -106,6 +106,11 @@ first-html=14ms complete=64ms prelude=628949b tail=1033762b
 - `ppr:shell-marker` is the tag-marker check, on every `CFCacheStore` read; it
   runs alongside `ppr:shell-prelude`, and `commit-wait` is how much it held the
   commit back (with `tags=0` it resolves at once).
+- `records=` counts the snapshot records the tail was seeded with, by
+  family; `pruned=` counts the ones the capture dropped because no reader of
+  the entry consumes them. Here every HIT tail replays the handler layer from
+  the one segment record, so the five `"use cache"` item records that produced
+  it were not stored.
 - `snapshot=`, `seed=`, `match=`, `first-html=` are offsets from the commit,
   not durations; `snapshot-read=`, `snapshot-parse-cpu=` and `seed-cpu=` are
   durations.

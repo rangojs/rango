@@ -64,7 +64,11 @@ import {
 import {
   RecordingShellStore,
   SnapshotOnlySegmentStore,
+  countSnapshotFamilies,
   getRecordingStore,
+  hasDocRecord,
+  pruneShellSnapshot,
+  type ShellSnapshotReaders,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
@@ -1385,6 +1389,39 @@ function handlerLayerIsLive(
 }
 
 /**
+ * Who reads the snapshot this capture stores beyond its segment family
+ * (docs/design/shell-entry-layout.md §2), or undefined when a HIT can re-run
+ * handlers, which read any item or response record:
+ * - "segments" for a navigation-only entry (R1): only partial replay reads
+ *   it, and replay seeds segments alone.
+ * - "loaders" for a document entry whose every HIT tail replays the handler
+ *   layer from the implicit doc record: the record is in the snapshot and the
+ *   fast path arms (R2.1), the store has no keyGenerator that could send a
+ *   visitor's tail to another doc key (R2.2), and the doc scope was the
+ *   route's own (R2.5; a route-derived cache() scope is what its HIT tail
+ *   resolves instead). A build-time capture (producer B) keeps everything:
+ *   its doc key carries the synthetic build host, which no request computes,
+ *   so its HIT tails re-run handlers.
+ */
+function snapshotReaders(
+  capture: ShellCaptureDescriptor,
+  reqCtx: RequestContext<any>,
+  recording: RecordingShellStore<any>,
+  snapshot: readonly ShellSnapshotRecord[],
+  fastPath: boolean,
+): ShellSnapshotReaders | undefined {
+  if (capture.navigationOnly) return "segments";
+  const marker = reqCtx._shellImplicitCache;
+  return fastPath &&
+    marker?.routeDocScope &&
+    hasDocRecord(snapshot, marker.docKey) &&
+    !recording.keyGenerator &&
+    !reqCtx.build
+    ? "loaders"
+    : undefined;
+}
+
+/**
  * One capture attempt in a DERIVED request context.
  *
  * The derived context is `Object.create(reqCtx)` so it inherits the foreground's
@@ -2062,6 +2099,35 @@ async function captureAndStoreShell(
     const renderErrors = reqCtx._renderErrors;
     if (renderErrors && renderErrors.length > 0) throw renderErrors[0];
 
+    // Record only what a HIT reads (issue #941): drop the item and response
+    // records no reader of this entry consumes. Before the size guard, so the
+    // cap measures what is stored.
+    const handlerLiveHoles = handlerLayerIsLive(
+      reqCtx._shellCaptureHandleLiveness,
+    );
+    const transitionWhen = reqCtx._transitionWhen?.length ? true : undefined;
+    let prunedRecords: string | undefined;
+    if (recording && snapshot) {
+      const readers = snapshotReaders(
+        capture,
+        reqCtx,
+        recording,
+        snapshot,
+        !handlerLiveHoles && !transitionWhen,
+      );
+      if (readers) {
+        const { kept, pruned } = pruneShellSnapshot(
+          snapshot,
+          readers,
+          recording.loaderKeys,
+        );
+        if (pruned.length > 0) {
+          prunedRecords = countSnapshotFamilies(pruned);
+          snapshot = kept.length > 0 ? kept : undefined;
+        }
+      }
+    }
+
     // Snapshot size guard (issue #651): the snapshot duplicates every pinned
     // cache value inside the shell entry, so a page over a large cache()
     // segment can push the stored envelope toward store value limits (KV caps
@@ -2134,6 +2200,7 @@ async function captureAndStoreShell(
           // ShellCacheEntry.initialTheme.
           initialTheme: reqCtx.theme,
           snapshot,
+          prunedRecords: snapshot ? prunedRecords : undefined,
           // The canonical doc segment record's key, published by the doc
           // scope's cacheRoute during this capture's match (undefined when no
           // doc record was recorded — the entry then never claims navigation
@@ -2145,10 +2212,8 @@ async function captureAndStoreShell(
           // unknowable), or a handler-invoked loader execution — any of them
           // refuses the FAST PATH, not the capture. See
           // _shellCaptureHandleLiveness.
-          handlerLiveHoles: handlerLayerIsLive(
-            reqCtx._shellCaptureHandleLiveness,
-          ),
-          transitionWhen: reqCtx._transitionWhen?.length ? true : undefined,
+          handlerLiveHoles,
+          transitionWhen,
           createdAt: captureStartedAt,
         };
         const storeWrite = await store.putShell(

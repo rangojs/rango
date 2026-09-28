@@ -75,7 +75,8 @@ semantics.
 
 Only the snapshot's segment family is visible during navigation replay. Item,
 response, and loader-family pins exist to keep a document HIT byte-identical to
-its frozen HTML and would incorrectly freeze loader reads on a navigation. The
+its frozen HTML and would incorrectly freeze loader reads on a navigation, so a
+navigation-only entry does not store them at all (snapshot pruning, below). The
 implicit scope reads the canonical `doc:` identity even though the transport is
 partial, avoiding one cached shell per source-segment combination. Intercepts,
 handler-live holes, nonce-bearing requests, and snapshots without a segment
@@ -415,9 +416,12 @@ components, same sidebar parallel, same ring-3 `cache()` wrapping, plus the
 The fix is the **capture data snapshot** — Next.js's resume-data-cache, adapted
 to Rango's rings. The core invariant, which you should be able to recite:
 
-> The snapshot is exactly the set of cache-store reads the CAPTURE render
-> performed; replaying them on a HIT reproduces the shell content
-> byte-identically; everything not recorded stays live.
+> The snapshot is the set of cache-store reads the CAPTURE render performed
+> that a reader of the entry can consume; replaying them on a HIT reproduces
+> the shell content byte-identically; everything not recorded stays live.
+
+Until issue #941 the first clause read "exactly the set of reads the capture
+performed". Pruning (item 5 below) drops the records no reader consumes.
 
 This self-aligns with the hole doctrine. LIVE-lane loaders (every loader
 without `ssr: false`, postponing at `loading()` or an inline `<Suspense>`)
@@ -505,6 +509,49 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    every other read falls through to the real store (the holes stay live); all
    writes pass through (a live hole's loader may legitimately write); the shell
    family always passes through.
+5. **Pruning (issue #941).** Recording keeps every read, but not every reader
+   of the entry consumes every record. A document HIT that takes the fast path
+   replays the whole handler layer from the implicit `doc:` record, so the
+   `"use cache"` items the handlers read to produce that record are never read
+   again: on `tests/cloudflare-basic` `/ppr-large` they were 1.6 MB of a
+   2.6 MB snapshot. `captureAndStoreShell` drops them before the size cap, so
+   the cap measures what is stored (`pruneShellSnapshot`,
+   `src/cache/shell-snapshot.ts`):
+   - a navigation-only entry keeps its segment records only: partial replay
+     seeds that family alone;
+   - a document entry drops the item and response records no loader touched
+     during the capture, when every HIT tail replays the handler layer from
+     the doc record: the record is in the snapshot and the fast path arms (no
+     handler-live holes, no `transition({ when })`), the store has no
+     `keyGenerator` that could send a visitor's tail to another doc key, the
+     doc scope was the route's own (`_shellImplicitCache.routeDocScope`, set by
+     `resolveShellImplicitCacheScope`; a route with its own `cache()` scope
+     has its HIT tail resolve that scope instead, which re-runs handlers on a
+     miss, a bypass or a request-dependent `key()`), and the capture ran at
+     runtime (a build-time capture records its doc key under the synthetic
+     build host, which no request computes);
+   - anything else keeps every record.
+
+   Segment and loader records are always kept. A loader "touched" a record
+   when `RecordingShellStore` saw a read (hit or miss) or a write of its key
+   inside `isInsideAnyLoaderScope()`: bake-lane loaders re-run on every HIT and
+   read their pins, and a loader that joined a handler's in-flight
+   `"use cache"` call still read the store first (`cache-runtime.ts`), so the
+   miss marks it. The entry carries the pruned counts (`prunedRecords`, e.g.
+   `item:5`), and the HIT tail timing prints them as `pruned=`.
+
+   The doc record stays a copy inside the entry, not a reference: a separately
+   stored record could be evicted on its own (Cache API LRU), and the HIT that
+   then re-ran handlers would need every record pruning dropped.
+
+   If the doc record fails to decode on a HIT (`CacheScope` reports
+   `cache-corrupt` and evicts the key it read), the tail cannot replay the
+   handler layer and re-runs the handlers against live values for the items
+   the capture pruned. That tail can disagree with the prelude; React repairs
+   the mismatch client-side. The fast-path marker's `onCorrupt` schedules a
+   recapture, so later requests are served from a sound entry. Before pruning
+   the same failure re-ran the handlers against pinned items, and nothing
+   recaptured: every HIT repeated it until the entry expired.
 
 Both tail shapes — seeded and fragment-only — also wire a fresh render barrier
 onto their derived context, closure-bound to that context and the request's
@@ -523,8 +570,18 @@ same tag on the shell.
 
 Two edges worth stating out loud:
 
-- A key read BOTH above and below a `loading()` boundary is seeded everywhere, so
-  the hole shows capture-time data for that one key. Consistent by design.
+- A key read by shell content AND by a live hole (a live-lane loader under
+  `loading()` or an inline `<Suspense>`): the shell keeps the capture-time
+  value, which lives inside the doc record, and the hole reads the store on
+  every HIT. Once the value changes, the hole shows live data while the shell
+  still shows capture data. Holes are the live lane (decided in issue #941;
+  before pruning the key was seeded everywhere and the hole showed the capture
+  value too). This holds for pruned entries. An entry that keeps its item
+  records (the route has its own `cache()` scope, the store has a
+  `keyGenerator`, the fast path is declined, or a bake-lane loader read the
+  same key) still pins the value for the hole. The hole's live read happens
+  after the commit, never before the first byte: 7-19 ms in the #941 edge
+  model for a 1-594 KB item, against a seed hit's 0.002 ms.
 - The snapshot pins CACHED reads. UNCACHED nondeterminism in shell content — a raw
   `Date.now()`/`Math.random()`/uncached `fetch` rendered directly in a handler
   outside any cache ring — still drifts and must live under a hole. Same residual
@@ -542,6 +599,15 @@ live hole still updates; the `/ppr-blog` twin (realistic sidebar + ring-3 shape)
 hydrating cleanly on the real KV-backed `CFCacheStore`; and the mini
 shell-manifest e2e, which pins the no-clobber contract (a reload replays the
 FOREGROUND's shell generation — handler seq stable — while prices stay live).
+Pruning is pinned through the real serve pipeline and real Flight
+(`src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx`: a pruned HIT is
+byte-identical to the unpruned one and reads no item; each condition keeps
+every record when it fails; partial replay of a pruned entry is byte-identical;
+the shared-key hole reads live; a corrupt doc record recaptures), per condition
+in `shell-capture.test.ts`, and by dev+prod e2e (`/ppr-large`,
+`/ppr-large/holes`, `/shell-cache/large`: `records=segment:1 pruned=item:N` and
+a clean hydration; `/ppr-shared-key`, `/shell-cache/shared-key`: the shell keeps
+the capture stamp while the hole moves on, zero hydration errors).
 
 ## The hole doctrine (encode verbatim)
 

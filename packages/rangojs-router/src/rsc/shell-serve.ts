@@ -289,6 +289,8 @@ export interface ShellTailTiming {
   snapshotParseMs?: number;
   /** Snapshot records by family, e.g. `segment:1/item:5` (no commas: it rides a Server-Timing desc). */
   snapshotRecords?: string;
+  /** Records the capture pruned from the snapshot, same format (ShellCacheEntry.prunedRecords). */
+  snapshotPruned?: string;
   /** Loader-family seed decode (only when the entry carried a snapshot). */
   seedMs?: number;
   /** The seed decode's own duration: Flight deserialization, CPU only. */
@@ -309,7 +311,7 @@ export interface ShellTailTiming {
 
 /**
  * Compact single-line form for the console log and the Server-Timing mirror's
- * `desc`: alphanumerics and `=`, `-`, `:`, `/` only (records=item:5/segment:1),
+ * `desc`: alphanumerics and `=`, `-`, `:`, `/` only (records=segment:1 pruned=item:5),
  * so no quoted-string escaping is needed. Offsets are from the commit; the
  * `-cpu` fields are CPU-only durations.
  */
@@ -329,6 +331,9 @@ export function describeShellTailTiming(timing: ShellTailTiming): string {
   }
   if (timing.snapshotRecords !== undefined) {
     parts.push(`records=${timing.snapshotRecords}`);
+  }
+  if (timing.snapshotPruned !== undefined) {
+    parts.push(`pruned=${timing.snapshotPruned}`);
   }
   if (timing.seedMs !== undefined) parts.push(`seed=${timing.seedMs}ms`);
   if (timing.seedCpuMs !== undefined) {

@@ -323,6 +323,16 @@ export interface RequestContext<
      */
     docKey?: string;
     /**
+     * @internal Set by resolveShellImplicitCacheScope when it minted the doc
+     * scope for a route that derived no cache() scope. Only such a route's
+     * document HIT tail looks the doc record up. Under a route-derived scope
+     * the capture still records one (recordShellCaptureDocRecord) and sets
+     * `docKey`, but the HIT tail resolves the route's own scope and re-runs
+     * the handlers it does not replay. captureAndStoreShell drops handler-only
+     * item and response records only when this is set.
+     */
+    routeDocScope?: true;
+    /**
      * @internal Set ONLY by matchPartialWithPprReplay on the navigation-replay
      * serve path. Its presence arms the explicit-scope composition in
      * withCacheLookup: a route-derived cache() scope stays authoritative, and

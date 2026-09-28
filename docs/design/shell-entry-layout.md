@@ -3,8 +3,8 @@
 Status: **in progress** (issue #941). Stage 1 (decode once, native base64,
 chunked prelude enqueue), stage 2 (prelude-first CF entry, marker read in
 parallel), and the `debugPerformance` rows for a shell HIT ("Seeing it per
-request") are implemented. The per-isolate shell memo (decision 1) and
-snapshot pruning are specified below and land as their own stages. All four
+request") are implemented, and so is snapshot pruning (§2). The per-isolate
+shell memo (decision 1) is specified below and lands as its own stage. All four
 decisions are made.
 
 Read `shell-fast-path.md` and `packages/rangojs-router/docs/design/ppr-shell-resume.md`
@@ -186,7 +186,7 @@ The CF entry becomes one body laid out in the order the HIT consumes it
 ```
 "RSH1"                 4-byte magic (format version)
 8 hex digits           head length
-head JSON (UTF-8)      rv, bv, c, s, e, t, ta, i, dk, lh, tw, no, po, pl, sl
+head JSON (UTF-8)      rv, bv, c, s, e, t, ta, i, dk, pr, lh, tw, no, po, pl, sl
 prelude bytes          pl raw bytes, no base64
 snapshot JSON          the rest of the body: exactly sl bytes (0 when there is none)
 ```
@@ -306,12 +306,16 @@ migration is needed.
 
 ## 2. Record only what a HIT reads
 
-The snapshot is "exactly the set of cache-store reads the capture render
-performed". On a document HIT that takes the fast path (the tail HITs the
-implicit `doc:` record and replays the handler layer), the handlers never run,
-so the item and response records that only handler/render code read are never
-consulted. On `/ppr-large` that is 1,587 KB of the 2,582 KB snapshot. The job
-is to drop exactly those, and nothing a HIT or a navigation can still read.
+**Implemented** (`pruneShellSnapshot`, `src/cache/shell-snapshot.ts`; the
+decision in `snapshotReaders`, `src/rsc/shell-capture.ts`).
+
+The snapshot used to be "exactly the set of cache-store reads the capture
+render performed". On a document HIT that takes the fast path (the tail HITs
+the implicit `doc:` record and replays the handler layer), the handlers never
+run, so the item and response records that only handler/render code read are
+never consulted. On `/ppr-large` that was 1,587 KB of the 2,582 KB snapshot.
+The job is to drop exactly those, and nothing a HIT or a navigation can still
+read.
 
 ### Who reads which family
 
@@ -335,48 +339,127 @@ reads the segment family only. Keep segment records, drop the rest.
 **R2, document entries.** Drop an item or response record when all of these
 hold:
 
-1. the capture recorded the implicit doc record (`docKey` is set), and the
-   entry is fast-path eligible (`!handlerLiveHoles && !transitionWhen`), so
-   every HIT's tail replays the handler layer from that record;
-2. the store has no `keyGenerator`, so the doc key a HIT computes
+1. **R2.1** the capture recorded the implicit doc record (`docKey` is set AND
+   the snapshot carries that record with at least one segment), and the entry
+   is fast-path eligible (`!handlerLiveHoles && !transitionWhen`), so every
+   HIT's tail replays the handler layer from that record;
+2. **R2.2** the store has no `keyGenerator`, so the doc key a HIT computes
    (`doc:` + host + path + route params + the same sorted, filtered search the
    shell key uses) is the key the capture recorded;
-3. the capture masked no live-lane loader (`resolveLoaderData` hands out no
-   `createMaskedLoaderPromise`), so no loader that runs fresh on a HIT can read
-   a pinned key; and
-4. no read or write of that record's key happened inside a loader scope during
-   the capture (bake-lane loaders re-run on every HIT and must keep their pins).
+3. **R2.3, dropped** (decision 3): the capture masked no live-lane loader;
+4. **R2.4** no read or write of that record's key happened inside a loader
+   scope during the capture (bake-lane loaders re-run on every HIT and must
+   keep their pins); and
+5. **R2.5** the implicit doc scope was the route's scope at capture
+   (`_shellImplicitCache.routeDocScope`, set where
+   `resolveShellImplicitCacheScope` mints it for a route that derived no
+   scope).
+
+A build-time capture (producer B) keeps every record: it runs against
+`http://build.invalid`, so its `docKey` names a host no request computes, and
+its HIT tails miss the record and re-run the handlers.
 
 Segment and loader records are always kept.
 
 Why each condition:
 
-- (1) With the fast path declined the tail re-runs handlers, and they read
-  items; so do tails of entries that never recorded a doc record.
-- (2) A store `keyGenerator` can fold request data into the doc key
+- (R2.1) With the fast path declined the tail re-runs handlers, and they read
+  items; so do tails of entries that never recorded a doc record. `docKey`
+  alone is not enough: the doc scope's `cacheRoute` sets it before its
+  deferred write, which can still decline to store or miss the write-settle
+  deadline.
+- (R2.2) A store `keyGenerator` can fold request data into the doc key
   (`x-user-segment`), so a visitor's tail can miss the recorded doc record and
   re-run handlers.
-- (3) A live loader under a hole reads the store on every HIT. Today a key it
-  shares with the shell is pinned for it too ("a key read both above and below
-  a `loading()` boundary is seeded everywhere", `ppr-shell-resume.md`).
-  Dropping the record would let that hole show live data for the key while
-  the shell shows capture data. That is a semantic change, so it waits for a
-  decision.
-- (4) The recording store sees every `"use cache"` call: each call does a
+- (R2.3, dropped) A live loader under a hole reads the store on every HIT.
+  Before pruning, a key it shared with the shell was pinned for it too ("seeded
+  everywhere"). With the record dropped, that hole shows live data for the key
+  while the shell shows capture data. The maintainer chose that semantic: holes
+  are the live lane (decision 3). The live read costs one store read after the
+  commit: 6.95 ms for a 1 KB item, 9.13 ms for 594 KB, 19.33 ms for 594 KB
+  tagged in the #941 edge model, against 0.001-0.002 ms for a seed hit. It is
+  never on the first-byte path.
+- (R2.4) The recording store sees every `"use cache"` call: each call does a
   `store.getItem` before any in-flight join (`cache-runtime.ts`), so marking
-  the key as loader-read on every access (hits and misses, in `isInsideAnyLoaderScope()`)
-  is complete, including a loader that joins a handler's in-flight leader.
+  the key as loader-read on every access (hits and misses, in
+  `isInsideAnyLoaderScope()`) is complete, including a loader that joins a
+  handler's in-flight leader. Loader-cache reads (`loader-cache.ts`) run inside
+  the same scope.
+- (R2.5) With a route-derived `cache()` scope the capture still records the doc
+  record and sets `docKey` (`recordShellCaptureDocRecord`), but the document
+  HIT tail never consults it: `resolveShellImplicitCacheScope` returns the
+  route's scope, and the doc-record fallback in `withCacheLookup` is gated on
+  `onExplicitHit`, which only partial replay sets. The handlers re-run on an
+  explicit miss, a `condition()` bypass or a request-dependent `key()`, and
+  read items. The mark lives where the doc scope is minted for the route, not
+  where `recordShellCaptureDocRecord` composes it.
+
+**Residual B (accepted).** If the doc record fails to decode on a HIT
+(`CacheScope` reports `cache-corrupt` and evicts the key it read), the tail
+re-runs the handlers against live values for the items the capture pruned.
+That tail can disagree with the prelude; React repairs the mismatch
+client-side. The HIT's fast-path marker sets `onCorrupt`, which schedules a
+recapture, so the next requests are served from a sound entry. Before this
+change nothing evicted or recaptured a document shell in that state: every HIT
+re-ran the handlers until the entry expired.
+
+The entry records what was dropped (`ShellCacheEntry.prunedRecords`, the CF
+frame head's `pr`, the Vercel envelope's `pr`), and the HIT tail timing prints
+it next to the kept records: `records=segment:1 pruned=item:5`.
+
+### Measured
+
+`tests/cloudflare-basic`, `vite preview` (workerd, KV-backed `CFCacheStore`),
+read from the `ppr-tail` Server-Timing row. "Before" is the same build with the
+prune step disabled.
+
+| entry                           | snapshot before | snapshot after | stored frame before | stored frame after |
+| ------------------------------- | --------------: | -------------: | ------------------: | -----------------: |
+| `/ppr-large` (production)       |     2,643,864 B |    1,018,799 B |         3,272,863 B |        1,647,811 B |
+| `/ppr-large/holes` (production) |     2,644,222 B |    1,019,145 B |         3,301,113 B |        1,676,049 B |
+| `/ppr-large` (dev)              |   16,960,162 B¹ |    1,374,662 B |                   - |                  - |
+
+¹ Over the 8 MiB `maxSnapshotBytes` cap, so the dev entry was stored without a
+snapshot and every dev HIT re-ran the handlers (tail `first-html` 229 ms against
+3 ms after).
+
+The stored frame is the 12-byte prefix + head + prelude + snapshot. The tail's
+`tail=` bytes are equal before and after (1,031,849 B for `/ppr-large`), and
+the tail reads 0 item records. Locally the snapshot read went from 4 to 2 ms and
+its parse from 3 to 2 ms; on the edge the saving is the 1.6 MB the tail no
+longer reads and parses per HIT.
 
 ### Proof by tests, not reasoning alone
 
-- a covered capture's stored snapshot has no handler-only item records, and
-  its HIT tail's Flight payload and resumed HTML are byte-identical to the
-  same HIT served from the unpruned snapshot;
-- every condition above has a test that keeps the records when it fails;
-- partial replay of a pruned entry replays the same segments;
-- e2e dev + production: `/ppr-large` HIT hydrates with zero errors and its
-  stored entry shrinks; the existing drift, bake-lane, and intercept suites
-  stay green.
+- `src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx` drives a MISS, the
+  real capture, and a document HIT through `handleRscRendering` with real
+  Flight. A covered capture stores only its doc record; its HIT reads no item
+  and its body (prelude + tail Flight payload) is byte-identical to the HIT
+  served from the unpruned snapshot. The keep cases (R2.5 with an explicit
+  miss, a `condition()` bypass and a custom `key()`; R2.2; R2.1 with a
+  handler-invoked loader) re-run handlers that read the capture values from the
+  seed. R2.4 keeps a bake-lane loader's item. The shared-key case shows the
+  shell's capture value and the hole's live one. Partial replay of a pruned
+  entry is byte-identical to the unpruned one. A corrupt doc record recaptures.
+- `src/rsc/__tests__/shell-capture.test.ts` ("snapshot pruning") flips one
+  condition per test, plus R1 and the size cap measuring the pruned snapshot.
+- Removing any one condition from `snapshotReaders` turns its keep tests red;
+  removing the prune step turns the pruning, shared-key, partial-replay and
+  residual-B tests red.
+- e2e, dev + production: `/ppr-large`, `/ppr-large/holes` and
+  `/shell-cache/large` report `records=segment:1 pruned=item:N` and hydrate
+  with zero errors; `/ppr-shared-key` and `/shell-cache/shared-key` keep the
+  shell's capture stamp while the hole moves on, with zero hydration errors.
+
+The unit test pins the tail's Flight payload, not the resumed HTML: it stubs
+SSR, because `react-dom/server` does not load under the react-server
+condition the Flight test project runs with. The resumed HTML is identical
+anyway, because `resume()` gets identical inputs: the same stored postponed
+state and a byte-identical tail Flight payload. The evidence on the real
+stack: the `/ppr-large` HIT's tail (resumed HTML with its inlined Flight
+payload) was 1,031,849 bytes long with and without pruning (the "Measured"
+table's build), and the dev + production e2e above hydrate the pruned HITs
+with zero errors.
 
 ### By copy vs. by reference
 
@@ -494,6 +577,11 @@ head + prelude, which is the part of this that cold colos hit.
    share: the hole would show live data. **Decided:** option A (drop R2.3,
    holes are the live lane), subject to a regression check that runs before
    the pruning stage is built.
+   **Implemented** with R2.3 dropped; the regression check added R2.5 (a
+   route-derived `cache()` scope keeps every record) and residual B (a HIT
+   whose doc record fails to decode re-runs handlers live and schedules a
+   recapture).
+
 4. **A public split read** (promote `readShellDocument` to the
    `SegmentCacheStore` contract so custom stores can serve the prelude
    first). **Decided:** no; it stays an `@internal` method only built-in

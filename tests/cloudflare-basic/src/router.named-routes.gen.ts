@@ -84,6 +84,7 @@ export const NamedRoutes = {
   pprScoped: "/ppr-scoped",
   pprScopedCondition: "/ppr-scoped-condition",
   pprScopedOptOut: "/ppr-scoped-optout",
+  pprSharedKey: "/ppr-shared-key",
   pprShell: "/ppr-shell",
   pprShellExecMatrix: "/ppr-shell/exec-matrix",
   pprShellInlineAction: "/ppr-shell/inline-action",

@@ -102,7 +102,13 @@ import {
   PprFlightErrorLoader,
   pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
-import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
+import {
+  PprDriftLayout,
+  PprDriftPricePage,
+  PprSharedLayout,
+  PprSharedPage,
+  PprSharedStampLoader,
+} from "./pages/ppr-drift.js";
 import {
   PprLargeLayout,
   PprLargePage,
@@ -1175,6 +1181,23 @@ export const urlpatterns = urls(
                 <div data-testid="ppr-drift-price-fallback">
                   Loading price...
                 </div>,
+              ),
+            ],
+          ),
+        ]),
+        // Shared-key route (issue #941): the shell layout and the live hole
+        // read the same "drift" item. Snapshot pruning drops the shell's item
+        // record, so after the item expires the hole shows a newer stamp than
+        // the shell.
+        layout(PprSharedLayout, () => [
+          path(
+            "/ppr-shared-key",
+            PprSharedPage,
+            { name: "pprSharedKey", ppr: { ttl: 300, swr: 120 } },
+            () => [
+              loader(PprSharedStampLoader),
+              loading(
+                <p data-testid="ppr-shared-hole-fallback">Loading stamp...</p>,
               ),
             ],
           ),

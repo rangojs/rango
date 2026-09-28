@@ -49,6 +49,8 @@ export interface ShellFrameHead {
   i?: string;
   /** ShellCacheEntry.docKey; navigation replay needs it after any round trip. */
   dk?: string;
+  /** ShellCacheEntry.prunedRecords (diagnostic). */
+  pr?: string;
   /** ShellCacheEntry.handlerLiveHoles; arms or declines the handler-free fast path. */
   lh?: boolean;
   /** ShellCacheEntry.transitionWhen */
@@ -82,6 +84,7 @@ function isShellFrameHead(value: unknown): value is ShellFrameHead {
     (head.ta === undefined || isFiniteNumber(head.ta)) &&
     (head.i === undefined || typeof head.i === "string") &&
     (head.dk === undefined || typeof head.dk === "string") &&
+    (head.pr === undefined || typeof head.pr === "string") &&
     (head.lh === undefined || typeof head.lh === "boolean") &&
     (head.tw === undefined || head.tw === true) &&
     (head.no === undefined || head.no === true) &&

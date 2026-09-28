@@ -73,6 +73,21 @@ describe("resolveShellImplicitCacheScope", () => {
     });
   });
 
+  it("marks the marker routeDocScope only when it mints the route's own doc scope", () => {
+    const minted = makeReqCtx({ _shellImplicitCache: { ttl: 60 } });
+    runWithRequestContext(minted, () => {
+      resolveShellImplicitCacheScope(null);
+    });
+    expect(minted._shellImplicitCache?.routeDocScope).toBe(true);
+
+    const scoped = makeReqCtx({ _shellImplicitCache: { ttl: 60 } });
+    runWithRequestContext(scoped, () => {
+      resolveShellImplicitCacheScope(new CacheScope({ ttl: 7 }));
+      resolveShellImplicitCacheScope(new CacheScope(false));
+    });
+    expect(scoped._shellImplicitCache?.routeDocScope).toBeUndefined();
+  });
+
   it("a route-derived scope always wins over the marker", () => {
     const appStore = makeInnerStore();
     const replayStore = makeInnerStore();

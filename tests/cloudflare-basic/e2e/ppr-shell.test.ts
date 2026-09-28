@@ -748,13 +748,84 @@ function describePprShell(mode: "dev" | "build") {
       expect(timing).toMatch(
         /ppr-tail;dur=[\d.]+;desc="complete snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms /,
       );
-      // Dev Flight carries debug info, so this fixture's dev snapshot is over
-      // the 8 MiB maxSnapshotBytes cap and is stored without one (warned).
-      if (mode === "build") {
-        expect(timing).toMatch(
-          /snapshot-bytes=\d{6,}b snapshot-parse-cpu=\d+ms records=[a-z:\d/]+ /,
+    });
+
+    // Issue #941, snapshot pruning: every HIT tail of these entries replays
+    // the handler layer from the doc record, so the capture stores that
+    // record alone and drops the five "use cache" item records that produced
+    // it (2.6 MB of the unpruned production snapshot; 17 MB in dev, where the
+    // unpruned snapshot overflowed the 8 MiB cap and was not stored at all).
+    for (const path of ["/ppr-large", "/ppr-large/holes"]) {
+      test(`${path}: the stored snapshot keeps only the doc record and the HIT hydrates`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        using __ = guardHydrationErrors(page);
+        const url = f.url(`${path}?__perf_debug=1&probe=pruned`);
+        await warmToHit(page.request, url);
+        // The previous HIT's tail rides this response's Server-Timing.
+        await page.request.get(url, { headers: HTML_HEADERS });
+        const res = await page.request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        const tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
+          res.headers()["server-timing"] ?? "",
+        )?.[1];
+        expect(tail).toContain(" records=segment:1 pruned=item:5 ");
+        const snapshotBytes = Number(/snapshot-bytes=(\d+)b/.exec(tail!)?.[1]);
+        expect(snapshotBytes).toBeGreaterThan(500 * 1024);
+        expect(snapshotBytes).toBeLessThan(2 * 1024 * 1024);
+
+        const response = await page.goto(url);
+        expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+        await waitForHydration(page);
+        await expect(page.locator("[data-sku]")).toHaveCount(380);
+      });
+    }
+
+    // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
+    // decision 3): /ppr-shared-key's layout and its live hole read the SAME
+    // "drift" item (ttl 2s). The capture pins the layout's value inside the doc
+    // record and drops the item record, so the hole's loader reads the store:
+    // once the item expires the hole shows a newer stamp while the shell keeps
+    // the capture stamp, and the page still hydrates cleanly.
+    test("shared key: the shell keeps the capture value while the live hole reads the store", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const url = f.url("/ppr-shared-key?probe=shared");
+      await warmToHit(page.request, url);
+      const first = await page.request.get(url, { headers: HTML_HEADERS });
+      const captureStamp =
+        /data-testid="ppr-shared-shell">ppr-shared-(\d+)</.exec(
+          splitPrelude(await first.text()).prelude,
+        )?.[1];
+      expect(captureStamp, "the shell bakes the capture stamp").toBeTruthy();
+
+      await expect(async () => {
+        const res = await page.request.get(url, { headers: HTML_HEADERS });
+        expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        const { prelude, resumed } = splitPrelude(await res.text());
+        expect(prelude).toContain(
+          `data-testid="ppr-shared-shell">ppr-shared-${captureStamp}<`,
         );
-      }
+        const holeStamp =
+          /data-testid="ppr-shared-hole">ppr-shared-(\d+)</.exec(resumed)?.[1];
+        expect(Number(holeStamp)).toBeGreaterThan(Number(captureStamp));
+      }).toPass({ timeout: 15_000 });
+
+      const response = await page.goto(url);
+      expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      await expect(testId(page, "ppr-shared-shell")).toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-hole")).not.toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-hole")).toHaveText(
+        /^ppr-shared-\d+$/,
+      );
     });
 
     // /ppr-blog is the realistic fixture: the SAME components/loaders/cache()

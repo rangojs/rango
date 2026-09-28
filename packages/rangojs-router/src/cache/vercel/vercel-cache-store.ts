@@ -214,6 +214,8 @@ interface VercelShellEnvelope {
    * reports `no-segment-snapshot` after a store round trip.
    */
   dk?: string;
+  /** ShellCacheEntry.prunedRecords (diagnostic). */
+  pr?: string;
   /**
    * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
    * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
@@ -831,6 +833,7 @@ export class VercelCacheStore<
         initialTheme: env.i,
         snapshot: env.sn,
         docKey: env.dk,
+        prunedRecords: env.pr,
         handlerLiveHoles: env.lh,
         transitionWhen: env.tw,
         navigationOnly: env.no,
@@ -885,6 +888,7 @@ export class VercelCacheStore<
         i: entry.initialTheme,
         sn: entry.snapshot,
         dk: entry.docKey,
+        pr: entry.prunedRecords,
         lh: entry.handlerLiveHoles,
         tw: entry.transitionWhen,
         no: entry.navigationOnly,
