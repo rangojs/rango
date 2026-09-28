@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The default document restores scroll on back/forward
+
+An app that passes no `document` to `createRouter` now gets
+`<Html.ScrollRestoration />` from the router's default document, next to the
+`Html.Meta` and `Html.Scripts` it already rendered. Back and forward return to
+the scroll position each page was left at, saved per history entry in
+`sessionStorage`, and the router sets `history.scrollRestoration = "manual"`.
+New navigations still scroll to the top or the hash target.
+
+To keep the browser's own back/forward scrolling, or to pass `getKey`, provide
+your own `document`. With the default document, a second
+`<Html.ScrollRestoration />` in a layout only logs
+`[Scroll] Already initialized`.
+
 ### Breaking: the document components move under `Html` ([#937](https://github.com/rangojs/rango/pull/937))
 
 `MetaTags`, `Scripts` and `ScrollRestoration` are replaced by one namespace

@@ -91,7 +91,8 @@ modal gated by the `when` config, `transition()` content-hold (component state s
 same-route param change).
 State & nav: `createLocationState` (flash + persistent), `useLocationState`,
 `Link state`, `useRouter`/`useNavigation`/`usePathname`/`useSegments`/`useParams`/
-`useSearchParams`, `useLinkStatus`, `Html.ScrollRestoration`.
+`useSearchParams`, `useLinkStatus`, `Html.ScrollRestoration` via the default
+document.
 Links: `Link`, `href`, `ctx.reverse`, mount-aware `useMount`/`useHref`,
 `useReverse` two ways — mount-aware local names via the `urls/products.tsx`
 per-module gen (`ProductsReverse`), and dotted global names via the inline

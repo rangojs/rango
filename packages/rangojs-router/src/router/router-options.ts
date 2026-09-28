@@ -164,8 +164,10 @@ export interface RangoOptions<TEnv = any> {
    *
    * Must be a client component ("use client") that accepts { children }.
    *
-   * If not provided, a default document with basic HTML structure is used:
-   * `<html><head><meta charset/viewport></head><body>{children}</body></html>`
+   * If not provided, a default document is used: `Html.Meta` and `Html.Scripts`
+   * in `<head>`, `Html.Scripts position="body"` before `{children}` and
+   * `Html.ScrollRestoration` after it. Pass your own to set `getKey` or to
+   * leave back/forward scrolling to the browser.
    *
    * @example
    * ```typescript

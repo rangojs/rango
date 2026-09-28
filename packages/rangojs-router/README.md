@@ -195,6 +195,7 @@ export function Document({ children }: { children: ReactNode }) {
       <body>
         <Html.Scripts position="body" />
         {children}
+        <Html.ScrollRestoration />
       </body>
     </html>
   );

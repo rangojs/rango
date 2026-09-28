@@ -455,7 +455,7 @@ function miniTests(f: Fixture) {
     );
   });
 
-  test("scroll restoration: Html.ScrollRestoration sets manual mode", async ({
+  test("scroll restoration: the default document's Html.ScrollRestoration sets manual mode", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);

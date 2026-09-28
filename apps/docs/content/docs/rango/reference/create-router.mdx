@@ -93,7 +93,7 @@ interface RangoOptions<TEnv> {
 
 ### document
 
-The HTML shell rendered around every route and every error state. It must be a client component. Render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Html.Scripts />`:
+The HTML shell rendered around every route and every error state. It must be a client component. Render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script), `<Html.Scripts />` and `<Html.ScrollRestoration />`:
 
 ```tsx
 // src/document.tsx
@@ -112,13 +112,14 @@ export function Document({ children }: { children: ReactNode }) {
       <body>
         <Html.Scripts position="body" />
         {children}
+        <Html.ScrollRestoration />
       </body>
     </html>
   );
 }
 ```
 
-When `document` is omitted, the router uses a default document with exactly this structure. Page titles and other per-route tags come from the `Meta` handle (see [Metadata](/docs/rango/features/metadata)), not from the Document.
+When `document` is omitted, the router uses a default document with exactly this structure. To pass `getKey` to `Html.ScrollRestoration`, or to leave back/forward scrolling to the browser, provide your own document. Page titles and other per-route tags come from the `Meta` handle (see [Metadata](/docs/rango/features/metadata)), not from the Document.
 
 #### Migrating from MetaTags / Scripts / ScrollRestoration
 
