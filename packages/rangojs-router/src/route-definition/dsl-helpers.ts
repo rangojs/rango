@@ -150,6 +150,23 @@ const attachOrphanSibling = (
 };
 
 /**
+ * The route whose use() list `parent` sits in: `parent` itself, or the route
+ * above a chain of layout-typed wrappers (layout(), middleware()/transition()
+ * wrapper form). Inside a path those wrappers never hold routes (path-in-path
+ * is rejected), so the route is the only cacheable unit there. An intercept()
+ * scope (its temporary parent: a spread of the declaring entry with an own
+ * `cache` sink) stops the walk, so its cache() stays rejected by
+ * validateInterceptUseItems instead of configuring the path around it.
+ */
+function enclosingRoute(parent: EntryData | null): EntryData | undefined {
+  for (let entry = parent; entry; entry = entry.parent) {
+    if (entry.type === "route") return entry;
+    if (entry.type !== "layout" || "cache" in entry) return undefined;
+  }
+  return undefined;
+}
+
+/**
  * Run `fn` with `ctx.parent` temporarily redirected to `temp` — a satellite
  * entry that captures the attachments declared by a use() callback — restoring
  * the original parent afterward, including on throw. loader()/intercept() each
@@ -328,13 +345,15 @@ const cache: RouteHelpers<any, any>["cache"] = (
   // Among a path's children, cache() configures that path: the route entry
   // carries the config, so buildEntriesAndCacheScope (router/route-snapshot.ts)
   // makes the route the boundary and its own segments (handler, layouts,
-  // parallels) the cached unit. Both forms leave ctx.parent on the route, so
-  // every sibling and wrapped item still attaches to it. Issue #912: a cache
-  // entry here was never an ancestor of the route (no scope, no store write),
-  // and a layout() after it nested under that orphan entry, which
-  // resolveOrphanLayout (segment-resolution/fresh.ts) never renders.
-  if (ctx.parent?.type === "route") {
-    ctx.parent.cache = cacheConfig;
+  // parallels) the cached unit. Both forms leave ctx.parent unchanged, so
+  // every sibling and wrapped item still attaches where it was. Issue #912: a
+  // cache entry here was never an ancestor of the route (no scope, no store
+  // write). The same holds inside a routeless layout()/middleware()/
+  // transition() wrapper in a path (issue #918): a route's record is
+  // all-or-nothing, so the path is the only thing such a cache() can cache.
+  const route = enclosingRoute(ctx.parent);
+  if (route && ctx.parent) {
+    route.cache = cacheConfig;
     if (!children) return { name, type: "cache" } as CacheItem;
     const uses = runAndValidateUseItems(
       store,
@@ -521,7 +540,19 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     "children",
   );
 
-  if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
+  if (isOrphan(result)) {
+    // Its middleware runs for every route of the enclosing entry
+    // (collectRouteMiddleware walks orphans), so the wrapper scopes nothing;
+    // the flat form says what runs. Issue #918: the nested layout() was
+    // dropped at render.
+    invariant(
+      !result.some((item) => item?.type === "layout"),
+      `middleware(fn, () => [...]) with no routes inside cannot contain layout() [${namespace}]. ` +
+        "The middleware runs for every route of the enclosing path or layout either way; " +
+        "list them as siblings instead: middleware(fn), layout(...)",
+    );
+    attachOrphanSibling(ctx.parent, entry);
+  }
 
   return {
     name: namespace,

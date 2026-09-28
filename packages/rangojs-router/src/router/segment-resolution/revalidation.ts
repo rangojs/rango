@@ -934,6 +934,8 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
   stale?: boolean,
+  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). */
+  chain?: readonly EntryData[],
 ): Promise<SegmentRevalidationResult> {
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
@@ -1066,6 +1068,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     matchedIds.push(...parallelResult.matchedIds);
 
     for (const orphan of entry.layout) {
+      if (chain?.includes(orphan)) continue;
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan,
         params,
@@ -1274,6 +1277,27 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   segments.push(...parallelResult.segments);
   matchedIds.push(...parallelResult.matchedIds);
 
+  // Nested routeless entries; see resolveOrphanLayout (fresh.ts).
+  for (const nested of orphan.layout) {
+    const nestedResult = await resolveOrphanLayoutWithRevalidation(
+      nested,
+      params,
+      context,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      belongsToRoute,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...nestedResult.segments);
+    matchedIds.push(...nestedResult.matchedIds);
+  }
+
   return { segments, matchedIds };
 }
 
@@ -1296,6 +1320,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   pathname: string,
   deps: SegmentResolutionDeps<TEnv>,
   stale?: boolean,
+  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). */
+  chain: readonly EntryData[] = entries,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allSegments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
@@ -1349,6 +1375,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
           deps,
           actionContext,
           stale,
+          chain,
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,

@@ -57,6 +57,8 @@ export const NamedRoutes = {
   itemDetail: "/item/:itemId/detail",
   loaderCacheDep: "/loader-cache-dep",
   localeInfo: "/:locale(en|fr)/info",
+  markerAfter: "/marker-after",
+  markerBefore: "/marker-before",
   "mixedClient.detail": "/mixed-client-routes/:slug",
   "mixedClient.index": "/mixed-client-routes",
   "mixedClientAsync.detail": "/mixed-client-async/:slug",

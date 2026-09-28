@@ -621,19 +621,23 @@ export function withCacheLookup<TEnv>(
               ctx.localRouteName,
               ctx.pathname,
               ctx.stale,
+              ctx.entries,
             );
           }
+          // The full chain keeps a bare cache() marker, which also sits in
+          // its layout's orphan list, out of the live pass: the record
+          // supplies it and its subtree (issue #918).
           const segments = await resolveAllSegments(
             liveEntries,
             ctx.routeKey,
             ctx.matched.params,
             ctx.handlerContext,
             ctx.loaderPromises,
+            { chain: ctx.entries },
           );
           return { segments, matchedIds: segments.map((s) => s.id) };
         });
-      // An orphan cache() entry also sits in its declaring layout's orphan
-      // list, so the live pass resolves it too; the record supplies it.
+      // The record supplies every covered segment.
       liveSegments = live.segments.filter(
         (s) => !hitScope.covers(s.id, s.namespace),
       );

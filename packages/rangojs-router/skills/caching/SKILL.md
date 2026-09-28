@@ -83,6 +83,10 @@ layout(AccountShell, () => [
 ]);
 ```
 
+A `cache()` inside a `layout()` or `middleware()` wrapper in the path does the
+same: `layout(ProductChrome, () => [cache({ ttl: 60 })])` caches the whole
+path, not only ProductChrome.
+
 The consumer rule: **want it cached? render it inline. Want it live? put it in a
 loader and read it with `useLoader()` in a client component.** Anything read
 with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader
@@ -341,6 +345,19 @@ export const urlpatterns = urls(({ path, cache }) => [
   // siblings that follow it
   cache({ ttl: 60, swr: 120 }),
   path("/feed", FeedPage, { name: "feed" }),
+]);
+```
+
+In a layout's children, a `layout()` after the bare `cache()` wraps every
+route of that layout, as it would without the `cache()`. It is cached only with
+the routes after the `cache()`; on a route before it, it renders live:
+
+```typescript
+layout(<AppShell />, () => [
+  path("/a", PageA, { name: "a" }), // PromoBanner renders live
+  cache({ ttl: 60 }),
+  layout(<PromoBanner />),
+  path("/b", PageB, { name: "b" }), // PromoBanner cached with PageB
 ]);
 ```
 

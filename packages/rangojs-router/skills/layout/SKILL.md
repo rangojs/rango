@@ -213,6 +213,22 @@ Orphan layouts can also call `ctx.set()` for their own children, but the usual
 split is: middleware and route handlers write, orphan layouts and parallels
 read.
 
+Keep orphan layouts flat. A layout with no routes cannot contain another
+`layout()`, directly or inside a `middleware(fn, () => [...])` wrapper;
+`router.routes()` throws. Sibling layouts nest in declaration order, and a
+sibling `middleware(fn)` runs for the whole route either way:
+
+```typescript
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth),
+  layout(<AccountShell />), // wraps AccountNav
+  layout(<AccountNav />), // wraps AccountPage
+]);
+```
+
+A `cache()` inside an orphan layout caches the whole path, like a `cache()`
+among the path's children (`/caching`).
+
 ## Layout Revalidation
 
 A standalone `layout()` renders when it is first mounted and is then kept as-is:

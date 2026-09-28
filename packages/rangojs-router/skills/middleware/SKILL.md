@@ -207,6 +207,23 @@ middleware([authMw, loggingMw], () => [
 This creates a transparent layout (`<Outlet />`) that carries the middleware.
 The middleware does not affect sibling routes outside the callback.
 
+That scope comes from the routes inside the callback. With no routes inside,
+the wrapper scopes nothing: its middleware runs for every route of the
+enclosing path or layout. Such a wrapper cannot contain `layout()`;
+`router.routes()` throws and points to the flat form:
+
+```typescript
+// throws at definition time
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth, () => [layout(<AccountNav />)]),
+]);
+// same behavior, written flat
+path("/account", AccountPage, { name: "account" }, () => [
+  middleware(requireAuth),
+  layout(<AccountNav />),
+]);
+```
+
 ## Middleware Context
 
 ```typescript

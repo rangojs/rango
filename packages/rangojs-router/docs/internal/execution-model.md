@@ -108,7 +108,20 @@ global middleware
   guards latch at the route (`entry.cache` in `resolveAllSegments` and
   `resolveAllSegmentsWithRevalidation`). Pinned by
   `match-middleware/__tests__/cache-path-children.test.ts` and
-  `e2e/cache-path-children.test.ts`.
+  `e2e/cache-path-children.test.ts`. A `cache()` inside a routeless
+  `layout()`/`middleware()`/`transition()` wrapper in a path configures that
+  path the same way (`enclosingRoute()` in `dsl-helpers.ts`).
+- An orphan renders the routeless entries in its own `layout[]` after its
+  handler and parallels (`resolveOrphanLayout`,
+  `resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
+  `cache()` marker wraps every route of the enclosing layout. The marker is
+  also the chain parent of the routes after it; for those routes it is
+  resolved and its middleware collected once, at its chain position, never as
+  its layout's orphan (`ResolveSegmentOptions.chain`, `collectRouteMiddleware`).
+  A hit's live pass gets the full chain, so the marker's subtree comes only
+  from the record. Pinned by
+  `match-middleware/__tests__/orphan-nested-layouts.test.ts` and
+  `e2e/cache-orphan-nested.test.ts`.
 - A response route wrapped in `cache()` returns the same payload on a
   follow-up request; an uncached response route re-executes on every request
   and its payload changes. Pinned by the `[RC1]`/`[RC2]` semantic matrix rows.

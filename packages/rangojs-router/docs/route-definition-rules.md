@@ -31,6 +31,21 @@ Guard locations below are relative to `src/`: `path()` guards live in
 | Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition/dsl-helpers.ts` |
 | Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition/dsl-helpers.ts` |
 
+### middleware()
+
+| Rule                                                         | Example                                                           | Guard location                    |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- | --------------------------------- |
+| Wrapper form with no routes inside cannot contain `layout()` | `path("/a", A, () => [middleware(fn, () => [layout(L)])])`        | `route-definition/dsl-helpers.ts` |
+| Same in a layout's children                                  | `layout(R, () => [middleware(fn, () => [layout(L)]), path(...)])` | `route-definition/dsl-helpers.ts` |
+
+A wrapper with no routes inside is an orphan of the enclosing entry, so its
+middleware runs for every route of that entry (`collectRouteMiddleware` walks
+orphans) and the wrapper scopes nothing. The error points to the flat form,
+`middleware(fn), layout(L)`, which behaves the same. Before issue #918 the
+nested `layout()` was dropped at render while the middleware still ran. A
+wrapper with routes inside may hold a `layout()`, and a routeless wrapper
+without one (`middleware(fn, () => [loader(L)])`) stays valid.
+
 ### parallel()
 
 | Rule                                         | Example                             | Guard location                    |
@@ -96,12 +111,15 @@ their parent's `layout[]` array.
 - `loader()` -- data loader for the layout segment
 - `errorBoundary()` -- error boundary wrapping the layout
 - `notFoundBoundary()` -- not-found boundary wrapping the layout
-- `cache()` (orphan, without children) -- cache config
+- `cache()` -- inside a `path()`, configures that path (see "Orphan Cache
+  Behavior"). In a layout's children an orphan layout has no routes, so a
+  `cache()` in it caches nothing
 - `parallel()` -- parallel slots
 
 ### What orphan layouts CANNOT have as children
 
-- Other `layout()` calls (nested orphan layout chains are broken at render time)
+- Other `layout()` calls, directly or through a routeless `middleware()`
+  wrapper. List sibling layouts instead: they render the same nesting
 
 ### How orphan layouts work
 
@@ -120,7 +138,10 @@ their parent's `layout[]` array.
    handled those errors. `parent` itself stays null: `matchError`'s
    matched-id stack (`router/match-api.ts`) starts at the entry that holds
    the boundary, which can be an orphan, and must stop there
-3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout
+3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout,
+   then for the routeless entries in its own `layout[]` (a `layout()` after a
+   bare `cache()` marker, a wrapper inside a routeless wrapper). Before issue
+   #918 it rendered one level only and dropped those
 4. `collectRouteMiddleware()` recursively processes orphan layouts for middleware
 5. The segment system renders orphan layout components as wrappers around route content
 
@@ -156,8 +177,32 @@ layout(RootLayout, () => [
 ]);
 ```
 
+The entry is also pushed to the parent's `layout[]`, so the non-route siblings
+after it (`layout()`, `middleware()`, `loader()`, `parallel()`) wrap every
+route of the parent, including the routes before the marker. Only the routes
+after it are in its cache scope:
+
+```typescript
+layout(<AppShell />, () => [
+  path("/a", PageA, { name: "a" }), // PromoBanner renders live
+  cache({ ttl: 60 }),
+  layout(<PromoBanner />),
+  path("/b", PageB, { name: "b" }), // PromoBanner cached with PageB
+]);
+```
+
+For a route after the marker the entry is both an orphan of the parent and a
+chain entry. It resolves once, as the chain entry (`ResolveSegmentOptions.chain`
+in `segment-resolution/fresh.ts`, `collectRouteMiddleware` in
+`router/middleware.ts`), below the `cache()` header latch and never in a hit's
+live pass. Before issue #918 a `layout()` after the marker never rendered on
+the routes before it, and on the routes after it a `parallel()` after the
+marker ran twice on a miss and once, discarded, on a hit, and a
+`middleware()` after it ran twice.
+
 A cache **with** children callback but no routes among its children is treated
-like an orphan layout and pushed to `parent.layout[]`.
+like an orphan layout and pushed to `parent.layout[]`. With no route in its
+scope it caches nothing; its children render as the parent's orphans.
 
 Inside a `loader()` use callback, `cache()` is not a structural entry: it sets
 that loader's own cache config (`loader(Def, () => [cache({ ttl: 60 })])`) and
@@ -172,6 +217,27 @@ segment and its own layouts and parallels are the cached unit. Before issue
 #912 it created an orphan cache entry here. That entry was never an ancestor
 of the route, so no scope was built, and a `layout()` declared after it nested
 under the entry, where `resolveOrphanLayout()` never rendered it.
+
+The same holds for a `cache()` inside a routeless `layout()`, `middleware()`
+or `transition()` wrapper in a path (`enclosingRoute()` in
+`route-definition/dsl-helpers.ts`): it configures the path, and its siblings
+stay on the wrapper. A route's cache record is all-or-nothing, so the path is
+the only unit such a `cache()` can cover:
+
+```typescript
+path("/products/:id", ProductPage, { name: "product" }, () => [
+  layout(<ProductChrome />, () => [cache({ ttl: 300 })]), // caches the path
+]);
+// same as
+path("/products/:id", ProductPage, { name: "product" }, () => [
+  cache({ ttl: 300 }),
+  layout(<ProductChrome />),
+]);
+```
+
+Before issue #918 it created an orphan cache entry inside the layout and
+cached nothing. A `cache()` in an `intercept()` use() inside that layout stays
+rejected: the walk stops at the intercept's temporary parent.
 
 ## include() Behavior
 
@@ -209,7 +275,10 @@ the included patterns.
   middleware to the parent entry.
 - **Wrapping mode** — `middleware(fn, () => [...])` or
   `middleware([fn1, fn2], () => [...])` creates a transparent layout that
-  scopes middleware to the children callback only.
+  scopes middleware to the routes in the children callback. With no routes
+  inside, the wrapper is an orphan of the enclosing entry and its middleware
+  runs for every route of that entry; such a wrapper cannot contain `layout()`
+  (see the `middleware()` table above).
 
 ```text
 // Wrapping: authMw only applies to /admin and /admin/settings
@@ -276,6 +345,8 @@ inside `layout` inside `path`) are NOT caught because the direct child
 - `path()` inside `layout()` inside `path()` — direct child is `LayoutItem` (valid)
 - `path()` inside `cache()` inside `path()` — direct child is `CacheItem` (valid)
 - Orphan layout containing another orphan layout — both are `LayoutItem` (valid)
+- `layout()` inside a routeless `middleware()` wrapper — `LayoutItem` is a
+  valid child of the wrapper
 - `layout()` inside `parallel()` — `LayoutItem` is not in `ParallelUseItem` at
   the type level, but the runtime guard provides the error message
 - `revalidate()`, `errorBoundary()`, `notFoundBoundary()` or `cache()` from a

@@ -80,6 +80,8 @@ export interface SegmentWrappers<TEnv = any> {
     interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
     localRouteName: string,
     pathname: string,
+    stale?: boolean,
+    chain?: readonly EntryData[],
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
   findInterceptForRoute: (
     targetRouteKey: string,
@@ -205,6 +207,7 @@ export function createSegmentWrappers<TEnv = any>(
     localRouteName: string,
     pathname: string,
     stale?: boolean,
+    chain?: readonly EntryData[],
   ): ReturnType<typeof _resolveAllSegmentsWithRevalidation> {
     return _resolveAllSegmentsWithRevalidation(
       entries,
@@ -222,6 +225,7 @@ export function createSegmentWrappers<TEnv = any>(
       pathname,
       segmentDeps,
       stale,
+      chain,
     );
   }
 

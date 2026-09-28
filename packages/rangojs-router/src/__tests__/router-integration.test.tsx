@@ -903,6 +903,108 @@ describe("route tree inspection", () => {
     ).toThrow("orphan layout cannot contain other layouts as children");
   });
 
+  it("a middleware() wrapper with no routes that contains a layout() throws in a path (#918)", () => {
+    const AccountNav = (<div>nav</div>) as React.ReactNode;
+    expect(() =>
+      buildRouteTree(
+        urls(({ path, layout, middleware }) => [
+          path("/account", Dashboard, { name: "account" }, () => [
+            middleware(authMiddleware, () => [layout(AccountNav)]),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      /middleware\(fn, \(\) => \[\.\.\.\]\) with no routes inside cannot contain layout\(\).*middleware\(fn\), layout\(\.\.\.\)/,
+    );
+  });
+
+  it("a middleware() wrapper with no routes that contains a layout() throws in a layout's children (#918)", () => {
+    const Nav = (<div>nav</div>) as React.ReactNode;
+    expect(() =>
+      buildRouteTree(
+        urls(({ path, layout, middleware }) => [
+          layout(RootLayout, () => [
+            middleware(authMiddleware, () => [layout(Nav)]),
+            path("/", HomePage, { name: "home" }),
+          ]),
+        ]),
+      ),
+    ).toThrow(/with no routes inside cannot contain layout\(\)/);
+  });
+
+  it("a middleware() wrapper may contain a layout() when it has routes, or loaders without a layout()", () => {
+    const Nav = (<div>nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware, loader }) => [
+        layout(RootLayout, () => [
+          middleware(authMiddleware, () => [
+            layout(Nav),
+            path("/", HomePage, { name: "home" }),
+          ]),
+          middleware(logMiddleware, () => [loader(UserLoader)]),
+          path("/about", AboutPage, { name: "about" }),
+        ]),
+      ]),
+    );
+    const wrapper = tree.entry("home")!.parent!;
+    expect(wrapper.middleware).toEqual([authMiddleware]);
+    expect(wrapper.layout.map((l) => l.handler)).toEqual([Nav]);
+  });
+
+  it("the flat form puts the middleware and the layout on the path", () => {
+    const AccountNav = (<div>nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware }) => [
+        path("/account", Dashboard, { name: "account" }, () => [
+          middleware(authMiddleware),
+          layout(AccountNav),
+        ]),
+      ]),
+    );
+    const account = tree.entry("account")!;
+    expect(account.middleware).toEqual([authMiddleware]);
+    expect(account.layout.map((l) => l.handler)).toEqual([AccountNav]);
+  });
+
+  it("a cache() inside a routeless layout in a path configures the path (#918)", () => {
+    const ProductChrome = (<div>chrome</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, cache, middleware }) => [
+        path("/products/:id", ProductDetail, { name: "product" }, () => [
+          layout(ProductChrome, () => [cache({ ttl: 300 })]),
+        ]),
+        path("/list", ProductList, { name: "list" }, () => [
+          middleware(authMiddleware, () => [cache({ ttl: 60 })]),
+        ]),
+      ]),
+    );
+    const product = tree.entry("product")!;
+    expect(product.cache).toEqual({ options: { ttl: 300 } });
+    expect(product.layout).toHaveLength(1);
+    expect(product.layout[0]!.layout).toHaveLength(0);
+    expect(tree.entry("list")!.cache).toEqual({ options: { ttl: 60 } });
+  });
+
+  it("cache() in the use() of an intercept declared in a routeless layout in a path still throws", () => {
+    expect(() =>
+      buildRouteTree(
+        urls((h) => [
+          h.path("/detail", AboutPage, { name: "detail" }),
+          h.path("/list", ProductList, { name: "list" }, () => [
+            h.layout(Sidebar, () => [
+              h.intercept("@modal", ".detail", ProductModal, () => {
+                h.cache();
+                return [h.loader(PostLoader)];
+              }),
+            ]),
+          ]),
+        ]),
+      ),
+    ).toThrow(
+      /cache\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\)/,
+    );
+  });
+
   it("sibling orphan layouts stack as composable wrappers", () => {
     const Wrapper1 = (<div>w1</div>) as React.ReactNode;
     const Wrapper2 = (<div>w2</div>) as React.ReactNode;
