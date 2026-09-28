@@ -1157,8 +1157,8 @@ Suspense boundary), so handle data cannot be a hole. Three classes:
 2. Fresh handler pushes on uncached shells: they settle fine, but the prelude
    is an older render than the hydration payload — see the drift note below.
 3. Deferred handles resolved by loaders: masked loaders can never resolve
-   them. `handleStore.seal()` + `await settled` (the same regime the
-   `__prerender_collect` path already runs, which also excludes loaders) must
+   them. `handleStore.seal()` + `await settled` (the same regime
+   `matchForPrerender` already runs, which also excludes loaders) must
    settle them during capture; if the generator still hangs, the prelude comes
    back trivial and the sanity gate refuses to store — a fail-safe no-op, not
    an error.

@@ -192,8 +192,8 @@ function acceptsFlightExplicitly(request: Request, url: URL): boolean {
  * Classify whether a request may require SSR (HTML rendering).
  *
  * Returns false for requests that are definitively RSC-only: transport
- * params (partial/action/loader/__rsc), prerender collection, or an explicit
- * Accept: text/x-component. Must never return false for a request whose
+ * params (partial/action/loader/__rsc) or an explicit Accept:
+ * text/x-component. Must never return false for a request whose
  * render-time decision (isRscRequest) will be HTML — the two share
  * acceptsFlightExplicitly so the Accept rule cannot drift. document-cache.ts
  * keys its HTML/RSC response slots off this function, so any divergence from
@@ -208,8 +208,7 @@ export function mayNeedSSR(request: Request, url: URL): boolean {
     url.searchParams.has("_rsc_action") ||
     request.headers.has("rsc-action") ||
     url.searchParams.has("_rsc_loader") ||
-    url.searchParams.has("__rsc") ||
-    url.searchParams.has("__prerender_collect")
+    url.searchParams.has("__rsc")
   ) {
     return false;
   }

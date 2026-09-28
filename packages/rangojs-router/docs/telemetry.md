@@ -172,7 +172,7 @@ or `bypass:<reason>`.
 
 SSR module loading and stream mode resolution are kicked off in parallel with
 route matching. Requests that won't need SSR (RSC partials, actions, loaders,
-Accept-based RSC, prerender collection) skip this entirely. Response and mime
+Accept-based RSC) skip this entirely. Response and mime
 routes also skip it — the setup runs after `classifyRequest()` determines the
 request mode. In production, the SSR module is memoized across requests so
 repeated imports resolve instantly.

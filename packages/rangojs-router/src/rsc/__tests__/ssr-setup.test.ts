@@ -79,11 +79,6 @@ describe("mayNeedSSR", () => {
     expect(mayNeedSSR(req, new URL(req.url))).toBe(false);
   });
 
-  it("returns false for __prerender_collect", () => {
-    const req = new Request("http://localhost/?__prerender_collect=1");
-    expect(mayNeedSSR(req, new URL(req.url))).toBe(false);
-  });
-
   it("returns true for POST form submissions (PE path)", () => {
     const req = new Request("http://localhost/submit", { method: "POST" });
     expect(mayNeedSSR(req, new URL(req.url))).toBe(true);

@@ -339,6 +339,14 @@ without `transition()` is not modeled.
   cached nothing. It now caches that path, like a `cache()` among the path's
   own children (#919), and the path's handler runs under the `cache()` guards
   ([#922](https://github.com/rangojs/rango/pull/922)).
+- A GET for a page with `?__prerender_collect` in its URL returned the route's
+  serialized segments, handle data, route name and params as
+  `application/json` instead of the page, in production as well as dev, and
+  skipped SSR and PPR shell serving. Nothing has sent that parameter since
+  prerendering moved to `matchForPrerender`, so the handler is removed. Such a
+  request now renders the page like any other, and `__prerender_collect` is no
+  longer excluded from cache keys
+  ([#931](https://github.com/rangojs/rango/pull/931)).
 
 ### Docs
 
