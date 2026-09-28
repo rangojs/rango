@@ -16,6 +16,7 @@ import {
   buildShellLoaderSeed,
 } from "../cache/shell-snapshot.js";
 import { appendMetric } from "../router/metrics.js";
+import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { getSSRSetup, createSsrHtmlStage, isRscRequest } from "./ssr-setup.js";
@@ -97,6 +98,7 @@ import type {
   SegmentCacheStore,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellReadStats,
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import {
@@ -487,7 +489,7 @@ function* shellServePlan<TEnv>(
   const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
   const store = reqCtx._cacheStore;
   const key = buildShellKey(url, reqCtx._searchParamsFilter);
-  mirrorPprServerTimingsForDev(key, reqCtx);
+  mirrorPprServerTimings(key, reqCtx);
   if (activeNonce !== undefined) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent): a ppr route gated off by an active
@@ -535,7 +537,11 @@ function* shellServePlan<TEnv>(
     !cached.entry.navigationOnly &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
-    const document = openShellDocument(cached.entry, cached.read);
+    const document = openShellDocumentMetered(
+      reqCtx,
+      cached.entry,
+      cached.read,
+    );
     if (!document) {
       // Corrupt stored payload (undecodable prelude / unparseable
       // postponed): a store-layer fault worth a diagnostic, unlike the
@@ -605,7 +611,9 @@ function* shellServePlan<TEnv>(
   );
   // The document serve decodes the baked prelude once here; an undecodable
   // one is a MISS like a corrupt runtime entry.
-  const buildDocument = buildHit ? openShellDocument(buildHit.entry) : null;
+  const buildDocument = buildHit
+    ? openShellDocumentMetered(reqCtx, buildHit.entry)
+    : null;
   if (buildHit && buildDocument) {
     // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
     if (buildHit.stale) {
@@ -825,29 +833,89 @@ async function readShellEntry(
     reportCacheError(error, "cache-read", "[ShellServe] getShell");
   }
   if (reqCtx._metricsStore) {
+    const stats = cached?.read?.stats;
     appendMetric(
       reqCtx._metricsStore,
       "ppr:shell-read",
       shellReadStart,
       performance.now() - shellReadStart,
       undefined,
-      cached ? "hit" : "miss",
+      cached ? (stats ? `hit ${stats.tier}` : "hit") : "miss",
     );
+    if (stats)
+      recordShellReadStats(reqCtx._metricsStore, shellReadStart, stats);
   }
   return cached;
 }
 
 /**
- * Dev Server-Timing mirror (issue #651): a capture completes AFTER its
- * triggering response committed, so its outcome can only ride a LATER
- * response's header. Read-and-clear keeps one capture = one report;
- * dev-only (see takeCaptureDebugEventForTiming).
+ * A prelude-first read's sub-steps as `debugPerformance` rows under
+ * `ppr:shell-read`. The marker row starts with the prelude row because the
+ * two run in parallel; its desc says how long the read still waited on the
+ * marker once the prelude was in. On a deployed worker the clock only
+ * advances on I/O, so the byte counts are the cost signal for the CPU parts.
  */
-function mirrorPprServerTimingsForDev(
+function recordShellReadStats(
+  store: MetricsStore,
+  readStart: number,
+  stats: ShellReadStats,
+): void {
+  let at = readStart;
+  const row = (label: string, ms: number | undefined, desc: string): void => {
+    if (ms !== undefined) appendMetric(store, label, at, ms, 1, desc);
+  };
+  // A KV hit after an L1 miss: the L1 attempt first, then the KV read.
+  row("ppr:shell-l1-miss", stats.l1MissMs, stats.l1MissReason ?? "miss");
+  at += stats.l1MissMs ?? 0;
+  row("ppr:shell-match", stats.matchMs, stats.tier);
+  at += stats.matchMs ?? 0;
+  row("ppr:shell-head", stats.headMs, `bytes=${stats.headBytes ?? 0}`);
+  at += stats.headMs ?? 0;
+  row("ppr:shell-prelude", stats.preludeMs, `bytes=${stats.preludeBytes ?? 0}`);
+  row(
+    "ppr:shell-marker",
+    stats.markerMs,
+    `tags=${stats.tags ?? 0} parallel commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`,
+  );
+}
+
+/**
+ * openShellDocument (the HIT's integrity gate and only prelude decode) as a
+ * `ppr:shell-open` row: CPU only, so it reads 0 on a deployed worker.
+ */
+function openShellDocumentMetered(
+  reqCtx: RequestContext<any>,
+  entry: ShellCacheEntry,
+  read?: ShellDocumentRead,
+): ShellDocument | null {
+  const store = reqCtx._metricsStore;
+  if (!store) return openShellDocument(entry, read);
+  const start = performance.now();
+  const document = openShellDocument(entry, read);
+  appendMetric(
+    store,
+    "ppr:shell-open",
+    start,
+    performance.now() - start,
+    undefined,
+    `cpu ${read ? "raw" : "base64-decode"} prelude=${document?.prelude.length ?? 0}b`,
+  );
+  return document;
+}
+
+/**
+ * Server-Timing mirror (issue #651): a capture or a HIT tail completes AFTER
+ * its triggering response committed, so its numbers can only ride a LATER
+ * response's header. Read-and-clear keeps one report per run. The capture
+ * half is dev-only (see takeCaptureDebugEventForTiming); the tail half runs
+ * wherever a tail was buffered (serveShellHit).
+ */
+function mirrorPprServerTimings(
   key: string,
   reqCtx: ReturnType<typeof getRequestContext>,
 ): void {
-  if (process.env.NODE_ENV !== "production" && reqCtx._metricsStore) {
+  if (!reqCtx._metricsStore) return;
+  if (process.env.NODE_ENV !== "production") {
     const lastCapture = takeCaptureDebugEventForTiming(key);
     if (lastCapture) {
       appendMetric(
@@ -860,22 +928,23 @@ function mirrorPprServerTimingsForDev(
         describeShellCaptureEvent({ ...lastCapture, attemptMs: undefined }),
       );
     }
-    // Same mirror for the previous HIT's tail: its per-stage numbers
-    // (seed/match/handover/first-html/complete) finished after that
-    // response's headers were committed, so they ride THIS request's
-    // Server-Timing as `ppr:tail;dur=<complete ms>`.
-    const lastTail = takeShellTailTimingForServerTiming(key);
-    if (lastTail) {
-      appendMetric(
-        reqCtx._metricsStore,
-        "ppr:tail",
-        performance.now(),
-        lastTail.completeMs ?? 0,
-        undefined,
-        // completeMs already rides as this entry's dur — drop it from desc.
-        describeShellTailTiming({ ...lastTail, completeMs: undefined }),
-      );
-    }
+  }
+  // Same mirror for the previous HIT's tail: its per-stage numbers
+  // (snapshot/seed/match/handover/first-html/complete) finished after that
+  // response's headers were committed, so they ride THIS request's
+  // Server-Timing as `ppr:tail;dur=<complete ms>`. In production a tail is
+  // buffered only when its own HIT collected metrics (serveShellHit).
+  const lastTail = takeShellTailTimingForServerTiming(key);
+  if (lastTail) {
+    appendMetric(
+      reqCtx._metricsStore,
+      "ppr:tail",
+      performance.now(),
+      lastTail.completeMs ?? 0,
+      undefined,
+      // completeMs already rides as this entry's dur — drop it from desc.
+      describeShellTailTiming({ ...lastTail, completeMs: undefined }),
+    );
   }
 }
 
@@ -1401,6 +1470,35 @@ export function resolveShellHitRedirectTarget(
 }
 
 /**
+ * Buffer a finished tail timing for the next request's Server-Timing, and
+ * under debugPerformance print it for this request (whose own Server-Timing
+ * was sent at the commit, before the tail ran).
+ */
+function publishTailTiming(
+  tailTiming: ShellTailTiming | null,
+  metricsStore: MetricsStore | undefined,
+  request: Request,
+  url: URL,
+): void {
+  if (!tailTiming) return;
+  publishShellTailTiming(tailTiming);
+  if (metricsStore) {
+    console.log(
+      `[RSC Perf] ${request.method} ${url.pathname} shell tail: ${describeShellTailTiming(tailTiming)}`,
+    );
+  }
+}
+
+/** Snapshot records by family for the tail timing, e.g. `segment:1/item:5`. */
+function countSnapshotFamilies(snapshot: ShellSnapshotRecord[]): string {
+  const counts = new Map<string, number>();
+  for (const record of snapshot) {
+    counts.set(record.family, (counts.get(record.family) ?? 0) + 1);
+  }
+  return [...counts].map(([family, n]) => `${family}:${n}`).join("/");
+}
+
+/**
  * Serve a validated shell HIT: commit the stored prelude bytes NOW and run the
  * live tail behind them inside the response stream. Plain byte concatenation is
  * correct — React foster-parents content streamed after the prelude's closing
@@ -1421,11 +1519,13 @@ function serveShellHit(
   descriptor: ShellCaptureDescriptor,
 ): Response {
   const { entry, prelude: preludeBytes } = document;
-  // Per-stage tail timing for the dev `ppr:tail` Server-Timing mirror. Dev
-  // only (NODE_ENV folds the branch away in production builds); offsets are
-  // relative to this commit point.
+  const metricsStore = reqCtx._metricsStore;
+  // Per-stage tail timing for the `ppr:tail` Server-Timing mirror and the
+  // perf console line: always in dev, in production only when this request
+  // collects debugPerformance metrics. Offsets are relative to this commit
+  // point.
   const tailTiming: ShellTailTiming | null =
-    process.env.NODE_ENV !== "production"
+    process.env.NODE_ENV !== "production" || metricsStore
       ? {
           key: descriptor.key,
           outcome: "complete",
@@ -1531,6 +1631,17 @@ function serveShellHit(
     // A prelude-first read delivers the snapshot on its own promise: the
     // prelude is already committed, so only the tail waits for it.
     const snapshot = await document.snapshot;
+    if (tailTiming) {
+      tailTiming.snapshotMs = Math.round(performance.now() - tailT0);
+      if (snapshot)
+        tailTiming.snapshotRecords = countSnapshotFamilies(snapshot);
+      const snapshotStats = document.stats?.snapshot;
+      if (snapshotStats) {
+        tailTiming.snapshotReadMs = Math.round(snapshotStats.readMs);
+        tailTiming.snapshotBytes = snapshotStats.bytes;
+        tailTiming.snapshotParseMs = Math.round(snapshotStats.parseMs);
+      }
+    }
     if (snapshot && snapshot.length > 0) {
       const seededCtx = createTailContext();
       if (reqCtx._cacheStore) {
@@ -1543,10 +1654,13 @@ function serveShellHit(
       // decode into a seed Map for the resolveLoaderData overlay, so the
       // payload's baked container bytes match the frozen prelude while the
       // hole-marker paths keep the fresh run's live nested promises.
-      const seedStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
+      const seedStart =
+        INTERNAL_RANGO_DEBUG || tailTiming ? performance.now() : 0;
       const loaderSeed = await buildShellLoaderSeed(snapshot);
       if (tailTiming) {
-        tailTiming.seedMs = Math.round(performance.now() - tailT0);
+        const seededAt = performance.now();
+        tailTiming.seedMs = Math.round(seededAt - tailT0);
+        tailTiming.seedCpuMs = Math.round(seededAt - seedStart);
       }
       if (INTERNAL_RANGO_DEBUG) {
         console.log(
@@ -1600,6 +1714,8 @@ function serveShellHit(
       // Fixed-size chunks (SHELL_PRELUDE_CHUNK_BYTES): a compressor in front
       // of the worker emits after each chunk instead of after the whole
       // prelude. slice() gives every chunk its own buffer.
+      const commitStart = metricsStore ? performance.now() : 0;
+      let chunks = 0;
       for (
         let offset = 0;
         offset < preludeBytes.length;
@@ -1607,6 +1723,17 @@ function serveShellHit(
       ) {
         controller.enqueue(
           preludeBytes.slice(offset, offset + SHELL_PRELUDE_CHUNK_BYTES),
+        );
+        chunks++;
+      }
+      if (metricsStore) {
+        appendMetric(
+          metricsStore,
+          "ppr:shell-commit",
+          commitStart,
+          performance.now() - commitStart,
+          undefined,
+          `cpu chunks=${chunks} prelude=${preludeBytes.length}b`,
         );
       }
       if (INTERNAL_RANGO_DEBUG) {
@@ -1688,7 +1815,7 @@ function serveShellHit(
             tailTiming.completeMs = Math.round(performance.now() - tailT0);
           }
         }
-        if (tailTiming) publishShellTailTiming(tailTiming);
+        publishTailTiming(tailTiming, metricsStore, request, url);
         controller.close();
       } catch (error) {
         // Self-heal on a failed tail: errors the pre-commit gates cannot catch
@@ -1709,8 +1836,8 @@ function serveShellHit(
         if (tailTiming) {
           tailTiming.outcome = "error";
           tailTiming.completeMs = Math.round(performance.now() - tailT0);
-          publishShellTailTiming(tailTiming);
         }
+        publishTailTiming(tailTiming, metricsStore, request, url);
         controller.error(error);
       }
     },

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added: a PPR shell HIT broken into `debugPerformance` rows ([#955](https://github.com/rangojs/rango/pull/955))
+
+Under `debugPerformance`, a PPR shell HIT reported one `ppr:shell-read` row.
+With `CFCacheStore`, that read is now broken into `ppr:shell-match`,
+`ppr:shell-head` and `ppr:shell-prelude` (with byte counts),
+`ppr:shell-marker` (the tag-marker read and how long the commit waited on it),
+and, for a KV hit after a Cache API miss, a `ppr:shell-l1-miss` row first.
+Every store then shows `ppr:shell-open` (the integrity check and decode) and
+`ppr:shell-commit` (chunk count and prelude bytes), both labelled `cpu`. The
+work after the commit (snapshot read and parse, seed, tail) prints as one
+`[RSC Perf] … shell tail:` line with snapshot bytes, records per family, and
+CPU durations, and rides the next request's `Server-Timing` as `ppr-tail`, now
+in production too when the HIT collected metrics. In production, nothing is
+collected when `debugPerformance` is off.
+
 ### Fixes
 
 - A PPR shell capture no longer gives up while a client component in the

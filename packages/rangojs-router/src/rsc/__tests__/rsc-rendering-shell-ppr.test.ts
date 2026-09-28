@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // PPR serving is INTEGRAL to the render pipeline: handleRscRendering itself reads
 // the matched route's `ppr` path option (off the classified route snapshot),
@@ -50,6 +50,9 @@ import type { HandlerContext } from "../handler-context.js";
 import { SSR_SETUP_VAR, type SSRSetup } from "../ssr-setup.js";
 import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
+import { createMetricsStore } from "../../router/metrics.js";
+import type { MetricsStore } from "../../server/context.js";
+import { takeShellTailTimingForServerTiming } from "../shell-serve.js";
 
 const scheduleMock = vi.mocked(scheduleShellCapture);
 
@@ -1104,6 +1107,246 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
     expect(scheduleMock).toHaveBeenCalledTimes(1);
     expect((scheduleMock.mock.calls[0]![6] as any).key).toBe(KEY);
+  });
+});
+
+/** A CFCacheStore over Map-backed Cache API and KV stubs (caches is stubbed). */
+function createCfShellFixture() {
+  const stored = new Map<string, { bytes: Uint8Array; init: ResponseInit }>();
+  const l1 = { matchDelayMs: 0 };
+  const cache = {
+    async match(request: Request): Promise<Response | undefined> {
+      if (l1.matchDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, l1.matchDelayMs));
+      }
+      const hit = stored.get(request.url);
+      return hit ? new Response(hit.bytes.slice(), hit.init) : undefined;
+    },
+    async put(request: Request, response: Response): Promise<void> {
+      stored.set(request.url, {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        init: { status: response.status, headers: response.headers },
+      });
+    },
+    async delete(request: Request): Promise<boolean> {
+      return stored.delete(request.url);
+    },
+  };
+  const kvValues = new Map<string, string>();
+  const kv = {
+    async get(key: string): Promise<string | null> {
+      return kvValues.get(key) ?? null;
+    },
+    async put(key: string, value: string): Promise<void> {
+      kvValues.set(key, value);
+    },
+    async delete(key: string): Promise<void> {
+      kvValues.delete(key);
+    },
+  };
+  vi.stubGlobal("caches", { default: cache, open: async () => cache });
+  const pending: Promise<unknown>[] = [];
+  const store = new CFCacheStore({
+    ctx: {
+      waitUntil: (p: Promise<unknown>) => {
+        pending.push(p);
+      },
+      passThroughOnException() {},
+    } as any,
+    kv: kv as any,
+  });
+  return {
+    store,
+    drain: () => Promise.all(pending.splice(0)),
+    /** Empty the Cache API tier (KV keeps its copy); delay its match. */
+    l1MissFor(ms: number): void {
+      stored.clear();
+      l1.matchDelayMs = ms;
+    },
+  };
+}
+
+// Issue #941: the HIT's store read, integrity check, and prelude flush were
+// one `ppr:shell-read` number, and the snapshot work after the commit was
+// invisible. Under debugPerformance each sub-step is its own row, with the
+// byte counts that expose the cost where workerd's clock does not advance.
+describe("handleRscRendering — integrated PPR serve: debugPerformance rows", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("records the read, marker, open, and commit rows with sizes and counts", async () => {
+    const cf = createCfShellFixture();
+    const snapshot: ShellSnapshotRecord[] = [
+      { family: "item", key: "it1", value: { value: "PINNED" } },
+      { family: "item", key: "it2", value: { value: "PINNED" } },
+      {
+        family: "segment",
+        key: "doc:none",
+        value: { segments: [], handles: "", expiresAt: 0 },
+      },
+    ];
+    await cf.store.putShell(KEY, shellEntry({ snapshot }), 300, 30, ["home"]);
+    await cf.drain();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    let metrics: MetricsStore | undefined;
+    try {
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        arm: (reqCtx) => {
+          metrics = createMetricsStore(true);
+          reqCtx._metricsStore = metrics;
+        },
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      const rows = new Map(
+        metrics!.metrics.map((m) => [
+          m.label,
+          { depth: m.depth, desc: m.desc },
+        ]),
+      );
+      const preludeLength = PRELUDE_HTML.length;
+      expect(rows.get("ppr:shell-read")).toEqual({
+        depth: undefined,
+        desc: "hit l1",
+      });
+      expect(rows.get("ppr:shell-match")).toEqual({ depth: 1, desc: "l1" });
+      expect(rows.get("ppr:shell-head")?.desc).toMatch(/^bytes=\d+$/);
+      expect(rows.get("ppr:shell-prelude")?.desc).toBe(
+        `bytes=${preludeLength}`,
+      );
+      expect(rows.get("ppr:shell-marker")?.desc).toMatch(
+        /^tags=1 parallel commit-wait=\d+\.\d\dms$/,
+      );
+      expect(rows.get("ppr:shell-open")?.desc).toBe(
+        `cpu raw prelude=${preludeLength}b`,
+      );
+      expect(rows.get("ppr:shell-commit")?.desc).toBe(
+        `cpu chunks=1 prelude=${preludeLength}b`,
+      );
+      expect(rows.has("ppr:shell-l1-miss")).toBe(false);
+
+      await readAll(response.body!);
+      const tail = log.mock.calls
+        .map(([line]) => String(line))
+        .find((line) => line.startsWith("[RSC Perf] GET /p shell tail:"));
+      expect(tail).toMatch(
+        /snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms records=item:2\/segment:1 seed=\d+ms seed-cpu=\d+ms /,
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  // A KV hit after an L1 miss: the L1 attempt is its own row, and the KV
+  // read's rows start after it instead of at the read's start.
+  it("puts the L1 attempt ahead of a KV hit's rows", async () => {
+    vi.useRealTimers();
+    const cf = createCfShellFixture();
+    await cf.store.putShell(KEY, shellEntry(), 300, 30);
+    await cf.drain();
+    cf.l1MissFor(15);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    let metrics: MetricsStore | undefined;
+    try {
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        arm: (reqCtx) => {
+          metrics = createMetricsStore(true);
+          reqCtx._metricsStore = metrics;
+        },
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!);
+      const rows = new Map(metrics!.metrics.map((m) => [m.label, m]));
+      expect(rows.get("ppr:shell-read")?.desc).toBe("hit kv");
+      const l1Miss = rows.get("ppr:shell-l1-miss")!;
+      expect(l1Miss).toMatchObject({ depth: 1, desc: "absent" });
+      expect(l1Miss.duration).toBeGreaterThanOrEqual(14);
+      const match = rows.get("ppr:shell-match")!;
+      expect(match.desc).toBe("kv");
+      expect(match.startTime).toBeGreaterThanOrEqual(
+        l1Miss.startTime + l1Miss.duration - 0.001,
+      );
+      expect(rows.get("ppr:shell-prelude")!.startTime).toBeGreaterThanOrEqual(
+        match.startTime + match.duration - 0.001,
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("takes no read timestamps, allocates no read stats, and logs nothing when debugPerformance is off", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    takeShellTailTimingForServerTiming(KEY); // an earlier test's buffered tail
+    const cf = createCfShellFixture();
+    await cf.store.putShell(KEY, shellEntry(), 300, 30);
+    await cf.drain();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const now = vi.spyOn(performance, "now");
+    const readShellDocument = cf.store.readShellDocument.bind(cf.store);
+    let readTimestamps = -1;
+    let read: Awaited<ReturnType<typeof readShellDocument>> | undefined;
+    vi.spyOn(cf.store, "readShellDocument").mockImplementation(async (key) => {
+      const before = now.mock.calls.length;
+      read = await readShellDocument(key);
+      readTimestamps = now.mock.calls.length - before;
+      return read;
+    });
+    try {
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+      });
+      await readAll(response.body!);
+      expect(readTimestamps).toBe(0);
+      expect(read).not.toBeNull();
+      expect("stats" in read!).toBe(false);
+      expect(takeShellTailTimingForServerTiming(KEY)).toBeUndefined();
+      expect(
+        log.mock.calls.some(([line]) => String(line).startsWith("[RSC Perf]")),
+      ).toBe(false);
+    } finally {
+      log.mockRestore();
+      now.mockRestore();
+    }
+  });
+
+  it("in production, buffers a tail timing only for a HIT that collected metrics", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    takeShellTailTimingForServerTiming(KEY); // an earlier test's buffered tail
+    const cf = createCfShellFixture();
+    await cf.store.putShell(KEY, shellEntry(), 300, 30);
+    await cf.drain();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const off = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+      });
+      await readAll(off.response.body!);
+      expect(takeShellTailTimingForServerTiming(KEY)).toBeUndefined();
+
+      const on = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        arm: (reqCtx) => {
+          reqCtx._metricsStore = createMetricsStore(true);
+        },
+      });
+      await readAll(on.response.body!);
+      expect(takeShellTailTimingForServerTiming(KEY)?.outcome).toBe("complete");
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 
