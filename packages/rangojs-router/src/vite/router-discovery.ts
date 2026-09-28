@@ -6,7 +6,7 @@
  * generation, virtual module codegen, and bundle post-processing.
  */
 
-import type { Plugin } from "vite";
+import type { Plugin, ViteDevServer } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -177,8 +177,9 @@ const injectedShellNotReadyPaths = new Set<string>();
  * - Build: hashed IDs (forceBuild), hashClientRefs for production bundles
  *
  * Returns the ViteDevServer instance. Callers access .environments.rsc as needed.
+ * @internal Exported for tests.
  */
-async function createTempRscServer(
+export async function createTempRscServer(
   state: DiscoveryState,
   options: {
     forceBuild?: boolean;
@@ -195,7 +196,7 @@ async function createTempRscServer(
      */
     realSsrEntry?: boolean;
   } = {},
-) {
+): Promise<ViteDevServer> {
   // Install the Node ESM loader hook before any module evaluation so
   // `cloudflare:*` specifiers in externalized/loader-delegated modules
   // (e.g. packages plugin-rsc marks as external) resolve to stubs
@@ -216,7 +217,16 @@ async function createTempRscServer(
   return createViteServer({
     root: state.projectRoot,
     configFile: false,
-    server: { middlewareMode: true },
+    server: {
+      middlewareMode: true,
+      // Build mode: no file watching. buildStart installs the per-router tries
+      // into this realm and runShellPrerenderPhase reuses it after the bundles
+      // are written. A watched write in between (writeRouteTypesFiles' own
+      // <router>.named-routes.gen.ts, which every router file imports) can
+      // make Vite full-reload the RSC runner; the shell phase then matches in
+      // a fresh realm with no tries and a root path("/*") wins (#947).
+      ...(options.forceBuild ? { watch: null } : {}),
+    },
     appType: "custom",
     logLevel: "silent",
     resolve: resolveConfig,

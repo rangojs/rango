@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A `vite build` that rewrote a router's `named-routes.gen.ts` (the first
+  build after adding, renaming or removing a route, or any build that found
+  the file out of date) could skip every build-time PPR shell. The build-time
+  server that runs route discovery and the shell phase watched the project,
+  so the rewrite could reload its modules (when the router file's importers
+  end at an entry nothing imports, as in a Cloudflare `worker.rsc.tsx`) and
+  drop the route trie discovery had installed; the shell phase then matched
+  each `Prerender` + `ppr` URL in declaration order. A wildcard such as
+  `path("/*")` declared before the route won, every candidate logged
+  `SHELL SKIP <url> - no router matched "<route>" (matched: <wildcard route>, ...)`,
+  and the routes fell back to capturing the shell on the first request after
+  deploy. The next build, with the file up to date, captured them. That
+  server no longer watches files
+  ([#951](https://github.com/rangojs/rango/pull/951)).
+
 ## 0.17.0 (2026-09-28)
 
 ### The default document restores scroll on back/forward ([#948](https://github.com/rangojs/rango/pull/948))

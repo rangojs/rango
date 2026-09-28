@@ -360,7 +360,10 @@ where an entry came from. Design:
    `buildApp` post hook) runs AFTER every environment bundle is written — the
    prelude embeds the BUILT client bootstrap URL, which does not exist at
    buildStart. It reuses the buildStart temp server (kept alive on discovery
-   state), seeds an in-realm prerender store from the retained payloads, then
+   state, and created without a file watcher: the build's own
+   `named-routes.gen.ts` rewrite can otherwise full-reload the realm and
+   drop the route tries discovery installed, #947), seeds an in-realm
+   prerender store from the retained payloads, then
    runs global and route middleware before producer A's capture core
    (`prerender/build-shell-capture.ts`, built on `deriveShellCaptureContext` +
    `captureAndStoreShell`) per URL. Middleware sees `ctx.build === true`;
