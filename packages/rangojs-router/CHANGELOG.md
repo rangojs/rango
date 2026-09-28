@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Back/forward keeps an entry's location state and scroll position ([#943](https://github.com/rangojs/rango/pull/943))
+
+Going back to an entry the router's history cache no longer holds (it keeps 20
+entries; also after a deploy or a cross-tab cache clear) refetches the page.
+That refetch used to replace the entry's `history.state`, so
+`useLocationState()` returned `undefined` for an entry that had state, and with
+`<ScrollRestoration>` the entry's saved scroll position was lost. It also saved
+the page being left under the returning entry's key. The entry's history state
+is now kept as the browser restored it, with any server-set state merged in.
+
+With `<ScrollRestoration>`, back and forward now also save the scroll position
+of the page being left, so forward to a page you scrolled and then left with
+back returns to where you were instead of the top.
+
 ### Breaking: `intercept()` `use()` rejects items an intercept never applies ([#872](https://github.com/rangojs/rango/pull/872), [#879](https://github.com/rangojs/rango/pull/879))
 
 An intercept's `use()`, and the `.use` of a handler mounted with

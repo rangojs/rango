@@ -73,6 +73,13 @@ type GetScrollKeyFunction = (location: {
 let customGetKey: GetScrollKeyFunction | null = null;
 
 /**
+ * Scroll key of the entry on screen. At popstate history.state already belongs
+ * to the destination, so this is the only way to save the page being left
+ * under its own key (see handleTraversalStart).
+ */
+let displayedKey: string | null = null;
+
+/**
  * Generate a unique key for the current history entry.
  * Uses history.state.key if available, otherwise generates and stores a new one.
  */
@@ -138,7 +145,7 @@ export function initScrollRestoration(options?: {
   }
 
   // Ensure current history entry has a key
-  getHistoryStateKey();
+  trackDisplayedEntry();
 
   // Save scroll positions on pagehide (before leaving/refreshing)
   const handlePageHide = () => {
@@ -164,6 +171,7 @@ export function initScrollRestoration(options?: {
     initialized = false;
     savedScrollPositions = {};
     scrollKeyOrder = [];
+    displayedKey = null;
   };
 }
 
@@ -172,8 +180,10 @@ export function initScrollRestoration(options?: {
  * Maintains bounded size by evicting oldest entries when the limit is exceeded.
  */
 export function saveCurrentScrollPosition(): void {
-  const key = getScrollKey();
+  saveScrollPosition(getScrollKey(), window.scrollY);
+}
 
+function saveScrollPosition(key: string, y: number): void {
   // If this key already exists, remove it from its current position
   // in the order array so it can be re-appended at the end (most recent).
   const existingIndex = scrollKeyOrder.indexOf(key);
@@ -181,7 +191,7 @@ export function saveCurrentScrollPosition(): void {
     scrollKeyOrder.splice(existingIndex, 1);
   }
 
-  savedScrollPositions[key] = window.scrollY;
+  savedScrollPositions[key] = y;
   scrollKeyOrder.push(key);
 
   // Evict oldest entries if we exceed the limit
@@ -355,6 +365,23 @@ export function handleNavigationStart(): void {
 }
 
 /**
+ * Handle scroll for a back/forward traversal, at popstate before anything
+ * renders: save the page being left under ITS key (history has already moved,
+ * so saveCurrentScrollPosition would use the destination's key) and track the
+ * destination as the displayed entry.
+ */
+export function handleTraversalStart(): void {
+  if (!initialized) return;
+  const leftKey = displayedKey;
+  trackDisplayedEntry();
+  // A key shared with the destination (a getKey that collapses entries, e.g.
+  // by pathname) keeps the destination's saved position.
+  if (leftKey !== null && leftKey !== displayedKey) {
+    saveScrollPosition(leftKey, window.scrollY);
+  }
+}
+
+/**
  * Handle scroll after navigation completes.
  * @param options.restore - If true, restore saved position (for popstate)
  * @param options.scroll - If false, don't scroll at all
@@ -410,5 +437,10 @@ export function handleNavigationEnd(options: {
  * Call this after changing history to ensure new entry has a key.
  */
 export function ensureHistoryKey(): void {
-  getHistoryStateKey();
+  trackDisplayedEntry();
+}
+
+/** Mints the current entry's key if missing and records it as displayed. */
+function trackDisplayedEntry(): void {
+  displayedKey = getScrollKey();
 }

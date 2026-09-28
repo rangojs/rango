@@ -359,3 +359,72 @@ describe("createNavigationTransaction", () => {
     tx2[Symbol.dispose]();
   });
 });
+
+describe("createNavigationTransaction traversal commit", () => {
+  let handleNavigationStart: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    const scroll = await import("../browser/scroll-restoration");
+    handleNavigationStart = vi.mocked(scroll.handleNavigationStart);
+    handleNavigationStart.mockClear();
+  });
+
+  it("keeps the history entry the browser restored and saves no scroll", () => {
+    const { store, eventController } = createTestContext();
+    const entryState = {
+      key: "k-entry",
+      idx: 3,
+      state: { from: "list" },
+      __rsc_ls_origin: { from: "origin-link" },
+    };
+    historyState = entryState;
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/start",
+      { replace: true },
+    );
+    tx.commit({
+      url: "http://localhost/start",
+      segmentIds: [],
+      segments: [],
+      traversal: true,
+    });
+
+    expect(handleNavigationStart).not.toHaveBeenCalled();
+    expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+    expect(historyState).toBe(entryState);
+    expect(store.getHistoryKey()).toBe("/start");
+    tx[Symbol.dispose]();
+  });
+
+  it("merges server-set state into the entry instead of replacing it", () => {
+    const { store, eventController } = createTestContext();
+    historyState = { key: "k-entry", idx: 3, state: { from: "list" } };
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/start",
+      { replace: true },
+    );
+    tx.commit({
+      url: "http://localhost/start",
+      segmentIds: [],
+      segments: [],
+      traversal: true,
+      serverState: { __rsc_ls_flash: { text: "saved" } },
+    });
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(historyState).toEqual({
+      key: "k-entry",
+      idx: 3,
+      state: { from: "list" },
+      __rsc_ls_flash: { text: "saved" },
+    });
+    tx[Symbol.dispose]();
+  });
+});

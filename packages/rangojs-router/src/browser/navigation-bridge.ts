@@ -18,6 +18,7 @@ import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
+  handleTraversalStart,
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 
@@ -496,6 +497,7 @@ export function createNavigationBridge(
     async handlePopstate(): Promise<void> {
       // Abort any pending navigation to prevent race conditions
       eventController.abortNavigation();
+      handleTraversalStart();
 
       const url = window.location.href;
 
@@ -698,7 +700,7 @@ export function createNavigationBridge(
           tx.handle.signal,
           tx.with({
             url,
-            replace: true,
+            traversal: true,
             scroll: false,
             intercept: isIntercept,
             interceptSourceUrl,

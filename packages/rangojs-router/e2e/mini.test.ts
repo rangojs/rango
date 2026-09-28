@@ -1,12 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { returnToEvictedEntry, routerNavigate } from "@shared/e2e";
 import type { Fixture } from "./fixture";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
   expectNoPageError,
   getNumericContent,
+  goBack,
+  goForward,
 } from "./helper";
 
 /**
@@ -28,6 +31,15 @@ import {
  */
 
 const MINI_ROOT = "./e2e/mini";
+
+const readScrollY = (page: Page): Promise<number> =>
+  page.evaluate(() => Math.round(window.scrollY));
+
+/** Room to scroll on every page: an inline style on <html> survives navigations. */
+const makePagesTall = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    document.documentElement.style.paddingBottom = "4000px";
+  });
 
 function miniTests(f: Fixture) {
   test("home: SSR, global middleware header, loader, breadcrumb", async ({
@@ -452,6 +464,56 @@ function miniTests(f: Fixture) {
     await waitForHydration(page);
     const mode = await page.evaluate(() => window.history.scrollRestoration);
     expect(mode).toBe("manual");
+  });
+
+  // The cache-miss refetch used to replaceState a fresh history state and save
+  // the page being left under the returning entry's scroll key.
+  test("scroll restoration: back to an evicted entry keeps its location state and scroll", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/state"));
+    await waitForHydration(page);
+    await page.getByTestId("origin-link").click();
+    await expect(page.getByTestId("origin")).toHaveText("origin-link");
+    await makePagesTall(page);
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await expect.poll(() => readScrollY(page)).toBe(1500);
+    const key = await page.evaluate(() => window.history.state?.key);
+
+    await returnToEvictedEntry(page, (n) => f.url(`/?n=${n}`));
+
+    await expect(page).toHaveURL(f.url("/state"));
+    await expect(page.getByTestId("state-page")).toBeVisible();
+    await expect(page.getByTestId("origin")).toHaveText("origin-link");
+    await expect.poll(() => readScrollY(page)).toBe(1500);
+    expect(await page.evaluate(() => window.history.state?.key)).toBe(key);
+  });
+
+  test("scroll restoration: forward restores the position the page had when back left it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/state"));
+    await waitForHydration(page);
+    await makePagesTall(page);
+    await page.evaluate(() => window.scrollTo(0, 300));
+    await expect.poll(() => readScrollY(page)).toBe(300);
+
+    await routerNavigate(page, f.url("/"));
+    // The navigation's own scroll-to-top has landed before B is scrolled.
+    await expect.poll(() => readScrollY(page)).toBe(0);
+    await page.evaluate(() => window.scrollTo(0, 900));
+    await expect.poll(() => readScrollY(page)).toBe(900);
+
+    await goBack(page);
+    await expect(page).toHaveURL(f.url("/state"));
+    await expect.poll(() => readScrollY(page)).toBe(300);
+    await goForward(page);
+    await expect(page).toHaveURL(f.url("/"));
+    await expect.poll(() => readScrollY(page)).toBe(900);
   });
 
   // -- clientChunks: per-route client splitting (dev + production) -----------

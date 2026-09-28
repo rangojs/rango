@@ -11,7 +11,11 @@ import {
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
-import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  buildHistoryState,
+  mergeLocationState,
+  pushHistoryWithIdx,
+} from "./history-state.js";
 
 export { resolveNavigationState } from "./history-state.js";
 
@@ -49,6 +53,12 @@ interface CommitOptions {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
+  /**
+   * Back/forward: history is already at this entry. Its state (scroll key,
+   * location state, idx) stays as the browser restored it; serverState is
+   * merged in. The page left was saved by handleTraversalStart.
+   */
+  traversal?: boolean;
 }
 
 /**
@@ -131,6 +141,7 @@ export function createNavigationTransaction(
       interceptSourceUrl,
       cacheOnly,
       serverState,
+      traversal,
     } = opts;
 
     const parsedUrl = new URL(url, window.location.origin);
@@ -145,7 +156,7 @@ export function createNavigationTransaction(
       return { scroll: false };
     }
 
-    handleNavigationStart();
+    if (!traversal) handleNavigationStart();
 
     store.setSegmentIds(segmentIds);
     store.setCurrentUrl(url);
@@ -160,6 +171,15 @@ export function createNavigationTransaction(
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       return { scroll: false };
+    }
+
+    if (traversal) {
+      if (serverState && Object.keys(serverState).length > 0) {
+        mergeLocationState(serverState);
+      }
+      handle.complete(parsedUrl);
+      debugLog("[Browser] Traversal committed, historyKey:", historyKey);
+      return { scroll };
     }
 
     const historyState = buildHistoryState(
