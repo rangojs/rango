@@ -170,6 +170,19 @@ export function isValidShellHit(
   );
 }
 
+/** The postponed blob is stored and parses (null is the DATA variant). */
+function hasParseablePostponed(
+  entry: ShellCacheEntry,
+): entry is ShellCacheEntry & { postponed: string | null } {
+  if (entry.postponed === undefined) return false;
+  try {
+    if (entry.postponed !== null) JSON.parse(entry.postponed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * DOCUMENT-half structural gate and type narrowing, without decoding the
  * prelude: the prelude is a string and the postponed blob parses. Partial
@@ -186,15 +199,7 @@ export function isValidShellHit(
 export function hasIntactShellPayload(
   entry: ShellCacheEntry,
 ): entry is DocumentShellCacheEntry {
-  if (typeof entry.prelude !== "string" || entry.postponed === undefined) {
-    return false;
-  }
-  try {
-    if (entry.postponed !== null) JSON.parse(entry.postponed);
-    return true;
-  } catch {
-    return false;
-  }
+  return typeof entry.prelude === "string" && hasParseablePostponed(entry);
 }
 
 /** A document shell ready to serve: its prelude decoded exactly once. */
@@ -225,27 +230,36 @@ export interface ShellDocument {
  * until the entry ages out. Returning null here turns a corrupt entry
  * (store-layer fault) into a plain MISS the recapture overwrites. The decoded
  * bytes are what serveShellHit enqueues, so the check costs no second decode.
- * A prelude-first `read` already carries raw bytes and a pending snapshot.
+ * A prelude-first `read` (SegmentCacheStore.readShellDocument) already carries
+ * the raw bytes and a pending snapshot, so only its postponed blob is checked.
  */
 export function openShellDocument(
   entry: ShellCacheEntry,
   read?: Pick<ShellDocumentRead, "prelude" | "snapshot" | "stats">,
 ): ShellDocument | null {
-  const postponed = entry.postponed;
-  if (postponed === undefined) return null;
-  if (!read && typeof entry.prelude !== "string") return null;
-  try {
-    if (postponed !== null) JSON.parse(postponed);
+  if (read) {
+    if (!hasParseablePostponed(entry)) return null;
     return {
       entry,
-      postponed,
-      prelude: read ? read.prelude : base64ToBytes(entry.prelude!),
-      snapshot: read ? read.snapshot : entry.snapshot,
-      ...(read?.stats && { stats: read.stats }),
+      postponed: entry.postponed,
+      prelude: read.prelude,
+      snapshot: read.snapshot,
+      ...(read.stats && { stats: read.stats }),
     };
+  }
+  if (!hasIntactShellPayload(entry)) return null;
+  let prelude: Uint8Array;
+  try {
+    prelude = base64ToBytes(entry.prelude);
   } catch {
     return null;
   }
+  return {
+    entry,
+    postponed: entry.postponed,
+    prelude,
+    snapshot: entry.snapshot,
+  };
 }
 
 /**
