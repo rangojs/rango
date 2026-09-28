@@ -20,12 +20,7 @@ import type { SearchParamsFilter } from "./search-params-filter.js";
  * slot; an allowlist keeps the router's own params out of the key while leaving
  * consumer `__` params intact.
  */
-const RESERVED_SEARCH_PARAMS = new Set([
-  "__no_cache",
-  "__rsc",
-  "__html",
-  "__prerender_collect",
-]);
+const RESERVED_SEARCH_PARAMS = new Set(["__no_cache", "__rsc", "__html"]);
 
 function isReservedSearchParam(key: string): boolean {
   return key.startsWith("_rsc") || RESERVED_SEARCH_PARAMS.has(key);

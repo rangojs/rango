@@ -294,8 +294,10 @@ anything shipped.
    strings). Covered by a Prerender route pushing a `Promise<ReactNode>`
    breadcrumb, e2e in dev + production.
 
-The (dead-code) `rsc-rendering.ts` `__prerender_collect` endpoint was confirmed
-unused and left as-is. The systemic guard worth adopting: make every handle
+The `rsc-rendering.ts` `__prerender_collect` endpoint was confirmed unused
+at the time and left as-is; it has since been removed (its only caller, a
+post-build `worker.fetch` script, went away when collection moved to
+`matchForPrerender`). The systemic guard worth adopting: make every handle
 boundary type a `string` (so a raw map at a `JSON.stringify` site won't
 type-check) and forbid `JSON.stringify` over a `handles`-keyed object outside
 `handle-snapshot.ts`.

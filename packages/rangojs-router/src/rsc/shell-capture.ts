@@ -1710,8 +1710,9 @@ async function captureAndStoreShell(
   // generator has not yielded, SsrRoot suspends at the root (consumeAsyncGenerator
   // sits above every boundary), the prelude comes back trivial, and
   // captureShellHTML's sanity gate returns null: the designed fail-safe no-op, not
-  // an error. This mirrors the __prerender_collect seal+settled regime, which also
-  // excludes loaders. See docs/design/ppr-shell-resume.md ("Loaders and handles").
+  // an error. This mirrors the matchForPrerender (router/prerender-match.ts)
+  // seal+settled regime, which also excludes loaders. See
+  // docs/design/ppr-shell-resume.md ("Loaders and handles").
   handleStore.seal();
 
   // Handles contract, shell half ("nesting = liveness"): TOP-LEVEL pushed handle

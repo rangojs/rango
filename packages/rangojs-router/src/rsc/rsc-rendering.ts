@@ -2,8 +2,7 @@
  * RSC Rendering Handler (Navigation)
  *
  * Handles RSC rendering for both partial (client-side navigation) and full
- * (initial page load) requests. Includes prerender collection for build-time
- * static generation.
+ * (initial page load) requests.
  */
 
 import {
@@ -394,8 +393,8 @@ function* requestRenderPlan<TEnv>(
   const shell = yield* scope("shell-serve", shellServePlan(input));
   if (shell.kind === "serve") return shell.response;
 
-  // Match + payload. A control response (redirect, prerender collection)
-  // ends the plan before any rendering.
+  // Match + payload. A control response (redirect) ends the plan before any
+  // rendering.
   const prepared = yield* scope(
     isPartial ? "prepare:partial" : "prepare:full",
     preparePayloadPlan(input),
@@ -470,7 +469,6 @@ function* shellServePlan<TEnv>(
   if (
     isPartial ||
     request.method !== "GET" ||
-    url.searchParams.has("__prerender_collect") ||
     isRscRequest(request, url, false) ||
     reqCtx._dynamic
   ) {
@@ -639,7 +637,7 @@ function* shellServePlan<TEnv>(
 
 /**
  * Match the request and assemble the RSC payload, or produce a control
- * response (redirect, prerender collection) that ends the request plan.
+ * response (redirect) that ends the request plan.
  */
 function* preparePayloadPlan<TEnv>(
   input: RequestRenderInput<TEnv>,
@@ -749,13 +747,6 @@ function* preparePayloadPlan<TEnv>(
 
   // Caching is now handled in router.match() via cache provider in request context
   // match.segments already contains cached or fresh segments as appropriate
-
-  if (url.searchParams.has("__prerender_collect")) {
-    const response = yield* step("prerender-collect", () =>
-      collectPrerenderArtifacts(match, handleStore),
-    );
-    return { kind: "control", response };
-  }
 
   return {
     kind: "payload",
@@ -867,38 +858,6 @@ function mirrorPprServerTimingsForDev(
       );
     }
   }
-}
-
-/**
- * Build-time prerender collection: serialize segments and handle data
- * to JSON for storage as build artifacts. At runtime the worker
- * deserializes these and feeds them through the normal segment pipeline.
- */
-async function collectPrerenderArtifacts<TEnv>(
-  match: Awaited<ReturnType<HandlerContext<TEnv>["router"]["match"]>>,
-  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
-): Promise<Response> {
-  const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
-  handleStore.seal();
-  await handleStore.settled;
-  const { serializeSegments } = await import("../cache/segment-codec.js");
-  const serializedSegments = await serializeSegments(nonLoaderSegments);
-  const handles: Record<string, Record<string, unknown[]>> = {};
-  for (const seg of nonLoaderSegments) {
-    const segHandles = handleStore.getDataForSegment(seg.id);
-    if (Object.keys(segHandles).length > 0) {
-      handles[seg.id] = segHandles;
-    }
-  }
-  return new Response(
-    JSON.stringify({
-      segments: serializedSegments,
-      handles,
-      routeName: match.routeName,
-      params: match.params,
-    }),
-    { headers: { "Content-Type": "application/json" } },
-  );
 }
 
 /** Assemble headers + tracking and run the foreground stage-driver render. */
