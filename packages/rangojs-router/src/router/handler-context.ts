@@ -30,6 +30,32 @@ import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 const MUTATING_HEADERS_METHODS = new Set(["set", "append", "delete"]);
 
 /**
+ * `headers` whose mutating methods run `assertWrite(method)` first. Shared by
+ * the handler ctx (createHandlerContext) and the middleware ctx
+ * (createMiddlewareContext).
+ */
+export function guardHeaderWrites(
+  headers: Headers,
+  assertWrite: (method: string | symbol) => void,
+): Headers {
+  return new Proxy(headers, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") {
+        if (MUTATING_HEADERS_METHODS.has(prop as string)) {
+          return (...args: any[]) => {
+            assertWrite(prop);
+            return value.apply(target, args);
+          };
+        }
+        return value.bind(target);
+      }
+      return value;
+    },
+  });
+}
+
+/**
  * Strip internal _rsc* query params from a URL.
  * Returns a new URL with only user-facing params.
  */
@@ -224,23 +250,10 @@ export function createHandlerContext<TEnv>(
   // assertCachedHeaderWriteAllowed, the unified #713 guard).
   // Uses lazy `ctx` reference (assigned below) — only the specific handler ctx
   // is stamped by cache-runtime, not the shared request context.
-  // MUTATING_HEADERS_METHODS is hoisted to module scope (constant, read-only).
   let ctx: InternalHandlerContext<any, TEnv>;
-  const guardedHeaders = new Proxy(stubResponse.headers, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value === "function") {
-        if (MUTATING_HEADERS_METHODS.has(prop as string)) {
-          return (...args: any[]) => {
-            assertNotInsideCacheExec(ctx, "headers");
-            assertCachedHeaderWriteAllowed("ctx.headers", prop);
-            return value.apply(target, args);
-          };
-        }
-        return value.bind(target);
-      }
-      return value;
-    },
+  const guardedHeaders = guardHeaderWrites(stubResponse.headers, (prop) => {
+    assertNotInsideCacheExec(ctx, "headers");
+    assertCachedHeaderWriteAllowed("ctx.headers", prop);
   });
 
   ctx = {

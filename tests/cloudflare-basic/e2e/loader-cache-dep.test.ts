@@ -52,6 +52,48 @@ async function expectDepCrumbOnceAcrossHit(
   expect(next.crumbs).not.toBe(hit.crumbs);
 }
 
+/**
+ * /loader-ctx/:id: a DSL loader passes its own ctx to a "use cache" function
+ * that pushes a crumb through it (#940). `lc-stamp` is the cached value: a HIT
+ * repeats it and replays the crumb once; another id misses. Ids are unique per
+ * run so the first load is a MISS.
+ */
+async function expectLoaderCtxCachedPerParams(
+  page: Page,
+  url: (path: string) => string,
+) {
+  const run = Math.random().toString(36).slice(2, 8);
+  const [a, b] = [`a${run}`, `b${run}`];
+  const load = async (id: string) => {
+    await page.goto(url(`/loader-ctx/${id}`));
+    await waitForHydration(page);
+    await expect(testId(page, "loader-ctx-page")).toBeVisible();
+    return {
+      stamp: (await testId(page, "lc-stamp").textContent()) ?? "",
+      crumbs: await testId(page, "dep-crumbs").textContent(),
+    };
+  };
+
+  const first = await load(a);
+  expect(first.stamp.startsWith(`${a} `)).toBe(true);
+  expect(first.crumbs).toBe(`Item ${a}`);
+
+  let hit = first;
+  await expect
+    .poll(async () => (hit = await load(a)).stamp, {
+      timeout: 15000,
+      message: 'Expected a "use cache" HIT for the loader ctx call',
+    })
+    .toBe(first.stamp);
+  expect(hit.crumbs).toBe(`Item ${a}`);
+
+  const other = await load(b);
+  expect(other.stamp.startsWith(`${b} `)).toBe(true);
+  expect(other.crumbs).toBe(`Item ${b}`);
+
+  expect((await load(a)).stamp).toBe(first.stamp);
+}
+
 const LOADER_CACHE_DEP = {
   path: "/loader-cache-dep",
   pageId: "loader-cache-dep-page",
@@ -81,6 +123,13 @@ test.describe("loader cache dependency crumbs", () => {
     using _ = expectNoPageError(page);
     await expectDepCrumbOnceAcrossHit(page, (p) => f.url(p), USE_CACHE_DEP);
   });
+
+  test("use cache: a DSL loader passing its ctx caches per params and replays its crumb once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLoaderCtxCachedPerParams(page, (p) => f.url(p));
+  });
 });
 
 test.describe("loader cache dependency crumbs (production)", () => {
@@ -98,5 +147,12 @@ test.describe("loader cache dependency crumbs (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectDepCrumbOnceAcrossHit(page, (p) => f.url(p), USE_CACHE_DEP);
+  });
+
+  test("use cache: a DSL loader passing its ctx caches per params and replays its crumb once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLoaderCtxCachedPerParams(page, (p) => f.url(p));
   });
 });

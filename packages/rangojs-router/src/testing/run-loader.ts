@@ -38,6 +38,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
@@ -268,7 +269,7 @@ function runWithLoaderContext<R>(
           );
         }) as TestLoaderContext["reverse"]);
 
-    const loaderCtx: TestLoaderContext = {
+    const loaderCtx: TestLoaderContext & { _routeName?: string } = {
       params: opts.params ?? {},
       routeParams: (opts.params ?? {}) as Record<string, string>,
       request: reqCtx.request,
@@ -324,6 +325,7 @@ function runWithLoaderContext<R>(
       body: opts.body,
       formData: opts.formData,
       reverse: reverse as TestLoaderContext["reverse"],
+      _routeName: reqCtx._routeName,
       rendered:
         opts.rendered !== undefined && opts.rendered !== false
           ? async () => {
@@ -344,6 +346,8 @@ function runWithLoaderContext<R>(
             },
     };
 
+    // Request-scoped for "use cache" keys, as production brands it (#940).
+    (loaderCtx as Record<symbol, unknown>)[NOCACHE_SYMBOL] = true;
     return fn(loaderCtx);
   });
 }

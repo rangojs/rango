@@ -440,10 +440,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // keeps a replayed loader's pushes to one copy per request.
     let callerSegmentId: string | undefined;
     let claimLoaderPushes: ((loaderId: string) => boolean) | undefined;
+    // A fetchable loader's request body (loader-fetch.ts) is an input the
+    // route fields leave out: such a call runs uncached (#940).
+    let hasBodyCtx = false;
     for (const arg of args) {
       if (isTainted(arg)) {
         hasTaintedArgs = true;
         const ctx = arg as any;
+        if (ctx.body !== undefined || ctx.formData !== undefined) {
+          hasBodyCtx = true;
+        }
         if (callerSegmentId === undefined) {
           callerSegmentId = ctx._currentSegmentId;
           claimLoaderPushes = ctx._claimLoaderPushes;
@@ -503,7 +509,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // gone. Throw early rather than silently dropping handle side effects.
     if (hasTaintedArgs && !requestCtx?._handleStore) {
       throw new Error(
-        `[use cache] "${id}" receives a tainted argument (ctx/env/req) but the ` +
+        `[use cache] "${id}" receives a ctx argument but the ` +
           `HandleStore is not available. This typically happens when a "use cache" ` +
           `function with ctx runs outside the request context (e.g., during late ` +
           `streaming after AsyncLocalStorage context is lost). Move the "use cache" ` +
@@ -518,6 +524,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Generate cache key
     let cacheKey: string;
     try {
+      if (hasBodyCtx) {
+        throw new Error("ctx carries a request body");
+      }
       if (keyArgs.length > 0) {
         // Fast path: when every key arg is JSON-safe, build the key with a
         // deterministic stable-stringify and skip encodeReply (the Flight reply
@@ -554,8 +563,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         console.warn(
           `[use cache] "${id}" ran uncached: an argument, or a value nested in ` +
             `one, cannot be serialized into the cache key (a function, class ` +
-            `instance or symbol). Pass serializable values; ctx, a Request, ` +
-            `the request's env and React elements are handled.`,
+            `instance or symbol, or a loader ctx carrying a request body). ` +
+            `Pass serializable values; ctx, a Request, the request's env and ` +
+            `React elements are handled.`,
         );
       }
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));

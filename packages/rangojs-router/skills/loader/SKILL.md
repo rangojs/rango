@@ -134,7 +134,12 @@ DSL loaders can safely read `createVar({ cache: false })` variables
 because they are always resolved fresh. The read guard is bypassed for
 loader functions — they never produce stale data. A `"use cache"` function
 the loader calls is not a loader body: a non-cacheable read inside it throws,
-so read the var in the loader and pass the value in as an argument.
+also through the loader's `ctx` passed in, so read the var in the loader and
+pass the value in as an argument. Passing the loader's `ctx` itself is fine:
+the call keys by route, params and search, like a handler `ctx` (`/use-cache`).
+A fetchable loader called with a request body (`load({ method: "POST", body })`
+or form data) is the exception: the body is not in the key, so the call runs
+uncached. Pass the body fields the function needs as arguments instead.
 
 ### ctx.use(Loader) — escape hatch
 

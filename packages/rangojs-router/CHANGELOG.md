@@ -176,6 +176,53 @@ async function getProduct(env: Env, id: string) {
 }
 ```
 
+### Breaking: a loader or middleware `ctx` passed to `"use cache"` is keyed and guarded like a handler `ctx` ([#946](https://github.com/rangojs/rango/pull/946))
+
+A fetchable loader called with a request body shared one `"use cache"` entry
+across every body. Its ctx is marked request-scoped, so a `"use cache"`
+function taking it was keyed by route, params and search, never the body: in
+0.16.0 two users' `load({ method: "POST", body })` calls with different bodies
+got the first caller's result. A ctx carrying a `body` or form data now runs
+the call uncached and warns in dev.
+
+The loader ctx (`getProduct(ctx)` inside a loader) and the middleware ctx were
+not marked request-scoped. In 0.16.0 a `"use cache"` call taking one was keyed
+by the ctx's plain fields as the Flight encoder serialized them: the full URL
+including internal `_rsc*` parameters (so a document load and a client
+navigation of the same page used separate entries), pathname, params and the
+env's plain values, but not the route name. Its `ctx.use(Handle)` pushes were
+not recorded, so they were missing on every hit, and nothing guarded
+`{ cache: false }` reads or middleware writes. They now behave like a handler
+ctx:
+
+- The ctx is left out of the key and its route fields are folded in: host,
+  route name, pathname, params and search (a loader ctx also carries the
+  response type). A loader ctx keys exactly like the handler ctx of the same
+  request. A middleware ctx has a route name only once the route is matched.
+- A loader ctx's `ctx.use(Handle)` pushes are captured on a miss and replayed
+  on a hit into the loader's segment, once per request, as for a handler ctx.
+- `ctx.get()` of a `{ cache: false }` variable through either ctx throws
+  inside the function. A loader body the function consumes with
+  `await ctx.use(Loader)` stays exempt.
+- A middleware ctx's `set()`, `header()` and `ctx.headers` writes throw inside
+  the function; their effect would be lost on a hit.
+
+Request headers and cookies are not in the key, as with a handler ctx: a
+function that reads them through `ctx.request` gets one entry per route. Read
+those values outside and pass them in.
+
+```ts
+async function getProduct(ctx: { params: { id: string } }) {
+  "use cache";
+  ctx.use(Breadcrumbs)({ label: "Product" });
+  return db.product(ctx.params.id);
+}
+export const ProductLoader = createLoader(async (ctx) => getProduct(ctx));
+// before (0.16.0): keyed by the raw URL, so a navigation missed the entry the
+// document load wrote, and the crumb was missing on every hit
+// after: one entry per route, id and query; the crumb is replayed on a hit
+```
+
 ### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
 
 `debugManifest()` was typed only on the internal router interface, so calling

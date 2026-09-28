@@ -59,7 +59,13 @@ import {
 } from "../../server/context.js";
 import { createHandlerContext } from "../../router/handler-context.js";
 import { setupLoaderAccess } from "../../router/loader-resolution.js";
-import type { HandlerContext, LoaderDefinition } from "../../types.js";
+import { executeLoaderMiddleware } from "../../router/middleware.js";
+import type { MiddlewareContext } from "../../router/middleware-types.js";
+import type {
+  HandlerContext,
+  LoaderContext,
+  LoaderDefinition,
+} from "../../types.js";
 
 const Tenant = createVar<string>({ cache: false });
 const Locale = createVar<string>();
@@ -111,7 +117,10 @@ function inRequest<T>(
   );
 }
 
-function loaderDef<T>(id: string, fn: () => Promise<T>): LoaderDefinition<T> {
+function loaderDef<T>(
+  id: string,
+  fn: (ctx: LoaderContext) => Promise<T>,
+): LoaderDefinition<T> {
   return { __brand: "loader", $$id: id, fn } as unknown as LoaderDefinition<T>;
 }
 
@@ -246,6 +255,117 @@ describe('"use cache": loader-body exemption (#925)', () => {
         }),
       );
     });
+  });
+});
+
+/** Run `body` as a middleware of a request for `tenant`. */
+function inMiddleware<T>(
+  store: MemorySegmentCacheStore,
+  tenant: string,
+  body: (ctx: MiddlewareContext<any>) => Promise<T>,
+): Promise<T> {
+  return inRequest(store, tenant, async (_hctx, reqCtx) => {
+    let result!: T;
+    await executeLoaderMiddleware(
+      [
+        async (ctx, next) => {
+          result = await body(ctx);
+          return next();
+        },
+      ],
+      reqCtx.request,
+      reqCtx.env,
+      {},
+      reqCtx._variables,
+      async () => new Response(null),
+    );
+    return result;
+  });
+}
+
+describe('"use cache": loader and middleware ctx reads (#940)', () => {
+  it("a loader ctx passed in throws, and nothing is stored for the next caller", async () => {
+    const store = new MemorySegmentCacheStore();
+    const getNav = registerCachedFunction(
+      async (ctx: LoaderContext) => `nav:${ctx.get(Tenant)}`,
+      "test#940:loader-ctx",
+      "default",
+    );
+    const NavLoader = loaderDef("test#940:NavLoader", (ctx) => getNav(ctx));
+
+    await expect(
+      inRequest(store, "a", (hctx) => hctx.use(NavLoader)),
+    ).rejects.toThrow(USE_CACHE_READ);
+    await expect(
+      inRequest(store, "b", (hctx) => hctx.use(NavLoader)),
+    ).rejects.toThrow(USE_CACHE_READ);
+  });
+
+  it("a middleware ctx passed in throws, and nothing is stored for the next caller", async () => {
+    const store = new MemorySegmentCacheStore();
+    const getNav = registerCachedFunction(
+      async (ctx: MiddlewareContext<any>) => `nav:${ctx.get(Tenant)}`,
+      "test#940:middleware-ctx",
+      "default",
+    );
+
+    await expect(
+      inMiddleware(store, "a", (ctx) => getNav(ctx)),
+    ).rejects.toThrow(USE_CACHE_READ);
+    await expect(
+      inMiddleware(store, "b", (ctx) => getNav(ctx)),
+    ).rejects.toThrow(USE_CACHE_READ);
+  });
+
+  it("a loader body the function consumes through the passed loader ctx stays exempt", async () => {
+    const store = new MemorySegmentCacheStore();
+    const TenantLoader = loaderDef("test#940:TenantLoader", async (ctx) =>
+      ctx.get(Tenant),
+    );
+    const getNav = registerCachedFunction(
+      async (ctx: LoaderContext) => `nav:${await ctx.use(TenantLoader)}`,
+      "test#940:loader-inside",
+      "default",
+    );
+    const NavLoader = loaderDef("test#940:NavLoader2", (ctx) => getNav(ctx));
+
+    expect(await inRequest(store, "a", (hctx) => hctx.use(NavLoader))).toBe(
+      "nav:a",
+    );
+  });
+
+  it("reads outside any cache scope are unchanged", async () => {
+    const store = new MemorySegmentCacheStore();
+    const TenantLoader = loaderDef("test#940:TenantLoader3", async (ctx) =>
+      ctx.get(Tenant),
+    );
+    expect(await inRequest(store, "a", (hctx) => hctx.use(TenantLoader))).toBe(
+      "a",
+    );
+    expect(await inMiddleware(store, "a", async (ctx) => ctx.get(Tenant))).toBe(
+      "a",
+    );
+  });
+
+  it("a middleware ctx read stays allowed inside a cache() subtree's render scope (intercept middleware)", async () => {
+    const store = new MemorySegmentCacheStore();
+    const read = RangoContext.run({ insideCacheScope: true } as any, () =>
+      inMiddleware(store, "a", async (ctx) => ctx.get(Tenant)),
+    );
+    expect(await read).toBe("a");
+  });
+
+  it("a loader ctx read stays exempt inside a cache() boundary", async () => {
+    const store = new MemorySegmentCacheStore();
+    const TenantLoader = loaderDef("test#940:TenantLoader4", async (ctx) =>
+      ctx.get(Tenant),
+    );
+    const read = inRequest(store, "a", (hctx) =>
+      RangoContext.run({ insideCacheScope: true } as any, () =>
+        hctx.use(TenantLoader),
+      ),
+    );
+    expect(await read).toBe("a");
   });
 });
 

@@ -1,5 +1,17 @@
-import { createLoader } from "@rangojs/router";
+import { createLoader, type LoaderContext } from "@rangojs/router";
 import { DepCrumbs } from "../handles/dep-crumbs.js";
+
+// /loader-ctx/:id: a DSL loader passes its own ctx to a "use cache" function
+// that pushes a crumb through it (#940). The stamp is the cached value.
+async function getItemStamp(ctx: LoaderContext): Promise<string> {
+  "use cache";
+  ctx.use(DepCrumbs)(`Item ${ctx.params.id}`);
+  return `${ctx.params.id} ${new Date().toISOString()}`;
+}
+
+export const LoaderCtxItemLoader = createLoader(async (ctx) =>
+  getItemStamp(ctx),
+);
 
 // /loader-cache-dep: the dependency of a loader with its own cache(), also
 // read by an uncached sibling loader. Each run pushes one crumb with a per-run
