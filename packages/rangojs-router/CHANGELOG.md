@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 (2026-09-28)
 
-### The default document restores scroll on back/forward
+### The default document restores scroll on back/forward ([#948](https://github.com/rangojs/rango/pull/948))
 
 An app that passes no `document` to `createRouter` now gets
 `<Html.ScrollRestoration />` from the router's default document, next to the
