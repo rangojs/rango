@@ -414,8 +414,8 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   next document GET's `Server-Timing` as `ppr-capture;desc="…"`.
 - For deployed Cloudflare tier diagnostics, build with
   `INTERNAL_RANGO_DEBUG=1` and run `wrangler tail`. `[CFCacheStore][shell]`
-  JSON events distinguish L1 hit/miss, KV fallback/promotion, tier writes, and
-  marker rejection, with `cf-ray`/colo and read timings. The flag is baked at
+  JSON events distinguish memo hits, L1 hit/miss, KV fallback/promotion, tier
+  writes, and marker rejection, with `cf-ray`/colo and read timings. The flag is baked at
   build time; setting only a Worker runtime variable is too late.
 
 ### Unit / integration testing (public primitives)

@@ -24,7 +24,7 @@ export const DEFAULT_STATE_COOKIE_PREFIX = "rango-state";
  * reaches the memos another router on the host reads (they often share a
  * store); a router with its own `stateCookiePrefix` gets its own cookie.
  */
-export const FRESH_READS_COOKIE_SUFFIX = "-fresh";
+const FRESH_READS_COOKIE_SUFFIX = "-fresh";
 
 /**
  * The fresh-reads cookie name for a router's resolved state cookie name

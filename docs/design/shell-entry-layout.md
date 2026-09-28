@@ -1,17 +1,43 @@
 # Shell entry layout: what a PPR shell HIT reads before its first byte
 
-Status: **in progress** (issue #941). Stage 1 (decode once, native base64,
-chunked prelude enqueue), stage 2 (prelude-first CF entry, marker read in
-parallel), the `debugPerformance` rows for a shell HIT ("Seeing it per
-request"), snapshot pruning (§2), and the per-isolate shell memo (decision 1,
-"The shell memo") are implemented. All four decisions are made; decision 2
-was revised after the memo stage, and the per-isolate tag-marker memo it asks
-for is implemented too ("The tag-marker memo").
+Status: **implemented** (issue #941). It shipped in six PRs, in this order:
+
+| PR   | what                                                                               | section                 |
+| ---- | ---------------------------------------------------------------------------------- | ----------------------- |
+| #952 | decode the prelude once (native base64 where the runtime has it), 32 KB enqueue    | §3, §5                  |
+| #953 | prelude-first `CFCacheStore` record; the marker read runs alongside the prelude    | §1, §4                  |
+| #955 | `debugPerformance` rows for a shell HIT                                            | "Seeing it per request" |
+| #958 | snapshot pruning                                                                   | §2                      |
+| #959 | per-isolate shell memo                                                             | "The shell memo"        |
+| #960 | tag-name hints, the stale-while-revalidate marker memo, and the fresh-reads cookie | "The tag-marker memo"   |
+
+All four decisions ("Decisions") are made; the three that called for code are built.
 
 Read `shell-fast-path.md` and `packages/rangojs-router/docs/design/ppr-shell-resume.md`
 first. This doc is about one narrow question: how many bytes, parses, and
 round trips a shell HIT pays before the browser sees its first byte, and how
 to make that "one small cache read".
+
+## What a HIT does now
+
+A document HIT on `CFCacheStore`, in order:
+
+1. The shell memo (`memo.shellMs`, per isolate). On a memo hit the tag-marker
+   check is the only store I/O left, and with KV bound the marker memo
+   usually answers it from memory.
+2. Otherwise the Cache API match (KV on an L1 miss), with KV bound the marker
+   reads of the key's hinted tags already started; then the frame head; then
+   the marker check for the head's tags alongside exactly `pl` prelude bytes.
+3. The commit: `openShellDocument` checks the postponed blob, and the raw
+   prelude goes out in 32 KB chunks.
+4. After the commit, the tail awaits the snapshot (the rest of the same body,
+   read off the commit path), seeds the store, and resumes the holes.
+
+`VercelCacheStore` reads its whole JSON envelope (the runtime cache has no
+partial read) with the hinted marker reads alongside it, and memoizes the
+decoded prelude with the entry. `MemorySegmentCacheStore` and custom stores
+go through the public `getShell`, and the serve path decodes their base64
+prelude once per HIT.
 
 ## Why
 
@@ -128,41 +154,46 @@ decode, plus a sequential marker read when the shell is tagged. Node lacks
 `Uint8Array.fromBase64`, so Node numbers keep the loop decode unless the
 harness installs a native shim (it can, to model workerd).
 
-## Results by stage
+## Measurement history
 
-Same harnesses as the baseline. Local workerd: 5 runs x 40 interleaved rounds
-per stage, pooled (200 samples), each large-shell sample minus the floor
-request of the same round, which cancels most of the machine's load drift.
-Edge model: the Node harness with workerd's native base64 installed.
+Same harnesses as the baseline, each row measured when its PR landed, on top
+of the rows above it. Local workerd: 5 runs x 40 interleaved rounds per row,
+pooled (200 samples), each large-shell sample minus the floor request of the
+same round, which cancels most of the machine's load drift. Edge model: the
+Node harness with workerd's native base64 installed.
 
-| stage                        | local workerd `/ppr-large` over floor | local workerd `/ppr-large/holes` over floor | edge model, untagged | edge model, tagged |
-| ---------------------------- | ------------------------------------- | ------------------------------------------- | -------------------- | ------------------ |
-| baseline                     | 13.2 [10.4-15.8]                      | 13.5 [11.5-15.1]                            | 21.0 [20.5-21.2]     | 29.8 [29.5-30.1]   |
-| 1. decode once, 32 KB chunks | 12.6 [9.9-14.0]                       | 12.4 [10.8-13.6]                            | 20.1 [19.5-20.6]     | 29.6 [29.2-29.9]   |
-| 2. prelude-first entry       | 3.6 [2.6-4.1]                         | 1.0 [0.6-1.3]                               | 8.3 [8.3-8.4]        | 17.5 [16.9-17.7]   |
-| shell memo hit (2 s window)  | 1.3 [0.7-2.0]                         | -0.3 [-0.8-0.2]                             | 0.2 [0.1-0.2]        | 10.2 [10.2-10.3]   |
+| change                            | local workerd `/ppr-large` over floor | local workerd `/ppr-large/holes` over floor | edge model, untagged | edge model, tagged |
+| --------------------------------- | ------------------------------------- | ------------------------------------------- | -------------------- | ------------------ |
+| baseline                          | 13.2 [10.4-15.8]                      | 13.5 [11.5-15.1]                            | 21.0 [20.5-21.2]     | 29.8 [29.5-30.1]   |
+| decode once, 32 KB chunks (#952)  | 12.6 [9.9-14.0]                       | 12.4 [10.8-13.6]                            | 20.1 [19.5-20.6]     | 29.6 [29.2-29.9]   |
+| prelude-first entry (#953)        | 3.6 [2.6-4.1]                         | 1.0 [0.6-1.3]                               | 8.3 [8.3-8.4]        | 17.5 [16.9-17.7]   |
+| shell memo hit, 2 s window (#959) | 1.3 [0.7-2.0]                         | -0.3 [-0.8-0.2]                             | 0.2 [0.1-0.2]        | 10.2 [10.2-10.3]   |
+| shell + marker memo hit (#960)    | -                                     | -                                           | -                    | 0.1 [0.1-0.2]      |
 
-Stage 1's first-byte gain is the decode work (1.4 ms of per-byte loop in
-workerd); its compressed-first-byte gain does not show in these uncompressed
-numbers (see the compression table). Stage 2 removes the 3.4 MB read and parse
-from the first-byte path; with a tagged shell the marker read (9 ms in the
-model) now sets the floor, overlapping the match-plus-prelude read instead of
-following it. A memo hit removes the store read as well; the tagged row is
-the marker read alone. The local workerd memo row is with the tail's
+The decode-once gain is the decode work (1.4 ms of per-byte loop in workerd);
+its compressed-first-byte gain does not show in these uncompressed numbers
+(see the compression table). The prelude-first entry removes the 3.4 MB read
+and parse from the first-byte path; with a tagged shell the marker read (9 ms
+in the model) then set the floor, overlapping the match-plus-prelude read
+instead of following it. A memo hit removes the store read as well, which
+left a tagged memo hit with the marker read alone; the marker memo removes
+that too (its other rows, store reads and the fresh-reads cookie included,
+are in "The tag-marker memo"). The local workerd memo row is with the tail's
 macrotask yield ("The shell memo" below): without it, memo hits measured 5.9
 and 6.7 ms over the floor.
 
 ### Seeing it per request
 
 Under `debugPerformance` the HIT's store read is broken into rows
-(`ppr:shell-match`, `-head`, `-prelude`, `-marker` under `ppr:shell-read`,
-after a `ppr:shell-l1-miss` row when a KV hit follows a Cache API miss, then
-`ppr:shell-open` and `ppr:shell-commit`), and the work after the commit
-prints as a `shell tail` line with the snapshot's bytes and records per family
-(`skills/observability` "Reading a PPR shell HIT", `docs/telemetry.md`). The
-byte and chunk counts are there because a deployed worker's clock does not
-advance during CPU work: `ppr:shell-open` and the snapshot parse read 0 ms
-there, and the sizes are what move when a stage changes them.
+(`ppr:shell-memo`, `ppr:shell-match`, `-head`, `-prelude`, `-marker` under
+`ppr:shell-read`, after a `ppr:shell-l1-miss` row when a KV hit follows a
+Cache API miss, then `ppr:shell-open` and `ppr:shell-commit`), and the work
+after the commit prints as a `shell tail` line with the snapshot's bytes and
+records per family (`skills/observability` "Reading a PPR shell HIT",
+`packages/rangojs-router/docs/telemetry.md`). The byte and chunk counts are
+there because a deployed worker's clock does not advance during CPU work:
+`ppr:shell-open` and the snapshot parse read 0 ms there, and the sizes are
+what move when a change moves the cost.
 
 ## What a HIT needs, and when
 
@@ -185,7 +216,7 @@ none of the first-byte work.
 
 ### The shape: one record, prelude-first
 
-The CF entry becomes one body laid out in the order the HIT consumes it
+The CF entry is one body laid out in the order the HIT consumes it
 (`src/cache/cf/cf-shell-frame.ts`):
 
 ```
@@ -237,14 +268,17 @@ is what snapshot pruning (§2) addresses.
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `CFCacheStore` (Cache API) | frame body; `Content-Type: application/octet-stream` (was `application/json`), the same cache headers (max-age, stale-at, expires-at, Cache-Tag) | match + head + prelude (~0.64 MB), marker in parallel                                                                      |
 | `CFCacheStore` (KV)        | the frame as a string; read with `{ type: "stream" }`                                                                                            | same, under one `kvReadTimeoutMs` for the open, head, and prelude; the snapshot is read off the commit path, then promoted |
-| `VercelCacheStore`         | unchanged JSON envelope                                                                                                                          | unchanged (see below)                                                                                                      |
-| `MemorySegmentCacheStore`  | unchanged (holds the entry object)                                                                                                               | no I/O and no parse; decode once natively                                                                                  |
-| custom stores              | unchanged `getShell`/`putShell` contract                                                                                                         | `getShell`, then decode once                                                                                               |
+| `VercelCacheStore`         | JSON envelope (base64 prelude, snapshot inline)                                                                                                  | the whole entry; the prelude decoded once per memoized shell (see below)                                                   |
+| `MemorySegmentCacheStore`  | holds the entry object                                                                                                                           | no I/O and no parse; one decode per HIT                                                                                    |
+| custom stores              | the public `getShell`/`putShell` contract                                                                                                        | `getShell`, then one decode per HIT                                                                                        |
 
 Vercel's runtime cache client returns a parsed value (`getCache().get()` does
 the fetch and the JSON parse); there is no way to read the head of a value
-without reading all of it, so the Vercel store keeps its envelope and gets
-stage 1's gains only. The memory store has nothing to read.
+without reading all of it, so the Vercel store keeps its envelope. Its first
+byte comes down instead through the shell memo, which keeps the decoded
+prelude with the memoized entry, and the tag-name hints, which start the
+marker reads alongside the entry read ("The shell memo", "The tag-marker
+memo"). The memory store has nothing to read.
 
 ### The contract stays as it is
 
@@ -255,8 +289,10 @@ a required split read, would break every custom store. So the public contract
 does not change: `putShell` still receives a base64 `prelude`, and `getShell`
 on `CFCacheStore` reads the framed body and returns the same `ShellCacheEntry`
 it always did (the prelude re-encoded with `toBase64`, 0.05 ms). The first-byte
-path uses an `@internal` optional store method, `readShellDocument(key)`, that
-only built-in stores implement and the serve path prefers when present:
+path uses an `@internal` optional store method,
+`readShellDocument(key, { tagHints })`, that only built-in stores implement
+and the serve path (`readShellEntry` in `rsc-rendering.ts`) prefers when
+present. `tagHints` is the route's `ppr.tags`, known before the entry is read:
 
 ```ts
 interface ShellDocumentRead {
@@ -264,13 +300,20 @@ interface ShellDocumentRead {
   prelude: Uint8Array; // raw bytes
   shouldRevalidate?: boolean;
   snapshot: Promise<ShellSnapshotRecord[] | undefined>; // never rejects
+  stats?: ShellReadStats; // debugPerformance rows, when on
 }
 ```
 
+`openShellDocument` (`src/rsc/shell-serve.ts`) is the one pre-commit gate for
+both reads. For a `readShellDocument` result it checks the postponed blob; for
+a `getShell` entry it runs `hasIntactShellPayload` (a string prelude and a
+parseable postponed blob, the check partial replay uses on its own) and then
+the one decode.
+
 **Decided (decision 4): it stays internal.** Exposing `readShellDocument`
 would freeze this internal record layout as public API. Custom stores keep the
-whole-entry `getShell` read and still get the single native decode and the
-pruned snapshot. If a custom-store author asks for a prelude-first read later,
+whole-entry `getShell` read and still get the single decode and the pruned
+snapshot. If a custom-store author asks for a prelude-first read later,
 the public shape to offer is a split by key: `getShell` for the head and
 prelude, then a separate `getShellSnapshot`, with a stated pairing and
 generation rule for the two records. Not `readShellDocument` as it is.
@@ -288,8 +331,8 @@ generation rule for the two records. Not `readShellDocument` as it is.
   no-snapshot path (the same posture as an over-cap snapshot,
   `maxSnapshotBytes`). A length mismatch or parse failure also evicts the
   entry from both tiers and reports `cache-corrupt`, so the next request
-  recaptures. This is a change: with the whole-envelope read, a corrupt or
-  slow snapshot made the read a MISS; now it is a HIT with an unpinned tail.
+  recaptures. (With the whole-envelope read before #953, a corrupt or slow
+  snapshot made the read a MISS.)
 - `getShell` (partial replay, custom callers) has no commit to protect, so the
   same snapshot failures make it return null instead of an entry without its
   pins.
@@ -298,7 +341,7 @@ generation rule for the two records. Not `readShellDocument` as it is.
 
 Producer B's `__ps-*.js` asset modules keep the `ShellCacheEntry` JSON. They
 are immutable and already memoized per isolate after the first read
-(`validatedManifestRecord`), so the only per-HIT cost is the one native decode.
+(`validatedManifestRecord`), so the only per-HIT cost is the one decode.
 
 ### Old entries
 
@@ -490,17 +533,18 @@ drop them. Pruning by copy removes the bytes with neither cost.
   prelude, a parseable postponed blob), which is all partial replay needs: it
   never serves the prelude, and its gate used to decode it once per
   navigation (unit test: 1 decode before, 0 after).
-- A per-isolate memo of decoded preludes is not worth it: with native decode
-  the whole decode costs 0.05 ms, and a shared buffer has to be copied per
-  response anyway (an enqueued chunk must own its buffer). The memo that does
-  pay is the one that skips the store read, which is a freshness decision
-  (see "Decisions").
+- A separate per-isolate memo of decoded preludes is not worth it: with
+  native decode the whole decode costs 0.05 ms, and a shared buffer has to be
+  copied per response anyway (an enqueued chunk must own its buffer). The
+  memo that pays is the one that skips the store read, which is a freshness
+  decision ("The shell memo", decision 1). It holds the raw prelude on
+  `CFCacheStore` and the decoded one on `VercelCacheStore`.
 
 ## 4. The tag-marker check
 
 With KV bound, a shell L1 hit checks the KV generation markers of its tags
-(the capture-start/purge race in `ppr-shell-resume.md`). Today that read
-starts after the whole body is read and parsed.
+(the capture-start/purge race in `ppr-shell-resume.md`). Before #953 that
+read started after the whole body was read and parsed.
 
 | option                                                 | first-byte gain (issue numbers)                      | staleness added                                                                                                            |
 | ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -509,16 +553,18 @@ starts after the whole body is read and parsed.
 | C. serve, then check the marker after the flush        | marker read (≈ 9 ms) on every HIT                    | at least one stale document per isolate after an invalidation; breaks `updateTag` read-your-own-writes for a following GET |
 | D. fold the tag generation into the shell key          | none by itself (the generation still has to be read) | none                                                                                                                       |
 
-**First decided: A only.** The marker read starts as soon as the head is
-parsed, runs in parallel with the prelude read, and is awaited before the
-commit, so nothing changes about what a HIT may serve. B was declined in any
-form, even opt-in, so that with KV bound `updateTag` / `revalidateTag` stay
+**Shipped: A, then B in a stale-while-revalidate form.** The marker read
+starts as soon as the head is parsed, runs in parallel with the prelude read,
+and is awaited before the commit (#953). B was first declined in any form,
+even opt-in, so that with KV bound `updateTag` / `revalidateTag` stay
 immediate across isolates; the one knob trading marker freshness for latency
 was the opt-in `tagCacheTtl` (a per-colo Cache API copy of each marker,
-documented as a staleness ceiling). C weakens the `updateTag` guarantee; D
-gains nothing on its own. A is built (stage 2). **Revised (decision 2):** B is
-now wanted in an SWR form, with the mutation path kept correct; see
-"Decisions for the maintainer".
+documented as a staleness ceiling). Once the shell memo left a tagged memo hit
+with nothing but its marker read, decision 2 was revised: plain reads get a
+per-isolate marker-value memo served stale-while-revalidate, reads after a
+mutation stay correct, and tag-name hints start the marker reads before the
+store match resolves (#960, "The tag-marker memo"). C weakens the `updateTag`
+guarantee; D gains nothing on its own.
 
 ## 5. Chunked prelude enqueue
 
@@ -544,24 +590,28 @@ settle" has no cheap signal (Flight exposes no per-element settlement), and the
 one full-settlement signal the capture has, the doc record's own
 serialization, deep-settles promises, so holding on it would bake PHYSICS
 holes (a pending handler promise under the consumer's own Suspense) into the
-shell and break the hole doctrine. Recommendation: document it. The hole
-doctrine table gains the case ("an async component rendered directly by a
-handler is shell material only if it settles inside the quiet window; await
-its data in the handler, or give it a Suspense boundary to make it a hole"),
-the no-shell warning names it, and finding B's stack points at it.
+shell and break the hole doctrine. **Documented, not fixed** (#952):
+`ppr-shell-resume.md` describes the case beside the hole doctrine table ("One
+shape sits between (b) and (c)"), `skills/ppr` lists it under "Not in the
+table", the no-shell warning names it, and finding B's stack points at it. Holding
+the gate for a late segment-root row was prototyped with the capture
+readiness gate (#954) and rejected: the gate admits bytes, not rows, so a
+physics promise that settled during the hold was baked into the prelude.
 
 **B. The no-shell warning names the component that pinned the root.** React
 passes each aborted task's `componentStack` to `prerender`'s `onError`
-(`finishAbortedTask`, react-dom 19.3). The capture swallowed those reports. In
-dev, the capture now keeps the first few stacks and the once-per-key no-shell
-warning prints them, which is exactly what found both causes in the issue.
+(`finishAbortedTask`, react-dom 19.3). The capture used to swallow those
+reports. In dev, the capture keeps the first few stacks and the once-per-key
+no-shell warning prints them, which is exactly what found both causes in the
+issue.
 
 **C. First-MISS read budgets on cold colos.** The 25 ms L1 lookup, 20 ms L1
 body, and 170 ms KV budgets are already per-store options
 (`edgeLookupTimeoutMs`, `edgeReadTimeoutMs`, `kvReadTimeoutMs`,
-`skills/caching/SKILL.md` "Latency budgets"). No code change: stage 2 shrinks
-what the L1 body budget has to cover from the whole 3.3 MB envelope to the
-head + prelude, which is the part of this that cold colos hit.
+`skills/caching/SKILL.md` "Latency budgets"). No code change: the
+prelude-first entry shrinks what the L1 body budget has to cover from the
+whole 3.3 MB envelope to the head + prelude, which is the part of this that
+cold colos hit.
 
 ## The shell memo
 
@@ -629,7 +679,7 @@ each tag marker, not measured on Vercel, on Node without native base64):
 
 | read                                  | untagged first byte |   tagged first byte |
 | ------------------------------------- | ------------------: | ------------------: |
-| `CFCacheStore` store read (stage 2)   |    8.3 [8.2-8.5] ms | 17.3 [16.4-17.4] ms |
+| `CFCacheStore` store read (#953)      |    8.3 [8.2-8.5] ms | 17.3 [16.4-17.4] ms |
 | `CFCacheStore` memo hit               |    0.2 [0.1-0.2] ms | 10.2 [10.2-10.3] ms |
 | `VercelCacheStore` store read (model) | 10.8 [10.7-10.9] ms | 17.9 [17.6-18.4] ms |
 | `VercelCacheStore` memo hit (model)   |    0.1 [0.1-0.2] ms |    6.9 [6.9-6.9] ms |
@@ -678,7 +728,7 @@ isolate; set it to 0 to turn the memo off.
 already in memory, so the tail's seed, match, and Flight render started in the
 same microtask run as the commit, ahead of the runtime writing the prelude
 (local workerd, 200 samples: 5.9 ms over the floor for `/ppr-large`, worse
-than the store read's 3.6 ms). `serveShellHit` now yields one macrotask before
+than the store read's 3.6 ms). `serveShellHit` yields one macrotask before
 the tail's work when the snapshot had already arrived; memo hits measure
 1.3 ms. `MemorySegmentCacheStore` and build-time shells had the same in-memory
 snapshot and get the same fix. A snapshot still arriving on I/O yields on its
@@ -828,56 +878,35 @@ read per HIT; `{ shellMs: 0, markerFreshMs: 0 }` makes every user's next
 request see an invalidation (with KV, the shell memo off alone still leaves
 the marker memo's window).
 
-## Decisions for the maintainer
+## Decisions
 
 1. **Per-isolate shell memo** (the issue's experimental patch): keep the last
-   fresh `readShellDocument` result per key for N ms and skip the Cache API
-   read. Gain: the L1 match + prelude read (≈ 6-8 ms at the issue's numbers)
-   on memo hits. Cost: an isolate keeps serving a generation for up to N ms
-   after a newer capture lands, and in KV-less purge mode after a purge (the
-   per-request marker memo still covers the invalidating request). With KV the
-   marker check still runs per request, so `updateTag` stays immediate.
-   **Decided:** build it as a per-store option with a byte cap, on by default
-   (starting point 2 s, 16 MB), in its own stage after stage 2 so its gain is
-   measured on its own; the final defaults follow that measurement. **Built**
-   ("The shell memo"): defaults 2 s and 16 MiB, per the measurements there.
-2. **Per-isolate marker memo** (option B above). **First decided:** no, in
-   any form; the marker read runs in parallel with the prelude read (option
-   A) and is awaited before the commit. **Revised:** on plain reads, aim for
-   SWR; after a mutation, aim for correct reads. A per-isolate marker-value
-   memo is wanted:
-   - a value within its fresh window is used; between fresh and a max-stale
-     cap it is used and refreshed in the background (`waitUntil`); past the
-     cap the read blocks on the marker;
-   - reads after a mutation stay correct in the mutating request (the
-     per-request marker memo), on the same isolate (`invalidateTags` writes
-     through to the isolate memo), and for the same user on any isolate (a
-     fresh-reads cookie, set on the response of a request that ran
-     `updateTag()`/`revalidateTag()`, makes that user's requests skip both
-     the marker memo and the shell memo for the cap);
-   - both stores, through one store-agnostic module, default on: fresh
-     window about 1 s on `CFCacheStore` (KV propagates across locations in
-     about 60 s) and about 300 ms on `VercelCacheStore` (`expireTag`
-     propagates in about 300 ms), each with a max-stale cap; the final values
-     follow measurement;
-   - the tag names a shell carries are hinted per isolate (never marker
-     values), so the marker reads start alongside the entry read; the
-     freshness check still uses the head's actual tags.
-
-   **Built** ("The tag-marker memo"): the value memo serves PPR shell reads
-   only (cached data families and the shell write gate keep reading their
-   markers), with the measured defaults there.
-
+   fresh `readShellDocument` result per key for N ms and skip the store read.
+   Gain: the L1 match + prelude read (≈ 6-8 ms at the issue's numbers) on
+   memo hits. Cost: an isolate keeps serving a generation for up to N ms after
+   a newer capture lands, and in KV-less purge mode after a purge (the
+   per-request marker memo still covers the invalidating request). With KV
+   the marker check still runs per request. **Decided and built** (#959) as a
+   per-store option with a byte cap, on by default: 2 s and 16 MiB, from the
+   measurements in "The shell memo".
+2. **Per-isolate marker memo** (option B in §4). First declined in any form:
+   the marker read runs in parallel with the prelude read (option A) and is
+   awaited before the commit. **Revised:** plain reads get stale-while-
+   revalidate, and reads after a mutation stay correct in the mutating
+   request, on the same isolate, and for the same user on any isolate (the
+   fresh-reads cookie). **Built** (#960, "The tag-marker memo") in one
+   store-agnostic module for both stores, with the tag names a shell carries
+   hinted per isolate. The value memo serves PPR shell reads only; cached data
+   families and the shell write gate keep reading their markers. Defaults
+   (1 s / 10 s on `CFCacheStore`, 300 ms / 2 s on `VercelCacheStore`) follow
+   the measurements there.
 3. **Pruning with live-lane loaders** (rule R2.3). Pruning when a route has
    live loaders changes "seeded everywhere" for keys the shell and a hole
-   share: the hole would show live data. **Decided:** option A (drop R2.3,
-   holes are the live lane), subject to a regression check that runs before
-   the pruning stage is built.
-   **Implemented** with R2.3 dropped; the regression check added R2.5 (a
-   route-derived `cache()` scope keeps every record) and residual B (a HIT
-   whose doc record fails to decode re-runs handlers live and schedules a
+   share: the hole shows live data. **Decided:** drop R2.3, holes are the live
+   lane. **Built** (#958); the regression check run before it shipped added
+   R2.5 (a route-derived `cache()` scope keeps every record) and residual B (a
+   HIT whose doc record fails to decode re-runs handlers live and schedules a
    recapture).
-
 4. **A public split read** (promote `readShellDocument` to the
    `SegmentCacheStore` contract so custom stores can serve the prelude
    first). **Decided:** no; it stays an `@internal` method only built-in

@@ -678,7 +678,8 @@ import { getCache, waitUntil } from "@vercel/functions";
 import { VercelCacheStore } from "@rangojs/router/cache";
 
 // A per-deploy namespace: Vercel does not reconcile entries across deploys.
-// One handle per process: the store keeps its PPR shell memo per handle.
+// One handle per process: the store keeps its PPR shell and tag-marker
+// memos per handle.
 const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
 
 const router = createRouter({

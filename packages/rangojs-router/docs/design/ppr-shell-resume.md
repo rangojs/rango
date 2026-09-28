@@ -302,8 +302,10 @@ request ──> global middleware chain (router.use(), onion)
                           ppr config off the classified route snapshot
                           nonce check (provider OR token; warn-once + axis 1 if set)
                           store family check (warn-once + axis 1 if absent)
+                          shell read: readShellDocument(key, { tagHints: ppr.tags })
+                            on built-in stores, else getShell(key)
                           getSSRSetup (allReady => bypass, axis 1)
-                          getShell(key)
+                          openShellDocument (corrupt => MISS)
                           ├─ HIT: commit composed response NOW
                           │    prelude bytes flush first; match()/Flight/resume
                           │    run BEHIND them inside the response stream
@@ -930,12 +932,13 @@ names; one shared derivation is what keeps key, capture, and resume
 byte-agreed), `isValidShellHit` (reactVersion + buildVersion gates — the
 postponed blob encodes hole positions against one exact tree, so neither a
 React upgrade nor an app redeploy may resume a stored blob),
-`openShellDocument` (the pre-commit integrity check and the HIT's only prelude
-decode: an undecodable prelude or unparseable postponed degrades to a MISS
-instead of throwing after the 200 + prelude committed, and the decoded bytes
-are what the HIT enqueues, in `SHELL_PRELUDE_CHUNK_BYTES` chunks),
-`hasIntactShellPayload` (the structural half of that check, without the
-decode, which is all partial replay needs), `hasShellFamily`, the
+`openShellDocument` (the pre-commit integrity check: an undecodable prelude
+or unparseable postponed degrades to a MISS instead of throwing after the
+200 + prelude committed; for a `getShell` entry it is the HIT's only prelude
+decode, and a built-in store's `readShellDocument` hands it raw bytes; either
+way its bytes are what the HIT enqueues, in `SHELL_PRELUDE_CHUNK_BYTES`
+chunks), `hasIntactShellPayload` (the structural half of that check, without
+the decode, which is all partial replay needs), `hasShellFamily`, the
 once-per-key missing-store-family warning, and `warnPprNonceActiveOnce` (the
 once-per-key active-per-request-nonce warning; see the nonce-gate scar tissue
 above). The route's ppr config is read
@@ -1511,7 +1514,8 @@ that collected metrics also prints it as a `[RSC Perf] … shell tail:` line.
 It is collected in dev, and in production only for a HIT that collected
 metrics, so a production isolate without `debugPerformance` never buffers
 one. Before the commit, the read itself is broken into rows under
-`ppr:shell-read` (match, head, prelude, and the parallel marker read) plus
+`ppr:shell-read` (the shell memo's outcome, an L1 miss before a KV hit, then
+match, head, prelude, and the parallel marker read) plus
 `ppr:shell-open` and `ppr:shell-commit`, with byte and chunk counts: on a
 deployed worker the clock only advances on I/O, so the counts are what show
 the cost of the CPU steps (docs/telemetry.md, skills/observability).
@@ -1519,8 +1523,9 @@ the cost of the CPU steps (docs/telemetry.md, skills/observability).
 
 **Cloudflare shell-tier trace.** A build made with `INTERNAL_RANGO_DEBUG=1`
 also emits compact `[CFCacheStore][shell]` JSON lines for runtime shell storage
-decisions: `l1-stored`, `kv-stored`, `l1-hit`, `l1-miss`, `kv-hit`,
-`kv-miss`, `kv-promoted`, `marker-invalidated`, and `write-invalidated`. The
+decisions: `l1-stored`, `kv-stored`, `memo-hit`, `l1-hit`, `l1-miss`,
+`kv-hit`, `kv-miss`, `kv-promoted`, `marker-invalidated`, and
+`write-invalidated`. The
 event carries the shell key, epoch timestamp, incoming `cf-ray`/colo when
 available, freshness/expiry, and the bounded match/body/marker/KV timings that
 apply to that decision. This is the deployed cross-colo diagnostic: tail the
@@ -1563,10 +1568,15 @@ The two CF tiers carry the exact same prelude-first frame (`cf-shell-frame.ts`:
 head, raw prelude, then the snapshot; see docs/design/shell-entry-layout.md).
 A document HIT reads the head and the prelude, runs the tag-marker read in
 parallel with the prelude read, and commits without waiting for the snapshot
-bytes. A Cache API miss falls through to KV and promotes the frame back into
-that colo once its snapshot has been read and parsed. Runtime
-shell L1 entries also carry the store's namespaced `Cache-Tag`s, so purge mode
-evicts them. Unlike ordinary L1 data entries, a surviving shell still checks KV
+bytes. A warm isolate serves repeat HITs from its shell memo (`memo.shellMs`)
+with only the marker check. With KV bound, the marker reads of the key's
+hinted tags start with the Cache API match, and a shell read's markers go
+through the per-isolate marker memo (fresh for `markerFreshMs`, served stale
+up to `markerMaxStaleMs` while it refreshes; see
+docs/design/shell-entry-layout.md "The tag-marker memo"). A Cache API miss
+falls through to KV and promotes the frame back into that colo once its
+snapshot has been read and parsed. Runtime shell L1 entries also carry the
+store's namespaced `Cache-Tag`s, so purge mode evicts them. Unlike ordinary L1 data entries, a surviving shell still checks KV
 generation markers WHEN KV IS BOUND: its `taggedAt` is capture start, and an
 old capture can land after the purge that invalidated it. The marker prevents
 that resurrection; KV-less, the check degrades to the per-request memo (see

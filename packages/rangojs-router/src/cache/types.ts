@@ -523,7 +523,10 @@ export interface ShellReadStats {
   markerMs?: number;
   /** How long the read waited for the marker after the prelude was read. */
   markerWaitMs?: number;
-  /** The marker read ran after the entry read instead of alongside it. */
+  /**
+   * The marker check was awaited after the entry read (VercelCacheStore), not
+   * alongside the prelude read; hinted reads still start with the entry read.
+   */
   markerSerial?: true;
   /**
    * How the isolate marker memo answered the shell's tags (the most

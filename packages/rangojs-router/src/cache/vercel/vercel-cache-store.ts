@@ -5,9 +5,10 @@
  * `@vercel/functions`). It is the production store analogue to CFCacheStore, but
  * far smaller: Vercel's Runtime Cache already IS a distributed, tag-aware cache
  * (regional storage, global tag-expire within ~300ms), so none of CFCacheStore's
- * L1/L2 tiering, KV tag-marker comparison, marker memoization, or per-tier
- * timeout budgets are needed here - the platform does that work. What this store
- * adds on top of the raw primitive is the parts Vercel does NOT give us:
+ * L1/L2 tiering or per-tier timeout budgets are needed here - the platform does
+ * that work. Tag markers exist only for the shell family (`tm`, see
+ * isTagsInvalidatedSince), and only PPR shell reads memoize them. What this
+ * store adds on top of the raw primitive is the parts Vercel does NOT give us:
  *
  *   1. Stale-while-revalidate. `getCache` has no stale-but-serve: a TTL'd entry
  *      simply becomes a miss. We store our own {staleAt, expiresAt} envelope and
@@ -79,6 +80,7 @@ import {
   isShellFresh,
   resolveShellMemoOptions,
   shellHasAnyTag,
+  type ResolvedShellMemoOptions,
   type StoreMemoOptions,
 } from "../shell-memo.js";
 import {
@@ -387,41 +389,30 @@ interface VercelShellMemoValue {
 }
 
 /**
- * Shell memos per runtime-cache handle: the handle carries the namespace, so
- * two stores over different namespaces never share memoized shells.
+ * The per-process memos of one runtime-cache handle: memoized shells,
+ * tag-marker values, and shell tag-name hints. Kept per handle because the
+ * handle carries the namespace, so stores over different namespaces never
+ * share them.
  */
-const vercelShellMemos = new WeakMap<
-  VercelRuntimeCache,
-  ShellMemo<VercelShellMemoValue>
->();
-
-function vercelShellMemo(
-  cache: VercelRuntimeCache,
-): ShellMemo<VercelShellMemoValue> {
-  let memo = vercelShellMemos.get(cache);
-  if (!memo) {
-    memo = new ShellMemo<VercelShellMemoValue>();
-    vercelShellMemos.set(cache, memo);
-  }
-  return memo;
-}
-
-/** Tag-marker values and shell tag-name hints, per runtime-cache handle. */
-const vercelMarkerMemos = new WeakMap<
-  VercelRuntimeCache,
-  { markers: TagMarkerMemo; hints: TagNameHints }
->();
-
-function vercelMarkerMemo(cache: VercelRuntimeCache): {
+interface VercelHandleMemos {
+  shells: ShellMemo<VercelShellMemoValue>;
   markers: TagMarkerMemo;
   hints: TagNameHints;
-} {
-  let memo = vercelMarkerMemos.get(cache);
-  if (!memo) {
-    memo = { markers: new TagMarkerMemo(), hints: new TagNameHints() };
-    vercelMarkerMemos.set(cache, memo);
+}
+
+const vercelHandleMemos = new WeakMap<VercelRuntimeCache, VercelHandleMemos>();
+
+function handleMemos(cache: VercelRuntimeCache): VercelHandleMemos {
+  let memos = vercelHandleMemos.get(cache);
+  if (!memos) {
+    memos = {
+      shells: new ShellMemo<VercelShellMemoValue>(),
+      markers: new TagMarkerMemo(),
+      hints: new TagNameHints(),
+    };
+    vercelHandleMemos.set(cache, memos);
   }
-  return memo;
+  return memos;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -462,7 +453,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * import { VercelCacheStore } from "@rangojs/router/cache";
  *
  * // One handle per process: getCache() resolves the platform cache on every
- * // call, and the PPR shell memo (`memo.shellMs`) is kept per handle.
+ * // call, and the PPR shell and tag-marker memos are kept per handle.
  * // `process.env` (not `import.meta.env`, which needs a VITE_ prefix and
  * // would be undefined here) so cross-deploy busting via `version` works.
  * const runtimeCache = getCache({
@@ -494,10 +485,8 @@ export class VercelCacheStore<
   private readonly waitUntil?: (promise: Promise<unknown>) => void;
   private readonly version?: string;
   private readonly maxItemBytes: number;
-  private readonly shellMemoMs: number;
-  private readonly shellMemoMaxBytes: number;
-  private readonly markerFreshMs: number;
-  private readonly markerMaxStaleMs: number;
+  private readonly memo: ResolvedShellMemoOptions;
+  private readonly handleMemos: VercelHandleMemos;
   /** @internal SegmentCacheStore.freshReadsWindowMs */
   readonly freshReadsWindowMs: number;
   private readonly name?: string;
@@ -515,15 +504,12 @@ export class VercelCacheStore<
     this.keyGenerator = options.keyGenerator;
     this.version = options.version;
     this.maxItemBytes = options.maxItemBytes ?? VERCEL_MAX_ITEM_BYTES;
-    const memo = resolveShellMemoOptions(options.memo, {
+    this.memo = resolveShellMemoOptions(options.memo, {
       markerFreshMs: DEFAULT_VERCEL_MARKER_FRESH_MS,
       markerMaxStaleMs: DEFAULT_VERCEL_MARKER_MAX_STALE_MS,
     });
-    this.shellMemoMs = memo.shellMs;
-    this.shellMemoMaxBytes = memo.shellMaxBytes;
-    this.markerFreshMs = memo.markerFreshMs;
-    this.markerMaxStaleMs = memo.markerMaxStaleMs;
-    this.freshReadsWindowMs = freshReadsWindowMs(memo, true);
+    this.handleMemos = handleMemos(options.cache);
+    this.freshReadsWindowMs = freshReadsWindowMs(this.memo, true);
     this.name = options.name;
     this.debug = options.debug;
   }
@@ -919,7 +905,7 @@ export class VercelCacheStore<
           "cache-corrupt",
           "[VercelCacheStore] getShell: undecodable prelude, evicting",
         );
-        vercelShellMemo(this.cache).delete(storeKey);
+        this.handleMemos.shells.delete(storeKey);
         void this.safeDelete(storeKey);
         return null;
       }
@@ -938,7 +924,7 @@ export class VercelCacheStore<
 
   /** @internal SegmentCacheStore.dropShellMemo */
   dropShellMemo(key: string): void {
-    vercelShellMemo(this.cache).delete(this.toStoreKey(key, "h"));
+    this.handleMemos.shells.delete(this.toStoreKey(key, "h"));
   }
 
   /**
@@ -959,7 +945,7 @@ export class VercelCacheStore<
     memoized?: VercelShellMemoValue;
   } | null> {
     const storeKey = this.toStoreKey(key, "h");
-    const memo = vercelShellMemo(this.cache);
+    const memo = this.handleMemos.shells;
     // A request after the same user's updateTag() reads past the memos.
     const freshReads = freshReadsRequired(_getRequestContext());
     if (stats && freshReads) stats.freshReads = true;
@@ -972,7 +958,7 @@ export class VercelCacheStore<
     );
     const memoized = freshReads
       ? undefined
-      : memo.get(storeKey, this.shellMemoMs);
+      : memo.get(storeKey, this.memo.shellMs);
     if (memoized) {
       if (isShellFresh(memoized.staleAt, memoized.expiresAt)) {
         if (stats) stats.tier = "memo";
@@ -1008,7 +994,7 @@ export class VercelCacheStore<
       }
       memo.delete(storeKey);
     }
-    if (stats && this.shellMemoMs > 0) {
+    if (stats && this.memo.shellMs > 0) {
       stats.memo = { hit: false, bytes: memo.size };
     }
     const started = Date.now();
@@ -1060,7 +1046,7 @@ export class VercelCacheStore<
       return null;
     }
 
-    vercelMarkerMemo(this.cache).hints.remember(storeKey, env.t);
+    this.handleMemos.hints.remember(storeKey, env.t);
     if (
       await this.shellTagsInvalidated(env.t, env.c, stats, prefetched, outcomes)
     ) {
@@ -1116,8 +1102,8 @@ export class VercelCacheStore<
       value,
       (typeof raw === "string" ? raw.length : JSON.stringify(env).length) +
         (env.p === undefined ? 0 : base64ByteLength(env.p)),
-      this.shellMemoMs,
-      this.shellMemoMaxBytes,
+      this.memo.shellMs,
+      this.memo.shellMaxBytes,
     );
     return { entry, shouldRevalidate, memoized: value };
   }
@@ -1167,10 +1153,7 @@ export class VercelCacheStore<
     stats: ShellReadStats | undefined,
     outcomes: Map<string, MarkerMemoOutcome> | undefined,
   ): Map<string, Promise<number | null>> | undefined {
-    const tags = hintedTags(
-      vercelMarkerMemo(this.cache).hints.get(storeKey),
-      routeTags,
-    );
+    const tags = hintedTags(this.handleMemos.hints.get(storeKey), routeTags);
     if (tags.length === 0) return undefined;
     if (stats) {
       stats.markerHinted = tags;
@@ -1209,9 +1192,9 @@ export class VercelCacheStore<
       return { value, memoize: true };
     };
     if (!isolateMemo) return (await read()).value;
-    return vercelMarkerMemo(this.cache).markers.readThrough(key, read, {
-      freshMs: this.markerFreshMs,
-      maxStaleMs: this.markerMaxStaleMs,
+    return this.handleMemos.markers.readThrough(key, read, {
+      freshMs: this.memo.markerFreshMs,
+      maxStaleMs: this.memo.markerMaxStaleMs,
       bypass: freshReadsRequired(_getRequestContext()),
       keepAlive: this.waitUntil,
       onOutcome: outcomes ? (outcome) => outcomes.set(tag, outcome) : undefined,
@@ -1226,11 +1209,8 @@ export class VercelCacheStore<
     tags?: string[],
   ): Promise<"stored" | "invalidated" | void> {
     // This instance serves its own new capture from the next read on.
-    vercelShellMemo(this.cache).delete(this.toStoreKey(key, "h"));
-    vercelMarkerMemo(this.cache).hints.remember(
-      this.toStoreKey(key, "h"),
-      tags,
-    );
+    this.handleMemos.shells.delete(this.toStoreKey(key, "h"));
+    this.handleMemos.hints.remember(this.toStoreKey(key, "h"), tags);
     try {
       const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
       const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
@@ -1339,7 +1319,7 @@ export class VercelCacheStore<
     // Every memo hit reads the tag markers, so a read in flight that memoizes
     // one of these shells again is rejected on its next hit once the markers
     // below land (no in-flight record needed, unlike KV-less CFCacheStore).
-    vercelShellMemo(this.cache).deleteWhere((shell) =>
+    this.handleMemos.shells.deleteWhere((shell) =>
       shellHasAnyTag(shell.tags, tags),
     );
     // No per-item cap here: an invalidation must reach every requested tag.
@@ -1363,7 +1343,7 @@ export class VercelCacheStore<
       ),
     );
     // Same process: later reads here see the invalidation at once.
-    const { markers } = vercelMarkerMemo(this.cache);
+    const { markers } = this.handleMemos;
     for (const tag of safe) markers.store(this.toStoreKey(tag, "tm"), at);
     try {
       await this.cache.expireTag(safe);
