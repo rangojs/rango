@@ -718,3 +718,42 @@ describe("navigation-bridge handlePopstate intercept exit", () => {
     expect(mode).toBeUndefined();
   });
 });
+
+describe("navigation-bridge bfcache pageshow", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not take scroll from the browser (that belongs to <Html.ScrollRestoration>)", () => {
+    const listeners = new Map<string, (event: unknown) => void>();
+    const history = { state: {}, scrollRestoration: "auto" };
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/", origin: "http://localhost" },
+      history,
+      addEventListener: vi.fn((type: string, fn: (event: unknown) => void) =>
+        listeners.set(type, fn),
+      ),
+      removeEventListener: vi.fn(),
+    });
+    const abortNavigation = vi.fn();
+    const bridge = createNavigationBridge({
+      store: createStore() as any,
+      client: {} as any,
+      eventController: { ...createEventController(), abortNavigation } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    const cleanup = bridge.registerLinkInterception();
+    listeners.get("pageshow")?.({ persisted: true });
+
+    expect(abortNavigation).toHaveBeenCalledOnce();
+    expect(history.scrollRestoration).toBe("auto");
+    cleanup();
+  });
+});

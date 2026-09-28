@@ -502,3 +502,67 @@ export async function returnToEvictedEntry(
   }
   await page.evaluate((delta) => window.history.go(-delta), fillers);
 }
+
+/**
+ * Back/forward scroll WITHOUT <Html.ScrollRestoration> (history.scrollRestoration
+ * stays "auto"): the browser restores the entry's scroll itself, so the router
+ * must not scroll on popstate. A router scrollTo(0, 0) there races the native
+ * restore; desktop engines restore after it (final position still correct),
+ * so the spy on the scroll APIs is what pins the contract.
+ */
+export async function expectBackLeavesScrollToBrowser(
+  page: Page,
+  options: {
+    url: string;
+    originTestId: string;
+    linkTestId: string;
+    destinationUrl: string;
+    destinationTestId: string;
+    waitForHydration: (page: Page) => Promise<void>;
+  },
+): Promise<void> {
+  const originY = 1500;
+  const byTestId = (id: string) => page.locator(`[data-testid="${id}"]`);
+  const scrollY = () => page.evaluate(() => window.scrollY);
+
+  await page.addInitScript(() => {
+    const calls: string[] = [];
+    let armed = false;
+    (window as any).__scrollCallsAfterPopstate = calls;
+    addEventListener("popstate", () => {
+      armed = true;
+    });
+    const spy = (target: any, name: string) => {
+      const original = target[name];
+      target[name] = function (this: unknown, ...args: unknown[]) {
+        if (armed) calls.push(`${name}(${JSON.stringify(args)})`);
+        return original.apply(this, args);
+      };
+    };
+    spy(window, "scrollTo");
+    spy(window, "scroll");
+    spy(window, "scrollBy");
+    spy(Element.prototype, "scrollIntoView");
+  });
+  await page.goto(options.url);
+  await options.waitForHydration(page);
+  expect(await page.evaluate(() => history.scrollRestoration)).toBe("auto");
+  // Tall origin so the saved position is not clamped by the viewport.
+  await page.addStyleTag({
+    content: `[data-testid="${options.originTestId}"] { padding-bottom: 4000px; }`,
+  });
+  await page.evaluate((y) => window.scrollTo(0, y), originY);
+  await expect.poll(scrollY).toBe(originY);
+
+  // A DOM click: a locator click would scroll the link into view first.
+  await byTestId(options.linkTestId).evaluate((a: HTMLElement) => a.click());
+  await expect(byTestId(options.destinationTestId)).toBeVisible();
+  await expect(page).toHaveURL(options.destinationUrl);
+
+  await page.goBack();
+  await expect(byTestId(options.originTestId)).toBeVisible();
+  await expect.poll(scrollY).toBe(originY);
+  expect(
+    await page.evaluate(() => (window as any).__scrollCallsAfterPopstate),
+  ).toEqual([]);
+}

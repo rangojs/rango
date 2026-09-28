@@ -16,6 +16,18 @@ your own `document`. With the default document, a second
 `<Html.ScrollRestoration />` in a layout only logs
 `[Scroll] Already initialized`.
 
+### Back/forward scroll is left to the browser when it owns restoration ([#923](https://github.com/rangojs/rango/pull/923))
+
+With a custom `document` that doesn't render `<Html.ScrollRestoration>`, the
+browser restores back/forward scroll itself, but the router also called
+`scrollTo(0, 0)` after every `popstate`. When the browser restored first, the
+router's call won and back landed at the top of the page (reported in mobile
+Safari). The router no longer scrolls on back/forward for an entry whose
+`history.scrollRestoration` is `"auto"`. That also covers entries created
+before `<Html.ScrollRestoration>` mounted. A bfcache restore no longer switches
+`scrollRestoration` to `"manual"` in apps that never mounted
+`<Html.ScrollRestoration>`, so the browser keeps restoring there too.
+
 ### Breaking: the document components move under `Html` ([#937](https://github.com/rangojs/rango/pull/937))
 
 `MetaTags`, `Scripts` and `ScrollRestoration` are replaced by one namespace
