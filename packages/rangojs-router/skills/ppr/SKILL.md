@@ -708,7 +708,14 @@ Four hard edges (each e2e/unit-pinned):
   per-user state read from a middleware-provided object (`ctx.get("session")`)
   does NOT refuse — it bakes silently as the capturing user's data (see
   Pitfalls: the session-object bake trap).
-- **A rejecting bake-lane loader refuses.** Error UI never bakes.
+- **A rejecting bake-lane loader refuses.** Error UI never bakes. So does a
+  value that fails to encode: a function, a class instance, a promise inside a
+  `Map` that rejects, or a server component in the value that throws. The
+  capture stores nothing, logs the error, reports `cache-write` and backs the
+  key off, the same as a shell component that throws (below). The capture
+  encodes the value a second time to pin it for HITs, so a server component
+  that throws only on that run refuses it too. A build-time capture skips the
+  shell (`SHELL SKIP`) and the route keeps runtime capture.
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
   document GETs. Soft navigations may replay the captured handler segments, but
   DSL loaders and their item/response reads remain fresh. That IS the bake

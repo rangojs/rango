@@ -347,6 +347,17 @@ without `transition()` is not modeled.
   request now renders the page like any other, and `__prerender_collect` is no
   longer excluded from cache keys
   ([#931](https://github.com/rangojs/rango/pull/931)).
+- A PPR shell could be stored with a Flight error row in the snapshot record
+  of an `ssr: false` loader, and every shell hit seeded the loader from it.
+  The capture encodes each such loader value a second time to pin it, and did
+  not check that encode for errors. A server component in the value that threw
+  only on that run was stored, and so was a value Flight cannot encode (a
+  function, a class instance, a promise inside a `Map` that rejects) at build
+  time, where the capture refuses only on SSR errors. The capture now stores
+  nothing, reports `cache-write` and backs the key off, the same as a shell
+  component that throws (#920); a build-time capture skips the shell and the
+  route keeps runtime capture
+  ([#932](https://github.com/rangojs/rango/pull/932)).
 
 ### Docs
 

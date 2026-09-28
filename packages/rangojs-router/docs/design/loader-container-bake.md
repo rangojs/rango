@@ -58,7 +58,8 @@ Implementation notes (deltas from the sketch below, all deliberate):
 - **Records are keyed by loader segment id** (`<shortCode>D<i>.<loaderId>`),
   recorded pre-wrap (the wrapper is deterministic), serialized with
   `serializeResult` (null-preserving), and seeded via `_shellLoaderSeed` on
-  the HIT tail's derived context.
+  the HIT tail's derived context. A Flight error in that encode refuses the
+  capture like a render error (issue #927).
 - **Handler-side consumption follows the CONSUMPTION-LANE RULE** (issue
   #672 / #674, post-ship): `await ctx.use(loader)` in a HANDLER executes
   during capture with identity reads permitted (the shell guard exempts

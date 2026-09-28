@@ -74,8 +74,17 @@ already encodes the purity contract:
   own `_renderErrors` list (`deriveShellCaptureContext`), and
   `captureAndStoreShell` throws the first one before `putShell`, the same
   outcome as a fatal shell error: `reportCacheError` (`cache-write`), no
-  retry, key backed off (issue #915). The document cache applies the same
-  rule to a whole response.
+  retry, key backed off (issue #915). The loader drain's Flight encode of
+  each bake-lane container for the snapshot pushes to the same list, so a
+  container that encodes with an error row (a server component that throws
+  when the encode runs it again, a rejected promise inside a `Map`, a
+  function, a class instance) refuses the capture the same way (issue #927).
+  At runtime the capture's own Flight render already reports a value that
+  fails every time, since the container rides the payload; the encode check
+  catches a server component that fails only on the second run, and the
+  build-time producer, whose Flight render errors do not refuse (only its
+  Fizz errors do) but which calls the same `captureAndStoreShell`. The
+  document cache applies the same rule to a whole response.
 - The identity guard refuses captures whose render reads request identity
   (`cookies()`/`headers()`), so an entry never encodes a handler that
   branches on the requester.
