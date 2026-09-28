@@ -98,6 +98,8 @@ import {
   PprBakeHoleLoader,
   PprStorefrontLoader,
   PprRestockLoader,
+  PprFlightErrorLoader,
+  pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import {
@@ -125,7 +127,12 @@ import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
 import {
   DocumentCacheRenderErrorPage,
   PprRenderErrorPage,
+  RouteCacheRenderErrorPage,
 } from "./pages/capture-render-error.js";
+import {
+  UseCacheNonCacheablePage,
+  requestTenantMiddleware,
+} from "./pages/use-cache-non-cacheable.js";
 import { TaggedDocumentPage } from "./pages/tagged-document.js";
 import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
@@ -1403,6 +1410,33 @@ export const urlpatterns = urls(
         path("/ppr-render-error", PprRenderErrorPage, {
           ppr: { ttl: 300, swr: 120 },
         }),
+        // Issue #909: the route cache must not store a write whose async child
+        // threw.
+        cache({ ttl: 300 }, () => [
+          path("/route-cache-render-error", RouteCacheRenderErrorPage),
+        ]),
+        // Issue #927: the capture must not store a shell whose bake-lane value
+        // failed on the snapshot encode (loaders/ppr-shell.ts).
+        path(
+          "/ppr-flight-error",
+          PprWarningsPage,
+          { ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprFlightErrorLoader, { ssr: false })],
+        ),
+        // Its per-?run= encode pass count (pprFlightErrorPasses).
+        path.json("/ppr-flight-error-passes", (ctx) => ({
+          passes: pprFlightErrorPasses.get(ctx.searchParams.get("run") ?? ""),
+        })),
+        // Issue #925: a { cache: false } var read inside "use cache" throws.
+        middleware(requestTenantMiddleware, () => [
+          path("/use-cache-non-cacheable", UseCacheNonCacheablePage, () => [
+            errorBoundary((props) => (
+              <p data-testid="use-cache-non-cacheable-error">
+                {props.error.message}
+              </p>
+            )),
+          ]),
+        ]),
 
         // Tagged document cache route: the full-page response is document-cached
         // AND tagged (via a "use cache" + cacheTag), so updateTag("doc-page")

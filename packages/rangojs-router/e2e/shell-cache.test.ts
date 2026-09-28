@@ -999,6 +999,39 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     }
   });
 
+  // /shell-cache/flight-error (issue #927): the capture render encodes the
+  // bake-lane value cleanly, the snapshot re-encode gets a rejected entry
+  // (once per probe; ShellFlightErrorLoader). That capture must not store; a
+  // later clean one must.
+  test("bake-lane value that fails only on the snapshot encode: capture not stored, stays MISS, a later capture HITs", async ({
+    request,
+  }) => {
+    const probe = crypto.randomUUID();
+    const url = f.url(`/shell-cache/flight-error?probe=${probe}`);
+    const statusUrl = f.url(`/shell-cache/flight-error-status?probe=${probe}`);
+
+    const first = await request.get(url, { headers: HTML_HEADERS });
+    expect(first.headers()["x-rango-shell"]).toBe("MISS");
+    let settled = { stored: false, refused: false, passes: 0 };
+    await expect
+      .poll(async () => {
+        settled = await (await request.get(statusUrl)).json();
+        return settled.stored || settled.refused;
+      })
+      .toBe(true);
+
+    const next = await request.get(url, { headers: HTML_HEADERS });
+    expect(
+      next.headers()["x-rango-shell"],
+      "the capture whose snapshot encode failed must not be served",
+    ).toBe("MISS");
+    // passes: the capture's value was iterated exactly twice (render, then
+    // snapshot encode), so the pass-2 failure hit the snapshot encode.
+    expect(settled).toEqual({ stored: false, refused: true, passes: 2 });
+
+    await warmToHit(request, url);
+  });
+
   // /shell-cache/layout-loader-bare: the LITERAL storefront-homepage shape —
   // a bare ppr route (no loader, no loading(), no use list) under the
   // loader-registering layout. Formerly the canonical dead-end; now the layout

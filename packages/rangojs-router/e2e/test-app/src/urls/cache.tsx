@@ -1,5 +1,8 @@
+import { Suspense } from "react";
 import { urls } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
+import { onErrorLog } from "../error-log.js";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
@@ -59,6 +62,17 @@ let markerPromoRenders = 0;
 let layoutCacheShellRenders = 0;
 let layoutCacheRouteRenders = 0;
 let layoutCacheChromeRenders = 0;
+
+// /cache-test/flight-error (issue #909): handler runs per ?k=; the boundary's
+// own store lets the status route see whether the write stored.
+const flightErrorRuns = new Map<string, number>();
+const flightErrorStore = new MemorySegmentCacheStore();
+
+async function FlightErrorReviews({ k, run }: { k: string; run: number }) {
+  await Promise.resolve();
+  if (run === 1) throw new Error(`flight-error reviews down (k=${k})`);
+  return <p data-testid="flight-error-reviews">reviews ok</p>;
+}
 
 /**
  * Cache test routes URL patterns
@@ -564,5 +578,49 @@ export const cachePatterns = urls(
         { name: "cacheTest.searchParams" },
       ),
     ]),
+
+    // Issue #909: the write must refuse an entry whose async child threw during
+    // the write's Flight encode. The first handler run per ?k= passes run=1, so
+    // FlightErrorReviews throws in the live render and again in the write's
+    // re-render; later runs render.
+    cache({ ttl: 600, store: flightErrorStore }, () => [
+      path(
+        "/cache-test/flight-error",
+        (ctx) => {
+          const k = ctx.searchParams.get("k") ?? "";
+          const run = (flightErrorRuns.get(k) ?? 0) + 1;
+          flightErrorRuns.set(k, run);
+          return (
+            <div data-testid="flight-error-page">
+              <p data-testid="flight-error-run">{run}</p>
+              <Suspense fallback={<p>loading reviews</p>}>
+                <FlightErrorReviews k={k} run={run} />
+              </Suspense>
+            </div>
+          );
+        },
+        { name: "cacheTest.flightError" },
+      ),
+    ]),
+    // Write outcome for one ?k=: `stored` reads the boundary's own store,
+    // `refused` the onError cache-write report naming k.
+    path.json(
+      "/cache-test/flight-error-status",
+      (ctx) => {
+        const k = ctx.searchParams.get("k") ?? "";
+        const marker = `k=${k}`;
+        return {
+          stored: flightErrorStore
+            .getStats()
+            .keys.some((key) => key.includes(marker)),
+          refused: onErrorLog.some(
+            (e) =>
+              e.metadata?.category === "cache-write" &&
+              e.message.includes(marker),
+          ),
+        };
+      },
+      { name: "cacheTest.flightErrorStatus" },
+    ),
   ],
 );
