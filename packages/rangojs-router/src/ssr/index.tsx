@@ -421,6 +421,13 @@ interface ShellCaptureOptions {
    * refuses to store the shell (issue #915).
    */
   onError?: (error: unknown) => void;
+  /**
+   * Called with React's errorInfo for each task still pending when the
+   * capture's own abort froze the prelude; its componentStack is computed
+   * when read. The dev no-shell warning prints the stacks: one of them is what
+   * suspended above <body> (issue #941).
+   */
+  onAbortedTask?: (errorInfo: { componentStack?: string } | undefined) => void;
 }
 
 /**
@@ -823,8 +830,9 @@ export function createShellCaptureHandler<TEnv = unknown>(
         // render errors are NOT our sentinel and still surface through
         // deps.onError, the same channel renderHTML uses. See
         // docs/design/ppr-shell-resume.md.
-        onError: (error: unknown) => {
+        onError: (error: unknown, errorInfo?: { componentStack?: string }) => {
           if (error === abortReason) {
+            opts.onAbortedTask?.(errorInfo);
             return;
           }
           opts.onError?.(error);

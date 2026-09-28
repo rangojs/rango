@@ -674,6 +674,51 @@ function describePprShell(mode: "dev" | "build") {
       expect(liveSeq).toBeGreaterThan(firstSeq);
     });
 
+    // Issue #941: a storefront-sized shell on the real KV-backed CFCacheStore —
+    // a ~614 KB prelude (380 product cards) and a multi-MB capture snapshot
+    // (pages/ppr-large.tsx). The HIT must deliver every prelude byte once, in
+    // order, and hydrate; the holes variant resumes a live loader behind it.
+    for (const [variant, path, cards] of [
+      ["no holes", "/ppr-large", 380],
+      ["with a hole", "/ppr-large/holes", 380],
+    ] as const) {
+      test(`large shell HIT (${variant}): the chunked prelude arrives intact and hydrates`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        using __ = guardHydrationErrors(page);
+        const url = f.url(`${path}?probe=large`);
+        await warmToHit(page.request, url);
+
+        const { html } = await measureFirstChunk(url);
+        const { prelude, resumed } = splitPrelude(html);
+        expect(new TextEncoder().encode(prelude).length).toBeGreaterThan(
+          500 * 1024,
+        );
+        const skus = [...prelude.matchAll(/data-sku="(sku-\d+)"/g)].map(
+          (m) => m[1],
+        );
+        expect(skus).toEqual(
+          Array.from({ length: cards }, (_unused, i) => `sku-${i}`),
+        );
+        expect(prelude).toContain('data-testid="ppr-large-footer"');
+        if (path === "/ppr-large/holes") {
+          expect(prelude).toContain('data-testid="ppr-large-hole-fallback"');
+          expect(resumed).toContain("Live hole (seq");
+        }
+
+        const response = await page.goto(url);
+        expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+        await waitForHydration(page);
+        await expect(page.locator("[data-sku]")).toHaveCount(cards);
+        if (path === "/ppr-large/holes") {
+          await expect(testId(page, "ppr-large-hole")).toContainText(
+            "Live hole",
+          );
+        }
+      });
+    }
+
     // /ppr-blog is the realistic fixture: the SAME components/loaders/cache()
     // wrapping as the classic /blog (sidebar parallel + ring-3 cache() ttl 60
     // whose rendered content includes a per-render timestamp), duplicated under

@@ -8,6 +8,7 @@ import {
   resetBuildShellManifestForTests,
   type BuildShellEntry,
 } from "../shell-build-manifest.js";
+import { openShellDocument } from "../shell-serve.js";
 
 const BUILD_VERSION = "build-1";
 
@@ -114,10 +115,25 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     ).toBeNull();
   });
 
-  it("rejects a corrupt prelude (integrity gate before commit)", async () => {
+  // The read-through's gates are structural; the document serve decodes the
+  // prelude once (openShellDocument) and treats a failed decode as a MISS.
+  it("leaves an undecodable prelude to the document serve's one decode", async () => {
     installManifest({
       "/pp/a": {
         entry: entry({ prelude: "not-base64!!!" }),
+        ttl: 300,
+        routeName: "pp",
+      },
+    });
+    const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
+    expect(hit).not.toBeNull();
+    expect(openShellDocument(hit!.entry)).toBeNull();
+  });
+
+  it("rejects an unparseable postponed blob (integrity gate before commit)", async () => {
+    installManifest({
+      "/pp/a": {
+        entry: entry({ postponed: "{" }),
         ttl: 300,
         routeName: "pp",
       },

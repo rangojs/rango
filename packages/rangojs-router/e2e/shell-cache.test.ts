@@ -633,6 +633,42 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     expect(liveSeq).toBeGreaterThan(firstSeq);
   });
 
+  // --- Large shell (issue #941): a prelude over several enqueue chunks. ---
+
+  // /shell-cache/large renders a cached 240-item catalog into a prelude over
+  // several 32 KB enqueue chunks, with a live price hole resumed behind it.
+  // The HIT must deliver every prelude byte once, in order, then the hole.
+  test("large shell HIT: the chunked prelude arrives intact and hydrates, the hole stays live", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+
+    const url = f.url("/shell-cache/large?probe=large");
+    await warmToHit(page.request, url);
+
+    const { html } = await measureFirstChunk(url);
+    const { prelude, resumed } = splitPrelude(html);
+    expect(new TextEncoder().encode(prelude).length).toBeGreaterThan(
+      3 * 32 * 1024,
+    );
+    const items = [...prelude.matchAll(/data-item="(item-\d+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(items).toEqual(
+      Array.from({ length: 240 }, (_unused, i) => `item-${i}`),
+    );
+    expect(prelude).toContain('data-testid="shell-large-end"');
+    expect(prelude).toContain('data-testid="shell-large-fallback"');
+    expect(resumed).toContain("Live price:");
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(page.locator("[data-item]")).toHaveCount(240);
+    await expect(testId(page, "shell-price")).toContainText("Live price:");
+  });
+
   // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
 
   // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64 — far below the

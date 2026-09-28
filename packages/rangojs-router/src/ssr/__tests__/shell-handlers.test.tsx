@@ -342,6 +342,37 @@ describe("createShellCaptureHandler", () => {
     expect(Date.now() - start).toBeLessThan(2000);
   });
 
+  // Issue #941: the capture's own abort was swallowed with the component stack
+  // React passes for it, so a no-shell capture could not say what pinned it.
+  it("reports the component stack of each task pending at the abort", async () => {
+    const never = new Promise<never>(() => {});
+    function PinnedBody(): React.ReactNode {
+      React.use(never);
+      return null;
+    }
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(
+        React.createElement(
+          "html",
+          null,
+          React.createElement("body", null, React.createElement(PinnedBody)),
+        ),
+      ),
+    );
+    const stacks: (string | undefined)[] = [];
+    const onError = vi.fn();
+    const capture = createShellCaptureHandler(makeDeps());
+    const result = await capture(makeRscStream("PINNED_FLIGHT"), {
+      quiesce: Promise.resolve(),
+      maxWaitMs: 5000,
+      onError,
+      onAbortedTask: (errorInfo) => stacks.push(errorInfo?.componentStack),
+    });
+    expect(result).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(stacks.some((stack) => stack?.includes("PinnedBody"))).toBe(true);
+  });
+
   it("forwards an explicit progressiveChunkSize to prerender", async () => {
     const spy = vi.fn(prerender);
     const deps = makeDeps({

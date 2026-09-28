@@ -372,6 +372,8 @@ const warnedNullCaptures = new Set<string>();
  * tarball, so the path resolves for consumers (a05c8251 convention).
  */
 function warnNullCaptureOnce(key: string): void {
+  const pendingStacks = noShellPendingStacks.get(key);
+  noShellPendingStacks.delete(key);
   if (warnedNullCaptures.has(key)) return;
   warnedNullCaptures.add(key);
   console.warn(
@@ -386,8 +388,40 @@ function warnNullCaptureOnce(key: string): void {
       "an inline <Suspense>; a loader(Def, { ssr: false }) or top-level push (e.g. Meta) " +
       "slower than ppr.captureTimeout; or a pending promise with no Suspense above it. The " +
       "boundary belongs to the entry or component that owns the data.\n" +
+      "  3. An async server component the handler renders without awaiting, with no " +
+      "Suspense above it, whose data arrives after the capture's quiet window (a slow " +
+      "cache read on a cold colo). Await its data in the handler to bake it, or wrap it " +
+      "in <Suspense> to make it a hole.\n" +
+      (pendingStacks && pendingStacks.length > 0
+        ? "Components still pending when the capture froze the shell (one of them " +
+          "suspended above <body>):\n" +
+          pendingStacks.map(formatPendingStack).join("\n") +
+          "\n"
+        : "") +
       PPR_LANE_HINT,
   );
+}
+
+/**
+ * Dev only: component stacks of the tasks still pending at the latest
+ * no-shell attempt's abort, per key, printed (and cleared) by
+ * warnNullCaptureOnce. React reports them through prerender's onError
+ * (captureShellHTML's onAbortedTask).
+ */
+const noShellPendingStacks = new Map<string, string[]>();
+
+/** Stacks kept per attempt: the root pin is almost always among the first. */
+const MAX_PENDING_STACKS = 3;
+
+/** The first lines of one component stack, indented under the warning. */
+function formatPendingStack(stack: string): string {
+  return stack
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((line) => `    ${line}`)
+    .join("\n");
 }
 
 /** Keys already warned about a deterministic capture refusal (once per key). */
@@ -1804,6 +1838,26 @@ async function captureAndStoreShell(
     return "refused";
   };
 
+  // Dev diagnostics for a no-shell attempt (warnNullCaptureOnce): the stacks of
+  // the tasks React reports as still pending at the capture's abort. React's
+  // componentStack is computed on read, so it is read only while there is room.
+  let pendingStacks: string[] | undefined;
+  let onAbortedTask:
+    | ((errorInfo: { componentStack?: string } | undefined) => void)
+    | undefined;
+  if (process.env.NODE_ENV !== "production") {
+    noShellPendingStacks.delete(capture.key);
+    const stacks: string[] = [];
+    pendingStacks = stacks;
+    onAbortedTask = (errorInfo) => {
+      if (stacks.length >= MAX_PENDING_STACKS) return;
+      const componentStack = errorInfo?.componentStack;
+      if (componentStack && !stacks.includes(componentStack)) {
+        stacks.push(componentStack);
+      }
+    };
+  }
+
   try {
     // captureShellHTML CONSUMES the (gated) stream — it is not also SSR'd.
     let result: Awaited<ReturnType<typeof captureShellHTML>>;
@@ -1821,6 +1875,7 @@ async function captureAndStoreShell(
           onError: (error) => {
             reqCtx._renderErrors?.push(error);
           },
+          onAbortedTask,
         }),
       );
     } catch (error) {
@@ -1848,6 +1903,7 @@ async function captureAndStoreShell(
     if (refused) return refused;
 
     if (result === null) {
+      if (pendingStacks) noShellPendingStacks.set(capture.key, pendingStacks);
       return "no-shell";
     }
     if (stats) stats.preludeBytes = result.prelude.length;

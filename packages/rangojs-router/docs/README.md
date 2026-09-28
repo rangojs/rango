@@ -82,6 +82,9 @@ Read these before changing the corresponding subsystem.
   the read-latency budgets
 - [Shell fast path](../../../docs/design/shell-fast-path.md) - the PPR shell
   entry as a `cache()` of the handler layer, and the fragment splice
+- [Shell entry layout](../../../docs/design/shell-entry-layout.md) - what a
+  PPR shell HIT reads, parses, and decodes before its first byte, and the
+  stored entry layout that keeps it to the prelude (issue #941)
 - [Vercel cache store](../../../docs/design/vercel-cache-store.md) -
   `VercelCacheStore` and the `vercel` preset design
 - [Rango state cookie storage & single invalidation API](../../../docs/design/rango-state-cookie.md) -
