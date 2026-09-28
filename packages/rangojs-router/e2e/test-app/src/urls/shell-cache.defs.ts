@@ -100,6 +100,14 @@ export const ShellStorefrontLoader = createLoader(async (ctx) => {
   return { lowStock: stock.lowStock };
 });
 
+// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// The doc record keeps the push (the prelude rendered it) and the loader
+// re-runs on every HIT; the live push must replace the restored one.
+export const ShellRestockLoader = createLoader(async (ctx) => {
+  ctx.use(ShellWarnings)("Restock soon");
+  return { restock: true };
+});
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.

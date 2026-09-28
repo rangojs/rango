@@ -402,6 +402,21 @@ without `transition()` is not modeled.
   pre-renders an intercept declared directly after a bare `cache()` once
   instead of twice for the routes after it
   ([#933](https://github.com/rangojs/rango/pull/933)).
+- On a `ppr` route, a PPR shell hit restored the handle pushes an `ssr: false`
+  loader made during the shell capture, and the loader's re-run on the hit
+  pushed them again. A handle that does not dedupe by key, such as a custom
+  handle or a crumb without an `href`, showed the value twice, and hydration
+  did not match the prelude, which showed it once. The re-run's pushes now
+  replace the restored ones in place, so each value appears once and the
+  live value wins; a push that lands after the document's handle data was
+  sent reaches the client after hydration. With the loader's own `cache()`,
+  a hit on that cache no longer replays them a second time. The record gains
+  an optional `handleOwners` field on `CachedEntryData`; a custom
+  `SegmentCacheStore` that stores the whole entry keeps it, and a record
+  without it restores as before. Shell entries from an earlier build are
+  already recaptured by the build-version gate. This supersedes the #875
+  known-limitation note under Docs below
+  ([#936](https://github.com/rangojs/rango/pull/936)).
 
 ### Docs
 
@@ -423,6 +438,7 @@ without `transition()` is not modeled.
   dedupe by key shows them twice. Documented in the `ppr` and `shell-manifest`
   skills and guides; `Meta` and `Breadcrumbs` dedupe and are unaffected. No
   runtime change ([#875](https://github.com/rangojs/rango/pull/875)).
+  Superseded: the hit now replaces those pushes (see Fixes above).
 - The `server-actions` skill documents the default CSRF origin check (the
   Origin/Referer vs Host rule, the 403 rejection, and what it does not cover);
   the `response-routes` skill says response routes are outside it and shows a

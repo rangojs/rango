@@ -86,6 +86,13 @@ global middleware
   `loader-cache.ts`, `_claimLoaderPushes` in `loader-resolution.ts`
   (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
   `loader-cache-handles.test.ts` and `handle-store.test.ts`.
+- A PPR shell HIT that replays the handler layer restores the settled pushes
+  of each `loader(Def, { ssr: false })` body from the shell record through
+  the same `pushReplayed` path, claiming that loader; its re-run on the HIT
+  replaces them in place, and its own `cache()` HIT does not replay them a
+  second time. Source: `restoreHandles` in `handle-snapshot.ts`
+  (`CachedEntryData.handleOwners`, written from the capture's push wrapper
+  in `shell-capture.ts`); pinned by `cache-record-loader-pushes.test.ts`.
 - Under PPR shell capture, only `loader(Def, { ssr: false })` executes and
   bakes; every other loader is masked and live, whatever its `loading()`
   ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);

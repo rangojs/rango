@@ -97,6 +97,7 @@ import {
   PprBakeSlowLoader,
   PprBakeHoleLoader,
   PprStorefrontLoader,
+  PprRestockLoader,
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import {
@@ -778,6 +779,14 @@ export const urlpatterns = urls(
           PprWarningsPage,
           { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprStorefrontLoader, { ssr: false })],
+        ),
+        // Issue #929: the ssr:false loader pushes the string handle itself;
+        // the replayed record keeps it and the loader's re-run replaces it.
+        path(
+          "/ppr-restock",
+          PprWarningsPage,
+          { name: "pprRestock", ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprRestockLoader, { ssr: false })],
         ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the
         // real store-app shape — an app-wide cache() wrapping the tree).

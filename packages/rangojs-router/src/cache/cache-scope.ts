@@ -28,6 +28,7 @@ import { reportCacheError } from "./cache-error.js";
 // is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,
+  captureHandleOwners,
   restoreHandles,
   encodeHandles,
   decodeHandles,
@@ -342,11 +343,14 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param claimLoaderPushes - The handler context's _claimLoaderPushes, for
+   *   restoreHandles' loader-owned values
    */
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
+    claimLoaderPushes?: (loaderId: string) => boolean,
   ): Promise<{
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
@@ -355,6 +359,7 @@ export class CacheScope {
       pathname,
       params,
       isIntercept,
+      claimLoaderPushes,
     );
     return outcome.status === "hit" ? outcome.result : null;
   }
@@ -381,6 +386,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
+    claimLoaderPushes?: (loaderId: string) => boolean,
   ): Promise<CacheRouteLookupOutcome> {
     if (!this.enabled) return { status: "bypass" };
     if (!this.conditionAllows("read")) return { status: "bypass" };
@@ -478,7 +484,12 @@ export class CacheScope {
               if (!kept.has(id)) delete handlesRecord[id];
             }
           }
-          restoreHandles(handlesRecord, handleStore);
+          restoreHandles(
+            handlesRecord,
+            handleStore,
+            cached.handleOwners,
+            claimLoaderPushes,
+          );
         }
       }
 
@@ -629,6 +640,7 @@ export class CacheScope {
 
       // Collect handle data for non-loader segments only
       const handles = captureHandles(nonLoaderSegments, handleStore);
+      const handleOwners = captureHandleOwners(nonLoaderSegments, handleStore);
 
       try {
         if (INTERNAL_RANGO_DEBUG) {
@@ -660,6 +672,7 @@ export class CacheScope {
           expiresAt: Date.now() + ttl * 1000,
           tags,
         };
+        if (handleOwners && encodedHandles) data.handleOwners = handleOwners;
 
         if (INTERNAL_RANGO_DEBUG) {
           debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);

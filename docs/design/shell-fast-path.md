@@ -154,9 +154,18 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    pushed by an awaited loader was recorded and showed twice on a HIT. The
    capture's push wrapper passes `loaderPush: false` for a bake-lane loader's
    own settled, thenable-free pushes, so they are kept, because the prelude
-   rendered them; its re-run pushes them again, so on the fast path they
-   appear twice unless the handle dedupes by key (`Meta`, `Breadcrumbs` by
-   `href`).
+   rendered them. The loader re-runs on every HIT and pushes them again, so
+   the wrapper also passes the loader's id as `owner`. The record carries the
+   owners in `CachedEntryData.handleOwners`, and `restoreHandles` puts those
+   values back through `HandleStore.pushReplayed`, the mechanism a loader's
+   own `cache()` replay uses. The re-run's first push removes them and takes
+   the first one's position, so each value appears once and the live value
+   wins. Until issue #929 they were restored as plain values and showed twice
+   unless the handle deduped by key. A re-run push that lands after the
+   document's handle snapshot reaches the client after hydration (the late
+   channel); until then the client holds the recorded value, which matches
+   the prelude. A record written before `handleOwners` existed restores as a
+   plain replay.
 
 ## Why the original splice framing was dropped
 
@@ -274,7 +283,7 @@ narrower, in fact:
 | Handler-pushed handles (settled)             | re-pushed by handler re-run                | replayed from the entry                          |
 | Handler-pushed handles (nested promise)      | live via handler re-run                    | **entry ineligible** → full tail                 |
 | Handler-invoked `ctx.use(loader)` (#672)     | re-consumed by handler re-run              | **entry ineligible** → full tail                 |
-| Loader-pushed handles (bake lane, settled)   | re-pushed by loader re-run                 | replayed from the entry **and** re-pushed        |
+| Loader-pushed handles (bake lane, settled)   | re-pushed by loader re-run                 | replayed from the entry; re-run replaces it      |
 | Loader-pushed handles (all others)           | re-pushed by loader re-run                 | re-pushed by loader re-run (identical)           |
 | Per-request metadata (theme/locationState/…) | rebuilt per request                        | rebuilt per request (buildFullPayload)           |
 

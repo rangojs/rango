@@ -384,6 +384,7 @@ export const NamedRoutes = {
   shellCacheNoHole: "/shell-cache/no-hole",
   shellCacheNonceToken: "/shell-cache/nonce-token",
   shellCacheOutlined: "/shell-cache/outlined",
+  shellCacheRestock: "/shell-cache/restock",
   shellCacheScoped: "/shell-cache/scoped",
   shellCacheScopedCondition: "/shell-cache/scoped-condition",
   shellCacheScopedOptOut: "/shell-cache/scoped-optout",

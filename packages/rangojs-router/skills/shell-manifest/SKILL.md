@@ -37,8 +37,8 @@ batched.
    `/loader` — but a live loader's push is request-time and is NOT part of
    the replayed artifact; a manifest handle must be pushed by the code that
    gets frozen with the shell. An `ssr: false` loader on a `ppr` route is the
-   exception: its settled pushes are recorded and replayed, and pushed again
-   by its re-run — `/ppr` "On a shell HIT".)
+   exception: its settled pushes are recorded and replayed, and its re-run
+   replaces them with its live pushes — `/ppr` "On a shell HIT".)
 2. **Replay on every hit.** Handle data is stored with the Flight payload
    and replayed into the handle store on cache/prerender hits — handler code
    does not re-run, but its pushes do.

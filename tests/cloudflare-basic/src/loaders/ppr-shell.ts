@@ -216,6 +216,14 @@ export const PprStorefrontLoader = createLoader(async (ctx) => {
   return { lowStock: stock.lowStock };
 });
 
+// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// The doc record keeps the push (the prelude rendered it) and the loader
+// re-runs on every HIT; the live push must replace the restored one.
+export const PprRestockLoader = createLoader(async (ctx) => {
+  ctx.use(PprWarnings)("Restock soon");
+  return { restock: true };
+});
+
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
 // the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer
 // module counters; the DSL loader (live lane) reports the snapshot per serve,

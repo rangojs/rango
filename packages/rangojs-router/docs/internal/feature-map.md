@@ -499,8 +499,10 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   `runLoaderResult().handlePushes` records writes; `runLoader` seeds reads via
   `{ handles }` + `ctx.get`. `cache()` and PPR shell records exclude DSL-loader
   pushes (`handle-store.ts` push-time positional tagging; the shell capture
-  untags an `ssr: false` loader's own settled pushes; see
-  `docs/design/caching.md`).
+  untags an `ssr: false` loader's own settled pushes and records their loader
+  in `CachedEntryData.handleOwners`, and a HIT restores them through
+  `HandleStore.pushReplayed` so the loader's re-run replaces them in place;
+  see `docs/design/caching.md`).
 
 ### Revalidation
 

@@ -8,7 +8,7 @@
 
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore } from "../server/handle-store.js";
-import type { SegmentHandleData } from "./types.js";
+import type { HandleOwners, SegmentHandleData } from "./types.js";
 // segment-codec eagerly pulls @vitejs/plugin-rsc (a virtual: module unresolvable
 // in plain node/vitest). It is imported LAZILY inside the two async encode/decode
 // helpers below so that modules which import handle-snapshot only for the
@@ -104,9 +104,10 @@ export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
  * handler-invoked ctx.use(Loader) bodies (skipped with their handler on a
  * HIT), are kept. The store tags loader pushes by array position at push
  * time, so primitive values are covered. A PPR shell capture untags the
- * settled bake-lane pushes its record keeps (shell-capture.ts). Only this
- * call site passes excludeLoaderPushes; every other getDataForSegment
- * consumer (the render-barrier snapshot, prerender) sees every push.
+ * settled bake-lane pushes its record keeps (shell-capture.ts) and gives
+ * them an owner (captureHandleOwners). Only this call site passes
+ * excludeLoaderPushes; every other getDataForSegment consumer (the
+ * render-barrier snapshot, prerender) sees every push.
  */
 export function captureHandles(
   segments: ResolvedSegment[],
@@ -119,18 +120,68 @@ export function captureHandles(
   return handles;
 }
 
+/** The owners of captureHandles' values; undefined when none is owned. */
+export function captureHandleOwners(
+  segments: ResolvedSegment[],
+  handleStore: HandleStore,
+): HandleOwners | undefined {
+  let owners: HandleOwners | undefined;
+  for (const seg of segments) {
+    const segOwners = handleStore.getRecordOwners(seg.id);
+    if (segOwners) (owners ??= {})[seg.id] = segOwners;
+  }
+  return owners;
+}
+
 /**
  * Restore handle data from a cached snapshot into the handle store.
  * Used when serving cached segments to replay their handle data: a route
  * cache() record owns its segments' arrays, so it REPLACES them.
+ *
+ * A segment with `owners` is replaced with empty arrays and re-pushed in
+ * recorded order, an owned value through pushReplayed: the owning loader
+ * re-runs on the HIT (loaders stay live), and its live pushes replace the
+ * recorded ones in place instead of appending a second copy. `claim`
+ * (setupLoaderAccess _claimLoaderPushes) is asked once per owner, so the
+ * loader's own cache() HIT does not replay its pushes a second time
+ * (loader-cache.ts replayLoaderHandles); an owner it refuses is skipped. A
+ * record without owners restores as a plain replay.
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
+  owners?: HandleOwners,
+  claim?: (loaderId: string) => boolean,
 ): void {
+  let delivers: Map<string, boolean> | undefined;
   for (const [segId, segHandles] of Object.entries(handles)) {
-    if (Object.keys(segHandles).length > 0) {
+    if (Object.keys(segHandles).length === 0) continue;
+    const segOwners = owners?.[segId];
+    if (!segOwners) {
       handleStore.replaySegmentData(segId, segHandles);
+      continue;
+    }
+    const cleared: SegmentHandleData = {};
+    for (const handleName in segHandles) cleared[handleName] = [];
+    handleStore.replaySegmentData(segId, cleared);
+    for (const [handleName, values] of Object.entries(segHandles)) {
+      const valueOwners = segOwners[handleName];
+      for (let i = 0; i < values.length; i++) {
+        const owner = valueOwners?.[i];
+        if (!owner) {
+          handleStore.push(handleName, segId, values[i]);
+          continue;
+        }
+        delivers ??= new Map();
+        let deliver = delivers.get(owner);
+        if (deliver === undefined) {
+          deliver = claim ? claim(owner) : true;
+          delivers.set(owner, deliver);
+        }
+        if (deliver) {
+          handleStore.pushReplayed(handleName, segId, values[i], owner);
+        }
+      }
     }
   }
 }
