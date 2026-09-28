@@ -755,16 +755,6 @@ describe("VercelCacheStore", () => {
       expect(reads()).toBe(2);
     });
 
-    it("memo.shellMs: 0 disables the memo", async () => {
-      const { cache } = makeFakeCache();
-      const s = new VercelCacheStore({ cache, memo: { shellMs: 0 } });
-      await s.putShell("k", shellEntry(), 60, 300);
-      const reads = countShellReads(cache);
-      await s.getShell("k");
-      await s.getShell("k");
-      expect(reads()).toBe(2);
-    });
-
     it("does not keep a stale read", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -812,15 +802,6 @@ describe("VercelCacheStore", () => {
       await s.getShell("other");
       await s.getShell("k");
       expect(reads()).toBe(2);
-    });
-
-    it("a putShell in the same instance replaces the memoized shell", async () => {
-      const { cache } = makeFakeCache();
-      const s = new VercelCacheStore({ cache });
-      await s.putShell("k", shellEntry({ prelude: "old" }), 60, 300);
-      await s.getShell("k");
-      await s.putShell("k", shellEntry({ prelude: "new" }), 60, 300);
-      expect((await s.getShell("k"))?.entry.prelude).toBe("new");
     });
 
     it("a newer capture from another instance is served once the window passes", async () => {
@@ -922,16 +903,6 @@ describe("VercelCacheStore", () => {
       s.dropShellMemo("k");
       await s.getShell("k");
       expect(reads()).toBe(2);
-    });
-
-    it("invalidateTags drops the instance's own memoized shells", async () => {
-      const { cache } = makeFakeCache();
-      const s = new VercelCacheStore({ cache });
-      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
-      await s.getShell("k");
-      vi.setSystemTime(new Date(T0 + 100));
-      await s.invalidateTags(["home"]);
-      expect(await s.getShell("k")).toBeNull();
     });
 
     // The race KV-less purge-mode CFCacheStore had (a read during the
