@@ -951,6 +951,24 @@ describe("route tree inspection", () => {
     expect(wrapper.layout.map((l) => l.handler)).toEqual([Nav]);
   });
 
+  it("a middleware() wrapper may contain a layout() whose own children hold the routes", () => {
+    const AdminNav = (<div>admin nav</div>) as React.ReactNode;
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware }) => [
+        layout(RootLayout, () => [
+          middleware(authMiddleware, () => [
+            layout(AdminNav, () => [
+              path("/about", AboutPage, { name: "about" }),
+            ]),
+          ]),
+        ]),
+      ]),
+    );
+    const navLayout = tree.entry("about")!.parent!;
+    expect(navLayout.handler).toBe(AdminNav);
+    expect(navLayout.parent!.middleware).toEqual([authMiddleware]);
+  });
+
   it("the flat form puts the middleware and the layout on the path", () => {
     const AccountNav = (<div>nav</div>) as React.ReactNode;
     const tree = buildRouteTree(
