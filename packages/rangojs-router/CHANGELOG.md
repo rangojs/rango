@@ -550,6 +550,26 @@ without `transition()` is not modeled.
   already recaptured by the build-version gate. This supersedes the #875
   known-limitation note under Docs below
   ([#936](https://github.com/rangojs/rango/pull/936)).
+- A `"use cache"` hit can be asserted through the testing primitives. The
+  `@vitejs/plugin-rsc/rsc` stub that `rangoTestAliases()` installs threw from
+  its encoder and serializer, so a cached function run through
+  `renderHandler` or `runLoader` with a seeded `cacheStore` never wrote an
+  entry and ran on every call, although the testing skill said a seeded store
+  asserts real cache behavior. Under the react-server condition (the Flight
+  project) the stub now runs the vendored react-server-dom builds plugin-rsc
+  wraps. The body runs once across calls, the value round-trips through
+  Flight, and an error row is not stored. The write is a background
+  (`waitUntil`) task the primitives do not await: a call before it lands joins
+  the still-running execution, and a call after it reads the store. In the
+  node project React's server build does not load, so calls still run
+  uncached, and any other failure to load the Flight builds now throws.
+  A function written with the directive also stayed a plain function in a
+  test: `rango()` runs the `"use cache"` transform only in its `rsc`
+  environment, and Vitest transforms in `ssr`. The new
+  `rangoUseCacheTransform()` from `@rangojs/router/testing/vitest` runs the
+  same transform in a Vitest project, with the ids `vite dev` emits; add it to
+  the Flight project's `plugins` next to `rangoUseClientTransform()`
+  ([#944](https://github.com/rangojs/rango/pull/944)).
 
 ### Docs
 

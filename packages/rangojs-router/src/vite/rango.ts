@@ -45,7 +45,7 @@ import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
-import { createRangoDebugger, NS } from "./debug.js";
+import { createCounter, createRangoDebugger, NS } from "./debug.js";
 
 const debugConfig = createRangoDebugger(NS.config);
 
@@ -565,7 +565,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   plugins.push(createLoaderDirectiveGuardPlugin());
   plugins.push(createLoaderScanStubPlugin());
   plugins.push(exposeActionId());
-  plugins.push(useCacheTransform());
+  plugins.push(
+    useCacheTransform(
+      createCounter(createRangoDebugger(NS.transform), "use-cache"),
+    ),
+  );
   plugins.push(exposeInternalIds());
   plugins.push(exposeRouterId());
   plugins.push(createVersionPlugin());

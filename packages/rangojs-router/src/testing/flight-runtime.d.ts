@@ -19,6 +19,9 @@ declare module "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge" {
     options?: { onError?: (error: unknown) => string | void },
   ): ReadableStream<Uint8Array>;
 
+  /** Server-side temporary-reference set (a WeakMap). */
+  export function createTemporaryReferenceSet(): unknown;
+
   /**
    * Tag a value as a client reference. Mutates `impl` in place (defining
    * `$$typeof`/`$$id`/`$$async`) and returns it, so a server tree that imports
@@ -54,4 +57,22 @@ declare module "@vitejs/plugin-rsc/core/browser" {
   export function setRequireModule(options: {
     load: (id: string) => unknown;
   }): void;
+}
+
+/**
+ * The vendored react-server-dom CLIENT build the RSC environment decodes with
+ * (plugin-rsc `react/rsc/client`). The plugin-rsc stub runs the "use cache"
+ * codec on it under the react-server condition.
+ */
+declare module "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge" {
+  export function createFromReadableStream<T = unknown>(
+    stream: ReadableStream<Uint8Array>,
+    options?: object,
+  ): Promise<T>;
+  export function encodeReply(
+    value: unknown,
+    options?: object,
+  ): Promise<string | FormData>;
+  /** Client-side temporary-reference set (a Map). */
+  export function createTemporaryReferenceSet(): unknown;
 }

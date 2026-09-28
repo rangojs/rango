@@ -34,7 +34,10 @@
 
 import { defineConfig } from "vitest/config";
 import { resolve } from "path";
-import { rangoUseClientTransform } from "./src/testing/vitest.js";
+import {
+  rangoUseCacheTransform,
+  rangoUseClientTransform,
+} from "./src/testing/vitest.js";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). See header for why dev mode is not viable here.
@@ -45,7 +48,7 @@ export default defineConfig({
   // islands from the server tree's own imports (no clientComponents needed).
   // Server components (no directive) are untouched, so renderToFlightString of
   // pure leaf trees is unaffected.
-  plugins: [rangoUseClientTransform()],
+  plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
   resolve: {
     conditions: ["react-server"],
     alias: {
