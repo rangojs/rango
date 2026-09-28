@@ -3,6 +3,7 @@ import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
 import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
+import { isThenable } from "../handles/is-thenable.js";
 import type { ErrorPhase } from "../types.js";
 import type { HeadScriptsOption } from "../vite/plugin-types.js";
 
@@ -250,15 +251,77 @@ export interface SSRDependencies<TEnv = unknown> {
  * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed.
  *
  * Hops alone are NOT render-readiness: fizz cannot emit even <html> until the
- * payload root settles, which waits on every referenced client-module LOAD —
- * real module-runner I/O in dev (100ms+ cold), which no fixed count of near-
- * zero-cost task hops can buy. captureShellHTML therefore awaits the payload-
- * settled signal (SsrRootOptions.onPayloadSettled, deadline-bounded) between
- * quiesce and these hops; the hops then only flush the settled tree and mark
- * pending boundaries POSTPONED. Still task-based (masked loaders never emit,
- * so more hops never lets a hole settle). Bounded by maxWaitMs end to end.
+ * payload root settles, nor complete a shell whose client components are
+ * still loading — real module-runner I/O in dev (100ms+ cold), which no fixed
+ * count of near-zero-cost task hops can buy. captureShellHTML therefore
+ * awaits the payload-settled signal (SsrRootOptions.onPayloadSettled) and
+ * then the client-reference loads in flight in the isolate (captureClientLoads),
+ * deadline-bounded, between quiesce and these hops; the hops then only flush
+ * the settled tree and mark pending boundaries POSTPONED. Still task-based
+ * (masked loaders never emit, so more hops never lets a hole settle). Bounded
+ * by maxWaitMs end to end.
  */
 const POST_QUIESCE_TASK_HOPS = 16;
+
+/**
+ * One set per running capture, collecting the client-reference module loads
+ * requested while it runs (captureClientLoads). The Flight client resolves a
+ * client component used as an element type lazily, so the payload settles
+ * while its module is still loading, and a shell that renders it outside any
+ * Suspense boundary cannot complete until the load does. On the
+ * cloudflare-basic build a cold load (the module, its imports, its CSS
+ * virtual) settled at +890.1ms, after the payload (+873.4ms) and 1ms before
+ * the abort, and uninstrumented builds lost that race (issue #949). The
+ * Flight client asks the loader again for every import row, even for a
+ * module another render is already loading, so a capture sees each load it
+ * needs; one a concurrent render requests meanwhile is collected too and is
+ * the same bounded I/O. The sets are per capture, their contents isolate-wide:
+ * a load that never settles can only hold the captures running when it was
+ * requested, each until its deadline.
+ */
+const activeCaptureClientLoads = new Set<Set<PromiseLike<unknown>>>();
+
+/** The loader wrapper {@link captureClientLoads} last installed. */
+let recordingClientReferenceLoader: ((id: string) => unknown) | undefined;
+
+/**
+ * Start collecting the client-reference loads requested during a capture;
+ * call the returned `stop` when the capture ends. Wraps plugin-rsc's SSR
+ * loader (`globalThis.__vite_rsc_client_require__`, which
+ * `__vite_rsc_require__` reads per call) on the first capture, so an isolate
+ * that never captures keeps the bare loader. Wraps again when another wrapper
+ * replaced this one (the build shell phase bridges hashed ids the same way,
+ * vite/discovery/shell-prerender-phase.ts). Collects nothing without the
+ * loader.
+ */
+function captureClientLoads(): {
+  loads: Set<PromiseLike<unknown>>;
+  stop: () => void;
+} {
+  const g = globalThis as {
+    __vite_rsc_client_require__?: (id: string) => unknown;
+  };
+  const load = g.__vite_rsc_client_require__;
+  if (typeof load === "function" && load !== recordingClientReferenceLoader) {
+    recordingClientReferenceLoader = (id) => {
+      const loading = load(id);
+      // plugin-rsc memoizes one promise per id and the Flight client stamps
+      // status "fulfilled" on it once loaded: a warm module is not collected.
+      if (
+        activeCaptureClientLoads.size > 0 &&
+        isThenable(loading) &&
+        (loading as { status?: string }).status !== "fulfilled"
+      ) {
+        for (const loads of activeCaptureClientLoads) loads.add(loading);
+      }
+      return loading;
+    };
+    g.__vite_rsc_client_require__ = recordingClientReferenceLoader;
+  }
+  const loads = new Set<PromiseLike<unknown>>();
+  activeCaptureClientLoads.add(loads);
+  return { loads, stop: () => activeCaptureClientLoads.delete(loads) };
+}
 
 /**
  * Route an SSR error through the deps.onError notification callback with the
@@ -768,12 +831,13 @@ export function createShellCaptureHandler<TEnv = unknown>(
     const deadline = (await isDebuggerAttached())
       ? { promise: new Promise<void>(() => {}), cancel: () => {} }
       : createCancelableTimeout(maxWaitMs);
+    const clientLoads = captureClientLoads();
     try {
       // No nonce (nonce'd requests never reach capture); no formState.
-      // payloadSettled: fires when the Flight payload root settles — i.e.
-      // every client-module load the payload references completed and fizz
-      // can actually emit the tree. The abort below gates on it (bounded by
-      // the same deadline): Flight byte-quiet alone is NOT render-readiness.
+      // payloadSettled: fires when the Flight payload root settles and fizz
+      // can emit the tree. The abort below gates on it and on the
+      // client-reference loads in flight in the isolate (bounded by the same
+      // deadline): Flight byte-quiet alone is NOT render-readiness.
       let settlePayload!: () => void;
       const payloadSettled = new Promise<void>((resolve) => {
         settlePayload = resolve;
@@ -854,25 +918,34 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // shell that never goes quiet (a root postpone / hung handle).
       await Promise.race([opts.quiesce, deadline.promise]);
       // Then wait for fizz RENDER-READINESS, bounded by the same deadline:
-      // the payload root settles only after every client-module load the
-      // payload references completed (real module-runner I/O in dev; 100ms+
-      // on a cold graph). Flight byte-quiet does NOT imply this — a fully
+      // the payload root settles, then the client-reference module loads the
+      // capture started settle — a client component used as an element type
+      // resolves lazily, after the payload (real module-runner I/O in dev;
+      // 100ms+ on a cold graph). Flight byte-quiet does NOT imply this — a fully
       // REPLAYED (prerendered) route's Flight stream finishes in ~1-3ms and
       // an abort taken on quiet-plus-task-hops alone landed BEFORE fizz could
       // emit <html>, freezing a zero-byte prelude: the eternal-MISS shape
       // this route class showed on every cold graph (dev cold boots, GH
       // runners) while ordinary routes — whose live handler execution keeps
-      // Flight noisy long enough — never hit it. Masked-loader holes do not
-      // block payload settlement (they postpone below the root), so this
-      // await costs a genuinely hole-y shell nothing; a payload that NEVER
-      // settles (hung handles) degrades at the deadline exactly as before.
-      // A prerender that SETTLES first (early success or a hard rejection)
-      // ends the wait immediately — fizz is already done either way.
+      // Flight noisy long enough — never hit it. Holes the payload carries
+      // block neither wait (masked loaders and physics promises postpone
+      // below the root and load no module; the Flight input stays frozen),
+      // so this await costs a genuinely hole-y shell nothing; a payload that
+      // NEVER settles (hung handles) degrades at the deadline exactly as
+      // before. A prerender that SETTLES first (early success or a hard
+      // rejection) ends the wait immediately — fizz is already done either
+      // way.
       const prerenderSettled = prerenderPromise.then(
         () => {},
         () => {},
       );
-      await Promise.race([payloadSettled, prerenderSettled, deadline.promise]);
+      // The capture's loads all started when their import rows were parsed,
+      // before the Flight input froze.
+      await Promise.race([
+        payloadSettled.then(() => Promise.allSettled(clientLoads.loads)),
+        prerenderSettled,
+        deadline.promise,
+      ]);
       // Fixed task hops before the abort: give React's fizz worker turns to flush
       // the now-complete shell and mark the still-pending boundaries as POSTPONED
       // rather than errored. Deterministic (the byte set is already frozen and
@@ -931,6 +1004,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       };
     } finally {
       deadline.cancel();
+      clientLoads.stop();
     }
   };
 }

@@ -4,6 +4,21 @@
 
 ### Fixes
 
+- A PPR shell capture no longer gives up while a client component in the
+  shell is still loading its module. The capture aborted a fixed number of
+  task turns after the page payload arrived, and a client component outside
+  any Suspense boundary could still be loading then, so the attempt stored
+  nothing and retried 400 ms later: about 400 ms more per `Prerender` + `ppr`
+  URL that loaded a client module first (with `DEBUG=rango:prerender`,
+  `vite build` logs `shell capture attempt 1/2 for <url> produced no shell`). On
+  `tests/cloudflare-basic`, `/ppr-shell/prerendered/alpha` went from 495-501 ms
+  to 112-119 ms, `/ppr-shell/passthrough/baked` from 447-452 ms to 38-39 ms, and
+  the shell phase from 1329-1366 ms to 552-584 ms. A runtime capture in a cold
+  isolate had the same race. Once its payload settles, the capture now waits,
+  within `ppr.captureTimeout`, for the client module loads in flight in the
+  isolate, including loads another render requested; live loaders
+  and promises passed down from the server still postpone as holes
+  ([#954](https://github.com/rangojs/rango/pull/954)).
 - A `vite build` that rewrote a router's `named-routes.gen.ts` (the first
   build after adding, renaming or removing a route, or any build that found
   the file out of date) could skip every build-time PPR shell. The build-time
