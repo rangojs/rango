@@ -189,14 +189,15 @@ export interface SsrRootOptions {
   nonce?: string;
   /**
    * Fires once when the Flight payload root settles (resolve OR reject) — the
-   * signal that every client-module load the payload references completed and
-   * fizz can start emitting the tree. The capture pass gates its abort on
-   * this: a fully REPLAYED (prerendered) route's Flight stream goes
-   * byte-quiet in ~1-3ms, but fizz cannot render even <html> until the
-   * module loads finish (real module-runner I/O in dev; 100ms+ on a cold
-   * graph), so an abort gated on Flight quiet alone fires first and freezes
-   * a zero-byte prelude. Masked-loader holes do NOT block this signal —
-   * they postpone below the root.
+   * signal that fizz can start emitting the tree. A client component used as
+   * an element type resolves lazily, so its module load can still be in
+   * flight (captureShellHTML waits for those separately, issue #949). The
+   * capture pass gates its abort on this: a fully REPLAYED (prerendered)
+   * route's Flight stream goes byte-quiet in ~1-3ms, but fizz cannot render
+   * even <html> until the module loads finish (real module-runner I/O in dev;
+   * 100ms+ on a cold graph), so an abort gated on Flight quiet alone fires
+   * first and freezes a zero-byte prelude. Masked-loader holes do NOT block
+   * this signal — they postpone below the root.
    */
   onPayloadSettled?: () => void;
   /**

@@ -759,13 +759,44 @@ Capture semantics:
 - `prerender(<SsrRoot/>, { signal, bootstrapScriptContent })`. No
   `injectRSCPayload` (the hydration payload must be fresh per request). No
   `formState`. No nonce (nonce'd requests never reach capture).
-- Abort ordering: await the caller's `quiesce` (bounded by `maxWaitMs`), then a
-  fixed `POST_QUIESCE_TASK_HOPS` (= 16) macrotask hops, then `controller.abort()`.
-  `prerender`'s promise settles only after the abort when holes are pending —
-  start it first, run the abort logic concurrently. By the time `quiesce`
-  resolves the Flight input is byte-quiet AND frozen (see "Capture quiesce:
-  task-based, not wall-clock" below), so the hops are deterministic and
-  `maxWaitMs` is only a pathological guard that should never fire.
+- Abort ordering: await the caller's `quiesce`, then render-readiness (the
+  payload root settled, then the client-reference module loads the capture
+  started), all bounded by `maxWaitMs`, then a fixed `POST_QUIESCE_TASK_HOPS` (= 16)
+  macrotask hops, then `controller.abort()`. `prerender`'s promise settles only
+  after the abort when holes are pending — start it first, run the abort logic
+  concurrently. By the time `quiesce` resolves the Flight input is byte-quiet
+  AND frozen (see "Capture quiesce: task-based, not wall-clock" below), so the
+  hops are deterministic and `maxWaitMs` is only a pathological guard that
+  should never fire.
+- Why the capture waits for client-reference module loads (issue #949): a
+  client component used as an element type reaches the SSR Flight client as a
+  lazy reference, so the payload settles while its module may still be
+  loading, and a shell that renders it with no Suspense above cannot complete
+  until the load does. The 16 hops only covered that by luck. The first build
+  capture of cloudflare-basic's `/ppr-shell/passthrough/baked` loads
+  `PprShellExecMatrix.tsx` cold (with `src/actions/counter.ts` and plugin-rsc's
+  SSR CSS virtual): payload settled at +873.4 ms, the module at +890.1 ms, the
+  abort at +891.1 ms. Uninstrumented builds lost that race in 4 of 5 runs, and
+  the first capture of a build (`/ppr-shell/prerendered/alpha`) in 5 of 5, each
+  paying the 400 ms retry. `captureShellHTML` now wraps plugin-rsc's SSR loader
+  (`globalThis.__vite_rsc_client_require__`) on its first capture. Every load
+  requested in the isolate while a capture runs, by that capture or by a
+  concurrent render, goes into each running capture's set, and a capture waits
+  for its set once the payload settles (bounded by its deadline; a load that
+  never settles delays each capture running at the time to its deadline, and
+  the capture still stores). It
+  cannot bake a hole the payload carries: a module load is not data the page
+  owns, and the Flight input stays frozen while the capture waits, so a physics
+  promise that settles meanwhile still postpones
+  (`shell-capture-readiness.test.tsx`). Async work a client component starts
+  itself during SSR (a promise it creates and `use()`s under Suspense) was
+  never gated by the Flight freeze; like the payload-settled wait before it,
+  the module wait, including loads other renders requested, gives such work
+  more time before the abort. Holding the Flight gate open
+  for a late segment-root row as well (an async server component the handler
+  renders without awaiting, issue #941) was prototyped and rejected: the gate
+  admits bytes, not rows, so a physics promise that settled during the hold
+  baked into the prelude.
 - Why 16 hops and not 2 (replay-only scar tissue): under replay-only the capture
   Flight render serializes ALREADY-serialized ring-3 segments, so it emits the whole
   payload in the first tick and the gate quiesces almost immediately. On the old
@@ -1014,10 +1045,12 @@ row from any later abort/cancel of the underlying render, can corrupt the frozen
 prelude.
 
 On the fizz side (`captureShellHTML`, `src/ssr/index.tsx`) the wall clock is gone
-too: once `quiesce` resolves the input is frozen, so a fixed `POST_QUIESCE_TASK_HOPS`
-(= 16) macrotask hops — enough turns for React to consume the instant replay payload,
-flush the settled shell, and mark still-pending boundaries as postponed — precede
-`controller.abort()`. No `Promise.race` against a clock except the `maxWaitMs` guard.
+too: once `quiesce` resolves the input is frozen, the capture waits for the payload
+root and the client-reference module loads in flight (see "Abort ordering" above),
+and a fixed `POST_QUIESCE_TASK_HOPS` (= 16) macrotask hops — enough turns for React
+to consume the instant replay payload, flush the settled shell, and mark
+still-pending boundaries as postponed — precede `controller.abort()`. No
+`Promise.race` against a clock except the `maxWaitMs` guard.
 (The count rose from 2 to 16 with replay-only: the replay Flight is emitted in one
 tick, so the fizz needs more post-quiesce turns to render the shell before the abort
 — see "Abort ordering" above.)
