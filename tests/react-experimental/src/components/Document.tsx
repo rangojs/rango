@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, MetaTags, href, Scripts } from "@rangojs/router/client";
+import { Html, Link, href } from "@rangojs/router/client";
 import { GtmPageViews } from "../gtm/GtmPageViews.js";
 import { DEFAULT_GTM_ID, gtmNoScriptSrc } from "../gtm/gtm.js";
 
@@ -9,8 +9,8 @@ export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
         <style
           dangerouslySetInnerHTML={{
             __html: `
@@ -79,7 +79,7 @@ export function Document({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         <noscript>
           <iframe
             src={gtmNoScriptSrc(DEFAULT_GTM_ID)}

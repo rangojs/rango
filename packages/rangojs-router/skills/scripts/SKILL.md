@@ -7,8 +7,8 @@ argument-hint: "[vendor]"
 # Scripts
 
 Push a script config from a **server** route/layout handler (or a loader) with
-`ctx.use(Script)(config)`; the built-in **`<Scripts />`** component renders it.
-It is the `Meta` / `<MetaTags>` pair, but for scripts. The request CSP **nonce
+`ctx.use(Script)(config)`; the built-in **`<Html.Scripts />`** component renders it.
+It is the `Meta` / `<Html.Meta>` pair, but for scripts. The request CSP **nonce
 is applied automatically to document-rendered scripts**; you never read or pass
 it. (The one exception is an async script first encountered on a soft
 navigation; see the nonce caveat under "Execution contract".)
@@ -18,25 +18,26 @@ run only on a hard (document) load, never on a soft navigation.
 
 ## Setup
 
-`<Scripts />` is a client component; place it in your Document (which is
+`<Html.Scripts />` is a client component; place it in your Document (which is
 `"use client"`). The default Document already includes both sites; a custom one
-adds them next to `<MetaTags />`:
+adds them next to `<Html.Meta />`:
 
 ```tsx
 // document.tsx
 "use client";
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
-        <Scripts /> {/* renders position: "head" scripts (the default) */}
+        <Html.Meta />
+        <Html.Scripts /> {/* renders position: "head" scripts (the default) */}
       </head>
       <body>
-        <Scripts position="body" /> {/* renders position: "body" scripts */}
+        <Html.Scripts position="body" />{" "}
+        {/* renders position: "body" scripts */}
         {children}
       </body>
     </html>
@@ -64,7 +65,7 @@ ctx.use(Script)({
   attributes: { "data-domain": "example.com" },
 });
 
-// 3. INLINE — `id` REQUIRED, raw JS body (escaped against </script> by <Scripts>).
+// 3. INLINE — `id` REQUIRED, raw JS body (escaped against </script> by <Html.Scripts>).
 //    For GTM/GA4/Segment let the body self-inject its loader (see below).
 ctx.use(Script)({ id: "gtm", children: gtmBootstrap("GTM-XXXX") });
 ```
@@ -100,7 +101,7 @@ innerHTML, which the HTML spec never executes). So:
 | External ordered (`defer`/plain) | Yes                            | **No** — document-load only                           |
 | External `async`                 | Yes                            | **Yes** — React loads the resource on first encounter |
 
-`<Scripts>` enforces this: after hydration it **freezes** the inline +
+`<Html.Scripts>` enforces this: after hydration it **freezes** the inline +
 ordered set to what was in the initial HTML, so a navigation never inserts an
 inert (silently dead) `<script>`. Async configs stay reactive. Reusing an `id`
 shapes the INITIAL document output (last-push-wins) — it does not re-run a script
@@ -143,7 +144,7 @@ own loader (Google's snippet does exactly this):
 function gtmBootstrap(id: string, initial?: Record<string, string>): string {
   return [
     "window.dataLayer=window.dataLayer||[];",
-    // <Scripts> escapes the body against </script> breakout, so plain
+    // <Html.Scripts> escapes the body against </script> breakout, so plain
     // JSON.stringify is enough here.
     initial ? `window.dataLayer.push(${JSON.stringify(initial)});` : "",
     'window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});',

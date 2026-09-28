@@ -109,7 +109,7 @@ const PlpMetaHandler: Handler = (ctx) => {
 // stale-revalidation uses on a revisit). Content (use(promise)) resolves at 2s;
 // the deferred Meta is a SEPARATE, SLOWER promise (4s) — mirrors the reported case
 // where the SEO meta resolves later than the page data. Without the store
-// resolution, the transition waits for the suspending MetaTags too -> held to 4s.
+// resolution, the transition waits for the suspending Html.Meta too -> held to 4s.
 const PlpMetaTxHandler: Handler = (ctx) => {
   const contentPromise = new Promise<{ title: string }>((resolve) =>
     setTimeout(() => resolve({ title: "TX Content" }), 2000),

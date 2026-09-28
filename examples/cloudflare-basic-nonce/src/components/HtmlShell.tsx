@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Outlet, MetaTags } from "@rangojs/router/client";
+import { Outlet, Html } from "@rangojs/router/client";
 
 /**
  * RSC Root layout that renders the full HTML shell.
@@ -8,12 +8,12 @@ import { Outlet, MetaTags } from "@rangojs/router/client";
  * since this RSC element handles all the HTML structure.
  *
  * Uses <Outlet /> to render child route content.
- * Uses <MetaTags /> to render route-defined meta tags.
+ * Uses <Html.Meta /> to render route-defined meta tags.
  */
 export const HtmlShell = (
   <html lang="en" suppressHydrationWarning>
     <head>
-      <MetaTags />
+      <Html.Meta />
       <style
         dangerouslySetInnerHTML={{
           __html: `

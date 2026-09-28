@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 /**
- * Script handle + <Scripts> renderer.
+ * Script handle + <Html.Scripts> renderer.
  *
  * collectScripts (the handle's collect) and escapeScriptBody are pure and tested
- * directly. <Scripts> is tested via renderRoute for the INLINE path only: an
- * external <script src> would make happy-dom attempt a real network load
- * ("JavaScript file loading is disabled"), so the external/async shapes — and the
- * freeze-after-hydration soft-nav contract — are covered by the dev+prod e2e
+ * directly. <Html.Scripts> is tested via renderRoute for the INLINE path only:
+ * an external <script src> would make happy-dom attempt a real network load
+ * ("JavaScript file loading is disabled"), so the external/async shapes — and
+ * the freeze-after-hydration soft-nav contract — are covered by the dev+prod e2e
  * (real browser) instead.
  *
  * Several cases deliberately cast invalid shapes to ScriptConfig: the
@@ -20,7 +20,7 @@ import { collectHandle } from "../../testing/collect-handle.js";
 import { renderRoute } from "../../testing/render-route.js";
 import { escapeScriptBody } from "../../escape-script.js";
 import { Script, type ScriptConfig } from "../script.js";
-import { Scripts } from "../Scripts.js";
+import * as Html from "../../html.js";
 
 afterEach(cleanup);
 
@@ -171,9 +171,9 @@ describe("escapeScriptBody", () => {
   });
 });
 
-describe("<Scripts /> (renderRoute, inline path)", () => {
+describe("<Html.Scripts /> (renderRoute, inline path)", () => {
   function seed(configs: ScriptConfig[], position?: "head" | "body") {
-    const Probe = () => <Scripts position={position} />;
+    const Probe = () => <Html.Scripts position={position} />;
     return renderRoute([{ path: "/", Component: Probe }], {
       request: "/",
       nonce: "test-nonce",

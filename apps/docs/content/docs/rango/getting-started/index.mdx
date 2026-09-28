@@ -89,24 +89,24 @@ export const router = createRouter({
 });
 ```
 
-The `Document` is the HTML frame around every page and every error state. It must be a client component, and it should render `<MetaTags />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Scripts />`:
+The `Document` is the HTML frame around every page and every error state. It must be a client component, and it should render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Html.Scripts />`:
 
 ```tsx
 // src/document.tsx
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {children}
       </body>
     </html>

@@ -114,8 +114,8 @@ describe("generateGtmInit", () => {
     expect(out).toContain('"content_group":"demo"');
   });
 
-  it("emits raw JS (no manual escaping) — <Scripts/> escapes </script> at render", () => {
-    // generateGtmInit does not escape; the router's <Scripts/> applies
+  it("emits raw JS (no manual escaping) — <Html.Scripts/> escapes </script> at render", () => {
+    // generateGtmInit does not escape; the router's <Html.Scripts/> applies
     // escapeScriptBody when it renders the inline body (covered by the router's
     // handles/__tests__/script.test.tsx). So the builder stays a plain snippet.
     const out = generateGtmInit("GTM-TEST", { content_group: "demo" });

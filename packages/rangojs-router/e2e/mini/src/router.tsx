@@ -31,7 +31,7 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
-import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
+import { Outlet, Link, Html } from "@rangojs/router/client";
 
 import {
   ClockLoader,
@@ -256,7 +256,7 @@ export const router = createRouter({
               <main data-testid="app-main">
                 <Outlet />
               </main>
-              <ScrollRestoration />
+              <Html.ScrollRestoration />
             </div>
           );
         },

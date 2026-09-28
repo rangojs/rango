@@ -383,7 +383,7 @@ function CatalogLayout() {
 
 ### useScrollRestoration(options?)
 
-Turns on saved scroll positions: they are stored in `sessionStorage` per history entry and restored on back/forward navigation. Scrolling to the top on a new navigation and to a hash target work without it. Call it once, typically in the root layout, or render the equivalent `<ScrollRestoration />` component.
+Turns on saved scroll positions: they are stored in `sessionStorage` per history entry and restored on back/forward navigation. Scrolling to the top on a new navigation and to a hash target work without it. Call it once, typically in the root layout, or render the equivalent `<Html.ScrollRestoration />` component.
 
 ```tsx
 "use client";
@@ -395,7 +395,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
 }
 ```
 
-`getKey` changes what a saved position is keyed by. The default is the unique history entry; `(location) => location.pathname` restores by path. Pass a stable function (module-level or memoized), because a new identity re-initializes restoration and discards unsaved positions.
+`getKey` changes what a saved position is keyed by. The default is the unique history entry; `(location) => location.pathname` restores by path. Pass a stable function (module-level or memoized), because a new identity re-initializes restoration and discards unsaved positions. A function can't cross from a server component to a client one, so a server root layout renders `<Html.ScrollRestoration />` without `getKey`; pass `getKey` from a client component.
 
 ### useNonce()
 

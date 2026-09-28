@@ -23,17 +23,17 @@ path(
 );
 ```
 
-The collected tags render wherever you place `<MetaTags />` from `@rangojs/router/client` — normally inside `<head>` in your document:
+The collected tags render wherever you place `<Html.Meta />` from `@rangojs/router/client` — normally inside `<head>` in your document. `Html` is a module namespace whose members are client components, so a server root layout can render `<Html.Meta />` directly too:
 
 ```tsx
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

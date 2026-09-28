@@ -35,6 +35,7 @@ const markdownFiles = [
 
 const canonicalImportPaths: Record<string, string> = {
   CFCacheStore: "@rangojs/router/cache",
+  Html: "@rangojs/router/client",
   MemorySegmentCacheStore: "@rangojs/router/cache",
   Outlet: "@rangojs/router/client",
   ParallelOutlet: "@rangojs/router/client",

@@ -2,17 +2,42 @@
 
 ## Unreleased
 
+### Breaking: the document components move under `Html` ([#937](https://github.com/rangojs/rango/pull/937))
+
+`MetaTags`, `Scripts` and `ScrollRestoration` are replaced by one namespace
+exported from `@rangojs/router/client`: `Html.Meta`, `Html.Scripts` and
+`Html.ScrollRestoration`, with the same props. The old component exports are
+removed, with no aliases.
+
+```tsx
+// before
+import { MetaTags, Scripts, ScrollRestoration } from "@rangojs/router/client";
+<head><MetaTags /><Scripts /></head>
+<body><Scripts position="body" />{children}<ScrollRestoration /></body>
+
+// after
+import { Html } from "@rangojs/router/client";
+<head><Html.Meta /><Html.Scripts /></head>
+<body><Html.Scripts position="body" />{children}<Html.ScrollRestoration /></body>
+```
+
+A server root layout can render `<Html.Meta />` as well as a client document,
+and an app that never renders `<Html.ScrollRestoration />` does not bundle it.
+The script renderer's dev warnings are now prefixed `[Html.Scripts]`.
+`useScrollRestoration`, `ScrollRestorationProps`, the `Meta`, `Script` and
+`Breadcrumbs` handles, and `ThemeScript` are unchanged.
+
 ### Back/forward keeps an entry's location state and scroll position ([#943](https://github.com/rangojs/rango/pull/943))
 
 Going back to an entry the router's history cache no longer holds (it keeps 20
 entries; also after a deploy or a cross-tab cache clear) refetches the page.
 That refetch used to replace the entry's `history.state`, so
 `useLocationState()` returned `undefined` for an entry that had state, and with
-`<ScrollRestoration>` the entry's saved scroll position was lost. It also saved
+`<Html.ScrollRestoration>` the entry's saved scroll position was lost. It also saved
 the page being left under the returning entry's key. The entry's history state
 is now kept as the browser restored it, with any server-set state merged in.
 
-With `<ScrollRestoration>`, back and forward now also save the scroll position
+With `<Html.ScrollRestoration>`, back and forward now also save the scroll position
 of the page being left, so forward to a page you scrolled and then left with
 back returns to where you were instead of the top.
 

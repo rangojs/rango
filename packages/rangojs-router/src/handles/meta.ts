@@ -19,7 +19,7 @@
  *   return (
  *     <html>
  *       <head>
- *         <MetaTags />
+ *         <Html.Meta />
  *       </head>
  *       ...
  *     </html>
@@ -225,7 +225,7 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  * Built-in handle for managing document metadata.
  *
  * Use `ctx.use(Meta)` in route handlers to push meta descriptors.
- * Use `<MetaTags />` component to render them in the document head.
+ * Use the `<Html.Meta />` component to render them in the document head.
  *
  * Deferred (Promise) descriptors are resolved before collectMeta runs
  * (resolve-by-default), so they participate in deduplication and `%s`

@@ -2087,7 +2087,7 @@ export const pageMeta: PageMeta[] = [
     "url": "/docs/rango/guides/react-compiler"
   },
   {
-    "description": "Inject GTM, analytics, and widget scripts via the Script handle and the Scripts component — with the CSP nonce applied automatically.",
+    "description": "Inject GTM, analytics, and widget scripts via the Script handle and the Html.Scripts component — with the CSP nonce applied automatically.",
     "filePath": "/content/docs/rango/guides/scripts.mdx",
     "slug": "rango/guides/scripts",
     "title": "Third-Party Scripts",

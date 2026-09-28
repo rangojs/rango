@@ -1455,7 +1455,7 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
 export const urlpatterns = urls(
   ({ path, layout, transition, loader, loading }) => [
     // Root layout: pushes the GTM bootstrap into the Script handle on EVERY route
-    // (app-wide), rendered by <Scripts/> in the Document <head>. Owning the push
+    // (app-wide), rendered by <Html.Scripts/> in the Document <head>. Owning the push
     // here (rather than per-page) means /about, /counter, etc. also get the
     // bootstrap + first page_view; soft-nav page_views come from <GtmPageViews>.
     layout(

@@ -934,7 +934,7 @@ silent.
 `createRouter({ nonce })` is the canonical path — supply the nonce THERE, not
 via a token write. The provider value is threaded into the router's own SSR
 machinery: `NonceContext`/`useNonce()`, automatic nonce attributes on
-`<Scripts />` and `<MetaTags />` output, and the inlined Flight payload
+`<Html.Scripts />` and `<Html.Meta />` output, and the inlined Flight payload
 scripts. It ALSO sets the `nonce` token, so `ctx.get(nonce)` works in
 middleware and handlers for the CSP response header. A direct
 `ctx.set(nonce, value)` write in middleware is app-managed only: the router

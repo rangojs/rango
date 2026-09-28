@@ -61,7 +61,7 @@ export const urlpatterns = urls(
     // (the createRouter `document`) already wraps every route in <html><body>, so a
     // pass-through layout(<Outlet/>) would only add a redundant segment. These slots
     // sit at the route ROOT, so they apply to EVERY route (including the standalone
-    // /errors/unhandled). @gtm pushes the GTM bootstrap Script, rendered by <Scripts/>
+    // /errors/unhandled). @gtm pushes the GTM bootstrap Script, rendered by <Html.Scripts/>
     // in RootLayout's <head> with the request nonce; a route OVERRIDES it by reusing
     // the "gtm" id (see /gtm). @meta sets the SOLE managed <title>, so document.title
     // is correct at parse time when the bootstrap reads page_title. A child route's

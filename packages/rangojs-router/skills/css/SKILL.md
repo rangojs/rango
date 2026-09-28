@@ -19,7 +19,7 @@ behaves across host-router apps. `/tailwind` is the concrete Tailwind setup,
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 import styles from "./index.css?url";
 
 export function Document({ children }: { children: ReactNode }) {
@@ -28,7 +28,7 @@ export function Document({ children }: { children: ReactNode }) {
       <head>
         <link rel="preload" href={styles} as="style" precedence="default" />
         <link rel="stylesheet" href={styles} precedence="default" />
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

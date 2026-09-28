@@ -38,7 +38,7 @@ function expectSsrCompleteDocument(body: string) {
   expect(body).toContain("Wireless Headphones — $99.99");
   expect(body).not.toContain("client-shop-ssr-awaited-skeleton");
   // The awaited push reaches the SSR'd <head> <title> itself (router Meta →
-  // MetaTags; collectMeta title dedup replaces the root default) — the tab
+  // Html.Meta; collectMeta title dedup replaces the root default) — the tab
   // title is correct with no JS, not just after TitleUpdater's effect.
   expect(body).toMatch(
     /<title[^>]*>Wireless Headphones — SSR complete<\/title>/,

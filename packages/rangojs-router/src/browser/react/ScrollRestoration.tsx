@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { initScrollRestoration } from "../scroll-restoration.js";
 
 /**
- * Props for ScrollRestoration component
+ * Props for `<Html.ScrollRestoration />`.
  */
 export interface ScrollRestorationProps {
   /**
@@ -25,10 +25,10 @@ export interface ScrollRestorationProps {
    * const byPathname = (location) => location.pathname;
    *
    * // Restore based on pathname (same URL = same scroll)
-   * <ScrollRestoration getKey={byPathname} />
+   * <Html.ScrollRestoration getKey={byPathname} />
    *
    * // Restore based on unique history entry (default)
-   * // <ScrollRestoration /> — omit getKey to use location.key
+   * // <Html.ScrollRestoration /> — omit getKey to use location.key
    * ```
    */
   getKey?: (location: {
@@ -40,7 +40,7 @@ export interface ScrollRestorationProps {
 }
 
 /**
- * ScrollRestoration component
+ * Public as `Html.ScrollRestoration` (`@rangojs/router/client`).
  *
  * Enables scroll position restoration across navigations:
  * - Saves scroll positions to sessionStorage
@@ -57,7 +57,7 @@ export interface ScrollRestorationProps {
  *   return (
  *     <html>
  *       <body>
- *         <ScrollRestoration />
+ *         <Html.ScrollRestoration />
  *         {children}
  *       </body>
  *     </html>
@@ -78,7 +78,7 @@ export function ScrollRestoration({ getKey }: ScrollRestorationProps) {
 /**
  * Hook to initialize scroll restoration
  *
- * Alternative to the ScrollRestoration component for more control.
+ * Alternative to `<Html.ScrollRestoration />` for more control.
  *
  * @example
  * ```tsx

@@ -183,17 +183,17 @@ Outside all layouts is the document, the HTML shell passed to
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {children}
       </body>
     </html>
@@ -563,7 +563,7 @@ mental model that ties it together.
 | Export                         | Description                                                                                                                    |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | `@rangojs/router`              | Server/RSC core and shared types: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta`                       |
-| `@rangojs/router/client`       | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`                                                     |
+| `@rangojs/router/client`       | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `Html`                                                         |
 | `@rangojs/router/cache`        | Cache: `CFCacheStore`, `VercelCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                          |
 | `@rangojs/router/theme`        | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                                                              |
 | `@rangojs/router/host`         | Host routing: `createHostRouter`, `defineHosts`, `isNoRouteMatchError`                                                         |
@@ -581,7 +581,7 @@ Use only subpaths that are explicitly exported; avoid deep imports.
 The root entry is conditionally resolved: server-only APIs (`createRouter`,
 `urls`, `redirect`, `Prerender`, `cookies`) run under the `react-server`
 condition and throw guidance errors elsewhere. If you hit a root-entrypoint
-stub error: hooks and components (`Link`, `Outlet`, `useLoader`, `MetaTags`)
+stub error: hooks and components (`Link`, `Outlet`, `useLoader`, `Html`)
 live in `@rangojs/router/client`; cache APIs in `@rangojs/router/cache`;
 host APIs in `@rangojs/router/host`.
 

@@ -5,7 +5,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
 /**
  * JSON-LD <script> breakout-escaping tests.
  *
- * MetaTags renders script:ld+json descriptors via dangerouslySetInnerHTML.
+ * Html.Meta renders script:ld+json descriptors via dangerouslySetInnerHTML.
  * Without escaping, a string field containing "</script>" closes the tag early
  * and the remainder leaks as raw HTML (and any injected <script> executes).
  * The fix escapes "<"/">"/"&" before injection, so the payload stays inside the
@@ -26,7 +26,7 @@ const ESCAPED_LT = "\\u003c";
 
 function defineSpec(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : "dev";
-  test.describe(`MetaTags JSON-LD escaping (${label})`, () => {
+  test.describe(`Html.Meta JSON-LD escaping (${label})`, () => {
     const f = useFixture({
       root: "./e2e/test-app",
       mode,

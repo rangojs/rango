@@ -339,7 +339,7 @@ export interface RangoInternal<
 
   /**
    * Resolved theme configuration (null if theme not enabled)
-   * Used by NavigationProvider to include ThemeProvider and by MetaTags to render theme script
+   * Used by NavigationProvider to include ThemeProvider and by `Html.Meta` to render theme script
    */
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 

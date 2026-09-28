@@ -7,8 +7,9 @@ import { Scripts } from "../handles/Scripts.js";
 /**
  * Default document component that provides a basic HTML structure.
  * Used when no custom document is provided to createRouter.
- * Includes MetaTags for automatic charset, viewport, and route meta support,
- * and Scripts (head + body sites) so the Script handle works out of the box.
+ * Includes the Html.Meta and Html.Scripts renderers (imported directly, not
+ * via html.ts, so this chunk does not pull in Html.ScrollRestoration): charset, viewport,
+ * and route meta, plus head + body script sites for the Script handle.
  *
  * Uses suppressHydrationWarning on <html> because the theme script
  * may modify class/style attributes before React hydrates.

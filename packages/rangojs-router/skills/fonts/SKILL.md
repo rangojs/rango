@@ -18,7 +18,7 @@ stylesheet, which follows the `?url` + `precedence` pattern from `/css`.
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 import styles from "./index.css?url";
 
 export function Document({ children }: { children: ReactNode }) {
@@ -43,7 +43,7 @@ export function Document({ children }: { children: ReactNode }) {
         {/* App styles */}
         <link rel="preload" href={styles} as="style" />
         <link rel="stylesheet" href={styles} precedence="default" />
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -116,7 +116,7 @@ export function Document({ children }: { children: ReactNode }) {
         />
         <link rel="preload" href={styles} as="style" />
         <link rel="stylesheet" href={styles} precedence="default" />
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

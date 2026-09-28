@@ -290,12 +290,12 @@ function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
 // document.tsx — passed to createRouter({ document: Document, ... })
 "use client";
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head><MetaTags /></head>
+      <head><Html.Meta /></head>
       <body>{children}</body>
     </html>
   );

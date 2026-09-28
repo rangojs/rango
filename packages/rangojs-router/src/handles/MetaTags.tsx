@@ -2,17 +2,18 @@
 
 /**
  * Component to render collected meta descriptors in the document head.
+ * Public as `Html.Meta` (`@rangojs/router/client`).
  *
- * Deferred (Promise) meta descriptors are resolved before MetaTags renders
+ * Deferred (Promise) meta descriptors are resolved before `<Html.Meta />` renders
  * (server-side on the full render, client-side before apply on navigation), so
  * it only ever receives resolved descriptors and never suspends.
  *
- * When theme is enabled in the router config, MetaTags also renders
+ * When theme is enabled in the router config, `<Html.Meta />` also renders
  * the theme initialization script to prevent FOUC (flash of unstyled content).
- * This makes MetaTags the sole FOUC-script injector for apps that render it;
- * the standalone `<ThemeScript />` is only needed when MetaTags is not used.
- * Rendering both is safe (the inline script guards listener registration) but
- * redundant.
+ * This makes `<Html.Meta />` the sole FOUC-script injector for apps that render
+ * it; the standalone `<ThemeScript />` is only needed when `<Html.Meta />` is not
+ * used. Rendering both is safe (the inline script guards listener registration)
+ * but redundant.
  *
  * @example
  * ```tsx
@@ -20,7 +21,7 @@
  *   return (
  *     <html lang="en" suppressHydrationWarning>
  *       <head>
- *         <MetaTags />
+ *         <Html.Meta />
  *       </head>
  *       <body>...</body>
  *     </html>
@@ -179,17 +180,18 @@ export function renderMetaDescriptor(
 }
 
 /**
- * Renders all collected meta descriptors from route handlers.
+ * Renders all collected meta descriptors from route handlers. Public as
+ * `Html.Meta` (`@rangojs/router/client`).
  *
- * Place this component inside the `<head>` element of your document.
+ * Place `<Html.Meta />` inside the `<head>` element of your document.
  * It will automatically update when meta descriptors change during navigation.
  *
  * When theme is enabled in router config, also renders the theme initialization
  * script to prevent FOUC (flash of unstyled content).
  *
- * Deferred (Promise) meta descriptors are resolved BEFORE MetaTags renders —
+ * Deferred (Promise) meta descriptors are resolved BEFORE this renders —
  * server-side on the full/SSR render, client-side before apply on navigation
- * (resolve-by-default) — so MetaTags only ever receives resolved descriptors and
+ * (resolve-by-default) — so it only ever receives resolved descriptors and
  * never suspends.
  */
 export function MetaTags(): React.ReactNode {

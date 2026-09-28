@@ -116,7 +116,15 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Components
 
-`Outlet`, `ParallelOutlet`, `Link`, `ScrollRestoration`, `Meta`, `MetaTags`, `Script`, `Scripts`, `Breadcrumbs`
+`Outlet`, `ParallelOutlet`, `Link`, `Meta`, `Script`, `Breadcrumbs`, and the `Html` namespace (`html.ts`) grouping the document-level components:
+
+| Member                   | Renders                                                                                | Source                                                      |
+| ------------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `Html.Meta`              | Collected `Meta` descriptors + the theme FOUC script, in `<head>`                      | `handles/MetaTags.tsx` (`MetaTags`)                         |
+| `Html.Scripts`           | Collected `Script` handle entries for one site (`position`: `"head"` default/`"body"`) | `handles/Scripts.tsx` (`Scripts`)                           |
+| `Html.ScrollRestoration` | Scroll restoration across navigations (`getKey`; props type `ScrollRestorationProps`)  | `browser/react/ScrollRestoration.tsx` (`ScrollRestoration`) |
+
+`Html` is `html.ts` imported as a module namespace (`import * as Html`), not an object literal: bundlers drop the members an app never dots into, so opt-in `Html.ScrollRestoration` ships nothing unless rendered (an object literal kept it, tripping the cloudflare-basic router-chunk ratchet). `html.ts` has no `"use client"` directive, so each member stays the per-export client reference of its own `"use client"` module and a server root layout can dot into `Html` (`<Html.Meta />`). `client.rsc.tsx` imports `html.ts` directly, never via `./client.js`, whose exports are all opaque references in the RSC graph. Pinned by `testing/__tests__/html-namespace.rsc-test.tsx`. The pre-namespace component exports `MetaTags`, `Scripts`, `ScrollRestoration` were removed (no aliases); `ScrollRestorationProps` keeps its name.
 
 ### Hooks
 
@@ -475,7 +483,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Handle Data
 
-`createHandle`, `useHandle`, handle propagation from route handlers into client components, segment ordering and reconciler. Built-in: `Meta` handle for head tags, `Script` handle (+ `<Scripts>` renderer) for injecting nonced scripts into head/body, `Breadcrumbs` handle for breadcrumb navigation.
+`createHandle`, `useHandle`, handle propagation from route handlers into client components, segment ordering and reconciler. Built-in: `Meta` handle for head tags (rendered by `<Html.Meta>`), `Script` handle (+ `<Html.Scripts>` renderer) for injecting nonced scripts into head/body, `Breadcrumbs` handle for breadcrumb navigation.
 
 - **Loader handle writes**: `ctx.use(SomeHandle)({...})` in a LOADER body is
   the push (handler parity); the rendered()-gated READ moved to

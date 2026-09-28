@@ -847,7 +847,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 ```
 
 Delivery is async **by the race model**: pushes that settle before the handler
-barrier ride the SSR handle snapshot (in the SSR'd document — `<MetaTags />`,
+barrier ride the SSR handle snapshot (in the SSR'd document — `<Html.Meta />`,
 `useHandle` reads); later pushes stream to the client and apply post-hydration
 on document loads (`metadata.handlesLate`) or progressively on navigations.
 A push before your slow fetch usually beats the barrier; a push derived from

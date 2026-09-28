@@ -760,13 +760,13 @@ Next.js's `revalidateTag()` maps directly: tag entries via `cache({ tags })` / `
 
 ## 8. Metadata / Head
 
-Rango uses the `Meta` handle + `<MetaTags />` client component:
+Rango uses the `Meta` handle + `<Html.Meta />` client component:
 
 ```typescript
 // Next.js: export const metadata = { title: "Home" }
 // Next.js: export function generateMetadata({ params }) { ... }
 
-// Rango: Meta handle in handlers (server), MetaTags in document <head> (client)
+// Rango: Meta handle in handlers (server), Html.Meta in document <head> (client)
 import { Meta, type Handler } from "@rangojs/router";
 
 const HomePage: Handler<"home"> = (ctx) => {
@@ -804,16 +804,16 @@ Without the flag the push still applies, but a slow loader's title lands
 post-hydration instead of in the document — see `/loader` → "Writing Handles
 from Loaders" for the delivery race.
 
-Add `<MetaTags />` in the Document component's `<head>`:
+Add `<Html.Meta />` in the Document component's `<head>`:
 
 ```typescript
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 function Document({ children }: { children: ReactNode }) {
   return (
     <html>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -896,7 +896,7 @@ See `/theme` for full API including system detection and cookie persistence.
        "instant navigations" via `prefetch="viewport"`/`defaultPrefetch` (§6)
 10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 11. [ ] Migrate API routes to `path.json()` / `path.text()`
-12. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
+12. [ ] Update metadata to use `Meta` handle + `<Html.Meta />` in document head
         (`generateMetadata` → loader push + `{ ssr: false }`)
 13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
 14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,

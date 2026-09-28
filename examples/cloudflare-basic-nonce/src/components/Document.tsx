@@ -1,13 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, MetaTags, href } from "@rangojs/router/client";
+import { Html, Link, href } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
+        <Html.Meta />
         <style
           dangerouslySetInnerHTML={{
             __html: `

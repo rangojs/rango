@@ -536,7 +536,7 @@ See [Not-found handling](/docs/rango/features/routing#not-found-handling).
 
 ## Step 7: Metadata, API routes, theme
 
-The `meta` export becomes the `Meta` handle in server handlers, rendered by `<MetaTags />` (from `@rangojs/router/client`) in the Document's `<head>`:
+The `meta` export becomes the `Meta` handle in server handlers, rendered by `<Html.Meta />` (from `@rangojs/router/client`) in the Document's `<head>`:
 
 ```tsx
 import { Meta } from "@rangojs/router";
@@ -621,7 +621,7 @@ See [Setup](/docs/rango/getting-started) for the Worker entry itself.
 ## Migration checklist
 
 1. Set up the Vite config with the `rango()` plugin (Node 24+, React 19.2.8+, Vite 8)
-2. Create the Document component with `<MetaTags />` in head
+2. Create the Document component with `<Html.Meta />` in head
 3. Create `router.tsx` with `createRouter()` and export it as `router`
 4. Convert route config / file routes to the `urls()` DSL
 5. Migrate layouts — keep `<Outlet />` (import from `@rangojs/router/client`)
@@ -630,7 +630,7 @@ See [Setup](/docs/rango/getting-started) for the Worker entry itself.
 8. Migrate auth guards from loaders to `router.use()`, and authorize sensitive actions in the action body
 9. Replace `react-router-dom` Link/navigation with `@rangojs/router/client`
 10. Convert error boundaries to the `errorBoundary()` DSL
-11. Update metadata to the `Meta` handle + `<MetaTags />`
+11. Update metadata to the `Meta` handle + `<Html.Meta />`
 12. Replace a custom theme provider with `theme: true` in `createRouter`
 13. Run `npx rango generate src/` to generate route types (see [CLI](/docs/rango/reference/cli))
 14. Verify no shims: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/` returns nothing, no mock modules or aliases exist, and the packages are out of `package.json`

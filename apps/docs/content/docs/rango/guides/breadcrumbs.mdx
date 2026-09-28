@@ -76,7 +76,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 Navigating to `/shop/widget` produces: `Home / Shop / widget`.
 
-The `<html>`, `<head>`, and `<body>` elements, and `<MetaTags />` for the `Meta` pushes, belong in the router's `document` component, not in a layout. See [createRouter](/docs/rango/reference/create-router).
+The `<html>`, `<head>`, and `<body>` elements, and `<Html.Meta />` for the `Meta` pushes, belong in the router's `document` component, not in a layout. See [createRouter](/docs/rango/reference/create-router).
 
 The push function also accepts a `Promise` of an item, or an async function (called immediately) that returns one:
 

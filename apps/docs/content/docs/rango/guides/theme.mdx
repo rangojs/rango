@@ -6,7 +6,7 @@ type: guide
 
 You need a light/dark toggle that remembers the user's choice and never flashes the wrong theme on first paint. Rango ships an opt-in theme system that covers the whole loop:
 
-- an inline script (rendered by `<MetaTags />`) that applies the stored theme to `<html>` before first paint;
+- an inline script (rendered by `<Html.Meta />`) that applies the stored theme to `<html>` before first paint;
 - `ctx.theme` / `ctx.setTheme()` in handlers and middleware;
 - the `useTheme()` hook in client components (the provider is added for you).
 
@@ -60,20 +60,20 @@ With `attribute: "class"` the resolved theme is added as a class on `<html>` (`<
 
 Two things your document component must do:
 
-1. Render `<MetaTags />` in the head. It emits the FOUC-prevention script first, before the meta tags — skipping it brings the flash back. See [Metadata & Handles](/docs/rango/features/metadata) for `<MetaTags />` itself. The default Document already does this.
+1. Render `<Html.Meta />` in the head. It emits the FOUC-prevention script first, before the meta tags — skipping it brings the flash back. See [Metadata & Handles](/docs/rango/features/metadata) for `<Html.Meta />` itself. The default Document already does this.
 2. Add `suppressHydrationWarning` to `<html>`, since the inline script changes its `class`/`style` before React hydrates.
 
 ```tsx
 // document.tsx
 "use client";
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -81,7 +81,7 @@ export function Document({ children }: { children: ReactNode }) {
 }
 ```
 
-A Document that does not render `<MetaTags />` can place `<ThemeScript />` from `@rangojs/router/theme` in `<head>` instead. It takes the resolved config (`config: ResolvedThemeConfig`) and an optional `nonce`.
+A Document that does not render `<Html.Meta />` can place `<ThemeScript />` from `@rangojs/router/theme` in `<head>` instead. It takes the resolved config (`config: ResolvedThemeConfig`) and an optional `nonce`.
 
 ## Toggle it on the client
 
@@ -159,7 +159,7 @@ export const ThemedLoader = createLoader(async () => {
 
 | Symptom                                         | Fix                                                                                                                 |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Page flashes the wrong theme on load            | Render `<MetaTags />` (or `<ThemeScript />`) in the document head — it carries the FOUC-prevention script           |
+| Page flashes the wrong theme on load            | Render `<Html.Meta />` (or `<ThemeScript />`) in the document head — it carries the FOUC-prevention script          |
 | React hydration warning on the `<html>` element | Add `suppressHydrationWarning` to `<html>`                                                                          |
 | No `ctx.theme` in a loader                      | Loaders don't get it; read the cookie with `cookies().get(storageKey)`                                              |
 | Tailwind `dark:` follows the OS, not the toggle | Add `@custom-variant dark` to your CSS so the variant reads the class (see [Tailwind](/docs/rango/guides/tailwind)) |

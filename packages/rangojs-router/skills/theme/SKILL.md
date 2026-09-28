@@ -8,7 +8,7 @@ argument-hint: [setup]
 
 Opt-in theme system. Enabling it gives you:
 
-- an inline script (rendered by `<MetaTags />`) that applies the stored theme
+- an inline script (rendered by `<Html.Meta />`) that applies the stored theme
   to `<html>` before first paint, so there is no flash of the wrong theme;
 - `ctx.theme` / `ctx.setTheme()` in handlers and middleware;
 - the `useTheme()` hook in client components (the provider is added for you).
@@ -53,7 +53,7 @@ first entry in `themes`.
 
 ## Document requirements
 
-- Render `<MetaTags />` in `<head>`: it emits the FOUC-prevention script
+- Render `<Html.Meta />` in `<head>`: it emits the FOUC-prevention script
   first, before the meta tags. The default Document already does this.
 - Add `suppressHydrationWarning` to `<html>`: the script changes its
   `class`/`style` before React hydrates.
@@ -61,13 +61,13 @@ first entry in `themes`.
 ```tsx
 "use client";
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -75,7 +75,7 @@ export function Document({ children }: { children: ReactNode }) {
 }
 ```
 
-A Document that does not render `<MetaTags />` can place `<ThemeScript />`
+A Document that does not render `<Html.Meta />` can place `<ThemeScript />`
 from `@rangojs/router/theme` in `<head>` instead. It takes the resolved config
 (`config: ResolvedThemeConfig`) and an optional `nonce`.
 

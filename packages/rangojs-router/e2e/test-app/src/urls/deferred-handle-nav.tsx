@@ -70,7 +70,7 @@ const DhNavDeferredHandler: Handler = (ctx) => {
   ctx.use(Breadcrumbs)({ label: "DH Sync Crumb", href: "/dh-nav/deferred" });
 
   // 2. DEFERRED Meta title — resolves late. The store resolves Meta before apply
-  //    (it would otherwise suspend MetaTags in <head>); meanwhile the PREVIOUS
+  //    (it would otherwise suspend Html.Meta in <head>); meanwhile the PREVIOUS
   //    title is kept (SWR), never blanked.
   const titleP = new Promise<string>((resolve) =>
     setTimeout(() => resolve("DH Deferred Title"), DEFER_DELAY),
