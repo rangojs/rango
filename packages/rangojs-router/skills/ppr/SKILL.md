@@ -178,10 +178,13 @@ On a document GET to a ppr route the router runs:
    read running alongside; the capture snapshot is read off the commit path.
    `CFCacheStore` and `VercelCacheStore` keep the last fresh read of each shell
    in a memo for `memo.shellMs` (default 2 s): a warm isolate's next HITs skip
-   the store read, but never the tag-marker check, so `updateTag()` /
-   `revalidateTag()` still reject the shell on the next request (with KV, in
-   every isolate; KV-less purge mode and another Vercel region see it once
-   the window passes — see the caching skill);
+   the store read, but never the tag-marker check, which reads its markers
+   through a per-isolate stale-while-revalidate memo (`memo.markerFreshMs`,
+   `memo.markerMaxStaleMs`). The user whose request ran `updateTag()` /
+   `revalidateTag()` gets a fresh-reads cookie that skips both memos; other
+   users see the invalidation once the marker memo refreshes (KV-less purge
+   mode and another Vercel region: once the shell window passes; see the
+   caching skill);
 4. **HIT** — the composed response is committed immediately: the stored prelude
    bytes flush first (in 32 KB chunks), while segment resolution, the fresh
    Flight render (the full hydration payload — there is no Flight-side resume),

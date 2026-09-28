@@ -17,6 +17,7 @@ import type { CookieOptions } from "../router/middleware.js";
 import {
   KEEP_CACHE_HEADER,
   getRawCookieValue,
+  freshReadsCookieName,
   mintStateValue,
   serializeStateCookie,
 } from "../browser/cookie-name.js";
@@ -165,6 +166,24 @@ export interface RequestContext<
   _rotateStateCookie(): void;
   /** @internal Set the keepClientCache() directive header on the response. */
   _setKeepCacheDirective(): void;
+  /**
+   * @internal This request carries the fresh-reads cookie: it follows an
+   * updateTag()/revalidateTag() by the same user, so the stores read tag
+   * markers and shells from the store, not from an isolate memo.
+   */
+  _freshReads?: boolean;
+  /**
+   * @internal Set the fresh-reads cookie on this response for `maxAgeMs`
+   * (rounded up to whole seconds; the longest stays). Called by
+   * updateTag()/revalidateTag().
+   */
+  _setFreshReadsCookie(maxAgeMs: number): void;
+  /**
+   * @internal The handler has handed the response to the host (rsc/handler.ts
+   * `rango.response`): header and cookie writes after this are lost, as from
+   * a streaming loader or render.
+   */
+  _responseSent?: boolean;
 
   /**
    * Access loader data or push handle data.
@@ -805,6 +824,9 @@ export type PublicRequestContext<
   | "_setStatus"
   | "_rotateStateCookie"
   | "_setKeepCacheDirective"
+  | "_freshReads"
+  | "_setFreshReadsCookie"
+  | "_responseSent"
   | "_variables"
   | "_classifiedRoute"
   | "_requestMode"
@@ -1001,6 +1023,10 @@ export function createRequestContext<TEnv>(
   } = options;
   const cookieHeader = request.headers.get("Cookie");
   let rangoStateRotated = false;
+  const freshCookie = stateCookieName
+    ? freshReadsCookieName(stateCookieName)
+    : undefined;
+  let freshCookieMaxAge = 0;
   let parsedCookies: Record<string, string> | null = null;
 
   let stubResponse = initialResponse
@@ -1264,6 +1290,48 @@ export function createRequestContext<TEnv>(
       rawStubHeaders.set(KEEP_CACHE_HEADER, "1");
     },
 
+    // The fresh-reads cookie (browser/cookie-name.ts): one Set-Cookie per
+    // response, the longest Max-Age any invalidation asked for. HttpOnly (the
+    // client never reads it), SameSite=Lax, Path=/. rawStubHeaders: an
+    // internal writer, allowed wherever updateTag()/revalidateTag() are. A
+    // shared cache never stores it (Set-Cookie is a per-client signal).
+    _setFreshReadsCookie(maxAgeMs: number): void {
+      if (!freshCookie) return;
+      const maxAge = Math.ceil(maxAgeMs / 1000);
+      // Already set for at least this long (an earlier invalidation in this
+      // request): nothing to add, sent or not.
+      if (maxAge <= freshCookieMaxAge) return;
+      if (ctx._responseSent) {
+        // A streaming loader or render: the headers already left. The
+        // invalidation itself still ran; only the mutating user's bypass of
+        // the stores' isolate memos is lost.
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            `[rango] updateTag()/revalidateTag() ran after the response ` +
+              `headers were sent (from a streaming loader or render), so the ` +
+              `${freshCookie} cookie was not set: this user's next requests ` +
+              `can be served from a store's isolate memo for a few seconds. ` +
+              `Invalidate in a server action, a route handler, or middleware.`,
+          );
+        }
+        return;
+      }
+      const serialized = (age: number) =>
+        `${freshCookie}=1; Max-Age=${age}; Path=/; HttpOnly; SameSite=Lax` +
+        (url.protocol === "https:" ? "; Secure" : "");
+      if (freshCookieMaxAge > 0) {
+        const prior = serialized(freshCookieMaxAge);
+        const kept = rawStubHeaders
+          .getSetCookie()
+          .filter((cookie) => cookie !== prior);
+        rawStubHeaders.delete("Set-Cookie");
+        for (const cookie of kept) rawStubHeaders.append("Set-Cookie", cookie);
+      }
+      freshCookieMaxAge = maxAge;
+      rawStubHeaders.append("Set-Cookie", serialized(maxAge));
+      invalidateResponseCookieCache();
+    },
+
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
       assertResponseWriteAllowed("setStatus");
@@ -1285,6 +1353,9 @@ export function createRequestContext<TEnv>(
     _explicitTaggedStores: explicitTaggedStores,
     _requestTags: new Set<string>(),
     _cacheProfiles: cacheProfiles,
+    _freshReads:
+      freshCookie !== undefined &&
+      getRawCookieValue(cookieHeader, freshCookie) !== null,
 
     waitUntil(fn: () => Promise<void>): void {
       if (ctx.build) return;

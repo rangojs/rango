@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STATE_COOKIE_PREFIX,
+  freshReadsCookieName,
   decodeStateValue,
   encodeStateValue,
   serializeStateCookie,
@@ -10,6 +11,17 @@ import {
 describe("cookie-name", () => {
   it("uses rango-state as the default prefix", () => {
     expect(DEFAULT_STATE_COOKIE_PREFIX).toBe("rango-state");
+  });
+
+  // One fresh-reads cookie per state-cookie prefix, shared by every router on
+  // the host that uses the prefix (the prefix never contains `_`).
+  it("names the fresh-reads cookie after the state cookie's prefix", () => {
+    expect(freshReadsCookieName("rango-state_router_0")).toBe(
+      "rango-state-fresh",
+    );
+    expect(freshReadsCookieName("rango-state_admin")).toBe("rango-state-fresh");
+    expect(freshReadsCookieName("shop_router_1")).toBe("shop-fresh");
+    expect(freshReadsCookieName("rango-state")).toBe("rango-state-fresh");
   });
 
   describe("encodeStateValue", () => {

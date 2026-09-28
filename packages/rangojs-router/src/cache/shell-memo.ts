@@ -41,14 +41,17 @@ export interface StoreMemoOptions {
    * What ANOTHER isolate can serve for up to one window:
    * - a newer capture of the same key;
    * - `CFCacheStore` without KV, in purge mode: a purged shell. The purge
-   *   removes the stored entry, not other isolates' memos, and this includes
-   *   the mutating user's next request when it lands on another isolate; set
-   *   `{ shellMs: 0 }` where that request must read its own write;
+   *   removes the stored entry, not other isolates' memos;
    * - `VercelCacheStore`: an invalidation from another region (the tag
    *   markers are a regional `cache.set`; only `expireTag` is global), and a
    *   platform `expireTag` issued outside rango.
    *
-   * Default 2000.
+   * The mutating user is not served these: the response of a request that
+   * ran `updateTag()` / `revalidateTag()` sets the fresh-reads cookie, and
+   * requests carrying it skip the memos. Set `{ shellMs: 0, markerFreshMs: 0 }`
+   * where every user's next request must see an invalidation (with KV,
+   * `CFCacheStore`'s marker memo alone can serve an invalidated shell for up
+   * to `markerMaxStaleMs`). Default 2000.
    */
   shellMs?: number;
   /**
@@ -57,6 +60,23 @@ export interface StoreMemoOptions {
    * budget is not kept. Default 16 MiB. 0 turns the memo off.
    */
   shellMaxBytes?: number;
+  /**
+   * Tag-marker memo for PPR shell reads: a tag's invalidation marker read
+   * within this many ms is used without a store read. Default 1000 on
+   * `CFCacheStore` (with KV; without KV there are no markers), 300 on
+   * `VercelCacheStore`. 0 turns the marker memo off. Cached data families
+   * (`cache()`, `"use cache"`, responses) keep reading their markers.
+   */
+  markerFreshMs?: number;
+  /**
+   * The oldest memoized marker a shell read still uses while a background
+   * read refreshes it; an older one blocks on the store read. Default 10000
+   * on `CFCacheStore`, 2000 on `VercelCacheStore`. The isolate that runs
+   * `updateTag()` / `revalidateTag()` writes the new marker into its memo,
+   * and the response sets the fresh-reads cookie, so the same user's next
+   * requests skip both memos on any isolate.
+   */
+  markerMaxStaleMs?: number;
 }
 
 /** Default memo window (ms). */
@@ -69,23 +89,58 @@ export const DEFAULT_SHELL_MEMO_MAX_BYTES: number = 16 * 1024 * 1024;
 export interface ResolvedShellMemoOptions {
   shellMs: number;
   shellMaxBytes: number;
+  markerFreshMs: number;
+  markerMaxStaleMs: number;
 }
 
 /**
- * Validate a store's `memo` option. A non-finite value (`NaN` from
- * `Number(env.UNSET)`, `Infinity`, null) falls back to the default, like the
- * CFCacheStore read budgets; a finite 0 or negative passes through and turns
- * the memo off.
+ * Validate a store's `memo` option; the marker memo's defaults are per store
+ * (isolate-tag-memo.ts). A non-finite value (`NaN` from `Number(env.UNSET)`,
+ * `Infinity`, null) falls back to the default, like the CFCacheStore read
+ * budgets; a finite 0 or negative passes through and turns that memo off.
  */
 export function resolveShellMemoOptions(
   memo: StoreMemoOptions | undefined,
+  markerDefaults: { markerFreshMs: number; markerMaxStaleMs: number },
 ): ResolvedShellMemoOptions {
   const finite = (value: number | undefined, fallback: number): number =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return {
     shellMs: finite(memo?.shellMs, DEFAULT_SHELL_MEMO_MS),
     shellMaxBytes: finite(memo?.shellMaxBytes, DEFAULT_SHELL_MEMO_MAX_BYTES),
+    markerFreshMs: finite(memo?.markerFreshMs, markerDefaults.markerFreshMs),
+    markerMaxStaleMs: finite(
+      memo?.markerMaxStaleMs,
+      markerDefaults.markerMaxStaleMs,
+    ),
   };
+}
+
+/**
+ * Headroom on the fresh-reads cookie's lifetime: revalidateTag() writes its
+ * markers in the background, so they can land after the response that sets
+ * the cookie, and the memos' windows count from then.
+ */
+export const FRESH_READS_MARGIN_MS = 1000;
+
+/**
+ * How long the fresh-reads cookie keeps a mutating user off a store's memos:
+ * the longest either memo can still hold a value from before the mutation
+ * (the shell window; the marker memo's max-stale cap when the store reads
+ * markers through it, counted from the start of the read that filled it),
+ * plus FRESH_READS_MARGIN_MS. 0 when both memos are off: no cookie.
+ */
+export function freshReadsWindowMs(
+  memo: ResolvedShellMemoOptions,
+  markerMemo: boolean,
+): number {
+  const window = Math.max(
+    memo.shellMs > 0 && memo.shellMaxBytes > 0 ? memo.shellMs : 0,
+    markerMemo && memo.markerFreshMs > 0
+      ? Math.max(memo.markerFreshMs, memo.markerMaxStaleMs)
+      : 0,
+  );
+  return window > 0 ? window + FRESH_READS_MARGIN_MS : 0;
 }
 
 /**

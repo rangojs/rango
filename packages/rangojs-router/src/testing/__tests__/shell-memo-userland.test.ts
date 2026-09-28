@@ -15,12 +15,15 @@ import {
   VercelCacheStore,
   type VercelRuntimeCache,
 } from "../../cache/index.js";
-import { shellCacheKey } from "../index.js";
+import { runInRequestContext, shellCacheKey } from "../index.js";
+// The function `@rangojs/router` exports under the react-server condition.
+import { updateTag } from "../../cache/tag-invalidation.js";
 
 /** A counting in-memory stand-in for `getCache()` (one per process). */
-function countingCache(): { cache: VercelRuntimeCache; reads: () => number } {
-  const values = new Map<string, unknown>();
-  const tags = new Map<string, string[]>();
+function countingCache(
+  values: Map<string, unknown> = new Map(),
+  tags: Map<string, string[]> = new Map(),
+): { cache: VercelRuntimeCache; reads: () => number } {
   let reads = 0;
   const cache: VercelRuntimeCache = {
     async get(key) {
@@ -89,5 +92,52 @@ describe("PPR shell memo through the public store API", () => {
     expect(await store.getShell(key)).not.toBeNull();
     await store.invalidateTags(["product:1"]);
     expect(await store.getShell(key)).toBeNull();
+  });
+
+  // updateTag() on one process: the response sets the fresh-reads cookie, and
+  // the same user's next request on ANOTHER process (whose memos predate the
+  // mutation) reads past both memos. Other users are served the memoized
+  // shell until the marker memo refreshes.
+  it("after updateTag, a request carrying the fresh-reads cookie is fresh on another process", async () => {
+    const values = new Map<string, unknown>();
+    const tags = new Map<string, string[]>();
+    const a = new VercelCacheStore({
+      cache: countingCache(values, tags).cache,
+    });
+    const b = new VercelCacheStore({
+      cache: countingCache(values, tags).cache,
+    });
+    await a.putShell(key, { ...SHELL, createdAt: Date.now() - 10 }, 60, 300, [
+      "product:1",
+    ]);
+    const warm = await runInRequestContext(() => b.getShell(key), {
+      cacheStore: b,
+    });
+    expect(warm.result).not.toBeNull();
+
+    const mutation = await runInRequestContext(() => updateTag("product:1"), {
+      cacheStore: a,
+    });
+    const fresh = mutation.response.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith("rango-state-fresh="));
+    expect(fresh).toMatch(
+      new RegExp(
+        "^rango-state-fresh=1; Max-Age=3; Path=/; HttpOnly; SameSite=Lax",
+      ),
+    );
+
+    const otherUser = await runInRequestContext(() => b.getShell(key), {
+      cacheStore: b,
+    });
+    expect(otherUser.result).not.toBeNull();
+
+    const sameUser = await runInRequestContext(() => b.getShell(key), {
+      cacheStore: b,
+      requestInit: {
+        headers: { cookie: "rango-state-fresh=1" },
+      },
+    });
+    expect(sameUser.result).toBeNull();
   });
 });

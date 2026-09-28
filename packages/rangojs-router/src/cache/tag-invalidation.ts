@@ -104,6 +104,21 @@ function warnPartialTagStore(fn: string, incapable: number): void {
   );
 }
 
+/**
+ * Set the fresh-reads cookie on this request's response for as long as the
+ * invalidated stores' isolate memos can stay stale (isolate-tag-memo.ts), so
+ * the same user's next requests read past them on every isolate.
+ */
+function markFreshReads(stores: SegmentCacheStore[]): void {
+  const ctx = _getRequestContext();
+  if (!ctx?._setFreshReadsCookie) return;
+  let windowMs = 0;
+  for (const store of stores) {
+    windowMs = Math.max(windowMs, store.freshReadsWindowMs ?? 0);
+  }
+  if (windowMs > 0) ctx._setFreshReadsCookie(windowMs);
+}
+
 async function invalidateAcross(
   stores: SegmentCacheStore[],
   tags: string[],
@@ -163,6 +178,7 @@ export async function updateTag(...tags: string[]): Promise<void> {
   }
   if (incapable > 0) warnPartialTagStore("updateTag", incapable);
 
+  markFreshReads(capable);
   await invalidateAcross(capable, valid);
 }
 
@@ -209,6 +225,7 @@ export function revalidateTag(...tags: string[]): void {
   }
   if (incapable > 0) warnPartialTagStore("revalidateTag", incapable);
 
+  markFreshReads(capable);
   const ctx = _getRequestContext();
   // reportingAsync never rejects: it catches a failed durable write and routes
   // it through reportCacheError (loud log + onError). This is the only place a

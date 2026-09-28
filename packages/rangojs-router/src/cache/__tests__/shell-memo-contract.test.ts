@@ -1,24 +1,26 @@
 /**
- * The PPR shell memo's contract, run against both stores that keep one
- * (issue #941, docs/design/shell-entry-layout.md "The shell memo"). Two store
- * instances sharing one backing store stand in for two isolates: for
- * CFCacheStore two copies of its module (the memo is module state, one per
- * isolate) over one Cache API (and KV, when bound); for VercelCacheStore two
- * runtime-cache handles (the memo is per handle) over one backing map.
- * CFCacheStore runs twice: with KV, and KV-less in purge mode, where another
- * isolate learns of an invalidation only through the purge.
+ * The isolate memos' contract (the PPR shell memo and the tag-marker memo),
+ * run against both stores that keep them (issue #941,
+ * docs/design/shell-entry-layout.md "The shell memo", "The tag-marker memo").
+ * Two store instances sharing one backing store stand in for two isolates:
+ * for CFCacheStore two copies of its module (the memos are module state, one
+ * per isolate) over one Cache API (and KV, when bound); for VercelCacheStore
+ * two runtime-cache handles (the memos are per handle) over one backing map.
+ * CFCacheStore runs twice: with KV, and KV-less in purge mode, where there
+ * are no markers and another isolate learns of an invalidation only through
+ * the purge. Each read runs in a request context of its isolate's own module
+ * copy, with or without the fresh-reads cookie a mutating user's next
+ * requests carry.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { SegmentCacheStore, ShellCacheEntry } from "../types.js";
 import type { StoreMemoOptions } from "../shell-memo.js";
-import {
-  VercelCacheStore,
-  type VercelRuntimeCache,
-} from "../vercel/vercel-cache-store.js";
 
 const T0 = 1_700_000_000_000;
-/** A 10 KB prelude: it dominates what either store counts per shell. */
+/** A 10 KB prelude, so both stores count about one prelude per shell. */
 const PRELUDE = "x".repeat(10 * 1024);
+const STATE_COOKIE = "rango-state_router_0";
+const FRESH_COOKIE = "rango-state-fresh=1";
 
 function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {
@@ -31,22 +33,30 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   };
 }
 
+interface Isolate {
+  store: SegmentCacheStore;
+  /** Run `fn` in a request of this isolate, optionally with the fresh-reads cookie. */
+  request<T>(fn: () => Promise<T>, opts?: { freshReads?: boolean }): Promise<T>;
+}
+
 interface Isolates {
   /** The same store configuration in two isolates over one backing store. */
-  make(
-    memo?: StoreMemoOptions,
-  ): Promise<[SegmentCacheStore, SegmentCacheStore]>;
+  make(memo?: StoreMemoOptions): Promise<[Isolate, Isolate]>;
   /** Backing-store reads of a shell entry so far. */
   shellReads(): number;
-  /** Let scheduled background writes land. */
+  /** Let scheduled background work (writes, marker refreshes) land. */
   settle(): Promise<void>;
   /**
    * Hold the next invalidateTags() at its slowest write (the tag markers, or
    * the purge in KV-less purge mode) until the returned release is called.
    */
   holdInvalidation(): () => void;
-  /** A memo budget with room for one test shell, not two. */
+  /** A shell memo budget with room for one test shell, not two. */
   roomForOneShell: number;
+  /** The store's fresh window for a memoized tag marker (its default). */
+  markerFreshMs: number;
+  /** The store's max-stale cap for a memoized tag marker (its default). */
+  markerMaxStaleMs: number;
 }
 
 /** A gate: `wait()` blocks while held; `hold()` returns the release. */
@@ -64,6 +74,25 @@ function gate(): { wait(): Promise<void>; hold(): () => void } {
         release();
       };
     },
+  };
+}
+
+/** A request-context runner from one module copy. */
+async function requestRunner(): Promise<Isolate["request"]> {
+  const { createRequestContext, runWithRequestContext } =
+    await import("../../server/request-context.js");
+  return (fn, opts) => {
+    const request = new Request("https://shop.example/p", {
+      headers: opts?.freshReads ? { cookie: FRESH_COOKIE } : {},
+    });
+    const ctx = createRequestContext({
+      env: {},
+      request,
+      url: new URL(request.url),
+      variables: {},
+      stateCookieName: STATE_COOKIE,
+    });
+    return runWithRequestContext(ctx, fn);
   };
 }
 
@@ -101,14 +130,14 @@ function cfIsolates(options: { kv: boolean }): Isolates {
       kvValues.delete(key);
     },
   };
-  /** Purge-by-tag over the Cache API entries' Cache-Tag headers. */
-  const tagPurge = async (tags: string[]): Promise<void> => {
+  // KV-less purge mode: Cloudflare's purge-by-tag evicts every L1 entry
+  // carrying one of the purged Cache-Tag tokens, in every colo.
+  const tagPurge = async (purgeTags: string[]): Promise<void> => {
     await invalidation.wait();
     for (const [url, entry] of stored) {
       const header = new Headers(entry.init.headers).get("Cache-Tag") ?? "";
-      if (header.split(",").some((token) => tags.includes(token.trim()))) {
-        stored.delete(url);
-      }
+      const tokens = header.split(",").map((token) => token.trim());
+      if (purgeTags.some((tag) => tokens.includes(tag))) stored.delete(url);
     }
   };
   vi.stubGlobal("caches", { default: cache, open: async () => cache });
@@ -121,36 +150,45 @@ function cfIsolates(options: { kv: boolean }): Isolates {
   };
   return {
     async make(memo) {
-      const stores: SegmentCacheStore[] = [];
+      const isolates: Isolate[] = [];
       for (let i = 0; i < 2; i++) {
         vi.resetModules();
         const { CFCacheStore } = await import("../cf/cf-cache-store.js");
-        stores.push(
-          new CFCacheStore(
-            options.kv ? { ctx, kv: kv as any, memo } : { ctx, tagPurge, memo },
-          ),
+        // baseUrl pinned: writes run outside a request, reads inside one, and
+        // both must address the same Cache API URL.
+        const store = new CFCacheStore(
+          options.kv
+            ? { ctx, kv: kv as any, memo, baseUrl: "https://shop.example/" }
+            : { ctx, tagPurge, memo, baseUrl: "https://shop.example/" },
         );
+        isolates.push({ store, request: await requestRunner() });
       }
-      return [stores[0]!, stores[1]!];
+      return [isolates[0]!, isolates[1]!];
     },
     shellReads: () => reads,
     async settle() {
-      while (pending.length > 0) await Promise.all(pending.splice(0));
+      for (let i = 0; i < 5 && pending.length > 0; i++) {
+        await Promise.all(pending.splice(0));
+      }
     },
     holdInvalidation: () => invalidation.hold(),
     // Counted: the 10 KB prelude plus the snapshot JSON.
     roomForOneShell: 15 * 1024,
+    markerFreshMs: 1000,
+    markerMaxStaleMs: 10_000,
   };
 }
 
-function vercelIsolates(): Isolates {
+async function vercelIsolates(): Promise<Isolates> {
   const backing = new Map<
     string,
     { value: unknown; expiresAt: number | null; tags: string[] }
   >();
   let reads = 0;
   const invalidation = gate();
-  const handle = (): VercelRuntimeCache => ({
+  const { VercelCacheStore } = await import("../vercel/vercel-cache-store.js");
+  type Handle = ConstructorParameters<typeof VercelCacheStore>[0]["cache"];
+  const handle = (): Handle => ({
     async get(key) {
       // Shell entries only: a stale read's revalidation lock is `rg:h:k:lock`.
       if (key.startsWith("rg:h:") && !key.endsWith(":lock")) reads++;
@@ -181,55 +219,73 @@ function vercelIsolates(): Isolates {
       }
     },
   });
+  const pending: Promise<unknown>[] = [];
+  const request = await requestRunner();
   return {
     async make(memo) {
-      return [
-        new VercelCacheStore({ cache: handle(), memo }),
-        new VercelCacheStore({ cache: handle(), memo }),
-      ];
+      const make = (): Isolate => ({
+        store: new VercelCacheStore({
+          cache: handle(),
+          memo,
+          waitUntil: (p) => {
+            pending.push(p);
+          },
+        }),
+        request,
+      });
+      return [make(), make()];
     },
     shellReads: () => reads,
-    async settle() {},
+    async settle() {
+      for (let i = 0; i < 5 && pending.length > 0; i++) {
+        await Promise.all(pending.splice(0));
+      }
+    },
     holdInvalidation: () => invalidation.hold(),
     // Counted: the envelope (the prelude as ~13.7 KB of base64) plus the
     // 10 KB decoded prelude.
     roomForOneShell: 30 * 1024,
+    markerFreshMs: 300,
+    markerMaxStaleMs: 2000,
   };
 }
 
+/** A shell read in `isolate`'s request, as the first 8 prelude characters. */
 async function read(
-  store: SegmentCacheStore,
-  key = "k",
+  isolate: Isolate,
+  opts?: { key?: string; freshReads?: boolean },
 ): Promise<string | undefined> {
-  const hit = await store.getShell!(key);
+  const hit = await isolate.request(
+    () => isolate.store.getShell!(opts?.key ?? "k"),
+    opts,
+  );
   return hit ? atob(hit.entry.prelude!).slice(0, 8) : undefined;
 }
 
 /**
- * How another isolate's memo learns of an invalidation: "marker", its
- * per-read marker check rejects the shell on the next read; "window", it does
- * not (KV-less purge mode: the purge removes the stored entry only), and the
- * shell serves until the window passes.
+ * How a store learns of an invalidation in another isolate: "markers", its
+ * tag-marker reads (through the marker memo); "purge", only the purge of the
+ * stored entry (CFCacheStore without KV), which never reaches a memo.
  */
-type OtherIsolates = "marker" | "window";
+type Invalidation = "markers" | "purge";
 
 describe.each([
-  ["CFCacheStore with KV", () => cfIsolates({ kv: true }), "marker"],
+  ["CFCacheStore with KV", async () => cfIsolates({ kv: true }), "markers"],
   [
     "CFCacheStore KV-less, purge mode",
-    () => cfIsolates({ kv: false }),
-    "window",
+    async () => cfIsolates({ kv: false }),
+    "purge",
   ],
-  ["VercelCacheStore", vercelIsolates, "marker"],
+  ["VercelCacheStore", vercelIsolates, "markers"],
 ] as const satisfies ReadonlyArray<
-  readonly [string, () => Isolates, OtherIsolates]
->)("PPR shell memo contract: %s", (_name, isolates, otherIsolates) => {
+  readonly [string, () => Promise<Isolates>, Invalidation]
+>)("isolate memo contract: %s", (_name, isolates, invalidation) => {
   let setup: Isolates;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(T0));
-    setup = isolates();
+    setup = await isolates();
   });
 
   afterEach(() => {
@@ -238,9 +294,11 @@ describe.each([
     vi.resetModules();
   });
 
+  // --- the shell memo ---
+
   it("serves a repeat read within the window without a backing read", async () => {
     const [a] = await setup.make();
-    await a.putShell!("k", shellEntry(), 300, 30);
+    await a.store.putShell!("k", shellEntry(), 300, 30);
     await setup.settle();
     await read(a);
     await setup.settle();
@@ -251,7 +309,7 @@ describe.each([
 
   it("reads the backing store again once the window has passed", async () => {
     const [a] = await setup.make({ shellMs: 1000 });
-    await a.putShell!("k", shellEntry(), 300, 30);
+    await a.store.putShell!("k", shellEntry(), 300, 30);
     await setup.settle();
     await read(a);
     await setup.settle();
@@ -263,7 +321,7 @@ describe.each([
 
   it("{ shellMs: 0 } reads the backing store every time", async () => {
     const [a] = await setup.make({ shellMs: 0 });
-    await a.putShell!("k", shellEntry(), 300, 30);
+    await a.store.putShell!("k", shellEntry(), 300, 30);
     await setup.settle();
     const before = setup.shellReads();
     await read(a);
@@ -274,7 +332,7 @@ describe.each([
 
   it("does not keep a stale shell", async () => {
     const [a] = await setup.make({ shellMs: 60_000 });
-    await a.putShell!("k", shellEntry(), 1, 300);
+    await a.store.putShell!("k", shellEntry(), 1, 300);
     await setup.settle();
     vi.setSystemTime(new Date(T0 + 1500));
     const before = setup.shellReads();
@@ -284,94 +342,40 @@ describe.each([
     expect(setup.shellReads()).toBe(before + 2);
   });
 
-  it("the invalidating isolate's next read misses", async () => {
-    const [a] = await setup.make();
-    await a.putShell!("k", shellEntry(), 300, 30, ["home"]);
-    await setup.settle();
-    expect(await read(a)).toBe("xxxxxxxx");
-    await setup.settle();
-    vi.setSystemTime(new Date(T0 + 100));
-    await a.invalidateTags!(["home"]);
-    await setup.settle();
-    expect(await read(a)).toBeUndefined();
-  });
-
-  // A read on the invalidating isolate while the markers (or the purge) are
-  // still being written serves the shell, since nothing has landed yet, but
-  // what it memoizes must not outlive the invalidation.
-  it("a read during invalidateTags is not served from the memo once it resolves", async () => {
-    const [a] = await setup.make();
-    await a.putShell!("k", shellEntry(), 300, 30, ["home"]);
-    await setup.settle();
-    vi.setSystemTime(new Date(T0 + 100));
-    const release = setup.holdInvalidation();
-    const invalidation = a.invalidateTags!(["home"]);
-    expect(await read(a)).toBe("xxxxxxxx");
-    await setup.settle();
-    release();
-    await invalidation;
-    await setup.settle();
-    vi.setSystemTime(new Date(T0 + 110));
-    expect(await read(a)).toBeUndefined();
-  });
-
-  it.runIf(otherIsolates === "marker")(
-    "an invalidateTags in another isolate rejects the memoized shell on the next read",
-    async () => {
-      const [a, b] = await setup.make();
-      await a.putShell!("k", shellEntry(), 300, 30, ["home"]);
-      await setup.settle();
-      expect(await read(b)).toBe("xxxxxxxx");
-      await setup.settle();
-      vi.setSystemTime(new Date(T0 + 100));
-      await a.invalidateTags!(["home"]);
-      await setup.settle();
-      expect(await read(b)).toBeUndefined();
-    },
-  );
-
-  // KV-less purge mode: the purge removes the stored entry, not another
-  // isolate's memo, and that isolate's memo-hit check has no marker to read.
-  // This is the mutating user's next request too, when it lands there.
-  it.runIf(otherIsolates === "window")(
-    "another isolate serves a purged shell until its window passes",
-    async () => {
-      const [a, b] = await setup.make({ shellMs: 1000 });
-      await a.putShell!("k", shellEntry(), 300, 30, ["home"]);
-      await setup.settle();
-      expect(await read(b)).toBe("xxxxxxxx");
-      await setup.settle();
-      vi.setSystemTime(new Date(T0 + 100));
-      await a.invalidateTags!(["home"]);
-      await setup.settle();
-      expect(await read(a)).toBeUndefined();
-      const before = setup.shellReads();
-      expect(await read(b)).toBe("xxxxxxxx");
-      expect(setup.shellReads()).toBe(before);
-      vi.setSystemTime(new Date(T0 + 1000));
-      expect(await read(b)).toBeUndefined();
-    },
-  );
-
   it("the isolate's own putShell replaces its memoized copy at once", async () => {
     const [a] = await setup.make();
-    await a.putShell!("k", shellEntry({ prelude: btoa("one-one-") }), 300, 30);
+    await a.store.putShell!(
+      "k",
+      shellEntry({ prelude: btoa("one-one-") }),
+      300,
+      30,
+    );
     await setup.settle();
     expect(await read(a)).toBe("one-one-");
     await setup.settle();
-    await a.putShell!("k", shellEntry({ prelude: btoa("two-two-") }), 300, 30);
+    await a.store.putShell!(
+      "k",
+      shellEntry({ prelude: btoa("two-two-") }),
+      300,
+      30,
+    );
     await setup.settle();
     expect(await read(a)).toBe("two-two-");
   });
 
   it("a newer capture from another isolate is served once the window passes", async () => {
     const [a, b] = await setup.make({ shellMs: 1000 });
-    await a.putShell!("k", shellEntry({ prelude: btoa("one-one-") }), 300, 30);
+    await a.store.putShell!(
+      "k",
+      shellEntry({ prelude: btoa("one-one-") }),
+      300,
+      30,
+    );
     await setup.settle();
     expect(await read(b)).toBe("one-one-");
     await setup.settle();
     vi.setSystemTime(new Date(T0 + 500));
-    await a.putShell!(
+    await a.store.putShell!(
       "k",
       shellEntry({ prelude: btoa("two-two-"), createdAt: T0 + 500 }),
       300,
@@ -385,18 +389,124 @@ describe.each([
 
   it("evicts the least recently used shell past shellMaxBytes", async () => {
     const [a] = await setup.make({ shellMaxBytes: setup.roomForOneShell });
-    await a.putShell!("k", shellEntry(), 300, 30);
-    await a.putShell!("other", shellEntry(), 300, 30);
+    await a.store.putShell!("k", shellEntry(), 300, 30);
+    await a.store.putShell!("other", shellEntry(), 300, 30);
     await setup.settle();
-    await read(a, "k");
+    await read(a, { key: "k" });
     await setup.settle();
-    await read(a, "other");
+    await read(a, { key: "other" });
     await setup.settle();
     const before = setup.shellReads();
     // "other" (the most recent) is still memoized; "k" was evicted for it.
-    expect(await read(a, "other")).toBe("xxxxxxxx");
+    expect(await read(a, { key: "other" })).toBe("xxxxxxxx");
     expect(setup.shellReads()).toBe(before);
-    expect(await read(a, "k")).toBe("xxxxxxxx");
+    expect(await read(a, { key: "k" })).toBe("xxxxxxxx");
     expect(setup.shellReads()).toBe(before + 1);
   });
+
+  // A read on the invalidating isolate while the markers (or the purge) are
+  // still being written serves the shell, since nothing has landed yet, but
+  // what it memoizes must not outlive the invalidation.
+  it("a read during invalidateTags is not served from the memo once it resolves", async () => {
+    const [a] = await setup.make();
+    await a.store.putShell!("k", shellEntry(), 300, 30, ["home"]);
+    await setup.settle();
+    vi.setSystemTime(new Date(T0 + 100));
+    const release = setup.holdInvalidation();
+    const invalidating = a.request(() => a.store.invalidateTags!(["home"]));
+    expect(await read(a)).toBe("xxxxxxxx");
+    await setup.settle();
+    release();
+    await invalidating;
+    await setup.settle();
+    vi.setSystemTime(new Date(T0 + 110));
+    expect(await read(a)).toBeUndefined();
+  });
+
+  // --- the tag-marker memo and the fresh-reads cookie ---
+
+  /** Isolate B holds the tagged shell and its marker in its memos; A invalidates. */
+  async function invalidatedElsewhere(
+    memo?: StoreMemoOptions,
+  ): Promise<[Isolate, Isolate]> {
+    const [a, b] = await setup.make(memo);
+    await a.store.putShell!("k", shellEntry(), 300, 30, ["home"]);
+    await setup.settle();
+    expect(await read(b)).toBe("xxxxxxxx");
+    await setup.settle();
+    vi.setSystemTime(new Date(T0 + 100));
+    await a.request(() => a.store.invalidateTags!(["home"]));
+    await setup.settle();
+    return [a, b];
+  }
+
+  it("updateTag in another isolate: the mutating user's next request (fresh-reads cookie) is fresh", async () => {
+    const [, b] = await invalidatedElsewhere();
+    expect(await read(b, { freshReads: true })).toBeUndefined();
+  });
+
+  // KV-less purge mode: no markers, so the purge removes the stored entry but
+  // not another isolate's memo, which serves the purged shell until its
+  // window passes. The mutating user's cookie reads past it.
+  it.runIf(invalidation === "purge")(
+    "updateTag in another isolate: other users get the memoized shell until the shell window passes",
+    async () => {
+      const [, b] = await invalidatedElsewhere({ shellMs: 2000 });
+      const before = setup.shellReads();
+      expect(await read(b)).toBe("xxxxxxxx");
+      expect(setup.shellReads()).toBe(before);
+      vi.setSystemTime(new Date(T0 + 2000));
+      expect(await read(b)).toBeUndefined();
+    },
+  );
+
+  it.runIf(invalidation === "markers")(
+    "updateTag in another isolate: other users get the memoized shell once past the fresh window, then fresh",
+    async () => {
+      const [, b] = await invalidatedElsewhere();
+      // Inside the marker's fresh window: served from the memos, no store read.
+      expect(await read(b)).toBe("xxxxxxxx");
+      // Past it, inside the max-stale cap: served stale once while the marker
+      // refreshes in the background...
+      vi.setSystemTime(new Date(T0 + 100 + setup.markerFreshMs));
+      expect(await read(b)).toBe("xxxxxxxx");
+      await setup.settle();
+      // ...and the next request sees the invalidation.
+      expect(await read(b)).toBeUndefined();
+    },
+  );
+
+  it.runIf(invalidation === "markers")(
+    "past the max-stale cap a memoized marker is not served: the read blocks on the store",
+    async () => {
+      // No shell memo: the marker memo alone decides.
+      const [, b] = await invalidatedElsewhere({ shellMs: 0 });
+      vi.setSystemTime(new Date(T0 + 100 + setup.markerMaxStaleMs));
+      expect(await read(b)).toBeUndefined();
+    },
+  );
+
+  it("the invalidating isolate's own next request is fresh (write-through), cookie or not", async () => {
+    const [a] = await setup.make();
+    await a.store.putShell!("k", shellEntry(), 300, 30, ["home"]);
+    await setup.settle();
+    expect(await read(a)).toBe("xxxxxxxx");
+    await setup.settle();
+    vi.setSystemTime(new Date(T0 + 100));
+    await a.request(() => a.store.invalidateTags!(["home"]));
+    await setup.settle();
+    expect(await read(a)).toBeUndefined();
+    expect(await read(a, { freshReads: true })).toBeUndefined();
+  });
+
+  it.runIf(invalidation === "markers")(
+    "{ markerFreshMs: 0 } reads the markers on every request",
+    async () => {
+      const [, b] = await invalidatedElsewhere({
+        shellMs: 0,
+        markerFreshMs: 0,
+      });
+      expect(await read(b)).toBeUndefined();
+    },
+  );
 });

@@ -417,6 +417,24 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       getSpy.mockRestore();
     });
 
+    // The isolate marker memo (on by default) serves PPR shell reads only:
+    // a data family keeps reading its markers per request.
+    it("a data-family read is not served from the isolate marker memo", async () => {
+      const store = makeStore({ memo: { markerFreshMs: 60_000 } });
+      await store.set("k", createTestData(["shared"]), 300);
+      await ctx.flush();
+
+      const getSpy = vi.spyOn(kv, "get");
+      await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+      await runWithRequestContext(makeReqCtx(), () => store.get("k"));
+
+      const markerReads = getSpy.mock.calls.filter(([key]) =>
+        String(key).includes("__tag__/shared"),
+      );
+      expect(markerReads.length).toBe(2);
+      getSpy.mockRestore();
+    });
+
     it("caches the marker in L1 across requests within tagCacheTtl (one KV read)", async () => {
       const store = makeStore({ tagCacheTtl: 60 });
       await store.set("k", createTestData(["shared"]), 300);

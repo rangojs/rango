@@ -662,6 +662,9 @@ export function createRSCHandler<
         // the host; it never reads or wraps response.body. A downstream throw
         // skips it entirely (no response exists to hand off).
         return observePhase(PHASES.response, (responseSpan) => {
+          // Header and cookie writes from here on (a streaming loader or
+          // render) no longer reach the response.
+          requestContext._responseSent = true;
           let response: Response;
           if (hasMiddleware) {
             if (
