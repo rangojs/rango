@@ -95,11 +95,19 @@ use-cache:{functionId}:{serializedArgs}
 ```
 
 - `functionId` -- stable ID assigned by the Vite transform: `path#export` in dev, a hash of it in production builds.
-- `serializedArgs` -- the non-tainted arguments. When every argument is JSON-safe, the key uses a deterministic stable stringify under a `j:` namespace (`use-cache:{functionId}:j:{json}`) and skips `encodeReply()`; otherwise the arguments are serialized with RSC `encodeReply()`. A call with no key arguments uses `use-cache:{functionId}`. If the arguments cannot be encoded, the call runs uncached (no key is generated, the function still executes).
+- `serializedArgs` -- the non-tainted arguments. When every argument is JSON-safe, the key uses a deterministic stable stringify under a `j:` namespace (`use-cache:{functionId}:j:{json}`) and skips `encodeReply()`; otherwise the arguments are serialized with RSC `encodeReply()`. A call with no key arguments uses `use-cache:{functionId}`. If the arguments cannot be encoded, the call runs uncached (no key is generated, the function still executes) and warns once per function id in dev.
 
-### Tainted arguments
+"Cannot be encoded" includes more than an `encodeReply()` throw. Given a temporary-reference set, `encodeReply()` does not throw on a function, a class instance, a symbol or a React element, top-level or nested: it writes the token `"$T"`. So `[new Request(a), "/"]` and `[new Request(b), "/"]` both encoded as `["$T","/"]` and shared one entry (issue #924).
 
-Request-scoped objects (`ctx`, `env`, `req`) are branded with a taint symbol (`Symbol.for('rango:nocache')`) at creation time in `createRequestContext()` (and the analogous handler/response-route context constructors).
+Some of those tokens are wanted. React elements and client/server references are render slots: a cached component takes `header`/`children` elements, they stay out of the key, and the first call's rendered slot is part of the cached output (the interleave route, `e2e/use-cache-streaming.test.ts`). Every other `"$T"` takes the uncached path. `hasUnkeyableReference()` tells them apart after the encoder path: it counts the unescaped `"$T"` tokens in the reply string, or in each string part of a FormData reply, and the render slots among the temporary-reference set's values. That set is the Map `encodeReply()` fills with one entry per `"$T"` it writes plus every object it visits, so more tokens than slots means a non-slot `"$T"`, without walking the arguments. A user string `"$T"` encodes as `"$$T"`, a quote inside a string is escaped, and an object key `"$T"` is followed by `:`, so none of them counts. The JSON-safe fast path never reaches the check.
+
+### Request-scoped arguments
+
+Three kinds of argument are kept out of the serialized key arguments:
+
+- **`ctx`** (tainted): handler, loader, middleware and response-route contexts are branded with a taint symbol (`Symbol.for('rango:nocache')`) at creation time in `createRequestContext()` (and the analogous handler/response-route context constructors). Handling below.
+- **A `Request`** (`arg instanceof Request`, e.g. `ctx.request`): replaced by `cacheKeyBase(host, pathname, searchParams)` of its URL, with the request's `cache.searchParams` filter. It is not tainted: no handle capture, no guard stamping. Headers, cookies and method are not in the key.
+- **The request's `env`** (`arg === requestCtx.env`): dropped. It is fixed per deployment, and its bindings are class instances that would otherwise send the call down the uncached path. A binding passed on its own (`env.DB`) is still a class instance and runs uncached.
 
 When `registerCachedFunction` detects a tainted argument:
 
@@ -234,8 +242,8 @@ registerCachedFunction(fn, id, profileName);
 ```
 
 1. Receive call with `args`.
-2. Check args for tainted objects. If found, strip from key, enable handle capture mode.
-3. Generate cache key: `use-cache:{id}:j:{stableJson(nonTaintedArgs)}` when the args are JSON-safe, else `use-cache:{id}:{encodeReply(nonTaintedArgs)}` (see Cache Key).
+2. Check args for tainted objects. If found, strip from key, enable handle capture mode. Replace a `Request` with its URL key and drop the request's `env`.
+3. Generate cache key: `use-cache:{id}:j:{stableJson(nonTaintedArgs)}` when the args are JSON-safe, else `use-cache:{id}:{encodeReply(nonTaintedArgs)}` (see Cache Key). An encode that throws, or holds a `"$T"` token for anything but a render slot, runs `fn(...args)` uncached.
 4. Look up in `SegmentCacheStore.get(key)`.
 5. **Hit (fresh)**: deserialize value via `createFromReadableStream()`, replay handle data if present, return.
 6. **Hit (stale)**: return stale value, trigger background revalidation via `waitUntil()`.

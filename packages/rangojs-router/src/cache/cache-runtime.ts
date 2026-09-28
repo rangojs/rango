@@ -41,7 +41,7 @@ import {
   decodeHandles,
 } from "./handle-snapshot.js";
 import { startHandleCapture } from "./handle-capture.js";
-import { sortedSearchString } from "./cache-key-utils.js";
+import { cacheKeyBase, sortedSearchString } from "./cache-key-utils.js";
 import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -129,9 +129,73 @@ export async function replyToCacheKey(
   return encodeKV(pairs, { sort: true });
 }
 
+/**
+ * An unescaped temporary-reference token in an encodeReply part. A user
+ * string "$T" encodes as "$$T", a quote inside a string is escaped, and an
+ * object key "$T" is followed by ":".
+ */
+const TEMPORARY_REFERENCE_TOKEN = /(?<!\\)"\$T"(?!:)/g;
+
+const REACT_ELEMENT_TYPE = Symbol.for("react.transitional.element");
+const CLIENT_REFERENCE_TYPE = Symbol.for("react.client.reference");
+const SERVER_REFERENCE_TYPE = Symbol.for("react.server.reference");
+
+function countTemporaryReferences(encoded: string | FormData): number {
+  if (typeof encoded === "string") {
+    return encoded.match(TEMPORARY_REFERENCE_TOKEN)?.length ?? 0;
+  }
+  let count = 0;
+  encoded.forEach((value) => {
+    if (typeof value === "string") {
+      count += value.match(TEMPORARY_REFERENCE_TOKEN)?.length ?? 0;
+    }
+  });
+  return count;
+}
+
+/** A React element, or a client or server reference function. */
+function isRenderSlot(value: unknown): boolean {
+  if (typeof value === "object" && value !== null) {
+    return (value as { $$typeof?: unknown }).$$typeof === REACT_ELEMENT_TYPE;
+  }
+  if (typeof value === "function") {
+    const tag = (value as { $$typeof?: unknown }).$$typeof;
+    return tag === CLIENT_REFERENCE_TYPE || tag === SERVER_REFERENCE_TYPE;
+  }
+  return false;
+}
+
+/**
+ * Whether encodeReply wrote "$T" for a value that cannot be keyed. Given a
+ * temporary-reference set it does not throw on a value it cannot serialize:
+ * it writes "$T", so distinct arguments would share one key (issue #924).
+ * React elements and client/server references are render slots, left out of
+ * the key on purpose (the interleave route, e2e/use-cache-streaming.test.ts);
+ * a function, a symbol or a class instance is not.
+ *
+ * The set is the Map encodeReply fills: one entry per "$T" it writes, plus
+ * every object it visits. So more tokens than slot entries means a non-slot
+ * "$T", with no traversal of the arguments. Runs only on the encoder path.
+ */
+function hasUnkeyableReference(
+  encoded: string | FormData,
+  tempRefs: unknown,
+): boolean {
+  const tokens = countTemporaryReferences(encoded);
+  if (tokens === 0) return false;
+  let slots = 0;
+  for (const value of (tempRefs as Map<string, unknown>).values()) {
+    if (isRenderSlot(value)) slots++;
+  }
+  return tokens > slots;
+}
+
 // Cached-fn ids already warned about running uncached under a test runner, so
 // the test-ergonomics warning fires once per fn rather than once per call.
 const warnedUncachedUnderTest = new Set<string>();
+
+// Cached-fn ids already warned about arguments that cannot be keyed (dev only).
+const warnedUnkeyableArgs = new Set<string>();
 
 /**
  * Fast-path cache-key builder for JSON-safe key args. Returns a deterministic
@@ -337,11 +401,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       );
     }
 
-    // Separate tainted args (ctx, env, req) from key-generating args.
-    // For tainted objects that carry route context (params, pathname,
-    // searchParams), extract serializable values into the key so
-    // different routes, param combinations, and query variants produce
-    // distinct cache entries.
+    // Separate request-scoped args (ctx, a Request, the request's env) from
+    // key-generating args. For those that carry route context (ctx params,
+    // pathname, searchParams; a Request's URL), extract serializable values
+    // into the key so different routes, param combinations, and query
+    // variants produce distinct cache entries.
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     // The calling segment, read synchronously as ctx.use(Handle) does: a HIT
@@ -382,6 +446,22 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             }
           }
         }
+      } else if (arg instanceof Request) {
+        // A raw Request (ctx.request) is request-scoped like ctx: fold in its
+        // URL with the same host-namespacing and search normalization.
+        const url = new URL(arg.url);
+        keyArgs.push(
+          cacheKeyBase(
+            url.host,
+            url.pathname,
+            url.searchParams,
+            undefined,
+            requestCtx?._searchParamsFilter,
+          ),
+        );
+      } else if (arg != null && arg === requestCtx?.env) {
+        // The request's env is left out: constant per deployment, and its
+        // bindings are not serializable.
       } else {
         keyArgs.push(arg);
       }
@@ -419,6 +499,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           const encoded = await encodeReply(keyArgs as unknown[], {
             temporaryReferences: tempRefs,
           });
+          if (hasUnkeyableReference(encoded, tempRefs)) {
+            throw new Error("unserializable key argument");
+          }
           const argsKey = await replyToCacheKey(encoded);
           cacheKey = `use-cache:${id}:${argsKey}`;
         }
@@ -429,6 +512,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Non-serializable args: run uncached (within a tag scope so cacheTag()
       // still does not throw). Record runtime tags so the document union still
       // sees them even though this call is not itself cached.
+      if (
+        process.env.NODE_ENV !== "production" &&
+        !warnedUnkeyableArgs.has(id)
+      ) {
+        warnedUnkeyableArgs.add(id);
+        console.warn(
+          `[use cache] "${id}" ran uncached: an argument, or a value nested in ` +
+            `one, cannot be serialized into the cache key (a function, class ` +
+            `instance or symbol). Pass serializable values; ctx, a Request, ` +
+            `the request's env and React elements are handled.`,
+        );
+      }
       const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       const result = await scoped.result;
       recordRequestTags(scoped.tags, requestCtx);

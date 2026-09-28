@@ -74,14 +74,14 @@ createRouter({
 use-cache:{functionId}:{serializedArgs}
 ```
 
-`functionId` is a stable ID from the Vite transform (module path + export name in dev, a hash of both in production builds). `serializedArgs` is the key-generating arguments: a stable JSON encoding when every argument is JSON-safe, otherwise RSC `encodeReply()`. With no key-generating arguments the key is just `use-cache:{functionId}`. If the arguments cannot be serialized at all, the call runs uncached (no error). Two consequences worth knowing:
+`functionId` is a stable ID from the Vite transform (module path + export name in dev, a hash of both in production builds). `serializedArgs` is the key-generating arguments: a stable JSON encoding when every argument is JSON-safe, otherwise RSC `encodeReply()`. With no key-generating arguments the key is just `use-cache:{functionId}`. React elements (`header`, `children` slots) and client or server references are left out of the key: the first call's rendered slot is part of the cached output. If any other argument cannot be serialized, top-level or nested (a function, a class instance such as a database client, a symbol), the call runs uncached and warns once per function in dev: the encoder writes the same placeholder for every such value, so keying on it would serve one caller's result to every other. Two consequences worth knowing:
 
 - **Different functions never share entries**, even on the same URL. An intercepted route's path handler and intercept handler each have their own `functionId`, so each caches separately with no extra work.
 - **Route context is folded into the key.** If you pass `ctx`, the tainted object itself is excluded from serialization, but the route-identifying fields read off it are extracted into the key: `url.host`, route name, `pathname`, `params`, response type, and the user-facing sorted search params. The same cached function on different routes, params, or query variants gets distinct entries — not one shared one.
 
 ## Passing ctx: tainted arguments and handles
 
-Request-scoped objects (`ctx`, `env`, `req`) are branded with `Symbol.for('rango:nocache')`. Passing them is safe: they're excluded from the key, and side effects pushed through `ctx.use(Handle)` are captured on a miss and replayed on a hit:
+Request-scoped arguments are safe to pass. A `Request` such as `ctx.request` keys by its URL (host, pathname, user-facing search params), not its headers or cookies. The request's `env` is left out of the key; pass `env` rather than a single binding (`env.DB`), which is a class instance and runs uncached. `ctx` is branded with `Symbol.for('rango:nocache')`: it is excluded from the key (its route fields are folded in, above), and side effects pushed through `ctx.use(Handle)` are captured on a miss and replayed on a hit:
 
 ```ts
 export async function getProductData(ctx) {

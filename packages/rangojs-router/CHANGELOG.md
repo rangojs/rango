@@ -141,6 +141,41 @@ async function getNav(tenant: string) {
 const nav = await getNav(ctx.get(Tenant)!);
 ```
 
+### Breaking: `"use cache"` runs a call uncached when an argument cannot be serialized ([#934](https://github.com/rangojs/rango/pull/934))
+
+A `"use cache"` function that took a `Request` served the first caller's
+result to every later caller. The key encoder writes the same placeholder,
+`"$T"`, for any value it cannot serialize, so
+`getPage(new Request("https://a.example/"), "/")` and
+`getPage(new Request("https://b.example/"), "/")` shared one entry. Functions,
+class instances and symbols, top-level or nested, collided the same way. Now:
+
+- A `Request` (such as `ctx.request`) keys by its URL: host, pathname and the
+  user-facing search params, normalized as for `ctx`. Headers and cookies are
+  not in the key.
+- The request's `env` is left out of the key.
+- React elements (`header`/`children` slots) and client or server references
+  stay out of the key and the call stays cached, as before.
+- Any other argument that cannot be serialized runs the call uncached and
+  warns once per function in dev.
+
+A call that passed a binding such as `env.DB`, a callback or a class instance
+was cached in 0.16.0 and now runs every time. Pass `env`, or the serializable
+values the function needs:
+
+```ts
+// before: keyed by id alone, whichever db was passed; now runs uncached
+async function getProduct(db: D1Database, id: string) {
+  "use cache";
+  return db.prepare("SELECT * FROM products WHERE id = ?").bind(id).first();
+}
+// after
+async function getProduct(env: Env, id: string) {
+  "use cache";
+  return env.DB.prepare("SELECT * FROM products WHERE id = ?").bind(id).first();
+}
+```
+
 ### Added: `router.debugManifest()` on the public `Rango` type ([#874](https://github.com/rangojs/rango/pull/874))
 
 `debugManifest()` was typed only on the internal router interface, so calling

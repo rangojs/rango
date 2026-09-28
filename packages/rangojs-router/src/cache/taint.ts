@@ -1,7 +1,7 @@
 /**
  * Taint symbol for request-scoped objects.
  *
- * Objects branded with NOCACHE_SYMBOL (ctx, env, req) are excluded from
+ * Objects branded with NOCACHE_SYMBOL (ctx objects) are excluded from
  * "use cache" cache keys and trigger handle capture mode so that side
  * effects (breadcrumbs, metadata) are recorded and replayed on cache hit.
  */
