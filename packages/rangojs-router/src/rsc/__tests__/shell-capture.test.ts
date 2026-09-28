@@ -1435,6 +1435,59 @@ describe("runShellCapture", () => {
     }
   });
 
+  // Issue #941: the no-shell warning listed causes but not which component
+  // pinned the root. React reports each task still pending at the capture's
+  // abort with its component stack; dev prints them once per key.
+  it("names the components still pending at the abort in the dev no-shell warning", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const capture = vi.fn(
+        async (
+          _stream: ReadableStream<Uint8Array>,
+          opts: {
+            onAbortedTask?: (
+              errorInfo: { componentStack?: string } | undefined,
+            ) => void;
+          },
+        ) => {
+          const componentStack =
+            "\n    at PageBody\n    at SiteProvider\n    at Layout";
+          opts.onAbortedTask?.({ componentStack });
+          opts.onAbortedTask?.({ componentStack });
+          opts.onAbortedTask?.(undefined);
+          return null;
+        },
+      );
+      const { ctx, ssrModule } = makeCtx(okMatch, capture as any);
+
+      const outcome = await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        { key: "/pending-stacks:shell", buildVersion: "test-build", ttl: 300 },
+        0,
+      );
+
+      expect(outcome).toBe("no-shell");
+      const warning = warnSpy.mock.calls
+        .map(([message]) => String(message))
+        .find((message) => message.includes('"/pending-stacks:shell"'));
+      expect(warning).toContain(
+        "An async server component the handler renders",
+      );
+      expect(warning).toContain(
+        "Components still pending when the capture froze the shell",
+      );
+      expect(warning).toContain("    at PageBody\n    at SiteProvider");
+      expect(warning!.match(/at PageBody/g)).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("aborts without storing when the matched route redirects", async () => {
     const putShell = makePutShell();
     const capture = vi.fn(async () => ({

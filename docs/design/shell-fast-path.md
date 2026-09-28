@@ -167,6 +167,16 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    the prelude. A record written before `handleOwners` existed restores as a
    plain replay.
 
+## What a HIT reads before its first byte
+
+The fast path above is about the tail. The first byte has its own budget: the
+store read, parse, and decode that happen before the prelude is enqueued, which
+issue #941 measured at 90-140 ms behind a hand-rolled shell server on
+Cloudflare. `shell-entry-layout.md` covers that path: the prelude is decoded
+once (natively where the runtime can) and enqueued in 32 KB chunks, and the
+doc specifies the entry layout that takes the capture snapshot off the
+first-byte read.
+
 ## Why the original splice framing was dropped
 
 - **Whole-payload Flight round-trip is fragile**: `metadata.handles` is an

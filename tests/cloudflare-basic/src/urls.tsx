@@ -104,6 +104,12 @@ import {
 } from "./loaders/ppr-shell.js";
 import { PprDriftLayout, PprDriftPricePage } from "./pages/ppr-drift.js";
 import {
+  PprLargeLayout,
+  PprLargePage,
+  PprLargeHolesPage,
+  PprLargeHoleLoader,
+} from "./pages/ppr-large.js";
+import {
   PprSlowMetaLayout,
   PprShortMetaLayout,
 } from "./pages/ppr-slow-meta.js";
@@ -1143,6 +1149,21 @@ export const urlpatterns = urls(
         // show the CAPTURE-time stamp (seeded from the snapshot) — byte parity
         // with the frozen prelude — while the price loader hole stays live. See
         // docs/design/ppr-shell-resume.md ("the capture data snapshot").
+        // Large-shell fixture (issue #941): a ~650 KB prelude and a multi-MB
+        // capture snapshot. /ppr-large settles with no holes (postponed null);
+        // /ppr-large/holes adds a live loader under an inline <Suspense>.
+        layout(PprLargeLayout, () => [
+          path("/ppr-large", PprLargePage, {
+            name: "pprLarge",
+            ppr: { ttl: 300, swr: 120 },
+          }),
+          path(
+            "/ppr-large/holes",
+            PprLargeHolesPage,
+            { name: "pprLargeHoles", ppr: { ttl: 300, swr: 120 } },
+            () => [loader(PprLargeHoleLoader)],
+          ),
+        ]),
         layout(PprDriftLayout, () => [
           path(
             "/ppr-drift",

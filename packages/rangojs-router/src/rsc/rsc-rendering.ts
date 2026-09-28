@@ -59,7 +59,8 @@ import {
   shellSearchSeed,
   isValidShellHit,
   hasIntactShellPayload,
-  base64ToBytes,
+  openShellDocument,
+  SHELL_PRELUDE_CHUNK_BYTES,
   hasShellFamily,
   warnShellStoreMissingOnce,
   warnPprNonceActiveOnce,
@@ -67,6 +68,7 @@ import {
   publishShellTailTiming,
   takeShellTailTimingForServerTiming,
   type ResolvedPprConfig,
+  type ShellDocument,
   type ShellTailTiming,
 } from "./shell-serve.js";
 import {
@@ -92,7 +94,6 @@ import { reportCacheError } from "../cache/cache-error.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type {
-  DocumentShellCacheEntry,
   SegmentCacheStore,
   ShellCacheEntry,
   ShellSnapshotRecord,
@@ -533,7 +534,8 @@ function* shellServePlan<TEnv>(
     !cached.entry.navigationOnly &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
-    if (!hasIntactShellPayload(cached.entry)) {
+    const document = openShellDocument(cached.entry);
+    if (!document) {
       // Corrupt stored payload (undecodable prelude / unparseable
       // postponed): a store-layer fault worth a diagnostic, unlike the
       // silent version-mismatch lifecycle misses above. Degrade to MISS
@@ -562,7 +564,6 @@ function* shellServePlan<TEnv>(
           ),
         );
       }
-      const entry = cached.entry;
       const response = yield* step("shell-hit", () =>
         serveShellHit(
           ctx,
@@ -572,7 +573,7 @@ function* shellServePlan<TEnv>(
           reqCtx,
           handleStore,
           ssrModule,
-          entry,
+          document,
           descriptor,
         ),
       );
@@ -582,10 +583,12 @@ function* shellServePlan<TEnv>(
 
   // Build-time shell read-through (producer B, #699): on a runtime
   // store MISS a Prerender+ppr route serves its `vite build`-baked
-  // shell through the SAME serve path. lookupBuildShell owns every
-  // gate and fails to null (ordinary MISS path takes over); past
-  // ppr.ttl the baked entry still serves while SWR recaptures — the
-  // upgrade path from build entry to runtime entry.
+  // shell through the SAME serve path. lookupBuildShell owns the
+  // validity gates and fails to null; openShellDocument below is the
+  // prelude's integrity check and only decode (either failing leaves
+  // the ordinary MISS path); past ppr.ttl the baked entry still serves
+  // while SWR recaptures — the upgrade path from build entry to runtime
+  // entry.
   const buildHit = yield* step("build-shell-lookup", () =>
     lookupBuildShell(
       url,
@@ -599,7 +602,10 @@ function* shellServePlan<TEnv>(
       reqCtx._searchParamsFilter,
     ),
   );
-  if (buildHit) {
+  // The document serve decodes the baked prelude once here; an undecodable
+  // one is a MISS like a corrupt runtime entry.
+  const buildDocument = buildHit ? openShellDocument(buildHit.entry) : null;
+  if (buildHit && buildDocument) {
     // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
     if (buildHit.stale) {
       yield* handoff("shell-recapture", () =>
@@ -623,7 +629,7 @@ function* shellServePlan<TEnv>(
         reqCtx,
         handleStore,
         ssrModule,
-        buildHit.entry,
+        buildDocument,
         descriptor,
       ),
     );
@@ -1398,10 +1404,10 @@ function serveShellHit(
   reqCtx: RequestContext<any>,
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
   ssrModule: SSRModule,
-  entry: DocumentShellCacheEntry,
+  document: ShellDocument,
   descriptor: ShellCaptureDescriptor,
 ): Response {
-  const preludeBytes = base64ToBytes(entry.prelude);
+  const { entry, prelude: preludeBytes } = document;
   // Per-stage tail timing for the dev `ppr:tail` Server-Timing mirror. Dev
   // only (NODE_ENV folds the branch away in production builds); offsets are
   // relative to this commit point.
@@ -1575,7 +1581,18 @@ function serveShellHit(
   const serveStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      controller.enqueue(preludeBytes);
+      // Fixed-size chunks (SHELL_PRELUDE_CHUNK_BYTES): a compressor in front
+      // of the worker emits after each chunk instead of after the whole
+      // prelude. slice() gives every chunk its own buffer.
+      for (
+        let offset = 0;
+        offset < preludeBytes.length;
+        offset += SHELL_PRELUDE_CHUNK_BYTES
+      ) {
+        controller.enqueue(
+          preludeBytes.slice(offset, offset + SHELL_PRELUDE_CHUNK_BYTES),
+        );
+      }
       if (INTERNAL_RANGO_DEBUG) {
         console.log(
           `[Server][ppr] shell HIT: prelude enqueued (${preludeBytes.length}b) +${Math.round(performance.now() - serveStart)}ms`,

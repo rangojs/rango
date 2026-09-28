@@ -385,6 +385,7 @@ export const NamedRoutes = {
   shellCacheFlightError: "/shell-cache/flight-error",
   shellCacheFlightErrorStatus: "/shell-cache/flight-error-status",
   shellCacheGuard: "/shell-cache/guard",
+  shellCacheLarge: "/shell-cache/large",
   shellCacheLayoutLoader: "/shell-cache/layout-loader",
   shellCacheLayoutLoaderBare: "/shell-cache/layout-loader-bare",
   shellCacheNoHole: "/shell-cache/no-hole",

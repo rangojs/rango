@@ -25,6 +25,7 @@ import {
   makeShellStaleReplayData,
   getDriftStamp,
   getCapStamp,
+  getShellLargeCatalog,
   outlinedRenderCounter,
   ShellBakeSlowLoader,
   ShellBakeHoleLoader,
@@ -257,6 +258,33 @@ function ShellDriftLayout(ctx: HandlerContext) {
 
 function ShellDriftPricePage() {
   return <ShellCachePrice loader={ShellPriceLoader} />;
+}
+
+// Large-shell fixture page (issue #941): a cached catalog rendered into a
+// prelude that spans several enqueue chunks, plus a live price hole under an
+// inline <Suspense> so the HIT resumes behind the chunked prelude.
+async function ShellLargePage() {
+  const items = await getShellLargeCatalog("large");
+  return (
+    <main data-testid="shell-large-page">
+      <ul>
+        {items.map((item) => (
+          <li key={item.id} data-item={item.id}>
+            <h2>{item.name}</h2>
+            <p>{item.description}</p>
+          </li>
+        ))}
+      </ul>
+      <p data-testid="shell-large-end">end of catalog</p>
+      <Suspense
+        fallback={
+          <div data-testid="shell-large-fallback">Loading price...</div>
+        }
+      >
+        <ShellCachePrice loader={ShellPriceLoader} />
+      </Suspense>
+    </main>
+  );
 }
 
 // Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
@@ -645,6 +673,14 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
+    // Large-shell route (issue #941): a prelude over several 32 KB enqueue
+    // chunks with a live hole resumed behind it.
+    path(
+      "/shell-cache/large",
+      ShellLargePage,
+      { name: "shellCacheLarge", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPriceLoader)],
+    ),
     // Snapshot SIZE-CAP route (issue #651): maxSnapshotBytes far below any real
     // snapshot → every capture skips the snapshot (over cap, stored WITHOUT it)
     // but the shell must still store and the HIT lane must serve + hydrate

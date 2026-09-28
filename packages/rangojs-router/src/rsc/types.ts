@@ -228,6 +228,13 @@ export interface SSRModule {
       origin?: string;
       /** Each component error the prerender reports (never the capture's own abort). */
       onError?: (error: unknown) => void;
+      /**
+       * React's errorInfo for each task still pending at the capture's abort
+       * (its componentStack is computed when read).
+       */
+      onAbortedTask?: (
+        errorInfo: { componentStack?: string } | undefined,
+      ) => void;
     },
   ) => Promise<{ prelude: Uint8Array; postponed: string | null } | null>;
 

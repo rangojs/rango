@@ -81,16 +81,16 @@ function loadManifest(): Promise<ShellManifestModule | null> {
 }
 
 /**
- * Per-spec verdict memo for the version + integrity gates. A manifest record
+ * Per-spec verdict memo for the version + structural gates. A manifest record
  * is immutable for the process lifetime (content-hashed asset module), so its
- * gate verdict is constant — without this, EVERY request to a baked ppr route
- * re-decodes the full prelude base64 (hasIntactShellPayload) on the hot path:
- * a fresh build hit never populates the runtime store, so the store MISS +
- * read-through is the steady state, not a warm-up. Only the per-request
- * gates (tag markers, staleness) stay outside the memo. `null` memoizes a
- * failed verdict — deterministically invalid, don't re-pay the decode.
- * Spec-only keying is sound because buildVersion is process-constant on the
- * manifest path (folded into the shipped worker; dev never loads a manifest).
+ * gate verdict is constant: a fresh build hit never populates the runtime
+ * store, so the store MISS + read-through is the steady state, not a warm-up.
+ * Only the per-request gates (tag markers, staleness) stay outside the memo;
+ * the document HIT decodes the prelude once per serve (openShellDocument),
+ * partial replay never does. `null` memoizes a failed verdict —
+ * deterministically invalid. Spec-only keying is sound because buildVersion is
+ * process-constant on the manifest path (folded into the shipped worker; dev
+ * never loads a manifest).
  */
 const validatedSpecs = new Map<string, ValidatedBuildShellEntry | null>();
 

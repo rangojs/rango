@@ -448,6 +448,15 @@ Holes are **render-defined**, decided by the shape of the tree, on three rules:
 | **PHYSICS**    | any promise NESTED in handed-over data still pending at capture, under the consumer's own `<Suspense>` — handler props, handle containers (`push({ x: promise })`), loader-carried     | real I/O cannot win the task-quantized quiet window; the boundary postpones                 | the promise settles and streams in |
 | **SHELL**      | awaited handler data, TOP-LEVEL `push(promise)` (awaited before SSR), resolved promises, replayed `cache()` segments, the settled non-promise data of BAKE-lane (`ssr: false`) loaders | baked into the prelude                                                                      | served from the frozen prelude     |
 
+**Not in the table: an async server component the handler renders without
+awaiting its data, with no `<Suspense>` above it.** The capture does not wait
+for it; it bakes only if its data arrives inside the capture's quiet window.
+A slower read (a cold edge cache read) pins the root and the capture ends
+no-shell. Await the data in the handler (SHELL) or wrap the component in
+`<Suspense>` (a PHYSICS hole). The no-shell warning names this case, and in
+dev it prints the component stacks still pending when the capture froze the
+shell.
+
 ONE rule for promises, every lane — handlers, handles, AND loaders: **a promise
 nested inside your data is never baked; the container settles.** A
 `loader(Def, { ssr: false })` is the BAKE lane (see the lane rule below): its

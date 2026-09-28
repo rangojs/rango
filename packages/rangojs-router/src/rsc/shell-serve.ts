@@ -20,6 +20,7 @@ import React from "react";
 import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
+import { base64ToBytes } from "../cache/cf/cf-base64.js";
 import type {
   DocumentShellCacheEntry,
   ShellCacheEntry,
@@ -167,16 +168,11 @@ export function isValidShellHit(
 }
 
 /**
- * DOCUMENT-half integrity gate and type narrowing, run BEFORE the HIT response
- * commits: a stored entry whose prelude is not decodable base64 or whose
- * postponed blob is not parseable JSON would otherwise throw AFTER the 200 +
- * full static prelude flushed (`serveShellHit` decodes at stream construction,
- * `resumeShellHTML` parses in the tail) — the client gets a visually complete
- * page that never hydrates, re-served on every request until the entry ages
- * out (no eviction path exists; failure schedules no recapture by itself).
- * Checking here turns a corrupt entry (store-layer fault) into a plain MISS
- * the recapture overwrites. Cost: one duplicate decode/parse per HIT, sub-ms
- * against a prelude flush that dominates the path.
+ * DOCUMENT-half structural gate and type narrowing, without decoding the
+ * prelude: the prelude is a string and the postponed blob parses. Partial
+ * replay (which never serves the prelude) and the build-manifest read-through
+ * use it as-is; the document HIT path runs it inside
+ * {@link openShellDocument}, whose single decode is the prelude's check.
  *
  * navigationOnly entries store no document half (prelude/postponed absent) and
  * therefore never pass. The partial-replay path skips this gate for them
@@ -191,7 +187,6 @@ export function hasIntactShellPayload(
     return false;
   }
   try {
-    base64ToBytes(entry.prelude);
     if (entry.postponed !== null) JSON.parse(entry.postponed);
     return true;
   } catch {
@@ -199,13 +194,43 @@ export function hasIntactShellPayload(
   }
 }
 
-/** Decode a base64 prelude back into bytes for stream composition. */
-export function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+/** A document shell ready to serve: its prelude decoded exactly once. */
+export interface ShellDocument {
+  entry: DocumentShellCacheEntry;
+  prelude: Uint8Array;
 }
+
+/**
+ * Pre-commit integrity gate for a document HIT, and its only prelude decode.
+ * A stored entry whose prelude is not decodable base64 or whose postponed blob
+ * is not parseable JSON would otherwise throw AFTER the 200 + full static
+ * prelude flushed (`resumeShellHTML` parses in the tail) — the client gets a
+ * visually complete page that never hydrates, re-served on every request
+ * until the entry ages out. Returning null here turns a corrupt entry
+ * (store-layer fault) into a plain MISS the recapture overwrites. The decoded
+ * bytes are what serveShellHit enqueues, so the check costs no second decode.
+ */
+export function openShellDocument(
+  entry: ShellCacheEntry,
+): ShellDocument | null {
+  if (!hasIntactShellPayload(entry)) return null;
+  try {
+    return { entry, prelude: base64ToBytes(entry.prelude) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prelude enqueue granularity. A streaming compressor in front of the worker
+ * emits its first byte only after compressing the whole write it was handed:
+ * one 629 KB enqueue delayed the first compressed byte by the full prelude's
+ * compression time (brotli-6 5.1 ms, gzip-6 1.1 ms in Node zlib with a flush
+ * per write; workerd's CompressionStream emits nothing until the whole write is
+ * compressed), while 32 KB chunks emit within 0.1 ms and cost slightly more
+ * in total compression (0.55-0.70 ms) than one write (issue #941).
+ */
+export const SHELL_PRELUDE_CHUNK_BYTES: number = 32 * 1024;
 
 /** True when the store implements the shell entry family. */
 export function hasShellFamily(

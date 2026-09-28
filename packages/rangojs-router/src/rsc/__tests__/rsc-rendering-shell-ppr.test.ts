@@ -34,6 +34,7 @@ import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { installNativeBase64 } from "../../cache/cf/__tests__/native-base64.js";
 import type { CachedEntryData, ShellCacheEntry } from "../../cache/types.js";
 import {
   createRequestContext,
@@ -466,7 +467,147 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
   });
 });
 
+/**
+ * Calls to the base64 decoders whose input is `b64`: atob (the loop path) and
+ * Uint8Array.fromBase64 (the native path, installed here when `native` is
+ * set). cf-base64 looks the native method up per call, so the spy sees every
+ * native decode. `restore` must run in a `finally`: a spy a failed test leaves
+ * on atob leaks into the next test's count.
+ */
+function spyPreludeDecodes(
+  b64: string,
+  native: boolean,
+): { count: () => number; native: () => number; restore: () => void } {
+  const restoreNative = native ? installNativeBase64() : () => {};
+  const atobSpy = vi.spyOn(globalThis, "atob");
+  const hasNative =
+    typeof (Uint8Array as { fromBase64?: unknown }).fromBase64 === "function";
+  const nativeSpy = hasNative
+    ? vi.spyOn(Uint8Array as any, "fromBase64")
+    : undefined;
+  return {
+    count: () =>
+      atobSpy.mock.calls.filter(([s]) => s === b64).length +
+      (nativeSpy?.mock.calls.filter(([s]) => s === b64).length ?? 0),
+    native: () => nativeSpy?.mock.calls.filter(([s]) => s === b64).length ?? 0,
+    restore: () => {
+      atobSpy.mockRestore();
+      nativeSpy?.mockRestore();
+      restoreNative();
+    },
+  };
+}
+
+/** A prelude of exactly `size` ASCII bytes, as stored (base64). */
+function asciiPreludeBase64(size: number): string {
+  return btoa("a".repeat(size));
+}
+
 describe("handleRscRendering — integrated PPR serve: HIT", () => {
+  // Issue #941: the integrity gate decoded the whole base64 prelude to validate
+  // it and serveShellHit decoded it again, so a HIT paid two full decodes of a
+  // multi-hundred-KB prelude before its first byte.
+  for (const native of [false, true]) {
+    it(`decodes the stored prelude once per HIT (${native ? "native fromBase64" : "atob loop"})`, async () => {
+      const store = new MemorySegmentCacheStore();
+      const entry = shellEntry();
+      await store.putShell(KEY, entry, 300, 30);
+      const decodes = spyPreludeDecodes(entry.prelude!, native);
+      try {
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store,
+        });
+        expect(response.headers.get("x-rango-shell")).toBe("HIT");
+        expect(await readAll(response.body!)).toBe(
+          `${PRELUDE_HTML}RESUMED-HOLE`,
+        );
+        expect(decodes.count()).toBe(1);
+        // With the native method present, the one decode is the native one.
+        if (native) expect(decodes.native()).toBe(1);
+      } finally {
+        decodes.restore();
+      }
+    });
+  }
+
+  // The chunk loop's edges: no empty chunk for an empty prelude, no short
+  // trailing chunk for an exact multiple, a short last chunk for a remainder.
+  for (const size of [0, 2 * 32 * 1024, 2 * 32 * 1024 + 5]) {
+    it(`enqueues a ${size}-byte prelude as ${Math.ceil(size / (32 * 1024))} chunk(s)`, async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(
+        KEY,
+        shellEntry({ prelude: asciiPreludeBase64(size) }),
+        300,
+        30,
+      );
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      const reader = response.body!.getReader();
+      const sizes: number[] = [];
+      let received = 0;
+      while (received < size) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        sizes.push(value.length);
+        received += value.length;
+      }
+      reader.releaseLock();
+      const full = 32 * 1024;
+      const expected = Array.from({ length: Math.ceil(size / full) }, (_, i) =>
+        Math.min(full, size - i * full),
+      );
+      expect(sizes).toEqual(expected);
+      expect(await readAll(response.body!)).toBe("RESUMED-HOLE");
+    });
+  }
+
+  // Issue #941: one multi-hundred-KB enqueue makes a streaming compressor
+  // finish the whole prelude before its first output byte. Fixed-size chunks
+  // let the first compressed bytes leave after one chunk.
+  it("enqueues a large prelude in fixed-size chunks, byte-identical", async () => {
+    const big = `<html><body>${"<p>shell</p>".repeat(9000)}</body></html>`;
+    const bytes = new TextEncoder().encode(big);
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ prelude: btoa(binary) }), 300, 30);
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: true,
+      store,
+    });
+    const reader = response.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    while (received < bytes.length) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+    }
+    reader.releaseLock();
+
+    expect(chunks.length).toBe(Math.ceil(bytes.length / (32 * 1024)));
+    for (const chunk of chunks)
+      expect(chunk.length).toBeLessThanOrEqual(32 * 1024);
+    const joined = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    expect(new TextDecoder().decode(joined)).toBe(big);
+    expect(await readAll(response.body!)).toBe("RESUMED-HOLE");
+  });
+
   it("commits the composed response: prelude bytes FIRST, resumed tail behind, x-rango-shell: HIT", async () => {
     const store = new MemorySegmentCacheStore();
     await store.putShell(KEY, shellEntry(), 300, 30);
@@ -1196,6 +1337,65 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
+  // Replay never serves the prelude, so an undecodable one does not decline
+  // it; the document path rejects that entry (MISS + recapture), which
+  // rewrites the snapshot too.
+  it("replays the snapshot of a document entry whose prelude does not decode", async () => {
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      shell: shellEntry({
+        prelude: "%%%",
+        snapshot: [segmentRecord],
+        docKey: DOC_KEY,
+      }),
+      matchPartial: async () => {
+        const active = getRequestContext();
+        if ((await active._shellImplicitCache?.store?.get(DOC_KEY)) !== null) {
+          active._shellImplicitCache?.onHit?.();
+        }
+        return emptyMatchResult();
+      },
+    });
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+    expect(scheduleMock).not.toHaveBeenCalled();
+  });
+
+  // Issue #941: partial replay consumes only the snapshot, yet its gate
+  // decoded the document entry's whole prelude on every navigation.
+  for (const native of [false, true]) {
+    it(`replays a document snapshot without decoding its prelude (${native ? "native fromBase64" : "atob loop"})`, async () => {
+      const entry = shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY });
+      const decodes = spyPreludeDecodes(entry.prelude!, native);
+      try {
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          partial: true,
+          ppr: true,
+          shell: entry,
+          matchPartial: async () => {
+            const active = getRequestContext();
+            if (
+              (await active._shellImplicitCache?.store?.get(DOC_KEY)) !== null
+            ) {
+              active._shellImplicitCache?.onHit?.();
+            }
+            return emptyMatchResult();
+          },
+        });
+        expect(response.headers.get("x-rango-ppr-replay")).toBe(
+          "HIT; freshness=fresh",
+        );
+        expect(decodes.count()).toBe(0);
+      } finally {
+        decodes.restore();
+      }
+    });
+  }
+
   it("seeds the captured document segments while item reads and loaders stay live", async () => {
     const store = new MemorySegmentCacheStore();
     await store.setItem("loader-item", "LIVE", { ttl: 60 });
@@ -1748,7 +1948,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       { buildVersion: "other-build" },
       "invalid-version",
     ],
-    ["a corrupt prelude", { prelude: "%%%" }, "corrupt-entry"],
+    ["an unparseable postponed blob", { postponed: "{" }, "corrupt-entry"],
   ] as const)(
     "heals %s with a navigation capture",
     async (_label, overrides, reason) =>

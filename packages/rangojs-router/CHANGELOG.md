@@ -18,6 +18,18 @@
   deploy. The next build, with the file up to date, captured them. That
   server no longer watches files
   ([#951](https://github.com/rangojs/rango/pull/951)).
+- A PPR shell HIT decodes its stored prelude once instead of twice, with the
+  runtime's native `Uint8Array.fromBase64` where it exists (workerd: 0.05 ms
+  instead of 0.75 ms per decode of a 614 KB prelude), and enqueues it in 32 KB
+  chunks instead of one write. A streaming compressor handed one write
+  compresses all of it before its first output byte; with 32 KB chunks, Node's
+  zlib and workerd's `CompressionStream` emit their first bytes after one
+  chunk (measured locally; Cloudflare's edge compressor was not measured).
+  Partial navigation replay no longer decodes the document prelude it never
+  serves. The no-shell warning names an async server component rendered
+  without awaiting its data as a cause, and in dev it prints the component
+  stacks still pending when the capture froze the shell
+  ([#952](https://github.com/rangojs/rango/pull/952)).
 
 ## 0.17.0 (2026-09-28)
 

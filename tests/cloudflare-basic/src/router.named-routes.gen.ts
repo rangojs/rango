@@ -76,6 +76,8 @@ export const NamedRoutes = {
   pprHeaderGuardDynamic: "/ppr-header-guard/dynamic",
   pprHeaderGuardHandler: "/ppr-header-guard",
   pprHeaderGuardLoader: "/ppr-header-guard/loader",
+  pprLarge: "/ppr-large",
+  pprLargeHoles: "/ppr-large/holes",
   pprMwLive: "/ppr-mw-live",
   pprNonce: "/ppr-nonce",
   pprRestock: "/ppr-restock",

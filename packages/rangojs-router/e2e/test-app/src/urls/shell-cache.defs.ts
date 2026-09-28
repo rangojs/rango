@@ -1,6 +1,30 @@
 import { createLoader, createHandle } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 
+// Large-shell fixture (issue #941): a cached catalog whose rendering spans
+// several prelude chunks (SHELL_PRELUDE_CHUNK_BYTES, 32 KB). Deterministic, so
+// every capture of the route produces the same bytes.
+export interface ShellLargeItem {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function getShellLargeCatalog(
+  slug: string,
+): Promise<ShellLargeItem[]> {
+  "use cache";
+  const items: ShellLargeItem[] = [];
+  for (let i = 0; i < 240; i++) {
+    items.push({
+      id: `item-${i}`,
+      name: `${slug} item ${i}`,
+      description: `Item ${i} of the large shell fixture. `.repeat(12),
+    });
+  }
+  return items;
+}
+
 // Capture-data-snapshot DRIFT fixture (docs/design/ppr-shell-resume.md). A cached
 // value baked into the PPR shell (above loading(), so it is prelude material) via
 // the "drift" profile — ttl 1s, swr 0, so the underlying entry is fully GONE one
