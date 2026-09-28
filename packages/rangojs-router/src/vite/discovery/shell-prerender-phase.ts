@@ -64,6 +64,14 @@ export async function runShellPrerenderPhase(
   const startTotal = performance.now();
   console.log(`[rango] Shell-prerendering ${candidates.length} URL(s)...`);
 
+  // Hold the process open for the phase. The capture's waits are unref'd
+  // timers (retry delay, Flight quiesce hops) so a runtime capture never keeps
+  // Node alive; every bundle is already written and the build temp server has
+  // no file watcher (#947). Its only remaining handle is the HMR WebSocket on
+  // 24678, which fails to bind silently when another Vite server holds the
+  // port; `vite build` then exited 0 mid-phase without writing
+  // __shell-manifest.js.
+  const keepAlive = setInterval(() => {}, 60_000);
   let restoreClientRequire: (() => void) | undefined;
   try {
     // Runner access needs the RunnableDevEnvironment surface; the environments
@@ -343,6 +351,7 @@ export async function runShellPrerenderPhase(
     // buildApp post hook's finally on success, buildEnd on an aborted build.
     delete (globalThis as any).__loadPrerenderManifestModule;
     restoreClientRequire?.();
+    clearInterval(keepAlive);
   }
 }
 
