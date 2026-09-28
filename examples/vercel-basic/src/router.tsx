@@ -38,7 +38,7 @@ const memoryStore = new MemorySegmentCacheStore({ defaults });
 
 let e2eRuntimeCache: VercelRuntimeCache | undefined;
 // One handle per process: getCache() resolves the platform cache per call, and
-// VercelCacheStore keeps its PPR shell memo per handle.
+// VercelCacheStore keeps its PPR shell and tag-marker memos per handle.
 let vercelRuntimeCache: VercelRuntimeCache | undefined;
 
 function getE2eRuntimeCache(): VercelRuntimeCache {

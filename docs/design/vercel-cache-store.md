@@ -53,9 +53,11 @@ the entry, only rango's `tm` tag markers, and those are a regional
 `cache.set`. A region that memoized a shell before an invalidation issued in
 another region finds no marker and serves the shell until its window passes;
 without the memo, `expireTag` removed it within about 300 ms. In the region
-that invalidated, the next request misses. A platform `expireTag` issued
-outside rango (not through `invalidateTags`) writes no `tm` marker at all, so
-every memo that holds the shell serves it until its window passes. The shell
+that invalidated, the invalidating process misses on its next request, and
+the region's other processes once their memoized marker refreshes (below). A
+platform `expireTag` issued outside rango (not through `invalidateTags`)
+writes no `tm` marker at all, so every memo that holds the shell serves it
+until its window passes. The shell
 reads' marker checks go through a per-process marker memo (300 ms fresh, 2 s
 max-stale), and the user whose request ran `updateTag()` /
 `revalidateTag()` carries the fresh-reads cookie, which skips both memos
@@ -236,7 +238,7 @@ import { getCache, waitUntil } from "@vercel/functions";
 // Bake the deployment id into the namespace so a deploy cannot serve
 // stale-shaped entries (Vercel does not reconcile across deploys). One handle
 // per process: getCache() resolves the platform cache on every call, and the
-// store keeps its PPR shell memo per handle.
+// store keeps its PPR shell and tag-marker memos per handle.
 const runtimeCache = getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID });
 
 export const router = createRouter({
@@ -270,7 +272,8 @@ On Vercel there is no per-request `env`/`ctx` argument — bindings are
 Pass `debug: true` to log each read outcome, or `debug: (event) => …` to capture
 the structured `VercelCacheReadDebugEvent` (`op`, `key`, `outcome`,
 `staleAt`/`expiresAt`, `shouldRevalidate`, `readMs`). Outcomes are
-`miss | fresh | stale-revalidate | expired | corrupt | error`. Write failures,
+`miss | memo-hit | fresh | stale-revalidate | expired | corrupt | error`
+(`memo-hit`: a `getShell` served from the shell memo). Write failures,
 oversized skips, dropped tags, and corrupt-entry evictions all route through
 `reportCacheError`, so they reach the router's `onError` as well as the console.
 

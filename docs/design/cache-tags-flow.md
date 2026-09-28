@@ -82,8 +82,10 @@ flowchart TD
 - In **purge mode** (`tagPurge` configured) an ordinary L1 data hit consults
   only the per-request memo — eviction is the purge's job; see "Purge mode"
   below. KV reads always run the full cascade; PPR shell reads do too while KV
-  is bound (KV-less, shells adopt the purge-trust read like the data
-  families).
+  is bound, with a per-isolate stale-while-revalidate marker memo in front of
+  it (`memo.markerFreshMs` / `markerMaxStaleMs`; shell reads only, see
+  "Tag-marker read latency" below). KV-less, shells adopt the purge-trust read
+  like the data families.
 
 ---
 
@@ -301,3 +303,13 @@ work for a sub-3 ms warm-path win it mostly cannot deliver.
 `match + marker + body` — worth the critical-path churn only if `bodyReadMs` on
 tagged hits is large enough to be worth overlapping. The in-isolate Map is not on
 this list.
+
+**PPR shell reads are the exception** (issue #941,
+`docs/design/shell-entry-layout.md` "The tag-marker memo"). A shell HIT waits on
+its markers before its first byte, and once the shell memo removed the store
+read, the marker read was all of a tagged memo hit's first byte. So shell reads
+run the marker read in parallel with the prelude read, start it from tag-name
+hints before the match resolves, and read markers through a per-isolate memo
+(`TagMarkerMemo`: stale-while-revalidate, write-through from `invalidateTags`,
+never moving a marker back, LRU-bounded), with the fresh-reads cookie keeping
+the mutating user's reads correct. The data families keep the cascade above.
