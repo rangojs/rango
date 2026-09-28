@@ -81,6 +81,7 @@ import {
   isShellFresh,
   resolveShellMemoOptions,
   shellHasAnyTag,
+  type ResolvedShellMemoOptions,
 } from "../shell-memo.js";
 import {
   KV_KEY_PRESERVED_PREFIX_BYTES,
@@ -338,6 +339,18 @@ const cfTagHints = new TagNameHints();
 /** Tags this isolate invalidated recently: they keep shells out of cfShellMemo. */
 const recentShellInvalidations = new RecentTagInvalidations();
 
+/**
+ * Whether cfShellMemo may keep or serve this shell: still fresh (a stale one
+ * stays with the store read, which schedules the recapture), and not tagged
+ * at or before an invalidation this isolate is running or just ran.
+ */
+function isMemoizableShell(head: ShellFrameHead): boolean {
+  return (
+    isShellFresh(head.s, head.e) &&
+    !recentShellInvalidations.covers(head.t, head.ta)
+  );
+}
+
 /** @internal Reset the per-isolate shell and marker memos (tests). */
 export function resetCFShellMemoForTests(): void {
   cfShellMemo.clear();
@@ -359,18 +372,11 @@ type OpenedShellFrame =
   | { status: "timeout"; head?: undefined }
   | { status: "invalidated"; head?: undefined };
 
-/** debugTimings for a read without stats (nothing allocated per read). */
-const NO_DEBUG_TIMINGS: Readonly<
-  Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs">
-> = Object.freeze({});
-
 /** The `[CFCacheStore][shell]` trace's timings, from a read's stats. */
 function debugTimings(
   stats: ShellReadStats | undefined,
-): Readonly<
-  Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs">
-> {
-  if (!stats) return NO_DEBUG_TIMINGS;
+): Pick<CFShellDebugDetails, "matchMs" | "readMs" | "bodyReadMs" | "markerMs"> {
+  if (!stats) return {};
   if (stats.tier === "memo")
     return { markerMs: Math.round(stats.markerMs ?? 0) };
   const round = (ms: number | undefined) =>
@@ -478,10 +484,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
-  private readonly shellMemoMs: number;
-  private readonly shellMemoMaxBytes: number;
-  private readonly markerFreshMs: number;
-  private readonly markerMaxStaleMs: number;
+  private readonly memo: ResolvedShellMemoOptions;
   /** @internal SegmentCacheStore.freshReadsWindowMs */
   readonly freshReadsWindowMs: number;
   private readonly debug?: (event: CFCacheReadDebugEvent) => void;
@@ -534,16 +537,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       options.kvReadTimeoutMs,
       KV_READ_TIMEOUT_MS,
     );
-    const memo = resolveShellMemoOptions(options.memo, {
+    this.memo = resolveShellMemoOptions(options.memo, {
       markerFreshMs: DEFAULT_CF_MARKER_FRESH_MS,
       markerMaxStaleMs: DEFAULT_CF_MARKER_MAX_STALE_MS,
     });
-    this.shellMemoMs = memo.shellMs;
-    this.shellMemoMaxBytes = memo.shellMaxBytes;
-    this.markerFreshMs = memo.markerFreshMs;
-    this.markerMaxStaleMs = memo.markerMaxStaleMs;
     // Without KV there are no markers, so no marker memo to outwait.
-    this.freshReadsWindowMs = freshReadsWindowMs(memo, Boolean(options.kv));
+    this.freshReadsWindowMs = freshReadsWindowMs(
+      this.memo,
+      Boolean(options.kv),
+    );
     this.debug =
       options.debug === true
         ? (event) =>
@@ -670,11 +672,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
   }
 
-  /** Build-time-gated shell tier trace for deployed cross-colo diagnostics. */
+  /**
+   * Build-time-gated shell tier trace for deployed cross-colo diagnostics.
+   * A read's `stats` print as its timings, after the other details and before
+   * `expiresAt`.
+   */
   private debugShell(
     key: string,
     outcome: CFShellDebugOutcome,
-    details: CFShellDebugDetails = {},
+    details: CFShellDebugDetails & { stats?: ShellReadStats } = {},
   ): void {
     if (!INTERNAL_RANGO_DEBUG) return;
     const request = _getRequestContext()?.request as
@@ -688,6 +694,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         : ray?.includes("-")
           ? ray.slice(ray.lastIndexOf("-") + 1)
           : undefined;
+    const { stats, expiresAt, ...rest } = details;
     console.log(
       `[CFCacheStore][shell] ${JSON.stringify({
         key,
@@ -695,7 +702,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         at: Date.now(),
         ray,
         colo,
-        ...details,
+        ...rest,
+        ...debugTimings(stats),
+        expiresAt,
       })}`,
     );
   }
@@ -2065,13 +2074,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const freshReads = freshReadsRequired(ctx);
     const memoized = freshReads
       ? undefined
-      : cfShellMemo.get(memoKey, this.shellMemoMs);
+      : cfShellMemo.get(memoKey, this.memo.shellMs);
     if (memoized) return this.readMemoizedShell(key, memoKey, memoized);
     const stats = this.shellReadStats("l1");
     const l1StartedAt = stats ? performance.now() : 0;
     if (stats && freshReads) stats.freshReads = true;
     this.prefetchShellMarkers(memoKey, options?.tagHints, stats);
-    if (stats && this.shellMemoMs > 0) {
+    if (stats && this.memo.shellMs > 0) {
       stats.memo = { hit: false, bytes: cfShellMemo.size };
     }
     try {
@@ -2094,14 +2103,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           );
         }
         const reason = matchError ? "error" : timedOut ? "timeout" : "absent";
-        this.debugShell(key, "l1-miss", { reason, ...debugTimings(stats) });
+        this.debugShell(key, "l1-miss", { reason, stats });
         return this.kvReadShellDocument(key, stats, l1StartedAt, reason);
       }
       if (response.status !== 200 || !response.body) {
         this.debugShell(key, "l1-miss", {
           reason: "non-200",
           status: response.status,
-          ...debugTimings(stats),
+          stats,
         });
         return this.kvReadShellDocument(key, stats, l1StartedAt, "non-200");
       }
@@ -2126,7 +2135,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (opened.status === "corrupt") {
         this.debugShell(key, "l1-miss", {
           reason: "malformed",
-          ...debugTimings(stats),
+          stats,
         });
         return this.healCorruptL1(
           cache,
@@ -2139,7 +2148,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (opened.status === "timeout" || opened.status === "expired") {
         this.debugShell(key, "l1-miss", {
           reason: opened.status,
-          ...debugTimings(stats),
+          stats,
           expiresAt: opened.head?.e,
         });
         return this.kvReadShellDocument(key, stats, l1StartedAt, opened.status);
@@ -2147,7 +2156,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "l1",
-          ...debugTimings(stats),
+          stats,
         });
         return null;
       }
@@ -2155,7 +2164,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (INTERNAL_RANGO_DEBUG) {
         this.debugShell(key, "l1-hit", {
           freshness: read.shouldRevalidate ? "stale" : "fresh",
-          ...debugTimings(stats),
+          stats,
           expiresAt: opened.head.e,
         });
       }
@@ -2238,10 +2247,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     memoized: CFShellMemoValue,
   ): Promise<ShellDocumentRead | null> {
     const { head } = memoized;
-    if (
-      !isShellFresh(head.s, head.e) ||
-      recentShellInvalidations.covers(head.t, head.ta)
-    ) {
+    if (!isMemoizableShell(head)) {
       cfShellMemo.delete(memoKey);
       return this.readShellDocument(key);
     }
@@ -2264,7 +2270,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       cfShellMemo.delete(memoKey);
       this.debugShell(key, "marker-invalidated", {
         tier: "memo",
-        ...debugTimings(stats),
+        stats,
       });
       return null;
     }
@@ -2272,7 +2278,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.recordShellHit(key, head.t, stats);
     this.debugShell(key, "memo-hit", {
       freshness: "fresh",
-      ...debugTimings(stats),
+      stats,
       expiresAt: head.e,
     });
     return {
@@ -2445,10 +2451,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           bytes: rest.length,
         };
       }
-      if (
-        isShellFresh(head.s, head.e) &&
-        !recentShellInvalidations.covers(head.t, head.ta)
-      ) {
+      if (isMemoizableShell(head)) {
         // A view into a larger body chunk would pin that chunk in the memo.
         const ownPrelude =
           prelude.byteLength === prelude.buffer.byteLength
@@ -2458,8 +2461,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           this.shellMemoKey(key),
           { head, prelude: ownPrelude, snapshot: records, headers },
           ownPrelude.length + rest.length,
-          this.shellMemoMs,
-          this.shellMemoMaxBytes,
+          this.memo.shellMs,
+          this.memo.shellMaxBytes,
         );
       }
       promote?.(rest);
@@ -2702,7 +2705,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (timedOut || raw == null) {
         this.debugShell(key, "kv-miss", {
           reason: timedOut ? "timeout" : "unavailable",
-          ...debugTimings(stats),
+          stats,
         });
         return null;
       }
@@ -2730,14 +2733,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         this.scheduleKvEvict(kvKey, "getShell");
         this.debugShell(key, "kv-miss", {
           reason: "malformed",
-          ...debugTimings(stats),
+          stats,
         });
         return null;
       }
       if (opened.status === "timeout" || opened.status === "expired") {
         this.debugShell(key, "kv-miss", {
           reason: opened.status,
-          ...debugTimings(stats),
+          stats,
           expiresAt: opened.head?.e,
         });
         return null;
@@ -2745,7 +2748,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "kv",
-          ...debugTimings(stats),
+          stats,
         });
         return null;
       }
@@ -2765,7 +2768,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       if (INTERNAL_RANGO_DEBUG) {
         this.debugShell(key, "kv-hit", {
           freshness: read.shouldRevalidate ? "stale" : "fresh",
-          ...debugTimings(stats),
+          stats,
           expiresAt: opened.head.e,
         });
       }
@@ -3292,8 +3295,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return { value, memoize: !outcome.timedOut };
       },
       {
-        freshMs: this.markerFreshMs,
-        maxStaleMs: this.markerMaxStaleMs,
+        freshMs: this.memo.markerFreshMs,
+        maxStaleMs: this.memo.markerMaxStaleMs,
         bypass: freshReadsRequired(ctx),
         keepAlive: this.waitUntil
           ? (refresh) => this.waitUntil!(() => refresh)
@@ -3618,7 +3621,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } finally {
       recentShellInvalidations.settle(
         tags,
-        Math.max(this.shellMemoMs, DEFAULT_SHELL_MEMO_MS),
+        Math.max(this.memo.shellMs, DEFAULT_SHELL_MEMO_MS),
       );
     }
   }

@@ -48,9 +48,9 @@ export const DEFAULT_CF_MARKER_MAX_STALE_MS = 10_000;
  */
 export const DEFAULT_VERCEL_MARKER_MAX_STALE_MS = 2000;
 /** Most tags a marker memo holds (least recently used evicted). */
-export const MARKER_MEMO_MAX_ENTRIES = 4096;
+const MARKER_MEMO_MAX_ENTRIES = 4096;
 /** Most shell keys a hint map holds (least recently used evicted). */
-export const TAG_HINTS_MAX_ENTRIES = 2048;
+const TAG_HINTS_MAX_ENTRIES = 2048;
 
 /** How a marker read was answered, for the debugPerformance marker row. */
 export type MarkerMemoOutcome = "fresh" | "stale" | "read" | "bypass";

@@ -2,12 +2,10 @@
 // Tag-marker memo
 // ============================================================================
 //
-// Per-request memoization of tag-invalidation marker reads, plus the prefix and
-// sentinel used by the optional per-colo L1 marker cache. Extracted from
-// cf-cache-store.ts; the WeakMaps stay MODULE SINGLETONS here (the module is
-// evaluated once), so binding-keyed memo semantics are unchanged: the maps are
-// keyed by the request-context object then the store INSTANCE, identical to
-// before the move.
+// CFCacheStore's per-request tag-marker state: the data families' marker memo
+// and in-flight reads, the PPR shell read's own marker record, and the prefix
+// and sentinel of the optional per-colo L1 marker cache. The maps are module
+// singletons keyed by the request-context object, then the store INSTANCE.
 
 import type { MarkerMemoOutcome } from "../isolate-tag-memo.js";
 
@@ -25,6 +23,29 @@ export const TAG_MARKER_CACHE_PREFIX = "__tagmarker__/";
  * never "no marker" - absence is only ever represented by this cached sentinel.
  */
 export const TAG_MARKER_ABSENT = "none";
+
+/** Request context -> store instance -> T, both levels weakly held. */
+type PerRequestStoreMap<T> = WeakMap<object, WeakMap<object, T>>;
+
+/** The value for (ctx, store), created on first use. */
+function perRequestStoreValue<T>(
+  map: PerRequestStoreMap<T>,
+  ctx: object,
+  store: object,
+  create: () => T,
+): T {
+  let byStore = map.get(ctx);
+  if (!byStore) {
+    byStore = new WeakMap();
+    map.set(ctx, byStore);
+  }
+  let value = byStore.get(store);
+  if (value === undefined) {
+    value = create();
+    byStore.set(store, value);
+  }
+  return value;
+}
 
 /**
  * Per-request memo of tag-invalidation markers (tag -> latest invalidatedAt, or
@@ -56,26 +77,14 @@ export const TAG_MARKER_ABSENT = "none";
  * It does NOT span requests, so a hot single-entry route still pays one KV read
  * per request; that read hits Cloudflare KV's own edge read cache for hot keys.
  */
-const tagMarkerMemo = new WeakMap<
-  object,
-  WeakMap<object, Map<string, number | null>>
->();
+const tagMarkerMemo: PerRequestStoreMap<Map<string, number | null>> =
+  new WeakMap();
 
 export function getTagMarkerMemo(
   ctx: object,
   store: object,
 ): Map<string, number | null> {
-  let byStore = tagMarkerMemo.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerMemo.set(ctx, byStore);
-  }
-  let memo = byStore.get(store);
-  if (!memo) {
-    memo = new Map();
-    byStore.set(store, memo);
-  }
-  return memo;
+  return perRequestStoreValue(tagMarkerMemo, ctx, store, () => new Map());
 }
 
 /**
@@ -87,10 +96,9 @@ export function getTagMarkerMemo(
  * collapses those to a single KV read. Entries are dropped once resolved (the
  * value is then in the memo), so this only spans the concurrent read window.
  */
-const tagMarkerInflight = new WeakMap<
-  object,
-  WeakMap<object, Map<string, Promise<number | null>>>
->();
+const tagMarkerInflight: PerRequestStoreMap<
+  Map<string, Promise<number | null>>
+> = new WeakMap();
 
 /**
  * A request's PPR shell-read marker reads (issue #941), kept apart from the
@@ -110,41 +118,21 @@ export interface ShellMarkerReads {
   outcomes: Map<string, MarkerMemoOutcome>;
 }
 
-const shellMarkerReads = new WeakMap<
-  object,
-  WeakMap<object, ShellMarkerReads>
->();
+const shellMarkerReads: PerRequestStoreMap<ShellMarkerReads> = new WeakMap();
 
 export function getShellMarkerReads(
   ctx: object,
   store: object,
 ): ShellMarkerReads {
-  let byStore = shellMarkerReads.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    shellMarkerReads.set(ctx, byStore);
-  }
-  let reads = byStore.get(store);
-  if (!reads) {
-    reads = { reads: new Map(), outcomes: new Map() };
-    byStore.set(store, reads);
-  }
-  return reads;
+  return perRequestStoreValue(shellMarkerReads, ctx, store, () => ({
+    reads: new Map(),
+    outcomes: new Map(),
+  }));
 }
 
 export function getTagMarkerInflight(
   ctx: object,
   store: object,
 ): Map<string, Promise<number | null>> {
-  let byStore = tagMarkerInflight.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    tagMarkerInflight.set(ctx, byStore);
-  }
-  let inflight = byStore.get(store);
-  if (!inflight) {
-    inflight = new Map();
-    byStore.set(store, inflight);
-  }
-  return inflight;
+  return perRequestStoreValue(tagMarkerInflight, ctx, store, () => new Map());
 }
