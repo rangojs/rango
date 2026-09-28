@@ -108,6 +108,52 @@ export const ShellRestockLoader = createLoader(async (ctx) => {
   return { restock: true };
 });
 
+// Issue #927 fixture: a bake-lane value Flight encodes cleanly on its first
+// pass and with an error row on its second. The capture renders one loader
+// run's value (pass 1), then the snapshot re-encodes it (pass 2); the
+// foreground render encodes its own run once. A Map is a leaf to the capture's
+// mask and elide walks, so both passes iterate this instance. Fails once per
+// ?probe=, so a later capture stores. Not a server component: in dev the walks
+// copy elements without their dev fields and the capture crashes (#942).
+const flightErrorProbes = new Set<string>();
+
+/**
+ * Most passes any one ShellFlightErrorLoader value took, per ?probe=. The
+ * capture's value takes 2; any other count means the pass-2 failure no longer
+ * lands on the snapshot encode.
+ */
+export const shellFlightErrorPasses: Map<string, number> = new Map();
+
+class ShellRelatedEntries extends Map<string, unknown> {
+  private passes = 0;
+
+  constructor(private readonly probe: string) {
+    super([["related", "related ok"]]);
+  }
+
+  override *[Symbol.iterator](): MapIterator<[string, unknown]> {
+    this.passes += 1;
+    shellFlightErrorPasses.set(
+      this.probe,
+      Math.max(shellFlightErrorPasses.get(this.probe) ?? 0, this.passes),
+    );
+    if (this.passes === 2 && !flightErrorProbes.has(this.probe)) {
+      flightErrorProbes.add(this.probe);
+      const failed = Promise.reject(
+        new Error(`related upstream down (probe=${this.probe})`),
+      );
+      failed.catch(() => {});
+      yield ["related", failed];
+      return;
+    }
+    yield* super.entries();
+  }
+}
+
+export const ShellFlightErrorLoader = createLoader(async (ctx) => ({
+  entries: new ShellRelatedEntries(ctx.url.searchParams.get("probe") ?? ""),
+}));
+
 // Live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md). ~400ms
 // so the shell prelude clearly beats the hole; seq advances on every request to
 // prove loaders stay fresh while the shell is served from the cached prelude.

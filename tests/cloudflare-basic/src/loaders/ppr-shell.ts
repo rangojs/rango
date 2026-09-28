@@ -224,6 +224,50 @@ export const PprRestockLoader = createLoader(async (ctx) => {
   return { restock: true };
 });
 
+// Issue #927: a bake-lane value Flight encodes cleanly on its first pass and
+// with an error row on its second. The capture renders one loader run's value
+// (pass 1), then the snapshot re-encodes it (pass 2); the foreground render
+// encodes its own run once. A Map is a leaf to the capture's mask and elide
+// walks, so both passes iterate this instance. Fails once per ?run=, so a
+// later capture stores. Not a server component: in dev the walks copy
+// elements without their dev fields and the capture crashes (#942).
+const pprFlightErrorRuns = new Set<string>();
+
+/**
+ * Most passes any one PprFlightErrorLoader value took, per ?run=. The
+ * capture's value takes 2; any other count means the pass-2 failure no longer
+ * lands on the snapshot encode.
+ */
+export const pprFlightErrorPasses: Map<string, number> = new Map();
+
+class PprRelatedEntries extends Map<string, unknown> {
+  private passes = 0;
+
+  constructor(private readonly run: string) {
+    super([["related", "related ok"]]);
+  }
+
+  override *[Symbol.iterator](): MapIterator<[string, unknown]> {
+    this.passes += 1;
+    pprFlightErrorPasses.set(
+      this.run,
+      Math.max(pprFlightErrorPasses.get(this.run) ?? 0, this.passes),
+    );
+    if (this.passes === 2 && !pprFlightErrorRuns.has(this.run)) {
+      pprFlightErrorRuns.add(this.run);
+      const failed = Promise.reject(new Error("related upstream down"));
+      failed.catch(() => {});
+      yield ["related", failed];
+      return;
+    }
+    yield* super.entries();
+  }
+}
+
+export const PprFlightErrorLoader = createLoader(async (ctx) => ({
+  entries: new PprRelatedEntries(ctx.url.searchParams.get("run") ?? ""),
+}));
+
 // Shell fast-path EXECUTION MATRIX fixture (docs/design/shell-fast-path.md),
 // the workerd/KV counterpart of test-app's shell-cache exec matrix. Per-layer
 // module counters; the DSL loader (live lane) reports the snapshot per serve,

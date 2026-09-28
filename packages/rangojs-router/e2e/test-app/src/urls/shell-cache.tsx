@@ -33,6 +33,8 @@ import {
   ShellBakedOnlyLoader,
   ShellStorefrontLoader,
   ShellRestockLoader,
+  ShellFlightErrorLoader,
+  shellFlightErrorPasses,
 } from "./shell-cache.defs.js";
 import {
   ShellBakedView,
@@ -53,6 +55,7 @@ import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
 import { ShellStaleReplay } from "../components/ShellStaleReplay.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
+import { onErrorLog } from "../error-log.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
 //
@@ -820,6 +823,43 @@ export const shellCachePatterns = urls(
       ShellWarningsPage,
       { name: "shellCacheRestock", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellRestockLoader, { ssr: false })],
+    ),
+    // Issue #927: the capture's snapshot encode of the ssr:false loader value
+    // fails once per ?probe= (ShellFlightErrorLoader); that capture must not
+    // store, and a later clean capture must.
+    path(
+      "/shell-cache/flight-error",
+      ShellWarningsPage,
+      { name: "shellCacheFlightError", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellFlightErrorLoader, { ssr: false })],
+    ),
+    // Capture outcome for one ?probe=: `refused` when onError got the capture's
+    // cache-write report, `passes` from shellFlightErrorPasses. `stored` only
+    // ends the test's poll when nothing is refused; the next request's
+    // x-rango-shell MISS is what the test relies on. Its key mirrors
+    // buildShellKey for a single search param; router.js is imported
+    // dynamically (urls -> router cycle).
+    path.json(
+      "/shell-cache/flight-error-status",
+      async (
+        ctx,
+      ): Promise<{ stored: boolean; refused: boolean; passes: number }> => {
+        const url = new URL(ctx.request.url);
+        const probe = url.searchParams.get("probe") ?? "";
+        const { cacheStore } = await import("../router.js");
+        const key = `${url.host}/shell-cache/flight-error?probe=${probe}:shell`;
+        const marker = `(probe=${probe})`;
+        return {
+          passes: shellFlightErrorPasses.get(probe) ?? 0,
+          stored: (await cacheStore.getShell(key)) !== null,
+          refused: onErrorLog.some(
+            (e) =>
+              e.metadata?.category === "cache-write" &&
+              e.message.includes(marker),
+          ),
+        };
+      },
+      { name: "shellCacheFlightErrorStatus" },
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",

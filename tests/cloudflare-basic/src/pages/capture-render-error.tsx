@@ -44,3 +44,32 @@ export function DocumentCacheRenderErrorPage(ctx: HandlerContext) {
 export function PprRenderErrorPage(ctx: HandlerContext) {
   return <Page run={ctx.searchParams.get("run") ?? ""} failFor={3} />;
 }
+
+// Handler runs per ?run= for RouteCacheRenderErrorPage. A cache HIT skips the
+// handler, so the rendered count holds.
+const routeCacheRuns = new Map<string, number>();
+
+async function RouteCacheReviews({ fail }: { fail: boolean }) {
+  await Promise.resolve();
+  if (fail) throw new Error("reviews upstream down");
+  return <p data-testid="capture-render-error-ok">reviews</p>;
+}
+
+/**
+ * Under cache() (issue #909). The first handler run per ?run= passes
+ * fail=true, so Reviews throws in the live render and in the cache write's
+ * re-render; later runs render. The route cache must not store the first run.
+ */
+export function RouteCacheRenderErrorPage(ctx: HandlerContext) {
+  const run = ctx.searchParams.get("run") ?? "";
+  const handlerRun = (routeCacheRuns.get(run) ?? 0) + 1;
+  routeCacheRuns.set(run, handlerRun);
+  return (
+    <main data-testid="capture-render-error-page">
+      <p data-testid="route-cache-handler-run">{handlerRun}</p>
+      <Suspense fallback={<p>loading reviews</p>}>
+        <RouteCacheReviews fail={handlerRun === 1} />
+      </Suspense>
+    </main>
+  );
+}
