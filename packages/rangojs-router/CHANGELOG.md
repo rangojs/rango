@@ -96,6 +96,31 @@ include placeholders carried the parent `urls()` handler and re-registered its
 routes. Placeholders are now skipped, so routes mounted with `include()` are
 absent from the result.
 
+### Added: per-navigation loader seeds and held navigations in `renderRoute()` ([#893](https://github.com/rangojs/rango/pull/893))
+
+`renderRoute().navigate()` from `@rangojs/router/testing/dom` committed
+urgently and took no per-navigation data, so the 0.16.0 `useLoader().isLoading`
+stale state could only be tested in e2e. `navigate(url, { loaders })` now takes
+loader seeds for that navigation, merged over the render-time seeds, and a spec
+with `transition` (`{}` mirrors a bare `transition()`) commits the navigation
+through production's transition path. A reader held on screen then reports
+`isLoading: true` on the old data while a pending Promise seed is unsettled,
+and `false` with the new data in the commit that settles it:
+
+```tsx
+const { router } = await renderRoute(
+  [{ path: "/products/:id", Component: ProductPrice, transition: {} }],
+  { request: "/products/1", loaders: [[ProductLoader, { price: 10 }]] },
+);
+await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+// ProductPrice: isLoading true with price 10 until `next` settles
+```
+
+Without `transition`, the commit stays urgent and a pending read suspends to
+its `<Suspense>` fallback. `useNavigation().state`, `useLinkStatus().pending`
+and `useAction().state` stay `idle`, and production's same-structure hold
+without `transition()` is not modeled.
+
 ### Fixes
 
 - An intercept handler that throws or calls `notFound()` no longer fails the
@@ -162,7 +187,7 @@ absent from the result.
   boundary's subtree, and a hit renders the segments above the boundary on
   every request, document and partial alike, as the `cache()` docs describe.
   A `ppr` route keeps whole-chain coverage: its chain bakes into the shell
-  ([#906](https://github.com/rangojs/rango/issues/906)).
+  ([#911](https://github.com/rangojs/rango/pull/911)).
 - A `cache()` among a path's children, as in
   `path("/p", Page, { name: "p" }, () => [cache({ ttl: 60 }), layout(<Chrome />)])`,
   cached nothing, and a `layout()` declared after it never rendered. It now
@@ -173,6 +198,108 @@ absent from the result.
   handler now runs under the `cache()` guards, so a header write or a
   `cookies()` read in it throws
   ([#919](https://github.com/rangojs/rango/pull/919)).
+- An async intercept handler that rejected while the intercept's async
+  `layout()` or one of its loaders was still pending raised an
+  `unhandledRejection`, which under Node's default
+  `--unhandled-rejections=throw` can crash the process. The modal slot still
+  renders the declaring layout's `errorBoundary()` with a 500, and the
+  rejection is now handled ([#899](https://github.com/rangojs/rango/pull/899)).
+- An intercept declared in a layout with no routes of its own ignored its
+  ancestors' `errorBoundary()` and `notFoundBoundary()`: a handler throw or
+  `notFound()` rendered the default "Internal Server Error" / "Not Found"
+  fallback, and a loader error rendered no fallback. The boundary lookup now
+  continues from the routeless layout to the layout that holds it and that
+  layout's ancestors, which also gives the routeless layout's own loaders a
+  boundary. A boundary on the routeless layout itself still wins, and the
+  status stays 500 / 404 ([#903](https://github.com/rangojs/rango/pull/903)).
+- A loader with its own `cache()` replays the handle pushes of the loaders it
+  awaits through `ctx.use` (#877 above). When a sibling DSL loader or the
+  handler also read that dependency, the dependency still ran live on a hit,
+  so its push appeared twice (a crumb without `href`, or any handle that does
+  not dedupe); on a stale hit the background refresh took the dependency's
+  only run and the push could be missing. Each dependency's pushes now reach
+  the page once per request: if the dependency runs live after the replay, its
+  live value replaces the replayed one in place; if it ran first, the replay
+  skips it. A replacement that lands after the document's handle snapshot
+  reaches the client after hydration, like any late loader push. 0.16.0
+  showed one push; this was a regression from #877. A `"use cache"` function
+  that reads such a loader still shows the push twice on a hit
+  ([#905](https://github.com/rangojs/rango/pull/905)).
+- On a `ppr` route, a string, number or boolean handle value pushed during the
+  shell capture by a loader that an `ssr: false` loader awaits through
+  `ctx.use()`, or replayed from an `ssr: false` loader's own `cache()`, was
+  recorded into the shell. A hit that replays the record ran that loader again,
+  so `useHandle` returned the value twice and hydration did not match the
+  prelude, which showed it once. These pushes are now left out of the record,
+  as object values already were. An `ssr: false` loader's own settled pushes
+  are still recorded (#875 above)
+  ([#895](https://github.com/rangojs/rango/pull/895)).
+- The stale-route refresh and proactive caching appended the re-render's
+  `transition({ when })` predicates to the live request. When the refresh got
+  there before the response's transition gate ran, the gate evaluated the
+  predicate on the stale hit, where values set by the cached handler with
+  `ctx.set()` are missing, so the stored transition could be dropped and the
+  navigation streamed its `loading()` fallback instead of holding. With
+  `debugPerformance`, a loader called from a handler during the refresh also
+  showed up in the stale response's Server-Timing. Both background lanes now
+  keep their own predicate list and record no metrics; a stale hit always
+  replays its stored transition
+  ([#892](https://github.com/rangojs/rango/pull/892)).
+- The stale-route refresh and proactive caching wrote to the live request's
+  response: `header()`, `setCookie()` / `deleteCookie()`, `setStatus()`
+  (including the 500 or 404 an error or not-found boundary sets) and
+  `onResponse()` callbacks. Depending on timing, a stale hit could go out with
+  a header, a `Set-Cookie` or an `onResponse` transform from the refresh, or
+  with status 500 when the refresh's handler threw. The background render now
+  writes to a throwaway response that is never merged, so a stale hit matches
+  a fresh hit. Writes inside the `cache()` boundary still throw in the
+  refresh, as on a miss ([#901](https://github.com/rangojs/rango/pull/901)).
+- A stale-route refresh whose handler threw or called `notFound()` wrote its
+  error or not-found boundary render over the stale entry with a fresh `ttl`,
+  so every hit served the error page until the entry expired or a later
+  refresh succeeded. A background render that ends with a non-200 status is
+  no longer written, as a miss never stores one: the stale entry keeps
+  serving, and the next stale read after the store's revalidation marker
+  lapses (30 s in `CFCacheStore` and `VercelCacheStore`) refreshes again.
+  Proactive caching follows the same rule
+  ([#904](https://github.com/rangojs/rango/pull/904)).
+- A route under `cache()` whose handler resolved but whose tree held an async
+  server component that threw during the cache write was stored with a Flight
+  error row, and every hit rendered the error boundary until the entry
+  expired, even after the upstream recovered. Flight reports such a throw
+  through `onError` and completes, and the status stays 200, so the non-200
+  gate did not see it. The entry is now not written, and the skipped write is
+  reported to `onError` with phase `"cache"` and category `"cache-write"`. The
+  next request renders fresh; on a stale-hit refresh the stale entry keeps
+  serving ([#910](https://github.com/rangojs/rango/pull/910)).
+- The same rule now covers a `"use cache"` result, a loader's own `cache()`
+  value, and the handle values recorded with any of these or with a route
+  `cache()`. A value holding an async component that threw or a promise that
+  rejected was stored with an error row, so every hit rendered the error
+  boundary or the replayed handle promise rejected (React error #441). The
+  entry is now not written, and the failure is reported as `cache-write` on a
+  miss or `stale-revalidation` on a stale refresh, which keeps the stale entry.
+  A handle value that fails to encode refuses the whole entry, since a hit
+  without its handle record would serve a page missing its title or
+  breadcrumbs. A deterministic non-serializable value (a function or class
+  instance) was stored and then failed to decode on every hit; it is now
+  reported as `cache-write` on each miss and never stored
+  ([#916](https://github.com/rangojs/rango/pull/916)).
+- The document cache (`createDocumentCacheMiddleware`, `s-maxage`) and the PPR
+  shell capture stored a render in which a component threw after the response
+  started streaming, such as an async server component whose fetch failed, or
+  a client component that threw during SSR inside `<Suspense>`. Flight and
+  Fizz report such an error through `onError` and finish with an error row or
+  an errored Suspense boundary, the status stays 200, and every hit served the
+  error until the TTL expired. The document cache now skips the write
+  (`cache-write`), and a stale refresh that errors keeps the stale entry; the
+  shell capture stores nothing and backs the key off. The current response is
+  unchanged. A Flight error the router already reported as `"rendering"` is
+  not reported again, so the skip shows only as a `[DocumentCache]` or
+  `[ShellCache]` log line. A loader error behind `loading()` never reaches
+  `onError`, so that render is still stored. `renderHTML` now logs Fizz errors
+  with `console.error(error)`, without React's dev "[Server]" badge
+  ([#920](https://github.com/rangojs/rango/pull/920)).
 
 ### Docs
 
@@ -199,6 +326,14 @@ absent from the result.
   the `response-routes` skill says response routes are outside it and shows a
   `requireSameOrigin` middleware
   ([#881](https://github.com/rangojs/rango/pull/881)).
+- The `intercept` skill and the `intercepting-routes` guide list `route` among
+  an intercept's allowed `use()` items and say the boundary lookup from a
+  routeless declaring layout continues upward. The `handler-use` skill
+  documents that `intercept()` checks its explicit `use()` and the handler's
+  `.use` together at runtime (#879), and that modal chrome is a `layout()` with
+  no `use()` items of its own. `route-definition-rules.md` and the internal
+  reference docs were corrected for drift found reviewing v0.16.0..main
+  ([#903](https://github.com/rangojs/rango/pull/903)).
 
 ### Internal
 
@@ -212,6 +347,22 @@ absent from the result.
   cross-site RSC action call to a real action: both get 403 and the action
   never runs; a same-origin control runs it
   ([#887](https://github.com/rangojs/rango/pull/887)).
+- `@playwright/test` moves to `^1.62.0` in every workspace package that
+  declares it (the lockfile resolves 1.63.0). 1.57 dropped empty multipart
+  fields, so a posted server-action form lost its `$ACTION_ID_` field. The
+  origin-guard no-JS case now runs urlencoded and multipart (dev +
+  production). The router's `@playwright/test` peer range stays `^1.49.1`
+  ([#890](https://github.com/rangojs/rango/pull/890)).
+- Local e2e server reuse probes with `Host: localhost:<port>`, the Host the
+  suites send, so this checkout's host-fixture servers from an earlier run are
+  reused instead of rejected as foreign. The router and cloudflare-basic
+  Playwright webServers call `./node_modules/.bin/vite` directly, so they also
+  start in a git worktree with symlinked `node_modules`
+  ([#891](https://github.com/rangojs/rango/pull/891)).
+- Unit tests pin that a route handler under `loading()` that rejects after the
+  200 has gone out is never written to the route cache, on the miss, stale
+  refresh, proactive caching, partial navigation, parallel-slot and intercept
+  lanes. No runtime change ([#908](https://github.com/rangojs/rango/pull/908)).
 
 ## 0.16.0 (2026-09-20)
 
