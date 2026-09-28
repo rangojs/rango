@@ -8,7 +8,7 @@
 
 import { RouterError } from "../errors.js";
 import { getRequestContext } from "../server/request-context.js";
-import { contextGet } from "../context-var.js";
+import { contextGet, isNonCacheable } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
@@ -19,7 +19,10 @@ import {
   stripInternalParams,
 } from "../router/handler-context.js";
 import type { MiddlewareFn } from "../router/middleware.js";
-import type { EntryData } from "../server/context.js";
+import {
+  assertNonCacheableReadAllowed,
+  type EntryData,
+} from "../server/context.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createProblemDetails } from "./response-error.js";
 import {
@@ -85,7 +88,12 @@ export async function handleResponseRoute<TEnv>(
     originalUrl: reqCtx.originalUrl,
     pathname: url.pathname,
     reverse: createReverseFunction(handlerCtx.getRequiredRouteMap()),
-    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+    get: ((keyOrVar: any) => {
+      if (isNonCacheable(variables, keyOrVar)) {
+        assertNonCacheableReadAllowed(keyOrVar);
+      }
+      return contextGet(variables, keyOrVar);
+    }) as any,
     header: (name: string, value: string) => reqCtx.header(name, value),
     waitUntil: reqCtx.waitUntil.bind(reqCtx),
     executionContext: reqCtx.executionContext,

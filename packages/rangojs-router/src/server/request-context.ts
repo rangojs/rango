@@ -61,8 +61,8 @@ import type { RoutineTrace } from "../rsc/routine-plan.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
   assertCachedHeaderWriteAllowed,
+  assertNonCacheableReadAllowed,
   clearPprHeaderScope,
-  isInsideCacheScope,
 } from "./context.js";
 import {
   createReverseFunction,
@@ -1143,12 +1143,8 @@ export function createRequestContext<TEnv>(
     },
     _dynamic: false,
     get: ((keyOrVar: any) => {
-      if (isNonCacheable(variables, keyOrVar) && isInsideCacheScope()) {
-        throw new Error(
-          `ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary. ` +
-            `The variable was created with { cache: false } or set with { cache: false }, ` +
-            `and its value would be stale on cache hit. Move the read outside the cached scope.`,
-        );
+      if (isNonCacheable(variables, keyOrVar)) {
+        assertNonCacheableReadAllowed(keyOrVar);
       }
       return contextGet(variables, keyOrVar);
     }) as RequestContext<TEnv>["get"],

@@ -634,7 +634,11 @@ stored value is non-cacheable.
 cache-safety metadata alongside the value but does not throw. When `ctx.get()`
 is called inside a cache scope (detected via ALS — same mechanism as the
 existing `"use cache"` guards), it checks the stored metadata and throws if
-the value is non-cacheable.
+the value is non-cacheable. Both scopes count: a `cache()` boundary
+(`isInsideCacheScope()`) and a `"use cache"` body (the exec scope in
+`cache/cache-exec-scope.ts`). One guard, `assertNonCacheableReadAllowed` in
+`server/context.ts`, serves the request, handler and response-route `ctx.get()`,
+and runs only after `isNonCacheable()` matches.
 
 - `ctx.get(cacheableVar)` inside cache scope: allowed.
 - `ctx.get(nonCacheableVar)` inside cache scope: throws.

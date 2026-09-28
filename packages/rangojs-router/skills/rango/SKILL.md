@@ -134,8 +134,8 @@ stated, greppable contract.
   lane rule). Pinned by semantic-matrix row PPR3.
 - Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
-  is captured on miss and replayed on hit. (The non-cacheable read guard is a
-  separate `cache()`-boundary check — see the correctness bullet below.)
+  is captured on miss and replayed on hit. A non-cacheable variable read
+  (`createVar({ cache: false })`) throws too — see the correctness bullet below.
 - One identity `path#export` (`functionId`/`$$id`/`actionId`); one store. Freshness
   is TTL/SWR expiry plus tag-based invalidation: tag via `cache({ tags })` /
   `cacheTag(...tags)`, then `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)`
@@ -144,7 +144,7 @@ stated, greppable contract.
 - Caches are correctness-first: persistent store keys are version-segmented (no
   cross-deploy drift), the forward/back cache is mutation-aware, and
   `createVar({ cache: false })` throws on a **direct** read inside a `cache()`
-  boundary (a deliberately non-propagating guard). See `/cache-guide` →
+  boundary or a `"use cache"` function (a deliberately non-propagating guard). See `/cache-guide` →
   "Correctness & invalidation".
 - Nested caches: the outer cache window bounds the inner — an inner shorter TTL
   only applies when the enclosing cache recomputes; put a value in a loader if it

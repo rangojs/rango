@@ -61,6 +61,11 @@ export function isInsideCacheExecScope(): boolean {
   return cacheExecStorage.getStore() !== undefined;
 }
 
+/** The calling chain's innermost "use cache" scope, if any. */
+export function getCacheExecScope(): CacheExecScope | undefined {
+  return cacheExecStorage.getStore();
+}
+
 /** True when the calling async chain runs inside `scope`, at any depth. */
 export function isInCacheExecChain(scope: CacheExecScope): boolean {
   for (let s = cacheExecStorage.getStore(); s; s = s.parent) {

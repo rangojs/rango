@@ -132,7 +132,9 @@ cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
 
 DSL loaders can safely read `createVar({ cache: false })` variables
 because they are always resolved fresh. The read guard is bypassed for
-loader functions — they never produce stale data.
+loader functions — they never produce stale data. A `"use cache"` function
+the loader calls is not a loader body: a non-cacheable read inside it throws,
+so read the var in the loader and pass the value in as an argument.
 
 ### ctx.use(Loader) — escape hatch
 

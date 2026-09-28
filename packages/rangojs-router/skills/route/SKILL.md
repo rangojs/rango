@@ -329,10 +329,11 @@ cache({ ttl: 60 }, () => [
 ]);
 ```
 
-The guard is scoped to the `cache()` DSL boundary. It does not fire inside a
-`"use cache"` function body and does not follow derived values (a string copied
-out of `Session` and cached elsewhere is not tracked). Loaders are exempt — they
-run fresh on every request. Cacheable vars (the default) can be read freely
+The same read throws inside a `"use cache"` function body, where the value
+would be stored without being part of the key — pass it in as an argument
+instead. The guard does not follow derived values (a string copied out of
+`Session` and cached elsewhere is not tracked). Loaders are exempt — they run
+fresh on every request — but a `"use cache"` function a loader calls is not. Cacheable vars (the default) can be read freely
 inside cache scopes. See `/cache-guide` → "Context Variable Cache Safety".
 
 ### Revalidation Contracts for Handler Data
