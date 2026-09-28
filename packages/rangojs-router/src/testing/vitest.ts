@@ -78,6 +78,10 @@
 
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  isUseCacheCandidate,
+  transformUseCache,
+} from "../vite/plugins/use-cache-transform.js";
 
 /** A single Vite/Vitest resolve alias entry. Structurally a Vite `Alias`. */
 export interface TestAlias {
@@ -262,6 +266,7 @@ interface FlightTransformPlugin {
  * import { defineConfig } from "vitest/config";
  * import {
  *   rangoUseClientTransform,
+ *   rangoUseCacheTransform,
  *   rangoTestAliases,
  *   rangoInlineDeps,
  * } from "@rangojs/router/testing/vitest";
@@ -271,7 +276,7 @@ interface FlightTransformPlugin {
  * process.env.NODE_ENV = "production";
  *
  * export default defineConfig({
- *   plugins: [rangoUseClientTransform()],
+ *   plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
  *   resolve: {
  *     conditions: ["react-server"],
  *     // Bare `@rangojs/router` -> its react-server build, so a handler/component
@@ -337,6 +342,62 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
         code: output.toString(),
         map: output.generateMap({ hires: true }),
       };
+    },
+  };
+}
+
+/** The Vite plugin shape {@link rangoUseCacheTransform} returns. */
+interface UseCacheTransformPlugin {
+  name: string;
+  enforce: "post";
+  configResolved(config: { root: string }): void;
+  transform(
+    this: { warn(message: string): void },
+    code: string,
+    id: string,
+  ): Promise<{ code: string; map: unknown } | undefined>;
+}
+
+/**
+ * A Vite plugin that applies the rango plugin's `"use cache"` transform in a
+ * Vitest project, so a function written with the directive is wrapped with
+ * `registerCachedFunction` as in dev and a build. `rango()` runs that transform
+ * only in its `rsc` environment and Vitest transforms in `ssr`, so without this
+ * plugin the directive is an inert string and the function runs on every call.
+ *
+ * Add it to the react-server project next to {@link rangoUseClientTransform}
+ * (see that function's config). There, with a seeded `cacheStore`,
+ * `renderHandler` / `runLoader` observe real hits. In the node project the
+ * wrap applies too, but the stubbed Flight serializer cannot write an entry.
+ *
+ * Ids are the ones `vite dev` emits: `<path relative to the Vitest root>#<name>`
+ * (a function-level directive gives `src/data.ts#$$hoist_0_getData`), not the
+ * build's hashed path, so store keys stay readable. `configResolved` sets that
+ * root. If `@vitejs/plugin-rsc/transforms` fails to load, the transform throws
+ * instead of leaving the module unwrapped (which the rango plugin does).
+ */
+export function rangoUseCacheTransform(): UseCacheTransformPlugin {
+  let root = process.cwd();
+  return {
+    name: "rango:testing-use-cache",
+    enforce: "post",
+    configResolved(config) {
+      root = config.root;
+    },
+    async transform(code, id) {
+      if (!isUseCacheCandidate(code, id)) return undefined;
+      return transformUseCache(code, id, {
+        root,
+        isBuild: false,
+        warn: (message) => this.warn(message),
+        onTransformsError: (error) => {
+          throw new Error(
+            `rangoUseCacheTransform: @vitejs/plugin-rsc/transforms failed to ` +
+              `load, so "use cache" functions in ${id} would run unwrapped.`,
+            { cause: error },
+          );
+        },
+      });
     },
   };
 }

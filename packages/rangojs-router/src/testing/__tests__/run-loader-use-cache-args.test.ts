@@ -1,8 +1,9 @@
 /**
  * "use cache" arguments through runLoader (issue #924), under the plugin-rsc
  * stubs that rangoTestAliases ships (src/testing/vitest-stubs/plugin-rsc.ts).
- * The stub encoder and serializer throw, so nothing is written and a hit is
- * not observable here; the store lookups are. A Request argument
+ * Outside the react-server condition the stub encoder and serializer throw,
+ * so nothing is written and a hit is not observable here; the store lookups
+ * are. use-cache-hit.rsc-test.tsx asserts hits. A Request argument
  * (ctx.request) is looked up per URL; an argument that cannot be serialized
  * runs uncached and warns once in dev.
  */

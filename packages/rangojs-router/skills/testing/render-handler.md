@@ -113,6 +113,47 @@ it("asserts the client-cache directives", async () => {
 });
 ```
 
+## A `"use cache"` hit
+
+With `cacheStore` seeded, a `"use cache"` function the handler calls runs the real cache runtime on real Flight. The first call runs the body and writes the entry in a background (`waitUntil`) task that `renderHandler` does not await. A call made before that write lands joins the still-running execution; a call made after it reads the store. Either way the body runs once, and the value comes back through a Flight round trip, so a `Date`, a `Map`, a client island or a server action keeps its type and reference. A value Flight encodes as an error row, such as a rejected promise, is not stored. The stale (SWR) path is not covered here; assert it at e2e.
+
+The rango plugin's `"use cache"` transform runs only in its `rsc` environment (dev or build), and Vitest transforms in `ssr`, so add `rangoUseCacheTransform()` to the react-server project's `plugins` (see [`./setup.md`](./setup.md)). It runs the same transform, with the ids `vite dev` emits (`src/data/products.ts#...`). Without it the directive is an inert string and the function runs on every call.
+
+```tsx
+// src/data/products.ts
+export async function getProduct(slug: string) {
+  "use cache: short";
+  return db.products.find(slug);
+}
+```
+
+```tsx
+import { it, expect, vi } from "vitest";
+import { renderHandler } from "@rangojs/router/testing/flight";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import { ProductPage } from "../src/pages/product"; // calls getProduct(ctx.params.slug)
+import { db } from "../src/db";
+
+it("reads the second render's product from the store", async () => {
+  const find = vi.spyOn(db.products, "find");
+  const cacheStore = new MemorySegmentCacheStore();
+  const setItem = vi.spyOn(cacheStore, "setItem");
+  const options = {
+    params: { slug: "wine" },
+    cacheStore,
+    cacheProfiles: { short: { ttl: 60 } },
+  };
+
+  await renderHandler(ProductPage, options);
+  await vi.waitFor(() => expect(setItem).toHaveBeenCalled()); // the background write
+  await renderHandler(ProductPage, options);
+
+  expect(find).toHaveBeenCalledTimes(1);
+});
+```
+
+Without the plugin, wrap a function yourself with the call the transform emits, `registerCachedFunction(fn, id, profile)` from `@rangojs/router/cache-runtime`.
+
 ## Caveats
 
 - An unseeded `ctx.use(loader)` REJECTS with a setup error — seed every dependency via `{ loaders: [[OtherLoader, data]] }`, matched by reference. Loaders are SEEDED, not executed (same as `runLoader`).
@@ -120,7 +161,7 @@ it("asserts the client-cache directives", async () => {
 - A `throw redirect()` is captured on `thrown` (with `tree` undefined, since it produced a `Response`) — assert on `thrown`/`response`, no try/catch needed.
 - No hydration and no interaction — for clicks, forms, and navigation use e2e.
 - `renderHandler` runs a handler FUNCTION `(ctx) => rsc`; for a plain ELEMENT `<Page/>` use `renderServerTree` (see [`./server-tree.md`](./server-tree.md)).
-- A handler that calls a `"use cache"` function runs UNCACHED unless you seed `cacheStore` (and `cacheProfiles` for a named profile). With nothing seeded the runtime bypasses to the live body and warns once under the test runner — assert real cache behavior by passing `{ cacheStore: new MemorySegmentCacheStore(), cacheProfiles: { default: { ttl: 60 } } }`.
+- A handler that calls a `"use cache"` function runs UNCACHED unless you seed `cacheStore` (and `cacheProfiles` for a named profile). With nothing seeded the runtime bypasses to the live body and warns once under the test runner. With a store seeded, the body runs once across renders and a render after the background write reads the store — see [A `"use cache"` hit](#a-use-cache-hit), including `rangoUseCacheTransform()`, without which Vitest leaves the directive unwrapped.
 
 ## See also
 

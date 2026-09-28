@@ -20,6 +20,7 @@ import { defineConfig } from "vitest/config";
 import {
   rangoInlineDeps,
   rangoTestAliases,
+  rangoUseCacheTransform,
   rangoUseClientTransform,
 } from "@rangojs/router/testing/vitest";
 
@@ -31,8 +32,10 @@ process.env.NODE_ENV = "production";
 export default defineConfig({
   // The "use client" transform lets renderServerTree resolve client islands
   // from the server tree's own imports (no clientComponents). Server components
-  // are untouched, so renderToFlightString of leaf trees is unaffected.
-  plugins: [rangoUseClientTransform()],
+  // are untouched, so renderToFlightString of leaf trees is unaffected. The
+  // "use cache" transform wraps directive functions as the rango plugin does
+  // in dev, so a seeded cacheStore caches them.
+  plugins: [rangoUseClientTransform(), rangoUseCacheTransform()],
   resolve: {
     conditions: ["react-server"],
     // Bare @rangojs/router -> index.rsc.ts (real react-server impls), so a

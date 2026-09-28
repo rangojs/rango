@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { useCacheTransform } from "../plugins/use-cache-transform.js";
+import { rangoUseCacheTransform } from "../../testing/vitest.js";
 
 function createPlugin(opts: { command?: string; root?: string } = {}) {
   const plugin = useCacheTransform();
@@ -85,6 +86,25 @@ describe("use-cache-transform: file-level non-function exports", () => {
     // Should succeed and produce wrapped output
     expect(result).toBeDefined();
     expect(result.code).toContain("__rango_registerCachedFunction");
+  });
+
+  it("rewrites the directive when a file-level 'use cache' has nothing to wrap", async () => {
+    // A layout's default export receives children, so it is not wrapped; the
+    // directive is still replaced (the lazily imported magic-string branch).
+    const plugin = initPlugin();
+
+    const code = `"use cache";\nexport default function Layout({ children }) {\n  return children;\n}\n`;
+
+    const result = await plugin.transform.call(
+      { environment: rscEnv },
+      code,
+      "/project/src/app/layout.tsx",
+    );
+
+    expect(result.code).toBe(
+      `/* "use cache" -- wrapped by rango */\nexport default function Layout({ children }) {\n  return children;\n}\n`,
+    );
+    expect(result.map.mappings).not.toBe("");
   });
 
   it("skips non-rsc environment", async () => {
@@ -230,5 +250,98 @@ export async function other(ctx) {
 
     expect(result).toBeDefined();
     expect(result.code).toContain("__rango_registerCachedFunction");
+  });
+});
+
+describe("rangoUseCacheTransform (testing/vitest)", () => {
+  const functionLevel = `export async function getData(id: string) {
+  "use cache: short";
+  return id;
+}
+`;
+  const fileLevel = `"use cache";
+export async function getA() {
+  return 1;
+}
+export const getB = async () => 2;
+`;
+  const nearMiss = `export async function getData() {
+  "use cache: my profile";
+  return 1;
+}
+`;
+
+  async function bothTransforms(code: string, id: string) {
+    const pluginWarnings: string[] = [];
+    const helperWarnings: string[] = [];
+    const dev = await initPlugin().transform.call(
+      { environment: rscEnv, warn: (m: string) => pluginWarnings.push(m) },
+      code,
+      id,
+    );
+    const helper = rangoUseCacheTransform();
+    helper.configResolved({ root: "/project" });
+    const inVitest = await helper.transform.call(
+      { warn: (m: string) => helperWarnings.push(m) },
+      code,
+      id,
+    );
+    return { dev, inVitest, pluginWarnings, helperWarnings };
+  }
+
+  it("emits the rango plugin's dev output for a function-level directive", async () => {
+    const { dev, inVitest } = await bothTransforms(
+      functionLevel,
+      "/project/src/data.ts",
+    );
+
+    expect(inVitest).toEqual(dev);
+    expect(inVitest?.code).toContain(
+      '"src/data.ts#$$hoist_0_getData", "short"',
+    );
+  });
+
+  it("emits the rango plugin's dev output for a file-level directive", async () => {
+    const { dev, inVitest } = await bothTransforms(
+      fileLevel,
+      "/project/src/all.ts",
+    );
+
+    expect(inVitest).toEqual(dev);
+    expect(inVitest?.code).toContain('"src/all.ts#getA", "default"');
+    expect(inVitest?.code).toContain('"src/all.ts#getB", "default"');
+  });
+
+  it("forwards the near-miss directive warning to the plugin context", async () => {
+    const { pluginWarnings, helperWarnings } = await bothTransforms(
+      nearMiss,
+      "/project/src/near.ts",
+    );
+
+    expect(helperWarnings).toEqual(pluginWarnings);
+    expect(helperWarnings).toEqual([
+      expect.stringContaining('invalid profile name "my profile"'),
+    ]);
+  });
+
+  it("leaves node_modules and directive-free modules alone", async () => {
+    const helper = rangoUseCacheTransform();
+    helper.configResolved({ root: "/project" });
+    const ctx = { warn: () => {} };
+
+    expect(
+      await helper.transform.call(
+        ctx,
+        functionLevel,
+        "/project/node_modules/x/data.ts",
+      ),
+    ).toBeUndefined();
+    expect(
+      await helper.transform.call(
+        ctx,
+        "export const a = 1;",
+        "/project/src/a.ts",
+      ),
+    ).toBeUndefined();
   });
 });
