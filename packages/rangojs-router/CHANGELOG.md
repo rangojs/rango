@@ -30,6 +30,21 @@
   without awaiting its data as a cause, and in dev it prints the component
   stacks still pending when the capture froze the shell
   ([#952](https://github.com/rangojs/rango/pull/952)).
+- `CFCacheStore` stores a PPR shell prelude-first: a head, the raw prelude
+  (no base64), then the capture snapshot, in both the Cache API and KV. A
+  shell HIT reads the head and the prelude, runs the tag-marker read alongside
+  the prelude read, and sends its first byte while the snapshot is still being
+  read; only the resumed tail waits for it. On a storefront-sized shell (614 KB
+  prelude, 2.5 MB snapshot) the first byte moved from 13.2 ms to 3.6 ms over a
+  trivial response on local workerd, and from 21.0 ms to 8.3 ms (29.8 ms to
+  17.5 ms when tagged) with Cloudflare's measured I/O latencies injected. The
+  public `getShell`/`putShell` contract is unchanged. Shells move to a new key
+  namespace; existing entries are already misses after a deploy (buildVersion)
+  and age out. One failure mode changes: a truncated, corrupt, or slow
+  (over `kvReadTimeoutMs`) snapshot used to make the read a MISS; it is now a
+  HIT whose resumed tail runs without the snapshot's pins, and a truncated or
+  corrupt entry is also evicted so the next request recaptures
+  ([#953](https://github.com/rangojs/rango/pull/953)).
 
 ## 0.17.0 (2026-09-28)
 

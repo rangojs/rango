@@ -173,9 +173,10 @@ The fast path above is about the tail. The first byte has its own budget: the
 store read, parse, and decode that happen before the prelude is enqueued, which
 issue #941 measured at 90-140 ms behind a hand-rolled shell server on
 Cloudflare. `shell-entry-layout.md` covers that path: the prelude is decoded
-once (natively where the runtime can) and enqueued in 32 KB chunks, and the
-doc specifies the entry layout that takes the capture snapshot off the
-first-byte read.
+once (natively where the runtime can) and enqueued in 32 KB chunks, and
+`CFCacheStore` stores a prelude-first entry, so a HIT commits after reading
+the head and the prelude while the capture snapshot is still arriving; only
+the tail waits for it.
 
 ## Why the original splice framing was dropped
 

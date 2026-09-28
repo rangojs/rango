@@ -1,10 +1,10 @@
 # Shell entry layout: what a PPR shell HIT reads before its first byte
 
 Status: **in progress** (issue #941). Stage 1 (decode once, native base64,
-chunked prelude enqueue) is implemented. Stage 2 (prelude-first CF entry,
-marker read in parallel), the per-isolate shell memo (decision 1), and
-snapshot pruning are specified below and land as separate stages. Decisions 1
-and 2 are decided; 3 and 4 are open and not implemented.
+chunked prelude enqueue) and stage 2 (prelude-first CF entry, marker read in
+parallel) are implemented. The per-isolate shell memo (decision 1) and
+snapshot pruning are specified below and land as their own stages. All four
+decisions are made.
 
 Read `shell-fast-path.md` and `packages/rangojs-router/docs/design/ppr-shell-resume.md`
 first. This doc is about one narrow question: how many bytes, parses, and
@@ -126,6 +126,26 @@ decode, plus a sequential marker read when the shell is tagged. Node lacks
 `Uint8Array.fromBase64`, so Node numbers keep the loop decode unless the
 harness installs a native shim (it can, to model workerd).
 
+## Results by stage
+
+Same harnesses as the baseline. Local workerd: 5 runs x 40 interleaved rounds
+per stage, pooled (200 samples), each large-shell sample minus the floor
+request of the same round, which cancels most of the machine's load drift.
+Edge model: the Node harness with workerd's native base64 installed.
+
+| stage                        | local workerd `/ppr-large` over floor | local workerd `/ppr-large/holes` over floor | edge model, untagged | edge model, tagged |
+| ---------------------------- | ------------------------------------- | ------------------------------------------- | -------------------- | ------------------ |
+| baseline                     | 13.2 [10.4-15.8]                      | 13.5 [11.5-15.1]                            | 21.0 [20.5-21.2]     | 29.8 [29.5-30.1]   |
+| 1. decode once, 32 KB chunks | 12.6 [9.9-14.0]                       | 12.4 [10.8-13.6]                            | 20.1 [19.5-20.6]     | 29.6 [29.2-29.9]   |
+| 2. prelude-first entry       | 3.6 [2.6-4.1]                         | 1.0 [0.6-1.3]                               | 8.3 [8.3-8.4]        | 17.5 [16.9-17.7]   |
+
+Stage 1's first-byte gain is the decode work (1.4 ms of per-byte loop in
+workerd); its compressed-first-byte gain does not show in these uncompressed
+numbers (see the compression table). Stage 2 removes the 3.4 MB read and parse
+from the first-byte path; with a tagged shell the marker read (9 ms in the
+model) now sets the floor, overlapping the match-plus-prelude read instead of
+following it.
+
 ## What a HIT needs, and when
 
 | field                                | needed before the first byte | needed by the tail              |
@@ -147,20 +167,33 @@ none of the first-byte work.
 
 ### The shape: one record, prelude-first
 
-The CF entry becomes one binary body laid out in the order the HIT consumes it:
+The CF entry becomes one body laid out in the order the HIT consumes it
+(`src/cache/cf/cf-shell-frame.ts`):
 
 ```
 "RSH1"                 4-byte magic (format version)
-u32 big-endian         head length
-head JSON (UTF-8)      rv, bv, c, s, e, t, ta, i, dk, lh, tw, no, po, pl
+8 hex digits           head length
+head JSON (UTF-8)      rv, bv, c, s, e, t, ta, i, dk, lh, tw, no, po, pl, sl
 prelude bytes          pl raw bytes, no base64
-snapshot JSON          the rest of the body (absent when there is no snapshot)
+snapshot JSON          the rest of the body: exactly sl bytes (0 when there is none)
 ```
 
 A document HIT reads the head, starts the tag-marker read, reads exactly `pl`
 prelude bytes, awaits the marker, and commits. The snapshot bytes are still
 streaming in; `readShellDocument` hands the tail a promise that reads and
-parses the rest of the same body.
+parses the rest of the same body. That read starts when `readShellDocument`
+resolves, so it runs off the commit path rather than strictly after the
+commit, and it is registered with `waitUntil`: a read nobody serves still
+finishes its KV-to-L1 promotion or its corrupt-entry eviction.
+
+Why an ASCII length and not a binary one: every byte of the frame is then
+UTF-8 text whenever the prelude is, and React's HTML through `TextEncoder`
+always is. KV stores the frame as a string, because the public
+`KVNamespace` shape the store accepts declares `put(key, value: string)`, and
+`kv.get(key, { type: "stream" })` returns exactly the frame's bytes. A binary
+KV value would have meant widening that public type. `shellFrameToText`
+decodes with `fatal: true`, so a prelude that is not valid UTF-8 fails the KV
+write loudly instead of corrupting it.
 
 You might ask why not two records (prelude record + snapshot record, fetched
 in parallel), which is what the issue proposed. Two records have to be paired:
@@ -178,17 +211,17 @@ body gives the same "the snapshot is not on the first-byte path" property with
 no pairing, no generation ids, and no mismatch handling.
 
 What it does not buy: the snapshot's bytes still travel with every read. That
-is what stage 3 (pruning) addresses.
+is what snapshot pruning (§2) addresses.
 
 ### Per store
 
-| store                      | layout                                                             | first-byte read                                       |
-| -------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| `CFCacheStore` (Cache API) | framed body, `application/octet-stream`, same headers as today     | match + head + prelude (~0.64 MB), marker in parallel |
-| `CFCacheStore` (KV)        | the same framed bytes as the value; read with `{ type: "stream" }` | same; the snapshot is read post-commit, then promoted |
-| `VercelCacheStore`         | unchanged JSON envelope                                            | unchanged (see below)                                 |
-| `MemorySegmentCacheStore`  | unchanged (holds the entry object)                                 | no I/O and no parse; decode once natively             |
-| custom stores              | unchanged `getShell`/`putShell` contract                           | `getShell`, then decode once                          |
+| store                      | layout                                                                                                                                           | first-byte read                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `CFCacheStore` (Cache API) | frame body; `Content-Type: application/octet-stream` (was `application/json`), the same cache headers (max-age, stale-at, expires-at, Cache-Tag) | match + head + prelude (~0.64 MB), marker in parallel                                                                      |
+| `CFCacheStore` (KV)        | the frame as a string; read with `{ type: "stream" }`                                                                                            | same, under one `kvReadTimeoutMs` for the open, head, and prelude; the snapshot is read off the commit path, then promoted |
+| `VercelCacheStore`         | unchanged JSON envelope                                                                                                                          | unchanged (see below)                                                                                                      |
+| `MemorySegmentCacheStore`  | unchanged (holds the entry object)                                                                                                               | no I/O and no parse; decode once natively                                                                                  |
+| custom stores              | unchanged `getShell`/`putShell` contract                                                                                                         | `getShell`, then decode once                                                                                               |
 
 Vercel's runtime cache client returns a parsed value (`getCache().get()` does
 the fetch and the JSON parse); there is no way to read the head of a value
@@ -216,20 +249,32 @@ interface ShellDocumentRead {
 }
 ```
 
-Making the split read part of the public contract, so custom stores can opt
-into it, is a decision for later (see "Decisions").
+**Decided (decision 4): it stays internal.** Exposing `readShellDocument`
+would freeze this internal record layout as public API. Custom stores keep the
+whole-entry `getShell` read and still get the single native decode and the
+pruned snapshot. If a custom-store author asks for a prelude-first read later,
+the public shape to offer is a split by key: `getShell` for the head and
+prelude, then a separate `getShellSnapshot`, with a stated pairing and
+generation rule for the two records. Not `readShellDocument` as it is.
 
 ### Failure handling
 
-- Before the commit (bad magic, head that fails `isShellHead`, fewer than `pl`
-  prelude bytes, a head+prelude read over `edgeReadTimeoutMs`): exactly today's
-  L1 corruption/timeout handling (heal, fall through to KV, then MISS).
-- After the commit (snapshot bytes that fail to parse, a snapshot read over
-  `kvReadTimeoutMs`): the snapshot promise resolves `undefined` and the tail
-  runs without pins, which is the existing no-snapshot path (the same posture
-  as an over-cap snapshot, `maxSnapshotBytes`). A parse failure also evicts the
+- Before the commit (bad magic, head that fails `isShellFrameHead`, fewer
+  than `pl` prelude bytes, a head+prelude read over `edgeReadTimeoutMs`, or
+  over `kvReadTimeoutMs` counted from the KV open): exactly the previous L1
+  corruption/timeout handling (heal, fall through to KV, then MISS).
+- After the commit (a snapshot part that is not `sl` bytes long, which catches
+  a body truncated exactly at the prelude's end; snapshot bytes that fail to
+  parse; a snapshot read over `kvReadTimeoutMs`): the snapshot promise
+  resolves `undefined` and the tail runs without pins, which is the existing
+  no-snapshot path (the same posture as an over-cap snapshot,
+  `maxSnapshotBytes`). A length mismatch or parse failure also evicts the
   entry from both tiers and reports `cache-corrupt`, so the next request
-  recaptures.
+  recaptures. This is a change: with the whole-envelope read, a corrupt or
+  slow snapshot made the read a MISS; now it is a HIT with an unpinned tail.
+- `getShell` (partial replay, custom callers) has no commit to protect, so the
+  same snapshot failures make it return null instead of an entry without its
+  pins.
 
 ### Build-time shells
 
@@ -433,9 +478,11 @@ head + prelude, which is the part of this that cold colos hit.
    trades marker freshness for latency.
 3. **Pruning with live-lane loaders** (rule R2.3). Pruning when a route has
    live loaders changes "seeded everywhere" for keys the shell and a hole
-   share: the hole would show live data. Recommendation: accept it (holes are
-   the live lane), in a separate change with its own docs update.
-4. **A public split read.** Promote `readShellDocument` to the
-   `SegmentCacheStore` contract so custom stores can serve the prelude first.
-   Recommendation: not yet; no custom store has asked, and the internal shape
-   can still change.
+   share: the hole would show live data. **Decided:** option A (drop R2.3,
+   holes are the live lane), subject to a regression check that runs before
+   the pruning stage is built.
+4. **A public split read** (promote `readShellDocument` to the
+   `SegmentCacheStore` contract so custom stores can serve the prelude
+   first). **Decided:** no; it stays an `@internal` method only built-in
+   stores implement (reason and the preferred future public shape under "The
+   contract stays as it is").

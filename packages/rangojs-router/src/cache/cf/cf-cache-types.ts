@@ -340,9 +340,12 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
 
   /**
    * Latency budget (ms) for reading the BODY of a matched L1 entry
-   * (response.json()). CF streams the cache body lazily, so the multi-second
-   * tail can appear after `match` already resolved; this bounds it. On timeout
-   * the read is treated as a miss and falls through to L2/KV or render.
+   * (response.json(); for a PPR shell, only its head and prelude — the
+   * snapshot behind them is read after the HIT commits, under
+   * {@link kvReadTimeoutMs}). CF streams the cache body lazily, so the
+   * multi-second tail can appear after `match` already resolved; this bounds
+   * it. On timeout the read is treated as a miss and falls through to L2/KV or
+   * render.
    *
    * Separate from {@link edgeLookupTimeoutMs} because a healthy body read
    * (fetch + JSON parse of a potentially large Flight payload) takes a little
@@ -356,7 +359,11 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * Latency budget (ms) for an L2 (KV) read. KV is the last cache tier before a
    * full render and is a global store (~50ms healthy, seconds when degraded);
    * this bounds it so a slow namespace cannot pin the request. On timeout the
-   * read is treated as a miss (no L1 promote) and falls through to render.
+   * read is treated as a miss (no L1 promote) and falls through to render. For
+   * a PPR shell it covers opening the KV value and reading its head and
+   * prelude; separately, it bounds the shell's snapshot read (either tier),
+   * which runs off the commit path: a timeout there lets the tail run without
+   * the snapshot's pins.
    *
    * Defaults to {@link KV_READ_TIMEOUT_MS} (170) -- a few multiples above the
    * ~50ms healthy read, with headroom for legitimate tails (large payloads / far

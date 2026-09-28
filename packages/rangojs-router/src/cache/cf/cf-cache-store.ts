@@ -35,6 +35,8 @@ import type {
   CacheItemResult,
   CacheItemOptions,
   ShellCacheEntry,
+  ShellDocumentRead,
+  ShellSnapshotRecord,
   CacheReadError,
 } from "../types.js";
 import { CACHE_READ_ERROR } from "../types.js";
@@ -55,7 +57,20 @@ import {
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
-import { bufferToBase64, base64ToBuffer } from "./cf-base64.js";
+import {
+  bufferToBase64,
+  base64ToBuffer,
+  base64ToBytes,
+  bytesToBase64,
+} from "./cf-base64.js";
+import {
+  ShellFrameReader,
+  encodeShellFrame,
+  encodeShellSnapshot,
+  parseShellSnapshot,
+  shellFrameToText,
+  type ShellFrameHead,
+} from "./cf-shell-frame.js";
 import {
   KV_KEY_PRESERVED_PREFIX_BYTES,
   KV_MAX_KEY_BYTES,
@@ -267,54 +282,50 @@ interface KVItemEnvelope {
 }
 
 /**
- * Coupled Cache API/KV envelope for PPR shell cache entries.
- * @internal
+ * Key namespace of the shell family. `shell2:` holds the prelude-first frame
+ * (cf-shell-frame.ts); `shell:` held the JSON envelope. Every deploy retires
+ * the old entries anyway (buildVersion gate); the new namespace also keeps
+ * new code from reporting an old body as corrupt and a rollback from parsing
+ * a frame. Old keys age out by their TTL.
  */
-interface CFShellEnvelope {
-  /**
-   * base64-encoded prelude bytes. Absent iff `no` (navigationOnly entries
-   * store no document half — ShellCacheEntry.prelude).
-   */
-  p?: string;
-  /** postponed state JSON, or null (DATA variant — no holes). Absent iff `no`. */
-  po?: string | null;
-  /** React.version captured at prerender time */
-  rv: string;
-  /** Build version captured at prerender time (ShellCacheEntry.buildVersion) */
-  bv?: string;
-  /** Capture-generation start time (ms epoch), used by tag marker checks. */
-  c: number;
-  /** When entry becomes stale (ms epoch) */
-  s: number;
-  /** When entry hard-expires (ms epoch) */
-  e: number;
-  /** Cache tags (for distributed tag invalidation) */
-  t?: string[];
-  /** Timestamp when tags were attached (ms epoch) */
-  ta?: number;
-  /** initialTheme the capture render was built with (resume theme fidelity) */
-  i?: string;
-  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity */
-  sn?: import("../types.js").ShellSnapshotRecord[];
-  /**
-   * ShellCacheEntry.docKey. Must round-trip: navigation-replay eligibility
-   * requires the exact canonical doc segment record named here — dropping the
-   * field reads back as "no consumable record" and every partial navigation
-   * reports `no-segment-snapshot` after a KV round trip (the memory store
-   * passes the entry by reference, so only envelope stores can lose it).
-   */
-  dk?: string;
-  /**
-   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
-   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
-   * here silently fast-pathed handler-live entries after a KV round trip —
-   * their holes only a handler re-run can fill.
-   */
-  lh?: boolean;
-  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
-  tw?: true;
-  /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
-  no?: true;
+const SHELL_KEY_PREFIX = "shell2:";
+
+/**
+ * Whether a ShellDocumentRead's snapshot read failed (timed out, truncated,
+ * corrupt), as opposed to the entry storing none: both resolve `snapshot` to
+ * undefined, which the serve path treats alike, but getShell misses on a
+ * failure.
+ */
+const snapshotReadFailures = new WeakMap<ShellDocumentRead, Promise<boolean>>();
+
+/** openShellFrame outcome: the head and prelude, or why the read failed. */
+type OpenedShellFrame =
+  | {
+      status: "ok";
+      head: ShellFrameHead;
+      prelude: Uint8Array;
+      reader: ShellFrameReader;
+      bodyReadMs?: number;
+      markerMs?: number;
+    }
+  | { status: "corrupt"; error: Error; bodyReadMs?: number; head?: undefined }
+  | { status: "expired"; head: ShellFrameHead; bodyReadMs?: number }
+  | { status: "timeout"; bodyReadMs?: number; head?: undefined }
+  | { status: "invalidated"; bodyReadMs?: number; markerMs?: number };
+
+/** The public entry shape of a frame head (no prelude, no snapshot). */
+function shellHeadToEntry(head: ShellFrameHead): ShellCacheEntry {
+  return {
+    ...(head.po !== undefined ? { postponed: head.po } : {}),
+    reactVersion: head.rv,
+    buildVersion: head.bv,
+    initialTheme: head.i,
+    docKey: head.dk,
+    handlerLiveHoles: head.lh,
+    transitionWhen: head.tw,
+    navigationOnly: head.no,
+    createdAt: head.c,
+  };
 }
 
 type CFShellDebugOutcome =
@@ -335,7 +346,6 @@ interface CFShellDebugDetails {
     | "timeout"
     | "error"
     | "non-200"
-    | "corrupt"
     | "malformed"
     | "expired"
     | "unavailable";
@@ -347,41 +357,6 @@ interface CFShellDebugDetails {
   readMs?: number;
   expiresAt?: number;
   remainingTtl?: number;
-}
-
-/** Validate the coupled PPR shell envelope before any field reaches resume. */
-function isShellEnvelope(value: unknown): value is CFShellEnvelope {
-  if (value == null || typeof value !== "object") return false;
-  const envelope = value as Partial<CFShellEnvelope>;
-  return (
-    // Document half: required unless the envelope is navigationOnly (`no`),
-    // which stores neither field. Tolerate a legacy navigationOnly envelope
-    // that still carries them.
-    (typeof envelope.p === "string" ||
-      (envelope.p === undefined && envelope.no === true)) &&
-    (envelope.po === null ||
-      typeof envelope.po === "string" ||
-      (envelope.po === undefined && envelope.no === true)) &&
-    typeof envelope.rv === "string" &&
-    (envelope.bv === undefined || typeof envelope.bv === "string") &&
-    typeof envelope.c === "number" &&
-    Number.isFinite(envelope.c) &&
-    typeof envelope.s === "number" &&
-    Number.isFinite(envelope.s) &&
-    typeof envelope.e === "number" &&
-    Number.isFinite(envelope.e) &&
-    (envelope.t === undefined ||
-      (Array.isArray(envelope.t) &&
-        envelope.t.every((tag) => typeof tag === "string"))) &&
-    (envelope.ta === undefined ||
-      (typeof envelope.ta === "number" && Number.isFinite(envelope.ta))) &&
-    (envelope.i === undefined || typeof envelope.i === "string") &&
-    (envelope.sn === undefined || Array.isArray(envelope.sn)) &&
-    (envelope.dk === undefined || typeof envelope.dk === "string") &&
-    (envelope.lh === undefined || typeof envelope.lh === "boolean") &&
-    (envelope.tw === undefined || envelope.tw === true) &&
-    (envelope.no === undefined || envelope.no === true)
-  );
 }
 
 /**
@@ -723,6 +698,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     read: () => Promise<T>,
     budgetMs: number,
     label: string,
+    consequence = "treating as miss",
   ): Promise<{ value: T | undefined; timedOut: boolean }> {
     if (budgetMs <= 0) return { value: await read(), timedOut: false };
 
@@ -741,7 +717,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       ]);
       if (result.timedOut) {
         console.warn(
-          `[CFCacheStore] ${label} exceeded ${budgetMs}ms; treating as miss`,
+          `[CFCacheStore] ${label} exceeded ${budgetMs}ms; ${consequence}`,
         );
         return { value: undefined, timedOut: true };
       }
@@ -1952,18 +1928,43 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Get a cached PPR shell entry from Cache API, falling through to KV and
-   * promoting a valid KV hit. Both tiers store one envelope so the prelude,
-   * postponed state, snapshot, versions, and generation metadata cannot mix.
-   * SWR remains a plain staleness flag; the capture scheduler's module-level
-   * in-flight set is the recapture stampede guard.
+   * Get a cached PPR shell entry: the public custom-store contract, built on
+   * readShellDocument. It waits for the snapshot and re-encodes the prelude to
+   * the base64 `ShellCacheEntry.prelude` the contract carries (native
+   * `toBase64` in workerd). Partial replay and the testing helpers read
+   * through here; the document serve path reads readShellDocument directly.
+   * A snapshot that failed to read is a miss here: with no committed response
+   * to protect, an entry without its pins is worse than none.
    */
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+    const read = await this.readShellDocument(key);
+    if (!read) return null;
+    const snapshot = await read.snapshot;
+    if (await snapshotReadFailures.get(read)) return null;
+    const entry: ShellCacheEntry = { ...read.entry };
+    if (!entry.navigationOnly) entry.prelude = bytesToBase64(read.prelude);
+    if (snapshot) entry.snapshot = snapshot;
+    return { entry, shouldRevalidate: read.shouldRevalidate };
+  }
+
+  /**
+   * @internal Prelude-first read of a shell (SegmentCacheStore
+   * .readShellDocument). Cache API first, then KV; both tiers hold one
+   * cf-shell-frame body, so the prelude, postponed state, snapshot, versions,
+   * and generation metadata cannot mix. Before it resolves it reads only the
+   * head and the prelude's bytes, and the tag-marker read runs alongside the
+   * prelude read (it starts as soon as the head is parsed, and is awaited
+   * before this resolves, so an invalidated shell is never returned). The
+   * snapshot is the rest of the same body, read on its own promise. SWR is a
+   * plain staleness flag; the capture scheduler's in-flight set is the
+   * recapture stampede guard.
+   */
+  async readShellDocument(key: string): Promise<ShellDocumentRead | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`shell:${key}`);
+      const request = this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`);
       const matchStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
       const {
         response,
@@ -1986,60 +1987,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           reason: matchError ? "error" : timedOut ? "timeout" : "absent",
           matchMs,
         });
-        return this.kvGetShell(key);
+        return this.kvReadShellDocument(key);
       }
-      if (response.status !== 200) {
+      if (response.status !== 200 || !response.body) {
         this.debugShell(key, "l1-miss", {
           reason: "non-200",
           status: response.status,
           matchMs,
         });
-        return this.kvGetShell(key);
-      }
-
-      const bodyStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const { value, errored, error } =
-        await this.readJsonWithTimeout<unknown>(response);
-      const bodyReadMs = INTERNAL_RANGO_DEBUG
-        ? Date.now() - bodyStartedAt
-        : undefined;
-      if (value === undefined) {
-        this.debugShell(key, "l1-miss", {
-          reason: errored ? "corrupt" : "timeout",
-          matchMs,
-          bodyReadMs,
-        });
-        if (errored) {
-          return this.healCorruptL1(cache, request, error, "getShell", () =>
-            this.kvGetShell(key),
-          );
-        }
-        return this.kvGetShell(key);
-      }
-      if (!isShellEnvelope(value)) {
-        this.debugShell(key, "l1-miss", {
-          reason: "malformed",
-          matchMs,
-          bodyReadMs,
-        });
-        return this.healCorruptL1(
-          cache,
-          request,
-          new Error("malformed/partial L1 shell envelope"),
-          "getShell",
-          () => this.kvGetShell(key),
-        );
-      }
-
-      const now = Date.now();
-      if (now > value.e) {
-        this.debugShell(key, "l1-miss", {
-          reason: "expired",
-          matchMs,
-          bodyReadMs,
-          expiresAt: value.e,
-        });
-        return this.kvGetShell(key);
+        return this.kvReadShellDocument(key);
       }
 
       // Unlike other L1 families, shells with KV always check the durable
@@ -2049,49 +2005,220 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // purge is trusted; the per-request memo masks this request's own
       // updateTag() writes; entries a purge cannot reach fall back to the
       // marker check, which fails open KV-less).
-      const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const invalidated = this.kv
-        ? await this.isGloballyInvalidated(value.t, value.ta)
-        : await this.isL1Invalidated(value.t, value.ta, response.headers);
-      const markerMs = INTERNAL_RANGO_DEBUG
-        ? Date.now() - markerStartedAt
-        : undefined;
-      if (invalidated) {
+      const opened = await this.openShellFrame(
+        response.body,
+        this.edgeReadTimeoutMs,
+        "edge cache body read",
+        (head) =>
+          this.kv
+            ? this.isGloballyInvalidated(head.t, head.ta)
+            : this.isL1Invalidated(head.t, head.ta, response.headers),
+      );
+      if (opened.status === "corrupt") {
+        this.debugShell(key, "l1-miss", {
+          reason: "malformed",
+          matchMs,
+          bodyReadMs: opened.bodyReadMs,
+        });
+        return this.healCorruptL1(
+          cache,
+          request,
+          opened.error,
+          "getShell",
+          () => this.kvReadShellDocument(key),
+        );
+      }
+      if (opened.status === "timeout" || opened.status === "expired") {
+        this.debugShell(key, "l1-miss", {
+          reason: opened.status,
+          matchMs,
+          bodyReadMs: opened.bodyReadMs,
+          expiresAt: opened.head?.e,
+        });
+        return this.kvReadShellDocument(key);
+      }
+      if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "l1",
           matchMs,
-          bodyReadMs,
-          markerMs,
+          bodyReadMs: opened.bodyReadMs,
+          markerMs: opened.markerMs,
         });
         return null;
       }
-
-      const shouldRevalidate = value.s > 0 && now > value.s;
+      const read = this.shellDocumentRead(key, opened);
       this.debugShell(key, "l1-hit", {
-        freshness: shouldRevalidate ? "stale" : "fresh",
+        freshness: read.shouldRevalidate ? "stale" : "fresh",
         matchMs,
-        bodyReadMs,
-        markerMs,
-        expiresAt: value.e,
+        bodyReadMs: opened.bodyReadMs,
+        markerMs: opened.markerMs,
+        expiresAt: opened.head.e,
       });
-      return {
-        entry: this.shellEnvelopeToEntry(value),
-        shouldRevalidate,
-      };
+      return read;
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
       this.debugShell(key, "l1-miss", { reason: "error" });
-      return this.kvGetShell(key);
+      return this.kvReadShellDocument(key);
     }
   }
 
   /**
-   * Store a PPR shell envelope in Cache API and, when KV is configured and
-   * the retention meets its 60-second floor, KV. The shared write is
-   * registered with waitUntil and awaited so invalidation rejection can be
-   * acknowledged to the capture scheduler. Short-lived shells remain useful
-   * in L1 even though KV rejects them; a KV-less store is L1-only by design
-   * (edge-only ppr — see the section comment).
+   * Read a frame's head and prelude under one budget, starting the
+   * tag-marker read (`isInvalidated`) the moment the head is parsed so it
+   * overlaps the prelude read, then await it. Expired heads are rejected
+   * before the marker read starts.
+   */
+  private async openShellFrame(
+    body: ReadableStream<Uint8Array>,
+    budgetMs: number,
+    label: string,
+    isInvalidated: (head: ShellFrameHead) => Promise<boolean>,
+  ): Promise<OpenedShellFrame> {
+    const reader = new ShellFrameReader(body);
+    const startedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+    let marker: Promise<boolean> | undefined;
+    let markerMs: number | undefined;
+    const { value, timedOut } = await this.readWithTimeout(
+      async (): Promise<OpenedShellFrame> => {
+        const head = await reader.readHead();
+        if (!head) {
+          return {
+            status: "corrupt",
+            error: new Error("malformed/partial shell frame head"),
+          };
+        }
+        if (Date.now() > head.e) return { status: "expired", head };
+        const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
+        marker = isInvalidated(head).then((invalidated) => {
+          if (INTERNAL_RANGO_DEBUG) markerMs = Date.now() - markerStartedAt;
+          return invalidated;
+        });
+        marker.catch(() => {});
+        const prelude = await reader.take(head.pl);
+        if (!prelude) {
+          return {
+            status: "corrupt",
+            error: new Error("shell frame ends inside the prelude"),
+          };
+        }
+        return { status: "ok", head, prelude, reader };
+      },
+      budgetMs,
+      label,
+    );
+    const bodyReadMs = INTERNAL_RANGO_DEBUG
+      ? Date.now() - startedAt
+      : undefined;
+    if (timedOut || !value) {
+      reader.cancel();
+      return { status: "timeout", bodyReadMs };
+    }
+    if (value.status !== "ok") {
+      reader.cancel();
+      return { ...value, bodyReadMs };
+    }
+    if (await marker!) {
+      reader.cancel();
+      return { status: "invalidated", bodyReadMs, markerMs };
+    }
+    return { ...value, bodyReadMs, markerMs };
+  }
+
+  /**
+   * The ShellDocumentRead for an opened frame. Its snapshot promise starts
+   * reading the rest of the body now (off the commit path, not after it),
+   * bounded by the KV read budget, and is registered with waitUntil so the
+   * KV tier's L1 promotion and a corrupt entry's eviction still run when
+   * nothing awaits it (a read that is not served). A snapshot whose length
+   * differs from the head's `sl`, or that fails to parse, evicts the entry
+   * from both tiers and reports cache-corrupt. Every failure resolves
+   * undefined, and a HIT's tail then runs unpinned (the existing no-snapshot
+   * path); getShell turns a failure into a miss (snapshotReadFailures).
+   * `promote` receives the snapshot bytes once they parsed.
+   */
+  private shellDocumentRead(
+    key: string,
+    opened: Extract<OpenedShellFrame, { status: "ok" }>,
+    promote?: (snapshotBytes: Uint8Array) => void,
+  ): ShellDocumentRead {
+    const { head, prelude, reader } = opened;
+    type SnapshotOutcome = { records?: ShellSnapshotRecord[]; failed: boolean };
+    const outcome = (async (): Promise<SnapshotOutcome> => {
+      const { value: rest, timedOut } = await this.readWithTimeout(
+        () => reader.readRest(),
+        this.kvReadTimeoutMs,
+        "shell snapshot read",
+        "the HIT's tail runs unpinned",
+      );
+      if (timedOut || !rest) {
+        reader.cancel();
+        return { failed: true };
+      }
+      let records: ShellSnapshotRecord[] | undefined;
+      try {
+        if (rest.length !== head.sl) {
+          throw new Error(
+            `shell snapshot is ${rest.length} bytes, the head says ${head.sl}`,
+          );
+        }
+        records = parseShellSnapshot(rest);
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          "[CFCacheStore] getShell: corrupt shell snapshot, evicting",
+        );
+        this.evictShell(key);
+        return { failed: true };
+      }
+      promote?.(rest);
+      return { records, failed: false };
+    })().catch((error: unknown): SnapshotOutcome => {
+      reportCacheError(error, "cache-read", "[CFCacheStore] getShell snapshot");
+      return { failed: true };
+    });
+    if (this.waitUntil) this.waitUntil(() => outcome.then(() => {}));
+    const read: ShellDocumentRead = {
+      entry: shellHeadToEntry(head),
+      prelude,
+      shouldRevalidate: head.s > 0 && Date.now() > head.s,
+      snapshot: outcome.then(({ records }) => records),
+    };
+    snapshotReadFailures.set(
+      read,
+      outcome.then(({ failed }) => failed),
+    );
+    return read;
+  }
+
+  /** Delete a shell from both tiers (non-blocking). */
+  private evictShell(key: string): void {
+    const evict = async (): Promise<void> => {
+      const cache = await this.getCache();
+      await reportingAsync(
+        () => cache.delete(this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`)),
+        "cache-delete",
+        "[CFCacheStore] getShell: evict corrupt L1",
+      );
+      if (this.kv) {
+        await this.evictKvKey(
+          await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`),
+          "getShell",
+        );
+      }
+    };
+    if (this.waitUntil) this.waitUntil(evict);
+    else void evict();
+  }
+
+  /**
+   * Store a PPR shell in Cache API and, when KV is configured and the
+   * retention meets its 60-second floor, KV — the same cf-shell-frame bytes
+   * in both. The shared write is registered with waitUntil and awaited so
+   * invalidation rejection can be acknowledged to the capture scheduler.
+   * Short-lived shells remain useful in L1 even though KV rejects them; a
+   * KV-less store is L1-only by design (edge-only ppr — see the section
+   * comment).
    */
   async putShell(
     key: string,
@@ -2131,7 +2258,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
       const writeKv = !!this.kv && retentionTtl >= KV_MIN_EXPIRATION_TTL;
-      const kvKey = writeKv ? await this.toKVKey(`shell:${key}`) : null;
+      const kvKey = writeKv
+        ? await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`)
+        : null;
 
       const write = (async (): Promise<"stored" | "invalidated" | void> => {
         if (
@@ -2143,12 +2272,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           return "invalidated";
         }
 
-        const envelope: CFShellEnvelope = {
-          // Presence-keyed: a navigationOnly entry has no document half, and an
-          // omitted key (vs an explicit undefined) also keeps it out of the
-          // serialized JSON.
-          ...(entry.prelude !== undefined ? { p: entry.prelude } : {}),
-          ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
+        // A navigationOnly entry stores no document half: no prelude bytes
+        // and no postponed field (an omitted key, not an explicit undefined).
+        const prelude =
+          entry.prelude !== undefined
+            ? base64ToBytes(entry.prelude)
+            : new Uint8Array(0);
+        const snapshotBytes = encodeShellSnapshot(entry.snapshot);
+        const head: ShellFrameHead = {
           rv: entry.reactVersion,
           bv: entry.buildVersion,
           c: entry.createdAt,
@@ -2157,24 +2288,24 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           t: tags,
           ta: taggedAt,
           i: entry.initialTheme,
-          sn: entry.snapshot,
           dk: entry.docKey,
           lh: entry.handlerLiveHoles,
           tw: entry.transitionWhen,
           no: entry.navigationOnly,
+          ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
+          pl: prelude.length,
+          sl: snapshotBytes?.length ?? 0,
         };
-        const body = JSON.stringify(envelope);
+        const frame = encodeShellFrame(head, prelude, snapshotBytes);
         const writes: Promise<boolean>[] = [
           (async () => {
             try {
               const cache = await this.getCache();
               await cache.put(
-                this.keyToRequest(`shell:${key}`),
-                this.shellEnvelopeResponse(body, envelope),
+                this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`),
+                this.shellFrameResponse(frame, head),
               );
-              this.debugShell(key, "l1-stored", {
-                expiresAt: envelope.e,
-              });
+              this.debugShell(key, "l1-stored", { expiresAt: head.e });
               return true;
             } catch (error) {
               reportCacheError(
@@ -2190,12 +2321,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           writes.push(
             (async () => {
               try {
-                await this.kv!.put(kvKey, body, {
+                await this.kv!.put(kvKey, shellFrameToText(frame), {
                   expirationTtl: retentionTtl,
                 });
-                this.debugShell(key, "kv-stored", {
-                  expiresAt: envelope.e,
-                });
+                this.debugShell(key, "kv-stored", { expiresAt: head.e });
                 return true;
               } catch (error) {
                 reportCacheError(
@@ -2219,107 +2348,103 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
   }
 
-  /** Rebuild the public shell entry from its validated storage envelope. */
-  private shellEnvelopeToEntry(envelope: CFShellEnvelope): ShellCacheEntry {
-    return {
-      prelude: envelope.p,
-      postponed: envelope.po,
-      reactVersion: envelope.rv,
-      buildVersion: envelope.bv,
-      initialTheme: envelope.i,
-      snapshot: envelope.sn,
-      docKey: envelope.dk,
-      handlerLiveHoles: envelope.lh,
-      transitionWhen: envelope.tw,
-      navigationOnly: envelope.no,
-      createdAt: envelope.c,
-    };
-  }
-
-  /** Build the Cache API representation of the coupled shell envelope. */
-  private shellEnvelopeResponse(
-    body: string,
-    envelope: CFShellEnvelope,
+  /** The Cache API representation of a shell frame. */
+  private shellFrameResponse(
+    frame: Uint8Array<ArrayBuffer>,
+    head: ShellFrameHead,
   ): Response {
-    const remainingTtl = Math.max(
-      1,
-      Math.floor((envelope.e - Date.now()) / 1000),
-    );
-    return new Response(body, {
+    const remainingTtl = Math.max(1, Math.floor((head.e - Date.now()) / 1000));
+    return new Response(frame, {
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/octet-stream",
         "Cache-Control": `public, max-age=${remainingTtl}`,
-        [CACHE_STALE_AT_HEADER]: String(envelope.s),
-        [CACHE_EXPIRES_AT_HEADER]: String(envelope.e),
+        [CACHE_STALE_AT_HEADER]: String(head.s),
+        [CACHE_EXPIRES_AT_HEADER]: String(head.e),
         [CACHE_STATUS_HEADER]: "HIT",
-        ...this.tagHeaderEntries(envelope.t, envelope.ta),
+        ...this.tagHeaderEntries(head.t, head.ta),
       },
     });
   }
 
-  /** KV shell fallback with corruption checks and background L1 promotion. */
-  private async kvGetShell(
+  /** KV shell fallback: the same prelude-first read, then L1 promotion. */
+  private async kvReadShellDocument(
     key: string,
-  ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
+  ): Promise<ShellDocumentRead | null> {
     if (!this.kv) return null;
     try {
       const readStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const kvKey = await this.toKVKey(`shell:${key}`);
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<CFShellEnvelope>(
-          kvKey,
-          isShellEnvelope,
-          "getShell",
-        );
+      // One kvReadTimeoutMs budget covers opening the value and reading its
+      // head and prelude; the remainder after the open bounds the frame read.
+      const deadline = Date.now() + this.kvReadTimeoutMs;
+      const kvKey = await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`);
+      // A transient read REJECTION propagates to the catch below (reported
+      // cache-read, the entry left intact); only a malformed frame on a body
+      // that WAS read is corruption that evicts.
+      const { value: raw, timedOut } = await this.readWithTimeout<unknown>(
+        () => this.kv!.get(kvKey, { type: "stream" }),
+        this.kvReadTimeoutMs,
+        "KV read",
+      );
       const readMs = INTERNAL_RANGO_DEBUG
         ? Date.now() - readStartedAt
         : undefined;
-      if (timedOut || !envelope) {
+      if (timedOut || raw == null) {
         this.debugShell(key, "kv-miss", {
           reason: timedOut ? "timeout" : "unavailable",
           readMs,
         });
         return null;
       }
-
-      const now = Date.now();
-      if (now > envelope.e) {
+      // A binding that ignores `type` (a test shim) hands back the stored
+      // string itself.
+      const body =
+        raw instanceof ReadableStream
+          ? (raw as ReadableStream<Uint8Array>)
+          : new Response(raw as BodyInit).body!;
+      const opened = await this.openShellFrame(
+        body,
+        // readWithTimeout treats <= 0 as "no budget": keep a spent budget
+        // spent (1 ms) rather than unbounded.
+        this.kvReadTimeoutMs > 0 ? Math.max(1, deadline - Date.now()) : 0,
+        "KV read",
+        (head) => this.isGloballyInvalidated(head.t, head.ta),
+      );
+      if (opened.status === "corrupt") {
+        reportCacheError(
+          opened.error,
+          "cache-corrupt",
+          "[CFCacheStore] getShell: malformed shell frame in KV, evicting",
+        );
+        this.scheduleKvEvict(kvKey, "getShell");
+        this.debugShell(key, "kv-miss", { reason: "malformed", readMs });
+        return null;
+      }
+      if (opened.status === "timeout" || opened.status === "expired") {
         this.debugShell(key, "kv-miss", {
-          reason: "expired",
+          reason: opened.status,
           readMs,
-          expiresAt: envelope.e,
+          expiresAt: opened.head?.e,
         });
         return null;
       }
-      const markerStartedAt = INTERNAL_RANGO_DEBUG ? Date.now() : 0;
-      const invalidated = await this.isGloballyInvalidated(
-        envelope.t,
-        envelope.ta,
-      );
-      const markerMs = INTERNAL_RANGO_DEBUG
-        ? Date.now() - markerStartedAt
-        : undefined;
-      if (invalidated) {
+      if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
           tier: "kv",
           readMs,
-          markerMs,
+          markerMs: opened.markerMs,
         });
         return null;
       }
-
-      const shouldRevalidate = envelope.s > 0 && now > envelope.s;
+      const read = this.shellDocumentRead(key, opened, (snapshotBytes) =>
+        this.promoteShellToL1(key, opened.head, opened.prelude, snapshotBytes),
+      );
       this.debugShell(key, "kv-hit", {
-        freshness: shouldRevalidate ? "stale" : "fresh",
+        freshness: read.shouldRevalidate ? "stale" : "fresh",
         readMs,
-        markerMs,
-        expiresAt: envelope.e,
+        markerMs: opened.markerMs,
+        expiresAt: opened.head.e,
       });
-      this.promoteShellToL1(key, envelope);
-      return {
-        entry: this.shellEnvelopeToEntry(envelope),
-        shouldRevalidate,
-      };
+      return read;
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] kvGetShell");
       this.debugShell(key, "kv-miss", { reason: "error" });
@@ -2328,24 +2453,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /** Promote a valid KV shell into the per-colo Cache API tier. */
-  private promoteShellToL1(key: string, envelope: CFShellEnvelope): void {
+  private promoteShellToL1(
+    key: string,
+    head: ShellFrameHead,
+    prelude: Uint8Array,
+    snapshotBytes: Uint8Array,
+  ): void {
     if (!this.waitUntil) return;
     this.waitUntil(() =>
       reportingAsync(
         async () => {
-          if (Date.now() > envelope.e) return;
+          if (Date.now() > head.e) return;
           const cache = await this.getCache();
-          const body = JSON.stringify(envelope);
           await cache.put(
-            this.keyToRequest(`shell:${key}`),
-            this.shellEnvelopeResponse(body, envelope),
+            this.keyToRequest(`${SHELL_KEY_PREFIX}${key}`),
+            this.shellFrameResponse(
+              encodeShellFrame(head, prelude, snapshotBytes),
+              head,
+            ),
           );
           this.debugShell(key, "kv-promoted", {
-            remainingTtl: Math.max(
-              1,
-              Math.floor((envelope.e - Date.now()) / 1000),
-            ),
-            expiresAt: envelope.e,
+            remainingTtl: Math.max(1, Math.floor((head.e - Date.now()) / 1000)),
+            expiresAt: head.e,
           });
         },
         "cache-write",

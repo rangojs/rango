@@ -204,6 +204,16 @@ export interface SegmentCacheStore<TEnv = unknown> {
   ): Promise<"stored" | "invalidated" | "uncacheable" | void>;
 
   /**
+   * @internal Prelude-first read of a DOCUMENT shell, for built-in stores whose
+   * layout keeps the snapshot behind the prelude (CFCacheStore). The serve
+   * path prefers it over getShell: it resolves with the head and the raw
+   * prelude, and the snapshot arrives later on its own promise, so the HIT can
+   * commit before the snapshot is read (issue #941,
+   * docs/design/shell-entry-layout.md). Not part of the custom-store contract.
+   */
+  readShellDocument?(key: string): Promise<ShellDocumentRead | null>;
+
+  /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
    * no-op (a custom store whose backing tier is conditionally unavailable).
    * scheduleShellCapture skips captures whose only write target is inert —
@@ -420,6 +430,23 @@ export type DocumentShellCacheEntry = ShellCacheEntry & {
   prelude: string;
   postponed: string | null;
 };
+
+/**
+ * @internal Result of {@link SegmentCacheStore.readShellDocument}.
+ */
+export interface ShellDocumentRead {
+  /** The entry without its prelude and snapshot (delivered separately). */
+  entry: ShellCacheEntry;
+  /** Raw prelude bytes (empty for a navigationOnly entry). */
+  prelude: Uint8Array;
+  shouldRevalidate?: boolean;
+  /**
+   * The capture snapshot, read after the prelude. Resolves undefined when the
+   * entry has none or it could not be read (the tail then runs unpinned).
+   * Never rejects.
+   */
+  snapshot: Promise<ShellSnapshotRecord[] | undefined>;
+}
 
 /**
  * The families a shell snapshot pins. The item/segment/response families are

@@ -22,7 +22,11 @@ const NativeUint8Array = Uint8Array as unknown as NativeUint8ArrayBase64;
 
 /** Encode ArrayBuffer to base64 string. */
 export function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+/** Encode bytes (a view's own region only) to a base64 string. */
+export function bytesToBase64(bytes: Uint8Array): string {
   const nativeToBase64 = NativeUint8Array.prototype.toBase64;
   if (nativeToBase64) return nativeToBase64.call(bytes);
   // Build the binary (latin1) string in fixed-size chunks instead of one

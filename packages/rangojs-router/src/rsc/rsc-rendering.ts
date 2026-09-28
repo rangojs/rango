@@ -96,6 +96,7 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type {
   SegmentCacheStore,
   ShellCacheEntry,
+  ShellDocumentRead,
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import {
@@ -534,7 +535,7 @@ function* shellServePlan<TEnv>(
     !cached.entry.navigationOnly &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
-    const document = openShellDocument(cached.entry);
+    const document = openShellDocument(cached.entry, cached.read);
     if (!document) {
       // Corrupt stored payload (undecodable prelude / unparseable
       // postponed): a store-layer fault worth a diagnostic, unlike the
@@ -788,26 +789,38 @@ async function matchPartialAndRecordParams<TEnv>(
   return replay;
 }
 
+/** A document serve's store read: the entry, plus the prelude-first read when the store has one. */
+interface ShellStoreRead {
+  entry: ShellCacheEntry;
+  shouldRevalidate?: boolean;
+  read?: ShellDocumentRead;
+}
+
 /**
  * Shell store read that degrades to null on failure (axis 1 MISS, never a 500)
  * and records the raw `ppr:shell-read` outcome (pre-validity-gates, so a
  * version-mismatch lifecycle miss stays distinguishable from a store miss).
+ * A store with a prelude-first read (readShellDocument) resolves before the
+ * snapshot is read, so the HIT commits without waiting for it.
  */
-async function readShellEntry<
-  TStore extends { getShell(key: string): Promise<unknown> },
->(
-  store: TStore,
+async function readShellEntry(
+  store: SegmentCacheStore & {
+    getShell: NonNullable<SegmentCacheStore["getShell"]>;
+  },
   key: string,
   reqCtx: ReturnType<typeof getRequestContext>,
-): Promise<Awaited<ReturnType<TStore["getShell"]>> | null> {
-  let cached: Awaited<ReturnType<TStore["getShell"]>> | null = null;
+): Promise<ShellStoreRead | null> {
+  let cached: ShellStoreRead | null = null;
   const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
   try {
-    // The constraint types the call as Promise<unknown>; the instantiated
-    // TStore carries the real entry type, so the assertion restores it.
-    cached = (await store.getShell(key)) as Awaited<
-      ReturnType<TStore["getShell"]>
-    >;
+    if (store.readShellDocument) {
+      const read = await store.readShellDocument(key);
+      cached = read
+        ? { entry: read.entry, shouldRevalidate: read.shouldRevalidate, read }
+        : null;
+    } else {
+      cached = await store.getShell(key);
+    }
   } catch (error) {
     reportCacheError(error, "cache-read", "[ShellServe] getShell");
   }
@@ -1492,7 +1505,7 @@ function serveShellHit(
     }
     return observePhase(PHASES.ssr, () =>
       ssrModule.resumeShellHTML!(rscStream, {
-        postponed: entry.postponed,
+        postponed: document.postponed,
         nonce: undefined,
         // The shell key's own search — identical to the capture seed for
         // this key, so the resume tree matches the captured tree.
@@ -1515,12 +1528,15 @@ function serveShellHit(
     // values via a SeededShellStore overlay while unpinned reads (the holes)
     // stay live. The overlay lives on a DERIVED context so the shared reqCtx is
     // untouched.
-    if (entry.snapshot && entry.snapshot.length > 0) {
+    // A prelude-first read delivers the snapshot on its own promise: the
+    // prelude is already committed, so only the tail waits for it.
+    const snapshot = await document.snapshot;
+    if (snapshot && snapshot.length > 0) {
       const seededCtx = createTailContext();
       if (reqCtx._cacheStore) {
         seededCtx._cacheStore = new SeededShellStore(
           reqCtx._cacheStore,
-          entry.snapshot,
+          snapshot,
         );
       }
       // Loader-family records (bake-lane containers, loader-container-bake):
@@ -1528,7 +1544,7 @@ function serveShellHit(
       // payload's baked container bytes match the frozen prelude while the
       // hole-marker paths keep the fresh run's live nested promises.
       const seedStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
-      const loaderSeed = await buildShellLoaderSeed(entry.snapshot);
+      const loaderSeed = await buildShellLoaderSeed(snapshot);
       if (tailTiming) {
         tailTiming.seedMs = Math.round(performance.now() - tailT0);
       }

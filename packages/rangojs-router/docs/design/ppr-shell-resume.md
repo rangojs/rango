@@ -492,10 +492,12 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    `{ family, key, value }`, kept JSON-serializable (responses carry base64
    body + headers + status; items/segments are already JSON-able stored forms).
    It rides with the rest of the entry. NOTE: the CF and Vercel stores cherry-pick
-   entry fields into a custom KV/Blob envelope, so `snapshot` (and `initialTheme`)
-   are explicitly carried there (`KVShellEnvelope.sn`/`.i`,
-   `VercelShellEnvelope.sn`/`.i`) — a new field on `ShellCacheEntry` that those
-   envelopes forget silently no-ops on the real stores.
+   entry fields into their own layouts, so `snapshot` (and `initialTheme`) are
+   explicitly carried there (the CF frame's head `i` and its snapshot tail,
+   `cf-shell-frame.ts`; `VercelShellEnvelope.sn`/`.i`) — a new field on
+   `ShellCacheEntry` that those layouts forget silently no-ops on the real
+   stores. The CF frame stores the snapshot BEHIND the prelude, so a document
+   HIT commits before reading it (docs/design/shell-entry-layout.md).
 4. **Seeding.** `serveShellHit`'s tail runs through a `SeededShellStore` overlay
    (on a derived context, for the tail render ONLY — the shared `reqCtx` is
    untouched). A read for a snapshotted key returns the recorded value AS FRESH
@@ -1449,8 +1451,12 @@ Cache API under the store's internal fallback host (`deriveBaseUrl`), so
 edge-only shells work on preview deployments too — purge-by-tag does not
 reach that synthetic zone, so tagged shells there are ttl/swr-bound.
 
-The two CF tiers carry the exact same coupled envelope. A Cache API miss falls
-through to KV and promotes the validated envelope back into that colo. Runtime
+The two CF tiers carry the exact same prelude-first frame (`cf-shell-frame.ts`:
+head, raw prelude, then the snapshot; see docs/design/shell-entry-layout.md).
+A document HIT reads the head and the prelude, runs the tag-marker read in
+parallel with the prelude read, and commits without waiting for the snapshot
+bytes. A Cache API miss falls through to KV and promotes the frame back into
+that colo once its snapshot has been read and parsed. Runtime
 shell L1 entries also carry the store's namespaced `Cache-Tag`s, so purge mode
 evicts them. Unlike ordinary L1 data entries, a surviving shell still checks KV
 generation markers WHEN KV IS BOUND: its `taggedAt` is capture start, and an
