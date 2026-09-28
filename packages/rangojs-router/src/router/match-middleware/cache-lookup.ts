@@ -91,7 +91,7 @@
  *   - Request object
  *   - Action context (if POST)
  */
-import type { ResolvedSegment } from "../../types.js";
+import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
@@ -520,10 +520,15 @@ export function withCacheLookup<TEnv>(
       return;
     }
 
+    // A record's loader-owned handle values claim their loader, so its own
+    // cache() HIT does not replay them again (restoreHandles).
+    const claimLoaderPushes = (ctx.handlerContext as InternalHandlerContext)
+      ._claimLoaderPushes;
     const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
       ctx.matched.params,
       ctx.isIntercept,
+      claimLoaderPushes,
     );
     let cacheResult =
       explicitLookup.status === "hit" ? explicitLookup.result : null;
@@ -567,6 +572,7 @@ export function withCacheLookup<TEnv>(
           ctx.pathname,
           ctx.matched.params,
           ctx.isIntercept,
+          claimLoaderPushes,
         );
       } else if (explicitLookup.status === "bypass") {
         // condition() refused at lookup time (the gate only pre-decides the

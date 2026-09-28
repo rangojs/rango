@@ -32,6 +32,7 @@ import {
   ShellBakedSiblingLoader,
   ShellBakedOnlyLoader,
   ShellStorefrontLoader,
+  ShellRestockLoader,
 } from "./shell-cache.defs.js";
 import {
   ShellBakedView,
@@ -811,6 +812,14 @@ export const shellCachePatterns = urls(
       ShellWarningsPage,
       { name: "shellCacheWarnings", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellStorefrontLoader, { ssr: false })],
+    ),
+    // Issue #929: the ssr:false loader pushes the string handle itself; the
+    // replayed record keeps it and the loader's re-run replaces it.
+    path(
+      "/shell-cache/restock",
+      ShellWarningsPage,
+      { name: "shellCacheRestock", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellRestockLoader, { ssr: false })],
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",

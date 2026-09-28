@@ -77,6 +77,7 @@ export const NamedRoutes = {
   pprHeaderGuardLoader: "/ppr-header-guard/loader",
   pprMwLive: "/ppr-mw-live",
   pprNonce: "/ppr-nonce",
+  pprRestock: "/ppr-restock",
   pprScoped: "/ppr-scoped",
   pprScopedCondition: "/ppr-scoped-condition",
   pprScopedOptOut: "/ppr-scoped-optout",

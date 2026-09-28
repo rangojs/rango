@@ -1522,9 +1522,10 @@ export function deriveShellCaptureContext(
   //    title/meta, useHandle echoes), and the stored snapshot carries the same
   //    values so a HIT's handle data is guaranteed to match its own prelude.
   //    They still re-run on every HIT (resolveLoaderData, loader-cache.ts), so
-  //    on a HIT that replays this record their settled re-pushes append to the
-  //    restored copies: handles pushed from bake-lane loaders must dedupe by
-  //    key (Meta, Breadcrumbs by href). Only settled, thenable-free pushes
+  //    each kept push carries its loader as `owner` (HandleStore.push): the
+  //    record stores it (CachedEntryData.handleOwners), the HIT restores it
+  //    through pushReplayed, and the re-run's live pushes replace the
+  //    restored copies in place. Only settled, thenable-free pushes
   //    qualify — a deferred (thenable) push or one with masked nested promises
   //    keeps the exclusion so the handle encode cannot stall on a
   //    never-resolving mask.
@@ -1554,6 +1555,7 @@ export function deriveShellCaptureContext(
     };
     let masked: unknown;
     let loaderPush = pushedInLoaderScope;
+    let owner: string | undefined;
     if (isThenable(value)) {
       if (!pushedInLoaderScope) {
         handleLiveness.pendingPushes++;
@@ -1573,9 +1575,10 @@ export function deriveShellCaptureContext(
         loaderPush =
           bodyLoaderId === undefined ||
           derivedCtx._awaitBeforeFlushLoaderIds?.has(bodyLoaderId) !== true;
+        if (!loaderPush) owner = bodyLoaderId;
       }
     }
-    rawCapturePush(handleName, segmentId, masked, loaderPush);
+    rawCapturePush(handleName, segmentId, masked, loaderPush, owner);
   };
 
   const derivedCtx: RequestContext = Object.assign(Object.create(reqCtx), {

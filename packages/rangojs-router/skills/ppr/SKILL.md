@@ -668,15 +668,16 @@ response's critical path. To avoid it, give the loader its own cache —
 `loader(Def, { ssr: false }, () => [cache({ ttl })])` — so the background run
 reads through the loader cache.
 
-**Handle pushes from a bake-lane loader appear twice unless the handle dedupes.**
+**Handle pushes from a bake-lane loader appear once, with the re-run's value.**
 The capture records the loader's settled, thenable-free handle pushes (the
 prelude rendered them), and a HIT that replays the handler layer from the
-record restores them. The loader still re-runs, so its settled pushes are
-pushed again. The built-in handles dedupe by key — `Meta` by key (title, name,
-property) and `Breadcrumbs` by `href` — so they are unaffected; a custom handle (or a crumb
-without an `href`) pushed from an `ssr: false` loader on a `ppr` route should
-dedupe in its collector. Deferred and promise-carrying pushes are never
-recorded; the re-run is their only producer. The record keeps only the pushes
+record restores them. The loader still re-runs, and its pushes replace the
+restored ones in place, so any handle, deduping or not, shows each value
+once and the live value wins. A re-run push that lands after the document's
+handle snapshot reaches the client after hydration; until then the client
+shows the recorded value, which matches the prelude. Deferred and
+promise-carrying pushes are never recorded; the re-run is their only
+producer. The record keeps only the pushes
 made by the `ssr: false` loader's own body. A loader it awaits with
 `ctx.use()` re-runs with it on a HIT, so that loader's pushes are not recorded
 and appear once, whatever the value type (a string is left out the same way as

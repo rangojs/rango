@@ -541,6 +541,11 @@ export interface CachedEntryData {
    *  (see handle-snapshot.ts encodeHandles) so Promise/ReactNode handle values
    *  round-trip through JSON-serializing stores instead of being flattened. */
   handles: string;
+  /**
+   * Owning loader ids index-aligned with the decoded `handles` values
+   * (HandleOwners). Absent: every value restores as a plain replay.
+   */
+  handleOwners?: HandleOwners;
   /** Expiration timestamp (ms since epoch) */
   expiresAt: number;
   /** Cache tags for invalidation */
@@ -582,3 +587,12 @@ export interface CacheDefaults {
  * Structure: { handleName: [values...] }
  */
 export type SegmentHandleData = Record<string, unknown[]>;
+
+/**
+ * segmentId -> handleName -> the owning loader id of each recorded value, by
+ * index (null: not owned). Only a PPR shell capture writes owners: the
+ * settled pushes of an `ssr: false` loader's own body, which the record keeps
+ * because the prelude rendered them. restoreHandles replays an owned value
+ * through HandleStore.pushReplayed, so that loader's live re-run replaces it.
+ */
+export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

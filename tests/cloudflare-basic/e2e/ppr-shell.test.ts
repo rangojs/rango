@@ -510,6 +510,37 @@ function describePprShell(mode: "dev" | "build") {
       await expect(testId(page, "ppr-warning")).toHaveText(["Low stock"]);
     });
 
+    // Issue #929. The ssr:false loader pushes the string handle itself: the
+    // doc record keeps the push (the prelude rendered it) and the loader
+    // re-runs on every HIT. The re-run's push must replace the restored one,
+    // not append.
+    test("fast-path HIT renders a string handle pushed by an ssr:false loader once", async ({
+      page,
+    }) => {
+      // Cold-graph absorber (see the fragment-envelope test above).
+      await warmToHit(page.request, f.url("/ppr-shell?probe=restockwarmup"));
+      const url = f.url("/ppr-restock?probe=restock");
+      await warmToHit(page.request, url);
+
+      // Fast path, not the full tail: the tail replayed the doc record.
+      const res = await page.request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      expect(splitPrelude(await res.text()).resumed).toContain(
+        "__rangoFragment",
+      );
+
+      using _ = expectNoPageError(page);
+      using __ = guardHydrationErrors(page);
+      const nav = await page.goto(url);
+      expect(nav?.headers()["x-rango-shell"]).toBe("HIT");
+      await waitForHydration(page);
+      // The document stream stays open until the re-run settles
+      // (handlesLate), so a push that missed the handle snapshot has arrived.
+      await page.waitForLoadState("networkidle");
+
+      await expect(testId(page, "ppr-warning")).toHaveText(["Restock soon"]);
+    });
+
     // --- Loader-carried promise: the deterministic streaming lane in a hole. ---
 
     // /ppr-shell/stream's loader resolves an outer value fast but carries a nested

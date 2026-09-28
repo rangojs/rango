@@ -191,6 +191,7 @@ async function drain(options: {
     routeKey: "home",
     metricsStore: undefined,
     stale: false,
+    handlerContext: {},
   } as unknown as MatchContext<any>;
   const state = {
     cacheHit: false,

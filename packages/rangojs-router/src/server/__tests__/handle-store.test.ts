@@ -398,6 +398,23 @@ describe("HandleStore loader-push tagging (cache() record exclusion)", () => {
     });
   });
 
+  it("getRecordOwners reports push owners aligned with getDataForSegment(id, true)", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+    runInsideLoaderScope(() => {
+      store.push("crumbs", "seg1", "excluded");
+      store.push("crumbs", "seg1", "baked", false, "L");
+    });
+    store.push("meta", "seg1", "handler-only");
+
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: ["handler", "baked"],
+      meta: ["handler-only"],
+    });
+    expect(store.getRecordOwners("seg1")).toEqual({ crumbs: [null, "L"] });
+    expect(store.getRecordOwners("seg2")).toBeUndefined();
+  });
+
   it("replayed values are untagged; a later loader push is tagged", () => {
     const store = createHandleStore();
     runInsideLoaderScope(() => store.push("crumbs", "seg1", "stale-loader"));

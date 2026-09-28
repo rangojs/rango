@@ -58,6 +58,8 @@ interface SlotTag {
   replayOf?: string;
   /** Pushed by this loader's live run after it replaced its replayed slots. */
   liveOf?: string;
+  /** Pushed by this loader's body and kept in records (push `owner`). */
+  owner?: string;
 }
 
 // Shared by every plain DSL-loader push; tags are never mutated in place.
@@ -138,13 +140,16 @@ export interface HandleStore {
    * `loaderPush` overrides the push-time DSL-loader tag
    * (isInsideLoaderScope()) that getDataForSegment(id, true) excludes. The
    * PPR shell capture passes false for the bake-lane pushes its record keeps
-   * (shell-capture.ts deriveShellCaptureContext).
+   * (shell-capture.ts deriveShellCaptureContext), with `owner` set to the
+   * pushing loader's id so the record can restore them through pushReplayed
+   * (getRecordOwners).
    */
   push(
     handleName: string,
     segmentId: string,
     data: unknown,
     loaderPush?: boolean,
+    owner?: string,
   ): void;
 
   /**
@@ -201,6 +206,15 @@ export interface HandleStore {
     segmentId: string,
     excludeLoaderPushes?: boolean,
   ): Record<string, unknown[]>;
+
+  /**
+   * The push `owner` of each value in getDataForSegment(segmentId, true),
+   * index-aligned per handle (null: no owner). Handles without an owned
+   * value are omitted; undefined when none has one.
+   */
+  getRecordOwners(
+    segmentId: string,
+  ): Record<string, (string | null)[]> | undefined;
 
   /**
    * Replay cached handle data back into the store (for cache hits).
@@ -455,6 +469,7 @@ export function createHandleStore(): HandleStore {
       segmentId: string,
       value: unknown,
       loaderPush?: boolean,
+      owner?: string,
     ): void {
       if (completed) {
         const error = createLateHandlePushError(handleName, segmentId);
@@ -486,7 +501,11 @@ export function createHandleStore(): HandleStore {
         values,
         at,
         value,
-        liveOf ? { loader, liveOf } : loader ? LOADER_SLOT : undefined,
+        liveOf || owner
+          ? { loader, liveOf, owner }
+          : loader
+            ? LOADER_SLOT
+            : undefined,
       );
 
       // Bump the version; each consumer's cursor decides when to clone+yield.
@@ -608,6 +627,27 @@ export function createHandleStore(): HandleStore {
         }
         const kept = values.filter((_, i) => !tags[i]?.loader);
         if (kept.length > 0) result[handleName] = kept;
+      }
+      return result;
+    },
+
+    getRecordOwners(
+      segmentId: string,
+    ): Record<string, (string | null)[]> | undefined {
+      let result: Record<string, (string | null)[]> | undefined;
+      for (const handleName in data) {
+        const values = data[handleName][segmentId];
+        const tags = values && slotTags.get(values);
+        if (!tags) continue;
+        const owners: (string | null)[] = [];
+        let owned = false;
+        for (let i = 0; i < values.length; i++) {
+          if (tags[i]?.loader) continue;
+          const owner = tags[i]?.owner ?? null;
+          if (owner) owned = true;
+          owners.push(owner);
+        }
+        if (owned) (result ??= {})[handleName] = owners;
       }
       return result;
     },
