@@ -358,6 +358,18 @@ without `transition()` is not modeled.
   component that throws (#920); a build-time capture skips the shell and the
   route keeps runtime capture
   ([#932](https://github.com/rangojs/rango/pull/932)).
+- An `errorBoundary()`, `notFoundBoundary()` or `intercept()` declared in a
+  routeless entry nested in another one was never found: a `layout()` after a
+  bare `cache()` (for the routes before the `cache()`), or a `layout()` in a
+  routeless `transition(cfg, () => [...])` or `cache(o, () => [...])`. A
+  handler error, `notFound()` or server action error rendered an ancestor's
+  boundary or the default fallback, and the intercept neither opened on a soft
+  navigation nor was pre-rendered. These lookups now walk nested routeless
+  entries in the same order as the first level: the entry's own, then its
+  routeless entries in render order, then the parent. The build also
+  pre-renders an intercept declared directly after a bare `cache()` once
+  instead of twice for the routes after it
+  ([#933](https://github.com/rangojs/rango/pull/933)).
 
 ### Docs
 

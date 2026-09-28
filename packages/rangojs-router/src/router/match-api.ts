@@ -7,7 +7,9 @@ import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
   createErrorSegment,
+  findInOrphans,
   findNearestErrorBoundary as findErrorBoundary,
+  withErrorBoundary,
 } from "./error-handling.js";
 import {
   createHandlerContext,
@@ -481,24 +483,21 @@ export async function matchError<TEnv>(
     segmentType,
   );
 
+  // Same search order as findNearestErrorBoundary, so the fallback above and
+  // the entry that positions it agree.
   let entryWithBoundary: EntryData | null = null;
   let current: EntryData | null = manifestEntry;
+  let prev: EntryData | null = null;
   while (current) {
     if (current.errorBoundary && current.errorBoundary.length > 0) {
       entryWithBoundary = current;
       break;
     }
 
-    if (current.layout && current.layout.length > 0) {
-      for (const orphan of current.layout) {
-        if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
-          entryWithBoundary = orphan;
-          break;
-        }
-      }
-      if (entryWithBoundary) break;
-    }
+    entryWithBoundary = findInOrphans(current, withErrorBoundary, prev) ?? null;
+    if (entryWithBoundary) break;
 
+    prev = current;
     current = current.parent;
   }
 
@@ -507,21 +506,17 @@ export async function matchError<TEnv>(
 
   if (entryWithBoundary) {
     boundaryEntry = entryWithBoundary;
+    // The chain entry holding the boundary, itself or in its orphan tree: the
+    // error segment takes the place of its child in the chain.
+    const boundaryOwner = current;
 
     outletEntry = manifestEntry;
     current = manifestEntry;
 
     while (current) {
-      if (current.parent === boundaryEntry) {
+      if (current.parent === boundaryOwner) {
         outletEntry = current;
         break;
-      }
-
-      if (current.parent && current.parent.layout) {
-        if (current.parent.layout.includes(boundaryEntry)) {
-          outletEntry = current;
-          break;
-        }
       }
 
       current = current.parent;

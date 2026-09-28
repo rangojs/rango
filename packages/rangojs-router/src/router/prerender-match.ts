@@ -15,6 +15,7 @@ import {
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
+import { findInOrphans } from "./error-handling.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
@@ -363,19 +364,23 @@ export async function matchForPrerender<TEnv = any>(
         intercept: InterceptEntry;
         entry: EntryData;
       }[] = [];
-      let current: EntryData | null = manifestEntry;
-      while (current) {
-        // Flatten the entry and its sibling layouts into one source list, the
-        // same traversal findInterceptForRoute uses; the build keeps ALL matches
-        // (not just the innermost) and skips when(). intercept/layout are
-        // non-optional arrays, so empty ones are a no-op here.
-        for (const source of [current, ...current.layout]) {
-          for (const ic of source.intercept) {
-            if (ic.routeName === matched.routeKey) {
-              foundIntercepts.push({ intercept: ic, entry: source });
-            }
+      // The entry, then its orphans (nested ones included): the same traversal
+      // findInterceptForRoute uses; the build keeps ALL matches (not just the
+      // innermost) and skips when().
+      const collect = (source: EntryData): undefined => {
+        for (const ic of source.intercept) {
+          if (ic.routeName === matched.routeKey) {
+            foundIntercepts.push({ intercept: ic, entry: source });
           }
         }
+        return undefined;
+      };
+      let current: EntryData | null = manifestEntry;
+      let prev: EntryData | null = null;
+      while (current) {
+        collect(current);
+        findInOrphans(current, collect, prev);
+        prev = current;
         current = current.parent;
       }
 

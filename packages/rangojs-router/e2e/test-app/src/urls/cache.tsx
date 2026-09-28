@@ -1,5 +1,5 @@
 import { urls } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
@@ -65,7 +65,15 @@ let layoutCacheChromeRenders = 0;
  * Routes: cacheTest.*
  */
 export const cachePatterns = urls(
-  ({ path, layout, intercept, loader, cache, notFoundBoundary }) => [
+  ({
+    path,
+    layout,
+    intercept,
+    loader,
+    cache,
+    errorBoundary,
+    notFoundBoundary,
+  }) => [
     // A layout ABOVE a cache() boundary is live: it renders and writes its
     // header on every request, cache HITs included. Only the route inside the
     // boundary replays from the cache. The entry page sits outside the layout,
@@ -194,6 +202,73 @@ export const cachePatterns = urls(
           "/cache-test/marker-after",
           () => <p data-testid="marker-route-count">{++markerAfterRenders}</p>,
           { name: "cacheTest.markerAfter" },
+        ),
+      ],
+    ),
+    // For the routes before the marker, the layout after it is nested one
+    // level under the marker in the shell's layout[]: its errorBoundary() and
+    // intercept() are found there (issue #926).
+    layout(
+      () => (
+        <div data-testid="nested-orphan-shell">
+          <Outlet />
+        </div>
+      ),
+      () => [
+        path(
+          "/cache-test/nested-orphan",
+          () => (
+            <nav>
+              <Link
+                to="/cache-test/nested-orphan/throw"
+                data-testid="nested-orphan-throw-link"
+              >
+                Throw
+              </Link>
+              <Link
+                to="/cache-test/nested-orphan/photo/1"
+                data-testid="nested-orphan-photo-link"
+              >
+                Photo
+              </Link>
+            </nav>
+          ),
+          { name: "cacheTest.nestedOrphanIndex" },
+        ),
+        path(
+          "/cache-test/nested-orphan/throw",
+          () => {
+            throw new Error("nested orphan route failed");
+          },
+          { name: "cacheTest.nestedOrphanThrow" },
+        ),
+        path(
+          "/cache-test/nested-orphan/photo/:id",
+          (ctx) => (
+            <p data-testid="nested-orphan-photo-page">photo {ctx.params.id}</p>
+          ),
+          { name: "cacheTest.nestedOrphanPhoto" },
+        ),
+        cache({ ttl: 600 }),
+        layout(
+          () => (
+            <div data-testid="nested-orphan-host">
+              <Outlet />
+              <ParallelOutlet name="@nestedOrphanModal" />
+            </div>
+          ),
+          () => [
+            errorBoundary(
+              <p data-testid="nested-orphan-error">nested orphan error</p>,
+            ),
+            intercept(
+              "@nestedOrphanModal",
+              ".cacheTest.nestedOrphanPhoto",
+              (ctx) => (
+                <p data-testid="nested-orphan-modal">modal {ctx.params.id}</p>
+              ),
+            ),
+          ],
         ),
       ],
     ),
