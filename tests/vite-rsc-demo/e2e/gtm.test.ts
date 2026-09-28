@@ -208,7 +208,7 @@ async function checkScriptScenarios(page: Page, url: Url) {
 //    script is trusted). Proven by a sentinel, not element presence — a
 //    CSP-blocked or failed request would still leave the element in the DOM;
 //  - the body inline script (document-load) is neither inserted NOR run —
-//    <Scripts/> freezes the non-async set after hydration, so React never inserts
+//    <Html.Scripts/> freezes the non-async set after hydration, so React never inserts
 //    an inert <script> (asserting only the side effect would also pass against the
 //    old inert-tag behavior, so the element absence is asserted too);
 //  - the soft-nav page_view still fires, via the already-mounted <GtmPageViews>.

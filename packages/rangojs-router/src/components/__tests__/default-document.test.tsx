@@ -2,11 +2,11 @@
 /**
  * DefaultDocument is what apps get when they pass no custom Document to
  * createRouter. This pins that it wires the Script handle out of the box: a
- * `<Scripts/>` site in <head> and a `<Scripts position="body"/>` site in <body>,
- * with the request nonce applied. Rendered through renderRoute (which seeds the
- * Script handle + NonceContext the same way the real app does); React 19 hoists
- * the head content to the real document.head, while the body site renders in the
- * render container.
+ * `<Html.Scripts/>` site in <head> and a `<Html.Scripts position="body"/>` site
+ * in <body>, with the request nonce applied. Rendered through renderRoute (which
+ * seeds the Script handle + NonceContext the same way the real app does); React
+ * 19 hoists the head content to the real document.head, while the body site
+ * renders in the render container.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
@@ -42,12 +42,12 @@ describe("DefaultDocument", () => {
       ],
     });
 
-    // Head <Scripts/>: hoisted by React into the real document head, nonced.
+    // Head <Html.Scripts/>: hoisted by React into the real document head, nonced.
     const headScript = document.head.querySelector("#doc-head");
     expect(headScript?.textContent).toContain("__docHead");
     expect(headScript?.getAttribute("nonce")).toBe("doc-nonce");
 
-    // Body <Scripts position="body"/>: rendered in place, nonced.
+    // Body <Html.Scripts position="body"/>: rendered in place, nonced.
     const bodyScript = container.querySelector("#doc-body");
     expect(bodyScript?.textContent).toContain("__docBody");
     expect(bodyScript?.getAttribute("nonce")).toBe("doc-nonce");

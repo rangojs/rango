@@ -514,14 +514,14 @@ export const PeRedirectHandler: Handler<"peRedirect"> = async () => {
 };
 
 // The literal payload an attacker would put in a JSON-LD string field to break
-// out of <script type="application/ld+json">. MetaTags.escapeJsonForScript must
+// out of <script type="application/ld+json">. Html.Meta's escapeJsonForScript must
 // neutralize the "<"/">"/"&" so this can never close the tag or execute.
 export const META_ESCAPE_PAYLOAD = "</script><script>window.__pwned=1</script>";
 
 /**
  * JSON-LD escaping fixture. Emits a script:ld+json descriptor whose
  * `description` field contains a literal `</script>` breakout attempt. The
- * MetaTags fix escapes the serialized JSON before dangerouslySetInnerHTML, so
+ * Html.Meta fix escapes the serialized JSON before dangerouslySetInnerHTML, so
  * the payload stays inside the script tag (no breakout, no execution) and the
  * JSON re-parses to the original string.
  */

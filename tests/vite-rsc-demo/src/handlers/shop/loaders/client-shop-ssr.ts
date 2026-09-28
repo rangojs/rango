@@ -57,7 +57,7 @@ export const ClientShopSsrProductLoader = createLoader(
     // Pushed after the delay too: only the document await puts it in the SSR
     // handle snapshot; on navigations it streams. Two handles on purpose:
     // the app Meta feeds SsrMetaEcho + TitleUpdater (document.title, a client
-    // effect), the router Meta owns the SSR'd <head> <title> via MetaTags —
+    // effect), the router Meta owns the SSR'd <head> <title> via Html.Meta —
     // collectMeta's title dedup replaces the root "@meta" default, so the
     // document title tag is deterministic without JS.
     ctx.use(Meta)({ title: `${product.name} — SSR complete` });

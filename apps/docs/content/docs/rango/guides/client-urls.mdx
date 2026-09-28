@@ -378,7 +378,7 @@ export function OpenEspresso() {
 
 `refresh()`, `back()`, and `forward()` don't depend on the mount.
 
-A few client APIs don't apply inside a group. `ParallelOutlet` has no slots to render, and `useSegments()` sees the whole group as one server segment. Render `ScrollRestoration` once in the root layout, not in a group. `MetaTags` and `Scripts` belong in the document head. `useHandle()` only reads inside a group, because handle writes come from loaders.
+A few client APIs don't apply inside a group. `ParallelOutlet` has no slots to render, and `useSegments()` sees the whole group as one server segment. Render `Html.ScrollRestoration` once in the root layout, not in a group. `Html.Meta` and `Html.Scripts` belong in the document head. `useHandle()` only reads inside a group, because handle writes come from loaders.
 
 ## Security boundary
 

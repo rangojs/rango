@@ -301,7 +301,7 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   READ-ONLY in groups: handle writes come from loaders
   (`ctx.use(Meta)({ title })`) — there is no `handle()` DSL item. The
   built-in handles (`Meta`, `Breadcrumbs`, `Script`) all ride that same
-  lane; their renderers (`MetaTags`, `Scripts`) are document-head
+  lane; their renderers (`Html.Meta`, `Html.Scripts`) are document-head
   components that live in the root layout, not in groups.
 - **`<Outlet>` (the component)** reads the same context as `useOutlet` —
   inside a group layout it renders the identical `content`. Its named-slot
@@ -364,9 +364,9 @@ everything and are out of group scope entirely.
 Not meaningful inside a group (structural, not missing wiring):
 `ParallelOutlet` (groups have no parallel slots), `useSegments` (the whole
 group is one server segment — its answer inside a group does not reflect
-the group's own nesting), `ScrollRestoration` / `useScrollRestoration`
+the group's own nesting), `Html.ScrollRestoration` / `useScrollRestoration`
 (module singleton — render once in the root layout; mounting in a group
-tears down stored positions on group unmount), `MetaTags` / `Scripts` /
+tears down stored positions on group unmount), `Html.Meta` / `Html.Scripts` /
 `NavigationProvider` (document-head / app-root components).
 
 Programmatic navigation is mount-aware through RELATIVE paths:

@@ -162,7 +162,7 @@ Each numbered step's full walkthrough lives in a companion file linked below.
 ## Migration Checklist
 
 1. [ ] Set up Vite config with `rango()` plugin
-2. [ ] Create Document component with `<MetaTags />` in head
+2. [ ] Create Document component with `<Html.Meta />` in head
 3. [ ] Create `router.tsx` with `createRouter()`
 4. [ ] Convert route config / file routes to `urls()` DSL
 5. [ ] Migrate layouts — keep `<Outlet />` (import from `@rangojs/router/client`)
@@ -172,7 +172,7 @@ Each numbered step's full walkthrough lives in a companion file linked below.
 8. [ ] Migrate auth guards from loaders to `router.use()`
 9. [ ] Replace `react-router-dom` Link/navigation with `@rangojs/router/client`
 10. [ ] Convert error boundaries to `errorBoundary()` DSL
-11. [ ] Update metadata to use `Meta` handle + `<MetaTags />`
+11. [ ] Update metadata to use `Meta` handle + `<Html.Meta />`
 12. [ ] Replace custom theme provider with `theme: true` in createRouter (see `/theme`)
 13. [ ] Run `npx rango generate src/` to generate route types
 14. [ ] Verify no shims: `grep -rnE "from ['\"](react-router|@remix-run)" src/ app/`

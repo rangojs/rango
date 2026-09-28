@@ -43,7 +43,7 @@ export function pageViewTagging(page: GtmPageInfo): GtmDataLayerEvent {
  * Deterministic so SSR and hydration produce a byte-identical string.
  */
 export function generateGtmInit(containerId: string): string {
-  // Raw JS; <Scripts/> escapes the inline body against "</script>" breakout.
+  // Raw JS; <Html.Scripts/> escapes the inline body against "</script>" breakout.
   const id = JSON.stringify(containerId);
   return [
     "window.dataLayer=window.dataLayer||[];",

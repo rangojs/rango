@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 // site is the cross-app SOURCE in the shared-stylesheet repro: it renders the
 // SHARED href UNMANAGED (no precedence), exactly like the real site/document.tsx.
@@ -13,7 +13,7 @@ export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
+        <Html.Meta />
         <link rel="preload" href={sharedStyles} as="style" />
         <link rel="stylesheet" href={sharedStyles} />
         <style

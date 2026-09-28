@@ -156,16 +156,16 @@ owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body, with
 `loader(Def, { ssr: false })` when the title must be in the SSR'd
 head. See `/loader` → "Writing Handles from Loaders".
 
-Add `<MetaTags />` in the Document component's `<head>`:
+Add `<Html.Meta />` in the Document component's `<head>`:
 
 ```typescript
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 function Document({ children }: { children: ReactNode }) {
   return (
     <html>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>

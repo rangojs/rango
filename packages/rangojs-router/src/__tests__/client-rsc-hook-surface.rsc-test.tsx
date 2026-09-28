@@ -49,4 +49,12 @@ describe("client.rsc entry hook surface (H4)", () => {
     expect(surface.useNavigation).toBeUndefined();
     expect(surface.useAction).toBeUndefined();
   });
+
+  it("exports the Html namespace and none of its removed pre-namespace names", () => {
+    const surface = clientRsc as Record<string, unknown>;
+    expect(surface.Html).toBeDefined();
+    for (const removed of ["MetaTags", "Scripts", "ScrollRestoration"]) {
+      expect(surface[removed], removed).toBeUndefined();
+    }
+  });
 });

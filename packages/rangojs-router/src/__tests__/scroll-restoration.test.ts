@@ -292,7 +292,7 @@ describe("scroll-restoration traversal", () => {
     expect(getSavedScrollPosition("/products")).toBe(800);
   });
 
-  it("does nothing without <ScrollRestoration>", () => {
+  it("does nothing without <Html.ScrollRestoration>", () => {
     currentKey = "B";
     setScrollY(700);
     handleTraversalStart();

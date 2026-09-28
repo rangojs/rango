@@ -20,7 +20,7 @@ function pushDataLayer(event: GtmDataLayerEvent) {
 /**
  * Fires a GTM page_view on every soft (client-side) navigation. The FIRST
  * page_view is emitted server-side by the inline Script bootstrap (pushed via
- * ctx.use(Script), rendered by <Scripts/> — visible without JS, no hydration
+ * ctx.use(Script), rendered by <Html.Scripts/> — visible without JS, no hydration
  * dependency), so this effect seeds its key to the initial
  * location and pushes ONLY on change — covering Link clicks, router.push/replace,
  * popstate, and action redirects through one path, with no double-count on the

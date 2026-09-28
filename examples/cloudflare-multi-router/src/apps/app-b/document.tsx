@@ -1,11 +1,11 @@
 "use client";
 
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 import appBStyles from "./styles.css?url";
 
 export function Document({ children }: { children: React.ReactNode }) {
   return (
-    // suppressHydrationWarning: the theme init script (rendered by MetaTags)
+    // suppressHydrationWarning: the theme init script (rendered by Html.Meta)
     // sets the data-theme attribute before hydration.
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -13,8 +13,8 @@ export function Document({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>App B</title>
         <link rel="stylesheet" href={appBStyles} precedence="high" />
-        {/* MetaTags renders the theme init script when a theme is configured. */}
-        <MetaTags />
+        {/* Html.Meta renders the theme init script when a theme is configured. */}
+        <Html.Meta />
       </head>
       <body>
         <div

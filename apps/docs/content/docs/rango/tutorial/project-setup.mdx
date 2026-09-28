@@ -100,25 +100,25 @@ The Worker itself is described by `wrangler.json`:
 
 ## The document shell
 
-Rango renders your entire app inside a `Document` component. It owns the `<html>` element, and every route renders into `children`. The Document must be a client component, and it renders two router components: `<MetaTags />` (the `charset` and `viewport` tags, plus per-route metadata) and `<Scripts />`:
+Rango renders your entire app inside a `Document` component. It owns the `<html>` element, and every route renders into `children`. The Document must be a client component, and it renders two router components: `<Html.Meta />` (the `charset` and `viewport` tags, plus per-route metadata) and `<Html.Scripts />`:
 
 ```tsx
 // src/document.tsx
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
         <title>Brew</title>
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {children}
       </body>
     </html>

@@ -5,8 +5,8 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 test.describe.configure({ mode: "serial" });
 
 /**
- * Script handle + <Scripts/> renderer under the Cloudflare preset (router.fetch).
- * Verifies the custom Document's two <Scripts/> sites render the inline head +
+ * Script handle + <Html.Scripts/> renderer under the Cloudflare preset (router.fetch).
+ * Verifies the custom Document's two <Html.Scripts/> sites render the inline head +
  * body scripts pushed by the route AND that they execute, in both dev and the
  * production build. (Nonce application is covered by tests/vite-rsc-demo, which
  * configures a nonceProvider + enforced CSP; cloudflare-basic configures no
@@ -17,7 +17,7 @@ function describeScripts(mode: "dev" | "build") {
   test.describe(`scripts (${label})`, () => {
     const f = useFixture({ root: ".", mode });
 
-    test("renders + executes inline head and body scripts via <Scripts/>", async ({
+    test("renders + executes inline head and body scripts via <Html.Scripts/>", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);

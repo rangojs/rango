@@ -548,7 +548,7 @@ For cache invalidation from actions, use `await updateTag(tag)` — it is read-y
 
 ## Step 8: Metadata
 
-Rango uses the `Meta` handle in handlers (server) plus `<MetaTags />` in the document head (client):
+Rango uses the `Meta` handle in handlers (server) plus `<Html.Meta />` in the document head (client):
 
 ```tsx
 // Next.js: export const metadata = { title: "Home" }
@@ -589,17 +589,17 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 Without `{ ssr: false }` the push still applies, but a slow loader's title can arrive after the document response has started instead of in the server-rendered `<head>`.
 
-Render `<MetaTags />` in the Document's `<head>`:
+Render `<Html.Meta />` in the Document's `<head>`:
 
 ```tsx
 import type { ReactNode } from "react";
-import { MetaTags } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html>
       <head>
-        <MetaTags />
+        <Html.Meta />
       </head>
       <body>{children}</body>
     </html>
@@ -668,7 +668,7 @@ See [Theme](/docs/rango/guides/theme) for system detection and cookie persistenc
 8. Replace `next/link` with `Link` from `@rangojs/router/client`, and set `prefetch` where you relied on Next's automatic prefetching
 9. Convert loading/error files to `loading()` / `errorBoundary()`, with a client `ErrorBoundary` where you need `reset`
 10. Migrate API routes to `path.json()` / `path.text()`
-11. Update metadata to the `Meta` handle + `<MetaTags />` in the document head (`generateMetadata` becomes a loader push with `{ ssr: false }`)
+11. Update metadata to the `Meta` handle + `<Html.Meta />` in the document head (`generateMetadata` becomes a loader push with `{ ssr: false }`)
 12. Replace `next-themes` with `theme: true` in `createRouter`
 13. Map segment config: `revalidate = N` to `cache({ ttl })`, `force-static` to `Static()`/`Prerender()`, `experimental_ppr` to the `ppr` path option
 14. Run `npx rango generate src/` to generate route types (see [CLI](/docs/rango/reference/cli))

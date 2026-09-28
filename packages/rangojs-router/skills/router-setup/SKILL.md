@@ -255,26 +255,26 @@ Notes:
 ## Document component
 
 The Document renders `<html>`, `<head>`, and `<body>` around every page and
-every error state. It must be a client component. Include `<MetaTags />` (it
+every error state. It must be a client component. Include `<Html.Meta />` (it
 emits the default `charset`/`viewport` tags, `Meta` handle output, and the
-theme script) and `<Scripts />` (the `Script` handle, see `/scripts`):
+theme script) and `<Html.Scripts />` (the `Script` handle, see `/scripts`):
 
 ```tsx
 // src/document.tsx
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {children}
       </body>
     </html>

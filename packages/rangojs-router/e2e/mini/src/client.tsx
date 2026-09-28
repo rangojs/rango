@@ -8,7 +8,7 @@
 // surface: useLoader / useFetchLoader / useRefreshLoaders, useRouter /
 // useNavigation / usePathname / useSegments / useParams / useSearchParams,
 // useAction + useActionState (server actions), useLocationState, useHandle +
-// Breadcrumbs, Link / useHref / useMount / useLinkStatus, and ScrollRestoration.
+// Breadcrumbs, Link / useHref / useMount / useLinkStatus, and Html.ScrollRestoration.
 
 import { useActionState, useState, useTransition } from "react";
 import {

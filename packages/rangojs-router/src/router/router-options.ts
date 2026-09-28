@@ -369,7 +369,7 @@ export interface RangoOptions<TEnv = any> {
    * When provided, enables:
    * - ctx.theme and ctx.setTheme() in route handlers
    * - useTheme() hook for client components
-   * - FOUC prevention via inline script in MetaTags
+   * - FOUC prevention via inline script in `<Html.Meta />`
    * - Automatic ThemeProvider wrapping in NavigationProvider
    *
    * @example

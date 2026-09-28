@@ -43,7 +43,7 @@ Settled:
 - [x] `ErrorBoundary` — pinned as the in-group idiom
 - [x] `ParallelOutlet` — NOT in groups (documented)
 - [x] `useSegments` — NOT meaningful in groups (documented)
-- [x] `ScrollRestoration` / `MetaTags` / `Scripts` / `NavigationProvider` — root-level, not group APIs (documented)
+- [x] `Html.ScrollRestoration` / `Html.Meta` / `Html.Scripts` / `NavigationProvider` — root-level, not group APIs (documented)
 - [x] `useNonce` — orthogonal (SSR-only value, no group interaction)
 
 Settled 2026-07-27 (second batch):
@@ -109,7 +109,7 @@ inside a group"):
       `Breadcrumbs`. Group loaders push it through the same generic
       `ctx.use(Handle)` write lane the `client-shop-handles` suite pins for
       `Meta` (the lane is handle-agnostic — `collectHandleData` never
-      special-cases types); the `Scripts` RENDERER stays a document-head
+      special-cases types); the `Html.Scripts` RENDERER stays a document-head
       component in the root layout. No separate pin: a per-handle-type pin
       would re-test the lane, not new semantics.
 - [x] Definition factories — CONFIRMED placement rules, with one
@@ -136,7 +136,7 @@ inside a group"):
 
 Doc-drift from the same sweep: SYNCED 2026-07-27 — client-urls.md now
 states the useHandle read-only restriction, the built-in handle set
-(`Meta`/`Breadcrumbs`/`Script` + the `MetaTags`/`Scripts` renderers), the
+(`Meta`/`Breadcrumbs`/`Script` + the `Html.Meta`/`Html.Scripts` renderers), the
 `<Outlet>` component semantics, `useAction`, the prefetch-tier statement,
 the orthogonal set (`useNonce`, `./theme`, cache controls, factories,
 `MountContext`, `./browser`), and `useScrollRestoration` +
@@ -179,10 +179,10 @@ Structural, not missing wiring. Documented in `docs/client-urls.md`.
   one route segment; the group's own `route.layouts` nesting is invisible.
   Its answer inside a group does not describe the group. `path` (URL split)
   still works, but that is `usePathname` territory.
-- **`ScrollRestoration` / `useScrollRestoration`** — module singleton,
+- **`Html.ScrollRestoration` / `useScrollRestoration`** — module singleton,
   documented "render once in your root layout"; mounting in a group tears
   down stored positions on group unmount.
-- **`MetaTags` / `Scripts` / `NavigationProvider`** — document-head / app-root
+- **`Html.Meta` / `Html.Scripts` / `NavigationProvider`** — document-head / app-root
   components; nothing group-specific to support.
 
 ## Under consideration (maintainer-flagged 2026-07-27)

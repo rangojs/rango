@@ -166,6 +166,28 @@ export function Example() {
   );
 }
 `,
+      "html-consumer.tsx": `
+import type { ReactNode } from "react";
+import { Html, type ScrollRestorationProps } from "@rangojs/router/client";
+
+const byPathname: ScrollRestorationProps["getKey"] = (location) => location.pathname;
+
+export function Document({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <Html.Meta />
+        <Html.Scripts />
+      </head>
+      <body>
+        <Html.Scripts position="body" />
+        <Html.ScrollRestoration getKey={byPathname} />
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
       "cache-consumer.ts": `
 import {
   CFCacheStore,
@@ -329,6 +351,26 @@ void Outlet;
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("@rangojs/router");
     expect(result.output).toContain("Outlet");
+  }, 20_000);
+
+  it("rejects the pre-Html document component names from the client entry", () => {
+    const result = runConsumerTypecheck({
+      "invalid-client-document-names.ts": `
+import { MetaTags, Scripts, ScrollRestoration } from "@rangojs/router/client";
+
+void MetaTags;
+void Scripts;
+void ScrollRestoration;
+`,
+    });
+
+    expect(result.status).not.toBe(0);
+    for (const name of ["MetaTags", "Scripts", "ScrollRestoration"]) {
+      // TS2305 ("member 'X'") or TS2724 ("member named 'X'. Did you mean").
+      expect(result.output).toMatch(
+        new RegExp(`has no exported member (named )?'${name}'`),
+      );
+    }
   }, 20_000);
 
   it("rejects non-exported deep cache subpaths", () => {

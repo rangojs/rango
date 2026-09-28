@@ -93,24 +93,24 @@ interface RangoOptions<TEnv> {
 
 ### document
 
-The HTML shell rendered around every route and every error state. It must be a client component. Render `<MetaTags />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Scripts />`:
+The HTML shell rendered around every route and every error state. It must be a client component. Render `<Html.Meta />` (the default `charset` and `viewport` tags, per-route `Meta` output, and the theme script) and `<Html.Scripts />`:
 
 ```tsx
 // src/document.tsx
 "use client";
 
 import type { ReactNode } from "react";
-import { MetaTags, Scripts } from "@rangojs/router/client";
+import { Html } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
-        <MetaTags />
-        <Scripts />
+        <Html.Meta />
+        <Html.Scripts />
       </head>
       <body>
-        <Scripts position="body" />
+        <Html.Scripts position="body" />
         {children}
       </body>
     </html>
@@ -119,6 +119,19 @@ export function Document({ children }: { children: ReactNode }) {
 ```
 
 When `document` is omitted, the router uses a default document with exactly this structure. Page titles and other per-route tags come from the `Meta` handle (see [Metadata](/docs/rango/features/metadata)), not from the Document.
+
+#### Migrating from MetaTags / Scripts / ScrollRestoration
+
+`Html` is a namespace exported from `@rangojs/router/client`, replacing three separate component imports:
+
+| Before                                                        | After                                                                   |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `import { MetaTags, Scripts } from "@rangojs/router/client"`  | `import { Html } from "@rangojs/router/client"`                         |
+| `<MetaTags />`                                                | `<Html.Meta />`                                                         |
+| `<Scripts />` / `<Scripts position="body" />`                 | `<Html.Scripts />` / `<Html.Scripts position="body" />`                 |
+| `<ScrollRestoration />` / `<ScrollRestoration getKey={fn} />` | `<Html.ScrollRestoration />` / `<Html.ScrollRestoration getKey={fn} />` |
+
+The old component exports are removed, not aliased. `useScrollRestoration`, the `ScrollRestorationProps` type and the `Meta`/`Script`/`Breadcrumbs` handles are unchanged.
 
 ### basename
 
@@ -386,7 +399,7 @@ The resolver receives `{ request, env, url }`, may be async, and runs only for H
 
 ### theme
 
-`theme?: ThemeConfig | true` enables the light/dark theme system with FOUC prevention: `ctx.theme` and `ctx.setTheme()` in handlers, `useTheme()` from `@rangojs/router/theme` in client components, and the theme script emitted by `<MetaTags />`. `true` enables it with all defaults. See [Theme](/docs/rango/guides/theme).
+`theme?: ThemeConfig | true` enables the light/dark theme system with FOUC prevention: `ctx.theme` and `ctx.setTheme()` in handlers, `useTheme()` from `@rangojs/router/theme` in client components, and the theme script emitted by `<Html.Meta />`. `true` enables it with all defaults. See [Theme](/docs/rango/guides/theme).
 
 ## Observability and debugging
 

@@ -8,6 +8,9 @@ import {
   Suspense,
   type ReactNode,
 } from "react";
+// Not `export * as Html`: plugin-rsc's "use client" proxy transform only
+// expands bare `export *` and throws on a named one.
+import * as Html from "./html.js";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import {
   type ClientErrorBoundaryFallbackProps,
@@ -427,7 +430,6 @@ export {
 } from "./browser/react/use-link-status.js";
 
 export {
-  ScrollRestoration,
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
@@ -436,14 +438,13 @@ export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
 
 export { Meta } from "./handles/meta.js";
-export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export {
   Script,
   type ScriptConfig,
   type ScriptAttributes,
 } from "./handles/script.js";
-export { Scripts } from "./handles/Scripts.js";
+export { Html };
 export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 export {

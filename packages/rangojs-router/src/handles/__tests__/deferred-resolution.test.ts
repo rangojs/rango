@@ -18,7 +18,7 @@ describe("root accumulation across layouts + parallel slots", () => {
   // The user-facing concern: handle values accumulate from EVERY segment in the
   // matched chain — root layout, nested layouts, the leaf, AND parallel slots
   // (each slot keys into its OWN bucket `parent.@slot`, see fresh.ts). A consumer
-  // reading the handle at the root (e.g. <MetaTags/>) collects the whole chain.
+  // reading the handle at the root (e.g. <Html.Meta />) collects the whole chain.
   // With resolve-by-default, a DEFERRED push from any of those segments must be
   // resolved before that root read — including one pushed from a parallel slot.
   it("a deferred value pushed from a parallel slot is resolved before the root collects the whole chain", async () => {

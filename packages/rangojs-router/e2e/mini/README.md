@@ -91,12 +91,12 @@ modal gated by the `when` config, `transition()` content-hold (component state s
 same-route param change).
 State & nav: `createLocationState` (flash + persistent), `useLocationState`,
 `Link state`, `useRouter`/`useNavigation`/`usePathname`/`useSegments`/`useParams`/
-`useSearchParams`, `useLinkStatus`, `ScrollRestoration`.
+`useSearchParams`, `useLinkStatus`, `Html.ScrollRestoration`.
 Links: `Link`, `href`, `ctx.reverse`, mount-aware `useMount`/`useHref`,
 `useReverse` two ways — mount-aware local names via the `urls/products.tsx`
 per-module gen (`ProductsReverse`), and dotted global names via the inline
 `router.named-routes.gen.ts` (`GlobalReverse`, root mount only).
-Head: `Meta` (title template) + `Breadcrumbs` + `useHandle`, `MetaTags` via the
+Head: `Meta` (title template) + `Breadcrumbs` + `useHandle`, `Html.Meta` via the
 default document.
 
 ## What deliberately does **not** fit the single-file shape

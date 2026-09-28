@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * Renders the scripts collected by the Script handle into the document.
+ * Renders the scripts collected by the Script handle into the document. Public
+ * as `Html.Scripts` (`@rangojs/router/client`).
  *
- * Place `<Scripts />` inside `<head>` (default) and, if you push body scripts,
- * `<Scripts position="body" />` at the top of `<body>`. Each site renders the
- * configs whose `position` matches; the request CSP nonce is applied
+ * Place `<Html.Scripts />` inside `<head>` (default) and, if you push body
+ * scripts, `<Html.Scripts position="body" />` at the top of `<body>`. Each site
+ * renders the configs whose `position` matches; the request CSP nonce is applied
  * automatically to every DOCUMENT-RENDERED <script> (consumers never pass it). An
  * async script first encountered on a soft navigation is injected client-side
  * where the nonce is unavailable, so it carries no nonce and relies on
@@ -24,11 +25,11 @@
  * ```tsx
  * <html>
  *   <head>
- *     <MetaTags />
- *     <Scripts />
+ *     <Html.Meta />
+ *     <Html.Scripts />
  *   </head>
  *   <body>
- *     <Scripts position="body" />
+ *     <Html.Scripts position="body" />
  *     {children}
  *   </body>
  * </html>
@@ -80,10 +81,10 @@ function passthroughAttributes(
       if (dev) {
         console.warn(
           isHandler
-            ? `[Scripts] event handler "${key}" in a script's attributes is ` +
+            ? `[Html.Scripts] event handler "${key}" in a script's attributes is ` +
                 `dropped; callbacks cannot cross the server -> client handle ` +
                 `boundary. Use a "use client" component for load/error handling.`
-            : `[Scripts] managed field "${key}" in a script's attributes is ` +
+            : `[Html.Scripts] managed field "${key}" in a script's attributes is ` +
                 `dropped; set it via the ScriptConfig fields (the request nonce ` +
                 `is applied automatically).`,
         );
@@ -129,7 +130,7 @@ function renderScript(
     async
   ) {
     console.warn(
-      `[Scripts] An async external script (src="${src}") is hoisted into ` +
+      `[Html.Scripts] An async external script (src="${src}") is hoisted into ` +
         `<head> by React; position: "body" is ignored for it.`,
     );
   }
