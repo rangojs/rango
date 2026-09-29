@@ -34,7 +34,9 @@ Writers: handlers AND loader bodies — `ctx.use(Handle)` returns the push
 function in each (middleware has no handle APIs). Loader pushes follow a delivery race (settle before
 the handler barrier → in the SSR'd document; later → applied client-side), and
 `loader(Def, { ssr: false })` makes them deterministic in the
-document. See `/loader` → "Writing Handles from Loaders". `useHandle`
+document. On a `ppr` shell HIT, a loader without `ssr: false` never ran during
+the capture, so its pushes always apply client-side; with `ssr: false` they
+bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
 Handles can be passed as props from server to client components:

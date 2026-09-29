@@ -18,15 +18,15 @@ of the request live on a hit. The runtime layers share the app-level store
 `revalidateTag`); `Prerender()`/`Static()` output is built into the server
 bundle instead.
 
-| Layer                | Declared with                                  | Stores                                                   | Still runs on a hit                                             | Skill                 |
-| -------------------- | ---------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- | --------------------- |
-| Function / component | `"use cache"`                                  | one function's return value                              | everything around the call                                      | `/use-cache`          |
-| Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                                      | other loaders, handlers, rendering                              | `/caching`, `/loader` |
-| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree                    | middleware, segments above it, loaders, HTML render             | `/caching`            |
-| Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build                        | middleware, loaders, HTML render                                | `/prerender`          |
-| HTML shell           | `ppr` path option                              | HTML prelude + React postponed state + the handler layer | middleware, loaders (handlers never run); only the holes resume | `/ppr`                |
-| Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store                          | middleware above it; nothing below                              | `/document-cache`     |
-| Whole response (CDN) | `Cache-Control: s-maxage` read by the platform | final response outside the app                           | nothing — the app is not invoked                                | `/deployment-caching` |
+| Layer                | Declared with                                  | Stores                                                   | Still runs on a hit                                    | Skill                 |
+| -------------------- | ---------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------ | --------------------- |
+| Function / component | `"use cache"`                                  | one function's return value                              | everything around the call                             | `/use-cache`          |
+| Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                                      | other loaders, handlers, rendering                     | `/caching`, `/loader` |
+| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree                    | middleware, segments above it, loaders, HTML render    | `/caching`            |
+| Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build                        | middleware, loaders, HTML render                       | `/prerender`          |
+| HTML shell           | `ppr` path option                              | HTML prelude + React postponed state + the handler layer | middleware and live loaders (no handler); holes resume | `/ppr`                |
+| Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store                          | middleware above it; nothing below                     | `/document-cache`     |
+| Whole response (CDN) | `Cache-Control: s-maxage` read by the platform | final response outside the app                           | nothing — the app is not invoked                       | `/deployment-caching` |
 
 Quick rules:
 
@@ -37,7 +37,10 @@ Quick rules:
 - **Whole response** public and identical for everyone → `/document-cache` or
   CDN caching (`/deployment-caching`).
 - A value that must be fresh on **every** request → a loader (never cached
-  unless you opt in).
+  unless you opt in), read with `useLoader()`; on a `ppr` route, keep it off
+  `ssr: false`. A handler inside a `cache()` or `ppr` boundary that awaits
+  `ctx.use(Loader)` renders the value it got on the miss, and every hit
+  replays that output.
 
 The layers compose: `"use cache"` inside a `cache()` subtree, a cached loader
 under a `cache()` boundary, `cache()` segments replayed inside a `ppr` shell
@@ -57,21 +60,34 @@ Everything on this page is **stored-value freshness** — _is a cached value
 still good?_ There is a second, orthogonal concern it is easy to mistake for
 caching:
 
-1. **Stored-value freshness** — _is a cached value still good?_
-   → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
-   Entries expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
-   `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during a
-   request render outside `"use cache"` it tags the document/shell artifact).
-   All built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`,
-   `VercelCacheStore`) index by tag; invalidate on demand with `updateTag(...tags)` (awaitable,
-   read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking).
-   Both hard-purge; the difference is awaitability, not stale-serving.
+1. **Stored-value freshness** — _is a cached value still good?_ → `"use cache"`
+   (fn/component), `cache()` (segment), loader `cache()` (loader data). Entries
+   expire by **TTL/SWR** and can be tagged (`cache({ tags })` or runtime
+   `cacheTag(...tags)` — inside `"use cache"` it tags that entry; called during
+   a request render outside `"use cache"` it tags what the render stores: the
+   enclosing route `cache()` entry, a cached loader's own entry when called in
+   its body, and the `ppr` shell or document-cache entry built from them; on a
+   `ppr` route it tags the shell only when shell material calls it). All
+   built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`,
+   `VercelCacheStore`) index by tag; invalidate on demand with
+   `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)` (background,
+   non-blocking). Both evict rather than mark stale, and the request that calls
+   either reads its own writes; `updateTag()` also waits for the durable write,
+   `revalidateTag()` leaves it in the background. `CFCacheStore` and
+   `VercelCacheStore` serve PPR shell reads through per-isolate memos: the
+   invalidating user skips them via the fresh-reads cookie, other users see the
+   invalidation once the memo refreshes and, on `CFCacheStore` with KV, once KV
+   propagates the marker to their colo (`/caching` → "Tag-Based Invalidation"
+   and "The fresh-reads cookie").
 2. **Client-update selection** — _should this segment re-run and stream to the
    client on this navigation/action?_
    → `revalidate()`. Covered in `/loader` and `/route`, **not here**.
 
 They are orthogonal and compose: a segment selected by `revalidate()` still
-consults its cache (hit → no recompute); a cache bust does **not** force a client
+consults its cache (hit → no recompute), except that a server action's
+revalidation render skips the route `cache()` lookup and re-renders those
+segments fresh (a loader's own `cache()` and `"use cache"` are still read); a
+cache bust does **not** force a client
 update, and `revalidate()` never reads, writes, or expires a cached value. If you
 know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
 `/rango` → "Coming from another framework" for the cross-framework mapping.
@@ -115,9 +131,10 @@ else they allow:
   loader.
 - **Loader `cache()` guard** (a loader bound with its own `cache()`) — its value
   is stored under a key that names no user, so a miss whose body read
-  `cookies()`, `headers()` or a non-cacheable `ctx.get()` fails unless the
-  binding has a `key()` or its store a `keyGenerator`. Either one switches the
-  check off, so put what the body reads in it (`/loader` → "Cache Key").
+  `cookies()`, `headers()`, the theme or a non-cacheable `ctx.get()` fails
+  unless the binding has a `key()` or its store a `keyGenerator`. Either one
+  switches the check off, so put what the body reads in it (`/loader` →
+  "Cache Key").
 - **`"use cache"` exec-guard** (function-level) — the same request-scoped APIs
   throw inside the cached function (`cookies()`, `headers()`, `ctx.set()`,
   `ctx.headers.set()` and other response writes); additionally, tainted
@@ -125,9 +142,9 @@ else they allow:
   the cached path: with no item-capable store configured the function runs
   uncached and nothing throws.
 
-The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`,
-a `{ cache: false }` variable read, and `ctx.dynamic()` refuse the capture
-anywhere it waits — handlers, promises they pass or push, async server
+The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`, a
+theme read, a `{ cache: false }` variable read, and `ctx.dynamic()` refuse the
+capture anywhere it waits — handlers, promises they pass or push, async server
 components, `ssr: false` loaders, and loaders a handler awaits (no loader
 exemption there). The route then serves uncached; see `/ppr`.
 
@@ -215,7 +232,7 @@ local/dev behavior, not as proof that segment SWR is active.
 | **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw      |
 | **Handle data**      | Handler pushes replayed; loader pushes re-run live    | Captured and replayed when it receives `ctx`      |
 | **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                        |
-| **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached |
+| **Nesting**          | Inner TTLs override; `key()` partitions compose       | Compose by calling cached functions from uncached |
 
 ### cache() Cache Key
 
@@ -228,8 +245,14 @@ honors `createRouter({ cache: { searchParams } })`.
 
 A custom `key` function replaces the whole default key (e.g., to key by user role
 or locale); it also bypasses the store's `keyGenerator` and the search-param
-filter. `condition` can disable caching entirely at runtime (e.g., skip for
-authenticated users).
+filter. It runs once per request and may read `cookies()`. A nested `cache()`
+keys its records within the enclosing `key()` partition (`/caching` → "Keys
+nest"). Never return raw request input from `key()`: normalize it to the
+values you serve or prefix it. On a `ppr` route, `key()` (and a store
+`keyGenerator` that returns a non-default key) also partitions the shell: one
+shell per value, and a partitioned request never reads a build-time shell.
+Keep the values to a small set. `condition` can disable caching entirely at
+runtime (e.g., skip for authenticated users).
 
 ### "use cache" Cache Key
 
@@ -306,6 +329,11 @@ export const urlpatterns = urls(({ path, cache }) => [
 ]);
 ```
 
+On a `ppr` route, `cache(false)` or a `condition()` that returns false also
+means no shell: that route (or that request) renders like a cache miss, with
+no shell served or captured. A `ppr` route cannot opt out of a layout's
+`cache()` and still get a shell.
+
 ## When to Use "use cache"
 
 Use the `"use cache"` directive when:
@@ -376,8 +404,20 @@ does **not** keep a value fresher than its parent:
 So `"use cache: short"` (60s) inside `cache({ ttl: 600 })` yields ~600s freshness
 on hits, **not** 60s. This is not a bug: setting `cache({ ttl: 600 })` declares
 "this subtree may be ~600s stale." **If a value must be fresher than its
-enclosing segment, put it in a loader** (always live). `debugPerformance` prints
-cache hits per layer, so the actual per-request behavior is observable.
+enclosing segment, put it in a loader** read with `useLoader()` (without
+`ssr: false` on a `ppr` route). `debugPerformance` prints cache hits per
+layer, so the actual per-request behavior is observable.
+
+Keys and tags cross the nesting too:
+
+- An inner `cache()` without `key` keys its records within the outer `key()`
+  partition; one with its own `key` composes both (`/caching` → "Keys nest").
+- Tags that `cacheTag()` calls and `"use cache"` reads record inside a
+  `cache()` subtree are stored on that `cache()` entry, so `updateTag()` of one
+  of them evicts it (and a `ppr` shell or document built from it) instead of
+  waiting for it to expire.
+- A `ppr` shell never outlives the route `cache()` entry it was captured
+  from: its ttl and ttl + swr are capped to what that entry has left.
 
 ## Headers and Cookies
 
@@ -508,8 +548,13 @@ fresh on every request. This is enforced at two levels:
    loaders after yielding its cached UI segments (the loaders above the boundary
    run with their live segments), ensuring fresh data regardless of cache state.
 
-This means `cache()` gives you cached UI + fresh data by default. To also cache
-a loader's data, explicitly opt in with `loader(Fn, () => [cache({...})])`.
+This means `cache()` gives you cached UI + fresh data by default, where the
+data is read outside the cached output: `useLoader()` in a client component.
+A handler inside the boundary that awaits `ctx.use(Loader)` renders the value
+it got on the miss, and every hit replays that output. On a `ppr` route an
+`ssr: false` loader is the other exception: it bakes into the shell (`/ppr`).
+To also cache a loader's data, explicitly opt in with
+`loader(Fn, () => [cache({...})])`.
 That entry is keyed by loader, host, path and params, not by the route's
 `key()`, so give it a `key()` that includes any request data its body reads;
 without one the miss fails.
@@ -535,16 +580,16 @@ path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
 ```
 
 On hit: DashboardPage, DashboardSidebar, StatsPanel, and ActivityFeed are all
-served from cache, and DashboardLoader runs fresh. On miss: all handlers run
-and the path's segments are cached together. DashboardPage runs inside the
-boundary, so the guards apply to it: a header write there throws. The wrapper
-form `cache({ ttl: 300 }, () => [layout(DashboardSidebar)])` inside a path
-does the same, and `cache(false)` there opts the path out of an enclosing
-`cache()`. The same form caches a response route:
+served from cache, and DashboardLoader runs fresh. On miss: all handlers run and
+the path's segments are cached together. DashboardPage runs inside the boundary,
+so the guards apply to it: a header write there throws. The wrapper form
+`cache({ ttl: 300 }, () => [layout(DashboardSidebar)])` inside a path does the
+same, and `cache(false)` there opts the path out of an enclosing `cache()` (on a
+`ppr` route, out of the shell too). The same form caches a response route:
 `path.json("/api/feed", handler, { name: "feed" }, () => [cache({ ttl: 60 })])`.
-A `cache()` inside a `layout()` or `middleware()` wrapper in the path caches
-the path too: `layout(DashboardSidebar, () => [cache({ ttl: 300 })])` is the
-same unit as the example above, not the sidebar alone.
+A `cache()` inside a `layout()` or `middleware()` wrapper in the path caches the
+path too: `layout(DashboardSidebar, () => [cache({ ttl: 300 })])` is the same
+unit as the example above, not the sidebar alone.
 
 ### Bare cache() among a layout's children
 
@@ -588,8 +633,8 @@ RootLayout renders fresh every request, and a header it writes lands on every
 response. ProductPage, ReviewsPanel, and RelatedProducts are inside the cache
 boundary and served from cache on hit. This is useful when the root layout
 depends on request-specific data (user session, theme) but the product content
-is cacheable. On a `ppr` route the whole chain bakes into the shell, so there
-`cache()` covers RootLayout too.
+is cacheable. On a `ppr` route the shell bakes RootLayout too: a shell HIT runs
+no layout, and the shell expires no later than this `cache()` entry.
 
 ### Loader-level caching
 
@@ -614,7 +659,9 @@ supports custom keys, tags, SWR, conditional bypass, and per-loader store
 overrides — see `/loader` for the full reference. A body that reads
 `cookies()`, `headers()` or a non-cacheable variable needs a `key()`, which
 must include the value: without one the miss fails, and any `key()` switches
-that check off.
+that check off. The entry also carries the tags its body recorded
+(`cacheTag()` calls, `"use cache"` reads, and those of the loaders it reads
+with `ctx.use()`), so `updateTag()` of any of them drops it.
 
 ## See Also
 

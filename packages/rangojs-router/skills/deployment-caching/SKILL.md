@@ -56,8 +56,11 @@ There are two shell producers:
 Both producers feed the same in-function serve path. Build-time shells are
 content-hashed modules in the server bundle, not CDN-served HTML files.
 
-`ppr.ttl`, `ppr.swr`, and `ppr.tags` govern that shell entry. They do **not**
-emit HTTP `Cache-Control` and do not configure a platform CDN.
+`ppr.ttl` and `ppr.swr` set the shell entry's lifetime, capped by the route
+`cache()` entry it was captured from (the shorter wins). Its tags are
+`ppr.tags` plus the tags its content recorded. A route `cache({ key })` or a
+store `keyGenerator` stores one shell per partition value. None of this emits
+HTTP `Cache-Control` or configures a platform CDN.
 
 ## Platform deployment shapes
 

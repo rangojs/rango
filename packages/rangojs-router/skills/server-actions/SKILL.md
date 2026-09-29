@@ -37,6 +37,17 @@ Actions mutate state; route handlers and loaders read the latest state. After
 an action finishes, Rango performs a server-side revalidation render for the
 matched route so the UI receives fresh segment output and loader data.
 
+Segments under a route `cache()` re-render fresh on that render (actions skip
+the route cache lookup and write). A loader with its own `cache()` and a
+`"use cache"` read return their stored entry, and a `ppr` route's stored shell
+is not evicted, unless the action invalidates their tags.
+`await updateTag(...tags)` purges them before the revalidation render, so the
+action's own response reads fresh (`revalidateTag()` gives that render fresh
+reads too; only its durable write runs in the background). On a store that keeps
+per-isolate memos (`CFCacheStore`, `VercelCacheStore`) the response also sets
+the fresh-reads cookie (`rango-state-fresh` by default), so the same user's next
+requests skip those memos (see `/caching` → "The fresh-reads cookie").
+
 The main control point is `revalidate((ctx) => ...)` on the segment that owns
 the data. Match specific actions by imported reference with `ctx.isAction()`;
 use raw `actionId` only when you intentionally need path or directory matching.

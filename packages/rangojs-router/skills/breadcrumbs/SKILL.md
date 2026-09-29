@@ -103,13 +103,16 @@ Delivery follows the loader race model: a push that beats the handler barrier
 is in the SSR'd document; a push after a slow fetch streams and applies
 client-side (`useHandle` re-renders when it lands). To guarantee document
 delivery, register the loader as `loader(Def, { ssr: false })` —
-see `/loader` → "Writing Handles from Loaders". Under `cache()` loader crumbs
-are not stored with the cached segments; the loader re-pushes them on every
-hit, so they appear once even without an `href`. A loader with its own
-`cache()` keeps its crumbs on its own hits too: they are replayed from the
-loader's cache entry. A crumb from a loader it awaits appears once even when
-a sibling loader or the handler reads that loader too; that live run's crumb
-replaces the cached one in the trail.
+see `/loader` → "Writing Handles from Loaders". On a `ppr` route the race is
+decided at capture: a loader without `ssr: false` never runs there, so its
+crumb is not in the shell and applies client-side on every HIT; with
+`ssr: false` the crumb bakes into the shell (`/ppr` → "On a shell HIT").
+Under `cache()` loader crumbs are not stored with the cached segments; the
+loader re-pushes them on every hit, so they appear once even without an `href`.
+A loader with its own `cache()` keeps its crumbs on its own hits too: they are
+replayed from the loader's cache entry. A crumb from a loader it awaits appears
+once even when a sibling loader or the handler reads that loader too; that live
+run's crumb replaces the cached one in the trail.
 
 ## Async Content
 
@@ -133,6 +136,13 @@ path("/product/:id", async (ctx) => {
 
 Async content is a `Promise<ReactNode>`. Resolve it in your component
 with React's `use()` hook wrapped in `<Suspense>`.
+
+A crumb the HANDLER pushes is handler output. In a route `cache()` entry and
+in a `ppr` shell it is stored resolved: the cache write, or the shell capture
+(within `ppr.captureTimeout`), waits for a `content` promise and for a
+`.defer()` slot (below), and every HIT replays the crumb as it was resolved
+then, without running the handler. For per-request crumb content, push it
+from a loader without `ssr: false` (see "Pushing from Loaders").
 
 ### Deferred content (decide now, resolve from a deep component)
 

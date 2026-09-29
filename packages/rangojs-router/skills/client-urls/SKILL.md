@@ -268,8 +268,9 @@ handler parity — `ctx.use(Meta)({ title })` pushes exactly like a handler
 push. Reads moved to `ctx.get(handle)`, gated behind `await ctx.rendered()`.
 Delivery follows the race model: pushes that settle before the handler barrier
 ride the SSR handle snapshot; later ones stream and apply post-hydration
-(document loads) or progressively (navigations). See `/loader` for the full
-contract.
+(document loads) or progressively (navigations). On a `ppr` shell HIT a loader
+without `ssr: false` never ran during the capture, so its pushes are never in
+the shell and always apply client-side. See `/loader` for the full contract.
 
 ## `ssr: false` — the SSR-completeness opt-in
 
@@ -309,10 +310,14 @@ Constraints:
 - Under a `ppr` group route the flag is the bake lane, exactly as on a server
   route (`/ppr` → The loader lane rule).
 
-Every document load pays the flagged loader's latency before first byte —
-that is the point, but it is a real cost. Keep flagged loaders fast (existence
-checks before expensive fetches) and flag the loaders that need it, not the
-route.
+Every document render that is not a `ppr` shell HIT pays the flagged
+loader's latency before first byte — that is the point, but it is a real cost.
+On a shell HIT the shell flushes first: a flagged loader whose value has no
+promises is served from the shell and does not run (unless the capture marked
+it to run: see `/ppr` → On a shell HIT), and one whose value
+carries promises runs on every HIT to fill its holes. Keep flagged loaders
+fast (existence checks before expensive fetches) and flag the loaders that
+need it, not the route.
 
 Pinned end to end by dev + production e2e in the router repository.
 

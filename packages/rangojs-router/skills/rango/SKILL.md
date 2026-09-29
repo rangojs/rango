@@ -26,7 +26,9 @@ with the shape, then pick a primitive.
   inside a cached render. They run **in parallel** right after middleware and
   **stream**, so data latency overlaps first paint instead of blocking it (a
   cache hit streams UI instantly while loaders resolve fresh alongside). Opt into
-  caching explicitly. See `/loader` → "Parallel and streaming".
+  caching explicitly. See `/loader` → "Parallel and streaming". The one
+  exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  and runs on a shell HIT only when its return carries promises (`/ppr`).
 - **One identity, one store** — loaders, handles, cached fns, and actions are all
   `path#export`; all caches share one store. Entries expire by TTL/SWR, and are
   tagged via `cache({ tags })` or runtime `cacheTag(...tags)`; built-in stores
@@ -68,8 +70,9 @@ Reach for the next rung only when the one above doesn't fit — the higher rungs
 are immune to partial-revalidation staleness by construction.
 
 1. **A loader** (`loader()` + `useLoader()`). Loaders resolve fresh on every
-   pass — full renders, action revalidations, cache hits. Nothing to keep in
-   sync. If the data can be a loader, make it a loader.
+   pass — full renders, action revalidations, cache hits, PPR shell HITs (on a
+   `ppr` route, keep it off `ssr: false`, which bakes it into the shell).
+   Nothing to keep in sync. If the data can be a loader, make it a loader.
 2. **Middleware `ctx.set()`**. Route middleware wraps every render pass,
    including post-action revalidation and PE re-renders, so its variables are
    never stale. Right for request-shaped context: auth, session, locale.
@@ -114,7 +117,7 @@ stated, greppable contract.
 | guarantee loader output in the SSR HTML | `loader(L, { ssr: false })`        | /loader                 |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
-| cache the HTML shell, keep loaders live | `ppr` path option                  | /ppr                    |
+| cache HTML shell, live loaders as holes | `ppr` path option                  | /ppr                    |
 | choose in-function vs CDN caching       | deployment cache boundary          | /deployment-caching     |
 | stream SSE / upgrade a WebSocket        | `path.stream()` / `path.any()`     | /streams-and-websockets |
 
@@ -123,6 +126,8 @@ stated, greppable contract.
 - `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
 - **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
+  The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  and runs on a shell HIT only when its return carries promises.
 - **The consumption-lane rule.** For every shared artifact (`cache()`,
   `"use cache"`, the PPR shell): server-side handler consumption
   (`await ctx.use(loader)`) yields a BAKED copy — the capture-time value
@@ -133,11 +138,12 @@ stated, greppable contract.
   uncached until the read moves to a live loader. Client-side consumption
   (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
   `loader()` segments follow their PPR lane (only `ssr: false` bakes; see
-  `/ppr` → The loader lane rule). Pinned by semantic-matrix row PPR3.
+  `/ppr` → The loader lane rule).
 - **A PPR shell HIT never runs a handler.** Everything a handler produces
   (promises it passes under `<Suspense>`, async server components, handle
   pushes, loaders it awaits) is shell material, as under `cache()`; a HIT
-  runs middleware and loaders only. Live data belongs in a loader without
+  runs middleware and live loaders only (an `ssr: false` loader runs there
+  only when its return carries promises). Live data belongs in a loader without
   `ssr: false`, read with `useLoader` under `loading()` or an inline
   `<Suspense>`.
 - Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
@@ -178,6 +184,10 @@ Same words, different jobs — this is the most common source of the
 | HTTP `Cache-Control` / ISR              | Deployment layer             | Complete-response deployment layer. A CDN hit bypasses Rango entirely; the store-backed middleware does not. See `/deployment-caching` and `/document-cache`.                                                                                                                           |
 | Next.js PPR (partial prerendering)      | HTML shell layer             | Same React primitive, different transport: Rango serves shells in-function after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See `/ppr`, `/prerender`, and `/deployment-caching`.                                                              |
 | Remix/RR `loader`                       | live data                    | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
+
+Next.js PPR and Rango's `ppr` also differ in the hole model: in Rango only
+loaders make holes. A handler's own promise under `<Suspense>` bakes into the
+shell, as under `cache()`.
 
 See `/cache-guide` for the cache decision guide, `/loader` and `/route` for
 `revalidate()` (partial-render selection), and `/document-cache` for the edge

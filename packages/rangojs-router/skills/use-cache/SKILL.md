@@ -512,20 +512,31 @@ built into the server bundle, see `/prerender`.)
 Entries are tagged by the profile's `tags` plus any runtime `cacheTag(...tags)`
 calls in the function body. `cacheTag` has two forms: inside a `"use cache"`
 function it tags that entry; called during a request render outside
-`"use cache"` it tags the request's `ppr` shell / document-cache entry instead
-(see `/caching` → "Tag-Based Invalidation"). All built-in stores
-(`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`) index by tag.
-Invalidate on demand with `updateTag(...tags)` (awaitable,
-read-your-own-writes; for server actions) or `revalidateTag(...tags)`
-(background, non-blocking; for route handlers/webhooks). Both hard-purge; the
-difference is awaitability, not stale-serving. For `CFCacheStore`, cross-colo
-invalidation needs a `kv` namespace (markers live in that same namespace) or
-`tagPurge`. The separate `revalidate()` export is the client-update axis (which
-segments re-render on a navigation or action), not a cache bust.
+`"use cache"` it tags what the render stores: the enclosing route `cache()`
+entry, a cached loader's own entry when called in its body, and the `ppr`
+shell or document-cache entry built from them (on a `ppr` route, only when
+shell material calls it). See `/caching` → "Tag-Based Invalidation". All
+built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`,
+`VercelCacheStore`) index by tag. Invalidate on demand with
+`updateTag(...tags)` (awaitable; for server actions) or
+`revalidateTag(...tags)` (background, non-blocking; for route
+handlers/webhooks). Both evict rather than mark stale, and the request that
+calls either reads its own writes; `updateTag()` also waits for the durable
+write. PPR shell reads on `CFCacheStore`/`VercelCacheStore` go through
+per-isolate memos, which the invalidating user skips via the fresh-reads
+cookie. For `CFCacheStore`, cross-colo invalidation needs a `kv` namespace
+(markers live in that same namespace) or `tagPurge`. The separate
+`revalidate()` export is the client-update control (which segments re-render
+on a navigation or action), not a cache bust.
 
-A `"use cache"` entry's tags do not propagate to an enclosing `cache()` segment
-entry: invalidating them re-runs the function on the next miss of the outer
-boundary, not before (see `/cache-guide` → "Nesting rule").
+A route `cache()` entry stores the tags of the `"use cache"` reads inside it,
+so `updateTag()` of one evicts the enclosing entry and any `ppr` shell or
+document built from it. A loader's own `cache()` entry does the same for the
+reads in its body. The exception is a `"use cache"` function called inside
+another `"use cache"` function: its tags do not reach the enclosing entry, so
+invalidating one of them neither evicts the outer entry nor keeps this request
+from joining or storing an outer call that started before the invalidation
+([#980](https://github.com/rangojs/rango/issues/980)).
 
 ## Interaction with Other Caching
 
@@ -539,7 +550,11 @@ boundary, not before (see `/cache-guide` → "Nesting rule").
 | `Prerender()`    | Route segment tree | Build-time | Pre-render known params, optional live fallback       |
 
 Inside a `ppr` shell, a `"use cache"` value that renders as shell material is
-pinned at capture time for the life of that shell (see `/ppr` → Pitfalls).
+pinned at capture time for the life of that shell (see `/ppr` → Pitfalls). A
+hole's own read (in a loader without `ssr: false` under `loading()` or an
+inline `<Suspense>`) returns the current entry, not the shell's copy, unless a
+loader the capture ran (an `ssr: false` loader, or one a handler awaits) read
+the same entry.
 
 ## Dev Mode and tests
 

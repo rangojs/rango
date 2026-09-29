@@ -184,6 +184,8 @@ parallel({
 });
 ```
 
+On a `ppr` route, a slot's `loading()` over handler output does not make a hole. A slot handler that awaits `ctx.use(CartLoader)` is handler output: it runs at capture, its value is baked into the shared shell, and every HIT replays it without running the handler. A `cookies()`/`headers()` read in that loader refuses the capture, so the route stays on MISS. For a per-request slot, read the loader with `useLoader()` in a `"use client"` component under the slot's `loading()` (see `/ppr` → "The layout-with-loaders playbook").
+
 ### Two scopes for explicit `use` at the mount site: shared (broadcast) and slot-local
 
 `parallel()` accepts an explicit `use()` callback that **broadcasts** to every slot in the call ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). That's the right behavior for the items the parallel allow-list permits and that accumulate (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`) — every slot gets them. (Note: `middleware` is not allowed inside `parallel()`; see the allowed-types table above.)

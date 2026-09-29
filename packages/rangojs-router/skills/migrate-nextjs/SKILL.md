@@ -40,8 +40,10 @@ Common reasons to migrate:
   build-time rendering instead of mixing rendering and caching behind conventions.
   See: `/prerender`
 - **Partial prerendering, shipped** — the `ppr` path option caches a page's
-  HTML shell and resumes only the live holes on each request; loaders stay
-  fresh. The equivalent of Next's `experimental_ppr`, stable and per-route.
+  HTML shell and resumes its holes per request: loaders without `ssr: false`,
+  read under `loading()` or an inline `<Suspense>`. Handler output bakes into
+  the shell. It maps to Next's `experimental_ppr`, stable and per-route, but
+  holes come from loaders, not from any `<Suspense>`.
   See: `/ppr`
 - **Composable route tree** — layouts, includes, middleware, parallels, and
   intercepts compose directly in the route definition.
@@ -93,6 +95,13 @@ its call site with the real Rango API:
 | `next/font`                                                                  | see `/fonts`                                                                                   |
 | `next/script` `Script`                                                       | see `/scripts`                                                                                 |
 | `next-themes`                                                                | `theme: true` in `createRouter` (see §10)                                                      |
+| `next/dynamic` `dynamic(() => import(...), { ssr: false })`                  | render it after mount in a `"use client"` component (see the note below)                       |
+
+`next/dynamic`'s `{ ssr: false }` keeps a component out of server rendering:
+render it only after mount in a `"use client"` component (a `useEffect` flag,
+with `React.lazy()` if its code should split out). Do not map it to
+`loader(L, { ssr: false })`, which does the opposite: the server settles that
+loader before the first flush, and under `ppr` it bakes into the shell.
 
 If an import has no row here and no obvious Rango equivalent, stop and surface
 it to the user — do not mock it to keep the build green.
@@ -489,7 +498,11 @@ Differences that matter during migration:
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
   `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
-  lever and never touches shell HTML).
+  lever and never touches shell HTML). Under a route `cache()`, the shell
+  lives no longer than that entry: its ttl/swr are capped by the entry's (dev
+  warns when an explicit `ppr` window is reduced). A route `cache({ key })`
+  gives one shell per key value, and `cache(false)` or a false `condition()`
+  means no shell.
 - **Request-scoped reads in shell material refuse the capture** (in Next they
   silently force dynamic rendering). `cookies()`, `headers()`, a
   `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
@@ -525,12 +538,18 @@ renders into, and the route `cache()` entry it renders inside). Then invalidate 
 // revalidateTag("products")  →  await updateTag("products")  // in a server action: awaitable,
 //                                                            // read-your-own-writes (next render is fresh)
 //                            or  revalidateTag("products")    // in a route handler / webhook:
-//                                                            // background, non-blocking (hard-purge)
+//                                                            // background, non-blocking (evicts)
 ```
 
 `updateTag` is awaitable and immediate; `revalidateTag` is fire-and-forget. Both
-hard-purge (the next read re-renders fresh); the only difference is awaitability —
-despite the Next.js name, `revalidateTag` here is NOT stale-while-revalidate.
+evict (despite the Next.js name, `revalidateTag` here is NOT
+stale-while-revalidate), and the request that calls either reads its own
+writes. `updateTag()` also waits for the durable write and rejects when it
+fails; `revalidateTag()` runs it in the background. The mutating user's next
+requests skip the stores' per-isolate PPR shell memos via the fresh-reads
+cookie (`rango-state-fresh`); other users, and other locations on
+`CFCacheStore`, see the invalidation once the memo refreshes and KV
+propagates (`/caching` → "The fresh-reads cookie").
 Built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`)
 index by tag. Next's
 `revalidatePath` has no path-based equivalent — tag the relevant entries instead.

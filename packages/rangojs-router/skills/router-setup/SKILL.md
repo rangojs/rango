@@ -163,7 +163,7 @@ interface RangoOptions<TEnv> {
   viewTransition?: "auto" | false; // Router-placed <ViewTransition> default (/view-transitions)
   warmup?: boolean; // Connection warmup after idle (default true)
   strictMode?: boolean; // Hydrate inside <React.StrictMode> (default true)
-  stateCookiePrefix?: string; // Prefix of the state cookie `{prefix}_{routerId}` (default "rango-state")
+  stateCookiePrefix?: string; // Prefix of the state cookie `{prefix}_{routerId}` and the fresh-reads cookie `{prefix}-fresh` (default "rango-state")
 
   // --- Request handling ---
   nonce?: (
@@ -752,7 +752,9 @@ the check.
   render counts in development. Production behavior is unchanged.
 - `stateCookiePrefix`: rename the state cookie that keys the client caches. The
   `_{routerId}` suffix is always kept so sibling apps on one origin do not
-  collide.
+  collide. The prefix also names the fresh-reads cookie `{prefix}-fresh`
+  (`rango-state-fresh` by default) that `updateTag()`/`revalidateTag()` set
+  on a store with per-isolate memos; a consent-manager list needs both names.
 - `nonce: () => true`: generate a CSP nonce per request and apply it to the
   router's inline scripts. Return a string to supply your own, or
   `false`/`""` to skip it for one request. Middleware reads it with

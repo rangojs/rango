@@ -205,7 +205,10 @@ the variant suffixes are still appended.
 - Responses whose `Cache-Control` also contains `private`, `no-store`, or an
   unqualified `no-cache` (those win over `s-maxage` in a shared cache)
 - Responses carrying `Set-Cookie` (a per-client value must not be replayed to
-  everyone)
+  everyone). That includes a response whose request called
+  `updateTag()`/`revalidateTag()` on a store that keeps per-isolate memos
+  (`CFCacheStore`, `VercelCacheStore`): it carries the fresh-reads cookie
+  (`rango-state-fresh` by default), so it is not stored.
 - Non-200 responses
 - A 200 whose render reported an error: a component that threw after the
   response started streaming, such as an async server component whose fetch
@@ -226,7 +229,8 @@ with the request's tag set, so `updateTag()`/`revalidateTag()` evict them:
 - tags of `cache()` segments, cached loaders, and `"use cache"` functions the
   render read. A `cache()` segment HIT contributes the tags its content
   recorded when it was written (render-callable calls and `"use cache"` reads
-  inside it), so a document stored over the HIT stays evictable by them.
+  inside it), so a document stored over the HIT stays evictable by them. A
+  cached loader's HIT likewise contributes the tags its body recorded.
 
 Tags are snapshotted after the response body has fully streamed, so tags from
 Suspense-streamed content are included. A `Prerender()` route's build-time

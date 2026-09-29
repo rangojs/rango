@@ -7,7 +7,8 @@ argument-hint: "[loader]"
 # Data Loaders with loader()
 
 A loader is a server function created with `createLoader()` and registered on a
-route segment with `loader()`. It runs fresh on every request, streams its
+route segment with `loader()`. It runs fresh on every request (on a `ppr` route,
+one registered with `ssr: false` is baked into the shell instead), streams its
 result to the client, and client components read it with `useLoader()`. This
 skill covers defining, registering, consuming, revalidating, caching, and
 client-fetching loaders.
@@ -121,29 +122,37 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 >   (plain GET only). See the hooks skill ("Scoping refetch with a `key`" and
 >   "Refreshing multiple loaders together").
 > - `cache({ key })` — a **server** cache identity (storage hit/miss/ttl/swr).
+>   On a route `cache()` over a `ppr` route, each key value also gets its own
+>   shell; keep the value set small.
 > - `revalidate()` — which **server** segments/loaders recompute during
 >   navigation and action refreshes.
 
 DSL loaders are the **live data layer**: they resolve fresh on every request,
 even when the route is inside a `cache()` boundary, so `cache()` gives you
 cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
+The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell,
+and a shell HIT runs it only when its return carries promises.
 
 ### Cache safety
 
-DSL loaders can safely read `createVar({ cache: false })` variables
-because they are always resolved fresh. The read guard is bypassed for
-loader functions — they never produce stale data. A loader bound with its
-own `cache()` is the exception: its value is stored and shared, so a miss
-whose body read `cookies()`, `headers()` or a non-cacheable variable fails
-unless the binding has a `key()` or a store `keyGenerator`, which must then
-include them (see "Cache Key"). A `"use cache"` function
-the loader calls is not a loader body: a non-cacheable read inside it throws,
-also through the loader's `ctx` passed in, so read the var in the loader and
-pass the value in as an argument. Passing the loader's `ctx` itself is fine:
-the call keys by route, params and search, like a handler `ctx` (`/use-cache`).
-A fetchable loader called with a request body (`load({ method: "POST", body })`
-or form data) is the exception: the body is not in the key, so the call runs
-uncached. Pass the body fields the function needs as arguments instead.
+A DSL loader without `ssr: false` can read `createVar({ cache: false })`
+variables: it runs on every request, `cache()` and PPR shell HITs included, so
+the read guard is bypassed for it. On a `ppr` route the capture runs an
+`ssr: false` loader, and a loader a handler awaits, and bakes their values into
+the shell: a `cookies()`, `headers()` or `{ cache: false }` read there refuses
+the capture, so the route keeps rendering without a shell (warned once per key).
+A loader bound with its own `cache()` is the other exception: its value is
+stored and shared, so a miss whose body read `cookies()`, `headers()`, a
+non-cacheable variable or the theme fails unless the binding has a `key()` or a
+store `keyGenerator`, which must then include them (see "Cache Key"). A
+`"use cache"` function the loader calls is not a loader body: a non-cacheable
+read inside it throws, also through the loader's `ctx` passed in, so read the
+var in the loader and pass the value in as an argument. Passing the loader's
+`ctx` itself is fine: the call keys by route, params and search, like a handler
+`ctx` (`/use-cache`). A fetchable loader called with a request body
+(`load({ method: "POST", body })` or form data) is the exception: the body is
+not in the key, so the call runs uncached. Pass the body fields the function
+needs as arguments instead.
 
 ### ctx.use(Loader) — escape hatch
 
@@ -161,7 +170,9 @@ path("/product/:slug", async (ctx) => {
 ])
 ```
 
-`ctx.use(Loader)` is a live read, memoized for the request: however many
+`ctx.use(Loader)` is a per-request read on any render that runs the handler,
+memoized for the request (a route `cache()` HIT or a `ppr` shell HIT runs no
+handler, so the handler's output from the read is replayed): however many
 times it is called, and whether or not the loader is also registered with
 `loader()`, it runs once per request. It never reads or writes the loader
 store cache on its own: a loader's `cache()` belongs to its DSL binding
@@ -175,12 +186,13 @@ the tree).
 - The handler output depends on the loader data. If the route is inside
   `cache()`, the handler is cached with the loader result baked in —
   defeating the live data guarantee.
-- The same holds under a PPR shell capture (`/ppr`): handler consumption is
-  the BAKED lane — the loader executes at capture and the rendered value is a
+- The same holds under a PPR shell capture (`/ppr`): handler consumption is the
+  BAKED lane — the loader executes at capture and the rendered value is a
   capture-time copy served on every HIT (a HIT never runs the handler);
-  `useLoader` client-side is the live lane. Unlike `cache()`, an identity read
-  inside that loader (`cookies()`, `headers()`, a `{ cache: false }` variable)
-  refuses the capture, so the route stays uncached. One rule across
+  `useLoader` of a loader without `ssr: false` is the live lane (an `ssr: false`
+  loader is the bake lane however it is read). Unlike `cache()`, an identity
+  read inside that loader (`cookies()`, `headers()`, a `{ cache: false }`
+  variable) refuses the capture, so the route stays uncached. One rule across
   `cache()`, `"use cache"`, and PPR: the consumption-lane rule (`/rango` →
   Invariants).
 - Non-cacheable variable reads (`createVar({ cache: false })`) inside the
@@ -498,11 +510,16 @@ Loaders resolve fresh on every request, even when the route's UI segments are
 served from cache. Route-level `cache()` caches rendered segments but never
 loader data: loaders are excluded when the segments are stored and re-resolved
 when they are served. Caching a loader's own data is a separate opt-in (see
-"Opting a Loader into Caching").
+"Opting a Loader into Caching"). A `ppr` shell does store some loader data: an
+`ssr: false` loader's settled data bakes into the shell, and a HIT runs that
+loader only when its return carries promises (see "`ssr: false`" below and
+`/ppr`).
 
-Pre-rendering follows the same rule: at build time loaders are skipped entirely
-(there is no real request context), and at runtime the worker resolves them
-fresh against the live database.
+Pre-rendering follows the same rule: the build-time Flight payload skips
+loaders (there is no real request context), and at runtime the worker resolves
+them fresh against the live database. The exception is a `Prerender` + `ppr`
+route: its build-time shell capture runs `ssr: false` loaders and bakes their
+settled data into the shell, like a runtime capture.
 
 ### Parallel and streaming — latency overlaps first paint
 
@@ -523,8 +540,8 @@ If you come from a framework where the loader is a blocking step that runs
 before the response is built, this is the shift to internalize: here the
 response starts streaming first and loader data fills in. (The one deliberate
 exception is per-loader: `loader(Def, { ssr: false })` awaits that
-loader before first flush on document renders — see "`ssr: false`"
-below.)
+loader before first flush on document renders other than a `ppr` shell HIT,
+where the shell flushes first — see "`ssr: false`" below.)
 
 ### See it: `debugPerformance`
 
@@ -907,7 +924,10 @@ flushes, so both signals are resolved server-side while the tree is built:
 `redirect()` replaces the whole page with the redirect carrier (still a 200
 document, the client replaces to the target on hydration) and `notFound()`
 renders the not-found UI at the owning segment with a real 404. No read site
-runs, so a `useLoader` in a layout above every Suspense boundary is safe.
+runs, so a `useLoader` in a layout above every Suspense boundary is safe. On a
+`ppr` route, a flagged loader that settles with `notFound()` or `redirect()`
+during the shell capture refuses the capture (warned once per key): that URL
+gets no shell, and its renders deliver the signal as above.
 
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
@@ -974,14 +994,17 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 The options object is typed as `LoaderOptions`
 (`import type { LoaderOptions } from "@rangojs/router"`).
 
-The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off
-for this loader, so nothing of it is left to stream in the document:
-document renders await this loader before first flush — data is settled
-(`useLoader` reads it synchronously, no fallback paints), handle pushes beat
-the barrier snapshot, and a thrown `notFound()` deterministically precedes
-Response construction (real 404, no warm-up race). Client navigations stream
-exactly as before. Scoped per LOADER: the flagged loader awaits only itself;
-siblings keep streaming.
+The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off for
+this loader, so nothing of it is left to stream in the document: document
+renders await this loader before first flush — data is settled (`useLoader`
+reads it synchronously, no fallback paints), handle pushes beat the barrier
+snapshot, and a thrown `notFound()` deterministically precedes Response
+construction (real 404, no warm-up race). Client navigations stream exactly as
+before (on a `ppr` route, a navigation that replays a shell captured by a
+document request serves a promise-free flagged loader from its pin, as a
+document HIT does; a snapshot captured by a navigation alone carries no pins,
+and its replay runs the loader fresh). Scoped per LOADER: the flagged loader
+awaits only itself; siblings keep streaming.
 
 Delivery is in-place, not merely in-document. React's Fizz outlines any
 COMPLETED Suspense boundary over ~500 bytes to an end-of-stream
@@ -997,17 +1020,25 @@ still outline; their reveal must wait for the CSS.
 
 The costs and constraints:
 
-- Every document load pays the flagged loader's latency before first byte.
-  That is the point — but keep flagged loaders fast, and flag loaders, not
-  routes.
+- Every document render that is not a `ppr` shell HIT pays the flagged
+  loader's latency before first byte. That is the point — but keep flagged
+  loaders fast, and flag loaders, not routes. On a HIT the shell flushes
+  first: a flagged loader whose return has no promises does not run (unless
+  the capture marked it to run: see `/ppr` → On a shell HIT), and one whose
+  return carries promises runs to fill its holes.
 - A flagged loader must not `await ctx.rendered()` / `ctx.get(handle)` — the
   document render awaits the loader before the render barrier resolves, so
   that wait is a cycle by construction; it throws a deadlock error naming the
   fix.
 - Under PPR the flag is also the bake lane: the settled non-promise data
   (handle pushes included) freezes into the stored shell — see `/ppr` → The
-  loader lane rule. The `progressiveChunkSize` auto-raise is live-document
-  only; captured shells outline per the explicit option or React's default.
+  loader lane rule. On a HIT, a flagged loader whose return has no promises is
+  served from the shell and does not run (unless the capture marked it to run:
+  see `/ppr` → On a shell HIT); one whose return carries promises
+  runs on every HIT, with its baked parts overlaid. A `cookies()`, `headers()`
+  or `{ cache: false }` read in it refuses the capture. The
+  `progressiveChunkSize` auto-raise is live-document only; captured shells
+  outline per the explicit option or React's default.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.

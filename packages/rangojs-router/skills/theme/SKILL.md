@@ -141,7 +141,8 @@ Read the theme where it is per request instead:
   `ctx.setTheme`; read the cookie directly. A live loader runs on every
   request, HITs included, and on a `ppr` route needs `loading()` or an inline
   `<Suspense>` above its reader. A bake-lane loader (`ssr: false`) runs at
-  capture, where this `cookies()` read refuses the capture.
+  capture, where this `cookies()` read refuses the capture, and so does a
+  loader a handler awaits with `ctx.use()`.
 
 ```typescript
 import { cookies, createLoader } from "@rangojs/router";

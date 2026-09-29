@@ -20,8 +20,9 @@ The handler code and its imports are removed from the production bundle.
 
 ## Not this skill if…
 
-- You want a cached HTML shell captured at runtime, with holes and loaders
-  staying live per request — see `/ppr`.
+- You want a cached HTML shell captured at runtime, with holes staying live
+  per request (loaders without `ssr: false` run per request; `ssr: false`
+  loaders bake) — see `/ppr`.
 - You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
   see `/caching`. Prerender is the same cache filled at build time.
 - You are unsure which cache layer you need — start at `/cache-guide`.
@@ -244,15 +245,14 @@ In client and SSR environments, ALL prerender handlers are always stubbed.
 ## Sub-use Semantics
 
 Everything inside the path's use() callback is part of the pre-rendered route
-subtree (the "B segment" in the design docs) and gets pre-rendered. Loaders are
-the exception — they stay live:
+subtree and gets pre-rendered. Loaders are the exception — they stay live:
 
 ```typescript
 path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
-  layout(<PostLayout />, () => [        // inside B -> pre-rendered
+  layout(<PostLayout />, () => [        // inside the route -> pre-rendered
     loader(PostMetaLoader),              // live at runtime, bundled normally
   ]),
-  parallel({ "@sidebar": BlogSidebar }), // inside B -> pre-rendered
+  parallel({ "@sidebar": BlogSidebar }), // inside the route -> pre-rendered
 ])
 ```
 
@@ -333,7 +333,10 @@ request can be an `x-rango-shell: HIT`. A route partitioned by
 `cache({ key })` or a store `keyGenerator` never serves that build shell (the
 build captured one partition); each partition captures at runtime, a
 once-per-route warning says so, and a `keyGenerator` that returns the default
-key unchanged keeps it.
+key unchanged keeps it. When the route's `cache()` scope (its own, or one
+inherited from a layout) refuses a request — `cache(false)`, or a
+`condition()` that returns false — that request gets no shell at all, the
+build shell included: it renders like a cache miss.
 
 That shell capture is request-shaped enough to run middleware safely:
 
@@ -366,14 +369,15 @@ entry STILL serves and a runtime recapture is scheduled that upgrades it in plac
 (SWR is the upgrade path from build entry → fresher runtime entry). Because the
 `Prerender` handler is evicted from the production bundle, that recapture never
 re-runs the handler — it replays the same build-time segments and only refreshes
-`cache()`-scoped data baked into the shell. **If nothing in the shell is
-`cache()`-backed, `ttl` has nothing to refresh** — reach for `updateTag` (or a
+what the capture reads again: `cache()`-scoped data baked into the shell, and
+the data of `ssr: false` loaders, which run at every capture. **If the shell
+bakes neither, `ttl` has nothing to refresh** — reach for `updateTag` (or a
 redeploy) instead of a shorter `ttl`.
 
 `ctx.dynamic()` opts a request off the shell ONLY. A `Prerender` route has
 no live handler to fall back to (it was evicted), so a `dynamic()` request still
-serves the build-baked segments — fresh loaders in their holes, not a fresh
-handler render. There is no "fully dynamic" render for a prerendered route.
+serves the build-baked segments — fresh loaders, not a fresh handler render.
+There is no "fully dynamic" render for a prerendered route.
 
 ## Dev Mode
 
@@ -638,6 +642,11 @@ Passthrough entries are logged distinctly:
 
 Loaders on pre-rendered routes run at request time. They are bundled normally
 and need `cache()` for caching. Do not use build-only APIs in loaders.
+
+The exception is an `ssr: false` loader on a `Prerender` + `ppr` route: the
+build-time shell capture runs it and bakes its settled data into the shell,
+and a shell HIT runs it only when its return carries promises (`/ppr` → "The
+bake lane"). The Flight payload collection itself still skips loaders.
 
 ### Build-time handle data is frozen
 

@@ -114,7 +114,10 @@ during navigation.
 > means it is silently dropped. If a loader must contribute an inline script
 > to the document, register it `loader(Def, { ssr: false })` so the
 > document render awaits the push; otherwise push from a handler (or use an
-> `async` config, which stays reactive).
+> `async` config, which stays reactive). On a `ppr` route a loader without
+> `ssr: false` never runs during the shell capture, so its inline/ordered
+> script is dropped on every shell HIT; with `ssr: false` the push bakes into
+> the shell.
 
 **Nonce caveat for soft-nav async.** The "nonce is applied automatically" claim
 holds for DOCUMENT-RENDERED scripts (they carry the nonce in the SSR HTML). An
@@ -184,6 +187,10 @@ Otherwise allow the vendor hosts. For GTM/GA4 (Google's wildcards): `script-src
 / `connect-src` for `*.google-analytics.com` / `*.analytics.google.com`, and
 `frame-src https://*.googletagmanager.com` for the GTM `<noscript>` iframe. See
 [Google's CSP guide](https://developers.google.com/tag-platform/security/guides/csp).
+
+A per-request nonce also takes a `ppr` route off its shell: a shared shell
+cannot carry one request's nonce, so the route renders normally (no shell) and
+warns once per key. See `/ppr` → "What always renders without a shell".
 
 ## Not covered (do it yourself)
 

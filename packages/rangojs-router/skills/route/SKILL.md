@@ -329,15 +329,17 @@ cache({ ttl: 60 }, () => [
 ]);
 ```
 
-The same read throws inside a `"use cache"` function body, where the value
-would be stored without being part of the key — pass it in as an argument
-instead. The guard does not follow derived values (a string copied out of
-`Session` and cached elsewhere is not tracked). Loaders are exempt — they run
-fresh on every request — but a `"use cache"` function a loader calls is not,
-and neither is a loader bound with its own `cache()` without a `key()` (any
-`key()` switches the check off, so it must include the value; `/loader` →
-"Cache Key"). Cacheable vars (the default) can be read freely
-inside cache scopes. See `/cache-guide` → "Context Variable Cache Safety".
+The same read throws inside a `"use cache"` function body, where the value would
+be stored without being part of the key — pass it in as an argument instead. The
+guard does not follow derived values (a string copied out of `Session` and
+cached elsewhere is not tracked). Under `cache()`, loaders are exempt — a DSL
+loader re-runs on every hit — but a `"use cache"` function a loader calls is
+not, and neither is a loader bound with its own `cache()` without a `key()` (any
+`key()` switches the check off, so it must include the value; `/loader` → "Cache
+Key"). On a `ppr` route the exemption does not cover a loader the shell capture
+waits for (`ssr: false`, or awaited by a handler via `ctx.use()`): the read
+refuses the capture. Cacheable vars (the default) can be read freely inside
+cache scopes. See `/cache-guide` → "Context Variable Cache Safety".
 
 ### Revalidation Contracts for Handler Data
 
@@ -546,7 +548,7 @@ interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   build: boolean; // true while pre-rendering at build time
   dev: boolean; // true under Vite dev
   dynamic(): void; // opt this request out of PPR shell capture (see /ppr)
-  theme?: Theme; // plus setTheme?() — only when the router enables themes (/theme)
+  readonly theme?: Theme; // plus setTheme?() — only when the router enables themes; a read is guarded like cookies() (/theme)
 }
 ```
 
