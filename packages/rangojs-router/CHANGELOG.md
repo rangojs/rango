@@ -681,6 +681,50 @@ backoff and stampede guard, and `CFCacheStore`'s isolate memos. Call it in
 
 ### Fixes
 
+- The request that calls `revalidateTag()` reads its own writes. A server
+  action that called `revalidateTag("x")` and then rendered got the
+  pre-invalidation value of `"use cache"` and `cache()` entries tagged `x`:
+  on `CFCacheStore` with KV until the KV marker write landed, and for the
+  rest of the request once a read had memoized the absent marker; on
+  `VercelCacheStore` until `expireTag` landed; on `MemorySegmentCacheStore`
+  when the read started in the same tick, as a `"use cache"` call right after
+  `revalidateTag()` does. `revalidateTag()` now calls each store's
+  `invalidateTags()` before it returns, and each built-in store marks the
+  tags as invalidated for the rest of that request before its first await;
+  only the durable write (KV marker, tag purge, `expireTag`) stays in the
+  background. Other requests see the invalidation when that write lands, as
+  before. The mark only turns that request's hits into misses: if the
+  durable write fails, the request pays extra misses, not a stale read. This
+  also changes the failed-write case of `await updateTag()` on `CFCacheStore`
+  and `VercelCacheStore`: the call still rejects, and the rest of the request
+  now misses on the tags instead of reading the entries.
+  `VercelCacheStore` stamps tagged entries with their write time, so an entry
+  the request writes after its invalidation still hits (one written in the
+  same millisecond misses); entries written before this release count as
+  older. A custom `SegmentCacheStore` gets the same behavior by recording the
+  invalidation in request-scoped state before the first `await` of its
+  `invalidateTags()`. More same-request cases are fixed, for both verbs. A
+  `"use cache"` call made earlier in the request, whose store write was
+  still pending, was reused by the same call after the invalidation
+  (`await getStock("beer"); revalidateTag("stock"); await getStock("beer")`
+  returned `"beer #1"` twice), and with `await updateTag()` its write landed
+  after the invalidation and was read back. A stale entry's background
+  refresh that started before the call wrote its pre-invalidation value
+  after it, for the rest of the request and for later requests. Now an
+  execution or refresh that started before one of its own tags was
+  invalidated is neither joined nor written, and concurrent calls after the
+  invalidation share one fresh execution. An execution with other tags, or
+  one that starts after the call in the same millisecond, still fills the
+  store. The mask also reaches contexts derived from the request (a PPR HIT
+  tail after an invalidation in middleware). On a `CFCacheStore` in purge
+  mode without KV, an L1 entry without the store's entry Cache-Tags (written
+  before they existed) was served after the request's own invalidation; it
+  now misses. Not covered, as before this release
+  ([#977](https://github.com/rangojs/rango/issues/977)): a `"use cache"`
+  execution in another request, or a loader's own `cache()` in any request,
+  that started before the invalidation can still write its value after it,
+  on every built-in store, and later reads can get that value
+  ([#981](https://github.com/rangojs/rango/pull/981)).
 - In dev, a PPR route whose `ssr: false` loader returns JSX now captures its
   shell and HITs. Before, Flight logged
   `Attempted to render <…> without development properties`, the capture

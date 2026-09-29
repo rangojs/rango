@@ -31,6 +31,8 @@ import {
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
+import { slowMarkerStore } from "./slow-marker-store.js";
+import { RyowLoader } from "./loaders/ryow.js";
 import type { AppBindings } from "./env.js";
 
 declare global {
@@ -169,6 +171,7 @@ import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
+import { RyowActionPage } from "./pages/ryow-action.js";
 import { UseCacheDepPage } from "./pages/use-cache-dep.js";
 import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
@@ -1720,6 +1723,20 @@ export const urlpatterns = urls(
           () => [
             loader(BodyTaggedLoader, () => [cache({ ttl: 600 })]),
             loader(BodyTaggedDepLoader),
+          ],
+        ),
+
+        // A cached loader on a store whose KV marker writes land late, and a
+        // server action that runs revalidateTag() on its tag: the action's
+        // own re-render must re-run the loader (#973).
+        path(
+          "/ryow-action/:probe",
+          RyowActionPage,
+          { name: "ryowAction" },
+          () => [
+            loader(RyowLoader, () => [
+              cache({ ttl: 600, store: slowMarkerStore }),
+            ]),
           ],
         ),
 

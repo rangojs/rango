@@ -21,9 +21,28 @@
  * primitive for each tag. A single configured store (the common case) owns its
  * own tag index and distributed invalidation - there is no separate
  * tag-invalidation store.
+ *
+ * Both call invalidateTags() synchronously, inside the request (#973). A store
+ * masks the tags for the rest of the request before its first await (the
+ * built-in stores write their per-request marker state there), so the request
+ * that ran either verb reads its own writes; revalidateTag() leaves only the
+ * durable remainder (KV marker put, tag purge, expireTag) to waitUntil.
+ * Invariant: the mask only turns the invalidating request's hits into misses.
+ * If the durable write then fails, that request paid extra misses, never a
+ * stale read, and other requests read the durable state. Both also record
+ * the tags on the request (markInvalidated), so a "use cache" execution or
+ * stale refresh this request started before one of its own tags was
+ * invalidated is neither joined nor written (cache-runtime.ts). Its own tags
+ * only: a nested "use cache" function's tags do not reach the enclosing
+ * entry (#980), for this gate as for eviction. Not covered (#977): such an
+ * execution in another request, or a loader cache() write, still lands, and
+ * the store accepts it (docs/design/caching.md "Read-your-own-writes").
  */
 
-import { _getRequestContext } from "../server/request-context.js";
+import {
+  _getRequestContext,
+  type RequestContext,
+} from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
@@ -119,6 +138,51 @@ function markFreshReads(stores: SegmentCacheStore[]): void {
   if (windowMs > 0) ctx._setFreshReadsCookie(windowMs);
 }
 
+/**
+ * The isolate's order of tag invalidations and "use cache" execution starts
+ * (#973). A counter, not Date.now(): Workers advance the clock only on I/O,
+ * so an execution started right after an invalidation would share its
+ * millisecond and read as older.
+ */
+let cacheSeq = 0;
+
+/** The current position in that order; an execution records it at start. */
+export function currentCacheSeq(): number {
+  return cacheSeq;
+}
+
+/**
+ * Whether the request invalidated any of `tags` after `since` (a
+ * currentCacheSeq() value an execution recorded when it started): its value
+ * may predate the invalidation, so the request neither joins nor writes it.
+ */
+export function invalidatedSince(
+  ctx: RequestContext<any, any> | undefined,
+  tags: readonly string[] | undefined,
+  since: number,
+): boolean {
+  const record = (ctx?._requestRoot ?? ctx)?._tagInvalidations;
+  if (!record || !tags) return false;
+  for (const tag of tags) {
+    const at = record.get(tag);
+    if (at !== undefined && at > since) return true;
+  }
+  return false;
+}
+
+/**
+ * Record the invalidation on the request (RequestContext._tagInvalidations,
+ * on the root so derived contexts share it), before any store sees it.
+ */
+function markInvalidated(tags: readonly string[]): void {
+  const ctx = _getRequestContext();
+  if (!ctx) return;
+  const root = ctx._requestRoot ?? ctx;
+  const at = ++cacheSeq;
+  const record = (root._tagInvalidations ??= new Map());
+  for (const tag of tags) record.set(tag, at);
+}
+
 async function invalidateAcross(
   stores: SegmentCacheStore[],
   tags: string[],
@@ -179,6 +243,7 @@ export async function updateTag(...tags: string[]): Promise<void> {
   if (incapable > 0) warnPartialTagStore("updateTag", incapable);
 
   markFreshReads(capable);
+  markInvalidated(valid);
   await invalidateAcross(capable, valid);
 }
 
@@ -189,10 +254,12 @@ export async function updateTag(...tags: string[]): Promise<void> {
  * This is NOT stale-while-revalidate: like updateTag() it hard-purges, so the
  * next read after the invalidation lands is a miss that re-renders fresh. The
  * only difference from updateTag() is awaitability - revalidateTag() defers the
- * purge off the response path and is not awaited.
+ * durable write off the response path and is not awaited.
  *
- * Use in Route Handlers / webhooks. For read-your-own-writes inside a Server
- * Action, use updateTag() instead so the action's own response is fresh.
+ * Read-your-own-writes (#973): each built-in store masks the tags for the rest
+ * of this request before revalidateTag() returns, so a Server Action's own
+ * re-render after it is fresh, as after `await updateTag()`. Other requests see
+ * the invalidation once the durable write lands.
  *
  * Fire-and-forget: because this returns void and runs in the background, a
  * failed durable marker write (e.g. a transient KV outage) is NOT surfaced to
@@ -227,22 +294,23 @@ export function revalidateTag(...tags: string[]): void {
 
   markFreshReads(capable);
   const ctx = _getRequestContext();
+  // A build-time render drops background work (RequestContext.waitUntil), so
+  // it never ran this invalidation; keep it that way.
+  if (ctx?.build) return;
+  markInvalidated(valid);
+  // Started here, not in the waitUntil task, so each store masks the tags
+  // before this returns (#973, header above).
+  //
   // reportingAsync never rejects: it catches a failed durable write and routes
   // it through reportCacheError (loud log + onError). This is the only place a
   // revalidateTag failure can be observed, since it is not awaitable. Pass ctx
-  // explicitly - the run executes in a detached waitUntil where the ALS context
-  // is gone, so onError fires only if we hand it the captured context.
-  const run = () =>
-    reportingAsync(
-      () => invalidateAcross(capable, valid),
-      "cache-invalidate",
-      "[revalidateTag] background invalidation",
-      ctx,
-    );
-  if (ctx?.waitUntil) {
-    ctx.waitUntil(run);
-  } else {
-    // No request context (e.g. called outside ALS): best-effort background run.
-    void run();
-  }
+  // explicitly: the write can settle after the response, outside the
+  // request's ALS scope, and onError fires only with the captured context.
+  const pending = reportingAsync(
+    () => invalidateAcross(capable, valid),
+    "cache-invalidate",
+    "[revalidateTag] background invalidation",
+    ctx,
+  );
+  ctx?.waitUntil(() => pending);
 }

@@ -238,6 +238,99 @@ describe("revalidateTag (background hard-purge)", () => {
   });
 });
 
+// Issue #973: revalidateTag() calls every store's invalidateTags() before it
+// returns, so what a store records before its first await masks the tags for
+// the rest of the request; only the durable remainder runs in the background.
+describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+  beforeEach(() => {
+    MemorySegmentCacheStore.resetGlobalCache();
+  });
+
+  it("calls invalidateTags() before it returns and hands the pending write to waitUntil", async () => {
+    let finish!: () => void;
+    const durable = new Promise<void>((resolve) => (finish = resolve));
+    const store = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => false,
+      invalidateTags: vi.fn(() => durable),
+    } as unknown as SegmentCacheStore;
+    const ctx = makeCtx({ cacheStore: store });
+    const tasks: Array<() => Promise<void>> = [];
+    ctx.waitUntil = (fn: () => Promise<void>) => {
+      tasks.push(fn);
+    };
+
+    runWithRequestContext(ctx, () => {
+      revalidateTag("products");
+      expect(store.invalidateTags).toHaveBeenCalledWith(["products"]);
+    });
+
+    expect(tasks).toHaveLength(1);
+    let settled = false;
+    const task = tasks[0]!().then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await task;
+    expect(settled).toBe(true);
+  });
+
+  it("a build-time render still runs no invalidation (its waitUntil drops background work)", () => {
+    const store = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => false,
+      invalidateTags: vi.fn(async () => {}),
+    } as unknown as SegmentCacheStore;
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com/"),
+      url: new URL("https://example.com/"),
+      variables: {},
+      cacheStore: store,
+      build: true,
+    });
+
+    runWithRequestContext(ctx, () => revalidateTag("products"));
+
+    expect(store.invalidateTags).not.toHaveBeenCalled();
+  });
+
+  it("MemorySegmentCacheStore: a read in the same tick misses", async () => {
+    const app = new MemorySegmentCacheStore();
+    await app.setItem("item", "v", { ttl: 60, tags: ["products"] });
+    await app.set(
+      "seg",
+      { segments: [], handles: "", expiresAt: 0, tags: ["products"] },
+      60,
+    );
+    const ctx = makeCtx({ cacheStore: app });
+
+    const [item, seg] = await runWithRequestContext(ctx, () => {
+      revalidateTag("products");
+      // Called synchronously: no microtask has run since revalidateTag().
+      return Promise.all([app.getItem("item"), app.get("seg")]);
+    });
+    expect(item).toBeNull();
+    expect(seg).toBeNull();
+  });
+
+  it("MemorySegmentCacheStore: a read after a prior read in the request misses", async () => {
+    const app = new MemorySegmentCacheStore();
+    await app.setItem("item", "v", { ttl: 60, tags: ["products"] });
+    const ctx = makeCtx({ cacheStore: app });
+
+    await runWithRequestContext(ctx, async () => {
+      expect(await app.getItem("item")).not.toBeNull();
+      revalidateTag("products");
+      expect(await app.getItem("item")).toBeNull();
+    });
+  });
+});
+
 describe("outside a request context", () => {
   beforeEach(() => {
     MemorySegmentCacheStore.resetGlobalCache();

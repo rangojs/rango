@@ -1,7 +1,9 @@
-import { urls, cacheTag, updateTag, revalidateTag } from "@rangojs/router";
+import { urls, updateTag, revalidateTag } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { InvalidateTagButton } from "../components/InvalidateTagButton.js";
+import { RevalidateThenReadButton } from "../components/RevalidateThenReadButton.js";
 import { LoaderBodyTagDepLoader, LoaderBodyTagLoader } from "../loaders.js";
+import { getTaggedItem } from "./cache-tag-data.js";
 
 /**
  * Cache-tag invalidation test fixture (memory store).
@@ -14,15 +16,9 @@ import { LoaderBodyTagDepLoader, LoaderBodyTagLoader } from "../loaders.js";
  *   - cache() DSL with static tags             -> /catalog/:id
  *   - action-driven invalidation via updateTag -> /action-page
  * plus an awaitable invalidation endpoint      -> /invalidate/:tag
+ * and, on /action-page, an action that runs revalidateTag() and then reads
+ * /item/:id's entry in the same request (#973).
  */
-
-// "use cache" function tagged at runtime. The cached value (incl. its ts) is
-// reused until one of its tags is invalidated.
-async function getTaggedItem(id: string): Promise<{ ts: number; id: string }> {
-  "use cache";
-  cacheTag("items", `item:${id}`);
-  return { ts: Date.now(), id };
-}
 
 async function LoaderBodyTagPage(ctx: HandlerContext) {
   const data = await ctx.use(LoaderBodyTagLoader);
@@ -104,6 +100,7 @@ export const cacheTagPatterns = urls(({ path, cache, loader }) => [
         <div data-testid="action-tag-page">
           <span data-testid="action-tag-ts">{Date.now()}</span>
           <InvalidateTagButton tag="action-tag" />
+          <RevalidateThenReadButton />
         </div>
       ),
       { name: "cacheTagActionPage" },

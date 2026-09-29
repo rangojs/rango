@@ -180,6 +180,22 @@ export interface RequestContext<
    */
   _setFreshReadsCookie(maxAgeMs: number): void;
   /**
+   * @internal The context createRequestContext() returned. A context derived
+   * from it with Object.create (a PPR HIT tail, a shell capture, a background
+   * revalidation render) inherits it, so per-request invalidation state
+   * (tag-invalidation.ts, the stores' masks) is keyed by the request, not by
+   * whichever derived object called or read (#973).
+   */
+  _requestRoot?: RequestContext<any, any>;
+  /**
+   * @internal The tags this request invalidated with
+   * updateTag()/revalidateTag(), each with its position in the invalidation
+   * order (tag-invalidation.ts currentCacheSeq). Kept on _requestRoot. A
+   * "use cache" execution that started before one of its own tags was
+   * invalidated is neither joined nor written (cache-runtime.ts, #973).
+   */
+  _tagInvalidations?: Map<string, number>;
+  /**
    * @internal The handler has handed the response to the host (rsc/handler.ts
    * `rango.response`): header and cookie writes after this are lost, as from
    * a streaming loader or render.
@@ -921,6 +937,8 @@ export type PublicRequestContext<
   | "_setKeepCacheDirective"
   | "_freshReads"
   | "_setFreshReadsCookie"
+  | "_requestRoot"
+  | "_tagInvalidations"
   | "_responseSent"
   | "_variables"
   | "_classifiedRoute"
@@ -1559,6 +1577,14 @@ export function createRequestContext<TEnv>(
   });
 
   (ctx as any)[NOCACHE_SYMBOL] = true;
+  // Non-enumerable: a self-reference would make the context circular for
+  // JSON.stringify, spreads and React's dev debug-info serialization of props.
+  Object.defineProperty(ctx, "_requestRoot", {
+    value: ctx,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
   return ctx;
 }
 

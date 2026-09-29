@@ -274,6 +274,25 @@ function onProductsChanged() {
 | `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            | immediate; next read is fresh                         |
 | `revalidateTag(...tags)` | background (`void`)         | route handlers / webhooks | background (non-blocking); next read re-renders fresh |
 
+The request that calls either verb reads its own writes. Before the call
+returns, each built-in store marks the tags as invalidated for the rest of that
+request, so an action that calls `revalidateTag()` and then renders gets fresh
+`"use cache"` and `cache()` reads, as with `await updateTag()`. What
+`revalidateTag()` does not wait for is the durable write (the KV marker, the
+tag purge, Vercel's `expireTag`): other requests see the invalidation once it
+lands. A `"use cache"` call that this request started before the
+invalidation, and that carries one of the invalidated tags, is not reused
+after it and does not store its value; neither does a stale entry's
+background refresh. The tags are the call's own (its `cacheTag()` calls and
+profile `tags`): a nested `"use cache"` function's tags do not reach the
+enclosing entry, so invalidating one of them neither evicts the outer entry
+nor stops an outer call already running
+([#980](https://github.com/rangojs/rango/issues/980)). Not covered
+([#977](https://github.com/rangojs/rango/issues/977)): such a call started
+by another request, or a loader's own `cache()` that started before the
+invalidation, still stores its value when it finishes, and reads after that
+can get it.
+
 Both must run inside a request (action, handler, middleware, response route).
 Called from a queue consumer or cron job, there is no request context, so they
 warn and invalidate nothing. `updateTag()` rejects when a store's durable write
@@ -732,9 +751,11 @@ The store keeps the same PPR shell memo as `CFCacheStore` (`memo.shellMs`,
 default 2000; `memo.shellMaxBytes`, default 16 MiB) and the same tag-marker
 memo (`memo.markerFreshMs`, default 300; `memo.markerMaxStaleMs`, default
 2000), one per `cache` handle: create the handle once, as above, or the memos
-never hit. A shell read's marker check sees `updateTag()`/`revalidateTag()`
-in the process that ran it at once, and in the rest of the region once their
-marker memo refreshes. The tag markers are a regional `cache.set` (only
+never hit. The request that runs `updateTag()`/`revalidateTag()` misses on
+the entries carrying those tags before `expireTag` lands. A shell read's
+marker check sees the invalidation in the process that ran it once its
+markers are written, and in the rest of the region once their marker memo
+refreshes. The tag markers are a regional `cache.set` (only
 `expireTag` is global), so another region serves a shell it memoized before
 the invalidation until its window passes, where without the memo `expireTag`
 removes it within about 300 ms; a platform `expireTag` issued outside rango is
@@ -946,6 +967,16 @@ cache({ store: checkoutCache }, () => [
 A per-boundary store becomes reachable by `updateTag()`/`revalidateTag()` only
 once that boundary has been matched in the current process. For data you
 invalidate by tag, prefer the app-level store.
+
+If you implement `SegmentCacheStore` yourself, `invalidateTags(tags)` is called
+synchronously inside the invalidating request, and `revalidateTag()` does not
+await it. For that request to read its own writes, record the tags and the
+time as invalidated in request-scoped state your reads check (a `WeakMap`
+keyed by the object `getRequestContext()` returns) before the first `await`,
+then start the durable write. Only let that state turn hits into misses, and
+only for entries written at or before that time. A store that skips this
+still works, but the request that ran `revalidateTag()` can read invalidated
+entries until the durable write lands.
 
 ## Complete Example
 

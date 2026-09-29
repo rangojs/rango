@@ -2097,6 +2097,33 @@ test.describe("cache-tag invalidation", () => {
       )
       .not.toBe(initialTs);
   });
+
+  // #973: revalidateTag() does not wait for the store's write; the action's
+  // own read after it must still miss the entry the tag covers.
+  test("server action revalidateTag() then a read in the same request is fresh", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const id = `ryow-dev-${Date.now()}`;
+    const cached = await pollTs(request, `/cache-tag-test/item/${id}`);
+    await expect
+      .poll(() => pollTs(request, `/cache-tag-test/item/${id}`), {
+        timeout: 5000,
+      })
+      .toBe(cached);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    await page.getByTestId("ryow-id").fill(id);
+    await page.getByTestId("ryow-btn").click();
+    await expect(page.getByTestId("ryow-ts")).toBeVisible();
+
+    const readInAction = Number(
+      await page.getByTestId("ryow-ts").textContent(),
+    );
+    expect(readInAction).not.toBe(cached);
+  });
 });
 
 // ============================================================================
@@ -2251,5 +2278,30 @@ test.describe("cache-tag invalidation (production)", () => {
         { timeout: 10000 },
       )
       .not.toBe(initialTs);
+  });
+
+  test("server action revalidateTag() then a read in the same request is fresh", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const id = `ryow-prod-${Date.now()}`;
+    const cached = await pollTs(request, `/cache-tag-test/item/${id}`);
+    await expect
+      .poll(() => pollTs(request, `/cache-tag-test/item/${id}`), {
+        timeout: 5000,
+      })
+      .toBe(cached);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    await page.getByTestId("ryow-id").fill(id);
+    await page.getByTestId("ryow-btn").click();
+    await expect(page.getByTestId("ryow-ts")).toBeVisible();
+
+    const readInAction = Number(
+      await page.getByTestId("ryow-ts").textContent(),
+    );
+    expect(readInAction).not.toBe(cached);
   });
 });

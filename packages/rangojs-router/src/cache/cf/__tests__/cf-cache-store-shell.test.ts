@@ -17,6 +17,7 @@ import {
   runWithRequestContext,
 } from "../../../server/request-context";
 import { createMetricsStore } from "../../../router/metrics";
+import { revalidateTag, updateTag } from "../../tag-invalidation.js";
 
 function makeReqCtx() {
   return createRequestContext({
@@ -1811,4 +1812,119 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       vi.resetModules();
     }
   });
+
+  // Only this request's own unconfirmed mask is kept from the isolate memo:
+  // a value another read of the tag memoized mid-read came from KV.
+  it("a marker a concurrent data read memoized mid-read, with no invalidation, reaches the isolate memo", async () => {
+    const store = new CFCacheStore({
+      ctx: mockCtx,
+      kv: mockKV as any,
+      baseUrl: "https://test.internal/",
+      memo: { markerFreshMs: 60_000 },
+    });
+    await store.putShell("k", shellEntry(), 300, 30, ["T"]);
+    await store.setItem("item", "v", { ttl: 300, tags: ["T"] });
+    await drain(mockCtx);
+
+    const get = mockKV.get.bind(mockKV);
+    let releaseReads!: () => void;
+    const held = new Promise<void>((resolve) => (releaseReads = resolve));
+    let markerReads = 0;
+    vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+      if (key.includes("__tag__/")) {
+        markerReads++;
+        await held;
+      }
+      return get(key, options);
+    });
+
+    const readsStarted = async (count: number) => {
+      for (let i = 0; i < 100 && markerReads < count; i++) {
+        await Promise.resolve();
+      }
+      expect(markerReads).toBe(count);
+    };
+    await runWithRequestContext(makeReqCtx(), async () => {
+      // The data read's KV read resolves first and memoizes the marker for
+      // the request; the shell read's then finds it memoized mid-read.
+      const data = store.getItem("item");
+      await readsStarted(1);
+      const shell = store.readShellDocument("k");
+      await readsStarted(2);
+      releaseReads();
+      expect(await data).not.toBeNull();
+      expect(await shell).not.toBeNull();
+    });
+    await drain(mockCtx);
+
+    markerReads = 0;
+    const later = await runWithRequestContext(makeReqCtx(), () =>
+      store.readShellDocument("k"),
+    );
+    expect(later).not.toBeNull();
+    expect(markerReads).toBe(0);
+  });
+
+  // #973: the invalidating request's mask is unconfirmed until the KV put
+  // lands. A shell marker read in flight when it is set resolves to it for
+  // this request, but must not store it in the isolate marker memo: if the
+  // put then fails, later requests would miss for markerFreshMs with no
+  // marker in KV.
+  it.each(["updateTag", "revalidateTag"] as const)(
+    "%s: an in-flight shell marker read keeps the unconfirmed mask out of the isolate memo; after a failed put a later request hits",
+    async (verb) => {
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        baseUrl: "https://test.internal/",
+        memo: { markerFreshMs: 60_000 },
+      });
+      await store.putShell("k", shellEntry(), 300, 30, ["T"]);
+      await drain(mockCtx);
+      vi.setSystemTime(Date.now() + 100);
+
+      const put = mockKV.put.bind(mockKV);
+      vi.spyOn(mockKV, "put").mockImplementation(async (key, ...rest) => {
+        if (key.includes("__tag__/")) throw new Error("KV down");
+        return put(key, ...rest);
+      });
+      const get = mockKV.get.bind(mockKV);
+      let releaseRead!: () => void;
+      let readStarted!: () => void;
+      const held = new Promise<void>((resolve) => (releaseRead = resolve));
+      const started = new Promise<void>((resolve) => (readStarted = resolve));
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        if (key.includes("__tag__/")) {
+          readStarted();
+          await held;
+        }
+        return get(key, options);
+      });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const req = createRequestContext({
+        env: {},
+        request: new Request("https://test.internal/p"),
+        url: new URL("https://test.internal/p"),
+        variables: {},
+        cacheStore: store,
+      });
+
+      await runWithRequestContext(req, async () => {
+        const inFlight = store.readShellDocument("k");
+        await started;
+        const invalidation = verb === "updateTag" ? updateTag("T") : undefined;
+        if (verb === "revalidateTag") revalidateTag("T");
+        releaseRead();
+        expect(await inFlight).toBeNull();
+        if (invalidation) await expect(invalidation).rejects.toThrow();
+      });
+      await Promise.all(req._pendingBackgroundTasks ?? []);
+      await drain(mockCtx);
+
+      const later = await runWithRequestContext(makeReqCtx(), () =>
+        store.readShellDocument("k"),
+      );
+      expect(later).not.toBeNull();
+    },
+  );
 });

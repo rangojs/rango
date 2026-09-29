@@ -58,6 +58,7 @@ import {
   type CacheExecScope,
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
+import { currentCacheSeq, invalidatedSince } from "./tag-invalidation.js";
 import type { CacheItemResult } from "./types.js";
 import type { InternalHandlerContext } from "../types.js";
 
@@ -292,7 +293,10 @@ interface CacheEnvelope {
  */
 interface InFlightExecution {
   promise: Promise<CacheEnvelope>;
+  /** Date.now() at registration, for IN_FLIGHT_LEADER_MAX_WAIT_MS. */
   registeredAt: number;
+  /** currentCacheSeq() at registration, for invalidatedSince (#973). */
+  startSeq: number;
 }
 
 const inFlightExecutions = new Map<string, InFlightExecution>();
@@ -678,6 +682,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 PHASES.background("use-cache-revalidation"),
                 async () => {
                   const refreshArgs = args.map(refreshView);
+                  // The refresh reads its data from here on (#973).
+                  const startSeq = currentCacheSeq();
                   const scoped = runWithCacheTagScope(() =>
                     runWithCacheExecScope(
                       () => fn.apply(this, refreshArgs),
@@ -714,6 +720,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     // An error row would replace the stale entry; the catch
                     // below reports it and the stale entry keeps serving.
                     if (flightErrors.length > 0) throw flightErrors[0];
+                    // The request invalidated one of the refreshed value's
+                    // tags after the refresh started: the value may predate
+                    // it, and written now it would outlive it.
+                    if (invalidatedSince(requestCtx, freshTags, startSeq)) {
+                      return;
+                    }
                     await store.setItem!(cacheKey, serialized, {
                       handles: encodedHandles,
                       ttl: profile.ttl,
@@ -757,8 +769,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // against its OWN handle store (gated on ITS hasTaintedArgs), and records
     // tags into its OWN request — no deserialized result is shared across
     // requests. The store write stays exactly once (the leader's).
-    const existing = inFlightExecutions.get(cacheKey);
-    if (existing) {
+    let existing = inFlightExecutions.get(cacheKey);
+    while (existing) {
       const remainingMs =
         IN_FLIGHT_LEADER_MAX_WAIT_MS - (Date.now() - existing.registeredAt);
       const raced =
@@ -780,8 +792,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           "cache-read",
           `[use cache] "${id}" inflight-timeout`,
         );
-        // Fall through to a fresh execution below (this call becomes leader).
-      } else if (raced) {
+        break; // This call becomes the leader below.
+      }
+      // Leader rejected: its map entry is already cleared; run fresh.
+      if (!raced) break;
+      // Checked after the wait, so an invalidation made meanwhile counts too.
+      if (!invalidatedSince(requestCtx, raced.tags, existing.startSeq)) {
         try {
           return await serveCached({
             value: raced.serialized,
@@ -795,11 +811,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             "cache-corrupt",
             `[use cache] "${id}" inflight-hit`,
           );
-          // Fall through to a fresh execution below.
+          break; // Run fresh below.
         }
       }
-      // raced === undefined: leader rejected; its map entry is already
-      // cleared, so fall through to a fresh run.
+      // This request invalidated one of the leader's tags after it started
+      // (#973): its value may predate the invalidation. The leader cleared
+      // its entry before resolving, so an entry now is a newer execution
+      // (another caller that made this same decision): join it rather than
+      // start one more.
+      const next = inFlightExecutions.get(cacheKey);
+      existing = next !== existing ? next : undefined;
     }
 
     // This call becomes the leader. Register a deferred envelope so concurrent
@@ -816,9 +837,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Followers attach their own catch; guard the map's own reference so a
     // rejected envelope with no waiter is not an unhandled rejection.
     envelopePromise.catch(() => {});
+    const startSeq = currentCacheSeq();
     inFlightExecutions.set(cacheKey, {
       promise: envelopePromise,
       registeredAt: Date.now(),
+      startSeq,
     });
     const clearSelf = (): void => {
       if (inFlightExecutions.get(cacheKey)?.promise === envelopePromise) {
@@ -931,6 +954,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Hand followers the envelope before the store write so a slow/failed
       // write never stalls them.
       resolveEnvelope({ serialized, tags: allTags, handles: encodedHandles });
+      // This request invalidated one of the value's tags after the execution
+      // started (#973): the value may predate the invalidation, and written
+      // now it would outlive it. Skip the write; the next read runs fresh.
+      if (invalidatedSince(requestCtx, allTags, startSeq)) return;
       try {
         await store.setItem!(cacheKey, serialized, {
           handles: encodedHandles,
