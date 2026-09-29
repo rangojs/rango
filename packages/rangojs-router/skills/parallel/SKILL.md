@@ -148,13 +148,18 @@ route overrides via its own `@meta` slot. The route's slot pushes after the
 layout, and `Meta` keeps the last value per key, so the override wins.
 
 > **Loader-derived metadata: push from the loader instead.** This slot's
-> `await ctx.use(ProductLoader)` routes the data through HANDLER consumption —
-> the baked lane under `cache()`/PPR — just to reach a `ctx.use(Meta)` call.
-> The loader can now push `Meta` itself (`/loader` → "Writing Handles from
-> Loaders"), keeping the data on the live lane; add
-> `loader(Def, { ssr: false })` when the meta must be in the SSR'd
-> head. Keep the `@meta` slot for metadata that is NOT loader-derived
-> (templates, static descriptions, structured data with independent inputs).
+> `await ctx.use(ProductLoader)` routes the data through HANDLER consumption
+> just to reach a `ctx.use(Meta)` call: under `cache()` the slot's output is
+> stored with the segment, and on a `ppr` route it bakes into the shell and a
+> HIT replays it without running the slot. The loader can push `Meta` itself
+> (`/loader` → "Writing Handles from Loaders"). Without `ssr: false` the
+> loader runs per request, but on a `ppr` route its push is not in the
+> shell's `<head>` (it applies after hydration). Add
+> `loader(Def, { ssr: false })` when the meta must be in the SSR'd head; on a
+> `ppr` route that bakes the push into the shell, and a HIT serves it without
+> running the loader when its value has no promises. Keep the `@meta` slot for
+> metadata that is NOT loader-derived (templates, static descriptions,
+> structured data with independent inputs).
 
 ```typescript
 // Layout sets defaults

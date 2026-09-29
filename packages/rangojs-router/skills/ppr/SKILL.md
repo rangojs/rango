@@ -10,9 +10,9 @@ Caches the rendered HTML **shell** of a page route (React `prerender` prelude
 bytes plus `postponed` state) and, on a later request, flushes those bytes after
 route classification and the complete middleware chain, but before downstream
 tail rendering. It then resumes React's HTML renderer for just the live holes.
-The browser sees one ordinary streamed document; loaders stay fresh on every
-request. A normal render (no shell) is untouched, and every request the shell
-cannot serve falls open to it.
+The browser sees one ordinary streamed document; live loaders (no `ssr: false`)
+stay fresh on every request. A normal render (no shell) is untouched, and every
+request the shell cannot serve falls open to it.
 
 Use it when a page has a stable layout that should reach the browser instantly
 (the first byte comes from cache) while specific regions stay per-request:
@@ -37,7 +37,8 @@ PPR with HTTP shared-cache headers.
   `/document-cache`.
 - You want build-time Flight segment payloads from `Static()`/`Prerender()` —
   see `/prerender`. A `Prerender` page may also declare `ppr`; then the
-  build-time shell capture bakes the HTML shell while loaders stay live.
+  build-time shell capture bakes the HTML shell while loaders without
+  `ssr: false` stay live.
 - You want cached segments with live loaders but no cached HTML — that is the
   `cache()` DSL: see `/caching`.
 - You are unsure which cache layer you need — start at `/cache-guide`.
@@ -271,7 +272,8 @@ On a document GET to a ppr route the router runs:
    stream, starting a macrotask after the commit so they cannot delay the
    prelude's write. Segment resolution replays the handler layer from the
    shell's own recorded segments — NO handler runs on a HIT — and runs the
-   loaders fresh;
+   live loaders fresh (a promise-free bake-lane loader is served from the
+   shell, see "On a shell HIT");
 5. **MISS** — a normal render (no shell), tagged `x-rango-shell: MISS`, plus a
    background capture (stampede-guarded, retry-in-place, exponential backoff).
 
@@ -299,9 +301,9 @@ slow leaves the entry alone.
 ### Soft navigation caches and reuses the handler layer
 
 In short: client-side (soft) navigations to a `ppr` route reuse the handler
-segments captured with the shell, while loaders stay live. Nothing needs
-configuring; the rest of this section explains the `x-rango-ppr-replay` header
-for when you are debugging replay behavior.
+segments captured with the shell, while loaders without `ssr: false` stay live.
+Nothing needs configuring; the rest of this section explains the
+`x-rango-ppr-replay` header for when you are debugging replay behavior.
 
 Ordinary partial RSC navigations to a `ppr` URL use the same handler-layer cache
 contract even when no document request has captured an HTML shell yet. When a
@@ -312,13 +314,21 @@ replay its eligible snapshot. In both cases `matchPartial()`:
 
 - preserves client-owned shared layouts by segment id;
 - returns only new or revalidating destination segments;
-- runs DSL loaders fresh with their normal `loading()` streaming behavior;
+- runs live DSL loaders fresh with their normal `loading()` streaming
+  behavior, and serves bake-lane loaders from the pins of a shell captured by a
+  document request; a snapshot captured by a navigation alone carries no pins,
+  and its replay runs them fresh (see below);
 - keeps the existing prefetch key, source scope, and in-flight lock unchanged.
 
 This is deliberately invisible to the browser: the response is the same
 `RscPayload` shape as any other partial navigation. Captured item/response values
-and loader-container pins are NOT replayed on this path, so loader reads stay
-live.
+are NOT replayed on this path. Bake-lane loader pins are, when the replayed
+snapshot is a shell a document request captured, as on a document HIT: a
+promise-free `ssr: false` loader is served from its pin without running
+(unless the capture marked it to run: see "On a shell HIT"), and one whose
+return holds promises runs with its baked parts overlaid. A snapshot captured
+by a navigation alone carries no pins, and its replay runs them fresh. Loaders
+without `ssr: false` stay live.
 
 A route's own `cache()` scope — including one inherited from an ancestor, the
 common app-wide storefront shape — COMPOSES with replay instead of disabling
@@ -811,14 +821,16 @@ entries, not just routes.
 #### On a shell HIT
 
 What a bake-lane loader does on a HIT depends on whether its recorded
-container carried holes. A client navigation that replays the shell
-(`x-rango-ppr-replay: HIT`) does the same, for every `ssr: false` loader,
-including one on an entry with `loading()` (before, a navigation ran every
-loader and served its fresh values):
+container carried holes. A client navigation that replays a shell captured by
+a document request (`x-rango-ppr-replay: HIT`) does the same, for every
+`ssr: false` loader, including one on an entry with `loading()` (before, a
+navigation ran every loader and served its fresh values). A snapshot captured
+by a navigation alone carries no pins, and its replay runs these loaders fresh.
 
 - **Hole-free record (the return had no promises): served from the shell.**
   The response uses the pinned container immediately and the loader body does
-  NOT run: a HIT is rendered from the shell, like the handlers it replays, so
+  NOT run (unless the capture marked it to run: see the handle pushes note
+  below): a HIT is rendered from the shell, like the handlers it replays, so
   the loader costs nothing per HIT. Side effects in its body happen once per
   capture, not per request. The output changes only when the shell is
   recaptured (TTL/SWR expiry or tag invalidation).
@@ -907,10 +919,11 @@ Four hard edges (each e2e/unit-pinned):
   that throws only on that run refuses it too. A build-time capture skips the
   shell (`SHELL SKIP`) and the route keeps runtime capture.
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
-  document GETs. Soft navigations may replay the captured handler segments, but
-  DSL loaders and their item/response reads remain fresh. That IS the bake
-  lane's meaning; if a value must be fresh on every serve, it belongs on the
-  live lane (no `ssr: false`) or in a nested promise.
+  document GETs, and on soft navigations that replay a shell captured by a
+  document request (`x-rango-ppr-replay: HIT`). Live loaders and their
+  item/response reads remain fresh. That IS the bake lane's meaning; if a value
+  must be fresh on every serve, it belongs on the live lane (no `ssr: false`) or
+  in a nested promise.
 
 ### The layout-with-loaders playbook (the storefront case)
 
@@ -1036,9 +1049,13 @@ settled pushes are shell material like a handler's.
 bake-lane switch under PPR, not a knob for normal renders only: the capture
 render awaits the flagged loader too, so its settled non-promise data — handle
 pushes included — freezes into the stored shell and recurs as capture cost on
-every capture (levers 1 and 2 apply to it). Outside capture the flag keeps its
+every capture (levers 1 and 2 apply to it). On a MISS the flag keeps its
 normal-render meaning: document renders await it before first flush, client
-navigations stream it.
+navigations stream it. A shell HIT, and a navigation that replays a shell
+captured by a document request, serve a promise-free one from the shell
+without running it (unless the capture marked it to run: see "On a shell
+HIT"); a snapshot captured by a navigation alone carries no pins, and its
+replay runs it fresh.
 
 ## Execution matrix
 
@@ -1047,7 +1064,7 @@ navigations stream it.
 | Middleware chain | runs (full)            | **NOT re-run** — inherits the request's post-middleware context                                                                                                                                       | runs (full) — commit point is after it                                           |
 | `router.match`   | runs                   | re-runs under a derived context                                                                                                                                                                       | runs (behind the flushed prelude)                                                |
 | Handlers         | run                    | run on UNCACHED segments (`cache()`d segments replay); everything they produce — promises, async server components, handle pushes, awaited loaders — settles before the freeze (`ppr.captureTimeout`) | **never run** — the handler layer is replayed from the shell's recorded segments |
-| Loaders          | run **fresh**          | LIVE lane (no `ssr: false`): MASKED; BAKE lane (`ssr: false`): execute + snapshot-pin                                                                                                                 | run **fresh** (bake containers overlaid from the snapshot)                       |
+| Loaders          | run **fresh**          | LIVE lane (no `ssr: false`): MASKED; BAKE lane (`ssr: false`): execute + snapshot-pin                                                                                                                 | live: run **fresh**; bake: pinned, runs only if its record has holes             |
 | Flight render    | full                   | full, from the capture's own recorded segments (the same bytes every HIT replays)                                                                                                                     | full (hydration needs the whole payload — no Flight resume)                      |
 | HTML production  | full fizz              | `prerender` + abort → prelude + postponed                                                                                                                                                             | `resume` only the holes — O(paths to holes)                                      |
 | Shell store      | schedules a bg capture | `putShell(key, …)`                                                                                                                                                                                    | `getShell(key)`; a stale/SWR hit also schedules a recapture                      |
@@ -1061,8 +1078,8 @@ serve-time: the commit point runs the full chain on EVERY serve.
 
 Because handlers on uncached segments EXECUTE during capture — along with
 everything they produce and every BAKE-lane loader — the capture guard is
-load-bearing: `cookies()`, `headers()`, and a `{ cache: false }` variable read
-THROW during a capture render (`assertNotInsideShellCapture`), and the capture
+load-bearing: `cookies()`, `headers()`, a theme read, and a `{ cache: false }`
+variable read THROW during a capture render, and the capture
 is refused even when the code catches that throw, so identity can never leak
 into a shared shell through them. Live-lane loaders (every loader without
 `ssr: false`) are exempt: masked at capture, they never run there.
@@ -1085,8 +1102,9 @@ middleware on every serve. A 401/redirect short-circuit returns before any
 shell byte.
 
 **(b) Request-scoped reads refuse the capture.** During the background capture
-render, `cookies()`, `headers()`, and `ctx.get()` of a `{ cache: false }`
-variable (`createVar({ cache: false })`, or a value written with
+render, `cookies()`, `headers()`, the visitor's theme (`ctx.theme`,
+`getRequestContext().theme`), and `ctx.get()` of a `{ cache: false }` variable
+(`createVar({ cache: false })`, or a value written with
 `ctx.set(..., { cache: false })`) THROW, wherever the capture waits for them:
 a handler, a promise it passes or pushes, an async server component, a
 bake-lane loader, and a loader a handler awaits (`await ctx.use(Loader)`). The
@@ -1303,12 +1321,13 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   (even an already-resolved one) or put the loader on the live lane (drop
   `ssr: false`).
 
-- **Theme on a HIT is capture-then-corrected**: the resume tree replays the
-  CAPTURE's `initialTheme` (resume requires it to match the frozen prelude);
-  the visitor's cookie theme is applied pre-paint by the FOUC script and
-  re-synced post-mount by ThemeProvider. Nothing to configure — but a themed
-  component in the shell may briefly render the captured theme's markup before
-  the post-mount re-sync.
+- **Theme on a HIT is default-then-corrected**: the shell's `initialTheme` is
+  the no-cookie default (`defaultTheme`), whoever captured it, and the resume
+  tree replays it (resume requires it to match the frozen prelude). A visitor
+  with a stored theme gets it pre-paint from the FOUC script and in
+  `useTheme()` after ThemeProvider re-syncs post-mount. Nothing to configure —
+  but a themed component in the shell may briefly render the default theme's
+  markup before the post-mount re-sync.
 - **Shell shows CAPTURE-time data for the shell's lifetime**: a
   `cache()`/`"use cache"` value baked into the shell is PINNED at capture (the
   capture data snapshot) and replayed on every HIT, so the shell stays

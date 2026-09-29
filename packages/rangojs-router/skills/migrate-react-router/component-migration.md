@@ -154,7 +154,9 @@ const HomePage: Handler<"home"> = (ctx) => {
 RR's data-derived `meta({ data })` maps to the same push from the LOADER that
 owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body, with
 `loader(Def, { ssr: false })` when the title must be in the SSR'd
-head. See `/loader` → "Writing Handles from Loaders".
+head. See `/loader` → "Writing Handles from Loaders". The loader flag is
+unrelated to RR7's `ssr: false` (SPA mode), which has no route-wide Rango
+equivalent: it makes the server settle that loader before the first flush.
 
 Add `<Html.Meta />` in the Document component's `<head>`:
 

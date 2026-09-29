@@ -168,6 +168,21 @@ family runs L1-only (each colo captures and serves its own shell). A tagged
 shell with neither `kv` nor `tagPurge` logs a warning once and expires only by
 ttl+swr. See `/caching` and `/ppr`.
 
+Shell reads are stale-while-revalidate through per-isolate memos: a warm
+isolate serves a shell it read within `memo.shellMs` (default 2000) from
+memory, and with `kv` it checks tag markers through a memo that is used as is
+for `memo.markerFreshMs` (default 1000) and while it refreshes in the
+background up to `memo.markerMaxStaleMs` (default 10000). After
+`updateTag()`/`revalidateTag()` the response sets the fresh-reads cookie
+(`rango-state-fresh` by default), so the mutating user's next requests skip
+the memos. That makes them fresh in the colo that ran the mutation; other
+colos converge once KV propagates the marker and their cached marker
+(`tagCacheTtl`) expires. In purge mode without `kv`, another isolate's memo
+keeps serving a purged shell until `memo.shellMs` passes. Set
+`memo: { shellMs: 0, markerFreshMs: 0 }` to remove the memo delay for every
+user's next request; cross-colo KV propagation (and `tagCacheTtl`) still
+applies. Details: `/caching` → "The fresh-reads cookie".
+
 ## Tracing on Workers
 
 `createCloudflareTracing()` from `@rangojs/router/cloudflare` emits the

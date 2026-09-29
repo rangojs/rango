@@ -142,10 +142,13 @@ the loader carried authority. A `createLoader()` body can throw `notFound()`
 for the missing product AND push the data-derived meta itself
 (`ctx.use(Meta)({ title: product.name })`); register it with
 `loader(ProductLoader, { ssr: false })` when the 404 status and
-title must be in the document deterministically. See `/loader` → "Loader
-Authority" and "Writing Handles from Loaders". (One RR habit that does NOT
-carry over: a loader `throw redirect()` is a client-side navigate on document
-loads, never an HTTP 302 — pre-stream 302s belong in middleware.)
+title must be in the document deterministically (the flag makes the server
+settle that loader before the first flush; it is unrelated to RR7's
+`ssr: false` SPA mode, which has no route-wide Rango equivalent). See
+`/loader` → "Loader Authority" and "Writing Handles from Loaders". (One RR
+habit that does NOT carry over: a loader `throw redirect()` is a client-side
+navigate on document loads, never an HTTP 302 — pre-stream 302s belong in
+middleware.)
 
 ### RR7 file routing → urls() DSL
 

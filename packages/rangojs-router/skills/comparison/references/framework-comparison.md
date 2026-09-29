@@ -373,15 +373,17 @@ old-deployment request pinning.
 The `@rangojs/router/testing/*` entry points give you `runLoader`,
 `runMiddleware`, `runInRequestContext` (server actions), `dispatch` (base
 `./testing`), `renderHandler` and real Flight rendering (`renderServerTree`,
-`findClientBoundaries`, `findElements`) from `./testing/flight`, `renderRoute`
-from `./testing/dom`, a vitest preset from `./testing/vitest`, and a Playwright
-e2e harness with dev/prod parity helpers (`parityDescribe`, `expectParity`) from
-`./testing/e2e`. You can unit-test a loader, a middleware, an action, or an RSC
-handler in isolation. Next.js and Waku ship no official primitives for testing
-server components/handlers; TanStack documents testing patterns (build your own
-harness from `createRouter`/`createMemoryHistory`) but ships no testing package,
-and nothing at the RSC-handler level. See the [testing skill](../../testing/SKILL.md)
-and [testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md).
+`findClientBoundaries`, `findElements`) plus a real PPR shell capture and HIT
+(`serveShellRequest`, `resetShellTestState`) from `./testing/flight`,
+`renderRoute` from `./testing/dom`, a vitest preset from `./testing/vitest`, and
+a Playwright e2e harness with dev/prod parity helpers (`parityDescribe`,
+`expectParity`) from `./testing/e2e`. You can unit-test a loader, a middleware,
+an action, or an RSC handler in isolation. Next.js and Waku ship no official
+primitives for testing server components/handlers; TanStack documents testing
+patterns (build your own harness from `createRouter`/`createMemoryHistory`) but
+ships no testing package, and nothing at the RSC-handler level. See the
+[testing skill](../../testing/SKILL.md) and
+[testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md).
 
 ### Bundle discipline
 
@@ -534,10 +536,13 @@ There are two distinct things named "revalidate", and the split is deliberate:
    tabs, and pagination. See
    [shallow-navigation.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/design/shallow-navigation.md).
 
-Both are separate from `revalidateTag()`/`updateTag()`, which hard-purge tagged
-cache entries. `updateTag()` is awaitable for read-your-own-writes;
-`revalidateTag()` schedules the same invalidation in the background. Neither API
-selects a client segment to render. Next.js offers `router.refresh()` (and
+Both are separate from `revalidateTag()`/`updateTag()`, which evict tagged
+cache entries; the request that calls either reads its own writes.
+`updateTag()` also awaits the durable write; `revalidateTag()` schedules it in
+the background. The mutating user's next requests skip the stores' per-isolate
+PPR shell memos via a fresh-reads cookie, and other users converge within the
+memo window and the platform's own propagation. Neither API selects a client
+segment to render. Next.js offers `router.refresh()` (and
 `refresh()` from `next/cache`) plus path/tag cache invalidation, but no per-segment
 render predicate and no typed action discrimination — and its invalidations clear
 the whole client cache rather than selecting a segment. TanStack's `shouldReload`/`router.invalidate()` is the nearest
@@ -620,19 +625,22 @@ this resource-aware policy layer.
 
 `createLoader(fn)` / `loader()` define **live-by-default** data units: they are
 excluded from an enclosing segment cache and resolve on every request unless the
-loader itself explicitly opts into `cache()`. They may safely read `cookies()`,
-`headers()`, request context, and `env` because loader execution is outside the
-cached shell; a loader with its own `cache()` must put those reads in its
-`key()`, or its miss fails and stores nothing. Loaders run in parallel, stream independently under `loading()`
-boundaries, compose server-side via `ctx.use(OtherLoader)`, and carry
-route-level authority: they can throw `notFound()`/`redirect()`, WRITE handles
-(`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the data's
-producer), read handle data after the render settles (`ctx.get(handle)` behind
-`await ctx.rendered()`), and opt into `loader(Def, { ssr: false })`
-so a document render awaits them before first flush (deterministic SSR'd data,
-meta, and 404 status). Reads happen through `useLoader` in a client component
-(including its SSR pass) or `useFetchLoader` for standalone client fetches. "Fetchable" loaders are callable
-endpoints with their own middleware and GET/POST/PUT/PATCH/DELETE bodies.
+loader itself explicitly opts into `cache()`. A loader without `ssr: false` may
+safely read `cookies()`, `headers()`, request context, and `env` because its
+execution is outside the cached shell; a loader with its own `cache()` must put
+those reads in its `key()`, or its miss fails and stores nothing. On a `ppr`
+route an `ssr: false` loader bakes into the shell, so an identity read there
+refuses the capture. Loaders run in parallel, stream independently under
+`loading()` boundaries, compose server-side via `ctx.use(OtherLoader)`, and
+carry route-level authority: they can throw `notFound()`/`redirect()`, WRITE
+handles (`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the
+data's producer), read handle data after the render settles (`ctx.get(handle)`
+behind `await ctx.rendered()`), and opt into `loader(Def, { ssr: false })` so a
+document render awaits them before first flush (deterministic SSR'd data, meta,
+and 404 status). Reads happen through `useLoader` in a client component
+(including its SSR pass) or `useFetchLoader` for standalone client fetches.
+"Fetchable" loaders are callable endpoints with their own middleware and
+GET/POST/PUT/PATCH/DELETE bodies.
 
 One sharp edge is worth stating because the distinction matters: a cached handler
 can call `await ctx.use(Loader)`, but if it renders that result inline, it bakes the
@@ -682,7 +690,7 @@ a fully prerendered route. Caching loader data is a separate, explicit opt-in on
 that loader.
 
 The mechanism is concrete: a prerendered route serves its baked Flight shell from
-the store, then `resolveLoadersOnly()` resolves the loaders through their own
+the store, then the router resolves the loaders through their own
 freshness policy at request time and merges their segments into that replayed
 shell. With the default policy you get a cached/prerendered shell plus live data,
 automatically, with no per-route static-vs-dynamic decision. The loader is the
@@ -693,7 +701,8 @@ designated live data slot in a cache-first RSC tree.** Several properties follow
 that no loader-before-render has:
 
 - it is the **cache-safety escape hatch** — the only place request-coupled reads
-  are allowed inside a cache scope, because it is the part guaranteed to re-run;
+  are allowed inside a cache scope, because it is the part guaranteed to re-run
+  (a loader without `ssr: false` and without its own unkeyed `cache()`);
 - it is **standalone and composable**, not route-coupled — one `createLoader()`
   read by many segments, composed via `ctx.use`, or exposed as a fetchable endpoint;
 - it **streams as a hole, not a gate** — concurrent, Suspense-resolved under
@@ -774,11 +783,13 @@ safe rule remains simple: read request-specific context at the live point of use
 normally a loader, rather than deriving it outside and carrying it into a cached
 shell.
 
-This is where the taint and loader designs meet. Loaders are the sanctioned dynamic
-holes: they run outside the enclosing segment cache and may read the current
-request, while the shared shell remains protected. Next.js also isolates runtime
-APIs from ordinary `"use cache"`, and React's optional taint APIs protect values at
-the server-to-client serialization boundary. Those are useful but different
+This is where the taint and loader designs meet. Loaders are the sanctioned
+dynamic holes: they run outside the enclosing segment cache and may read the
+current request (except, on a `ppr` route, an `ssr: false` loader or a loader a
+handler awaits, which the capture runs and refuses on such a read), while the
+shared shell remains protected. Next.js also isolates runtime APIs from ordinary
+`"use cache"`, and React's optional taint APIs protect values at the
+server-to-client serialization boundary. Those are useful but different
 contracts; they do not provide Rango's route-aware tainted-argument keying,
 non-cacheable typed context variables, handle capture/replay, and loader escape
 path as one system. TanStack Start and Waku leave this boundary primarily to

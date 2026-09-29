@@ -790,6 +790,7 @@ another, request-scoped APIs are guarded inside a cache scope:
 | `cookies()` / `headers()` (read or write)                                          | **throws** — request-scoped, would poison the entry |
 | Response writes: `ctx.headers.set()`, `setCookie()`, `setStatus()`, `onResponse()` | **throws** — response side effects lost on a hit    |
 | `ctx.get(var)` where the var is `{ cache: false }`                                 | **throws** on read                                  |
+| `ctx.theme`, `getRequestContext().theme`                                           | **throws** — the theme is the visitor's cookie      |
 | `ctx.set(var, value)` for a cacheable var                                          | allowed (children are cached too)                   |
 | Any of the above **inside a registered loader** (`loader(...)`)                    | **allowed** — loaders always run fresh              |
 

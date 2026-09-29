@@ -75,7 +75,10 @@ render pass — normal renders, post-action revalidation, PE re-renders — its
 variables are never stale: middleware is the safest `ctx.set` rung on the
 data-passing ladder (`/rango` → "Passing data down the tree"). But it does
 not change partial revalidation boundaries between handler/layout/parallel
-segments.
+segments. On a PPR shell HIT no handler or layout runs; on a route `cache()`
+HIT the segments inside the `cache()` boundary don't run, and those above it
+do. Output that didn't run shows the values read when the shell was captured
+or the entry written.
 
 For shared segment data, use named revalidation contracts on both the producer
 and consumer segments, even when middleware is present in the chain.
@@ -334,21 +337,23 @@ the token (`createVar<T>({ cache: false })`) or per write
 (`ctx.set("user", user, { cache: false })`). Reading it with `ctx.get()` inside
 a `cache()` boundary or a `"use cache"` function then throws instead of baking
 one user's data into a shared entry (inside `"use cache"`, also through a
-middleware `ctx` passed in); loaders can still read it because they always run
-fresh (a `"use cache"` function a loader calls cannot, and a loader bound with
-its own `cache()` only with a `key()`, which switches the check off, so the key
-must include the value). A middleware `ctx`
-passed to a `"use cache"` function keys the call by host, pathname, params and
-search, plus the route name once the route is matched (a global middleware
-before `next()` has none yet), and its `set()`, `header()` and `headers` writes
-throw inside the function (`/use-cache`).
+middleware `ctx` passed in); under `cache()` loaders can still read it because a
+DSL loader re-runs on every hit (a `"use cache"` function a loader calls cannot,
+and a loader bound with its own `cache()` only with a `key()`, which switches
+the check off, so the key must include the value). On a `ppr` route only a
+loader without `ssr: false` that no handler awaits may read it: a read the shell
+capture waits for refuses the capture. A middleware `ctx` passed to a
+`"use cache"` function keys the call by host, pathname, params and search, plus
+the route name once the route is matched (a global middleware before `next()`
+has none yet), and its `set()`, `header()` and `headers` writes throw inside the
+function (`/use-cache`).
 
 ## Build-Time PPR Middleware
 
 Normal `Prerender` Flight payload collection does not run middleware: there is
 no request to wrap. The exception is `Prerender` + `ppr` build-shell capture.
-After the Flight payload exists, the shell producer replays global and route
-middleware for each generated URL before it captures HTML.
+After the Flight payload exists, the build replays global and route middleware
+for each generated URL before capturing the shell.
 
 In that build-shell pass:
 

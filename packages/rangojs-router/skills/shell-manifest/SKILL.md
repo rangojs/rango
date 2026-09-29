@@ -9,8 +9,8 @@ argument-hint:
 Use this when a cached or prerendered shell has dynamic holes, and the live
 data layer needs to know **what the shell actually contains** — which
 products, which slots, which keys. The frozen render describes itself
-through a handle; loaders (always live) read that description and fetch
-exactly the dynamic data the shell needs, in one batch.
+through a handle; live loaders (no `ssr: false`) read that description and
+fetch exactly the dynamic data the shell needs, in one batch.
 
 Canonical case: a prerendered product list where prices must stay live.
 
@@ -32,16 +32,19 @@ batched.
 ## The mechanism (three features composed)
 
 1. **Handles record data at render time.** The handler pushes to a handle
-   (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on
-   the cache miss for `cache()`. (Loader bodies can push handles too — see
-   `/loader` — but a live loader's push is request-time and is NOT part of
-   the replayed artifact; a manifest handle must be pushed by the code that
-   gets frozen with the shell. An `ssr: false` loader on a `ppr` route is the
-   exception: its settled pushes are recorded and replayed, and its re-run
-   replaces them with its live pushes — `/ppr` "On a shell HIT".)
+   (`ctx.use(Handle)`) while it renders — at build time for `Prerender`, on the
+   cache miss for `cache()`. (Loader bodies can push handles too — see `/loader`
+   — but a live loader's push is request-time and is NOT part of the replayed
+   artifact; a manifest handle must be pushed by the code that gets frozen with
+   the shell. An `ssr: false` loader on a `ppr` route is the exception: its
+   settled pushes are recorded with the shell. On a HIT, one whose return has no
+   promises does not run (unless the capture marked it to run), so the recorded
+   pushes are what the page shows; one whose return carries promises runs on
+   every HIT, and its pushes replace the recorded ones — `/ppr` "On a shell
+   HIT".)
 2. **Replay on every hit.** Handle data is stored with the Flight payload
-   and replayed into the handle store on cache/prerender hits — handler code
-   does not re-run, but its pushes do.
+   and replayed into the handle store on cache, prerender and `ppr` shell
+   hits — handler code does not re-run, but its pushes do.
 3. **Loaders read after the render barrier.** A DSL loader can
    `await ctx.rendered()` (waits for all non-loader segments to settle —
    fresh render or replay alike), then `ctx.get(Handle)` returns the
@@ -185,7 +188,13 @@ const prices = await runLoader(PriceLoader, {
 
 This tests the loader's post-barrier logic. The real
 push → store → replay → barrier wiring is covered at the e2e tier (dev +
-production), like every cache-path behavior.
+production), like every cache-path behavior. On a `ppr` route,
+`serveShellRequest(router, url, { cacheStore })` from
+`@rangojs/router/testing/flight` runs the real capture and HIT in a unit test
+(react-server Vitest): serve the URL twice with the same store; the second
+response is a HIT, and its `flight` carries the live loader's output for the
+replayed ids. Call `resetShellTestState()` in `beforeEach`. Recipe:
+`/testing` → `serve-shell-request.md`.
 
 ## Related
 

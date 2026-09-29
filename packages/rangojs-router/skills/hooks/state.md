@@ -214,7 +214,9 @@ it is selected by export conditions:
   a rotated state `Set-Cookie` for the responding client, which marks its
   caches stale when it next reads them. Idempotent within a request; throws
   inside a `cache()` / `"use cache"` boundary; a no-op with a dev warning
-  outside a request.
+  outside a request. On a `ppr` route a shell HIT runs no handler, so a call
+  from handler code writes the cookie only on the renders that run it (a
+  MISS); call it from middleware, which runs on every request, HITs included.
 
 Server actions already invalidate automatically; to suppress that for a no-op
 action, call `keepClientCache()` inside it (see `/server-actions` → "Client
