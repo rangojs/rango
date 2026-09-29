@@ -242,6 +242,7 @@ export const router = createRouter<AppEnv>({
     onErrorLog.push({
       phase: context.phase,
       message: context.error.message,
+      pathname: context.pathname,
       actionId: context.actionId,
       metadata: context.metadata,
     });

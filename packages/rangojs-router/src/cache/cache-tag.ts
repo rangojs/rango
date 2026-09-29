@@ -19,6 +19,8 @@ import {
   getCurrentLoaderBodyId,
   getLoaderBodyTags,
   isInsideLoaderScope,
+  type LoaderIdentityRead,
+  type LoaderIdentityReadVerb,
 } from "../server/context.js";
 
 const cacheTagStorage = new AsyncLocalStorage<Set<string>>();
@@ -329,15 +331,28 @@ export function recordRequestTags(
  * The per-execution sets and read links run only for a request that resolves
  * a loader-cache binding (armLoaderTagSets); elsewhere a loader execution
  * allocates no set and a read links nothing.
+ *
+ * The same sets carry the execution's request-identity reads (#972,
+ * recordLoaderIdentityRead in server/context.ts): an entry with no declared
+ * key refuses an execution whose links reach one (recordedIdentityRead).
  */
 interface TagCapture {
   into: Set<string>;
   /** The loader body set active when the capture opened. */
   outer: Set<string> | undefined;
 }
-const recordedTagCapture = new AsyncLocalStorage<TagCapture>();
+// On globalThis like the loader scopes (server/context.ts): the identity-read
+// recorder is installed there too, so a second evaluated copy of this module
+// (a duplicated package, a dev re-evaluation) must share the capture scope and
+// the recorded reads, or its recorder writes where no fill looks.
+const recordedTagCapture: AsyncLocalStorage<TagCapture> = ((globalThis as any)[
+  Symbol.for("rangojs-router:recorded-tag-capture")
+] ??= new AsyncLocalStorage<TagCapture>());
 const tagLinks = new WeakMap<Set<string>, Set<Set<string>>>();
 const loaderValueTags = new WeakMap<object, Set<string>>();
+const identityReads: WeakMap<Set<string>, LoaderIdentityRead> = ((
+  globalThis as any
+)[Symbol.for("rangojs-router:identity-reads")] ??= new WeakMap());
 
 /**
  * Arm the per-execution loader tag sets for `ctx`: its match resolved a
@@ -397,6 +412,49 @@ export function readValueTags(value: object): void {
   if (!tags) return;
   const into = activeTagSet();
   if (into) linkRecordedTags(into, tags);
+}
+
+// recordLoaderIdentityRead (server/context.ts) calls this through the shared
+// key, not an import: a test mocking context.ts would break module init. First
+// read per execution: the fill's error names it.
+(globalThis as Record<symbol, unknown>)[
+  Symbol.for("rangojs-router:identity-read-recorder")
+] = (surface: string, verb: LoaderIdentityReadVerb): void => {
+  const set = activeTagSet();
+  if (set === undefined || identityReads.has(set)) return;
+  identityReads.set(set, { surface, verb, bodyId: getCurrentLoaderBodyId() });
+};
+
+/**
+ * A loader-cache HIT restores the read its entry's MISS recorded onto the
+ * value's set, so an unkeyed reader of the value refuses it as it would on
+ * the MISS (loader-cache.ts identity mark).
+ */
+export function markIdentityRead(
+  set: Set<string>,
+  read: LoaderIdentityRead,
+): void {
+  if (!identityReads.has(set)) identityReads.set(set, read);
+}
+
+/**
+ * The identity read `root`'s execution recorded, or one a set it links to
+ * recorded, nearest first (breadth-first, so the execution's own read wins).
+ */
+export function recordedIdentityRead(
+  root: Set<string>,
+): LoaderIdentityRead | undefined {
+  const seen = new Set<Set<string>>();
+  const queue = [root];
+  for (let i = 0; i < queue.length; i++) {
+    const set = queue[i]!;
+    if (seen.has(set)) continue;
+    seen.add(set);
+    const read = identityReads.get(set);
+    if (read) return read;
+    for (const linked of tagLinks.get(set) ?? []) queue.push(linked);
+  }
+  return undefined;
 }
 
 /** `root`'s tags plus those of every set it links to, transitively. */

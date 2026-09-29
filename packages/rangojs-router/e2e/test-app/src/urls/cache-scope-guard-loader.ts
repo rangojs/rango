@@ -35,6 +35,17 @@ export const CookieReaderLoader = createLoader(async () => {
   return { session: session ?? "no-cookie" };
 });
 
+// Bound with its OWN cache() (#972): the entry is shared by everyone who
+// resolves the same loader, host, path and params, so without a key() the
+// cookies() read throws on the MISS. `stamp` is per run: a repeat is a HIT.
+export const CachedSessionLoader = createLoader(async () => {
+  const session = cookies().get("csg-session")?.value;
+  return {
+    session: session ?? "no-cookie",
+    stamp: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  };
+});
+
 // Writes a cookie, but is consumed ONLY via ctx.use from a handler — never
 // registered with loader() in the route config. Under cache() this must THROW
 // (#725): a handler-invoked loader runs on the MISS but is skipped with its

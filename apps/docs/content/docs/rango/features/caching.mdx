@@ -48,7 +48,7 @@ export const router = createRouter({
 
 This is a Flight segment cache: HTML is still rendered on every request. Caching the rendered HTML shell and resuming only the holes is a separate layer, the `ppr` path option ([PPR](/docs/rango/guides/ppr)). Function-level caching uses the `"use cache"` directive ([use cache](/docs/rango/guides/use-cache)), and a loader's data caches with an explicit opt-in (`loader(Fn, () => [cache({ ttl })])`).
 
-The guards are correctness-first: `cookies()` and `headers()` throw inside cache scopes rather than silently baking one visitor's data into a shared shell. Read request-scoped data in a loader instead. [Freshness](/docs/rango/concepts/freshness) covers keys, SWR, nesting, and every guard.
+The guards are correctness-first: `cookies()` and `headers()` throw inside cache scopes rather than silently baking one visitor's data into a shared shell. Read request-scoped data in a loader instead. A loader with its own `cache()` stores its value too, so there a miss fails unless the loader's `cache()` has a `key()`, which must then include it ([Loaders](/docs/rango/features/loaders#live-by-default-even-inside-caches)). [Freshness](/docs/rango/concepts/freshness) covers keys, SWR, nesting, and every guard.
 
 ## Tags and invalidation
 

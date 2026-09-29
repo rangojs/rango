@@ -72,7 +72,7 @@ A cache's window bounds everything rendered inside it (loaders excepted). On an 
 
 So `"use cache: short"` (60s) inside `cache({ ttl: 600 })` yields ~600s freshness on hits, not 60s. That is not a bug: `cache({ ttl: 600 })` declares "this subtree may be ~600s stale." **If a value must be fresher than its enclosing segment, put it in a loader** — loaders are the exception, excluded from the segment cache and re-resolved live even on an outer hit. `debugPerformance` prints cache hits per layer, so the actual per-request behavior is observable.
 
-That loader exemption is also the default contract of `cache()`: cached UI plus fresh data. Opting a loader's data into caching is explicit — `loader(ProductLoader, () => [cache({ ttl: 300 })])` — and independent of the route's segment cache.
+That loader exemption is also the default contract of `cache()`: cached UI plus fresh data. Opting a loader's data into caching is explicit — `loader(ProductLoader, () => [cache({ ttl: 300 })])` — and independent of the route's segment cache. A loader's own `cache()` and `"use cache"` are keyed only by what they declare (a `key()`, the function's arguments); neither inherits an enclosing route `cache()` key.
 
 ## Correctness guards
 
@@ -82,6 +82,8 @@ Rango's caches are built so a hit can't serve another user's data or lose a resp
 - **`"use cache"` exec guard** — the same request-scoped APIs (the theme reads included) and response writes throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`. The guard runs only on the cached path: with no store configured the function runs uncached and nothing throws.
 
 Loaders are exempt from both — they always run fresh, so read request data there. Headers that must appear on every response belong in middleware, outside any boundary.
+
+A loader bound with its own `cache()` is the one loader that doesn't run fresh: its value is stored under the loader, host, path and params. A miss whose body read `cookies()`, `headers()` or a non-cacheable `ctx.get()` fails, and stores nothing (a stale entry's background refresh too), unless the loader's `cache()` has a `key()` or its store a `keyGenerator`. Either one switches the check off, so it must itself include the value.
 
 Context variables get a third, targeted guard. `createVar({ cache: false })` (or a `ctx.set(var, value, { cache: false })` write — least cacheable wins) taints a value as request-scoped, and a **direct** `ctx.get()` of it inside a `cache()` boundary throws — the guard against serving user A's data to user B. The same read throws inside a `"use cache"` function body, where the value would be stored without being part of the key; pass it in as an argument instead. The guarantee is deliberately narrow: a value _derived_ from a tainted var outside the boundary and cached later is not tracked. Don't read this as "you can't cache user data" — the safe pattern is the natural one: **read tainted context at the point of use, in the path that needs it (a loader or live segment) — never extract user data into a plain value and cache that.**
 

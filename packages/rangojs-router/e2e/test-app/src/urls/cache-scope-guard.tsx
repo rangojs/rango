@@ -14,6 +14,7 @@ import {
   CookieWriterLoader,
   CookieReaderLoader,
   HandlerInvokedCookieWriterLoader,
+  CachedSessionLoader,
 } from "./cache-scope-guard-loader.js";
 import { CacheScopeGuardCookieReader } from "../components/CacheScopeGuardCookieReader.js";
 
@@ -45,6 +46,10 @@ async function getTenantLabel(
  *   (/use-cache-read-blocked)
  * - non-cacheable value passed into "use cache" as an argument — allowed,
  *   keyed per value (/use-cache-arg-keyed)
+ * - cookies() in the body of a loader with its own cache() and no key() —
+ *   the fill fails (/loader-cache-unkeyed, #972), also when a parent layout
+ *   handler ran the loader first (/loader-cache-reader-first); with a key()
+ *   that includes the cookie — allowed, keyed per session (/loader-cache-keyed)
  */
 export const cacheScopeGuardPatterns = urls(
   ({ path, layout, cache, errorBoundary, parallel, loader, middleware }) => [
@@ -448,6 +453,96 @@ export const cacheScopeGuardPatterns = urls(
             () => [loader(CookieReaderLoader)],
           ),
         ]),
+
+        // A loader bound with its own cache() and no key(), whose body reads
+        // cookies() — BLOCKED (#972). The entry is keyed by loader, host,
+        // path and params, so the first visitor's session would reach every
+        // later visitor.
+        path(
+          "/loader-cache-unkeyed",
+          async (ctx) => {
+            const { session } = await ctx.use(CachedSessionLoader);
+            return (
+              <div data-testid="csg-loader-cache-session">
+                Should not render: {session}
+              </div>
+            );
+          },
+          { name: "loaderCacheUnkeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+            errorBoundary((props) => (
+              <div data-testid="csg-error-page">
+                <span data-testid="csg-error-message">
+                  {props.error.message}
+                </span>
+              </div>
+            )),
+          ],
+        ),
+
+        // The same unkeyed binding, read first by a parent layout's handler:
+        // the route's MISS reuses that run and fails the same way (#972).
+        layout(
+          async (ctx) => {
+            const { session } = await ctx.use(CachedSessionLoader);
+            return (
+              <div>
+                <span data-testid="csg-layout-session">{session}</span>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            path(
+              "/loader-cache-reader-first",
+              async (ctx) => {
+                const { session } = await ctx.use(CachedSessionLoader);
+                return (
+                  <div data-testid="csg-loader-cache-session">
+                    Should not render: {session}
+                  </div>
+                );
+              },
+              { name: "loaderCacheReaderFirst" },
+              () => [
+                loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+                errorBoundary((props) => (
+                  <div data-testid="csg-error-page">
+                    <span data-testid="csg-error-message">
+                      {props.error.message}
+                    </span>
+                  </div>
+                )),
+              ],
+            ),
+          ],
+        ),
+
+        // The same loader with a key() that includes the cookie — ALLOWED,
+        // one entry per session.
+        path(
+          "/loader-cache-keyed",
+          async (ctx) => {
+            const { session, stamp } = await ctx.use(CachedSessionLoader);
+            return (
+              <div>
+                <span data-testid="csg-loader-cache-session">{session}</span>
+                <span data-testid="csg-loader-cache-stamp">{stamp}</span>
+              </div>
+            );
+          },
+          { name: "loaderCacheKeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [
+              cache({
+                ttl: 600,
+                key: () =>
+                  `csg-session:${cookies().get("csg-session")?.value ?? ""}`,
+              }),
+            ]),
+          ],
+        ),
 
         // "use cache" and a non-cacheable var set per request from ?tenant=
         // (issue #925); no cache() boundary.

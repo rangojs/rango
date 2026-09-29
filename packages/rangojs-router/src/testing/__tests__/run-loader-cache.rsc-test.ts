@@ -27,12 +27,14 @@ import {
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { cacheTag } from "../../cache/cache-tag.js";
 import { updateTag } from "../../cache/tag-invalidation.js";
+import { cookies } from "../../server/cookie-store.js";
 
 function spiedStore() {
   const cacheStore = new MemorySegmentCacheStore();
   const setItem = vi.spyOn(cacheStore, "setItem");
   return {
     cacheStore,
+    setItem,
     /** Settle the first `count` writes. */
     async written(count: number) {
       await vi.waitFor(() => expect(setItem).toHaveBeenCalledTimes(count));
@@ -70,6 +72,51 @@ describe("runLoader: a loader's own cache()", () => {
     await store.written(2);
     expect(await load()).toEqual({ id: "1", run: 2 });
     expect(runs).toBe(2);
+  });
+
+  describe("a body that reads cookies() (#972)", () => {
+    const sessionLoader = async () => ({
+      session: cookies().get("session")?.value,
+    });
+    const asUser = (session: string) =>
+      new Request("http://localhost/account", {
+        headers: { cookie: `session=${session}` },
+      });
+
+    it("throws without a key(): the entry would be shared across users", async () => {
+      const store = spiedStore();
+
+      await expect(
+        runLoader(sessionLoader, {
+          request: asUser("a"),
+          cacheStore: store.cacheStore,
+          cache: { ttl: 300 },
+        }),
+      ).rejects.toThrow(
+        /cookies\(\) cannot be called inside loader "runLoader#\d+", whose own cache\(\) has no key\(\)/,
+      );
+      expect(store.setItem).not.toHaveBeenCalled();
+    });
+
+    it("with a key() that reads the cookie, each user gets their own entry", async () => {
+      const store = spiedStore();
+      const load = (session: string) =>
+        runLoader(sessionLoader, {
+          request: asUser(session),
+          cacheStore: store.cacheStore,
+          cache: {
+            ttl: 300,
+            key: () => `session:${cookies().get("session")?.value}`,
+          },
+        });
+
+      expect(await load("a")).toEqual({ session: "a" });
+      await store.written(1);
+      expect(await load("b")).toEqual({ session: "b" });
+      await store.written(2);
+      // A HIT for user a: the stored value, not user b's.
+      expect(await load("a")).toEqual({ session: "a" });
+    });
   });
 
   it("another params value is its own entry", async () => {

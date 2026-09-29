@@ -335,7 +335,9 @@ the token (`createVar<T>({ cache: false })`) or per write
 a `cache()` boundary or a `"use cache"` function then throws instead of baking
 one user's data into a shared entry (inside `"use cache"`, also through a
 middleware `ctx` passed in); loaders can still read it because they always run
-fresh (a `"use cache"` function a loader calls cannot). A middleware `ctx`
+fresh (a `"use cache"` function a loader calls cannot, and a loader bound with
+its own `cache()` only with a `key()`, which switches the check off, so the key
+must include the value). A middleware `ctx`
 passed to a `"use cache"` function keys the call by host, pathname, params and
 search, plus the route name once the route is matched (a global middleware
 before `next()` has none yet), and its `set()`, `header()` and `headers` writes

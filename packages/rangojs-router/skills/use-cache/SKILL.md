@@ -142,6 +142,11 @@ Different functions always produce different cache keys, even for the same route
 This is important for intercepted routes -- the path handler and intercept handler
 each have their own `functionId` and therefore their own cache entries.
 
+The key is only what the function declares: its id and arguments. A call made
+inside a route `cache()` with a `key()` does not inherit that key, so a value
+the route partitions by (a tier header, a session) must be passed in as an
+argument. The same holds for a loader's own `cache()` (`/loader` → "Cache Key").
+
 ### Route context is folded into the key
 
 The tainted `ctx` object is excluded from arg serialization (see below), but

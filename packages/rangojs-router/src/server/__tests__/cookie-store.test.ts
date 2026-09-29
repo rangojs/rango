@@ -10,14 +10,25 @@ import {
   runWithRequestContext,
   getRequestContext,
 } from "../request-context.js";
-import { cookies, headers, type ThemeReadSurface } from "../cookie-store.js";
+import {
+  cookies,
+  headers,
+  invalidateClientCache,
+  keepClientCache,
+  type ThemeReadSurface,
+} from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import {
   RangoContext,
   latchCachedHeaderScope,
+  loaderCacheIdentityError,
   runInsideLoaderBodyScope,
   runInsideLoaderScope,
 } from "../context.js";
+import {
+  captureRecordedTags,
+  recordedIdentityRead,
+} from "../../cache/cache-tag.js";
 import { createHandlerContext } from "../../router/handler-context.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
 import { payloadInitialTheme } from "../../rsc/full-payload.js";
@@ -752,14 +763,14 @@ describe("theme read guards (#971)", () => {
         "a handler-invoked loader body under cache()",
         "allowed",
         false,
-        (fn) => inCacheScope(() => runInsideLoaderBodyScope(fn, "L", true)),
+        (fn) => inCacheScope(() => runInsideLoaderBodyScope(fn, "L")),
       ],
       ["a ppr capture render", "capture", true, (fn) => fn()],
       [
         "a segment loader body at capture",
         "capture",
         true,
-        (fn) => runInsideLoaderBodyScope(fn, "L", false),
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
         "L",
       ],
       // No loader-body exemption at capture (#969): a HIT replays the
@@ -768,7 +779,7 @@ describe("theme read guards (#971)", () => {
         "a handler-invoked loader body at capture",
         "capture",
         true,
-        (fn) => runInsideLoaderBodyScope(fn, "L", true),
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
         "L",
       ],
     ];
@@ -961,6 +972,84 @@ describe("theme read guards (#971)", () => {
         expect(() => ctx.setTheme!("light")).toThrow(/"use cache"/);
       });
     });
+  });
+});
+
+describe("identity reads recorded for a loader cache() fill (#972)", () => {
+  /** Run `fn` in a fill's recorded set; return the read it recorded. */
+  function recordedBy(fn: () => void) {
+    const into = new Set<string>();
+    withContext({ cookieHeader: "session=abc" }, () =>
+      captureRecordedTags(into, fn),
+    );
+    return recordedIdentityRead(into);
+  }
+
+  it("cookies() and headers() record the read, not throw", () => {
+    expect(recordedBy(() => cookies().get("session"))).toEqual({
+      surface: "cookies()",
+      verb: "called",
+      bodyId: undefined,
+    });
+    expect(recordedBy(() => headers().get("cookie"))?.surface).toBe(
+      "headers()",
+    );
+  });
+
+  it("response directives record nothing: a key() cannot replay them on a HIT", () => {
+    expect(
+      recordedBy(() => {
+        invalidateClientCache();
+        keepClientCache();
+      }),
+    ).toBeUndefined();
+  });
+
+  it("headers() records on its read methods, not the call: a view taken outside and read inside counts", () => {
+    expect(recordedBy(() => headers())).toBeUndefined();
+    const into = new Set<string>();
+    withContext({ headers: { "x-user": "u1" } }, () => {
+      const view = headers();
+      captureRecordedTags(into, () => {
+        view.get("x-user");
+      });
+    });
+    expect(recordedIdentityRead(into)?.surface).toBe("headers()");
+    for (const read of [
+      (h: ReturnType<typeof headers>) => h.has("x-user"),
+      (h: ReturnType<typeof headers>) => [...h],
+      (h: ReturnType<typeof headers>) => h.forEach(() => {}),
+    ]) {
+      expect(recordedBy(() => read(headers()))?.surface).toBe("headers()");
+    }
+  });
+
+  it("a cookie write records nothing; its read methods do", () => {
+    expect(recordedBy(() => cookies().set("seen", "1"))).toBeUndefined();
+    for (const read of [
+      (jar: ReturnType<typeof cookies>) => jar.getAll(),
+      (jar: ReturnType<typeof cookies>) => jar.has("session"),
+    ]) {
+      expect(recordedBy(() => read(cookies()))?.surface).toBe("cookies()");
+    }
+  });
+
+  it("a shell-capture run keeps its own guard, which flags the capture", () => {
+    recordedBy(() => {
+      const ctx = getRequestContext() as any;
+      ctx._shellCaptureRun = true;
+      expect(() => cookies()).toThrow(/capturing a shared shell/i);
+      expect(ctx._shellCaptureGuardTripped).toMatchObject({
+        surface: "cookies()",
+      });
+    });
+  });
+
+  it("the fill error names the loader and the fix", () => {
+    const read = recordedBy(() => cookies().get("session"))!;
+    expect(loaderCacheIdentityError(read, "SessionLoader#L").message).toMatch(
+      /^cookies\(\) cannot be called inside loader "SessionLoader#L", whose own cache\(\) has no key\(\)\..*key: \(ctx\) =>/s,
+    );
   });
 });
 

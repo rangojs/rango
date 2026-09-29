@@ -28,6 +28,7 @@ import {
   BodyTaggedDepLoader,
   BodyTaggedLoader,
 } from "./loaders/loader-cache-tag.js";
+import { CachedSessionLoader } from "./loaders/loader-cache-identity.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
@@ -172,6 +173,10 @@ import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { RyowActionPage } from "./pages/ryow-action.js";
+import {
+  LoaderCacheIdentityLayout,
+  LoaderCacheIdentityPage,
+} from "./pages/loader-cache-identity.js";
 import { UseCacheDepPage } from "./pages/use-cache-dep.js";
 import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
@@ -1736,6 +1741,50 @@ export const urlpatterns = urls(
           () => [
             loader(RyowLoader, () => [
               cache({ ttl: 600, store: slowMarkerStore }),
+            ]),
+          ],
+        ),
+
+        // A loader with its own cache() whose body reads cookies() (#972).
+        // Without a key() the entry would be shared across users, so the fill
+        // fails, also when a parent layout handler ran the loader first
+        // (reader-first); with a key() that includes the cookie, one entry per
+        // session.
+        path(
+          "/loader-cache-identity/unkeyed",
+          LoaderCacheIdentityPage,
+          { name: "loaderCacheIdentityUnkeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+            errorBoundary((props) => (
+              <p data-testid="lci-error">{props.error.message}</p>
+            )),
+          ],
+        ),
+        layout(LoaderCacheIdentityLayout, () => [
+          path(
+            "/loader-cache-identity/reader-first",
+            LoaderCacheIdentityPage,
+            { name: "loaderCacheIdentityReaderFirst" },
+            () => [
+              loader(CachedSessionLoader, () => [cache({ ttl: 600 })]),
+              errorBoundary((props) => (
+                <p data-testid="lci-error">{props.error.message}</p>
+              )),
+            ],
+          ),
+        ]),
+        path(
+          "/loader-cache-identity/keyed",
+          LoaderCacheIdentityPage,
+          { name: "loaderCacheIdentityKeyed" },
+          () => [
+            loader(CachedSessionLoader, () => [
+              cache({
+                ttl: 600,
+                key: () =>
+                  `lci-session:${cookies().get("lci-session")?.value ?? ""}`,
+              }),
             ]),
           ],
         ),

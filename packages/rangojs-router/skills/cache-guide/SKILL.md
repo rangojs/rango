@@ -111,7 +111,13 @@ else they allow:
   would be baked in), and response side effects (`ctx.headers.set()`,
   `setCookie()`, `setStatus()`, `onResponse()`) throw. `ctx.set()` of a cacheable var is
   **allowed** — children are cached too and can read it. **Loaders are exempt**
-  (they always run fresh) — read request data inside a loader.
+  (a route `cache()` does not store their values) — read request data inside a
+  loader.
+- **Loader `cache()` guard** (a loader bound with its own `cache()`) — its value
+  is stored under a key that names no user, so a miss whose body read
+  `cookies()`, `headers()` or a non-cacheable `ctx.get()` fails unless the
+  binding has a `key()` or its store a `keyGenerator`. Either one switches the
+  check off, so put what the body reads in it (`/loader` → "Cache Key").
 - **`"use cache"` exec-guard** (function-level) — the same request-scoped APIs
   throw inside the cached function (`cookies()`, `headers()`, `ctx.set()`,
   `ctx.headers.set()` and other response writes); additionally, tainted
@@ -423,15 +429,16 @@ specifies `cache: false`, the value is non-cacheable.
 
 **Behavior inside a `cache()` boundary:**
 
-| Operation                                 | Inside a `cache()` boundary                            |
-| ----------------------------------------- | ------------------------------------------------------ |
-| `cookies()` / `headers()` (read or write) | Throws (request-scoped, would poison the shared entry) |
-| `ctx.theme`, `getRequestContext().theme`  | Throws, like `cookies()` (#971)                        |
-| `ctx.get(cacheableVar)`                   | Allowed                                                |
-| `ctx.get(nonCacheableVar)`                | Throws (would be baked in)                             |
-| `ctx.set(var, value)` (cacheable)         | Allowed                                                |
-| `ctx.headers.set()` / cookie writes       | Throws (response side effect would be lost on hit)     |
-| Any of the above **inside a loader**      | Allowed (loaders always run fresh)                     |
+| Operation                                          | Inside a `cache()` boundary                                                        |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `cookies()` / `headers()` (read or write)          | Throws (request-scoped, would poison the shared entry)                             |
+| `ctx.theme`, `getRequestContext().theme`           | Throws, like `cookies()` (#971)                                                    |
+| `ctx.get(cacheableVar)`                            | Allowed                                                                            |
+| `ctx.get(nonCacheableVar)`                         | Throws (would be baked in)                                                         |
+| `ctx.set(var, value)` (cacheable)                  | Allowed                                                                            |
+| `ctx.headers.set()` / cookie writes                | Throws (response side effect would be lost on hit)                                 |
+| Any of the above **inside a loader**               | Allowed (loaders always run fresh)                                                 |
+| The reads above in a loader with its own `cache()` | The miss fails without a `key()`; any `key()` allows them, so it must include them |
 
 (Both scopes block the same request-scoped APIs — `cookies()`, `headers()`,
 response side effects, and non-cacheable `ctx.get()` — because each would leak
@@ -487,7 +494,8 @@ non-cacheable value in as an argument so it becomes part of the key. The pattern
 **read tainted context at the point of use, in the path that needs it (a loader or
 live segment) — never extract user data into a plain value and cache that.**
 Loaders are exempt because they run outside the cache scope and resolve fresh
-every request.
+every request. A loader with its own `cache()` does not: its value is stored,
+so it falls under the loader `cache()` guard above.
 
 ## Loaders Are Always Fresh
 
@@ -502,6 +510,9 @@ fresh on every request. This is enforced at two levels:
 
 This means `cache()` gives you cached UI + fresh data by default. To also cache
 a loader's data, explicitly opt in with `loader(Fn, () => [cache({...})])`.
+That entry is keyed by loader, host, path and params, not by the route's
+`key()`, so give it a `key()` that includes any request data its body reads;
+without one the miss fails.
 
 ## cache() Placement Patterns
 
@@ -600,7 +611,10 @@ This attaches the cache config directly to the loader entry. The loader's
 data is cached independently from the route's segment cache, together with
 the handle pushes its body made (replayed on every hit). Loader caching
 supports custom keys, tags, SWR, conditional bypass, and per-loader store
-overrides — see `/loader` for the full reference.
+overrides — see `/loader` for the full reference. A body that reads
+`cookies()`, `headers()` or a non-cacheable variable needs a `key()`, which
+must include the value: without one the miss fails, and any `key()` switches
+that check off.
 
 ## See Also
 

@@ -120,6 +120,73 @@ A server-side read moves into a live loader, read under `loading()`:
 `createLoader(async () => cookies().get("theme")?.value ?? "system")` (the
 cookie name is `storageKey`).
 
+### Breaking: a loader's own `cache()` fails the fill and stores nothing when its body reads `cookies()`/`headers()` without a `key()` ([#982](https://github.com/rangojs/rango/pull/982))
+
+A loader bound with its own `cache()` (`loader(Loader, () => [cache({...})])`)
+stores its value under loader, host, path and params. Nothing in that key
+names the user, and an enclosing route `cache()` key does not partition it.
+A body that read `cookies()` stored the first visitor's session in the entry
+and served it to every later visitor for the TTL, with nothing thrown or
+logged (#972).
+
+On a miss, the loader now fails, and nothing is stored, when its execution
+read `cookies()`, `headers()` or a non-cacheable variable
+(`createVar({ cache: false })`, or a value written with
+`ctx.set(..., { cache: false })`), unless the binding declares identity: a
+`key()` on the loader's `cache()`, or a `keyGenerator` on its store. The check
+tests only that one of them is there, so it must itself include the value. The
+loader fails the same way whoever ran the body: the binding, or a reader that
+started the loader first (a parent layout's handler calling `ctx.use()`). It
+also fails when the body reads another loader with `ctx.use()` that read them,
+including a keyed cached loader served from its own cache: that entry keeps
+the read its miss made. A stale entry's background refresh fails the same way
+(reported to `onError`; the stale entry keeps serving). A read that settles
+after the value, in a promise inside it or in a handle push that settles
+within the 5 s handle-encode timeout, can't fail what was already served: that
+user gets their own value, nothing is stored, and `onError` gets the error. A
+push still pending after the timeout drops the entry's handles; the value is
+stored without them. A cookie write alone (`cookies().set()`) is not a read. A theme read
+(`getRequestContext().theme`, or a handler or middleware `ctx.theme` read
+inside a loader body) counts like a `cookies()` read. A loader without
+its own `cache()` is unchanged, under a route `cache()` too.
+
+```ts
+const SessionLoader = createLoader(async () => ({
+  session: cookies().get("session")?.value,
+}));
+
+// Before: user B received user A's { session: "a" } until the TTL ran out.
+// After: the miss fails —
+//   cookies() cannot be called inside loader "…#SessionLoader", whose own
+//   cache() has no key(). …
+loader(SessionLoader, () => [cache({ ttl: 60 })]);
+```
+
+Migration: add a `key()` that includes what the body reads, or drop the
+loader's `cache()` if the value must stay per request.
+
+```ts
+loader(SessionLoader, () => [
+  cache({
+    ttl: 60,
+    key: () => `session:${cookies().get("session")?.value ?? "anon"}`,
+  }),
+]);
+```
+
+Entries stored before the upgrade are not checked: a HIT skips the body. In a
+store that versions its keys per deploy (`CFCacheStore`'s build version) they
+are gone after the deploy. In one that doesn't (`VercelCacheStore` without
+`options.version`, a pinned `version`, a shared external store), a leaked entry
+keeps serving through its TTL and SWR window, because a failed refresh keeps
+the stale entry. The same store also keeps keyed entries written before the
+upgrade without the identity mark, so an unkeyed cached loader that reads one
+on a HIT or stale hit fills without error, until that keyed entry is rewritten
+(its refresh stores the mark), and serves that value through its own TTL and
+SWR window. On such a store, when an unkeyed cached loader reads a keyed one,
+bump the store's `version` or `updateTag()` the affected tags after the
+upgrade.
+
 ### Breaking: a route `cache()` entry is tagged by what its content recorded, so `updateTag()` evicts shells and documents built from it ([#965](https://github.com/rangojs/rango/pull/965))
 
 On a `ppr` route with its own `cache()`, the shell capture replays the route's

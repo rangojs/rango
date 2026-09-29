@@ -97,6 +97,20 @@ global middleware
   `loader-cache.ts` (the handler interceptor), `useLoader` and
   `_runLoaderIsolated` in `loader-resolution.ts`; pinned by
   `loader-cache-tags.test.ts` and `loader-cache-handles.test.ts` (#964).
+- A loader's own `cache()` is keyed only by what the binding declares
+  (`key()`, else the store `keyGenerator`, else loader id, host, path and
+  params); it does not inherit an enclosing route `cache()` key (#974). With
+  no declared identity, a fill whose execution read `cookies()`, `headers()`
+  or a non-cacheable `ctx.get()`, in the body or in a loader value it read via
+  `ctx.use` (a keyed cached loader's HIT included, through its entry's
+  identity mark), fails and stores nothing: on the MISS, on its stale refresh,
+  and when a reader (a parent layout's handler) started the loader before the
+  binding and the MISS reused that run. A read that settles after the value
+  only refuses the write. A live loader running beside it is
+  unaffected. Source: `executeLoaderData` in `loader-cache.ts`,
+  `recordLoaderIdentityRead` in `server/context.ts`, `recordedIdentityRead`
+  in `cache/cache-tag.ts`; pinned by `loader-cache-identity-guard.test.ts`
+  (#972).
 - A PPR shell HIT that replays the handler layer restores the settled pushes
   of each loader body the capture ran (an `ssr: false` loader's own and those
   of the loaders it awaits) from the shell record through the same

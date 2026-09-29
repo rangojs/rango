@@ -877,8 +877,9 @@ const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
 
 /**
  * Check if the current execution is inside a cache() DSL boundary.
- * Returns false inside loader execution — loaders are always fresh
- * (never cached), so non-cacheable reads are safe.
+ * Returns false inside loader execution: a route cache() does not store
+ * loader values, so non-cacheable reads are safe. A loader bound with its own
+ * cache() stores its value; recordLoaderIdentityRead guards that.
  */
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
@@ -1018,13 +1019,13 @@ export function assertNonCacheableReadAllowed(
   // A shell capture bakes what it reads into a page every visitor gets.
   assertNotInsideShellCapture(requestCtx, "ctx.get");
   const execScope = getCacheExecScope();
+  const variable = ` for a non-cacheable variable${typeof keyOrVar === "string" ? ` "${keyOrVar}"` : ""}`;
   if (
     execScope !== undefined &&
     loaderBodyScopeALS.getStore()?.execScope !== execScope
   ) {
-    const name = typeof keyOrVar === "string" ? ` "${keyOrVar}"` : "";
     throw new Error(
-      `ctx.get() for a non-cacheable variable${name} cannot be called inside a "use cache" function. ` +
+      `ctx.get()${variable} cannot be called inside a "use cache" function. ` +
         `The variable was created with { cache: false } or set with { cache: false }, ` +
         `and the cache key does not include its value, so the first caller's value ` +
         `would be served to later callers. Read it before calling the cached function ` +
@@ -1038,6 +1039,88 @@ export function assertNonCacheableReadAllowed(
         `and its value would be stale on cache hit. Move the read outside the cached scope.`,
     );
   }
+  recordLoaderIdentityRead(`ctx.get()${variable}`);
+}
+
+/** How the identity error words a read: a function call or a property read. */
+export type LoaderIdentityReadVerb = "called" | "read";
+
+/** A request-identity read a loader execution made (recordLoaderIdentityRead). */
+export interface LoaderIdentityRead {
+  /**
+   * The read as the error names it: "cookies()", "headers()",
+   * `ctx.get() for a non-cacheable variable "x"`, "ctx.theme" or
+   * "getRequestContext().theme".
+   */
+  surface: string;
+  /** "called" for a function, "read" for a property (the theme getters). */
+  verb: LoaderIdentityReadVerb;
+  /** The loader body that made the read. */
+  bodyId: string | undefined;
+  /**
+   * The cached loader whose value carries a read another loader made
+   * (loader-cache.ts identity mark): its readers read it through `via`.
+   */
+  via?: string;
+}
+
+/**
+ * Where cache-tag.ts installs its recorder at module init (same key there):
+ * it owns the per-execution recorded sets, and importing it here would be a
+ * cycle.
+ */
+const IDENTITY_READ_RECORDER_KEY = Symbol.for(
+  "rangojs-router:identity-read-recorder",
+);
+
+/**
+ * Record a request-identity read (cookies(), headers(), a non-cacheable
+ * ctx.get()) on the current loader execution (#972).
+ *
+ * isInsideCacheScope() exempts loader bodies because a route cache() never
+ * stores their values. A loader bound with its own cache() does: with no key()
+ * and no store keyGenerator its entry is keyed by loader, host, path and
+ * params only, and an enclosing route cache() key does not partition it
+ * (#974). A cookies() read there stored the first visitor's session and served
+ * it to everyone for the TTL. The read is recorded on the execution, not
+ * thrown at the call: a reader that starts the loader before its binding does
+ * runs it outside any fill, and the binding's MISS then reuses that run. The
+ * fill checks what its execution recorded, through the same links as its tags
+ * (cache-tag.ts recordedIdentityRead), so both orders fail the same way.
+ * Response directives do not record: a key cannot make a skipped body's side
+ * effect reach a HIT.
+ */
+export function recordLoaderIdentityRead(
+  surface: string,
+  verb: LoaderIdentityReadVerb = "called",
+): void {
+  const recorder = (globalThis as Record<symbol, unknown>)[
+    IDENTITY_READ_RECORDER_KEY
+  ] as ((surface: string, verb: LoaderIdentityReadVerb) => void) | undefined;
+  recorder?.(surface, verb);
+}
+
+/** The error a loader cache() fill with no declared key fails with (#972). */
+export function loaderCacheIdentityError(
+  read: LoaderIdentityRead,
+  cachedLoaderId: string,
+): Error {
+  const filling = `while filling its own cache() entry with no key()`;
+  const where =
+    read.via !== undefined && read.via !== cachedLoaderId
+      ? `inside loader "${read.bodyId}", which loader "${cachedLoaderId}" reads through another loader ("${read.via}") ${filling}`
+      : read.bodyId !== undefined && read.bodyId !== cachedLoaderId
+        ? `inside loader "${read.bodyId}", which loader "${cachedLoaderId}" reads ${filling}`
+        : `inside loader "${cachedLoaderId}", whose own cache() has no key()`;
+  return new Error(
+    `${read.surface} cannot be ${read.verb} ${where}. ` +
+      `The entry is keyed by loader, host, path and params only, so it is ` +
+      `shared across users: request-scoped data (cookies, headers, ` +
+      `non-cacheable variables) read here would be stored from one request ` +
+      `and served to everyone. Add a key that includes the value, or drop ` +
+      `the loader's cache():\n\n` +
+      `  cache({ ttl: 60, key: (ctx) => \`session:\${cookies().get("session")?.value}\` })`,
+  );
 }
 
 /**
