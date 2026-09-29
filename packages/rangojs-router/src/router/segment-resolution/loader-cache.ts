@@ -230,14 +230,17 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  *   `bakeSegmentKey` from the caller. The loader EXECUTES at capture (the
  *   flag's "data in the HTML before first flush" maps to the frozen prelude)
  *   and its settled non-promise data bakes into the shell. Promises nested in
- *   plain objects/arrays are masked (mask-nested.ts) and stay live holes at
- *   the consumer's own Suspense — per-request material must be promise-shaped
- *   (the #692 cross-session scar). The masked container registers on
- *   `_shellCaptureLoaderRecords`: it holds the capture gate (bounded by
- *   `ppr.captureTimeout`) and pins into the snapshot's loader family, and on a
- *   HIT the recorded container is overlaid onto the fresh run (below) so the
- *   payload matches the frozen prelude byte-for-byte. cookies()/headers() in
- *   its body (nested promise bodies included) trip the capture guard.
+ *   plain objects, arrays and JSX props are masked (mask-nested.ts) and stay
+ *   live holes at the consumer's own Suspense — per-request material must be
+ *   promise-shaped (the #692 cross-session scar). The masked container
+ *   registers on `_shellCaptureLoaderRecords`: it holds the capture gate
+ *   (bounded by `ppr.captureTimeout`) and pins into the snapshot's loader
+ *   family, and on a HIT the recorded container is overlaid onto the fresh
+ *   run (below) so the payload matches the frozen prelude outside the holes.
+ *   A server-component element holding a promise is a hole as a whole, so its
+ *   other props come from the fresh run (loader-snapshot.ts
+ *   elideLoaderContainer). cookies()/headers() in its body (nested promise
+ *   bodies included) trip the capture guard.
  * - LIVE lane: every other loader, whatever its entry's loading(). Never
  *   executes at capture: the slot gets a never-resolving promise
  *   (loader-mask.ts) and postpones at the reader's boundary — loading() or an

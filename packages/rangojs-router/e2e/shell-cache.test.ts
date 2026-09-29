@@ -1164,6 +1164,43 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await warmToHit(request, url);
   });
 
+  // /shell-cache/jsx (issue #942): in dev the route stayed MISS.
+  test("bake-lane value with JSX: HITs, bakes the elements, streams the promises inside JSX, hydrates cleanly", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const url = f.url(`/shell-cache/jsx?probe=${crypto.randomUUID()}`);
+    await warmToHit(page.request, url);
+
+    const res = await page.request.get(url, { headers: HTML_HEADERS });
+    expect(res.headers()["x-rango-shell"]).toBe("HIT");
+    const { prelude, resumed } = splitPrelude(await res.text());
+    expect(prelude).toContain("JSX from a bake-lane loader");
+    expect(prelude).toContain("Related to p1");
+    const captured = prelude.match(/captured in run \d+/)?.[0];
+    expect(captured).toBeDefined();
+    expect(prelude).toContain("live pending...");
+    expect(prelude).toContain("reviews pending...");
+    expect(prelude).not.toMatch(/live run \d+/);
+    expect(prelude).not.toMatch(/reviews run \d+/);
+    expect(resumed).toMatch(/live run \d+/);
+    expect(resumed).toMatch(/reviews run \d+/);
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "shell-jsx-related")).toHaveText("Related to p1");
+    // The stamp beside the hole comes from the pin, not the HIT's fresh run.
+    await expect(testId(page, "shell-jsx-live-run")).toHaveText(captured!);
+    const live = testId(page, "shell-jsx-live");
+    await expect(live).toHaveCount(1);
+    await expect(live).toHaveText(/live run \d+/);
+    await expect(testId(page, "shell-jsx-reviews")).toHaveText(
+      /reviews run \d+/,
+    );
+  });
+
   // /shell-cache/layout-loader-bare: the LITERAL storefront-homepage shape —
   // a bare ppr route (no loader, no loading(), no use list) under the
   // loader-registering layout. Formerly the canonical dead-end; now the layout
