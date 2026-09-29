@@ -45,7 +45,8 @@ import {
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
-import { observeEvent, observeHandler } from "../instrument.js";
+import { observeEvent, observeSegmentHandler } from "../instrument.js";
+import { runInSegmentTagScope } from "../../cache/cache-tag.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
 import {
   track,
@@ -476,7 +477,9 @@ async function resolveParallelSlotComponent<TEnv>(args: {
       handlerRan = true;
       if (hasLoadingFallback) {
         const result =
-          typeof handler === "function" ? handler(context) : handler;
+          typeof handler === "function"
+            ? runInSegmentTagScope(parallelId, handler, context)
+            : handler;
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, parallelId);
           const tracked = deps.trackHandler(result, {
@@ -497,7 +500,9 @@ async function resolveParallelSlotComponent<TEnv>(args: {
         }
       } else {
         component =
-          typeof handler === "function" ? await handler(context) : handler;
+          typeof handler === "function"
+            ? await runInSegmentTagScope(parallelId, handler, context)
+            : handler;
       }
     }
   }
@@ -842,14 +847,19 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           : routeEntry.handler;
       if (!routeEntry.loading) {
         const result = handleHandlerResult(
-          await observeHandler(entry.id, handler, context),
+          await observeSegmentHandler(
+            entry.shortCode,
+            entry.id,
+            handler,
+            context,
+          ),
         );
         doneHandler();
         return result;
       }
       if (!actionContext) {
         const result = handleHandlerResult(
-          observeHandler(entry.id, handler, context),
+          observeSegmentHandler(entry.shortCode, entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, routeEntry.id);
@@ -875,7 +885,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         entryId: entry.id,
       });
       const actionResult = handleHandlerResult(
-        await observeHandler(entry.id, handler, context),
+        await observeSegmentHandler(
+          entry.shortCode,
+          entry.id,
+          handler,
+          context,
+        ),
       );
       doneHandler();
       return {

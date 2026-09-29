@@ -34,6 +34,80 @@ async function warmToHit(request: Page["request"], url: string): Promise<void> {
   }).toPass({ timeout: 20000 });
 }
 
+/**
+ * The layout's per-render token (BlogLayout `data-shell-render`) from a HIT
+ * document. The layout sits in the ppr route's cache() record, so the token
+ * names the render that wrote the record the shell was captured from.
+ */
+async function hitRenderToken(
+  request: Page["request"],
+  url: string,
+): Promise<string> {
+  const res = await request.get(url, { headers: HTML_HEADERS });
+  expect(res.headers()["x-rango-shell"]).toBe("HIT");
+  const token = /data-shell-render="([^"]+)"/.exec(await res.text())?.[1];
+  expect(token).toBeTruthy();
+  return token!;
+}
+
+/**
+ * GET `invalidateUrl` (an awaited updateTag(), a deterministic marker write),
+ * then poll the document until it MISSes. Polling absorbs KV marker
+ * propagation on the dev worker.
+ */
+async function evict(
+  request: Page["request"],
+  invalidateUrl: string,
+  url: string,
+): Promise<void> {
+  const inv = await request.get(invalidateUrl);
+  expect(inv.status()).toBe(200);
+  await expect
+    .poll(
+      async () =>
+        (await request.get(url, { headers: HTML_HEADERS })).headers()[
+          "x-rango-shell"
+        ],
+      { timeout: 15000 },
+    )
+    .toBe("MISS");
+}
+
+/**
+ * The eviction cycle for a shell whose tag only a server component recorded.
+ *
+ * 1. Prime: the first document GET MISSes (a virgin shell key). The capture
+ *    replays the route's cache() record, which carries the tags its content
+ *    recorded (#957).
+ * 2. Warm the shell to a HIT.
+ * 3. updateTag() evicts it.
+ * 4. It recaptures and HITs again. The tag also invalidated the cache()
+ *    record, so the layout rendered fresh (a new token); before, the recapture
+ *    replayed the pre-update record.
+ * 5. The recaptured shell is re-tagged, so a second updateTag() evicts it
+ *    too: the shell keeps tracking the tag across generations.
+ */
+async function assertEvictionCycle(
+  request: Page["request"],
+  url: string,
+  invalidateUrl: string,
+): Promise<void> {
+  const first = await request.get(url, { headers: HTML_HEADERS });
+  expect(first.status()).toBe(200);
+  expect(first.headers()["x-rango-shell"]).toBe("MISS");
+
+  await warmToHit(request, url);
+  const renderBefore = await hitRenderToken(request, url);
+
+  await evict(request, invalidateUrl, url);
+
+  await warmToHit(request, url);
+  expect(await hitRenderToken(request, url)).not.toBe(renderBefore);
+
+  await evict(request, invalidateUrl, url);
+  await warmToHit(request, url);
+}
+
 // A fresh probe per test run. The shell key includes the search string and
 // miniflare KV persists across runs, so a fixed probe would HIT a shell captured
 // by a prior run and the "first GET is a MISS" assertion would flake. A unique
@@ -52,40 +126,15 @@ function describeTagEviction(mode: "dev" | "build") {
     test("a render-tagged PPR shell is evicted by updateTag(), then recaptures", async ({
       request,
     }) => {
+      // BlogLayout's handler calls cacheTag(tag) with no cache()/"use cache"
+      // around it; the shell carries the tag only because it rendered it.
       const probe = uniqueProbe("evict");
       const tag = `pprblog-shell-${probe}`;
-      const url = f.url(`/ppr-blog?shelltag=${probe}`);
-
-      // 1. Prime: the first HTML GET MISSes (virgin shell key); the background
-      // capture records the render-called cacheTag(tag) into the shell entry.
-      const first = await request.get(url, { headers: HTML_HEADERS });
-      expect(first.status()).toBe(200);
-      expect(first.headers()["x-rango-shell"]).toBe("MISS");
-
-      // 2. Warm until that capture lands as a HIT.
-      await warmToHit(request, url);
-
-      // 3. Invalidate the component's tag. updateTag() is awaited (deterministic
-      // marker write) — the shell carries this tag ONLY because a server
-      // component rendered it, with no cache()/"use cache" involved.
-      const inv = await request.get(f.url(`/test/invalidate-tag/${tag}`));
-      expect(inv.status()).toBe(200);
-
-      // 4. The render-tagged shell is now evicted: the next document GET MISSes
-      // (recapture). Poll to absorb KV marker propagation on the dev worker.
-      await expect
-        .poll(
-          async () =>
-            (await request.get(url, { headers: HTML_HEADERS })).headers()[
-              "x-rango-shell"
-            ],
-          { timeout: 15000 },
-        )
-        .toBe("MISS");
-
-      // 5. It recaptures and HITs again (re-tagged), so the shell keeps tracking
-      // the tag across generations.
-      await warmToHit(request, url);
+      await assertEvictionCycle(
+        request,
+        f.url(`/ppr-blog?shelltag=${probe}`),
+        f.url(`/test/invalidate-tag/${tag}`),
+      );
     });
 
     test("a shell tagged AFTER an await in an async server component is evicted by updateTag(), then recaptures (#676)", async ({
@@ -97,39 +146,15 @@ function describeTagEviction(mode: "dev" | "build") {
       // that post-await tag was dropped from the shell entry and this invalidation
       // could not evict — the exact #676 loss. Distinct probe/param => distinct
       // shell key and tag, so it never touches the sync case or a sibling shell.
+      // The record's serialization re-renders AsyncShellTagger, so its
+      // post-await tag lands on the cache() record the capture replays (#957).
       const probe = uniqueProbe("async-evict");
       const tag = `pprblog-async-shell-${probe}`;
-      const url = f.url(`/ppr-blog?asyncshelltag=${probe}`);
-
-      // 1. Prime: virgin shell key MISSes; the background capture records the
-      // async-recorded cacheTag(tag) into the shell entry (only reachable because
-      // the snapshot now runs at the putShell write barrier, post-quiesce).
-      const first = await request.get(url, { headers: HTML_HEADERS });
-      expect(first.status()).toBe(200);
-      expect(first.headers()["x-rango-shell"]).toBe("MISS");
-
-      // 2. Warm until the capture lands as a HIT.
-      await warmToHit(request, url);
-
-      // 3. Invalidate the async-recorded tag.
-      const inv = await request.get(f.url(`/test/invalidate-tag/${tag}`));
-      expect(inv.status()).toBe(200);
-
-      // 4. The shell carries the async tag => it is evicted; the next document GET
-      // MISSes (recapture). Poll to absorb KV marker propagation on the dev worker.
-      await expect
-        .poll(
-          async () =>
-            (await request.get(url, { headers: HTML_HEADERS })).headers()[
-              "x-rango-shell"
-            ],
-          { timeout: 15000 },
-        )
-        .toBe("MISS");
-
-      // 5. It recaptures and HITs again (re-tagged), so the async tag keeps
-      // tracking the shell across generations.
-      await warmToHit(request, url);
+      await assertEvictionCycle(
+        request,
+        f.url(`/ppr-blog?asyncshelltag=${probe}`),
+        f.url(`/test/invalidate-tag/${tag}`),
+      );
     });
 
     test("an untagged sibling probe shell survives a different tag's invalidation (isolation)", async ({

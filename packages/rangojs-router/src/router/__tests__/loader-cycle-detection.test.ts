@@ -5,6 +5,7 @@ vi.mock("../../server/context", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => false,
   runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+  getCurrentLoaderBodyId: () => undefined,
   isInsidePushCallbackScope: () => false,
   runInsidePushCallbackScope: <T>(fn: () => T): T => fn(),
 }));

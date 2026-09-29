@@ -32,6 +32,7 @@ import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
 import { getRouterContext } from "./router-context.js";
+import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -332,12 +333,18 @@ export async function resolveInterceptEntry<TEnv>(
     );
   }
 
+  // The intercept segment's id, and the tag scope its handler and layout
+  // record in (#957, cache-tag.ts runInSegmentTagScope).
+  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
   let handlerResult: ReactNode;
   try {
+    const handler = interceptEntry.handler;
     handlerResult =
-      typeof interceptEntry.handler === "function"
-        ? handleHandlerResult(interceptEntry.handler(context))
-        : interceptEntry.handler;
+      typeof handler === "function"
+        ? handleHandlerResult(
+            runInSegmentTagScope(slotSegmentId, handler, context),
+          )
+        : handler;
   } catch (error) {
     handlerResult = renderInterceptHandlerError(
       error,
@@ -355,14 +362,19 @@ export async function resolveInterceptEntry<TEnv>(
 
   let layoutElement: ReactNode | undefined;
   if (interceptEntry.layout) {
-    if (typeof interceptEntry.layout === "function") {
-      const layoutResult = await interceptEntry.layout(context);
+    const layout = interceptEntry.layout;
+    if (typeof layout === "function") {
+      const layoutResult = await runInSegmentTagScope(
+        slotSegmentId,
+        layout,
+        context,
+      );
       if (layoutResult instanceof Response) {
         throw layoutResult;
       }
       layoutElement = layoutResult;
     } else {
-      layoutElement = interceptEntry.layout;
+      layoutElement = layout;
     }
   }
 
@@ -413,7 +425,7 @@ export async function resolveInterceptEntry<TEnv>(
   }
 
   const interceptSegment = {
-    id: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+    id: slotSegmentId,
     namespace: `intercept:${interceptEntry.routeName}`,
     type: "parallel" as const,
     index: 0,

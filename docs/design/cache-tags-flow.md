@@ -39,7 +39,31 @@ render **outside** any `"use cache"` function, it records onto the request's
 `_requestTags` instead of throwing. PPR shell capture and the document cache union
 that set onto their entry, so a plain server component can tag the shell/full-page
 artifact it renders into — `revalidateTag` then evicts it. On a route that is
-neither PPR nor document-cached the tag records where nothing reads it (a no-op).
+neither PPR nor document-cached and has no `cache()`, the tag records where
+nothing reads it (a no-op).
+
+Inside a route `cache()` boundary the same tags also land on that route's
+`cache()` record (#957). A HIT does not run the covered handlers or re-render
+their server components, so the record stores the tags its content recorded
+when it was written — render-callable `cacheTag()` calls and the tags of
+`"use cache"` reads, from handlers and server components alike — and a HIT
+records them onto `_requestTags` again. Two consequences:
+
+- A PPR shell captured by replaying the record, or a document stored over a
+  record HIT, still carries those tags, so `updateTag()` evicts it.
+- The record itself is invalidated by them, so after `updateTag()` the next
+  render re-runs the covered handlers instead of replaying pre-update output
+  until ttl+swr.
+
+A HIT replays all covered handler output and handle values, `loading()`
+subtrees included, so every tag that output recorded goes on the record. A
+loader's tags reach the record only when a handler consumes its value
+(`ctx.use()`), whoever started the loader. A loader nobody reads on the server,
+such as one read by `useLoader()` under `loading()`, runs per request and stays
+off the record. The attribution lives in `src/cache/cache-tag.ts`
+(`runInSegmentTagScope`, `linkLoaderTags`, `recordLoaderTags`) and
+`CacheScope.cacheRoute` (`collectRecordTags`). It runs only for a request whose
+match resolved a cache scope (`armRecordTagOwners`).
 
 ---
 

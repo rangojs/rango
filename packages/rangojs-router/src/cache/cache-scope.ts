@@ -17,7 +17,11 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
-import { recordRequestTags } from "./cache-tag.js";
+import {
+  getSegmentTags,
+  recordRequestTags,
+  runInSegmentTagScope,
+} from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
 // segment-codec is the only module on cache-scope's import graph that eagerly
 // pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
@@ -657,9 +661,21 @@ export class CacheScope {
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
         };
+        // Each segment serializes inside its own tag scope, and the handles
+        // inside one for this write: Flight re-renders their server
+        // components, so their render-called tags land on the record.
+        const handlesOwnerId = `${key}#handles`;
         const [serializedSegments, encodedHandles] = await Promise.all([
-          serializeSegments(nonLoaderSegments, onFlightError),
-          encodeHandles(handles, onFlightError),
+          Promise.all(
+            nonLoaderSegments.map((segment) =>
+              runInSegmentTagScope(segment.id, () =>
+                serializeSegments([segment], onFlightError),
+              ),
+            ),
+          ).then((parts) => parts.flat()),
+          runInSegmentTagScope(handlesOwnerId, () =>
+            encodeHandles(handles, onFlightError),
+          ),
         ]);
         // Flight encodes a component that throws (an async server component in
         // the tree) or a rejected handle value as an error row and completes
@@ -670,7 +686,10 @@ export class CacheScope {
           segments: serializedSegments,
           handles: encodedHandles,
           expiresAt: Date.now() + ttl * 1000,
-          tags,
+          tags: collectRecordTags(requestCtx, tags, [
+            ...nonLoaderSegments.map((s) => s.id),
+            handlesOwnerId,
+          ]),
         };
         if (handleOwners && encodedHandles) data.handleOwners = handleOwners;
 
@@ -697,6 +716,27 @@ export class CacheScope {
       }
     });
   }
+}
+
+/**
+ * A route cache() record's tags (#957): its config tags plus every tag its
+ * content recorded under `ownerIds` (cache-tag.ts getSegmentTags — the covered
+ * segments' handlers, the server components their Flight serialization
+ * re-rendered, the loaders those handlers consumed, and the handle values).
+ * A HIT replays all of that output, loading() subtrees included, so every one
+ * of these tags describes it.
+ */
+function collectRecordTags(
+  requestCtx: RequestContext,
+  configTags: string[] | undefined,
+  ownerIds: string[],
+): string[] | undefined {
+  const tags = new Set(configTags);
+  const before = tags.size;
+  for (const id of ownerIds) {
+    for (const tag of getSegmentTags(requestCtx, id)) tags.add(tag);
+  }
+  return tags.size > before ? [...tags] : configTags;
 }
 
 /**

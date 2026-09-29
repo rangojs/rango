@@ -56,6 +56,13 @@ export function BlogLayout(ctx: HandlerContext) {
 
   return (
     <div data-testid="blog-layout" style={{ display: "flex", gap: "2rem" }}>
+      {/* #957: a per-render token for the eviction e2e. The layout sits in the
+          ppr route's cache() record, so a HIT shows the token of the render
+          that wrote the record; a new token after updateTag() proves the
+          record was invalidated with the shell and re-rendered. */}
+      {shellProbe || asyncShellProbe ? (
+        <span hidden data-shell-render={crypto.randomUUID()} />
+      ) : null}
       {asyncShellProbe ? <AsyncShellTagger probe={asyncShellProbe} /> : null}
       <main style={{ flex: 1 }}>
         <Outlet />

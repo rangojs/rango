@@ -259,6 +259,30 @@ describe("CFCacheStore", () => {
       const result = hit(await store.get("test-key"));
       expect(result).not.toBeNull();
     });
+
+    it("resolves only once the L1 entry is readable, so a background writer's awaiters can read it (#957)", async () => {
+      // cacheRoute awaits set() inside a background task, and the PPR
+      // capture's write barrier awaits that task before its record lookup.
+      // A set() that resolved before the put landed let the capture MISS the
+      // foreground's record and re-render instead of replaying it.
+      const cache = mockCaches.default;
+      const put = cache.put.bind(cache);
+      // Land the put many microtasks later (this suite fakes timers): well
+      // after a set() that resolved at schedule time, and a get() behind it.
+      cache.put = async (request: Request, response: Response) => {
+        for (let i = 0; i < 50; i++) await Promise.resolve();
+        return put(request, response);
+      };
+      try {
+        const store = new CFCacheStore({ ctx: createMockCtx() });
+
+        await store.set("slow-put-key", createTestData(), 60);
+
+        expect(hit(await store.get("slow-put-key"))).not.toBeNull();
+      } finally {
+        cache.put = put;
+      }
+    });
   });
 
   describe("staleness headers", () => {

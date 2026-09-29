@@ -37,7 +37,7 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { _getRequestContext } from "../../server/request-context.js";
 import { getRouterContext } from "../router-context.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
-import { observeHandler } from "../instrument.js";
+import { observeSegmentHandler } from "../instrument.js";
 import {
   track,
   RangoContext,
@@ -396,7 +396,7 @@ export async function resolveSegment<TEnv>(
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
         const result = handleHandlerResult(
-          observeHandler(entry.id, handler, context),
+          observeSegmentHandler(entry.shortCode, entry.id, handler, context),
         );
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, entry.id);
@@ -420,7 +420,12 @@ export async function resolveSegment<TEnv>(
         }
       } else {
         component = handleHandlerResult(
-          await observeHandler(entry.id, handler, context),
+          await observeSegmentHandler(
+            entry.shortCode,
+            entry.id,
+            handler,
+            context,
+          ),
         );
         doneRouteHandler();
       }
@@ -670,7 +675,12 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function"
-            ? observeHandler(`${parallelEntry.id}.${slot}`, handler, context)
+            ? observeSegmentHandler(
+                `${parentShortCode}.${slot}`,
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                context,
+              )
             : handler;
         if (result instanceof Promise) {
           result.finally(doneParallelHandler).catch(() => {});
@@ -694,7 +704,8 @@ export async function resolveParallelEntry<TEnv>(
       } else {
         component =
           typeof handler === "function"
-            ? await observeHandler(
+            ? await observeSegmentHandler(
+                `${parentShortCode}.${slot}`,
                 `${parallelEntry.id}.${slot}`,
                 handler,
                 context,

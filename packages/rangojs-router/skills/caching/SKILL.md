@@ -221,15 +221,20 @@ function CampaignBanner() {
 
 Each tag attaches to one entry, so know which entry you are tagging:
 
-- Forms 1 and 2 tag the `cache()` segment entry. They are the only way to tag
-  it: tags recorded by a `"use cache"` function (form 3) stay on that
-  function's entry and do not attach to an enclosing `cache()` segment entry.
+- Forms 1 and 2 tag the `cache()` segment entry.
 - Form 3 tags the `"use cache"` entry (plus any profile `tags`).
 - Form 4 tags the request's `ppr` shell entry (`/ppr`) or `/document-cache`
-  entry, with no `"use cache"` needed. Called inside a `cache()` segment it
-  still tags the document/shell, not the segment entry. On a route that is
-  neither `ppr` nor document-cached, nothing reads the tag — a silent no-op, so
-  do not expect a bare `cacheTag()` to tag an ordinary uncached page.
+  entry, with no `"use cache"` needed. On a route that is neither `ppr` nor
+  document-cached and has no `cache()`, nothing reads the tag — a silent
+  no-op, so do not expect a bare `cacheTag()` to tag an ordinary uncached page.
+- A route `cache()` entry also carries the tags its own content recorded when
+  it was written: form 4 calls and form 3 reads in the handlers and server
+  components it covers. `updateTag()` of such a tag drops the entry, and a HIT
+  re-records the tags, so a ppr shell or document built from the HIT stays
+  evictable. `loading()` subtrees count too: a HIT replays their output. A
+  loader's tags reach the entry only when a handler consumes its value
+  (`await ctx.use(Loader)`); a loader nobody reads on the server runs per
+  request and stays off.
 
 Invalidate with one of two server-only verbs (both variadic, imported from
 `@rangojs/router`):

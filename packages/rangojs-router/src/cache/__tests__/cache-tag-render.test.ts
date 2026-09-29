@@ -1,11 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { cacheTag, runWithCacheTagScope } from "../cache-tag.js";
+import { describe, it, expect, vi } from "vitest";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  cacheTag,
+  getSegmentTags,
+  linkLoaderTags,
+  recordLoaderTags,
+  runInSegmentTagScope,
+  runWithCacheTagScope,
+} from "../cache-tag.js";
 import {
   runWithRequestContext,
   createRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import { RangoContext } from "../../server/context.js";
+import {
+  RangoContext,
+  runInsideLoaderBodyScope,
+  runInsideLoaderScope,
+} from "../../server/context.js";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
 import { updateTag } from "../tag-invalidation.js";
 import type { ShellCacheEntry, SegmentCacheStore } from "../types.js";
@@ -88,9 +100,9 @@ describe("cacheTag() scope vs request routing (#648)", () => {
 
   it("records at the DOCUMENT level inside a cache() DSL segment (isInsideCacheScope true, no tag scope)", () => {
     // A cache() DSL boundary sets RangoContext.insideCacheScope but does NOT enter
-    // the cacheTagStorage scope (only the "use cache" runtime does). So cacheTag()
-    // records at the document level (_requestTags), not on the segment — the
-    // documented semantic. Pin it so the contract has a test.
+    // the cacheTagStorage scope (only the "use cache" runtime does), so cacheTag()
+    // records on the document set (_requestTags). The route's cache() record
+    // picks it up through the segment tag scope instead (#957, below).
     const ctx = makeReqCtx();
     runWithRequestContext(ctx, () => {
       RangoContext.run({ insideCacheScope: true } as never, () => {
@@ -98,6 +110,101 @@ describe("cacheTag() scope vs request routing (#648)", () => {
       });
     });
     expect(ctx._requestTags).toEqual(new Set(["dsl-seg-tag"]));
+  });
+});
+
+describe("render-called tags attributed to their segment (#957)", () => {
+  it("records on the document set AND the segment's set inside its tag scope", async () => {
+    const ctx = makeReqCtx({ _recordTagOwners: true });
+    await runWithRequestContext(ctx, () =>
+      runInSegmentTagScope("L0", async () => {
+        cacheTag("sync-tag");
+        await Promise.resolve();
+        cacheTag("after-await-tag");
+      }),
+    );
+    expect(ctx._requestTags).toEqual(new Set(["sync-tag", "after-await-tag"]));
+    expect(getSegmentTags(ctx, "L0")).toEqual(
+      new Set(["sync-tag", "after-await-tag"]),
+    );
+  });
+
+  it("gives a loader's tags to the segment only when the segment consumes the loader, whoever started it", () => {
+    const ctx = makeReqCtx({ _recordTagOwners: true });
+    runWithRequestContext(ctx, () => {
+      // Loader bodies started outside any segment (the DSL funnel), before
+      // the handler.
+      runInsideLoaderBodyScope(() => cacheTag("consumed-tag"), "test#Consumed");
+      runInsideLoaderBodyScope(() => cacheTag("unread-tag"), "test#Unread");
+      // The handler reads one of them (ctx.use).
+      runInSegmentTagScope("L0", () => linkLoaderTags("test#Consumed"));
+    });
+    expect(ctx._requestTags).toEqual(new Set(["consumed-tag", "unread-tag"]));
+    expect(getSegmentTags(ctx, "L0")).toEqual(new Set(["consumed-tag"]));
+  });
+
+  it("follows a consumed loader's own reads (loader-to-loader), cycles included", () => {
+    const ctx = makeReqCtx({ _recordTagOwners: true });
+    runWithRequestContext(ctx, () => {
+      runInsideLoaderBodyScope(() => {
+        cacheTag("a-tag");
+        linkLoaderTags("test#B");
+      }, "test#A");
+      runInsideLoaderBodyScope(() => {
+        cacheTag("b-tag");
+        linkLoaderTags("test#A");
+      }, "test#B");
+      runInSegmentTagScope("L0", () => linkLoaderTags("test#A"));
+    });
+    expect(getSegmentTags(ctx, "L0")).toEqual(new Set(["a-tag", "b-tag"]));
+  });
+
+  it("does not treat the DSL funnel starting a loader as a consumption", () => {
+    const ctx = makeReqCtx({ _recordTagOwners: true });
+    runWithRequestContext(ctx, () => {
+      recordLoaderTags("test#Dsl", ["dsl-tag"]);
+      runInSegmentTagScope("L0", () =>
+        runInsideLoaderScope(() => linkLoaderTags("test#Dsl")),
+      );
+    });
+    expect(getSegmentTags(ctx, "L0")).toEqual(new Set());
+  });
+
+  it("keeps each request context's segment sets apart (a capture's derived context)", () => {
+    const foreground = makeReqCtx({ _recordTagOwners: true });
+    const derived = Object.create(foreground) as RequestContext;
+    derived._requestTags = new Set<string>();
+
+    runWithRequestContext(foreground, () =>
+      runInSegmentTagScope("L0", () => cacheTag("fg-tag")),
+    );
+    runWithRequestContext(derived, () =>
+      runInSegmentTagScope("L0", () => cacheTag("capture-tag")),
+    );
+
+    expect(getSegmentTags(foreground, "L0")).toEqual(new Set(["fg-tag"]));
+    expect(getSegmentTags(derived, "L0")).toEqual(new Set(["capture-tag"]));
+  });
+
+  it("records no owners and enters no scope on a request that cannot write a record", () => {
+    const ctx = makeReqCtx();
+    const run = vi.spyOn(AsyncLocalStorage.prototype, "run");
+    try {
+      runWithRequestContext(ctx, () => {
+        run.mockClear();
+        runInsideLoaderBodyScope(() => cacheTag("loader-tag"), "test#Unarmed");
+        runInSegmentTagScope("L0", () => {
+          linkLoaderTags("test#Unarmed");
+          cacheTag("segment-tag");
+        });
+        // Only the loader body scope (server/context.ts) ran; no tag scope.
+        expect(run).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      run.mockRestore();
+    }
+    expect(ctx._requestTags).toEqual(new Set(["loader-tag", "segment-tag"]));
+    expect(getSegmentTags(ctx, "L0")).toEqual(new Set());
   });
 });
 

@@ -9,6 +9,7 @@ import type { EntryData } from "../server/context";
 import { observePhase, PHASES } from "./instrument.js";
 import { contextGet, isNonCacheable } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import { linkLoaderTags } from "../cache/cache-tag.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -438,6 +439,10 @@ function createLoaderExecutor<TEnv>(
     // loader's cache() read-through lives in loader-cache.ts
     // (executeLoaderData), whose ctx.use override serves a later handler read
     // the binding's result.
+    //
+    // A read is a consumption: the value bakes into the reader's output, so
+    // the loader's tags follow the reader onto a cache() record (#957).
+    linkLoaderTags(loader.$$id, reqCtxRef ?? _getRequestContext());
     if (loaderPromises.has(loader.$$id)) {
       return loaderPromises.get(loader.$$id)!;
     }
