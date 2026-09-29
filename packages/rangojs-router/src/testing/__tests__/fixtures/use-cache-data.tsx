@@ -3,6 +3,7 @@
 // registerCachedFunction; `runs` counts body runs per function.
 import type { ReactElement } from "react";
 import { registerServerReference } from "@vitejs/plugin-rsc/react/rsc/server";
+import { cacheTag } from "../../../cache/cache-tag.js";
 import { Counter } from "./Counter.js";
 
 export const runs: Record<string, number> = {};
@@ -22,6 +23,45 @@ export async function getProduct(
     tags: new Set(["red", "dry"]),
     updatedAt: new Date("2026-01-02T03:04:05.000Z"),
   };
+}
+
+export async function getStock(sku: string): Promise<string> {
+  "use cache";
+  cacheTag("stock");
+  return `${sku} #${ran("getStock")}`;
+}
+
+const pause = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The "database" getPrice reads; a test mutates it between requests. */
+export const priceSource: { value: string } = { value: "old" };
+
+/** Reads priceSource when it starts, then takes 30 ms to return it. */
+export async function getPrice(): Promise<string> {
+  "use cache";
+  cacheTag("price");
+  const value = priceSource.value;
+  await pause(30);
+  return value;
+}
+
+/** A 30 ms body tagged "stock", counting its runs. */
+export async function getSlowStock(sku: string): Promise<string> {
+  "use cache";
+  cacheTag("stock");
+  const run = ran("getSlowStock");
+  await pause(30);
+  return `${sku} #${run}`;
+}
+
+/** A 30 ms body tagged "unrelated", counting its runs. */
+export async function getUnrelated(sku: string): Promise<string> {
+  "use cache";
+  cacheTag("unrelated");
+  const run = ran("getUnrelated");
+  await pause(30);
+  return `${sku} #${run}`;
 }
 
 export async function getDay(day: Date): Promise<string> {

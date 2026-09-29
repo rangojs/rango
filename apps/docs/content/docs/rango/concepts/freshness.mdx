@@ -62,7 +62,7 @@ SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
 Tag entries at write time with `cache({ tags: [...] })` or the runtime `cacheTag(...tags)`; the built-in stores index by tag. Invalidate on demand:
 
 - `updateTag(...tags)` — **awaitable, read-your-own-writes**. Await it inside an action when the next render must see the new value.
-- `revalidateTag(...tags)` — **background, non-blocking**.
+- `revalidateTag(...tags)` — **background, non-blocking**. The request that calls it still reads its own writes; other requests see the invalidation once the store's write lands.
 
 Both hard-purge; the difference is awaitability, not stale-serving. There is no path-based busting — use tags.
 

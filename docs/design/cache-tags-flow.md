@@ -27,12 +27,12 @@ flowchart LR
 
 The three verbs a consumer touches:
 
-| API                      | Where                           | Semantics                                                          |
-| ------------------------ | ------------------------------- | ------------------------------------------------------------------ |
-| `cacheTag(...tags)`      | inside a `"use cache"` function | tag the entry at runtime                                           |
-| `cache({ tags })`        | route DSL                       | tag the entry (static array or `(ctx) => string[]`)                |
-| `updateTag(...tags)`     | server actions                  | **read-your-own-writes** — awaitable, immediate                    |
-| `revalidateTag(...tags)` | route handlers / webhooks       | background (non-blocking) — hard-purge, next read re-renders fresh |
+| API                      | Where                           | Semantics                                                                                                    |
+| ------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `cacheTag(...tags)`      | inside a `"use cache"` function | tag the entry at runtime                                                                                     |
+| `cache({ tags })`        | route DSL                       | tag the entry (static array or `(ctx) => string[]`)                                                          |
+| `updateTag(...tags)`     | server actions                  | **read-your-own-writes** — awaitable, immediate                                                              |
+| `revalidateTag(...tags)` | route handlers / webhooks       | background (non-blocking) — hard-purge, next read re-renders fresh; the calling request reads its own writes |
 
 `cacheTag(...tags)` has a second, render-callable form: called during a request
 render **outside** any `"use cache"` function, it records onto the request's
@@ -199,12 +199,12 @@ flowchart TD
 flowchart TD
   A["updateTag(tags)  /  revalidateTag(tags)"] --> B["normalize tags, find configured store(s)"]
   B --> C{Which verb?}
-  C -- "updateTag" --> D["await now (read-your-own-writes)"]
-  C -- "revalidateTag" --> E["run in background (waitUntil)"]
+  C -- "updateTag" --> D["call now, await the durable write"]
+  C -- "revalidateTag" --> E["call now, durable write in background (waitUntil)"]
   D --> F["store.invalidateTags(tags) — one batched call per store"]
   E --> F
   F --> G["Memory store: delete the tagged entries"]
-  F --> H["CF store, per tag:<br/>• write KV marker = now (global truth)<br/>• write-through memo + edge marker (this colo = instant)"]
+  F --> H["CF store, per tag:<br/>• mask this request's memo = now (before any await)<br/>• write KV marker = now (global truth)<br/>• write-through isolate memo + edge marker (this colo = instant)"]
   H --> J{onRevalidateTag wired?}
   J -- yes --> K["ONE batched CF purge → evicts cached lookups in all colos (prompt)"]
   J -- no --> L["other colos converge when their cached marker TTL expires (≤ tagCacheTtl)"]
@@ -213,6 +213,18 @@ flowchart TD
 - The whole tag batch from one call is handed to each store at once, so the
   Cloudflare store fires `onRevalidateTag` **once** (one CDN purge request, which
   respects purge-by-tag rate limits) rather than once per tag.
+- Both verbs call `invalidateTags()` synchronously, and each store masks the
+  tags for the rest of the calling request before its first await (#973). So
+  a server action that runs `revalidateTag("x")` and then renders reads past
+  every entry tagged `x` stored before the call, although the KV put has not
+  landed. The mask only turns that request's hits into misses: if the put
+  then fails, the request paid extra misses and other requests read KV as it
+  is (a marker read in flight when the mask is set publishes nothing to L1
+  or the isolate memo). Details, the per-store table, and what is not
+  covered ([#977](https://github.com/rangojs/rango/issues/977): another
+  request's `"use cache"` execution, or a loader `cache()`, that started
+  before the call and writes after it): [caching.md](./caching.md)
+  "Read-your-own-writes in the invalidating request".
 - The colo that runs the invalidation is correct **immediately** (KV marker +
   write-through). Other colos either converge within `tagCacheTtl`, or — if a
   purge is wired — are evicted promptly by the batched purge.
@@ -309,8 +321,9 @@ Configure `tagPurge` and the store flips the L1 contract:
 
 - **L1 hits stop reading markers.** A surviving entry is trusted — an
   invalidated one would have been purged. Only the per-request memo is checked
-  (synchronously, no KV read), so a request that ran `updateTag()` still masks
-  its own not-yet-purged entries (read-your-own-writes). The trust is
+  (synchronously, no KV read), so a request that ran `updateTag()` or
+  `revalidateTag()` still masks its own not-yet-purged entries
+  (read-your-own-writes). The trust is
   conditional on the entry actually carrying the store's entry Cache-Tags: an
   entry a purge cannot reach (written pre-upgrade, or its header omitted for
   the 16 KB overflow above) keeps the full marker check instead of serving

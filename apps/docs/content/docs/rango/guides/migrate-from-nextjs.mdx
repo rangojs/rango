@@ -548,7 +548,7 @@ Server actions work the same way — `"use server"` directive, `useActionState`,
 
 Key difference: route-level `middleware()` does not wrap action execution; only `router.use()` middleware does. Inside an action, `getRequestContext()` gives you `ctx.get()`/`ctx.set()` for the values that middleware set.
 
-For cache invalidation from actions, use `await updateTag(tag)` — it is read-your-own-writes, so the action's own re-render sees fresh data. Reserve `revalidateTag(tag)` for route handlers and webhooks; calling it from an action can leave that action's re-render stale. To re-render a layout that the default skips after an action, attach `revalidate((ctx) => ctx.isAction(updateBlog) || undefined)` to it, as in [Step 3](#revalidation-is-two-separate-axes); loaders and the route's own segments already re-run after every action. See [Server actions](/docs/rango/guides/server-actions).
+For cache invalidation from actions, use `await updateTag(tag)` — it is read-your-own-writes, so the action's own re-render sees fresh data, and it rejects when the store's durable write fails. `revalidateTag(tag)` is for route handlers and webhooks; the request that calls it also reads its own writes, but a failed durable write only reaches `onError`. To re-render a layout that the default skips after an action, attach `revalidate((ctx) => ctx.isAction(updateBlog) || undefined)` to it, as in [Step 3](#revalidation-is-two-separate-axes); loaders and the route's own segments already re-run after every action. See [Server actions](/docs/rango/guides/server-actions).
 
 ## Step 8: Metadata
 

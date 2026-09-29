@@ -55,7 +55,7 @@ The guards are correctness-first: `cookies()` and `headers()` throw inside cache
 Everything cacheable shares one identity scheme and one store. Entries expire by TTL/SWR and are tagged via `cache({ tags })` or runtime `cacheTag(...tags)`. Invalidate by tag:
 
 - `updateTag(...tags)` — awaitable, read-your-own-writes. Use inside an action when the next render must see the new value.
-- `revalidateTag(...tags)` — background, non-blocking.
+- `revalidateTag(...tags)` — background, non-blocking. The request that calls it still reads its own writes; other requests see the invalidation once the store's write lands.
 
 There is no path-based busting; use tags.
 

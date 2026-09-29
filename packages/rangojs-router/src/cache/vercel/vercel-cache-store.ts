@@ -76,6 +76,10 @@ import {
   base64ToBytes,
 } from "../cf/cf-base64.js";
 import {
+  perRequestStoreValue,
+  type PerRequestStoreMap,
+} from "../cf/cf-tag-marker-memo.js";
+import {
   ShellMemo,
   freshReadsWindowMs,
   isShellFresh,
@@ -183,6 +187,8 @@ interface VercelSegmentEnvelope {
   s: number;
   /** expiresAt (ms since epoch). */
   e: number;
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a "use cache" function result (getItem/setItem). */
@@ -197,6 +203,8 @@ interface VercelItemEnvelope {
   e: number;
   /** Tags, surfaced on read so a hit still contributes to the document tag set. */
   t?: string[];
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a full Response (getResponse/putResponse). */
@@ -213,6 +221,8 @@ interface VercelResponseEnvelope {
   e: number;
   /** Tags, preserved so a background revalidation re-write keeps them. */
   t?: string[];
+  /** Write time of a tagged entry (ms), for the request tag mask. */
+  ta?: number;
 }
 
 /** Stored envelope for a PPR shell entry (getShell/putShell). */
@@ -407,8 +417,25 @@ function handleMemos(cache: VercelRuntimeCache): VercelHandleMemos {
   return memos;
 }
 
+/**
+ * The tags a request invalidated through a store, with their invalidatedAt:
+ * request root context (RequestContext._requestRoot, so contexts derived
+ * from the request share it) -> store -> tag -> ms (#973). invalidateTags()
+ * writes it before its first await, and every read in that request treats an entry
+ * carrying one of the tags, written at or before that time, as invalidated.
+ * The platform's expireTag() and the tm marker writes are what other
+ * requests see, and revalidateTag() does not wait for them.
+ */
+const requestInvalidations: PerRequestStoreMap<Map<string, number>> =
+  new WeakMap();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+/** The envelope's `ta` write stamp, on tagged entries only. */
+function tagStamp(tags: string[]): { ta?: number } {
+  return tags.length > 0 ? { ta: Date.now() } : {};
 }
 
 /**
@@ -559,6 +586,9 @@ export class VercelCacheStore<
       });
       return null;
     }
+    if (this.maskedMiss("get", key, { t: env.d.tags, ta: env.ta }, readMs)) {
+      return null;
+    }
 
     const isStale = env.s > 0 && now > env.s;
     const shouldRevalidate = isStale
@@ -595,7 +625,12 @@ export class VercelCacheStore<
       const d: CachedEntryData = data.tags
         ? { ...data, tags: safeTags.length > 0 ? safeTags : undefined }
         : data;
-      const env: VercelSegmentEnvelope = { d, s: staleAt, e: expiresAt };
+      const env: VercelSegmentEnvelope = {
+        d,
+        s: staleAt,
+        e: expiresAt,
+        ...tagStamp(safeTags),
+      };
       await this.write(
         this.toStoreKey(key, "s"),
         env,
@@ -666,6 +701,7 @@ export class VercelCacheStore<
       });
       return null;
     }
+    if (this.maskedMiss("getResponse", key, env, readMs)) return null;
 
     // Reconstruct the Response BEFORE claiming revalidation. A corrupt body
     // (e.g. invalid base64 from base64ToBuffer, or bad header entries) would
@@ -741,6 +777,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
+        ...tagStamp(safeTags),
       };
       await this.write(
         this.toStoreKey(key, "r"),
@@ -798,6 +835,7 @@ export class VercelCacheStore<
       });
       return null;
     }
+    if (this.maskedMiss("getItem", key, env, readMs)) return null;
 
     const isStale = env.s > 0 && now > env.s;
     const shouldRevalidate = isStale
@@ -845,6 +883,7 @@ export class VercelCacheStore<
         s: staleAt,
         e: expiresAt,
         t: safeTags.length > 0 ? safeTags : undefined,
+        ...tagStamp(safeTags),
       };
       await this.write(
         this.toStoreKey(key, "i"),
@@ -1294,6 +1333,7 @@ export class VercelCacheStore<
     prefetched?: Map<string, Promise<number | null>>,
     outcomes?: Map<string, MarkerMemoOutcome>,
   ): Promise<boolean> {
+    if (this.maskedForRequest(tags, sinceMs)) return true;
     try {
       const markers = await Promise.all(
         tags.map(
@@ -1331,12 +1371,13 @@ export class VercelCacheStore<
       "cache-invalidate",
     );
     if (safe.length === 0) return;
+    const at = Date.now();
+    this.maskTagsForRequest(safe, at);
     // Marker writes FIRST, and strict: isTagsInvalidatedSince() is how an
     // updateTag() reaches a build-time shell entry (expireTag cannot delete
     // what lives in the build manifest), so a failed marker write must reject
     // like a failed expireTag — silently resolving would report success while
     // the baked shell keeps serving.
-    const at = Date.now();
     await Promise.all(
       safe.map((tag) =>
         this.cache.set(this.toStoreKey(tag, "tm"), JSON.stringify({ at }), {
@@ -1363,6 +1404,58 @@ export class VercelCacheStore<
       );
       throw error instanceof Error ? error : new Error(String(error));
     }
+  }
+
+  /**
+   * The request-local half of invalidateTags(), run before its first await
+   * (#973): see requestInvalidations. revalidateTag() waits for nothing
+   * after it.
+   */
+  private maskTagsForRequest(tags: string[], at: number): void {
+    const ctx = _getRequestContext();
+    if (!ctx) return;
+    const mask = perRequestStoreValue(
+      requestInvalidations,
+      ctx._requestRoot ?? ctx,
+      this,
+      () => new Map<string, number>(),
+    );
+    for (const tag of tags) mask.set(tag, at);
+  }
+
+  /**
+   * Whether this request invalidated one of `tags` through this store at or
+   * after `taggedAt`. `>=`, as the marker check: an entry written in the
+   * invalidation's millisecond may hold a value computed before it, so it
+   * misses (a false miss, never a stale read). An entry without a stamp was
+   * written before the stamp existed and counts as older.
+   */
+  private maskedForRequest(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): boolean {
+    if (!tags?.length) return false;
+    const ctx = _getRequestContext();
+    const mask =
+      ctx && requestInvalidations.get(ctx._requestRoot ?? ctx)?.get(this);
+    if (!mask) return false;
+    for (const tag of tags) {
+      const at = mask.get(tag);
+      if (at !== undefined && at >= (taggedAt ?? 0)) return true;
+    }
+    return false;
+  }
+
+  /** A data read's mask check: reports the miss and returns true when masked. */
+  private maskedMiss(
+    op: "get" | "getItem" | "getResponse",
+    key: string,
+    env: { t?: string[]; ta?: number },
+    readMs: number,
+  ): boolean {
+    if (!this.maskedForRequest(env.t, env.ta)) return false;
+    this.emitDebug({ op, key, outcome: "miss", readMs });
+    return true;
   }
 
   // --- Internals ---
@@ -1573,7 +1666,7 @@ export class VercelCacheStore<
 
   private asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { d, s, e } = raw;
+    const { d, s, e, ta } = raw;
     if (
       !isRecord(d) ||
       !Array.isArray((d as Record<string, unknown>).segments)
@@ -1581,12 +1674,17 @@ export class VercelCacheStore<
       return null;
     }
     if (typeof s !== "number" || typeof e !== "number") return null;
-    return { d: d as unknown as CachedEntryData, s, e };
+    return {
+      d: d as unknown as CachedEntryData,
+      s,
+      e,
+      ta: typeof ta === "number" ? ta : undefined,
+    };
   }
 
   private asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { v, h, s, e, t } = raw;
+    const { v, h, s, e, t, ta } = raw;
     if (typeof v !== "string") return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
     return {
@@ -1594,6 +1692,7 @@ export class VercelCacheStore<
       h: typeof h === "string" ? h : undefined,
       s,
       e,
+      ta: typeof ta === "number" ? ta : undefined,
       t: Array.isArray(t) ? (t as string[]) : undefined,
     };
   }
@@ -1632,7 +1731,7 @@ export class VercelCacheStore<
 
   private asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { b, st, hd, s, e, t } = raw;
+    const { b, st, hd, s, e, t, ta } = raw;
     if (typeof b !== "string" || typeof st !== "number") return null;
     if (!Array.isArray(hd)) return null;
     if (typeof s !== "number" || typeof e !== "number") return null;
@@ -1643,6 +1742,7 @@ export class VercelCacheStore<
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
+      ta: typeof ta === "number" ? ta : undefined,
     };
   }
 }

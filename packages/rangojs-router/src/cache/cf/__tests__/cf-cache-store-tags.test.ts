@@ -13,6 +13,7 @@ import {
   CACHE_READ_ERROR,
   type CacheReadError as CacheReadErrorT,
 } from "../../types.js";
+import { revalidateTag, updateTag } from "../../tag-invalidation.js";
 
 // get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
 // these tests assert hit/miss shapes, so narrow the sentinel away up front.
@@ -22,12 +23,13 @@ function hit(
   return r === CACHE_READ_ERROR ? null : r;
 }
 
-function makeReqCtx() {
+function makeReqCtx(cacheStore?: CFCacheStore) {
   return createRequestContext({
     env: {},
     request: new Request("https://test.internal/"),
     url: new URL("https://test.internal/"),
     variables: {},
+    cacheStore,
   });
 }
 
@@ -400,6 +402,198 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
     });
   });
 
+  // Issue #973: revalidateTag() does not wait for the KV marker write, so the
+  // request that ran it read entries its own invalidation covers until the
+  // put landed (and memoized the absent marker for the rest of the request).
+  describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+    /** Park every KV marker put until the returned release is called. */
+    function holdMarkerWrites(): () => void {
+      const put = kv.put.bind(kv);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      vi.spyOn(kv, "put").mockImplementation(async (key, value, options) => {
+        if (key.includes(TAG_MARKER_PREFIX)) await held;
+        return put(key, value, options);
+      });
+      return release;
+    }
+
+    async function seed(store: CFCacheStore): Promise<void> {
+      await store.setItem("item", "v", { ttl: 300, tags: ["catalog"] });
+      await store.set("seg", createTestData(["catalog"]), 300);
+      await store.setItem("other", "v", { ttl: 300, tags: ["unrelated"] });
+      await ctx.flush();
+      vi.advanceTimersByTime(10);
+    }
+
+    it("a read with no prior marker read misses while the KV marker write is in flight", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const req = makeReqCtx(store);
+
+      await runWithRequestContext(req, async () => {
+        revalidateTag("catalog");
+        expect(await store.getItem("item")).toBeNull();
+        expect(hit(await store.get("seg"))).toBeNull();
+        expect(await store.getItem("other")).not.toBeNull();
+      });
+      const markerWritten = () =>
+        [...kv.store.keys()].some((key) =>
+          key.endsWith(`${TAG_MARKER_PREFIX}catalog`),
+        );
+      expect(markerWritten()).toBe(false);
+
+      release();
+      await Promise.all(req._pendingBackgroundTasks ?? []);
+      await ctx.flush();
+      const next = await runWithRequestContext(makeReqCtx(), () =>
+        store.getItem("item"),
+      );
+      expect(next).toBeNull();
+    });
+
+    it("a read after the request already read the marker misses too", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        // Memoizes the absent marker for this request.
+        expect(await store.getItem("item")).not.toBeNull();
+        vi.advanceTimersByTime(10);
+        revalidateTag("catalog");
+        expect(await store.getItem("item")).toBeNull();
+        expect(hit(await store.get("seg"))).toBeNull();
+      });
+      release();
+    });
+
+    // A PPR HIT tail and a shell capture render on Object.create(reqCtx): the
+    // mask belongs to the request, not to the context object that set it.
+    it("a context derived from the request reads its mask, and a mask it sets reaches the request", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const req = makeReqCtx(store);
+      const derived = () => Object.create(req) as typeof req;
+
+      runWithRequestContext(req, () => revalidateTag("catalog"));
+      await runWithRequestContext(derived(), async () => {
+        expect(await store.getItem("item")).toBeNull();
+        revalidateTag("unrelated");
+      });
+      await runWithRequestContext(req, async () => {
+        expect(await store.getItem("other")).toBeNull();
+      });
+      release();
+    });
+
+    // A context that already memoized a marker keeps its memo, so a mask set
+    // after that, by the request or by a sibling, must reach that memo too.
+    it.each([
+      ["the request", (req: object) => req],
+      ["a sibling context", (req: object) => Object.create(req) as object],
+    ])(
+      "a context whose memo already exists sees a mask %s sets later",
+      async (_label, masker) => {
+        const store = makeStore();
+        await seed(store);
+        const release = holdMarkerWrites();
+        const req = makeReqCtx(store);
+        const derived = Object.create(req) as typeof req;
+
+        // Memoizes "catalog" as having no marker.
+        await runWithRequestContext(derived, async () => {
+          expect(await store.getItem("item")).not.toBeNull();
+        });
+        runWithRequestContext(masker(req) as typeof req, () =>
+          revalidateTag("catalog"),
+        );
+
+        await runWithRequestContext(derived, async () => {
+          expect(await store.getItem("item")).toBeNull();
+        });
+        release();
+      },
+    );
+
+    /** Park KV marker reads: resolves once one started; release lets all run. */
+    function holdMarkerReads(): {
+      started: Promise<void>;
+      release: () => void;
+    } {
+      const get = kv.get.bind(kv);
+      let release!: () => void;
+      let readStarted!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const started = new Promise<void>((resolve) => (readStarted = resolve));
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        if (key.includes(TAG_MARKER_PREFIX)) {
+          readStarted();
+          await held;
+        }
+        return get(key, options);
+      });
+      return { started, release };
+    }
+
+    it("a marker read in flight when revalidateTag() runs resolves to the invalidation", async () => {
+      const store = makeStore();
+      await seed(store);
+      const release = holdMarkerWrites();
+      const reads = holdMarkerReads();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const inFlight = store.getItem("item");
+        await reads.started;
+        revalidateTag("catalog");
+        reads.release();
+        expect(await inFlight).toBeNull();
+        expect(await store.getItem("item")).toBeNull();
+      });
+      release();
+    });
+
+    // The request's mask is unconfirmed until the KV put lands. A marker read
+    // in flight when it is set resolves to it for this request, but must not
+    // publish it to the colo's L1 marker cache: if the put then fails, later
+    // requests would miss for tagCacheTtl with no marker in KV.
+    it.each(["updateTag", "revalidateTag"] as const)(
+      "%s: an in-flight marker read keeps the unconfirmed mask out of L1; after a failed put a later request hits",
+      async (verb) => {
+        const store = makeStore({ tagCacheTtl: 60 });
+        await seed(store);
+        const put = kv.put.bind(kv);
+        vi.spyOn(kv, "put").mockImplementation(async (key, value, options) => {
+          if (key.includes(TAG_MARKER_PREFIX)) throw new Error("KV down");
+          return put(key, value, options);
+        });
+        const reads = holdMarkerReads();
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const req = makeReqCtx(store);
+
+        await runWithRequestContext(req, async () => {
+          const inFlight = store.getItem("item");
+          await reads.started;
+          const invalidation =
+            verb === "updateTag" ? updateTag("catalog") : undefined;
+          if (verb === "revalidateTag") revalidateTag("catalog");
+          reads.release();
+          expect(await inFlight).toBeNull();
+          if (invalidation) await expect(invalidation).rejects.toThrow();
+        });
+        await Promise.all(req._pendingBackgroundTasks ?? []);
+        await ctx.flush();
+
+        const later = await runWithRequestContext(makeReqCtx(), () =>
+          store.getItem("item"),
+        );
+        expect(later).not.toBeNull();
+      },
+    );
+  });
+
   describe("L1 marker cache (tagCacheTtl)", () => {
     it("default (tagCacheTtl=0) reads the KV marker on every request (no L1 cache)", async () => {
       const store = makeStore(); // tagCacheTtl defaults to 0
@@ -584,8 +778,12 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       );
     });
 
-    it("does not write-through the memo for a tag whose durable write failed", async () => {
-      const store = makeStore();
+    // #973: the invalidating request masks its tags before the durable write,
+    // so a failed write costs that request an extra miss, never a stale read.
+    // Nothing another request reads (KV, the isolate marker memo, L1) claims
+    // the invalidation.
+    it("a failed durable write rejects, masks only the invalidating request, and leaves later requests on the durable state", async () => {
+      const store = makeStore({ tagCacheTtl: 60 });
       await store.setItem("k", "v", { ttl: 300, tags: ["products"] });
       await ctx.flush();
 
@@ -599,11 +797,15 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await runWithRequestContext(makeReqCtx(), async () => {
         expect(await store.getItem("k")).not.toBeNull();
         vi.advanceTimersByTime(10);
-        // Rejects, and crucially must NOT poison the memo with a phantom success:
-        // a masked failure would make the same-request read below return null.
         await expect(store.invalidateTags(["products"])).rejects.toThrow();
-        expect(await store.getItem("k")).not.toBeNull();
+        expect(await store.getItem("k")).toBeNull();
       });
+      await ctx.flush();
+
+      const later = await runWithRequestContext(makeReqCtx(), () =>
+        store.getItem("k"),
+      );
+      expect(later).not.toBeNull();
     });
 
     it("normalizes a tag exceeding the 512-byte KV key limit and invalidation round-trips", async () => {

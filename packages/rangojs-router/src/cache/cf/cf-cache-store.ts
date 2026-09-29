@@ -99,6 +99,8 @@ import {
   getTagMarkerMemo,
   getTagMarkerInflight,
   getShellMarkerReads,
+  isRequestMasked,
+  maskRequestTags,
 } from "./cf-tag-marker-memo.js";
 import {
   TagMarkerMemo,
@@ -3274,7 +3276,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * entry Cache-Tag tokens (`headers`): an entry a purge cannot reach — one
    * written before the tokens existed, or whose tag set overflowed the
    * Cache-Tag header limit — keeps the full marker check, or purge mode
-   * would serve it stale until TTL with no eviction path.
+   * would serve it stale until TTL with no eviction path. KV-less there are
+   * no markers, so it gets the per-request memo check like any hit (#973).
    *
    * Without tagPurge this is the full marker cascade. KV-tier reads and
    * shells always use isGloballyInvalidated directly: purge cannot reach KV,
@@ -3288,7 +3291,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<boolean> {
     if (!this.tagPurge) return this.isGloballyInvalidated(tags, taggedAt);
     if (!Array.isArray(tags) || tags.length === 0 || !taggedAt) return false;
-    if (!this.hasEntryCacheTags(headers)) {
+    if (this.kv && !this.hasEntryCacheTags(headers)) {
       return this.isGloballyInvalidated(tags, taggedAt);
     }
     const ctx = _getRequestContext();
@@ -3365,13 +3368,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const read = cfMarkerMemo.readThrough(
       this.markerMemoKey(tag),
       async (background) => {
-        const outcome = { timedOut: false };
+        const outcome = { timedOut: false, fromRequest: false };
         const value = await this.fetchTagMarker(
           tag,
           background ? undefined : memo,
           outcome,
         );
-        return { value, memoize: !outcome.timedOut };
+        return {
+          value,
+          memoize: !outcome.timedOut && !outcome.fromRequest,
+        };
       },
       {
         freshMs: this.memo.markerFreshMs,
@@ -3398,20 +3404,33 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async fetchTagMarker(
     tag: string,
     memo: Map<string, number | null> | undefined,
-    read?: { timedOut: boolean },
+    read?: { timedOut: boolean; fromRequest?: boolean },
   ): Promise<number | null> {
     // Write the resolved marker into the memo WITHOUT clobbering a value a
     // concurrent invalidateTags() wrote during our await. The router resolves
-    // sibling slots in parallel, so a slot's updateTag() can land the
-    // authoritative invalidatedAt into the memo while this read is still in
-    // flight; overwriting it with our (pre-invalidation) read result would break
+    // sibling slots in parallel, so a slot's updateTag() can land its
+    // invalidatedAt into the memo while this read is still in flight;
+    // overwriting it with our (pre-invalidation) read result would break
     // read-your-own-writes for the rest of the request. If the tag was memoized
     // mid-read, that value wins and is returned. Without a memo, the read result
     // stands as-is.
-    const memoize = (read: number | null): number | null => {
-      if (memo && memo.has(tag)) return memo.get(tag) ?? null;
-      memo?.set(tag, read);
-      return read;
+    //
+    // A mask memoized mid-read stays in this request: maskTagsForRequest
+    // wrote it before the KV put was confirmed, and a failed put must not
+    // reach other requests (#973). So it is not written to L1 here, and
+    // `read.fromRequest` keeps the shell read from storing it in the isolate
+    // marker memo; writeTagInvalidation writes both after the put. A value
+    // another read memoized mid-read came from KV or L1 and is published.
+    let fromRequest = false;
+    const memoize = (value: number | null): number | null => {
+      if (memo && memo.has(tag)) {
+        const ctx = _getRequestContext();
+        fromRequest = ctx !== undefined && isRequestMasked(ctx, this, tag);
+        if (read) read.fromRequest = fromRequest;
+        return memo.get(tag) ?? null;
+      }
+      memo?.set(tag, value);
+      return value;
     };
 
     // L1 (per-colo) marker cache - opt-in via tagCacheTtl. Bounded by the same
@@ -3467,10 +3486,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const value = raw != null ? Number(raw) : null;
     const resolved = memoize(value);
 
-    // Populate L1 for subsequent reads in this colo (non-blocking). Use the
-    // resolved (memo-aware) value so a marker invalidated mid-read is not
-    // re-cached stale into this colo's L1.
-    if (this.tagCacheTtl > 0) {
+    // Populate L1 for subsequent reads in this colo (non-blocking), from KV's
+    // answer only. A value memoized mid-read is skipped: KV's answer predates
+    // it, and the memo's may be an unconfirmed mask (see memoize above).
+    if (this.tagCacheTtl > 0 && !fromRequest) {
       const put = () => this.putTagMarkerL1(tag, resolved);
       if (this.waitUntil) this.waitUntil(put);
       else void put();
@@ -3646,29 +3665,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Invalidate every entry tagged with any of `tags`. Receives the whole batch
-   * from one updateTag()/revalidateTag() call so the eager-purge hook fires
-   * ONCE (one CDN purge request, not one per tag). For each tag: records the KV
-   * marker (the durable cross-colo truth that reads compare taggedAt against),
-   * writes the fresh marker straight into this colo's L1 (write-through, NOT
-   * delete - a delete would let the next read re-read a not-yet-converged KV
-   * value and re-arm the stale window), and memoizes it for same-request
-   * read-your-own-writes. In purge mode (tagPurge) it then AWAITS the
-   * consumer's purge-by-tag call with the entry Cache-Tags — the eviction the
-   * per-read marker skip on L1 hits relies on. Finally fires onRevalidateTag
-   * with the namespaced lookup Cache-Tags so a consumer purge evicts the
-   * cached lookups in other colos promptly (otherwise they converge within
-   * tagCacheTtl).
-   *
-   * Durable-write integrity: the in-memory write-through (memo + L1) for a tag
-   * runs ONLY after that tag's KV marker write is confirmed. If any KV write
-   * fails (transient error; over-limit keys are normalized by toKVKey rather
-   * than rejected), this rejects with the
-   * failed tags so an awaiting updateTag() surfaces the failure instead of
-   * silently reporting success while other requests/colos serve stale data. The
-   * eager purge still fires for the whole batch first (it is additive).
-   */
-  /**
    * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
    * SAME KV markers used by runtime envelopes also evict immutable build shells
    * and captures whose write races updateTag(). Thin public wrapper over the
@@ -3683,9 +3679,36 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return this.isShellGenerationInvalidated(tags, sinceMs);
   }
 
+  /**
+   * Invalidate every entry tagged with any of `tags`. Receives the whole batch
+   * from one updateTag()/revalidateTag() call so the eager-purge hook fires
+   * ONCE (one CDN purge request, not one per tag). Before its first await it
+   * masks the tags for the rest of the request (maskTagsForRequest), which is
+   * all revalidateTag() waits for. For each tag it then records the KV marker
+   * (the durable cross-colo truth that reads compare taggedAt against) and
+   * writes the fresh marker straight into this colo's L1 (write-through, NOT
+   * delete - a delete would let the next read re-read a not-yet-converged KV
+   * value and re-arm the stale window). In purge mode (tagPurge) it then
+   * AWAITS the consumer's purge-by-tag call with the entry Cache-Tags — the
+   * eviction the per-read marker skip on L1 hits relies on. Finally fires
+   * onRevalidateTag with the namespaced lookup Cache-Tags so a consumer purge
+   * evicts the cached lookups in other colos promptly (otherwise they converge
+   * within tagCacheTtl).
+   *
+   * Durable-write integrity: the write-through other requests read (the
+   * isolate marker memo and L1) for a tag runs ONLY after that tag's KV marker
+   * write is confirmed. If any KV write fails (transient error; over-limit
+   * keys are normalized by toKVKey rather than rejected), this rejects with
+   * the failed tags so an awaiting updateTag() surfaces the failure instead of
+   * silently reporting success while other requests/colos serve stale data.
+   * The purge and onRevalidateTag still fire for the whole batch once the
+   * puts settle, whether or not one failed (they are additive); the rejection
+   * follows them.
+   */
   async invalidateTags(tags: string[]): Promise<void> {
     if (tags.length === 0) return;
     const invalidatedAt = Date.now();
+    this.maskTagsForRequest(tags, invalidatedAt);
     // The invalidating isolate drops its memoized shells for these tags at
     // once; with KV every isolate's per-read marker check rejects the rest.
     // Reads already in flight must not memoize them again while the markers
@@ -3705,14 +3728,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
   }
 
+  /**
+   * The request-local half of invalidateTags(), run before its first await
+   * (#973): this request's marker memo takes the new marker, so every later
+   * read in the request (data families, purge-mode L1 hits, shell reads)
+   * treats the tags as invalidated at `invalidatedAt` without waiting for the
+   * KV put or the purge that revalidateTag() leaves to waitUntil. Written
+   * before the durable write is confirmed: if that write fails, this request
+   * pays extra misses, never a stale read, and later requests read the
+   * durable state. Skipped where no read consults the memo (neither KV nor
+   * tagPurge).
+   */
+  private maskTagsForRequest(tags: string[], invalidatedAt: number): void {
+    if (!this.kv && !this.tagPurge) return;
+    const ctx = _getRequestContext();
+    if (ctx) maskRequestTags(ctx, this, tags, invalidatedAt);
+  }
+
   /** invalidateTags' marker writes, tag purge, and hooks. */
   private async writeTagInvalidation(
     tags: string[],
     invalidatedAt: number,
   ): Promise<void> {
-    const ctx = _getRequestContext();
-    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
-
     if (!this.kv && !this.onRevalidateTag && !this.tagPurge) {
       console.warn(
         `[CFCacheStore] invalidateTags had no effect: configure a KV namespace ` +
@@ -3723,6 +3760,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     const failedTags = new Set<string>();
     const errors: unknown[] = [];
+    const lookupMarkerCacheActive = Boolean(this.kv) && this.tagCacheTtl > 0;
     if (this.kv) {
       // Markers written with no expiry (tagInvalidationTtl unset) never expire,
       // so high-cardinality tags accumulate KV keys unboundedly with no reaper.
@@ -3758,27 +3796,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           }
         }),
       );
-    }
 
-    // Write-through memo + L1 only for tags with a confirmed durable marker, and
-    // only when KV is configured. Markers are read exclusively through
-    // isGloballyInvalidated(), which short-circuits to "not invalidated" when
-    // !this.kv; writing memo/L1 markers without KV would be dead state no read
-    // path ever consults — EXCEPT the memo in purge mode: isL1Invalidated()
-    // consults it (and only it) on every L1 hit, so a KV-less purge-mode store
-    // still writes the memo for same-request read-your-own-writes. The
-    // onRevalidateTag purge below still fires regardless (it is additive and
-    // external to the marker cascade). The memo write is synchronous
-    // (read-your-own-writes); the L1 Cache API writes are independent, so fan
-    // them out in parallel rather than awaiting each.
-    const lookupMarkerCacheActive = Boolean(this.kv) && this.tagCacheTtl > 0;
-    if (this.kv || this.tagPurge) {
+      // Write-through (isolate marker memo + L1) only for tags with a
+      // confirmed durable marker; this request's own memo was written up
+      // front (maskTagsForRequest). The L1 Cache API writes are independent,
+      // so fan them out in parallel rather than awaiting each.
       const l1Writes: Promise<void>[] = [];
       for (const tag of tags) {
         if (failedTags.has(tag)) continue;
-        memo?.set(tag, invalidatedAt);
         // Same isolate: later requests here see the invalidation at once.
-        if (this.kv) cfMarkerMemo.store(this.markerMemoKey(tag), invalidatedAt);
+        cfMarkerMemo.store(this.markerMemoKey(tag), invalidatedAt);
         if (lookupMarkerCacheActive) {
           l1Writes.push(
             this.putTagMarkerL1(tag, invalidatedAt, { critical: true }),

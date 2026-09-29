@@ -16,6 +16,7 @@ import {
   runWithRequestContext,
 } from "../../../server/request-context.js";
 import { createMetricsStore } from "../../../router/metrics.js";
+import { revalidateTag } from "../../tag-invalidation.js";
 
 // get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
 // these tests assert hit/miss shapes, so narrow the sentinel away up front.
@@ -1206,6 +1207,164 @@ describe("VercelCacheStore", () => {
 
       // Same instant, still stale, but the lock is held -> served as fresh.
       expect((await s.getItem("fn"))?.shouldRevalidate).toBe(false);
+    });
+  });
+
+  // Issue #973: revalidateTag() does not wait for the tm marker writes or
+  // expireTag, so the request that ran it read the entries its invalidation
+  // covers until the platform deleted them.
+  describe("revalidateTag: the invalidating request reads its own writes (#973)", () => {
+    function requestWith(store: VercelCacheStore) {
+      return createRequestContext({
+        env: {},
+        request: new Request("https://test.internal/p"),
+        url: new URL("https://test.internal/p"),
+        variables: {},
+        cacheStore: store,
+      });
+    }
+
+    /** Park the tm marker writes and expireTag until release is called. */
+    function holdInvalidation(cache: VercelRuntimeCache): () => void {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const set = cache.set.bind(cache);
+      const expireTag = cache.expireTag.bind(cache);
+      vi.spyOn(cache, "set").mockImplementation(async (key, value, options) => {
+        if (key.startsWith("rg:tm:")) await held;
+        return set(key, value, options);
+      });
+      vi.spyOn(cache, "expireTag").mockImplementation(async (tag) => {
+        await held;
+        return expireTag(tag);
+      });
+      return release;
+    }
+
+    async function seed(s: VercelCacheStore): Promise<void> {
+      await s.setItem("item", "v1", { ttl: 60, tags: ["home"] });
+      await s.set("seg", segment(["home"]), 60, 300);
+      await s.putResponse("res", new Response("r1"), 60, 300, ["home"]);
+      await s.setItem("other", "v1", { ttl: 60, tags: ["unrelated"] });
+      vi.setSystemTime(new Date(T0 + 100));
+    }
+
+    it.each([
+      ["with no prior read", false],
+      ["after a prior read", true],
+    ])(
+      "segment, item and response reads miss while expireTag is in flight (%s)",
+      async (_label, priorRead) => {
+        const { cache } = makeFakeCache();
+        const s = new VercelCacheStore({ cache });
+        await seed(s);
+        const release = holdInvalidation(cache);
+        const req = requestWith(s);
+
+        await runWithRequestContext(req, async () => {
+          if (priorRead) expect(await s.getItem("item")).not.toBeNull();
+          revalidateTag("home");
+          expect(await s.getItem("item")).toBeNull();
+          expect(okHit(await s.get("seg"))).toBeNull();
+          expect(await s.getResponse("res")).toBeNull();
+          expect(await s.getItem("other")).not.toBeNull();
+        });
+
+        release();
+        await Promise.all(req._pendingBackgroundTasks ?? []);
+        expect(await s.getItem("item")).toBeNull();
+      },
+    );
+
+    it("an entry the request writes after its invalidation is served", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        vi.setSystemTime(new Date(T0 + 200));
+        await s.setItem("item", "v2", { ttl: 60, tags: ["home"] });
+        expect((await s.getItem("item"))?.value).toBe("v2");
+      });
+      release();
+    });
+
+    // `>=`, as the marker checks: an entry stamped in the invalidation's
+    // millisecond may hold a value computed before it, so it misses. A false
+    // miss, never a stale read.
+    it("an entry written in the same millisecond as the invalidation misses", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        await s.setItem("item", "v2", { ttl: 60, tags: ["home"] });
+        expect(await s.getItem("item")).toBeNull();
+      });
+      release();
+    });
+
+    it("an entry written before the ta stamp existed counts as older and misses", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      for (const key of ["rg:i:item", "rg:s:seg", "rg:r:res"]) {
+        const entry = store.get(key)!;
+        const envelope = JSON.parse(entry.value as string) as { ta?: number };
+        expect(envelope.ta).toBe(T0);
+        delete envelope.ta;
+        entry.value = JSON.stringify(envelope);
+      }
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        expect(await s.getItem("item")).toBeNull();
+        expect(okHit(await s.get("seg"))).toBeNull();
+        expect(await s.getResponse("res")).toBeNull();
+      });
+      release();
+    });
+
+    it("a context derived from the request reads its mask, and a mask it sets reaches the request", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await seed(s);
+      const release = holdInvalidation(cache);
+      const req = requestWith(s);
+      const derived = () => Object.create(req) as typeof req;
+
+      runWithRequestContext(req, () => revalidateTag("home"));
+      await runWithRequestContext(derived(), async () => {
+        expect(await s.getItem("item")).toBeNull();
+        revalidateTag("unrelated");
+      });
+      await runWithRequestContext(req, async () => {
+        expect(await s.getItem("other")).toBeNull();
+      });
+      release();
+    });
+
+    it("a shell read and the shell write gate see it after a memoized marker read", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      // Memoizes the shell and its absent tm marker for this process.
+      expect(await s.getShell("k")).not.toBeNull();
+      vi.setSystemTime(new Date(T0 + 100));
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        revalidateTag("home");
+        expect(await s.getShell("k")).toBeNull();
+        expect(await s.readShellDocument("k")).toBeNull();
+        expect(await s.isTagsInvalidatedSince(["home"], T0)).toBe(true);
+      });
+      release();
     });
   });
 });

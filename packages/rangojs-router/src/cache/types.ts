@@ -303,6 +303,20 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * APIs delegate to. Receives ALL of one invalidation call's tags at once so
    * stores can batch their work (e.g. a single CDN purge request rather than
    * one per tag). Stores that do not support tags simply omit this method.
+   *
+   * Both verbs call it synchronously, inside the request that invalidates
+   * (#973); revalidateTag() then hands the returned promise to waitUntil
+   * without awaiting it. Read-your-own-writes for that request comes from
+   * what the store does before its first await: record the tags as
+   * invalidated in state its reads consult for the rest of the request (the
+   * built-in stores key a map by the request's root context and the store,
+   * so contexts derived from the request share it, and compare each hit's
+   * tags and write time against it), then start the
+   * durable write. Such a mask must only ever turn hits into misses, and only
+   * in that request: a durable write that later fails then costs extra
+   * misses, never a stale read. A store that records nothing before its
+   * first await still works; the request that ran revalidateTag() can read
+   * entries the invalidation covers until the durable write lands.
    * @param tags - The cache tags to invalidate
    */
   invalidateTags?(tags: string[]): Promise<void>;
