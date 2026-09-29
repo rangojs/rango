@@ -29,7 +29,7 @@ import type {
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
-import { observeHandler } from "../instrument.js";
+import { observeSegmentHandler } from "../instrument.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
@@ -175,7 +175,9 @@ export async function resolveLayoutComponent<TEnv>(
   // by track("handler:<id>") at the call site). handleHandlerResult stays OUTSIDE
   // the span so a handler that returns a Response (redirect control flow, which it
   // rethrows) is not recorded as a span error — mirrors the route-handler sites.
-  return handleHandlerResult(await observeHandler(entry.id, handler, context));
+  return handleHandlerResult(
+    await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+  );
 }
 
 // ---------------------------------------------------------------------------

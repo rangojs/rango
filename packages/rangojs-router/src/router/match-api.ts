@@ -3,6 +3,7 @@ import {
   createCacheScope,
   resolveShellImplicitCacheScope,
 } from "../cache/cache-scope.js";
+import { armRecordTagOwners } from "../cache/cache-tag.js";
 import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
@@ -150,6 +151,13 @@ export async function createMatchContextForFull<TEnv>(
     Store.metrics = metricsStore;
   }
 
+  // Shell fast path: a capture or an eligible document/navigation HIT may
+  // substitute an implicit doc-level scope (a route-derived scope wins).
+  const cacheScope = resolveShellImplicitCacheScope(snapshot.cacheScope);
+  // A scope means a route cache() record may be written: arm its tag owners
+  // before any handler runs (#957).
+  if (cacheScope) armRecordTagOwners();
+
   return {
     request,
     url: cleanUrl,
@@ -186,9 +194,7 @@ export async function createMatchContextForFull<TEnv>(
     },
     isSameRouteNavigation: false,
     interceptResult: null,
-    // Shell fast path: a capture or an eligible document/navigation HIT may
-    // substitute an implicit doc-level scope (a route-derived scope wins).
-    cacheScope: resolveShellImplicitCacheScope(snapshot.cacheScope),
+    cacheScope,
     isIntercept: false,
     actionContext: undefined,
     isAction: false,
@@ -401,6 +407,15 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   const isIntercept = !!interceptResult;
+  // A normal-route navigation may replay a PPR shell's canonical segment
+  // snapshot. Intercepts remain source-dependent and always use their normal
+  // cache path.
+  const cacheScope = isIntercept
+    ? snapshot.cacheScope
+    : resolveShellImplicitCacheScope(snapshot.cacheScope);
+  // A scope means a route cache() record may be written: arm its tag owners
+  // before any handler runs (#957).
+  if (cacheScope) armRecordTagOwners();
 
   return {
     request,
@@ -427,12 +442,7 @@ export async function createMatchContextForPartial<TEnv>(
     interceptSelectorContext,
     isSameRouteNavigation: nav.isSameRouteNavigation,
     interceptResult,
-    // A normal-route navigation may replay a PPR shell's canonical segment
-    // snapshot. Intercepts remain source-dependent and always use their normal
-    // cache path.
-    cacheScope: isIntercept
-      ? snapshot.cacheScope
-      : resolveShellImplicitCacheScope(snapshot.cacheScope),
+    cacheScope,
     isIntercept,
     actionContext,
     isAction,

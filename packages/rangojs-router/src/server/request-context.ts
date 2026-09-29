@@ -449,6 +449,15 @@ export interface RequestContext<
    */
   _requestTags: Set<string>;
 
+  /**
+   * @internal This request can write a route cache() record: its match
+   * resolved a cache scope (match-api.ts). Arms the record tag owners
+   * (cache-tag.ts armRecordTagOwners); off, the segment scopes, loader links
+   * and owned tag sets are skipped entirely. A capture's or background
+   * re-render's derived context (Object.create) inherits it.
+   */
+  _recordTagOwners?: true;
+
   /** @internal Cache profiles for "use cache" profile resolution (per-router) */
   _cacheProfiles?: Record<
     string,
@@ -786,6 +795,7 @@ export type PublicRequestContext<
   | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"
   | "_requestTags"
+  | "_recordTagOwners"
   | "_cacheProfiles"
   | "_onResponseCallbacks"
   | "_pendingBackgroundTasks"

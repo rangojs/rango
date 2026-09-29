@@ -1007,14 +1007,25 @@ the capture render — every `cacheTag(...)` that ran as shell material, whether
 from a `"use cache"` function, a `cache()` segment, or a render-callable
 `cacheTag()` in a plain server component (no `"use cache"`/`cache()` in its
 tree), plus the tags of cached loaders on the BAKE lane (they execute during
-capture). Live-lane loader tags (every loader without `ssr: false`) never
-attach — those loaders are masked at capture, and the holes are already live. `ppr.tags` adds
+capture). A live-lane loader's tags (every loader without `ssr: false`)
+attach only when a handler consumes its value with `ctx.use()`, which bakes
+it; one read only by the client stays off, since it is masked at capture and
+its hole is already live. `ppr.tags` adds
 operational tags the render cannot know (a tenant id, a deploy marker).
+
+When the route has its own `cache()`, the capture replays that record instead
+of re-rendering, so nothing it covers runs at capture. The record stores the
+tags its content recorded when the foreground wrote it and re-records them on
+the HIT, so the shell carries the same union. That includes a `loading()`
+slot's handler output (a HIT replays it from the record) and any loader a
+handler consumes with `ctx.use()`; a loader read only by `useLoader()` under
+`loading()` stays off. `updateTag()` of such a tag drops the record together
+with the shell, so the recapture renders fresh.
 
 | Lever                                                   | Reaches the frozen shell?                                     | Reaches the holes?                                  |
 | ------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
 | `updateTag` / `revalidateTag` on a SHELL tag            | YES — drops the shell → MISS → recapture                      | n/a (holes are already live)                        |
-| `updateTag` / `revalidateTag` on a live-lane LOADER tag | no — live-lane loader tags never attach to a shell            | drops that loader's cached value (if it `cache()`s) |
+| `updateTag` / `revalidateTag` on a live-lane LOADER tag | only if a handler consumes the loader (`ctx.use()`)           | drops that loader's cached value (if it `cache()`s) |
 | `revalidate()` (named revalidation contract)            | **no** — re-runs segments/loaders for the PAYLOAD, never HTML | yes — the hole re-renders with fresh data           |
 
 A server action's automatic invalidation refreshes the CLIENT only — it re-runs

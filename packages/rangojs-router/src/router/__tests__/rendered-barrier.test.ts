@@ -15,6 +15,7 @@ vi.mock("../../server/context", async (importActual) => {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    getCurrentLoaderBodyId: () => undefined,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };
@@ -26,6 +27,7 @@ vi.mock("../../server/context.js", async (importActual) => {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
+    getCurrentLoaderBodyId: () => undefined,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };

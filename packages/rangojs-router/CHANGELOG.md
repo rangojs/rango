@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Breaking: a route `cache()` entry is tagged by what its content recorded, so `updateTag()` evicts shells and documents built from it ([#965](https://github.com/rangojs/rango/pull/965))
+
+On a `ppr` route with its own `cache()`, the shell capture replays the route's
+`cache()` entry instead of rendering again, so no covered handler or server
+component runs. The entry carried only its `cache({ tags })`, so the shell
+was stored without the tags those components recorded with `cacheTag()` or a
+`"use cache"` read. `updateTag()` of such a tag then left the page on
+`x-rango-shell: HIT` until the shell's ttl+swr, even after the awaited call
+resolved (#957). A document-cache entry stored while the `cache()` entry was a
+HIT lost the same tags.
+
+A route `cache()` entry now stores the tags its content recorded when it was
+written: render-callable `cacheTag()` calls and `"use cache"` reads, in the
+handlers, server components and handle values it covers, `loading()` subtrees
+included (a HIT replays their output too). A loader's tags reach the entry only when a
+handler consumes its value with `ctx.use()`, whoever started the loader; a
+loader nobody reads on the server (a `useLoader()` under `loading()`) runs
+per request and stays off. The entry records its tags again on every HIT, so
+the shell or document built from the HIT carries them.
+
+The breaking part is that those tags also invalidate the `cache()` entry.
+Before, only `cache({ tags })` did, and after `updateTag()` the entry kept
+replaying the output rendered before the mutation until it expired.
+
+```tsx
+function CampaignLayout() {
+  cacheTag("campaign"); // render-callable: no "use cache" around it
+  return <Banner />;
+}
+layout(CampaignLayout, () => [
+  cache({ ttl: 600 }, () => [path("/sale", SalePage, { ppr: true })]),
+]);
+
+await updateTag("campaign");
+// Before: the /sale shell captured from the cache() entry stayed a HIT, and
+// the entry kept the old banner, until ttl+swr.
+// After: shell and entry are dropped; the next request renders fresh.
+```
+
+Migration: none is needed for correctness. Suppose a tag inside a cached
+subtree is meant for the document only, and it changes often enough that
+re-rendering the entry costs too much. On a route without `ppr`, move the
+`cacheTag()` to a layout above the `cache()`: that layout re-runs on every
+HIT and stays out of the entry.
+
+`CFCacheStore.set()` now resolves once its Cache API write lands. Before, it
+resolved as soon as the write was scheduled. The PPR capture waits for the
+page render's `cache()` write before reading it, so it replays the entry
+instead of rendering the page a second time. In the production run of
+`tests/cloudflare-basic` `ppr-tag-eviction` (10 repeats, 60 captures), captures
+that re-rendered went from 30 to 0.
+
 ### Breaking: a PPR hole reads the current `"use cache"` entry, not the shell's captured copy ([#958](https://github.com/rangojs/rango/pull/958))
 
 When a `ppr` route's shell and one of its live holes (a loader under

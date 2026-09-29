@@ -506,7 +506,7 @@ tag-based cache invalidation now maps directly.
 with `cache({ tags })` or runtime `cacheTag(...tags)`. `cacheTag()` works inside a
 `"use cache"` function (tags that entry) AND render-callable in a plain server
 component (no `"use cache"` needed — it tags the document / PPR shell the component
-renders into). Then invalidate by tag:
+renders into, and the route `cache()` entry it renders inside). Then invalidate by tag:
 
 ```typescript
 // Next.js                    Rango

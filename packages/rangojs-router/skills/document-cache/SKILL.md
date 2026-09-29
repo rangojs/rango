@@ -224,7 +224,9 @@ with the request's tag set, so `updateTag()`/`revalidateTag()` evict them:
 
 - a render-callable `cacheTag("...")` in any server component on the page;
 - tags of `cache()` segments, cached loaders, and `"use cache"` functions the
-  render read.
+  render read. A `cache()` segment HIT contributes the tags its content
+  recorded when it was written (render-callable calls and `"use cache"` reads
+  inside it), so a document stored over the HIT stays evictable by them.
 
 Tags are snapshotted after the response body has fully streamed, so tags from
 Suspense-streamed content are included. A `Prerender()` route's build-time

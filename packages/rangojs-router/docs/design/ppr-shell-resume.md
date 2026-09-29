@@ -677,10 +677,13 @@ The expiry invariant holds BY CONSTRUCTION, no filtering logic:
 
 - **tagged bake ⇒ evicts** — a component/loader that bakes into the shell executes
   during capture, so any `cacheTag()` call records and rides onto the entry.
-- **hole ⇒ fresh** — a live loader's subtree (behind `loading()` or an inline
-  `<Suspense>`) is masked during capture (its loaders never run), so nothing
-  under a hole can tag the shell; it stays live and re-renders per request
-  regardless of tag invalidation.
+- **live loader ⇒ untagged unless read** — the framework's own start of a
+  live-lane loader is masked during capture; a handler that reads its value
+  with `ctx.use()` runs it at capture (the consumption lane), so its own tags
+  reach the shell only through a handler that reads it. The rest of a `loading()`
+  subtree is not excluded. A fresh capture runs the slot's handler, and on a
+  route with its own `cache()` the capture replays that handler's output from
+  the record, tags included (#957, below).
 
 Timing: the tag snapshot sits at the putShell WRITE BARRIER (`captureAndStoreShell`,
 right before it builds the `ShellCacheEntry`), not at stream construction. By the
@@ -693,10 +696,56 @@ the deferred cache writes were awaited, so any tag the render recorded onto
 cache, which buffers the full response body before `collectRequestTags`. The earlier
 `attemptCapture` snapshot — taken right after `renderToReadableStream` returned,
 before React had rendered anything past the first await — dropped those late tags
-silently; moving it behind the quiesce gate closed that window (issue #676). Holes
-are unaffected by the move: a masked loader never executes during capture, so
-nothing under a hole records a tag regardless of when the snapshot runs — the
-baked ⇒ evicts / hole ⇒ fresh invariant above still holds by construction.
+silently; moving it behind the quiesce gate closed that window (issue #676).
+Masked loaders are unaffected by the move: they never execute during capture,
+so they record nothing whenever the snapshot runs.
+
+### A capture that replays the route's cache() record (scar tissue, #957)
+
+Everything above assumes the capture EXECUTES the shell material. It does not
+when the route has its own `cache()`: the capture replays the foreground's
+record (the write barrier in `attemptCapture` exists to make that ordering
+deterministic), so no handler runs and no server component re-renders, and none
+of their `cacheTag()` calls fire. Before #957 the record carried only its
+`cache({ tags })` config, so such a capture stored an UNTAGGED shell. That shell
+survived every `updateTag()` of its render-called tags until ttl+swr. It showed up
+as `ppr-tag-eviction` flaking in production (`x-rango-shell: HIT` for the whole
+poll after an awaited `updateTag`). It flaked only when the capture queued behind
+another one, which let the foreground's record write land first.
+
+The record now carries what it baked. Every tag records onto an owner. Each
+handler invocation (segment resolution) and each segment's Flight
+serialization in `CacheScope.cacheRoute` runs inside that segment's tag scope
+(`runInSegmentTagScope`, `cache-tag.ts`), and a tag recorded inside a loader
+body belongs to that loader (the body scope's `getCurrentLoaderBodyId`). So a
+render-callable `cacheTag()` or a
+`"use cache"` read lands on the segment or loader that ran it. A loader's value
+reaches the record only through the handler that reads it, so `ctx.use()`
+links the reader to the loader (`linkLoaderTags`) whoever started it: the DSL
+funnel often starts a loader before its handler runs. A loader nobody reads on
+the server stays off. The record's handle values are Flight-encoded under an
+owner of their own, since a HIT replays them too. `collectRecordTags` stores
+the union for every covered segment and that handle owner, following those
+links. `loading()` subtrees are included: a HIT replays their handler output
+from the record like any other. A HIT re-records the record's tags
+(`lookupRouteDetailed`), so the replaying capture's `_requestTags`, and with
+them the shell, carry them. The same tags invalidate the record, so after
+`updateTag()` the recapture renders fresh instead of replaying pre-update
+output.
+
+None of this runs on a request that cannot write a record. Every record writer
+needs the match's cache scope, which is known before any handler runs, so
+`match-api.ts` arms `RequestContext._recordTagOwners` only when it resolves
+one (`armRecordTagOwners`). Elsewhere a handler call is `observeHandler`
+unchanged: no tag scope, closure or owner allocation. A capture or background
+re-render's derived context (`Object.create`) inherits the flag.
+
+The barrier itself had a gap on `CFCacheStore`. `set()` resolved as soon as its
+Cache API put was scheduled, so the barrier's settle of the foreground's
+`cacheRoute` task finished before the record was readable. Half of the
+production captures in the eviction e2e missed the record and re-rendered.
+`set()` now resolves once the L1 put lands (the KV write stays in the
+background).
 
 ### The handles contract: "nesting = liveness"
 

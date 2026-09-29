@@ -1324,7 +1324,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Store entry data with TTL and optional SWR window.
-   * Uses waitUntil for non-blocking write when available.
+   * Resolves once the L1 write lands, per the SegmentCacheStore.set contract
+   * (also held by waitUntil when available); the KV write stays in the
+   * background.
    * When KV is configured, also persists to L2.
    */
   async set(
@@ -1375,20 +1377,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const putPromise = cache.put(request, response);
 
+      let l1Write: Promise<void> | undefined;
       if (this.waitUntil) {
-        // Non-blocking write. These store-level background tasks intentionally
-        // omit the reportingAsync ctx argument: the store is a request-agnostic
+        // These store-level background tasks intentionally omit the
+        // reportingAsync ctx argument: the store is a request-agnostic
         // singleton and this.waitUntil is the execution context's, not a single
         // request's, so a failure is reported console-loud only (it cannot be
         // attributed to one request's onError). The request-scoped tag verbs
         // (revalidateTag / stale-revalidation) DO thread their captured ctx.
-        this.waitUntil(() =>
-          reportingAsync(
-            () => putPromise,
-            "cache-write",
-            "[CFCacheStore] L1 write",
-          ),
+        const put = reportingAsync(
+          () => putPromise,
+          "cache-write",
+          "[CFCacheStore] L1 write",
         );
+        this.waitUntil(() => put);
+        l1Write = put;
       } else {
         // Blocking fallback
         await putPromise;
@@ -1396,6 +1399,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // L2: persist to KV (reuses `body` as envelope.d)
       this.kvSetSegment(key, body, staleAt, totalTtl, swrWindow);
+
+      // The set() contract (SegmentCacheStore.set, #957): resolve once L1 is
+      // readable.
+      await l1Write;
     } catch (error) {
       reportCacheError(error, "cache-write", "[CFCacheStore] set");
     }

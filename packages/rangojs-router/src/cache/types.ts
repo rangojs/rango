@@ -112,7 +112,11 @@ export interface SegmentCacheStore<TEnv = unknown> {
   get(key: string): Promise<CacheGetResult | null | CacheReadError>;
 
   /**
-   * Store entry data with TTL
+   * Store entry data with TTL. Resolve once a later `get(key)` from the same
+   * location observes the entry: the route cache() write runs in a background
+   * task, and a PPR shell capture awaits that task before it reads the entry
+   * back (#957). A store that resolves earlier makes the capture re-render
+   * the page instead of replaying the entry.
    * @param key - Cache key
    * @param data - Serialized entry data
    * @param ttl - Time-to-live in seconds

@@ -59,7 +59,7 @@ import {
   maskNestedContainerThenables,
   overlayLoaderContainer,
 } from "./loader-snapshot.js";
-import { recordRequestTags } from "../../cache/cache-tag.js";
+import { linkLoaderTags, recordLoaderTags } from "../../cache/cache-tag.js";
 import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
@@ -368,7 +368,11 @@ function executeLoaderData<TEnv>(
     internal._loaderCacheOriginalUse = originalUse;
     ctx.use = ((item: any) => {
       const cached = overrides!.get(item?.$$id);
-      if (cached) return cached;
+      if (cached) {
+        // A read is a consumption (#957): see createLoaderExecutor's useLoader.
+        linkLoaderTags(item.$$id);
+        return cached;
+      }
       return originalUse(item);
     }) as typeof ctx.use;
   }
@@ -395,7 +399,7 @@ function executeLoaderData<TEnv>(
   const swrWindow = resolveSwrWindow(options.swr, store.defaults);
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
-  recordRequestTags(tags);
+  recordLoaderTags(loaderId, tags);
 
   // Handle pushes: the store and the owning segment are read synchronously
   // at kickoff, as createLoaderExecutor does for the body's own pushes.
