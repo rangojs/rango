@@ -486,12 +486,24 @@ live hole, streamed fresh on every request at the consumer's own `<Suspense>`,
 however fast it settles. The shape of the return value declares what is live:
 a plain value bakes, a promise stays live.
 
-- **Any depth, plain containers only.** The mask walks plain objects
-  (prototype `Object.prototype` or `null`) and arrays at any depth —
-  `{ items: [{ stock: fetchStock(sku) }] }` keeps every `stock` live. A `Map`,
-  `Set`, class instance, or any other non-plain object is a LEAF: a promise
-  inside it is NOT masked and does NOT become a live hole. Keep live promises
-  in plain objects and arrays.
+- **Any depth, plain containers and JSX props.** The mask walks plain objects
+  (prototype `Object.prototype` or `null`), arrays and the props of React
+  elements at any depth — `{ items: [{ stock: fetchStock(sku) }] }` keeps
+  every `stock` live, and so does `{ reviews: <Reviews data={fetchReviews(id)} /> }`
+  for `data`. JSX without promises bakes like any plain value. A promise in
+  the props of a host element (`<p>`, `<div>`), `<Suspense>`/`<Fragment>` or a
+  client component is the hole and nothing else: the element's other props
+  bake and stay pinned on every HIT. That includes client components in JSX
+  the loader read back from `cache()` or `"use cache"`, which come back
+  wrapped in `lazy`. A server component (a function component, `memo` or
+  `forwardRef` around one, or a `lazy` that resolves to one) with a promise
+  anywhere in its props is the exception: the whole element is the hole and
+  renders from the
+  fresh loader run on a HIT, so the props it renders into the shell must come
+  out the same on every run. A `Map`, `Set`, class instance, or any other
+  non-plain object is a LEAF: a promise inside it is NOT masked and does NOT
+  become a live hole. Keep live promises in plain objects, arrays and JSX
+  props.
 - **The consumer's `<Suspense>` is the hole.** A client component reads the
   live property with `use(data.price)` inside its own `<Suspense>`; that
   boundary postpones at capture and resumes with the fresh value.
@@ -624,8 +636,8 @@ capturing session's identifiers — served to anonymous visitors.)
   containers (the capture store's push wrap, shell-capture.ts), so even an
   already-resolved nested promise holes instead of baking its value into the
   shared shell. Same shape-is-the-declaration rule, and the same mask, as
-  bake-lane loaders: promises are found at any depth of plain objects and
-  arrays; one inside a `Map`, `Set`, or class instance is not masked.
+  bake-lane loaders: promises are found at any depth of plain objects, arrays
+  and JSX props; one inside a `Map`, `Set`, or class instance is not masked.
 
 ### Want a hole for already-resolved data?
 
@@ -643,8 +655,9 @@ non-promise data bakes into the prelude; every promise nested in it is masked
 at capture (regardless of how fast it settles) and postpones at the consumer's
 own `<Suspense>` — a hole. The capture records the container into the shell
 snapshot's loader family so every HIT payload matches the frozen prelude
-byte-for-byte (see "On a shell HIT" below). The return shape is the
-declaration:
+outside the holes (see "On a shell HIT" below; a server component holding a
+promise is the one element that is a hole as a whole, see "Any depth" above).
+The return shape is the declaration:
 
 ```typescript
 export const StorefrontContextLoader = createLoader(async (ctx) => {

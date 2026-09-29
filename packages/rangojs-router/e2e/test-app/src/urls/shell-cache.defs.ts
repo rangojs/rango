@@ -160,8 +160,7 @@ export const ShellRestockLoader = createLoader(async (ctx) => {
 // run's value (pass 1), then the snapshot re-encodes it (pass 2); the
 // foreground render encodes its own run once. A Map is a leaf to the capture's
 // mask and elide walks, so both passes iterate this instance. Fails once per
-// ?probe=, so a later capture stores. Not a server component: in dev the walks
-// copy elements without their dev fields and the capture crashes (#942).
+// ?probe=, so a later capture stores.
 const flightErrorProbes = new Set<string>();
 
 /**

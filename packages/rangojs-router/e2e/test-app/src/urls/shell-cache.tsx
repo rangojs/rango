@@ -39,6 +39,7 @@ import {
   ShellFlightErrorLoader,
   shellFlightErrorPasses,
 } from "./shell-cache.defs.js";
+import { ShellJsxLoader, ShellJsxPage } from "./shell-cache-jsx.js";
 import {
   ShellBakedView,
   ShellBakedOnlyView,
@@ -931,6 +932,13 @@ export const shellCachePatterns = urls(
         };
       },
       { name: "shellCacheFlightErrorStatus" },
+    ),
+    // Issue #942 fixture (shell-cache-jsx.tsx).
+    path(
+      "/shell-cache/jsx",
+      ShellJsxPage,
+      { ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellJsxLoader, { ssr: false })],
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",

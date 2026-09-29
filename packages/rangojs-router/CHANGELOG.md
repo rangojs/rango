@@ -200,6 +200,26 @@ collected when `debugPerformance` is off.
 
 ### Fixes
 
+- In dev, a PPR route whose `ssr: false` loader returns JSX now captures its
+  shell and HITs. Before, Flight logged
+  `Attempted to render <…> without development properties`, the capture
+  failed with `TypeError: Cannot read properties of undefined (reading 'stack')`,
+  and every request stayed `x-rango-shell: MISS`. The same applies to JSX in a
+  handle value pushed during a capture. A promise in the props of a host
+  element, `<Suspense>` or a client component (`<p>{fetchStock()}</p>`) is a
+  live hole and the rest of that JSX stays baked on every HIT. A server
+  component with a promise in its props
+  (`reviews: <Reviews data={fetchReviews()} />`) is a live hole as a whole: on
+  a HIT it renders from the fresh loader run. Before, in production too, the
+  shell stored that server component's output rendered with a placeholder in
+  place of the promise, and every HIT served it
+  ([#967](https://github.com/rangojs/rango/pull/967)).
+- A PPR shell capture no longer stalls when an `ssr: false` loader value
+  reaches the same promise-holding object twice
+  (`{ summary: shared, card: { shared } }`). The snapshot encode waited
+  forever on the capture's never-settling stand-in for that promise, so the
+  shell was never stored
+  ([#967](https://github.com/rangojs/rango/pull/967)).
 - A `CFCacheStore` PPR shell read whose memoized shell went stale keeps the
   route's `ppr.tags` in its tag-marker prefetch. When the isolate's tag-name
   hints had evicted the key, the store read started those marker reads only

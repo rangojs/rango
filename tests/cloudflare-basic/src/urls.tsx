@@ -102,6 +102,8 @@ import {
   PprFlightErrorLoader,
   pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
+import { PprJsxPage } from "./pages/ppr-jsx.js";
+import { PprJsxLoader } from "./loaders/ppr-jsx.js";
 import {
   PprDriftLayout,
   PprDriftPricePage,
@@ -1481,6 +1483,10 @@ export const urlpatterns = urls(
         path.json("/ppr-flight-error-passes", (ctx) => ({
           passes: pprFlightErrorPasses.get(ctx.searchParams.get("run") ?? ""),
         })),
+        // Issue #942 fixture (loaders/ppr-jsx.tsx).
+        path("/ppr-jsx", PprJsxPage, { ppr: { ttl: 300, swr: 120 } }, () => [
+          loader(PprJsxLoader, { ssr: false }),
+        ]),
         // Issue #925: a { cache: false } var read inside "use cache" throws.
         middleware(requestTenantMiddleware, () => [
           path("/use-cache-non-cacheable", UseCacheNonCacheablePage, () => [

@@ -297,6 +297,44 @@ container-with-promise-paths-elided)` into the same
   froze); a path that is a promise in BOTH runs stays the fresh promise; a NEW
   path (absent at capture) passes through fresh — it cannot contradict prelude
   bytes that never rendered it.
+- **React elements: never copied, holes placed by type (issue #942).** A
+  container can carry JSX (`related: <Related id={id} />`). A key-by-key copy
+  loses React's non-enumerable dev fields (`_debugStack`, `_debugTask`), dev
+  Flight refused it ("Attempted to render <x> without development
+  properties"), and the capture crashed, so the route never HIT in dev. Now
+  every walk keeps an element by identity and rebuilds one only where a
+  thenable or marker sits in its props, through `cloneElementWithProps`
+  (`mask-nested.ts`), which is `cloneElement` plus React's dev key-validation
+  state (React 19 dev `cloneElement` resets `_store.validated`, and a keyless
+  child of a static list then warns "Each child in a list should have a
+  unique key").
+  - The capture mask descends every element's props: a promise there
+    (`<Reviews data={fetchReviews()} />`) declares per-request data by the
+    same shape rule.
+  - Elide places markers by what the pin encode does with the element type
+    (`rendersOnServer`, `loader-snapshot.ts`, mirroring Flight's
+    `renderElement`). Host (`string`), Suspense/Fragment (`symbol`) and
+    client-reference elements are encoded with their props as data, so the
+    marker stays inside their props and everything else about the element
+    is pinned: exact parity, the same as for plain containers. A `lazy` type
+    is resolved first, the way Flight resolves it: the Flight decode (a
+    `cache()` hit, a `"use cache"` result) hands every client component back
+    as a lazy around its client reference, and treating those as server
+    components made the whole element a hole. A server component (a function
+    component, `memo`/`forwardRef` around one, or a `lazy` resolving to one,
+    or one that cannot resolve yet) is CALLED by the pin encode, so a marker in its props would reach
+    it: an element of that type with a thenable anywhere in its props is ONE
+    hole marker, and the HIT takes the fresh run's element. That is the one
+    place parity is not exact — the component's other props come from the
+    fresh run while the prelude holds whatever it rendered at capture — so
+    they must come out the same on every run.
+  - The HIT overlay rebuilds a recorded element at its marker paths only, so
+    its other props stay pinned, and it reads through lazy nodes: Flight
+    moves an element past ~3.2 KB of its row into a row of its own (`$L`),
+    which the decode wraps in a lazy node, so a marker can sit behind one.
+    Props a fresh element adds do not pass through.
+  - Lazy nodes and every other object with a symbol `$$typeof` are leaves to
+    the mask and elide (`isPlainDataObject`).
 - **Envelope compat.** CF and Vercel shells cherry-pick entry fields into
   their own layouts (the CF frame's snapshot tail, `cf-shell-frame.ts` /
   `VercelShellEnvelope.sn`); the snapshot array itself already rides there,
