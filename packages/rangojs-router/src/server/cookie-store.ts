@@ -13,6 +13,7 @@ import {
   isInsideCacheScope,
   assertNotInsideShellCapture,
   tripShellCaptureGuard,
+  recordLoaderIdentityRead,
 } from "./context.js";
 import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
 
@@ -112,6 +113,9 @@ type HeadersIterator<T> = IterableIterator<T>;
  * (Scar: the previous INSIDE_CACHE_EXEC stamp on the shared RequestContext
  * made exactly that parallel read throw for the cached fetch's whole
  * execution window — see cache-exec-scope.ts.)
+ *
+ * The loader cache() identity reads (#972) are recorded by the read methods
+ * instead (createCookieStore, the headers() view), so a write alone is not one.
  */
 function assertNotInsideCacheContext(fnName: string): void {
   const scope = refusingCacheScope();
@@ -170,6 +174,9 @@ export type ThemeReadSurface = "ctx.theme" | "getRequestContext().theme";
  * entry or a "use cache" entry stored the first visitor's theme and served it
  * to every later visitor.
  *
+ * A read the guards allow is recorded on the current loader execution, as a
+ * cookies() read method records it (#972, recordLoaderIdentityRead).
+ *
  * `ctx` is the request context at read time, as cookies() reads it. The
  * router's own payload read (payloadInitialTheme, rsc/full-payload.ts) goes
  * through the unguarded `_readTheme()`.
@@ -201,9 +208,24 @@ export function assertThemeReadAllowed(
         `so the capturing visitor's theme would reach everyone. ${THEME_READ_FIX}`,
     );
   }
+  // An identity read like a cookies() read method: a loader cache() fill with
+  // no key() refuses an execution that made one (#972).
+  recordLoaderIdentityRead(surface, "read");
 }
 
 const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);
+// Reading one records the read (#972), like the cookies() read methods: a
+// headers() view taken outside a loader and read inside one still counts.
+const HEADERS_READ_PROPS = new Set<string | symbol>([
+  "get",
+  "has",
+  "entries",
+  "keys",
+  "values",
+  "forEach",
+  "getSetCookie",
+  Symbol.iterator,
+]);
 
 /**
  * Get the original request headers (read-only).
@@ -226,6 +248,7 @@ export function headers(): ReadonlyHeaders {
   assertNotInsideShellCapture(ctx, "headers");
   return new Proxy(ctx.request.headers, {
     get(target, prop, receiver) {
+      if (HEADERS_READ_PROPS.has(prop)) recordLoaderIdentityRead("headers()");
       if (typeof prop === "string" && HEADERS_MUTATION_METHODS.has(prop)) {
         return () => {
           throw new Error(
@@ -306,11 +329,13 @@ function createCookieStore(ctx: {
 }): CookieStore {
   return {
     get(name: string): Cookie | undefined {
+      recordLoaderIdentityRead("cookies()");
       const value = ctx.cookie(name);
       return value !== undefined ? { name, value } : undefined;
     },
 
     getAll(name?: string): Cookie[] {
+      recordLoaderIdentityRead("cookies()");
       const all = ctx.cookies();
       if (name !== undefined) {
         const value = all[name];
@@ -320,6 +345,7 @@ function createCookieStore(ctx: {
     },
 
     has(name: string): boolean {
+      recordLoaderIdentityRead("cookies()");
       return ctx.cookie(name) !== undefined;
     },
 

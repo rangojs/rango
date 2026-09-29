@@ -122,6 +122,7 @@ and `getRequestContext().theme` are guarded like `cookies()`:
 | after `ctx.dynamic()` on `ppr`                             | Allowed: that render is never captured                                                                |
 | middleware `ctx.set()` of the theme, read by a handler     | Not guarded: the first visitor's theme bakes into the shell or `cache()` entry, like a session object |
 | a route with no `ppr` or `cache()` above it, or middleware | Allowed: rendered per request                                                                         |
+| a loader with its own `cache()` and no `key()`             | The miss fails and stores nothing (#972), like a `cookies()` read there; key the theme                |
 
 The theme getters are read-only and non-enumerable: `{ ...ctx }` and
 `Object.assign({}, ctx)` do not carry `theme`, and assigning it throws.
@@ -149,6 +150,19 @@ export const ThemedLoader = createLoader(async () => {
   const theme = cookies().get("theme")?.value ?? "system"; // storageKey
   return loadThemedAssets(theme);
 });
+```
+
+If you bind it with its own `cache()`, the entry is shared across users, so the
+miss fails unless it has a `key()`. Any `key()` switches that check off, so
+make it include the theme:
+
+```typescript
+loader(ThemedLoader, () => [
+  cache({
+    ttl: 300,
+    key: () => `themed:${cookies().get("theme")?.value ?? "system"}`,
+  }),
+]);
 ```
 
 ## Client

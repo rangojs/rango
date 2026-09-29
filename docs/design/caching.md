@@ -243,6 +243,10 @@ path("post/:slug", () => [loader(PostLoader, () => [cache({ ttl: 30 })])]);
 
 Allows same loader data to be reused across different segments/routes.
 
+This layer is independent of the route's segment cache: its key is only what
+the binding declares (see "Opt-In Loader Caching" → "Identity"), and it does
+not inherit an enclosing route `cache()` key.
+
 ## Proactive Caching (waitUntil)
 
 When a partial request results in some cached segments having `component: null` (because the client already has them), proactively render those segments in the background and cache the complete set.
@@ -753,6 +757,117 @@ path("post/:slug", () => [
   loader(ViewCount, () => [cache({ ttl: 10, swr: 60 })]),
 ]);
 ```
+
+#### Identity: keyed only by what the binding declares (#972, #974)
+
+You might expect a loader's `cache()` inside a keyed route `cache()` to pick
+up the route's partition. It doesn't. A loader's own `cache()` and `"use
+cache"` are independent layers, keyed only by what they declare: the loader
+entry by `key()`, else the store's `keyGenerator`, else the default
+`loader:{id}:{host}{pathname}:{sortedParams}`
+(`resolveLoaderKey` in `src/router/segment-resolution/loader-cache.ts`); a
+`"use cache"` entry by its id and arguments. The default loader key names no
+user, so one entry serves everyone.
+
+That made the loader-body exemption a leak. `isInsideCacheScope()`
+(`src/server/context.ts`) returns false in every loader body because a route
+`cache()` never stores loader values. A loader with its own `cache()` does
+store its value: `cookies()` in its body put the first visitor's session in the
+entry and served it to everyone for the TTL, with nothing thrown or logged
+(#972, reproduced on 0.17.0).
+
+So an unkeyed fill now refuses an execution that read request identity. The
+read surfaces record the read instead of throwing: `cookies()`'s read methods
+(`get`/`getAll`/`has`; a write alone is not a read), the read methods of the
+`headers()` view (its Proxy's `get` trap: reading `view.get(...)` or iterating
+inside a loader counts even when the view was taken outside it, but a method
+pulled off the view beforehand, `const get = headers().get`, is not seen; both
+in `src/server/cookie-store.ts`) and
+non-cacheable `ctx.get()` (`assertNonCacheableReadAllowed`) and the theme getters
+(`assertThemeReadAllowed`, after #971's refusals) call
+`recordLoaderIdentityRead` (`src/server/context.ts`), which marks the current
+execution's recorded-tag set (`src/cache/cache-tag.ts`). Those are the #964
+sets, so the read travels the same links the tags do: a loader read with
+`ctx.use` links the reader's set to its value's set, whoever started that
+loader. When the binding has no `key()` and its store no `keyGenerator`,
+`executeLoaderData` walks its execution's links after the value settles
+(`recordedIdentityRead`). A read fails the fill with
+`loaderCacheIdentityError`, which names the loader and gives the fix: a `key()`
+that includes the value, or no `cache()`. Note what "declared" means: the check
+tests only that a `key()` or `keyGenerator` is there
+(`declared: Boolean(options.key || store.keyGenerator)` in `resolveLoaderKey`),
+not what it contains. A store-wide `keyGenerator` that adds a region prefix
+switches the check off for every loader in that store.
+
+Why record instead of throwing at the read, as `"use cache"` does? The first
+version threw at the read, from an AsyncLocalStorage scope around the fill. It
+missed the case where a reader starts the loader before its binding does, such
+as a parent layout's handler calling `ctx.use` on a route's cached loader. The
+MISS then reuses that run's memoized promise (`useLoader` in
+`src/router/loader-resolution.ts`), which ran outside any fill, and the second
+user still got the first user's session. Recording on the execution makes both
+orders fail the same way, with the same error, and store nothing.
+
+A HIT skips the body, so it records nothing. That would let an unkeyed loader
+read a keyed cached loader on the keyed loader's HIT and store another user's
+value. So a declared-key entry whose MISS recorded a read stores that read with
+the value: an identity mark (`~identity:{read}\n`) ahead of the Flight payload
+(`markIdentity`/`unmarkIdentity` in `loader-cache.ts`). A HIT or stale hit puts
+the read back on the value's set (`markIdentityRead`), and an unkeyed reader
+fails as it would have on the MISS. The value string is loader-cache's own:
+the store only holds it, and the PPR shell snapshot copies it unchanged
+(`src/cache/shell-snapshot.ts`), so the mark needs no change to the store
+contract. A keyed dependency that read no identity carries no mark. Entries
+written before the mark existed carry none: on a store that does not version
+its keys per deploy (`VercelCacheStore` without `version`, a pinned
+`version`), an unkeyed loader reading such an entry on a HIT or stale hit fills
+without error until the entry is rewritten (its refresh stores the mark), so
+the upgrade note says to bump `version` or `updateTag()` the affected tags.
+
+On a foreground MISS with a declared key, the read also marks this loader's
+own value set, as its readers see it: when another loader made the read, the
+mark carries `via` (this loader), and an unkeyed reader's error says it reads
+the value "through another loader". The HIT restores the same mark, so both
+give the same error. A stale refresh does not mark the value set: the page is
+served the stale entry, which its own mark (or its lack) describes, and an
+unkeyed reader of that stale value fills normally. The refreshed entry carries
+the refresh's read, so the next HIT marks its readers.
+
+The write-side check runs after the handle encode (`encodeHandles`), which
+waits for pending pushes: a pushed promise that reads `cookies()` settles only
+there, and a check before it stored the first user's handle values. The encode
+waits up to its timeout (5 s, `HANDLE_ENCODE_TIMEOUT_MS`); a push still pending
+then drops the entry's handle blob and the value is stored without it, so a
+read it makes later is not checked and has nothing to leak into.
+
+The capture scope and the recorded reads live on `globalThis`
+(`Symbol.for("rangojs-router:recorded-tag-capture")`,
+`"rangojs-router:identity-reads"`), like the loader scopes in `context.ts`. The
+recorder is installed there too, and a second evaluated copy of `cache-tag.ts`
+(a duplicated package, a dev re-evaluation) replaced it with one that wrote
+where no fill looked, which switched the check off.
+
+| Execution                                                                                           | Refused       | Why                                                           |
+| --------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------- |
+| The MISS body                                                                                       | yes           | its value is stored under a user-free key                     |
+| A run a reader started before the binding                                                           | yes           | the MISS reuses it; its set carries the read                  |
+| The stale refresh (`_runLoaderIsolated`)                                                            | yes           | same entry; the refresh fails, the stale entry keeps serving  |
+| A loader value the body reads via `ctx.use`                                                         | yes           | the value lands in the entry; the read link carries it        |
+| A keyed cached loader's HIT the body reads via `ctx.use`                                            | yes           | its entry's identity mark                                     |
+| A read that settles after the value (nested promise, pending handle push within the encode timeout) | write only    | the value is already served; the write is refused, `onError`  |
+| A live loader running beside the fill                                                               | no            | its set is not linked to the fill                             |
+| A loader under a route `cache()` with no `cache()` of its own                                       | no            | not stored; re-runs on every HIT                              |
+| A bake-lane loader during a PPR shell capture                                                       | capture guard | `assertNotInsideShellCapture` still throws at the read, first |
+
+Response directives (`invalidateClientCache()`, `keepClientCache()`) and cookie
+writes record nothing: a `key()` cannot make a skipped body's side effect
+reach a HIT.
+
+What stays out of reach, the same as for `"use cache"`: raw reads
+(`ctx.request.headers`, `getRequestContext().cookie()`), and a value computed
+outside any loader execution and handed in, such as a per-request memo a
+handler filled from `cookies()` before the loader awaited it. The read ran in
+no loader's set, so nothing links it to the fill.
 
 ### Implementation Notes
 

@@ -366,7 +366,16 @@ server projection.
   `armLoaderTagSets`, `RequestContext._recordLoaderTags`). A loader body's `ctx.use` of a
   cache()-bound loader gets the binding's value (see `execution-model.md`).
   `runLoader({ cache })` (`testing/run-loader.ts`) runs a loader through this
-  read-through.
+  read-through. The same per-execution sets carry request-identity reads
+  (`cookies()`/`headers()`/non-cacheable `ctx.get()`, recorded by
+  `recordLoaderIdentityRead` in `server/context.ts`). With no `key()` and no
+  store `keyGenerator`, a MISS or stale refresh whose execution, or a loader
+  value it read, recorded one fails with `loaderCacheIdentityError` and stores
+  nothing, whoever started that execution (`recordedIdentityRead`, #972). A
+  declared-key entry whose MISS recorded one stores it as an identity mark
+  ahead of the value (`markIdentity`), and a HIT restores it
+  (`markIdentityRead`) for unkeyed readers. A read that settles after the
+  value only refuses the write.
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

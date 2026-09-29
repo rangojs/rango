@@ -132,7 +132,11 @@ cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
 
 DSL loaders can safely read `createVar({ cache: false })` variables
 because they are always resolved fresh. The read guard is bypassed for
-loader functions — they never produce stale data. A `"use cache"` function
+loader functions — they never produce stale data. A loader bound with its
+own `cache()` is the exception: its value is stored and shared, so a miss
+whose body read `cookies()`, `headers()` or a non-cacheable variable fails
+unless the binding has a `key()` or a store `keyGenerator`, which must then
+include them (see "Cache Key"). A `"use cache"` function
 the loader calls is not a loader body: a non-cacheable read inside it throws,
 also through the loader's `ctx` passed in, so read the var in the loader and
 pass the value in as an argument. Passing the loader's `ctx` itself is fine:
@@ -654,6 +658,56 @@ A `key` function (or store `keyGenerator`) that throws is **not** caught: the
 loader fails as if its body threw. There is no silent fallback to the default
 key, because a personalised key collapsing onto the broad default would share
 one user's data with everyone.
+
+**Request-scoped reads in the body must be part of the key.** The default key
+names no user, so one entry serves everyone who requests the same loader, host,
+path and params. A route `cache()` around the route does not partition it
+either: a loader's own `cache()` is an independent layer, keyed only by what it
+declares. On a miss, a body that reads `cookies()`, `headers()` or a
+non-cacheable variable (`createVar({ cache: false })`, or a value written with
+`ctx.set(..., { cache: false })`) therefore **fails**, and nothing is stored,
+unless the binding declares identity with a `key()` or a store `keyGenerator`.
+The check tests only that one of them is there, not what it contains: any
+`key()` or store `keyGenerator` switches it off, so it must itself include the
+value. That includes a store-wide `keyGenerator` that only adds a region
+prefix, like the one described above.
+
+```typescript
+export const SessionLoader = createLoader(async () =>
+  getAccount(cookies().get("session")?.value),
+);
+
+// The miss fails: cookies() cannot be called inside loader "…SessionLoader",
+// whose own cache() has no key().
+loader(SessionLoader, () => [cache({ ttl: 60 })]),
+
+// One entry per session.
+loader(SessionLoader, () => [
+  cache({
+    ttl: 60,
+    key: (ctx) => `account:${cookies().get("session")?.value ?? "anon"}`,
+  }),
+]),
+```
+
+The same holds in a stale entry's background refresh (the refresh fails and the
+stale entry keeps serving) and for the loaders the body reads with `ctx.use()`,
+because their values land in the entry. That includes a keyed cached loader
+served from its own cache: its entry keeps the read its miss made. It also holds
+when something else ran the loader first, such as a parent layout's handler
+calling `ctx.use(SessionLoader)`: the miss reuses that run and fails the same
+way. A read that settles after the value, in a promise inside it or in a
+handle push that settles within the 5 s handle-encode timeout, can't fail a
+value that was already served: that user gets their own value, nothing is
+stored, and `onError` gets the same error. A push still pending after the
+timeout drops the entry's handles, and the value is stored without them. A loader with no `cache()` of its own
+reads request data freely.
+
+Two kinds of read are not seen, the same as in `"use cache"`: raw reads such
+as `ctx.request.headers` or `getRequestContext().cookie()`, and a value
+computed outside the loader and handed in, such as a per-request memo a handler
+filled from `cookies()` before the loader awaited it. Key what those carry
+too. If the value must stay per request, drop the loader's `cache()` instead.
 
 ### Tags for Invalidation
 

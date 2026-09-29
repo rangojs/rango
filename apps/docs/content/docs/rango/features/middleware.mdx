@@ -118,7 +118,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 const user = ctx.get(CurrentUser); // AuthUser | undefined
 ```
 
-Use `createVar` for route-local or feature-scoped data; use the global `Rango.Vars` augmentation for app-wide middleware state. Marking a var `{ cache: false }` makes a direct `ctx.get()` of it inside a `cache()` boundary or a `"use cache"` function throw, so one user's data can't be served to another; loaders can still read it because they always run fresh.
+Use `createVar` for route-local or feature-scoped data; use the global `Rango.Vars` augmentation for app-wide middleware state. Marking a var `{ cache: false }` makes a direct `ctx.get()` of it inside a `cache()` boundary or a `"use cache"` function throw, so one user's data can't be served to another; loaders can still read it because they always run fresh (a loader bound with its own `cache()` only with a `key()`, which switches the check off, so the key must include the value).
 
 ## Redirects with flash state
 

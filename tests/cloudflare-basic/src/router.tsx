@@ -145,6 +145,7 @@ export const router = createRouter<AppBindings>({
     onErrorLog.push({
       phase: ctx.phase,
       message: ctx.error.message,
+      pathname: ctx.pathname,
       metadata: ctx.metadata,
     });
   },

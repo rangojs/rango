@@ -90,8 +90,11 @@ path, not only ProductChrome.
 
 The consumer rule: **want it cached? render it inline. Want it live? put it in a
 loader and read it with `useLoader()` in a client component.** Anything read
-with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader
-(loaders always run fresh). Reading it directly in a cached handler throws;
+with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader:
+a route `cache()` does not store loader values, so a loader runs on every
+request. A loader bound with its own `cache()` is stored, so without a `key()`
+its miss fails; any `key()` switches that check off, so it must include the
+value (see `/loader` → "Cache Key"). Reading it directly in a cached handler throws;
 awaiting a loader with `ctx.use()` and rendering the result in a cached handler
 silently bakes per-request data into the shared entry (see "Cache purity &
 tainted objects" below).
@@ -422,6 +425,13 @@ value and replayed on every hit, stale included. The tags the body records
 (`cacheTag()`, `"use cache"` reads, and those of the loaders it reads) are
 stored with it too: `updateTag()` of one drops the entry, as `cache({ tags })`
 does. See `/loader` for the full loader reference.
+
+The entry's default key is the loader, host, path and params. It does not
+inherit an enclosing `cache()` boundary's `key()` either, so it is shared
+across users: a body that reads `cookies()`, `headers()` or a non-cacheable
+variable fails on a miss unless the loader `cache()` has a `key()` or its store
+a `keyGenerator`. Either one switches the check off, so it must itself include
+the value (`/loader` → "Cache Key").
 
 ## Global Cache Configuration
 
@@ -786,6 +796,12 @@ another, request-scoped APIs are guarded inside a cache scope:
 A loader body invoked from a handler with `await ctx.use(Loader)` may read
 `cookies()`/`headers()`, but its response writes still throw: on a hit the
 handler is skipped, so that loader never runs.
+
+A loader bound with its **own** `cache()` (`loader(Def, () => [cache({...})])`)
+stores its value, and its key does not inherit the route's. A miss whose body
+read `cookies()`, `headers()` or a non-cacheable `ctx.get()` fails unless the
+binding has a `key()` or its store a `keyGenerator`, which must then include
+the value (`/loader` → "Cache Key").
 
 **Tainted objects.** Request-scoped objects (`ctx`, `env`, `request`) carry an
 internal taint symbol so they are excluded from `"use cache"` cache keys. The

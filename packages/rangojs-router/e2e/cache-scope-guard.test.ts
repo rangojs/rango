@@ -93,6 +93,110 @@ function defineUseCacheNonCacheableVarTests(
   });
 }
 
+/**
+ * A loader bound with its own cache() whose body reads cookies() (#972).
+ * Without a key() the entry is shared across users, so the fill fails: the
+ * error boundary renders and onError gets the guard's message (the page shows
+ * it only in dev; production redacts it). The same holds when a parent layout
+ * handler runs the loader first and the route's MISS reuses that run. With a
+ * key() that includes the cookie, each session gets its own entry.
+ */
+const LOADER_CACHE_GUARD_MESSAGE = "whose own cache() has no key()";
+
+function defineLoaderCacheIdentityTests(f: Fixture, production: boolean): void {
+  test("cookies() in a loader with its own cache() and no key() renders the error boundary", async ({
+    page,
+    request,
+  }) => {
+    for (const session of ["user-a", "user-b"]) {
+      await page
+        .context()
+        .addCookies([{ name: "csg-session", value: session, url: f.url("/") }]);
+      await page.goto(f.url("/cache-scope-guard/loader-cache-unkeyed"));
+      await waitForHydration(page);
+      await expect(page.getByTestId("csg-error-page")).toBeVisible();
+      await expect(page.getByTestId("csg-loader-cache-session")).toHaveCount(0);
+      if (!production) {
+        await expect(page.getByTestId("csg-error-message")).toContainText(
+          LOADER_CACHE_GUARD_MESSAGE,
+        );
+      }
+    }
+
+    // By pathname: the reader-first route reports the same message.
+    const log: Array<{ message: string; pathname?: string }> | null = await (
+      await request.get(f.url("/__test/last-error"))
+    ).json();
+    expect(
+      log?.some(
+        (e) =>
+          e.pathname === "/cache-scope-guard/loader-cache-unkeyed" &&
+          e.message.includes(LOADER_CACHE_GUARD_MESSAGE),
+      ),
+      "onError got this route's guard error",
+    ).toBe(true);
+  });
+
+  test("the same when a parent layout handler reads the loader before its binding", async ({
+    page,
+  }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    for (const session of [`a-${run}`, `b-${run}`]) {
+      await page
+        .context()
+        .addCookies([{ name: "csg-session", value: session, url: f.url("/") }]);
+      await page.goto(f.url("/cache-scope-guard/loader-cache-reader-first"));
+      await waitForHydration(page);
+      // The layout's own read is live; the route's fill fails.
+      await expect(page.getByTestId("csg-layout-session")).toHaveText(session);
+      await expect(page.getByTestId("csg-error-page")).toBeVisible();
+      await expect(page.getByTestId("csg-loader-cache-session")).toHaveCount(0);
+      if (!production) {
+        await expect(page.getByTestId("csg-error-message")).toContainText(
+          LOADER_CACHE_GUARD_MESSAGE,
+        );
+      }
+    }
+  });
+
+  test("a loader with its own cache() and a key() that includes the cookie gives each user their own value", async ({
+    request,
+  }) => {
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const read = async (session: string) => {
+      const res = await request.get(
+        f.url("/cache-scope-guard/loader-cache-keyed"),
+        {
+          headers: { Accept: "text/html", Cookie: `csg-session=${session}` },
+        },
+      );
+      expect(res.status()).toBe(200);
+      const html = await res.text();
+      return {
+        session: html.match(/csg-loader-cache-session">([^<]*)</)?.[1],
+        stamp: html.match(/csg-loader-cache-stamp">([^<]*)</)?.[1],
+      };
+    };
+
+    // A repeated stamp is a HIT: the background write has landed.
+    let a = await read(`a-${run}`);
+    await expect
+      .poll(async () => {
+        const next = await read(`a-${run}`);
+        const hit = next.stamp === a.stamp;
+        a = next;
+        return hit;
+      })
+      .toBe(true);
+    expect(a.session).toBe(`a-${run}`);
+
+    const b = await read(`b-${run}`);
+    expect(b.session).toBe(`b-${run}`);
+    expect(b.stamp).not.toBe(a.stamp);
+    expect(await read(`a-${run}`)).toEqual(a);
+  });
+}
+
 // ============================================================================
 // Dev
 // ============================================================================
@@ -104,6 +208,7 @@ test.describe("cache-scope-guard", () => {
   });
 
   defineUseCacheNonCacheableVarTests(f, false);
+  defineLoaderCacheIdentityTests(f, false);
 
   test("ctx.set(cacheable var) inside cache() should be allowed", async ({
     page,
@@ -349,6 +454,7 @@ test.describe("cache-scope-guard (production)", () => {
   });
 
   defineUseCacheNonCacheableVarTests(f, true);
+  defineLoaderCacheIdentityTests(f, true);
 
   test("ctx.set(cacheable var) inside cache() should be allowed", async ({
     page,

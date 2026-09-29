@@ -17,6 +17,11 @@
  * On stale hit (SWR): returns stale data, schedules background revalidation.
  * On miss: executes loader, schedules non-blocking cache write.
  *
+ * Identity (#972): without a key() or a store keyGenerator the entry is
+ * shared across users, so a fill whose execution recorded a request-identity
+ * read fails and is not stored, whoever started that execution
+ * (server/context.ts recordLoaderIdentityRead).
+ *
  * Handle pushes (`ctx.use(Handle)(...)` in the loader body) are a side effect
  * the HIT must reproduce: the MISS records the pushes of the body and of the
  * loaders it awaits via ctx.use into the entry's `handles` blob (the
@@ -38,8 +43,10 @@
 import {
   getCurrentLoaderBodyId,
   isInsideLoaderBody,
+  loaderCacheIdentityError,
   type EntryData,
   type LoaderEntry,
+  type LoaderIdentityRead,
 } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { HandleStore } from "../../server/handle-store.js";
@@ -78,7 +85,9 @@ import {
   linkLoaderTags,
   linkLoaderTagsTo,
   linkRecordedTags,
+  markIdentityRead,
   readValueTags,
+  recordedIdentityRead,
   recordLoaderTags,
   tagLoaderValue,
 } from "../../cache/cache-tag.js";
@@ -120,7 +129,8 @@ function getDefaultLoaderCacheKey(
 }
 
 /**
- * Resolve cache key using the shared 3-tier priority.
+ * Resolve cache key using the shared 3-tier priority. `declared`: a key() or
+ * store keyGenerator produced it, so it can carry request identity (#972).
  */
 async function resolveLoaderKey(
   loaderEntry: LoaderEntry,
@@ -128,7 +138,7 @@ async function resolveLoaderKey(
   loaderId: string,
   pathname: string,
   params: Record<string, string>,
-): Promise<string> {
+): Promise<{ key: string; declared: boolean }> {
   const options = loaderEntry.cache!.options;
   // The host is part of the loader cache identity, matching the route-level
   // cache (cache-scope getCacheKeyBase: `${host}${pathname}`) and "use cache"
@@ -137,8 +147,11 @@ async function resolveLoaderKey(
   // loader data to another.
   const host = getRequestContext()?.url?.host ?? "localhost";
   const defaultKey = getDefaultLoaderCacheKey(loaderId, host, pathname, params);
-  if (options === false) return defaultKey;
-  return resolveCacheKey(options.key, store, defaultKey, "LoaderCache");
+  if (options === false) return { key: defaultKey, declared: false };
+  return {
+    key: await resolveCacheKey(options.key, store, defaultKey, "LoaderCache"),
+    declared: Boolean(options.key || store.keyGenerator),
+  };
 }
 
 /**
@@ -241,6 +254,36 @@ async function replayLoaderHandles(
       }
     }
   }
+}
+
+/**
+ * Identity mark (#972): a declared-key entry whose MISS recorded a
+ * request-identity read stores that read ahead of its payload. A HIT skips the
+ * body, so without the mark an unkeyed loader reading this value on a HIT
+ * would store another user's data. The value string is this module's own
+ * (serialize/deserialize below), so the mark needs no store support; Flight
+ * and JSON payloads never start with "~".
+ */
+const IDENTITY_MARK = "~identity:";
+
+function markIdentity(
+  value: string,
+  read: LoaderIdentityRead | undefined,
+): string {
+  return read ? `${IDENTITY_MARK}${JSON.stringify(read)}\n${value}` : value;
+}
+
+function unmarkIdentity(value: string): {
+  read: LoaderIdentityRead | undefined;
+  payload: string;
+} {
+  if (!value.startsWith(IDENTITY_MARK))
+    return { read: undefined, payload: value };
+  const end = value.indexOf("\n");
+  return {
+    read: JSON.parse(value.slice(IDENTITY_MARK.length, end)),
+    payload: value.slice(end + 1),
+  };
 }
 
 /**
@@ -492,7 +535,7 @@ function executeLoaderData<TEnv>(
 
   const dataPromise = (async () => {
     const codec = await getCodec();
-    const key = await resolveLoaderKey(
+    const { key, declared } = await resolveLoaderKey(
       loaderEntry,
       store,
       loaderId,
@@ -519,6 +562,8 @@ function executeLoaderData<TEnv>(
     let hitHandles: string | undefined;
     const onCachedRead = (label: string, cached: CacheItemResult) => {
       hitHandles = cached.handles;
+      const { read } = unmarkIdentity(cached.value);
+      if (read) markIdentityRead(valueTags, read);
       recordLoaderTags(loaderId, cached.tags);
       for (const tag of cached.tags ?? []) valueTags.add(tag);
       debugLoaderCacheLog(`[LoaderCache] ${label}: ${key}`);
@@ -544,6 +589,26 @@ function executeLoaderData<TEnv>(
         c.stop();
       }
     };
+    // #972: the execution's identity reads, and those of the loader values it
+    // read, are on the bodyTags links whoever started them. With an undeclared
+    // key one fails the fill (the MISS or the stale refresh); one that settles
+    // after the value (a nested promise, a pending handle push) skips the write
+    // instead. With a declared key it is stored as the entry's identity mark
+    // for the HITs, as this loader's readers see it (through this loader when
+    // another made it), and a foreground execution marks the value it serves.
+    // A stale refresh does not: the page is served the stale entry, which its
+    // own mark (or its lack) describes.
+    const identityRead = (): LoaderIdentityRead | undefined => {
+      const read = recordedIdentityRead(bodyTags);
+      if (!read) return undefined;
+      if (!declared) throw loaderCacheIdentityError(read, loaderId);
+      const seen =
+        read.bodyId === undefined || read.bodyId === loaderId
+          ? { ...read, bodyId: loaderId, via: undefined }
+          : { ...read, via: loaderId };
+      if (!revalidating) markIdentityRead(valueTags, seen);
+      return seen;
+    };
 
     // Flight encodes a rejected promise in the value or a handle push as an
     // error row and completes normally. setItem runs after serialize and
@@ -566,15 +631,21 @@ function executeLoaderData<TEnv>(
             ? await encodeHandles(capture.data, onFlightError)
             : "";
           if (flightErrors.length > 0) throw flightErrors[0];
+          // After the handle encode: it settles pending pushes, which can read.
+          const read = identityRead();
           const entryTags = [...flattenRecordedTags(bodyTags)];
-          await store.setItem!(k, v, {
+          await store.setItem!(k, markIdentity(v, read), {
             ...o,
             tags: entryTags.length > 0 ? entryTags : undefined,
             ...(handles ? { handles } : {}),
           });
         }),
       key,
-      execute: () => captureRecordedTags(bodyTags, runBody),
+      execute: async () => {
+        const value = await captureRecordedTags(bodyTags, runBody);
+        identityRead();
+        return value;
+      },
       // The rango.background span (kind=loader-revalidation) wraps the WHOLE
       // stale revalidation — the re-execution AND the serialize/setItem write
       // (read-through-swr routes the full task through wrapBackground) — so
@@ -592,7 +663,7 @@ function executeLoaderData<TEnv>(
         captureRecordedTags(bodyTags, () =>
           codec.serializeResult(d, onFlightError),
         ),
-      deserialize: (v) => codec.deserializeResult(v),
+      deserialize: (v) => codec.deserializeResult(unmarkIdentity(v).payload),
       storeOptions: { ttl, swr, tags },
       onHit: (cached) => onCachedRead("HIT", cached),
       onStale: (cached) => onCachedRead("STALE", cached),

@@ -158,6 +158,7 @@ A [`ppr`](/docs/rango/guides/ppr) shell and a `cache()` entry are shared by ever
 | after `ctx.dynamic()` on `ppr`                             | Allowed: that render is never captured                                                                |
 | middleware `ctx.set()` of the theme, read by a handler     | Not guarded: the first visitor's theme bakes into the shell or `cache()` entry, like a session object |
 | a route with no `ppr` or `cache()` above it, or middleware | Allowed: rendered per request                                                                         |
+| a loader with its own `cache()` and no `key()`             | The miss fails and stores nothing, like a `cookies()` read there; key the theme (below)               |
 
 The theme getters are read-only and non-enumerable: `{ ...ctx }` and `Object.assign({}, ctx)` do not carry `theme`, and assigning it throws. `ctx.setTheme()` throws in a handler on these routes too, like any response write there; call it from middleware.
 
@@ -177,6 +178,17 @@ export const ThemedLoader = createLoader(async () => {
   const theme = cookies().get("theme")?.value ?? "system"; // storageKey
   return loadThemedAssets(theme);
 });
+```
+
+Bound with its own `cache()`, the loader's entry is shared across users, so a miss fails unless it has a `key()`. Any `key()` switches that check off, so make it include the theme:
+
+```ts
+loader(ThemedLoader, () => [
+  cache({
+    ttl: 300,
+    key: () => `themed:${cookies().get("theme")?.value ?? "system"}`,
+  }),
+]);
 ```
 
 ## Pitfalls

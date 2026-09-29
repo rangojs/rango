@@ -622,7 +622,8 @@ this resource-aware policy layer.
 excluded from an enclosing segment cache and resolve on every request unless the
 loader itself explicitly opts into `cache()`. They may safely read `cookies()`,
 `headers()`, request context, and `env` because loader execution is outside the
-cached shell. Loaders run in parallel, stream independently under `loading()`
+cached shell; a loader with its own `cache()` must put those reads in its
+`key()`, or its miss fails and stores nothing. Loaders run in parallel, stream independently under `loading()`
 boundaries, compose server-side via `ctx.use(OtherLoader)`, and carry
 route-level authority: they can throw `notFound()`/`redirect()`, WRITE handles
 (`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the data's
