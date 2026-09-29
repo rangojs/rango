@@ -1088,17 +1088,19 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   TTL/SWR is the complete freshness policy, leave the shell untagged. Rango does not warn for that choice; with
   `debugShellCapture` enabled, a stored event reports `untaggedBake: true` when
   bake-lane loader material uses TTL/SWR-only invalidation.
-- **A `"use cache"` value the shell and a live hole both read is live in the
-  hole**: the shell keeps the capture-time value, and a live-lane loader under
-  `loading()` or an inline `<Suspense>` that reads the same `"use cache"` entry
-  reads the store on every HIT. Once the entry changes, the hole shows the new
-  value next to the shell's old one. The capture stores only what a HIT reads:
-  when every HIT replays the handler layer from the captured segment record,
-  the `"use cache"` items only handler code read are not stored. An entry that
-  keeps them — the route has its own `cache()` scope, the store has a
-  `keyGenerator`, the handlers must re-run on a HIT (a handler calls
-  `ctx.use()` on a loader, or pushes a handle holding a promise), or a
-  bake-lane loader read the same entry — still pins the value for the hole.
+- **A `"use cache"` value the shell and a live hole both read comes from the
+  cache store in the hole**: the shell keeps the capture-time value, and a
+  live-lane loader under `loading()` or an inline `<Suspense>` that reads the
+  same `"use cache"` entry reads it from the store on every HIT. It is still
+  cached under its own profile; once the entry expires or is invalidated and
+  refreshes, the hole shows the refreshed value next to the shell's old one. The
+  capture stores only what a HIT reads: when every HIT replays the handler layer
+  from the captured segment record, the `"use cache"` items only handler code
+  read are not stored. An entry that keeps them — the route has its own
+  `cache()` scope, the store has a `keyGenerator`, the handlers must re-run on a
+  HIT (a handler calls `ctx.use()` on a loader, or pushes a handle holding a
+  promise), or a bake-lane loader read the same entry — still pins the value for
+  the hole.
 - **Uncached nondeterminism in the shell is a hydration hazard**: a raw
   `Date.now()` / `Math.random()` / uncached `fetch` rendered directly in shell
   material (outside any cache ring) drifts between capture and hit and the
