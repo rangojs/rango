@@ -282,6 +282,28 @@ export function PprTieredPage(ctx: { request: Request }) {
   return <p data-testid="ppr-tiered">{`tier-${pprTier(ctx)}`}</p>;
 }
 
+export function PprTieredNestedPage(ctx: { request: Request }) {
+  return (
+    <>
+      <p data-testid="ppr-tiered">{`tier-${pprTier(ctx)}`}</p>
+      <p>ppr-tiered-nested-route</p>
+    </>
+  );
+}
+
+/**
+ * The layout between the keyed cache() and the cache() nested in it on
+ * /ppr-tiered-nested (issue #970); it reads the tier too.
+ */
+export function PprTieredLayout(ctx: { request: Request }) {
+  return (
+    <div data-testid="ppr-tiered-layout">
+      <p>{`layout-tier-${pprTier(ctx)}`}</p>
+      <Outlet />
+    </div>
+  );
+}
+
 export function PprScopedOptOutPage() {
   return <p data-testid="ppr-scoped-optout">Scoped opt-out static content</p>;
 }

@@ -432,6 +432,7 @@ describe("response-route-handler", () => {
           ttl: 60,
           condition,
         },
+        keyFns: [],
         ttl: 60,
         swr: 0,
         getStore: () => store,
@@ -581,6 +582,7 @@ describe("response-route-handler", () => {
       const scope = {
         enabled: true,
         config: { ttl: 60 },
+        keyFns: [],
         ttl: 60,
         swr: 0,
         getStore: () => store,

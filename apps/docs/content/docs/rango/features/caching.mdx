@@ -117,3 +117,29 @@ Same words, different jobs — this is the most common source of misreads:
 ## Nested caches
 
 The outer cache window bounds the inner: an inner shorter TTL only applies when the enclosing cache recomputes. If a value must be fresher than its surroundings, put it in a loader — that is what the live lane is for. `cache(false, () => [...])` turns caching off for a subtree inside a cached one.
+
+A `key()` partitions everything under its `cache()`, nested boundaries included, so a visitor in one partition never gets another partition's stored segments:
+
+```tsx
+const tier = (ctx) =>
+  ctx.request.headers.get("x-tier") === "gold" ? "gold" : "silver";
+
+cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
+  layout(TierLayout, () => [
+    // No key of its own: the outer key plus each route's own default key
+    cache({ ttl: 60 }, () => [
+      path("/pricing", PricingPage),
+      path("/faq", FaqPage),
+    ]),
+    // Its own key composes with the outer one
+    cache(
+      { ttl: 60, key: (ctx) => `v:${ctx.searchParams.get("v") ?? "a"}` },
+      () => [path("/plans", PlansPage)],
+    ),
+  ]),
+]);
+```
+
+An inner `cache()` without a `key` stores under the enclosing key plus its own default key (the store's `keyGenerator` result when it has one), so `/pricing` and `/faq` keep their own entries in each partition. One with its own `key` stores under both key results. The parts go outermost first, each URI-encoded and joined by `|`, so no two composed keys collide: two partitions never share an inner entry, and an inner key still splits within a partition. Deeper nesting composes the same way. A response route's entry is keyed the same way, and a [`ppr`](/docs/rango/guides/ppr) route's shell is partitioned by the key results. To share an inner cache across partitions, declare it outside the keyed `cache()`.
+
+A single keyed `cache()` stores its `key()` result as is, so a raw result can equal a composed key (a header value `gold|doc%3Aexample.com%2Fpricing` names gold's inner `/pricing` entry). Never return raw request input from `key()`: normalize it to the values you serve, prefix it (`` `tier:${value}` ``), or encode it. A composed key contains no `:`, so a prefixed result never equals one.

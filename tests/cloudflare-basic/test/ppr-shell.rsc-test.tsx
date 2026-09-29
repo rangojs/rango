@@ -1,6 +1,6 @@
 // Dogfood (issue #956): the Cache Lab's PPR contract (the runbook in
 // pages/cache-lab.tsx, e2e/cache-lab.test.ts) and the request-partitioned
-// /ppr-tiered route (e2e/ppr-shell.test.ts) in-process through
+// /ppr-tiered and /ppr-tiered-nested routes (e2e/ppr-shell.test.ts) in-process through
 // serveShellRequest — a real capture on the MISS and a real HIT after it.
 // The routers are built from the app's own pieces, since src/router.tsx does
 // not import in bare Vitest (test/FINDINGS.md): CacheLabPage with the ppr
@@ -10,7 +10,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createRouter, urls } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
-import { dispatch } from "@rangojs/router/testing";
+import { dispatch, shellCacheKey } from "@rangojs/router/testing";
 import {
   resetShellTestState,
   serveShellRequest,
@@ -21,7 +21,11 @@ import { CACHE_LAB_TAGS } from "../src/cache-lab-contract.js";
 import { CacheLabPulseLoader } from "../src/cache-lab-data.js";
 import type { AppBindings } from "../src/env.js";
 import { CacheLabPage } from "../src/pages/cache-lab.js";
-import { PprTieredPage, pprTier } from "../src/pages/ppr-shell.js";
+import {
+  PprTieredLayout,
+  PprTieredPage,
+  pprTier,
+} from "../src/pages/ppr-shell.js";
 
 const env = {} as AppBindings;
 
@@ -147,6 +151,55 @@ describe("request-partitioned PPR shell through serveShellRequest (cloudflare-ba
       const hit = await serve(own);
       expect(hit.shellStatus).toBe("HIT");
       expect(hit.prelude).toContain(`tier-${own}`);
+      expect(hit.body).not.toContain(`tier-${other}`);
+    }
+  });
+
+  // Issue #970: a cache() nested in the keyed one keeps the partition; its
+  // own key() composes with the outer one.
+  it("a ppr route under nested cache() scopes gets one shell per outer partition, under the composed key", async () => {
+    const router = createRouter<AppBindings>({
+      cache: { store: new MemorySegmentCacheStore() },
+    }).routes(
+      urls(({ path, layout, cache }) => [
+        cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+          layout(PprTieredLayout, () => [
+            cache({ ttl: 300, key: () => "layout:v2" }, () => [
+              path("/ppr-tiered-nested", PprTieredPage, {
+                name: "pprTieredNested",
+                ppr: { ttl: 300, swr: 120 },
+              }),
+            ]),
+          ]),
+        ]),
+      ]),
+    );
+    const serve = (tier: string) =>
+      serveShellRequest(router, "/ppr-tiered-nested", {
+        env,
+        headers: { "x-ppr-tier": tier },
+      });
+
+    const goldMiss = await serve("gold");
+    expect(goldMiss.shellStatus).toBe("MISS");
+    expect(goldMiss.key).toBe(
+      shellCacheKey("http://localhost/ppr-tiered-nested", undefined, [
+        "tier:gold",
+        "layout:v2",
+      ]),
+    );
+    const silverMiss = await serve("silver");
+    expect(silverMiss.shellStatus).toBe("MISS");
+    expect(silverMiss.flight).toContain("layout-tier-silver");
+    expect(silverMiss.flight).not.toContain("tier-gold");
+
+    for (const [own, other] of [
+      ["gold", "silver"],
+      ["silver", "gold"],
+    ] as const) {
+      const hit = await serve(own);
+      expect(hit.shellStatus).toBe("HIT");
+      expect(hit.prelude).toContain(`layout-tier-${own}`);
       expect(hit.body).not.toContain(`tier-${other}`);
     }
   });

@@ -49,6 +49,30 @@ import {
 let outerLiveLayoutRenders = 0;
 let outerLiveRouteRenders = 0;
 
+// /cache-test/nested-key* (issue #970): the tier the page served and its run
+// count, which a HIT replays unchanged.
+let nestedKeyRenders = 0;
+
+function nestedKeyTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-tier") ?? "none";
+}
+
+function NestedKeyPage(ctx: { request: Request }) {
+  return (
+    <p data-testid="nested-key-render">
+      {`${nestedKeyTier(ctx)}:${++nestedKeyRenders}`}
+    </p>
+  );
+}
+
+function NestedKeySiblingPage(ctx: { request: Request }) {
+  return (
+    <p data-testid="nested-key-render">
+      {`sibling-${nestedKeyTier(ctx)}:${++nestedKeyRenders}`}
+    </p>
+  );
+}
+
 // Render counts for /cache-test/path-children (issue #912).
 let pathChildrenShellRenders = 0;
 let pathChildrenRouteRenders = 0;
@@ -124,6 +148,41 @@ export const cachePatterns = urls(
             { name: "cacheTest.outerLive" },
           ),
         ]),
+      ],
+    ),
+
+    // A cache() nested in a keyed cache() keys its records within the outer
+    // key() partition (issue #970): without a key() of its own it composes the
+    // tier partition with its own default key, so its two routes keep their
+    // own records though the outer key() names no route; with one, the key()
+    // results compose. The probe gives each test its own entries.
+    cache(
+      {
+        ttl: 600,
+        key: (ctx) =>
+          `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
+      },
+      () => [
+        cache({ ttl: 600 }, () => [
+          path("/cache-test/nested-key", NestedKeyPage, {
+            name: "cacheTest.nestedKey",
+          }),
+          path("/cache-test/nested-key-sibling", NestedKeySiblingPage, {
+            name: "cacheTest.nestedKeySibling",
+          }),
+        ]),
+        cache(
+          {
+            ttl: 600,
+            key: (ctx) =>
+              `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
+          },
+          () => [
+            path("/cache-test/nested-key-composed", NestedKeyPage, {
+              name: "cacheTest.nestedKeyComposed",
+            }),
+          ],
+        ),
       ],
     ),
 

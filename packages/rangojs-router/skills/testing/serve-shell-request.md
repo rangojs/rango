@@ -138,6 +138,19 @@ expect(gold.key).toBe(shellCacheKey("/pricing", undefined, "tier:gold"));
 expect(await gold.readEntry()).not.toBeNull();
 ```
 
+Under nested keyed `cache()` boundaries the partition is their `key()` results composed, outermost first (see `/caching`, "Keys nest"). Pass them to `shellCacheKey` as an array and it composes them the same way:
+
+```ts
+// cache({ key: tierKey }, () => [
+//   layout(TierLayout, () => [
+//     cache({ key: (ctx) => `v:${variantOf(ctx)}` }, () => [path("/plans", PlansPage, { ppr: true })]),
+//   ]),
+// ])
+expect(result.key).toBe(
+  shellCacheKey("/plans", undefined, ["tier:gold", "v:a"]),
+);
+```
+
 A partial request has no HTML step, so its `key` is the URL's key without a partition: read a partitioned route's entry from a document request's result.
 
 ## Handles and loader data

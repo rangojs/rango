@@ -51,6 +51,25 @@ describe("shellCacheKey (production key identity)", () => {
     );
   });
 
+  it("composes nested cache() key() results, outermost first, as the record key does (#970)", () => {
+    const url = new URL("http://shop.test/p");
+    expect(shellCacheKey(url, undefined, ["tier:gold", "v:a"])).toBe(
+      partitionShellKey(buildShellKey(url), "tier%3Agold|v%3Aa"),
+    );
+    // One key() result is the plain partition.
+    expect(shellCacheKey(url, undefined, ["tier:gold"])).toBe(
+      shellCacheKey(url, undefined, "tier:gold"),
+    );
+    expect(shellCacheKey(url, undefined, ["a|b", "c"])).not.toBe(
+      shellCacheKey(url, undefined, ["a", "b|c"]),
+    );
+  });
+
+  it("an empty array of key() results is no partition", () => {
+    const url = new URL("http://shop.test/p");
+    expect(shellCacheKey(url, undefined, [])).toBe(buildShellKey(url));
+  });
+
   it("matches rsc/shell-serve buildShellKey for host+path+search", () => {
     const cases = [
       "http://localhost/products/1",

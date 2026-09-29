@@ -109,7 +109,31 @@ function TierPage(ctx: HandlerContext): React.ReactNode {
 }
 
 /** Runs of the tiered routes' key() functions, across tests. */
-const keyRuns = { header: 0, cookie: 0 };
+const keyRuns = { header: 0, cookie: 0, nestedTier: 0, nestedVariant: 0 };
+
+function variantOf(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-variant") ?? "none";
+}
+
+/** Runs of the /nested-record page handler, across tests. */
+const nestedRuns = { record: 0 };
+
+function NestedTierLayout(ctx: HandlerContext): React.ReactNode {
+  return <header>{`layout-${tierOf(ctx)}`}</header>;
+}
+
+function NestedPage(ctx: HandlerContext): React.ReactNode {
+  return <p>{`nested-${tierOf(ctx)}-${variantOf(ctx)}-page`}</p>;
+}
+
+function NestedRecordPage(ctx: HandlerContext): React.ReactNode {
+  nestedRuns.record += 1;
+  return <p>{`record-${tierOf(ctx)}-run-${nestedRuns.record}`}</p>;
+}
+
+function NestedRecordPageB(ctx: HandlerContext): React.ReactNode {
+  return <p>{`record-b-${tierOf(ctx)}`}</p>;
+}
 
 /** Body runs of the /bake-lane loaders, across tests. */
 const bakeRuns = { plain: 0, holey: 0, dep: 0 };
@@ -220,7 +244,9 @@ async function Flaky(): Promise<React.ReactNode> {
  * loading(), a ppr page pushing a handle, and a plain page; a layout reading
  * the same "use cache" key as a loader under loading(); a ppr page whose shell
  * can throw; a layout and page counting their runs over a counting loader
- * under loading(); a ppr page whose cache() key() partitions it by tier.
+ * under loading(); a ppr page whose cache() key() partitions it by tier;
+ * routes under a cache() nested in a tier-keyed cache() (#970), one without
+ * its own key() and one with a variant key().
  */
 function makeRouter(options: RangoOptions = {}) {
   return createRouter(options).routes(
@@ -321,6 +347,33 @@ function makeRouter(options: RangoOptions = {}) {
           ppr: true,
         }),
       ]),
+      cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+        cache({ ttl: 1 }, () => [
+          path(
+            "/nested-short-cache",
+            (ctx) => (
+              <p>{`nested-short-${tierOf(ctx)}@g${source.generation}`}</p>
+            ),
+            { name: "nestedShortCache", ppr: { ttl: 300 } },
+          ),
+        ]),
+        cache(
+          {
+            ttl: 300,
+            key: (ctx) => `tagged-v:${variantOf(ctx)}`,
+            tags: ["nested-tier"],
+          },
+          () => [
+            path(
+              "/nested-tagged",
+              (ctx) => (
+                <p>{`nested-tagged-${tierOf(ctx)}@g${source.generation}`}</p>
+              ),
+              { name: "nestedTagged", ppr: { ttl: 300 } },
+            ),
+          ],
+        ),
+      ]),
       cache({ ttl: 300 }, () => [
         path("/near-expiry", () => <p>near expiry</p>, {
           name: "nearExpiry",
@@ -354,6 +407,48 @@ function makeRouter(options: RangoOptions = {}) {
             name: "cookieTiered",
             ppr: true,
           }),
+        ],
+      ),
+      // The outer key() names no route: an inner cache() without key() adds
+      // its own default key, so its routes keep their own records.
+      cache(
+        {
+          ttl: 300,
+          key: (ctx) => {
+            keyRuns.nestedTier += 1;
+            return `tier:${tierOf(ctx)}`;
+          },
+        },
+        () => [
+          layout(NestedTierLayout, () => [
+            cache({ ttl: 60 }, () => [
+              path("/nested-tiered", NestedPage, {
+                name: "nestedTiered",
+                ppr: true,
+              }),
+              path("/nested-record", NestedRecordPage, {
+                name: "nestedRecord",
+              }),
+              path("/nested-record-b", NestedRecordPageB, {
+                name: "nestedRecordB",
+              }),
+            ]),
+            cache(
+              {
+                ttl: 60,
+                key: (ctx) => {
+                  keyRuns.nestedVariant += 1;
+                  return `v:${variantOf(ctx)}`;
+                },
+              },
+              () => [
+                path("/nested-composed", NestedPage, {
+                  name: "nestedComposed",
+                  ppr: true,
+                }),
+              ],
+            ),
+          ]),
         ],
       ),
     ]),
@@ -586,6 +681,116 @@ describe("serveShellRequest: request-partitioned shells", () => {
     });
     expect(nav.flight).toContain("cookie-tiered");
     expect(keyRuns.cookie).toBe(3);
+  });
+
+  describe("a cache() nested in a keyed cache() (#970)", () => {
+    const request = (tierName: string, variant?: string) => ({
+      headers: {
+        "x-tier": tierName,
+        ...(variant !== undefined && { "x-variant": variant }),
+      },
+    });
+
+    it("an inner cache() without key() keeps its record in the outer partition: another tier never HITs it", async () => {
+      const { serve, cacheStore } = setup();
+      nestedRuns.record = 0;
+
+      const gold = await serve("/nested-record", request("gold"));
+      expect(gold.flight).toContain("record-gold-run-1");
+      // Gold's second request replays gold's record: the handler does not run.
+      const goldHit = await serve("/nested-record", request("gold"));
+      expect(goldHit.flight).toContain("record-gold-run-1");
+      expect(nestedRuns.record).toBe(1);
+
+      const silver = await serve("/nested-record", request("silver"));
+      expect(silver.flight).toContain("record-silver-run-2");
+      expect(silver.flight).not.toContain("record-gold");
+      // Each record lives under the outer key() and the route's default key.
+      for (const tierName of ["gold", "silver"]) {
+        expect(
+          await cacheStore.get(
+            `tier%3A${tierName}|doc%3Alocalhost%2Fnested-record`,
+          ),
+        ).not.toBeNull();
+      }
+    });
+
+    it("two routes under an inner cache() without key() keep their own records, though the outer key() names no route", async () => {
+      const { serve } = setup();
+      nestedRuns.record = 0;
+
+      const a = await serve("/nested-record", request("gold"));
+      expect(a.flight).toContain("record-gold-run-1");
+      const b = await serve("/nested-record-b", request("gold"));
+      expect(b.flight).toContain("record-b-gold");
+      expect(b.flight).not.toContain("record-gold-run-1");
+    });
+
+    it("a ppr route under an inner cache() without key() captures and HITs one shell per outer partition", async () => {
+      const { serve, cacheStore } = setup();
+      const url = "http://localhost/nested-tiered";
+
+      const goldMiss = await serve("/nested-tiered", request("gold"));
+      expect(goldMiss.shellStatus).toBe("MISS");
+      // The partition is the key() result alone: the shell key carries the
+      // URL.
+      expect(goldMiss.key).toBe(shellCacheKey(url, undefined, "tier:gold"));
+
+      const silverMiss = await serve("/nested-tiered", request("silver"));
+      expect(silverMiss.shellStatus).toBe("MISS");
+      expect(silverMiss.flight).toContain("nested-silver-none-page");
+      expect(silverMiss.flight).not.toContain("gold");
+
+      for (const [own, other] of [
+        ["gold", "silver"],
+        ["silver", "gold"],
+      ] as const) {
+        const hit = await serve("/nested-tiered", request(own));
+        expect(hit.shellStatus).toBe("HIT");
+        expect(hit.prelude).toContain(`nested-${own}-none-page`);
+        expect(hit.prelude).toContain(`layout-${own}`);
+        expect(hit.body).not.toContain(other);
+      }
+      expect(await cacheStore.getShell!(shellCacheKey(url))).toBeNull();
+    });
+
+    it("an inner key() composes with the outer partition, for the shell, the record and a client navigation; each key() runs once per request", async () => {
+      const { serve } = setup();
+      const url = "http://localhost/nested-composed";
+      keyRuns.nestedTier = 0;
+      keyRuns.nestedVariant = 0;
+
+      const goldA = await serve("/nested-composed", request("gold", "a"));
+      expect(goldA.shellStatus).toBe("MISS");
+      expect(goldA.key).toBe(
+        shellCacheKey(url, undefined, ["tier:gold", "v:a"]),
+      );
+      // The shell key, the record lookup and write, and the capture share
+      // one run of each key().
+      expect(keyRuns).toMatchObject({ nestedTier: 1, nestedVariant: 1 });
+
+      // Another tier with the same variant, and another variant in the same
+      // tier, each capture their own.
+      const silverA = await serve("/nested-composed", request("silver", "a"));
+      expect(silverA.shellStatus).toBe("MISS");
+      expect(silverA.flight).toContain("nested-silver-a-page");
+      expect(silverA.flight).not.toContain("gold");
+      const goldB = await serve("/nested-composed", request("gold", "b"));
+      expect(goldB.shellStatus).toBe("MISS");
+      expect(goldB.flight).toContain("nested-gold-b-page");
+
+      const goldHit = await serve("/nested-composed", request("gold", "a"));
+      expect(goldHit.shellStatus).toBe("HIT");
+      expect(goldHit.prelude).toContain("nested-gold-a-page");
+
+      // A client navigation reads its own partition's shell and record.
+      const bronzeNav = await serve("/nested-composed", {
+        ...request("bronze", "a"),
+        partial: { from: "/about" },
+      });
+      expect(bronzeNav.flight).toContain("nested-bronze-a-page");
+      expect(bronzeNav.flight).not.toContain("gold");
+    });
   });
 
   it("a store keyGenerator that returns the default key partitions nothing", async () => {
@@ -1011,6 +1216,33 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
       ),
     ]);
   });
+
+  it("the cap reads the nested cache() record under its composed key (#970)", async () => {
+    const { serve, cacheStore } = setup();
+    const putShell = vi.spyOn(cacheStore, "putShell");
+    const gold = { headers: { "x-tier": "gold" } };
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+
+    expect((await serve("/nested-short-cache", gold)).shellStatus).toBe("MISS");
+    expect(
+      await cacheStore.get("tier%3Agold|doc%3Alocalhost%2Fnested-short-cache"),
+    ).not.toBeNull();
+    // Capped to that record (ttl 1, swr 0), not ppr.ttl 300.
+    expect(putShell.mock.calls.map(([, , ttl, swr]) => [ttl, swr])).toEqual([
+      [1, 0],
+    ]);
+    expect((await serve("/nested-short-cache", gold)).shellStatus).toBe("HIT");
+
+    // Past the inner cache({ ttl: 1 }), well inside ppr.ttl 300.
+    offset = 2_000;
+    source.generation = 2;
+    const later = await serve("/nested-short-cache", gold);
+
+    expect(later.shellStatus).toBe("MISS");
+    expect(later.flight).toContain("nested-short-gold@g2");
+  });
 });
 
 describe("serveShellRequest: the forced-MISS marker", () => {
@@ -1113,6 +1345,28 @@ describe("serveShellRequest: tags", () => {
       expect(hit.prelude).toContain(recaptured);
     },
   );
+
+  it("updateTag of a nested cache({ tags }) evicts its composed-key record and the shell captured from it (#970)", async () => {
+    const { serve, cacheStore } = setup();
+    const goldA = { headers: { "x-tier": "gold", "x-variant": "a" } };
+    const recordKey = "tier%3Agold|tagged-v%3Aa";
+
+    expect((await serve("/nested-tagged", goldA)).shellStatus).toBe("MISS");
+    const hit = await serve("/nested-tagged", goldA);
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.prelude).toContain("nested-tagged-gold@g1");
+    expect(await cacheStore.get(recordKey)).not.toBeNull();
+    source.generation = 2;
+
+    await runInRequestContext(() => updateTag("nested-tier"), { cacheStore });
+    expect(await cacheStore.get(recordKey)).toBeNull();
+    const recapture = await serve("/nested-tagged", goldA);
+    const fresh = await serve("/nested-tagged", goldA);
+
+    expect(recapture.shellStatus).toBe("MISS");
+    expect(fresh.shellStatus).toBe("HIT");
+    expect(fresh.prelude).toContain("nested-tagged-gold@g2");
+  });
 });
 
 describe("serveShellRequest: partial navigation", () => {

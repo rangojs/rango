@@ -496,6 +496,25 @@ function ShellTieredPage(ctx: HandlerContext) {
   return <p data-testid="shell-tiered">{`tier-${shellTier(ctx)}`}</p>;
 }
 
+function ShellTieredNestedPage(ctx: HandlerContext) {
+  return (
+    <>
+      <p data-testid="shell-tiered">{`tier-${shellTier(ctx)}`}</p>
+      <p>shell-tiered-nested-route</p>
+    </>
+  );
+}
+
+// The layout between the keyed cache() and the nested one (issue #970).
+function ShellTieredLayout(ctx: HandlerContext) {
+  return (
+    <div data-testid="shell-tiered-layout">
+      <p>{`layout-tier-${shellTier(ctx)}`}</p>
+      <Outlet />
+    </div>
+  );
+}
+
 function ShellSrvSlotHomePage() {
   return <p data-testid="shell-srv-slot-home">Srv slot home static content</p>;
 }
@@ -1140,6 +1159,18 @@ export const shellCachePatterns = urls(
         name: "shellCacheTiered",
         ppr: true,
       }),
+      // The same partition through a nested cache() without a key() of its
+      // own (issue #970): its record and its shell are per tier too, and its
+      // record, keyed by the tier and its own default key, never names
+      // /shell-cache/tiered's.
+      layout(ShellTieredLayout, () => [
+        cache({ ttl: 300 }, () => [
+          path("/shell-cache/tiered-nested", ShellTieredNestedPage, {
+            name: "shellCacheTieredNested",
+            ppr: true,
+          }),
+        ]),
+      ]),
     ]),
     // A shell never outlives its route cache() entry: it expires with this
     // 5 s entry, well inside ppr's own ttl.

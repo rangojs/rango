@@ -276,7 +276,9 @@ shared response.
 
 ## Per-user data
 
-The shell is shared per host + URL across all users (per request partition too, when the route's `cache({ key })` or the store's `keyGenerator` partitions its record: each partition gets its own shell), so identity must never bake:
+The shell is shared per host + URL across all users (per request partition too, when the route's `cache({ key })` or the store's `keyGenerator` partitions its record: each partition gets its own shell), so identity must never bake. The partition follows nested `cache()` boundaries: a `ppr` route under a `cache()` nested in a keyed one is partitioned by the outer `key()`, composed with the inner one's when it has its own (see [Caching](/docs/rango/features/caching#nested-caches)).
+
+What the guards refuse:
 
 - `cookies()`, `headers()`, and `ctx.get()` of a `{ cache: false }` variable **throw during the capture render**, wherever the capture waits for them: a handler, a promise it passes or pushes, an async server component, a bake-lane loader, and a loader a handler awaits (`await ctx.use(Loader)`). The capture is refused even if your code catches the throw, and the route keeps serving MISSes with a once-per-key warning. `ctx.dynamic()` called there refuses the capture too. Live-lane loaders (every loader without `ssr: false`) are exempt: they never run at capture.
 - The guard sees only those reads. A handler or bake-lane loader reading a normal middleware-provided session object (`ctx.get("session")`), or raw request headers, refuses nothing — whatever it renders or returns as plain data is photographed as the capturing user's state. `return { user: session.user }` bakes that user into the shared shell for every visitor. Creating the variable with `createVar({ cache: false })` turns such a read into a refusal instead.

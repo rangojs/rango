@@ -74,6 +74,8 @@ import {
   PprScopedHomePage,
   PprScopedOptOutPage,
   PprTieredPage,
+  PprTieredLayout,
+  PprTieredNestedPage,
   pprTier,
   PprScopedConditionPage,
   PprInlineActionPage,
@@ -264,6 +266,28 @@ function MixedRscLayout(): ReactNode {
       </header>
       <Outlet />
     </section>
+  );
+}
+
+// /nested-key* (issue #970): the tier the page served and a token a HIT
+// replays unchanged.
+function nestedKeyTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-tier") ?? "none";
+}
+
+function NestedKeyPage(ctx: { request: Request }): ReactNode {
+  return (
+    <p data-testid="nested-key-render">
+      {`${nestedKeyTier(ctx)}:${crypto.randomUUID()}`}
+    </p>
+  );
+}
+
+function NestedKeySiblingPage(ctx: { request: Request }): ReactNode {
+  return (
+    <p data-testid="nested-key-render">
+      {`sibling-${nestedKeyTier(ctx)}:${crypto.randomUUID()}`}
+    </p>
   );
 }
 
@@ -895,6 +919,17 @@ export const urlpatterns = urls(
               name: "pprTiered",
               ppr: { ttl: 300, swr: 120 },
             }),
+            // The same partition through a cache() nested in the keyed one,
+            // without a key() of its own (issue #970): its record, keyed by
+            // the tier and its own default key, never names /ppr-tiered's.
+            layout(PprTieredLayout, () => [
+              cache({ ttl: 300 }, () => [
+                path("/ppr-tiered-nested", PprTieredNestedPage, {
+                  name: "pprTieredNested",
+                  ppr: { ttl: 300, swr: 120 },
+                }),
+              ]),
+            ]),
           ]),
         ]),
         // Refusal semantics under a too-short budget (issue #715 negative):
@@ -1431,6 +1466,41 @@ export const urlpatterns = urls(
                 { name: "outerLive" },
               ),
             ]),
+          ],
+        ),
+
+        // A cache() nested in a keyed cache() keys its records within the
+        // outer key() partition (issue #970): without a key() of its own it
+        // composes the tier partition with its own default key, so its two
+        // routes keep their own records though the outer key() names no
+        // route; with one, the key() results compose. The page renders the
+        // tier it served and a token a HIT replays unchanged. The probe gives
+        // each test its own entries.
+        cache(
+          {
+            ttl: 60,
+            key: (ctx) =>
+              `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
+          },
+          () => [
+            cache({ ttl: 60 }, () => [
+              path("/nested-key", NestedKeyPage, { name: "nestedKey" }),
+              path("/nested-key-sibling", NestedKeySiblingPage, {
+                name: "nestedKeySibling",
+              }),
+            ]),
+            cache(
+              {
+                ttl: 60,
+                key: (ctx) =>
+                  `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
+              },
+              () => [
+                path("/nested-key-composed", NestedKeyPage, {
+                  name: "nestedKeyComposed",
+                }),
+              ],
+            ),
           ],
         ),
 

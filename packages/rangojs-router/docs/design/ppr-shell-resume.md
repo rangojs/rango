@@ -1182,7 +1182,19 @@ The rules that keep it tight:
   (`hasBuildShell` in `src/rsc/shell-build-manifest.ts`: a manifest entry in
   production, a Prerender route in dev), the first search-less such request
   warns once per route (`notePartitionBuildShellCheck`); a route without one
-  stays silent, and either way the route is probed once.
+  stays silent, and either way the route is probed once. A composed partition
+  (below) counts the same way.
+- The partition follows nested `cache()` scopes (issue #970):
+  `resolveShellPartition` asks the route scope (`CacheScope.resolvePartition`),
+  which reads the whole chain's `key()` functions (`CacheScope.keyFns`), not
+  only the innermost config. A `ppr` route under a `cache()` without `key`
+  nested in a keyed one is partitioned by the outer `key()`; with its own
+  `key`, by both, composed with `composeCacheKeys`
+  (`src/cache/cache-key-utils.ts`). The route's record also composes the inner
+  scope's default key; the partition leaves it out, since the shell key
+  already carries the URL, and keeps only a store `keyGenerator` result that
+  differs from the default key. Before, the inner scope's missing `key` meant
+  no partition at all, and every tier HIT the first tier's shell.
 
 A route with neither `key()` nor `keyGenerator` resolves no partition, with no
 work (the check returns synchronously), and keeps its shell key. Pinned by

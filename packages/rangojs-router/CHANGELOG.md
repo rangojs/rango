@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+### Breaking: a nested `cache()` keys its records within the enclosing `cache()`'s `key()` partition ([#983](https://github.com/rangojs/rango/pull/983))
+
+A `cache()` nested in a keyed `cache()` ignored the outer `key()`: the
+innermost boundary alone decided the record key (#970). An inner `cache()`
+without `key` stored under the default key, and an inner `key()` dropped the
+outer one, so a visitor in one partition received what a visitor in another
+partition had cached under the inner boundary. With PPR, the shell partition
+follows the record key, so the shell was shared the same way.
+
+A `key()` now partitions every record under its `cache()`. The record key is
+a list of parts, outermost first, each URI-encoded and joined by `|`:
+
+- An inner `cache()` without `key`: the enclosing `key()` results, then its
+  own default key (its store's `keyGenerator` result when the store has one,
+  else the default key). Its routes keep their own records, as before, and
+  gain the partition.
+- An inner `cache()` with its own `key`: the enclosing `key()` results, then
+  its own (`tier%3Agold|v%3Aa`). Two partitions never share an inner record,
+  and the inner key still splits within a partition.
+- Deeper nesting composes the same way.
+- Unchanged: a single keyed `cache()` keeps its raw `key()` result, a
+  `cache()` with no `key` anywhere above it keeps its default key, and
+  `cache(false)` caches nothing.
+- A response route's entry is keyed the same way. A `ppr` route's shell and
+  its client navigation replay are partitioned by the `key()` results (the
+  shell key already carries the URL). Each `key()` still runs once per
+  request.
+
+```tsx
+cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+  layout(TierLayout, () => [
+    cache({ ttl: 60 }, () => [
+      path("/pricing", PricingPage),
+      path("/faq", FaqPage),
+    ]),
+  ]),
+]);
+// Before: the /pricing record was keyed "doc:<host>/pricing" for every tier;
+// a silver visitor could HIT the record a gold visitor's request wrote.
+// After: it is keyed "tier%3Agold|doc%3A<host>%2Fpricing" (or silver's);
+// each tier renders its own, and /faq keeps its own record.
+```
+
+The breaking parts:
+
+- Records under a nested `cache()` in a keyed one move to new keys, so they
+  miss once after deploy.
+- A prerendered `ppr` route under a `cache()` without `key`, nested in a
+  keyed one, was unpartitioned and served its build-time shell. It is now
+  partitioned by the outer `key()`, so it stops serving the build shell:
+  each partition captures its own at runtime, and the once-per-route
+  build-shell warning fires.
+
+Migration: to share an inner cache across partitions on purpose, move it
+outside the keyed `cache()`; to keep serving a route's build shell, move the
+route out from under the keyed `cache()`. In tests, `shellCacheKey(url, searchParams,
+partition)` takes the nested `key()` results as an array, outermost first,
+and composes them the way the router does. Composed keys never collide with
+each other, but a single `key()` result is stored as returned: don't return
+raw request input from `key()` (prefix, normalize or encode it), or a value
+containing `|` can name another partition's record
+([#975](https://github.com/rangojs/rango/issues/975)).
+
 ### Breaking: a route `cache()` entry is tagged by what its content recorded, so `updateTag()` evicts shells and documents built from it ([#965](https://github.com/rangojs/rango/pull/965))
 
 On a `ppr` route with its own `cache()`, the shell capture replays the route's

@@ -2,8 +2,8 @@
  * Shared Cache Key Utilities
  *
  * Deterministic normalization of search params and route params
- * for cache key generation. Used by cache-runtime, cache-scope,
- * document-cache, and loader-cache.
+ * for cache key generation, and the composition of nested cache() keys.
+ * Used by cache-runtime, cache-scope, document-cache, and loader-cache.
  */
 
 import { encodeKV } from "../encode-kv.js";
@@ -94,4 +94,24 @@ export function cacheKeyBase(
   if (paramStr) key += `:${paramStr}`;
   if (searchStr) key += `?${searchStr}`;
   return key;
+}
+
+/**
+ * The record key, or shell partition, of nested keyed cache() scopes (#970)
+ * from its parts, outermost first: the chain's `key()` results and, for an
+ * inner scope without its own `key()`, that scope's default key
+ * (CacheScope.resolveKeyFrom). One part is returned raw, so a single keyed
+ * scope keeps its key byte for byte. Two or more are joined by `|`, each
+ * URI-encoded (like partitionShellKey, rsc/shell-capture-constants.ts): an
+ * encoded part holds no `|`, so every tuple maps to its own key, of any
+ * depth. Raw, `("a|b", "c")` and `("a", "b|c")` named one record. A composed
+ * key holds no `:` either, so a single raw result with one (a prefixed
+ * `tier:...`, a `doc:` default key) never equals it; an unprefixed raw result
+ * can. Shared with the testing helper `shellCacheKey`, which composes a
+ * nested partition the same way.
+ */
+export function composeCacheKeys(parts: readonly string[]): string {
+  return parts.length === 1
+    ? parts[0]
+    : parts.map((part) => encodeURIComponent(part)).join("|");
 }
