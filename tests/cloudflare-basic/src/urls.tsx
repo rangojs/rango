@@ -23,6 +23,10 @@ import {
   DepCrumbSiblingLoader,
   LoaderCtxItemLoader,
 } from "./loaders/loader-cache-dep.js";
+import {
+  BodyTaggedDepLoader,
+  BodyTaggedLoader,
+} from "./loaders/loader-cache-tag.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
@@ -154,6 +158,7 @@ import { StreamedDocumentPage } from "./pages/streamed-document.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
+import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { UseCacheDepPage } from "./pages/use-cache-dep.js";
 import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
@@ -1570,6 +1575,20 @@ export const urlpatterns = urls(
               cache({ ttl: 600 }),
             ]),
             loader(DepCrumbSiblingLoader, { ssr: false }),
+          ],
+        ),
+
+        // A loader with its own cache() and no cache({ tags }) whose body
+        // calls cacheTag() and reads a tagging dependency, bound after it so
+        // the DSL starts the dependency: the entry stores both tags, so
+        // updateTag() of either refreshes the loader's value (#964).
+        path(
+          "/loader-cache-tag",
+          LoaderCacheTagPage,
+          { name: "loaderCacheTag" },
+          () => [
+            loader(BodyTaggedLoader, () => [cache({ ttl: 600 })]),
+            loader(BodyTaggedDepLoader),
           ],
         ),
 

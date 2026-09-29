@@ -3,7 +3,8 @@ import {
   createCacheScope,
   resolveShellImplicitCacheScope,
 } from "../cache/cache-scope.js";
-import { armRecordTagOwners } from "../cache/cache-tag.js";
+import { armLoaderTagSets, armRecordTagOwners } from "../cache/cache-tag.js";
+import { bindsLoaderCache } from "./segment-resolution/loader-cache.js";
 import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
@@ -155,8 +156,10 @@ export async function createMatchContextForFull<TEnv>(
   // substitute an implicit doc-level scope (a route-derived scope wins).
   const cacheScope = resolveShellImplicitCacheScope(snapshot.cacheScope);
   // A scope means a route cache() record may be written: arm its tag owners
-  // before any handler runs (#957).
+  // before any handler runs (#957). A loader bound with its own cache() needs
+  // the per-execution loader tag sets before any loader runs (#964).
   if (cacheScope) armRecordTagOwners();
+  if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
 
   return {
     request,
@@ -414,8 +417,9 @@ export async function createMatchContextForPartial<TEnv>(
     ? snapshot.cacheScope
     : resolveShellImplicitCacheScope(snapshot.cacheScope);
   // A scope means a route cache() record may be written: arm its tag owners
-  // before any handler runs (#957).
+  // before any handler runs (#957); see the full-match site for #964's arm.
   if (cacheScope) armRecordTagOwners();
+  if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
 
   return {
     request,

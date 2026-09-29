@@ -27,6 +27,7 @@
 | `use`           | `UseResolver`                                                   | Dynamic resolver for `ctx.use(OtherLoader)` composition. `loaders` wins when both match.                                                                                                                                   |
 | `cacheStore`    | `SegmentCacheStore`                                             | Cache store backing `use cache` functions. Without one, a cached function bypasses and runs uncached (its taint/profile guards never fire).                                                                                |
 | `cacheProfiles` | `Record<string, CacheProfile>`                                  | Cache profiles, the `createRouter({ cacheProfiles })` shape.                                                                                                                                                               |
+| `cache`         | `PartialCacheOptions`                                           | Run the loader through the `cache()` a route binds it with (`loader(Loader, () => [cache({...})])` takes the same options), against `cache.store`, else `cacheStore`. See the caveat below.                                |
 | `stateCookie`   | `StateCookieSeed` (`{ prefix?, routerId?, version? }`)          | Customize the rango state cookie a loader calling `invalidateClientCache()` rotates (the name is always seeded — default `rango-state_router_0`).                                                                          |
 | `rendered`      | `boolean \| (() => void \| Promise<void>)`                      | Mock the `ctx.rendered()` render barrier so a loader that `await ctx.rendered()`s can be unit-tested. By default `ctx.rendered()` throws. `true` resolves immediately; a function controls timing/side effects.            |
 | `handles`       | `ReadonlyArray<readonly [Handle<any, any>, unknown]>`           | Seed the values `ctx.get(SomeHandle)` returns — the ACCUMULATED handle data read after `await ctx.rendered()`. Matched by handle reference. (Loader handle WRITES need no seed — see `runLoaderResult(...).handlePushes`.) |
@@ -124,6 +125,22 @@ it("asserts a loader's set-cookie + redirect (runLoaderResult)", async () => {
 - `ctx.search` (typed) defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`. Seed the typed object with `searchData`. (The harness seeds `searchData` verbatim — it does NOT run a typed-search SCHEMA, so schema parsing/validation is e2e.)
 - `ctx.theme`/`ctx.setTheme` are NOT on the loader context — theme accessors are handler-only. (The `theme` option seeds the underlying request context for `use cache` theme resolution, but a loader body cannot read theme.) `redirect()` does no basename prefixing unless you seed `basename`.
 - A `"use cache"` hit needs real Flight, which loads only under the react-server condition. In the react-server project (a `*.rsc-test.ts` file, see [`./setup.md`](./setup.md)) with `cacheStore` seeded, the body runs once across `runLoader` calls and the value round-trips. The write is a background (`waitUntil`) task `runLoader` does not await: a call before it lands joins the still-running execution, a call after it reads the store (wait with `vi.waitFor` on a `cacheStore.setItem` spy). In the node project a call looks up the store but never writes, so every call runs the body. A function written with the directive needs `rangoUseCacheTransform()` in the project's `plugins` (see [`./render-handler.md`](./render-handler.md#a-use-cache-hit)).
+- The `cache` option runs the loader through the production loader-cache read-through, so it needs the react-server project for the same reason. A HIT returns the stored value without running the body and records the tags the body recorded when the entry was written, so `updateTag()` of one (inside `runInRequestContext(fn, { cacheStore })`) drops the entry. There is no in-flight join here: wait for the write before the next call, or that call misses too. A raw body is keyed by its function reference. `runLoaderResult(...).handlePushes` lists the body's pushes, so a HIT reports none (the replay into the page's handle store is not modeled).
+
+  ```ts
+  const load = () =>
+    runLoader(productLoader, {
+      params: { id: "1" },
+      cacheStore,
+      cache: { ttl: 300 },
+    });
+  await load(); // MISS: the body runs and calls cacheTag("product:1")
+  await vi.waitFor(() => expect(setItem).toHaveBeenCalledTimes(1));
+  await load(); // HIT: the body does not run
+  await runInRequestContext(() => updateTag("product:1"), { cacheStore });
+  await load(); // MISS again
+  ```
+
 - Platform bindings are yours to double via `env` (see `./bindings.md`).
 
 ## See also

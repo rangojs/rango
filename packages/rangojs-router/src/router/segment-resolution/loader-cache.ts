@@ -23,11 +23,22 @@
  * "use cache" capture/encode), and every HIT — stale included — replays
  * them, each loader's pushes at most once per request (a dependency another
  * reader already ran keeps its live pushes). See replayLoaderHandles.
+ *
+ * Tags too (#964): the entry stores its cache() tags plus every tag its
+ * execution recorded, those of the loader values it read included
+ * (cache-tag.ts "Recorded-tag sets"), so updateTag() of any of them drops it.
+ * Every HIT records the stored tags through the loader's tag owner
+ * (recordLoaderTags), so a route cache() record, PPR shell or document built
+ * over the HIT carries them, and a loader that reads this one takes them on.
+ * Once the binding started, a loader body's ctx.use of it gets the same
+ * dataPromise as a handler read (createLoaderExecutor's useLoader); a stale
+ * refresh does not (setupLoaderAccess _runLoaderIsolated).
  */
 
 import {
   getCurrentLoaderBodyId,
   isInsideLoaderBody,
+  type EntryData,
   type LoaderEntry,
 } from "../../server/context.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
@@ -59,7 +70,16 @@ import {
   maskNestedContainerThenables,
   overlayLoaderContainer,
 } from "./loader-snapshot.js";
-import { linkLoaderTags, recordLoaderTags } from "../../cache/cache-tag.js";
+import {
+  armLoaderTagSets,
+  captureRecordedTags,
+  flattenRecordedTags,
+  linkLoaderTags,
+  linkRecordedTags,
+  readValueTags,
+  recordLoaderTags,
+  tagLoaderValue,
+} from "../../cache/cache-tag.js";
 import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
@@ -129,6 +149,39 @@ function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   const options = loaderEntry.cache?.options;
   if (!options) return undefined;
   return resolveTagsOption(options.tags, getRequestContext(), "LoaderCache");
+}
+
+const bindsLoaderCacheMemo = new WeakMap<EntryData, boolean>();
+
+const hasLoaderCache = (loaders: readonly LoaderEntry[] | undefined) =>
+  loaders?.some((l) => l.cache !== undefined && l.cache.options !== false) ??
+  false;
+
+function entryBindsLoaderCache(entry: EntryData): boolean {
+  let binds = bindsLoaderCacheMemo.get(entry);
+  if (binds === undefined) {
+    binds =
+      hasLoaderCache(entry.loader) ||
+      (entry.intercept?.some((i) => hasLoaderCache(i.loader)) ?? false) ||
+      (entry.layout?.some(entryBindsLoaderCache) ?? false) ||
+      Object.values(entry.parallel ?? {}).some(
+        (p) => p !== undefined && entryBindsLoaderCache(p),
+      );
+    bindsLoaderCacheMemo.set(entry, binds);
+  }
+  return binds;
+}
+
+/**
+ * Whether a request over the matched chain `entries` resolves a loader bound
+ * with its own cache(): on a chain entry, or on its parallel slots, orphan
+ * layouts or intercepts. The match arms the per-execution loader tag sets on
+ * it (cache-tag.ts armLoaderTagSets), before any loader starts, so a
+ * dependency the handler or another binding starts first still records.
+ * Memoized per entry.
+ */
+export function bindsLoaderCache(entries: readonly EntryData[]): boolean {
+  return entries.some(entryBindsLoaderCache);
 }
 
 function getLoaderStore(
@@ -372,8 +425,10 @@ function executeLoaderData<TEnv>(
     ctx.use = ((item: any) => {
       const cached = overrides!.get(item?.$$id);
       if (cached) {
-        // A read is a consumption (#957): see createLoaderExecutor's useLoader.
+        // A read is a consumption (#957, #964): see createLoaderExecutor's
+        // useLoader.
         linkLoaderTags(item.$$id);
+        readValueTags(cached);
         return cached;
       }
       return originalUse(item);
@@ -403,6 +458,16 @@ function executeLoaderData<TEnv>(
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
   recordLoaderTags(loaderId, tags);
+  // Production arms at match, before any loader runs (match-api.ts,
+  // bindsLoaderCache); no production path relies on this. It only keeps a
+  // resolveLoaders call outside a match from running unarmed after this
+  // point (loaders it started earlier stay unrecorded).
+  armLoaderTagSets();
+  // An execution of this loader outside the binding (a reader started it
+  // first, a stale refresh) answers for the cache() tags too.
+  if (tags && tags.length > 0) {
+    internal._bindLoaderCacheTags?.(loaderId, new Set(tags));
+  }
 
   // Handle pushes: the store and the owning segment are read synchronously
   // at kickoff, as createLoaderExecutor does for the body's own pushes.
@@ -413,6 +478,10 @@ function executeLoaderData<TEnv>(
   // concurrently. A dependency can still run on a HIT for another reader
   // (memoized per request); the replay's claim keeps its pushes to one copy.
   const isOwnBodyPush = () => isInsideLoaderBody(loaderId);
+  // What a reader of this value takes on (tagLoaderValue below,
+  // readValueTags): the cache() tags, plus the entry's tags on a HIT or the
+  // execution's on a MISS.
+  const valueTags = new Set(tags);
 
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -435,15 +504,19 @@ function executeLoaderData<TEnv>(
 
     // One readThroughItem call runs at most one execution — the foreground
     // MISS or the background stale revalidation (flagged by wrapBackground)
-    // — so a single capture slot serves the setItem that follows it.
+    // — so one handle capture and one tag set serve the setItem after it.
+    // The entry's tags: its cache() tags plus what the execution recorded.
     let capture: HandleCapture | undefined;
+    const bodyTags = new Set(tags);
     let revalidating = false;
     let hitHandles: string | undefined;
     const onCachedRead = (label: string, cached: CacheItemResult) => {
       hitHandles = cached.handles;
+      recordLoaderTags(loaderId, cached.tags);
+      for (const tag of cached.tags ?? []) valueTags.add(tag);
       debugLoaderCacheLog(`[LoaderCache] ${label}: ${key}`);
     };
-    const execute = async (): Promise<any> => {
+    const runBody = async (): Promise<any> => {
       // A stale-hit revalidation runs on its own executor: it diverts its
       // pushes (below), so sharing the page's memoized run of a dependency
       // would take that dependency's pushes off the page.
@@ -480,15 +553,21 @@ function executeLoaderData<TEnv>(
       // pushes awaited up to its timeout, the whole blob dropped on a timeout
       // or a thrown encode). Encoded here, inside the deferred write, so a
       // MISS response never waits on it.
-      setItem: async (k, v, o) => {
-        const handles = capture
-          ? await encodeHandles(capture.data, onFlightError)
-          : "";
-        if (flightErrors.length > 0) throw flightErrors[0];
-        await store.setItem!(k, v, handles ? { ...o, handles } : o);
-      },
+      setItem: (k, v, o) =>
+        captureRecordedTags(bodyTags, async () => {
+          const handles = capture
+            ? await encodeHandles(capture.data, onFlightError)
+            : "";
+          if (flightErrors.length > 0) throw flightErrors[0];
+          const entryTags = [...flattenRecordedTags(bodyTags)];
+          await store.setItem!(k, v, {
+            ...o,
+            tags: entryTags.length > 0 ? entryTags : undefined,
+            ...(handles ? { handles } : {}),
+          });
+        }),
       key,
-      execute,
+      execute: () => captureRecordedTags(bodyTags, runBody),
       // The rango.background span (kind=loader-revalidation) wraps the WHOLE
       // stale revalidation — the re-execution AND the serialize/setItem write
       // (read-through-swr routes the full task through wrapBackground) — so
@@ -502,12 +581,18 @@ function executeLoaderData<TEnv>(
           observePhase(PHASES.background("loader-revalidation"), run),
         );
       },
-      serialize: (d) => codec.serializeResult(d, onFlightError),
+      serialize: (d) =>
+        captureRecordedTags(bodyTags, () =>
+          codec.serializeResult(d, onFlightError),
+        ),
       deserialize: (v) => codec.deserializeResult(v),
       storeOptions: { ttl, swr, tags },
       onHit: (cached) => onCachedRead("HIT", cached),
       onStale: (cached) => onCachedRead("STALE", cached),
-      onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
+      onMiss: () => {
+        linkRecordedTags(valueTags, bodyTags);
+        debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
+      },
       onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
       host: requestCtxForExecute,
     });
@@ -529,6 +614,7 @@ function executeLoaderData<TEnv>(
   // push after full drain throws LateHandlePushError.
   handleStore?.trackAuxiliary(dataPromise);
 
+  tagLoaderValue(dataPromise, valueTags);
   overrides.set(loaderId, dataPromise);
 
   return dataPromise;

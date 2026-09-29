@@ -67,6 +67,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                                     | e2e                 | `parityDescribe` + `expectParity`                                                                              | `/server-actions`                        |
 | navigation / hydration / view transitions        | no reload, no page error, correct pathname                                          | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                                                 | `/hooks`, `/view-transitions`            |
 | a `"use cache"` function                         | hit/miss: the body runs once across two calls; the value round-trips                | RSC unit            | `renderHandler`/`runLoader` + seeded `cacheStore` + `rangoUseCacheTransform()` (rsc project)                   | `/use-cache`                             |
+| a loader's own `cache()`                         | hit/miss; `updateTag()` of a tag its body recorded drops the entry                  | RSC unit            | `runLoader` + `cache` + seeded `cacheStore` (rsc project)                                                      | `/loader`, `/caching`                    |
 | `cache()` / loader cache / `"use cache"` stale   | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
 | `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
 | `ppr` shell (axis 2)                             | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
@@ -461,7 +462,10 @@ tuples — the same shape as `renderHandler`/`renderRoute`; checked before `use`
 and `use` (a dynamic resolver for `ctx.use(OtherLoader)`; `loaders` wins when both
 match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one.
 Also accepted: `request`, `basename`, `theme`, `cacheStore`/`cacheProfiles`,
-`stateCookie`, and `rendered`/`handles` (below). In the body, `ctx.reverse`
+`cache` (the options a route binds the loader with — `loader(Loader, () =>
+[cache({...})])` — to run it through that loader cache; a HIT skips the body,
+and `updateTag()` of a tag the body recorded drops the entry; react-server
+project), `stateCookie`, and `rendered`/`handles` (below). In the body, `ctx.reverse`
 accepts any name from `routeMap` and `ctx.get` accepts any string key or
 `createVar()` handle (both are driven by the options, so neither is bound to the
 app's global augmentation).
@@ -1376,8 +1380,9 @@ runMiddleware(
 runLoader<T>(
   loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>, // raw body OR a registered createLoader() handle
   opts?: { params?, search?, searchData?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
-           formData?, loaders?: [loader, data][], use?, rendered?, handles?, basename?, theme?, cacheStore?, cacheProfiles?, stateCookie? },
+           formData?, loaders?: [loader, data][], use?, rendered?, handles?, basename?, theme?, cacheStore?, cacheProfiles?, cache?, stateCookie? },
 ): Promise<T>;
+// cache: the loader's own cache() options; runs it through the production loader cache (a HIT skips the body).
 // A createLoader() handle's fn is recovered from the registry (works through the server build / rangoTestConfig preset).
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
 // loaders: [[OtherLoader, data]] seeds ctx.use(OtherLoader) by reference (same shape as renderHandler/renderRoute); use = dynamic resolver.

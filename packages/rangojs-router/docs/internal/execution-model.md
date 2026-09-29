@@ -86,6 +86,17 @@ global middleware
   `loader-cache.ts`, `_claimLoaderPushes` in `loader-resolution.ts`
   (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
   `loader-cache-handles.test.ts` and `handle-store.test.ts`.
+- One value per loader per request: once a loader's `cache()` binding
+  started (`overrides.set` at kickoff in `executeLoaderData`), every
+  `ctx.use` of it, from a handler or from another loader's body, gets the
+  binding's value, a HIT included; the bound body never runs a second time
+  for a reader. A reader that ran before the binding started got the value
+  of its own run, as it does on main. A stale refresh reads its loaders on
+  its own executor, never through the page's bindings, so it is not rebuilt
+  from another stale entry. Source: `_loaderCacheOverrides` in
+  `loader-cache.ts` (the handler interceptor), `useLoader` and
+  `_runLoaderIsolated` in `loader-resolution.ts`; pinned by
+  `loader-cache-tags.test.ts` and `loader-cache-handles.test.ts` (#964).
 - A PPR shell HIT that replays the handler layer restores the settled pushes
   of each `loader(Def, { ssr: false })` body from the shell record through
   the same `pushReplayed` path, claiming that loader; its re-run on the HIT

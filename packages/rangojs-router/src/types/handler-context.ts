@@ -469,6 +469,13 @@ export type InternalHandlerContext<
    * from the page. See setupLoaderAccess.
    */
   _runLoaderIsolated?: (loader: any) => Promise<any>;
+  /**
+   * @internal A loader's cache() binding started with these cache() tags: an
+   * execution of that loader outside the binding (a reader started it first,
+   * or a stale refresh runs it) answers for them too (#964). See
+   * setupLoaderAccess.
+   */
+  _bindLoaderCacheTags?: (loaderId: string, tags: Set<string>) => void;
 };
 
 /**
