@@ -164,7 +164,9 @@ cache(
   — document requests, client navigations, and intercept navigations are cached
   separately. The search part honors `cache.searchParams` (below).
 - **`key`** is a full override: it bypasses the default key, the store's
-  `keyGenerator`, and the search-param filter. On a `ppr` route the same key
+  `keyGenerator`, and the search-param filter. A nested `cache()` keys its
+  records within that partition (see "Keys nest" under "Nested Cache
+  Boundaries"). On a `ppr` route the same key
   (or, without one, the store's `keyGenerator`) partitions the PPR shell: each
   partition captures and serves its own shell (`/ppr`, "Request-partitioned
   shells").
@@ -834,8 +836,9 @@ See `/cache-guide` for the full decision guide and the `cache()` vs `"use cache"
 
 ## Nested Cache Boundaries
 
-An inner boundary overrides the settings of the outer one for its subtree;
-`cache(false)` turns caching off for a subtree:
+An inner boundary overrides the settings of the outer one for its subtree
+(`key` composes instead, see below); `cache(false)` turns caching off for a
+subtree:
 
 ```typescript
 cache({ ttl: 300 }, () => [
@@ -856,6 +859,74 @@ On a `ppr` route the opt-out also means no shell: `cache(false)`, or a
 cache miss, with no shell served and none captured. A `ppr` route under a
 layout's `cache()` therefore cannot opt out of that `cache()` and still get a
 shell (`/ppr`).
+
+### Keys nest: a partition covers the whole subtree
+
+A `key()` partitions every record under its `cache()`. A nested `cache()`
+keys its records within that partition, so a request in one partition never
+HITs another partition's inner record:
+
+```typescript
+const tier = (ctx) =>
+  ctx.request.headers.get("x-tier") === "gold" ? "gold" : "silver";
+
+cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
+  layout(TierLayout, () => [
+    // No key() of its own: the outer key() result, then this boundary's own
+    // default key ("tier%3Agold|doc%3Aexample.com%2Fpricing"), so /pricing
+    // and /faq keep their own records
+    cache({ ttl: 60 }, () => [
+      path("/pricing", PricingPage, { name: "pricing" }),
+      path("/faq", FaqPage, { name: "faq" }),
+    ]),
+
+    // Its own key() composes with the outer one ("tier%3Agold|v%3Ab")
+    cache(
+      { ttl: 60, key: (ctx) => `v:${ctx.searchParams.get("v") ?? "a"}` },
+      () => [path("/plans", PlansPage, { name: "plans" })],
+    ),
+  ]),
+]);
+```
+
+The parts are joined by `|`, outermost first, each URI-encoded:
+
+| Boundary the route sits in                     | Record key                                                                                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `cache({ ttl })`, no `key`, under a keyed one  | The chain's `key()` results, then this boundary's default key (its store's `keyGenerator` result, else the default key) |
+| `cache({ key })` under a keyed one             | The chain's `key()` results                                                                                             |
+| deeper nesting                                 | Composes the same way; only the innermost boundary's missing `key` adds its default key                                 |
+| `cache(false)`                                 | No caching, as before; a `cache()` re-enabled below it stays in the partition                                           |
+| a single keyed `cache()`, or no `key` anywhere | Its raw `key()` result, or the default key, as before                                                                   |
+
+- The encoding is unambiguous among composed keys: an encoded part holds no
+  `|`, so no two partitions, and no two inner keys, compose to the same
+  record key.
+- A single keyed `cache()` stores its `key()` result as is, so a raw result
+  can equal a composed key: a header value `gold|doc%3Aexample.com%2Fpricing`
+  returned raw names the record gold's pricing page keeps under the inner
+  `cache()` in the example above. Never return raw
+  request input from `key()`: normalize it to the values you serve, prefix
+  it (`tier:${value}`), or encode it. A composed key holds no `:` (every
+  part is URI-encoded), so a prefixed result never equals one.
+- An inner boundary without `key` keeps everything its default key tells
+  apart (path, params, search, document vs navigation), so its routes never
+  share a record, even when the outer `key()` names no route.
+- A boundary with its own `key()` skips the store's `keyGenerator`, as a
+  single `key()` does.
+- Each `key()` runs once per request, however many boundaries and lookups use
+  it.
+- A response route's entry (`path.json()` and the other response routes) is
+  keyed the same way. A `ppr` route's shell is partitioned by the chain's
+  `key()` results alone, since the shell key already carries the URL (plus the
+  store `keyGenerator`'s result for an inner boundary without `key`).
+- To share an inner cache across partitions, move it outside the keyed
+  `cache()`.
+
+Before issue #970, the innermost boundary alone decided the key: an inner
+`cache()` without `key` wrote under the default key and an inner `key()`
+dropped the outer partition, so a silver visitor could HIT what a gold
+visitor's request had cached.
 
 ## Custom Cache Store
 

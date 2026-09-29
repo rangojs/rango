@@ -586,8 +586,9 @@ export function partitionBuildShellCheckDone(
 /**
  * Record a partitioned request's build-shell probe, and warn once per route
  * when it found one: the route has a build-time shell its requests cannot
- * read. The route's request partition (its `cache({ key })`, or the store's
- * keyGenerator) keys the shell per partition, and the build captured only
+ * read. The route's request partition (a `cache({ key })` enclosing it, at
+ * any depth (#970), or the store's keyGenerator) keys the shell per
+ * partition, and the build captured only
  * the default one, so each partition captures at runtime. Same
  * declared-intent-cannot-be-honored doctrine as the warnings above; a path
  * with no build shell stays silent.
@@ -610,7 +611,7 @@ export function notePartitionBuildShellCheck(
   partitionBuildShellWarned.add(route);
   console.warn(
     `[rango] Route ${routeName ? `"${routeName}" ` : ""}("${pathname}") has a ` +
-      "build-time shell, but its request partition (the route's cache({ key }), " +
+      "build-time shell, but its request partition (a cache({ key }) enclosing the route, " +
       "or the store's keyGenerator) keys its shell per partition, so the build " +
       "shell is not served and each partition captures its own at runtime. A " +
       "keyGenerator that returns the default key unchanged keeps the build shell.",

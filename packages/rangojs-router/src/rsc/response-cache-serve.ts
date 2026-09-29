@@ -105,7 +105,10 @@ export async function serveResponseRouteWithCache(
   // the host-namespacing and search-normalization rules cannot drift.
   let cacheKey = `response:${responseType}:${cacheKeyBase(url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
-  // Priority 1: route-level key() (full override). Priority 2: store-level
+  // Priority 1: route-level key() (full override): the key() results of every
+  // cache() enclosing the route, composed like the segment record key
+  // (CacheScope.resolveKeyFrom, #970), so a nested cache() never shares an
+  // entry across the enclosing partitions. Priority 2: store-level
   // keyGenerator (modifies the default key).
   //
   // A CONFIGURED key()/keyGenerator that THROWS must DEGRADE TO A MISS, not fall
@@ -114,13 +117,13 @@ export async function serveResponseRouteWithCache(
   // would cache PERSONALIZED output under it and serve it cross-user (cache
   // poisoning). Mirrors the segment-cache behavior (cache-scope.ts lookupRoute):
   // a throwing key degrades to a cache miss, never a collision onto the default
-  // slot. The no-key default path is left untouched (the broad key is correct
-  // when no key is configured).
+  // slot, and so does a key() with no ambient request context to run in
+  // (resolveKeyFrom rejects). The no-key default path is left untouched (the
+  // broad key is correct when no key is configured).
   let keyResolutionFailed = false;
-  if (cacheScope.config !== false && cacheScope.config.key) {
+  if (cacheScope.keyFns.length > 0) {
     try {
-      const customKey = await cacheScope.config.key(reqCtx);
-      cacheKey = `response:${customKey}`;
+      cacheKey = `response:${await cacheScope.resolveKeyFrom(cacheKey)}`;
     } catch (error) {
       keyResolutionFailed = true;
       reportCacheError(

@@ -38,7 +38,7 @@ import {
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
-import { cacheKeyBase } from "./cache-key-utils.js";
+import { cacheKeyBase, composeCacheKeys } from "./cache-key-utils.js";
 import {
   DEFAULT_ROUTE_TTL,
   isFiniteNonNegativeSeconds,
@@ -152,6 +152,39 @@ const CACHE_HIT_OBSERVERS = new WeakMap<
   () => void | Promise<void>
 >();
 
+type CacheKeyFn = NonNullable<PartialCacheOptions["key"]>;
+
+/**
+ * A configured `key()` cannot run without a request context. Falling back to
+ * the default key would store the key()'s partitioned output under the broad
+ * key and serve it across partitions, so key resolution fails instead and
+ * every caller degrades to an uncached render (as for a throwing `key()`).
+ */
+function keyWithoutContextError(): Error {
+  return new Error(
+    "[CacheScope] a cache() key() needs a request context; rendering uncached",
+  );
+}
+
+/**
+ * One key resolution per request, resolver (`by`: a `key()` or a store's
+ * keyGenerator) and `slot`, held on the request context (`_resolvedCacheKeys`,
+ * see CacheScope.resolveKeyFrom).
+ */
+function memoizedKey(
+  requestCtx: RequestContext,
+  by: unknown,
+  slot: string,
+  resolve: () => Promise<string>,
+): Promise<string> {
+  const memo = (requestCtx._resolvedCacheKeys ??= new Map());
+  let resolved = memo.get(by);
+  if (!resolved) memo.set(by, (resolved = new Map()));
+  let key = resolved.get(slot);
+  if (!key) resolved.set(slot, (key = resolve()));
+  return key;
+}
+
 /**
  * Discriminated outcome of a route cache lookup — see
  * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
@@ -185,6 +218,18 @@ export class CacheScope {
   readonly parent: CacheScope | null;
   /** Explicit store from cache() options, if specified */
   private readonly explicitStore: SegmentCacheStore | undefined;
+  /**
+   * @internal The `key()` functions that partition this scope's records,
+   * outermost first: every cache() on the parent chain that sets one, this
+   * scope's last (#970). `cache(false)` adds none and does not cut the chain,
+   * so a cache() re-enabled under it stays in the partition. Before, the
+   * innermost config alone decided the key: an inner cache() without `key()`
+   * wrote under the default key and an inner `key()` dropped the outer one,
+   * so a request in one partition HIT another partition's inner records.
+   */
+  readonly keyFns: readonly CacheKeyFn[];
+  /** Whether this scope's own config sets `key()` (the last of keyFns). */
+  private readonly hasOwnKey: boolean;
 
   constructor(
     config: PartialCacheOptions | false,
@@ -203,6 +248,15 @@ export class CacheScope {
     this.parent = parent;
     // Extract and store explicit store reference
     this.explicitStore = config !== false ? config.store : undefined;
+    // Only a function counts: a conditional `key: flag ? fn : null` from
+    // untyped code is no key(), as resolveCacheKey always treated it.
+    const ownKey =
+      config !== false && typeof config.key === "function"
+        ? config.key
+        : undefined;
+    const inherited = parent?.keyFns ?? [];
+    this.hasOwnKey = ownKey !== undefined;
+    this.keyFns = ownKey ? [...inherited, ownKey] : inherited;
   }
 
   /**
@@ -326,39 +380,114 @@ export class CacheScope {
   }
 
   /**
-   * @internal This scope's record key for `defaultKey` (its `key()`, else its
-   * store's keyGenerator, else `defaultKey`: resolveCacheKey), resolved once
-   * per request: a ppr route's shell partition (resolveShellPartition) and
-   * the record lookup share the one call, and a rejection is shared too.
+   * @internal This scope's record key for `defaultKey`, resolved once per
+   * request: a ppr route's shell partition (resolvePartition) and the record
+   * lookup share the `key()` runs, and a rejection is shared too.
    *
-   * The results live on the request context (`_resolvedCacheKeys`), so a
-   * shell capture, whose context is `Object.create` of the request's
-   * (shell-capture.ts), reads the foreground's through the prototype chain
-   * and never runs `key()` itself: a `key()` calling `cookies()` would trip
-   * the capture guard there, and a capture must store the partition its
-   * request resolved. A `key()` is a full override that never sees
-   * `defaultKey`, so it runs once per request whatever the default key
-   * (document, partial or `doc` shell prefix); a keyGenerator runs once per
-   * default key.
+   * With `key()` functions on the chain (keyFns) the parts are their results,
+   * outermost first, composed by composeCacheKeys (a single part raw), so a
+   * nested cache() keys its records within the enclosing partition (#970).
+   * A scope whose own config sets no `key()` appends its own default key
+   * (resolveDefaultKey). Reusing the outer `key()` result alone would give
+   * every route under the inner cache() one record: a `key()` replaces the
+   * whole default key, so an outer key that names no route (`tier:gold`)
+   * would make `/a` HIT `/b`'s record. A scope with its own `key()` adds no
+   * default key: a `key()` is a full override, and no keyGenerator runs.
+   * Without `key()` on the chain it is resolveDefaultKey alone. With one but
+   * no request context it rejects (keyWithoutContextError).
+   *
+   * Each `key()` result lives on the request context (`_resolvedCacheKeys`),
+   * by function: it runs once per request whatever the default key
+   * (document, partial or `doc` shell prefix) and however many scopes share
+   * it (sibling routes under one keyed cache()). A shell capture, whose
+   * context is `Object.create` of the request's (shell-capture.ts), reads the
+   * foreground's results through the prototype chain and never runs `key()`
+   * itself: a `key()` calling `cookies()` would trip the capture guard there,
+   * and a capture must store the partition its request resolved.
    */
   resolveKeyFrom(defaultKey: string): Promise<string> {
-    const keyFn = this.config !== false ? this.config.key : undefined;
-    const store = this.getStore();
     const requestCtx = _getRequestContext();
-    const by = keyFn ?? store?.keyGenerator;
-    if (!requestCtx || !by) {
-      return resolveCacheKey(keyFn, store, defaultKey, "CacheScope");
+    if (this.keyFns.length === 0) {
+      return this.resolveDefaultKey(requestCtx, defaultKey);
     }
-    const memo = (requestCtx._resolvedCacheKeys ??= new Map());
-    let resolved = memo.get(by);
-    if (!resolved) memo.set(by, (resolved = new Map()));
-    const slot = keyFn ? "" : defaultKey;
-    let key = resolved.get(slot);
-    if (!key) {
-      key = resolveCacheKey(keyFn, store, defaultKey, "CacheScope");
-      resolved.set(slot, key);
+    if (!requestCtx) return Promise.reject(keyWithoutContextError());
+    const parts = this.resolveKeyResults(requestCtx, defaultKey);
+    if (!this.hasOwnKey) {
+      parts.push(this.resolveDefaultKey(requestCtx, defaultKey));
     }
-    return key;
+    return parts.length === 1
+      ? parts[0]
+      : Promise.all(parts).then(composeCacheKeys);
+  }
+
+  /**
+   * @internal The request partition of a ppr route's shell under this scope
+   * (resolveShellPartition): the chain's `key()` results, composed like the
+   * record key but without the default key, which the URL-based shell key
+   * already carries. A scope without its own `key()` whose store has a
+   * keyGenerator adds that result when it differs from the `doc` default
+   * key, as an unkeyed scope's partition always did: the record is split by
+   * it, so the shell must be too. Undefined (synchronously, with no work)
+   * when nothing can partition; null when nothing does.
+   */
+  resolvePartition(
+    pathname: string,
+    params: Record<string, string> | undefined,
+  ): Promise<string | null> | undefined {
+    const keyGenerator = this.hasOwnKey
+      ? undefined
+      : this.getStore()?.keyGenerator;
+    if (this.keyFns.length === 0 && !keyGenerator) return undefined;
+    const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+    const requestCtx = _getRequestContext();
+    if (!requestCtx) {
+      return this.keyFns.length > 0
+        ? Promise.reject(keyWithoutContextError())
+        : Promise.resolve(null);
+    }
+    const generated = keyGenerator
+      ? this.resolveDefaultKey(requestCtx, defaultKey)
+      : undefined;
+    return Promise.all([
+      Promise.all(this.resolveKeyResults(requestCtx, defaultKey)),
+      generated,
+    ]).then(([keys, generatedKey]) => {
+      const parts =
+        generatedKey === undefined || generatedKey === defaultKey
+          ? keys
+          : [...keys, generatedKey];
+      const partition = parts.length === 0 ? null : composeCacheKeys(parts);
+      return partition === defaultKey ? null : partition;
+    });
+  }
+
+  /** The chain's `key()` results, each once per request (memoizedKey). */
+  private resolveKeyResults(
+    requestCtx: RequestContext,
+    defaultKey: string,
+  ): Promise<string>[] {
+    return this.keyFns.map((keyFn) =>
+      memoizedKey(requestCtx, keyFn, "", () =>
+        resolveCacheKey(keyFn, null, defaultKey, "CacheScope"),
+      ),
+    );
+  }
+
+  /**
+   * This scope's store keyGenerator result for `defaultKey` (once per request
+   * and default key), else `defaultKey` (resolveCacheKey).
+   */
+  private resolveDefaultKey(
+    requestCtx: RequestContext | undefined,
+    defaultKey: string,
+  ): Promise<string> {
+    const store = this.getStore();
+    const keyGenerator = store?.keyGenerator;
+    const resolve = () =>
+      resolveCacheKey(undefined, store, defaultKey, "CacheScope");
+    return requestCtx && keyGenerator
+      ? memoizedKey(requestCtx, keyGenerator, defaultKey, resolve)
+      : resolve();
   }
 
   /**
@@ -844,17 +973,18 @@ function collectRecordTags(
 }
 
 /**
- * @internal The request partition of a ppr route's shell: the record key
- * that partitions the route's cache() record for this request (its `key()`,
- * else its store's keyGenerator, both given the document default key) or,
- * with no route cache(), the app store's keyGenerator result. Undefined
- * (synchronously, with no work) when neither applies: the shell key stays
- * host + path + filtered search. Resolves to null when the key is the
- * default key itself (a keyGenerator that returns it unchanged): that
- * partitions nothing, so the shell stays unpartitioned and keeps its build
- * shell. The shell's key, its read and capture, and partial replay all use
- * it, so a visitor is only served its own partition. A rejected promise is a
- * failed key resolution: the caller serves no shell.
+ * @internal The request partition of a ppr route's shell: with a route
+ * cache() scope, its CacheScope.resolvePartition (the chain's `key()`
+ * results, composed, plus a keyGenerator's contribution for a scope without
+ * its own `key()` (#970)); with none, the app store's keyGenerator result
+ * given the document default key. Undefined (synchronously, with no work)
+ * when neither applies: the shell key stays host + path + filtered search.
+ * Resolves to null when the partition is the default key itself (a
+ * keyGenerator that returns it unchanged): that partitions nothing, so the
+ * shell stays unpartitioned and keeps its build shell. The shell's key, its
+ * read and capture, and partial replay all use it, so a visitor is only
+ * served its own partition. A rejected promise is a failed key resolution:
+ * the caller serves no shell.
  */
 export function resolveShellPartition(
   routeScope: CacheScope | null | undefined,
@@ -862,15 +992,12 @@ export function resolveShellPartition(
   pathname: string,
   params: Record<string, string> | undefined,
 ): Promise<string | null> | undefined {
-  const scope = routeScope?.enabled ? routeScope : undefined;
-  const keyFn = scope && scope.config !== false ? scope.config.key : undefined;
-  const store = scope ? scope.getStore() : appStore;
-  if (!keyFn && !store?.keyGenerator) return undefined;
+  if (routeScope?.enabled) return routeScope.resolvePartition(pathname, params);
+  if (!appStore?.keyGenerator) return undefined;
   const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
-  const key = scope
-    ? scope.resolveKeyFrom(defaultKey)
-    : resolveCacheKey(undefined, store ?? null, defaultKey, "CacheScope");
-  return key.then((resolved) => (resolved === defaultKey ? null : resolved));
+  return resolveCacheKey(undefined, appStore, defaultKey, "CacheScope").then(
+    (resolved) => (resolved === defaultKey ? null : resolved),
+  );
 }
 
 /**

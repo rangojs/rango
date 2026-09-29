@@ -141,7 +141,9 @@ cache({ ttl: 60 }, () => [
 
 ### Nested Cache Boundaries
 
-Override TTL or opt out:
+Override TTL or opt out. A `key()` is the exception to "the inner boundary
+overrides": it composes, so nested records stay in the enclosing partition
+(see "Nested keys compose" under Cache Key Customization):
 
 ```typescript
 cache({ ttl: 60 }, () => [
@@ -997,6 +999,90 @@ cache(
   () => [path("product/:id")],
 );
 ```
+
+#### Nested keys compose (issue #970)
+
+A `key()` is a partition of the whole subtree, not of one boundary. You might
+expect "the nearest `cache()` wins" to be harmless here, since it is how
+`ttl` and `swr` behave. It is not, and that was the bug: the innermost scope's
+config alone decided the record key, so an inner `cache()` without `key`
+wrote under the default key and an inner `key()` dropped the outer one. With
+the outer scope partitioning by tier, a silver visitor HIT the record a gold
+visitor's request wrote under the inner scope, and once PR #969 made the PPR
+shell partition follow the record key, the shell shared it too.
+
+So `CacheScope` carries the chain of `key()` functions from the outermost
+`cache()` down to itself (`keyFns`, built in the constructor from
+`parent.keyFns`; `cache(false)` adds none and does not cut the chain), and
+`resolveKeyFrom` resolves the record key from it. The parts are the chain's
+`key()` results, outermost first; a scope whose own config sets no `key()`
+appends its own default key (`resolveDefaultKey`: its store's
+`keyGenerator(ctx, defaultKey)` result, else the default key). Two or more
+parts are joined by `composeCacheKeys`, each URI-encoded:
+
+| The route's scope                                     | Record key                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------------ |
+| no `key()` on the chain                               | its default key (unchanged)                                        |
+| a single keyed scope (`key()` of its own, none above) | its raw `key()` result (byte-identical to before)                  |
+| no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                 |
+| its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result)`                |
+| `cache(false)` innermost                              | no read, no write (unchanged)                                      |
+| `cache()` re-enabled under `cache(false)`             | still in the partition: `compose(outer key() results..., default)` |
+
+Why the default key in the inherit case: a first cut reused the outer
+`key()` result verbatim, and that made a new collision. A `key()` replaces
+the whole default key, so with ``key: (ctx) => `tier:${tier}` `` every
+route under an inner `cache()` without `key`, and every route directly under
+the outer one, wrote under the one store key `tier:gold`. The store key
+carries no scope or route discriminator (`lookupRouteDetailed` reads
+`store.get(key)`, `cacheRoute` writes `store.set(key, ...)`), and nested
+enabled scopes share the outermost boundary (`createCacheScope`), so the
+boundary filter in `lookupRouteDetailed` keeps the other route's segments
+and `/b` rendered `/a`'s record. Composing the inner scope's own default key
+keeps what it told apart before (path, params, search, document vs
+navigation) and adds the partition.
+
+Why URI-encode: raw, `("a|b", "c")` and `("a", "b|c")` both join to
+`a|b|c`, and a partition is request-derived. An encoded part holds no `|`, so
+every tuple maps to its own key and the number of parts is recoverable from
+the key. The same trick keeps the PPR shell key unambiguous
+(`partitionShellKey` in `src/rsc/shell-capture-constants.ts` encodes the
+partition again). The collision probe in
+`src/cache/__tests__/nested-cache-key.test.ts` pins it.
+
+That guarantee holds among composed keys, not against a single raw one. A
+single keyed scope stores its `key()` result as is (byte-identical to before
+#970), and nothing stops that string from equalling a composed key: a
+`key()` returning the header value `gold|doc%3Alocalhost%2Fpricing` raw
+names gold's inner `/pricing` record, which is cross-route poisoning when
+the value is untrusted. The class is older than #970, since a raw `key()`
+could always name a `doc:` default key. The defence is at the call site:
+never return raw request input from `key()`; normalize, prefix or encode
+it. A composed key holds no `:` (`encodeURIComponent` escapes it in every
+part), so a prefixed result like `tier:${value}` never equals one; the
+probe pins that too.
+
+A scope with its own `key()` skips the store's `keyGenerator`, as a single
+`key()` always did. Each `key()` is memoized on the request context by
+function (`_resolvedCacheKeys`), so it runs once per request however many
+scopes and lookups use it (sibling routes under one keyed `cache()`, the
+document, partial and shell keys), and a shell capture, whose context is
+`Object.create` of the request's, reuses the foreground's results instead of
+running `key()` under the capture guard. A keyGenerator result is memoized
+per default key, as before.
+
+The response-route entry (`response-cache-serve.ts`) keys the same way: it
+reads the scope's `resolveKeyFrom` instead of the innermost `config.key`. The
+PPR shell partition does not take the default key:
+`CacheScope.resolvePartition` (called by `resolveShellPartition`) composes
+the chain's `key()` results alone, because the shell key already carries
+host, path and search. A scope without its own `key()` whose store has a `keyGenerator`
+adds that result when it differs from the `doc` default key, as an unkeyed
+scope's partition always did: the record is split by it, so the shell must
+be too.
+
+To share an inner cache across partitions on purpose, declare it outside
+the keyed `cache()`.
 
 ### Tags for Invalidation
 

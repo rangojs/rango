@@ -1478,52 +1478,81 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
 
   // A route whose cache() key() partitions its record by the visitor's tier
   // partitions its shell the same way: each tier captures and serves its own,
-  // hydrates cleanly, and never sees another tier's content.
-  test("a request-partitioned route: each tier gets its own shell, hydrates cleanly, and nothing leaks", async ({
-    browser,
-    request,
-  }) => {
-    const url = f.url(
-      `/shell-cache/tiered?probe=${crypto.randomUUID().slice(0, 8)}`,
-    );
-    const get = (tier: string) =>
-      request.get(url, { headers: { ...HTML_HEADERS, "x-shell-tier": tier } });
-    const expectHit = async (tier: string, other: string) => {
-      await expect(async () => {
-        const res = await get(tier);
-        expect(res.headers()["x-rango-shell"]).toBe("HIT");
-        const body = await res.text();
-        expect(body).toContain(`tier-${tier}`);
-        expect(body).not.toContain(`tier-${other}`);
-      }).toPass({ timeout: 15_000 });
-    };
+  // hydrates cleanly, and never sees another tier's content. So does a route
+  // under a cache() nested in the keyed one, without a key() of its own
+  // (issue #970); its layout reads the tier too.
+  for (const [route, label, nested] of [
+    ["/shell-cache/tiered", "a request-partitioned route", false],
+    [
+      "/shell-cache/tiered-nested",
+      "a route under a cache() nested in a keyed cache()",
+      true,
+    ],
+  ] as const) {
+    test(`${label}: each tier gets its own shell, hydrates cleanly, and nothing leaks`, async ({
+      browser,
+      request,
+    }) => {
+      const url = f.url(`${route}?probe=${crypto.randomUUID().slice(0, 8)}`);
+      const get = (tier: string) =>
+        request.get(url, {
+          headers: { ...HTML_HEADERS, "x-shell-tier": tier },
+        });
+      const expectHit = async (tier: string, other: string) => {
+        await expect(async () => {
+          const res = await get(tier);
+          expect(res.headers()["x-rango-shell"]).toBe("HIT");
+          const body = await res.text();
+          expect(body).toContain(`tier-${tier}`);
+          if (nested) expect(body).toContain(`layout-tier-${tier}`);
+          // The two routes share the outer key(); neither replays the other's
+          // record.
+          expect(body.includes("shell-tiered-nested-route")).toBe(nested);
+          expect(body).not.toContain(`tier-${other}`);
+        }).toPass({ timeout: 15_000 });
+      };
 
-    expect((await get("gold")).headers()["x-rango-shell"]).toBe("MISS");
-    await expectHit("gold", "silver");
-    // Silver does not HIT gold's shell: its own MISS, then its own capture.
-    const silverMiss = await get("silver");
-    expect(silverMiss.headers()["x-rango-shell"]).toBe("MISS");
-    expect(await silverMiss.text()).not.toContain("tier-gold");
-    await expectHit("silver", "gold");
-    await expectHit("gold", "silver");
-
-    for (const tier of ["gold", "silver"]) {
-      const context = await browser.newContext({
-        extraHTTPHeaders: { "x-shell-tier": tier },
-      });
-      try {
-        const page = await context.newPage();
-        using _ = expectNoPageError(page);
-        using __ = guardHydrationErrors(page);
-        const res = await page.goto(url);
-        expect(res?.headers()["x-rango-shell"]).toBe("HIT");
-        await waitForHydration(page);
-        await expect(testId(page, "shell-tiered")).toHaveText(`tier-${tier}`);
-      } finally {
-        await context.close();
+      if (nested) {
+        // /shell-cache/tiered's record sits under the bare outer key
+        // ("tier:gold"). Write it first: the nested route must not read it.
+        const flat = f.url(
+          `/shell-cache/tiered?probe=${crypto.randomUUID().slice(0, 8)}`,
+        );
+        await expect(async () => {
+          const res = await request.get(flat, {
+            headers: { ...HTML_HEADERS, "x-shell-tier": "gold" },
+          });
+          expect(res.headers()["x-rango-shell"]).toBe("HIT");
+        }).toPass({ timeout: 15_000 });
       }
-    }
-  });
+
+      expect((await get("gold")).headers()["x-rango-shell"]).toBe("MISS");
+      await expectHit("gold", "silver");
+      // Silver does not HIT gold's shell: its own MISS, then its own capture.
+      const silverMiss = await get("silver");
+      expect(silverMiss.headers()["x-rango-shell"]).toBe("MISS");
+      expect(await silverMiss.text()).not.toContain("tier-gold");
+      await expectHit("silver", "gold");
+      await expectHit("gold", "silver");
+
+      for (const tier of ["gold", "silver"]) {
+        const context = await browser.newContext({
+          extraHTTPHeaders: { "x-shell-tier": tier },
+        });
+        try {
+          const page = await context.newPage();
+          using _ = expectNoPageError(page);
+          using __ = guardHydrationErrors(page);
+          const res = await page.goto(url);
+          expect(res?.headers()["x-rango-shell"]).toBe("HIT");
+          await waitForHydration(page);
+          await expect(testId(page, "shell-tiered")).toHaveText(`tier-${tier}`);
+        } finally {
+          await context.close();
+        }
+      }
+    });
+  }
 
   test("a request carrying the forced-MISS marker renders on axis 1 even over a stored shell", async ({
     page,

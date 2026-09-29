@@ -876,6 +876,44 @@ describe("handleRscRendering — integrated PPR serve: the gate before the commi
       }
     });
 
+    it.each([
+      ["composed with the inner key()", { ttl: 30, key: () => "v:a" }],
+      ["inherited by an inner cache() without key()", { ttl: 30 }],
+    ])(
+      "a nested cache() partition (%s) skips the build shell and warns the same way (#970)",
+      async (_label, inner) => {
+        resetShellServeStateForTests();
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const arm = (reqCtx: RequestContext<unknown>) => {
+          const classified = reqCtx._classifiedRoute as any;
+          classified.routeKey = "product";
+          classified.manifestEntry.parent = {
+            type: "cache",
+            shortCode: "C0",
+            parent: null,
+            cache: { options: { ttl: 300, key: () => "tier:gold" } },
+          };
+          classified.manifestEntry.cache = { options: inner };
+        };
+        try {
+          const { response } = await run({
+            ssrModule: fullSsrModule(),
+            ppr: true,
+            arm,
+          });
+          expect(response.headers.get("x-rango-shell")).toBe("MISS");
+          const warnings = warn.mock.calls
+            .map(([message]) => String(message))
+            .filter((message) => message.includes("build-time shell"));
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toContain('Route "product" ("/p")');
+          expect(warnings[0]).toContain("a cache({ key }) enclosing the route");
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
     it("the tombstone makes the request a MISS instead of serving the build shell", async () => {
       const store = new MemorySegmentCacheStore();
       await store.putShell(

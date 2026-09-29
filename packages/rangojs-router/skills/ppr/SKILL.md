@@ -160,10 +160,29 @@ cache(
 // gold and silver visitors each get their own /pricing shell.
 ```
 
+The partition follows nested scopes (issue #970): a `ppr` route under a
+`cache()` nested in a keyed one is partitioned by the outer `key()` when the
+inner boundary has none, and by both composed (outermost first, each
+URI-encoded, joined by `|`) when it has its own. The route's record adds the
+inner boundary's own default key when it has no `key`; the shell partition
+does not, since the shell key already carries the URL (a store
+`keyGenerator`'s result is kept when it adds anything). See `/caching`,
+"Keys nest".
+
+```tsx
+cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+  layout(TierLayout, () => [
+    cache({ ttl: 60 }, () => [path("/pricing", PricingPage, { ppr: true })]),
+  ]),
+]);
+// gold and silver still get their own /pricing shell and record.
+```
+
 This is the sanctioned way to vary shell material by request: the capture
 guards still refuse `cookies()`/`headers()` in handler work, while the key
 function reads what it needs (`cookies()` included). A `key()` runs once per
-request: the shell read, the record lookup and the capture share its result.
+request: the shell read, the record lookup and the capture share its result
+(each `key()` of a nested chain once).
 One that throws serves no shell (like the record path renders uncached); a
 store `keyGenerator` that returns the default key unchanged partitions
 nothing. A partitioned route never serves a build-time shell (the build
@@ -189,7 +208,9 @@ value of it.
 
 In tests, `serveShellRequest` reports the key the serve path resolved
 (`result.key`, partition included); `shellCacheKey(url, searchParams,
-partition)` builds the same key from the partition.
+partition)` builds the same key from the partition. Under nested keyed
+scopes, pass the `key()` results as an array, outermost first
+(`shellCacheKey(url, undefined, ["tier:gold", "v:a"])`).
 
 ## Where PPR sits: the cache onion
 

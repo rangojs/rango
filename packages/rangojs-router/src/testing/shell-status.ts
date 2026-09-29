@@ -32,7 +32,10 @@
  * (Playwright — same pure helpers, no Vite virtuals).
  */
 
-import { sortedSearchString } from "../cache/cache-key-utils.js";
+import {
+  composeCacheKeys,
+  sortedSearchString,
+} from "../cache/cache-key-utils.js";
 import { partitionShellKey } from "../rsc/shell-capture-constants.js";
 import {
   compileSearchParamsFilter,
@@ -94,12 +97,15 @@ export type ShellStatusTarget = Response | { headers: Headers };
  * partitioned by the request — its `cache({ key })`, or the store's
  * `keyGenerator` — its shell is too: pass the key that function returns for
  * the request as `partition` (appended URI-encoded; a result equal to the
- * default key partitions nothing, so pass none).
+ * default key partitions nothing, so pass none). Under nested keyed
+ * `cache()` scopes, pass their `key()` results as an array, outermost first:
+ * they compose as the production record key composes them
+ * (`composeCacheKeys`).
  */
 export function shellCacheKey(
   url: URL | string,
   searchParams?: CacheSearchParams,
-  partition?: string,
+  partition?: string | readonly string[],
 ): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
@@ -109,7 +115,12 @@ export function shellCacheKey(
   );
   const searchSuffix = sorted ? `?${sorted}` : "";
   const key = `${resolved.host}${resolved.pathname}${searchSuffix}:shell`;
-  return partition === undefined ? key : partitionShellKey(key, partition);
+  if (partition === undefined) return key;
+  if (typeof partition === "string") return partitionShellKey(key, partition);
+  // No key() results: no partition, as when `partition` is omitted.
+  return partition.length === 0
+    ? key
+    : partitionShellKey(key, composeCacheKeys(partition));
 }
 
 function getHeaders(target: ShellStatusTarget): Headers {
