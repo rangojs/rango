@@ -2293,3 +2293,20 @@ export {
   REFUSED_CAPTURE_MAX_MS,
   REFUSED_CAPTURE_DEV_MAX_MS,
 };
+
+/**
+ * @internal Reset this module's per-isolate state: the capture stampede
+ * guard, the refused-capture backoff, the once-per-key warnings and the
+ * buffered debug events. Tests only (testing/serve-shell-request.ts
+ * resetShellTestState), between requests, never while a capture runs.
+ */
+export function resetShellCaptureStateForTests(): void {
+  inFlightCaptures.clear();
+  refusedCaptures.clear();
+  warnedNullCaptures.clear();
+  noShellPendingStacks.clear();
+  warnedRefusedCaptures.clear();
+  warnedOverCapSnapshots.clear();
+  warnedBakeCosts.clear();
+  lastCaptureEventsForTiming.clear();
+}

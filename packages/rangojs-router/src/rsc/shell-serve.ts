@@ -450,3 +450,13 @@ export function warnPprNonceActiveOnce(key: string): void {
       "ppr option on this route, or stop setting a per-request nonce for it.",
   );
 }
+
+/**
+ * @internal Reset the serve path's once-per-key warnings and buffered tail
+ * timings. Tests only (testing/serve-shell-request.ts resetShellTestState).
+ */
+export function resetShellServeStateForTests(): void {
+  warnedMissingStore.clear();
+  warnedNonceActive.clear();
+  lastTailTimingsForServerTiming.clear();
+}

@@ -10,13 +10,13 @@ This guide sets up the test runners for a Rango app and gives one working recipe
 
 What a behavior touches decides where it can be tested. A loader's data logic is a plain Node test. An async Server Component needs a real Flight render, which only loads under the `react-server` condition, so it can't be a plain Node test at all.
 
-| Layer                       | Runs under                                     | Entry                                                                       | Main helpers                                                                                                          |
-| --------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Unit and integration (node) | Vitest, default project                        | `@rangojs/router/testing`                                                   | `runLoader`, `runLoaderResult`, `runMiddleware`, `runInRequestContext`, `dispatch`, `assertGeneratedRoutesMatch`      |
-| Flight (RSC)                | Vitest, `react-server` project                 | `@rangojs/router/testing/flight`, `@rangojs/router/testing/flight-matchers` | `renderHandler`, `renderServerTree`, `renderToFlightString`, `findElements`, `findClientBoundaries`, `flightMatchers` |
-| DOM                         | Vitest, default project with a DOM environment | `@rangojs/router/testing/dom`                                               | `renderRoute`                                                                                                         |
-| End-to-end                  | Playwright                                     | `@rangojs/router/testing/e2e`                                               | `createRangoE2E`, `parityDescribe`, `expectParity`, `assertCacheStatus`                                               |
-| Config                      | `vitest.config.ts`, `vitest.rsc.config.ts`     | `@rangojs/router/testing/vitest`                                            | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`                                   |
+| Layer                       | Runs under                                     | Entry                                                                       | Main helpers                                                                                                                               |
+| --------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unit and integration (node) | Vitest, default project                        | `@rangojs/router/testing`                                                   | `runLoader`, `runLoaderResult`, `runMiddleware`, `runInRequestContext`, `dispatch`, `assertGeneratedRoutesMatch`                           |
+| Flight (RSC)                | Vitest, `react-server` project                 | `@rangojs/router/testing/flight`, `@rangojs/router/testing/flight-matchers` | `renderHandler`, `renderServerTree`, `renderToFlightString`, `findElements`, `findClientBoundaries`, `flightMatchers`, `serveShellRequest` |
+| DOM                         | Vitest, default project with a DOM environment | `@rangojs/router/testing/dom`                                               | `renderRoute`                                                                                                                              |
+| End-to-end                  | Playwright                                     | `@rangojs/router/testing/e2e`                                               | `createRangoE2E`, `parityDescribe`, `expectParity`, `assertCacheStatus`                                                                    |
+| Config                      | `vitest.config.ts`, `vitest.rsc.config.ts`     | `@rangojs/router/testing/vitest`                                            | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`                                                        |
 
 Host-router pattern helpers live separately at `@rangojs/router/host/testing`; see the [host router guide](/docs/rango/guides/host-router).
 
@@ -467,6 +467,31 @@ parityDescribe("caching", (f) => {
 The statuses are `hit`, `miss`, `stale`, and `prerendered`, reported per route; a route that passes through prerendering reports `miss`. Import the helper from `/testing/e2e` in Playwright, since the `/testing` barrel pulls in a build-only module a plain Playwright runner can't resolve. If a dev-mode cache test sees a miss where it expects a hit, pass `{ isolatedServer: true }` as the third argument to `parityDescribe` so the dev server is warmed up before the tests run.
 
 When your test owns the router instance that serves the request, `createCacheSink()` wired through `createRouter({ telemetry: sink })` and `assertCacheDecision()` read the same decision from telemetry, with no header. `dispatch` never renders, so it produces neither signal. See the [prerender guide](/docs/rango/guides/prerender) and [caching](/docs/rango/features/caching) for the behavior being tested.
+
+A `ppr` route's shell can be tested in the Flight project with `serveShellRequest` from `@rangojs/router/testing/flight`. It serves one GET through your router's request handler and settles the background work the request started, so the first call is a MISS whose capture has stored the shell, and the next call with the same store is a HIT from it. The HTML step is stubbed, since `react-dom/server` does not load under the `react-server` condition: `prelude` is the shell as captured and `flight` is what this request rendered, both as Flight text. Pass `partial: true` to serve a client navigation and read its `replayStatus`. The test process keeps the capture backoff and `CFCacheStore`'s memos across tests the way a worker keeps them across requests, so call `resetShellTestState()` in `beforeEach`.
+
+```tsx
+// test/product-shell.rsc-test.tsx
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  resetShellTestState,
+  serveShellRequest,
+} from "@rangojs/router/testing/flight";
+import { router } from "../src/product-router";
+
+beforeEach(() => resetShellTestState());
+
+it("serves the captured shell and renders the stock hole live", async () => {
+  const cacheStore = new MemorySegmentCacheStore();
+  const miss = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(miss.shellStatus).toBe("MISS");
+
+  const hit = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(hit.shellStatus).toBe("HIT");
+  expect(hit.prelude).toContain("Widget"); // captured
+  expect(hit.flight).toContain("in stock"); // the loader under loading(), live
+});
+```
 
 ## End-to-end: dev, production, and JS off
 

@@ -421,7 +421,7 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
 ### Unit / integration testing (public primitives)
 
 Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
-(Playwright):
+(Playwright); `serveShellRequest` from `@rangojs/router/testing/flight`:
 
 | Helper                                            | Use for                                                      |
 | ------------------------------------------------- | ------------------------------------------------------------ |
@@ -430,6 +430,7 @@ Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
 | `parsePprReplayStatus(res)`                       | Read structured replay/bypass status or null                 |
 | `shellCacheKey(url)`                              | Production store key for `store.getShell` / custom stores    |
 | `MemorySegmentCacheStore` + `getShell`/`putShell` | Custom store contract / tag eviction (no faked HIT)          |
+| `serveShellRequest(router, url, opts)`            | A real MISS → capture → HIT (react-server Vitest)            |
 
 ```ts
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
@@ -445,11 +446,14 @@ expect(await store.getShell(key)).not.toBeNull();
 assertShellStatus({ headers: new Headers(res.headers()) }, "HIT");
 ```
 
-**Out of unit scope** (stay e2e): live MISS → background capture → HIT,
-browser resume of holes, build-time producer B. `dispatch` never runs PPR.
+**Out of unit scope** (stay e2e): real HTML (the prelude bytes and the fizz
+resume), browser resume of holes, build-time producer B. A MISS → capture →
+HIT runs in a unit test through `serveShellRequest` from
+`@rangojs/router/testing/flight`: the shell as captured is `result.prelude`,
+the live tail is `result.flight`. `dispatch` never runs PPR.
 `renderHandler` only exposes `ctx.dynamic()` / `build` for the opt-out path.
 Do not invent a HIT Response in unit tests. Full recipe: `/testing` skill →
-`cache-prerender.md` (PPR shell section).
+`serve-shell-request.md` and `cache-prerender.md` (PPR shell section).
 
 ## The hole doctrine (encode this in your head)
 

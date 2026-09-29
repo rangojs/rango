@@ -251,7 +251,7 @@
     },
     {
       "name": "testing",
-      "description": "Test @rangojs/router apps — unit (loaders, middleware, server actions, handles, transition/clientUrls predicates), client components (renderRoute), RSC/Flight (renderServerTree, renderHandler), integration (dispatch), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader, middleware, action, or handler, setting up vitest for a Rango app, or testing a route end-to-end in dev and production.",
+      "description": "Test @rangojs/router apps — unit (loaders, middleware, server actions, handles, transition/clientUrls predicates), client components (renderRoute), RSC/Flight (renderServerTree, renderHandler, serveShellRequest for PPR shells), integration (dispatch), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader, middleware, action, or handler, setting up vitest for a Rango app, or testing a route end-to-end in dev and production.",
       "argumentHint": "[layer]",
       "path": "skills/testing/SKILL.md"
     },

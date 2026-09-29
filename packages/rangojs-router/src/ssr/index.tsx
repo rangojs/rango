@@ -2,7 +2,10 @@ import React from "react";
 import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "../rsc/shell-capture-constants.js";
+import {
+  POST_QUIESCE_TASK_HOPS,
+  SHELL_CAPTURE_MAX_WAIT_MS,
+} from "../rsc/shell-capture-constants.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type { ErrorPhase } from "../types.js";
 import type { HeadScriptsOption } from "../vite/plugin-types.js";
@@ -236,32 +239,6 @@ export interface SSRDependencies<TEnv = unknown> {
    */
   onError?: (error: Error, context: { phase: ErrorPhase }) => void;
 }
-
-/**
- * Fixed number of macrotask hops between `quiesce` resolving and the abort. These
- * give React's fizz worker turns to flush the settled shell into the prelude and
- * mark still-pending boundaries as POSTPONED (rather than errored) before
- * controller.abort() lands. Not a wall-clock wait.
- *
- * Why 16 and not the original 2: under the REPLAY-ONLY capture model
- * (docs/design/ppr-shell-resume.md), the capture Flight render serializes ring-3
- * cached segments that are ALREADY serialized, so it emits the whole shell payload
- * in the first tick and the gate declares quiesce almost immediately (~a few ms).
- * On the old fresh-execution path the Flight dribbled out as handlers ran, so
- * Flight-quiet effectively meant "the shell has rendered" and 2 hops sufficed.
- *
- * Hops alone are NOT render-readiness: fizz cannot emit even <html> until the
- * payload root settles, nor complete a shell whose client components are
- * still loading — real module-runner I/O in dev (100ms+ cold), which no fixed
- * count of near-zero-cost task hops can buy. captureShellHTML therefore
- * awaits the payload-settled signal (SsrRootOptions.onPayloadSettled) and
- * then the client-reference loads in flight in the isolate (captureClientLoads),
- * deadline-bounded, between quiesce and these hops; the hops then only flush
- * the settled tree and mark pending boundaries POSTPONED. Still task-based
- * (masked loaders never emit, so more hops never lets a hole settle). Bounded
- * by maxWaitMs end to end.
- */
-const POST_QUIESCE_TASK_HOPS = 16;
 
 /**
  * One set per running capture, collecting the client-reference module loads

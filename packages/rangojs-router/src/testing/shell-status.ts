@@ -18,11 +18,15 @@
  *    Secondary unit signal: `store.getShell(shellCacheKey(url))` after a real
  *    capture flush (background `putShell`). There is no Flight flag for shell HIT.
  *
- * 3. **Stays e2e-only:** live MISS → background capture → HIT (needs real
- *    `captureShellHTML` / React `prerender` + resume fizz), browser resume of
- *    holes, Cloudflare/Vercel live stores, nonce/eligibility fall-open, and
- *    build-time producer B bake. Unit layer dogfoods the **store family + key
- *    identity + header assert**; it must never stub a shell HIT response.
+ * 3. **A real MISS → capture → HIT in unit tests:** `serveShellRequest`
+ *    (`@rangojs/router/testing/flight`, serve-shell-request.ts) serves one
+ *    request through the router's production handler and settles its
+ *    background capture; a later request with the same store is a real HIT or
+ *    partial replay. Its only stub is the HTML step (the SSR module).
+ *    **Stays e2e-only:** real HTML (the prelude's `<body` gate, fizz resume of
+ *    holes), browser resume of holes, live Cloudflare/Vercel runtimes (store
+ *    test doubles work in unit), and build-time producer B bake. The unit layer
+ *    must never stub a shell HIT response.
  *
  * Import from `@rangojs/router/testing` (Vitest) or `@rangojs/router/testing/e2e`
  * (Playwright — same pure helpers, no Vite virtuals).

@@ -12,9 +12,11 @@ import {
 
 // Userland dogfood of the PPR shell STORE family + shell-status helpers through
 // the PUBLIC @rangojs/router/cache and @rangojs/router/testing surfaces.
-// Live MISS -> background capture -> HIT (x-rango-shell) needs the RSC/SSR
-// pipeline and stays e2e (test-app / cloudflare-basic, dev + production).
-// Unit layer: production shell key identity + getShell/putShell + header assert.
+// A live MISS -> background capture -> HIT (x-rango-shell) runs in a Flight
+// test through serveShellRequest (@rangojs/router/testing/flight); real HTML
+// stays e2e (test-app / cloudflare-basic, dev + production). This file covers
+// the store half: production shell key identity + getShell/putShell + header
+// assert.
 
 function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {

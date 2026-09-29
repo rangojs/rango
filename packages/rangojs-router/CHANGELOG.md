@@ -198,6 +198,39 @@ CPU durations, and rides the next request's `Server-Timing` as `ppr-tail`, now
 in production too when the HIT collected metrics. In production, nothing is
 collected when `debugPerformance` is off.
 
+### Added: `serveShellRequest()`, a real PPR shell capture and HIT in unit tests ([#966](https://github.com/rangojs/rango/pull/966))
+
+No `@rangojs/router/testing` primitive ran a `ppr` route's shell capture or
+served a shell HIT, so what a HIT shows, when a shell recaptures, and what
+`updateTag()` evicts could only be tested in e2e (#956).
+`serveShellRequest(router, url, options?)` from
+`@rangojs/router/testing/flight` serves one GET through the router's
+production request handler, with its `nonce`, `version`, `cache` config and
+middleware, and settles the request's background tasks before it resolves. The
+first request for a `ppr` route is a MISS whose capture has stored the shell;
+the next one with the same store is a HIT from it. `partial` serves a client
+navigation and reports its `x-rango-ppr-replay` decision:
+
+```tsx
+const cacheStore = new MemorySegmentCacheStore();
+const miss = await serveShellRequest(router, "/product/1", { cacheStore });
+// miss.shellStatus === "MISS"; await miss.readEntry() is the stored shell
+const hit = await serveShellRequest(router, "/product/1", { cacheStore });
+// hit.shellStatus === "HIT"
+// hit.prelude: the shell as captured; hit.flight: this request's tail
+```
+
+Only the HTML step is stubbed, because `react-dom/server` does not load under
+the react-server condition: the prelude is the Flight text the capture
+rendered, and a HIT body is that prelude followed by the tail's Flight. Real
+prelude HTML, its `<body>` sanity gate, SSR render errors, the capture
+deadline's partial prelude, and fizz resume of the holes stay e2e.
+
+`resetShellTestState()`, from the same entry, clears the PPR state a worker
+keeps across requests and a test file keeps across tests: the capture's
+backoff and stampede guard, and `CFCacheStore`'s isolate memos. Call it in
+`beforeEach`.
+
 ### Fixes
 
 - A `CFCacheStore` PPR shell read whose memoized shell went stale keeps the

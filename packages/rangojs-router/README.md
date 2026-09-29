@@ -524,8 +524,9 @@ parityDescribe("add to cart", (f) => {
 ```
 
 `runMiddleware`, `renderHandler` (Server Component handlers rendered to a
-real Flight tree), `renderRoute` (DOM tests) and the cache assertions follow
-the same pattern. See the [`/testing` skill](./skills/testing/SKILL.md).
+real Flight tree), `serveShellRequest` (a `ppr` route's real shell capture and
+HIT), `renderRoute` (DOM tests) and the cache assertions follow the same
+pattern. See the [`/testing` skill](./skills/testing/SKILL.md).
 
 ## Everything else, when you need it
 

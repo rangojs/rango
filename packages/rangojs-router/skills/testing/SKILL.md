@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Test @rangojs/router apps — unit (loaders, middleware, server actions, handles, transition/clientUrls predicates), client components (renderRoute), RSC/Flight (renderServerTree, renderHandler), integration (dispatch), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader, middleware, action, or handler, setting up vitest for a Rango app, or testing a route end-to-end in dev and production.
+description: Test @rangojs/router apps — unit (loaders, middleware, server actions, handles, transition/clientUrls predicates), client components (renderRoute), RSC/Flight (renderServerTree, renderHandler, serveShellRequest for PPR shells), integration (dispatch), and e2e (dev+prod parity, progressive enhancement). Use when writing a unit test for a loader, middleware, action, or handler, setting up vitest for a Rango app, or testing a route end-to-end in dev and production.
 argument-hint: [layer]
 ---
 
@@ -109,7 +109,8 @@ Each primitive links to its sub-file (API + recipe + caveats).
 | a `"use cache"` hit in a handler (the body runs once across renders; the value round-trips)                                        | RSC unit     | [`renderHandler` + seeded `cacheStore`](./render-handler.md#a-use-cache-hit)                             | `@rangojs/router/testing/flight` |
 | a `"use cache"` hit in a loader (the same, in the react-server project)                                                            | RSC unit     | [`runLoader` + seeded `cacheStore`](./loader.md)                                                         | `@rangojs/router/testing`        |
 | cache hit/miss/stale, prerender (= a cache hit by design)                                                                          | e2e + signal | [`assertCacheStatus` (header) / `assertCacheDecision` (telemetry sink)](./cache-prerender.md)            | `@rangojs/router/testing[/e2e]`  |
-| PPR shell HIT/MISS (`ppr` path option), shell store key / getShell after flush                                                     | e2e + signal | [`assertShellStatus` / `shellCacheKey` + store](./cache-prerender.md#ppr-shell-and-navigation-replay)    | `@rangojs/router/testing[/e2e]`  |
+| a `ppr` route's shell: MISS -> capture -> HIT, what the shell froze vs what a HIT renders live, tag eviction, navigation replay    | RSC unit     | [`serveShellRequest`](./serve-shell-request.md)                                                          | `@rangojs/router/testing/flight` |
+| PPR shell HIT/MISS in real HTML (`ppr` path option), shell store key / getShell after flush                                        | e2e + signal | [`assertShellStatus` / `shellCacheKey` + store](./cache-prerender.md#ppr-shell-and-navigation-replay)    | `@rangojs/router/testing[/e2e]`  |
 | generated route map drift vs runtime                                                                                               | unit (node)  | [`assertGeneratedRoutesMatch`](./reverse-and-types.md)                                                   | `@rangojs/router/testing`        |
 | a platform binding (`env.DB` / Durable Object / `env.R2`)                                                                          | unit/integr. | [your own double via `env`](./bindings.md)                                                               | (any primitive's `env` option)   |
 
@@ -125,7 +126,8 @@ Cross-references to the DSL skills: `/loader`, `/middleware`, `/server-actions`,
   [`predicates.md`](./predicates.md), [`reverse-and-types.md`](./reverse-and-types.md)
 - Unit (DOM): [`client-components.md`](./client-components.md)
 - RSC unit: [`flight.md`](./flight.md), [`server-tree.md`](./server-tree.md),
-  [`render-handler.md`](./render-handler.md)
+  [`render-handler.md`](./render-handler.md),
+  [`serve-shell-request.md`](./serve-shell-request.md)
 - Integration: [`response-routes.md`](./response-routes.md)
 - E2E: [`e2e-parity.md`](./e2e-parity.md), [`cache-prerender.md`](./cache-prerender.md)
 
@@ -134,24 +136,25 @@ Cross-references to the DSL skills: `/loader`, `/middleware`, `/server-actions`,
 Where each runtime export is documented (types such as `RunLoaderOptions` sit
 beside their function):
 
-| Entry                                     | Exports                                                                                                                                                      | Documented in                                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| `@rangojs/router/testing`                 | `runLoader`, `runLoaderResult`                                                                                                                               | [`loader.md`](./loader.md)                       |
-|                                           | `runMiddleware`                                                                                                                                              | [`middleware.md`](./middleware.md)               |
-|                                           | `runInRequestContext`, `createTestRequestContext`, `runWithRequestContext`, `toRequest`, `seedVariables`                                                     | [`server-actions.md`](./server-actions.md)       |
-|                                           | `runTransitionWhen`, `runClientRevalidate`                                                                                                                   | [`predicates.md`](./predicates.md)               |
-|                                           | `collectHandle`                                                                                                                                              | [`handles.md`](./handles.md)                     |
-|                                           | `dispatch`                                                                                                                                                   | [`response-routes.md`](./response-routes.md)     |
-|                                           | `assertCacheStatus`, `assertCacheDecision`, `parseCacheHeader`, `createCacheSink`, `filterCacheDecisions`                                                    | [`cache-prerender.md`](./cache-prerender.md)     |
-|                                           | `assertShellStatus`, `parseShellStatus`, `shellCacheKey`, `SHELL_STATUS_HEADER`, `assertPprReplayStatus`, `parsePprReplayStatus`, `PPR_REPLAY_STATUS_HEADER` | [`cache-prerender.md`](./cache-prerender.md)     |
-|                                           | `assertGeneratedRoutesMatch`, `diffGeneratedRoutes`                                                                                                          | [`reverse-and-types.md`](./reverse-and-types.md) |
-| `@rangojs/router/testing/dom`             | `renderRoute`                                                                                                                                                | [`client-components.md`](./client-components.md) |
-| `@rangojs/router/testing/flight`          | `renderToFlightString`, `normalizeFlight`, `assertFlightRuntimeAvailable`                                                                                    | [`flight.md`](./flight.md)                       |
-|                                           | `renderServerTree`, `findClientBoundaries`, `findElements`, `textContent`, `assertFlightTreeRuntimeAvailable`                                                | [`server-tree.md`](./server-tree.md)             |
-|                                           | `renderHandler`                                                                                                                                              | [`render-handler.md`](./render-handler.md)       |
-| `@rangojs/router/testing/flight-matchers` | `flightMatchers` (`toMatchFlight`, `toMatchFlightSnapshot`)                                                                                                  | [`flight.md`](./flight.md)                       |
-| `@rangojs/router/testing/vitest`          | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`, `rangoUseCacheTransform`                                                | [`setup.md`](./setup.md)                         |
-| `@rangojs/router/testing/e2e`             | `createRangoE2E` and its standalone helpers; the cache/shell status helpers above are re-exported here                                                       | [`e2e-parity.md`](./e2e-parity.md)               |
+| Entry                                     | Exports                                                                                                                                                      | Documented in                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `@rangojs/router/testing`                 | `runLoader`, `runLoaderResult`                                                                                                                               | [`loader.md`](./loader.md)                           |
+|                                           | `runMiddleware`                                                                                                                                              | [`middleware.md`](./middleware.md)                   |
+|                                           | `runInRequestContext`, `createTestRequestContext`, `runWithRequestContext`, `toRequest`, `seedVariables`                                                     | [`server-actions.md`](./server-actions.md)           |
+|                                           | `runTransitionWhen`, `runClientRevalidate`                                                                                                                   | [`predicates.md`](./predicates.md)                   |
+|                                           | `collectHandle`                                                                                                                                              | [`handles.md`](./handles.md)                         |
+|                                           | `dispatch`                                                                                                                                                   | [`response-routes.md`](./response-routes.md)         |
+|                                           | `assertCacheStatus`, `assertCacheDecision`, `parseCacheHeader`, `createCacheSink`, `filterCacheDecisions`                                                    | [`cache-prerender.md`](./cache-prerender.md)         |
+|                                           | `assertShellStatus`, `parseShellStatus`, `shellCacheKey`, `SHELL_STATUS_HEADER`, `assertPprReplayStatus`, `parsePprReplayStatus`, `PPR_REPLAY_STATUS_HEADER` | [`cache-prerender.md`](./cache-prerender.md)         |
+|                                           | `assertGeneratedRoutesMatch`, `diffGeneratedRoutes`                                                                                                          | [`reverse-and-types.md`](./reverse-and-types.md)     |
+| `@rangojs/router/testing/dom`             | `renderRoute`                                                                                                                                                | [`client-components.md`](./client-components.md)     |
+| `@rangojs/router/testing/flight`          | `renderToFlightString`, `normalizeFlight`, `assertFlightRuntimeAvailable`                                                                                    | [`flight.md`](./flight.md)                           |
+|                                           | `renderServerTree`, `findClientBoundaries`, `findElements`, `textContent`, `assertFlightTreeRuntimeAvailable`                                                | [`server-tree.md`](./server-tree.md)                 |
+|                                           | `renderHandler`                                                                                                                                              | [`render-handler.md`](./render-handler.md)           |
+|                                           | `serveShellRequest`, `resetShellTestState`                                                                                                                   | [`serve-shell-request.md`](./serve-shell-request.md) |
+| `@rangojs/router/testing/flight-matchers` | `flightMatchers` (`toMatchFlight`, `toMatchFlightSnapshot`)                                                                                                  | [`flight.md`](./flight.md)                           |
+| `@rangojs/router/testing/vitest`          | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`, `rangoUseCacheTransform`                                                | [`setup.md`](./setup.md)                             |
+| `@rangojs/router/testing/e2e`             | `createRangoE2E` and its standalone helpers; the cache/shell status helpers above are re-exported here                                                       | [`e2e-parity.md`](./e2e-parity.md)                   |
 
 ## Pre-push checklist
 

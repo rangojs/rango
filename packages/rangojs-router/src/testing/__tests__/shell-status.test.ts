@@ -156,9 +156,10 @@ describe("assertPprReplayStatus / parsePprReplayStatus", () => {
 });
 
 describe("MemorySegmentCacheStore + shellCacheKey (public store dogfood)", () => {
-  // Live MISS→capture→HIT needs the RSC/SSR capture pipeline (e2e). Unit layer
-  // dogfoods the consumer-touchable half: production key identity + real
-  // getShell/putShell on MemorySegmentCacheStore — no faked HIT Response.
+  // A live MISS→capture→HIT runs through serveShellRequest
+  // (serve-shell-request.rsc-test.tsx). This covers the store half: production
+  // key identity + real getShell/putShell on MemorySegmentCacheStore — no
+  // faked HIT Response.
   it("stores and retrieves a shell under the production key after putShell", async () => {
     const store = new MemorySegmentCacheStore();
     const url = new URL("http://localhost/products/42?utm=x&sort=price");
