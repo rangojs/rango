@@ -69,7 +69,8 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a `"use cache"` function                         | hit/miss: the body runs once across two calls; the value round-trips                | RSC unit            | `renderHandler`/`runLoader` + seeded `cacheStore` + `rangoUseCacheTransform()` (rsc project)                   | `/use-cache`                             |
 | `cache()` / loader cache / `"use cache"` stale   | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
 | `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
-| `ppr` shell (axis 2)                             | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
+| `ppr` shell (axis 2)                             | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
+| `ppr` shell (axis 2) in real HTML                | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
 | the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
@@ -92,7 +93,7 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                                                                                                                                                                                                                                     | Keep Flight tests to leaf server components; test full pages at e2e                                                                                                                                         |
 | streaming `use(promise)` Suspense content (e.g. async breadcrumb `content`) in `renderRoute`                                                | a plain resolving promise's Suspense **retry does not flush** in RTL — the DOM stays on the fallback                                                                                                                                                                                                                                                  | Assert the pending **fallback**; for the arrived state pass a **settled** promise (see the Catch under renderRoute), or use e2e                                                                             |
 | `"use cache"` / `cache()` hit/miss/stale in a loader or `dispatch`                                                                          | Without `cacheStore`/`cacheProfiles` seeded, `registerCachedFunction` **bypasses** — the fn runs **uncached**, so taint/profile/invalidation never fire and a green test proves nothing about caching                                                                                                                                                 | `"use cache"` hit/miss: **RSC unit** (seeded store, react-server project). `cache()`/loader cache and `"use cache"` stale: **e2e + cache signal**. In node a store reaches only lookups + the NOCACHE guard |
-| `ppr` shell MISS → capture → HIT via `dispatch` + `MemorySegmentCacheStore`                                                                 | `dispatch` is **RSC-free** — no Flight/SSR/`handleRscRendering`, so the shell serve/capture commit point never runs; seeding a store + `ppr: true` is a no-op for shells                                                                                                                                                                              | Unit: key/store plus `assertShellStatus` / `assertPprReplayStatus`; live bake/serve/replay is **e2e**. Never invent a HIT Response to fake capture                                                          |
+| `ppr` shell MISS → capture → HIT via `dispatch` + `MemorySegmentCacheStore`                                                                 | `dispatch` is **RSC-free** — no Flight/SSR/`handleRscRendering`, so the shell serve/capture commit point never runs; seeding a store + `ppr: true` is a no-op for shells                                                                                                                                                                              | Use **`serveShellRequest`** (RSC unit): the router's production handler with only the HTML step stubbed. Real HTML (prelude bytes, resume) stays **e2e**. Never invent a HIT Response to fake capture       |
 | importing your real **whole router file** (`import { router }`) into a bare test                                                            | the file's page modules may pull their own deps or plugin `virtual:` modules that need the rango plugin. (Handler `$$id` is NOT the blocker — `Prerender()` / `createLoader()` / `Static()` all construct via a runtime fallback id.)                                                                                                                 | Build the router from a focused **importable include** (e.g. your API routes) for `dispatch` / `assertGeneratedRoutesMatch`; run whole-router checks at **e2e** (see Setup → "Resolving `@rangojs/router`") |
 | a loader that `await`s `ctx.rendered()` then reads accumulated handles                                                                      | `runLoader` seeds handle pushes directly — it does **not** run the real push→accumulate→barrier chain, so a loader that crashes on **empty** post-barrier handles can pass when seeded but still fail in prod                                                                                                                                         | Seed the expected `rendered`/`handles` on `runLoader`; assert the full barrier wiring at **e2e**                                                                                                            |
 
@@ -1100,6 +1101,92 @@ RSC. `handles` is a `Map<Handle, pushed[]>` of what the handler pushed via
 `stateCookie`, `cacheStore`, `cacheProfiles`, `inActionRevalidation`, and
 `theme`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
 
+### serveShellRequest — a real PPR capture and HIT
+
+A `ppr` route's behavior lives in two requests: the MISS that captures the
+shell in the background, and the HIT that serves it and fills the holes.
+`renderHandler` runs one handler, and `dispatch` never renders, so neither
+reaches that. `serveShellRequest(router, url, options?)` serves one GET through
+your router's production request handler — built as `router.fetch` builds it,
+with your `nonce`, `version`, `cache` config and middleware — and settles every
+background task the request scheduled before it resolves. The first call is a
+MISS whose capture has already stored its shell; the next call with the same
+store is a HIT from it.
+
+```tsx
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  resetShellTestState,
+  serveShellRequest,
+} from "@rangojs/router/testing/flight";
+import { router } from "../src/product-router"; // a focused, importable router
+
+// A fresh worker's PPR state for every test (see below).
+beforeEach(() => resetShellTestState());
+
+it("keeps the shell and renders the stock hole live", async () => {
+  const cacheStore = new MemorySegmentCacheStore();
+
+  const miss = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(miss.shellStatus).toBe("MISS");
+  expect(await miss.readEntry()).not.toBeNull(); // the capture landed
+
+  const hit = await serveShellRequest(router, "/product/1", { cacheStore });
+  expect(hit.shellStatus).toBe("HIT");
+  expect(hit.prelude).toContain("Widget"); // the shell as captured
+  expect(hit.flight).toContain("in stock"); // the loader under loading(), live
+});
+```
+
+The one stub is the HTML step. `react-dom/server` does not load under the
+react-server condition, so the SSR module passes Flight through: a document
+body is its Flight payload, the capture stores the Flight text it rendered
+before going quiet as the prelude, and a HIT body is that prelude followed by
+the tail's Flight. So `prelude` shows what the shell froze and `flight` shows
+what this request rendered, both as Flight text. There is no structured
+`handles` map: a value the handler pushed (`ctx.use(Meta)(...)`) is text in the
+prelude and in every HIT's tail, and a live loader's data is text in the tail,
+so assert them with `toContain`. No public helper decodes a payload string.
+
+What the stub cannot reproduce stays e2e:
+
+- The real prelude HTML and its `<body` sanity gate: a route whose production
+  capture refuses for a root postpone (a live loader read with no boundary
+  above it) is captured here.
+- The capture deadline: when a shell does not go quiet within
+  `ppr.captureTimeout`, the stub returns no shell, while production goes on to
+  its abort and can still store a prelude with the pending parts as holes (a
+  bake-lane loader pending under an ancestor boundary, for example).
+- SSR render errors: in production a fizz render error during the capture
+  refuses it (#915); the stub renders no HTML, so a shell whose client
+  component throws during SSR is stored here. A throwing server component
+  still refuses the capture.
+- Fizz resume of the holes and browser resume.
+
+The test process keeps the PPR state a worker keeps across requests: the
+capture's stampede guard and backoff (a refused capture backs its URL off for
+later tests too), the capture's and the serve path's once-per-key warnings,
+the build-shell manifest memo, and `CFCacheStore`'s isolate
+memos, which every `CFCacheStore` shares by namespace and URL, so one test's
+shell can be the next test's first HIT. `resetShellTestState()` clears it;
+call it in `beforeEach`, never while a request is in flight.
+`VercelCacheStore`'s memos live on the `cache` handle you pass it.
+
+Options: `cacheStore` (replaces the store your `cache` config returns; its
+`searchParams` still applies), `env`, `headers`, and `partial` (`true` or
+`{ from, segments }`) to serve the navigation request the browser sends, whose
+decision is `replayStatus`. Result: `{ response, body, shellStatus,
+replayStatus, prelude, flight, key, readEntry }`. `readEntry()` reads the stored
+document entry through a passive `getShell`, which warms a shell memo like any
+read, so call it after the reads you count. A HIT's tail carries replayed
+segments as Flight fragments inside JSON strings, with escaped quotes, so match
+plain text. To evict by tag, call `updateTag()` through
+`runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
+`dispatch`, then request again. A store refuses a capture that starts in the
+invalidation's millisecond, so each `serveShellRequest` starts its request in
+a later millisecond than the call. A capture that never goes quiet stores nothing after `ppr.captureTimeout`
+and one retry, so give such a route a short `captureTimeout` in a test.
+
 ## E2E with dev/prod and PE parity
 
 ### parityDescribe — the default unit of organization
@@ -1349,6 +1436,11 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 // invokes; without cacheStore registerCachedFunction bypasses uncached (warns once under the runner).
 // inActionRevalidation: render as if inside a server action's revalidation render, so a stale "use cache"
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
+serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? } }):
+  Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null> }>;
+// One GET through the router's production handler, background capture settled. HTML step stubbed:
+// prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
+resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,children,element}[] (props excludes children); [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
 textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)

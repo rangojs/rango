@@ -290,15 +290,26 @@ import type {
   TelemetryEvent as TestTelemetryEvent,
 } from "@rangojs/router/testing";
 import type { TelemetryEvent, RequestStartEvent } from "@rangojs/router";
+import { createRouter } from "@rangojs/router";
 import { rangoTestConfig, rangoTestAliases, rangoInlineDeps } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
-import { renderToFlightString } from "@rangojs/router/testing/flight";
+import {
+  renderToFlightString,
+  serveShellRequest,
+  resetShellTestState,
+} from "@rangojs/router/testing/flight";
+import type {
+  ServeShellRequestOptions,
+  ServeShellRequestResult,
+} from "@rangojs/router/testing/flight";
 import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 // Telemetry event member types (T5) + the runLoaderResult envelope (T2) must be
 // nameable at a consumer call site, not just structurally reachable.
 type _TelemetryTypesReachable = [
+  ServeShellRequestOptions,
+  ServeShellRequestResult,
   RunLoaderResult<unknown>,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
@@ -332,6 +343,15 @@ void filterCacheDecisions;
 void collectHandle;
 void createRangoE2E;
 void renderToFlightString;
+// A public router, no cast.
+const _servedShell: Promise<ServeShellRequestResult> = serveShellRequest(
+  createRouter(),
+  "/product/1",
+  { partial: { from: "/" } },
+);
+void _servedShell;
+const _reset: Promise<void> = resetShellTestState();
+void _reset;
 void flightMatchers;
 `,
     });

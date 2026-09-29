@@ -44,6 +44,7 @@ The primitives are split across entries, one per test runtime, because each pull
 | `assertGeneratedRoutesMatch()`                  | `testing` | The generated route map against the runtime routes (async)                                                        |
 | `renderHandler()`                               | `flight`  | A route handler with seeded params, loaders, and vars; returns the rendered tree and its effects                  |
 | `renderServerTree()` / `renderToFlightString()` | `flight`  | Real Flight serialization of a Server Component, as an inspectable tree or the raw wire string                    |
+| `serveShellRequest()`                           | `flight`  | A `ppr` route's MISS, shell capture, and HIT through the router's request handler; the HTML step is stubbed       |
 | `renderRoute()`                                 | `dom`     | A client component reading `useParams`, `useLoader`, `Outlet`, and other hooks, with seeded data                  |
 | `parityDescribe()` / `expectParity()`           | `e2e`     | One test body run against dev and production; one form intent run with JS on and off                              |
 

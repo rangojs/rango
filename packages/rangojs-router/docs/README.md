@@ -54,7 +54,8 @@ If you are evaluating Rango against other frameworks, start with
   `@rangojs/router/testing/e2e` (`createRangoE2E` -> `parityDescribe`,
   `expectParity`), `@rangojs/router/testing/flight`
   (`renderServerTree`, the default for asserting a Flight render with typed
-  boundary props; `renderHandler` for a real route handler; and
+  boundary props; `renderHandler` for a real route handler;
+  `serveShellRequest` for a real PPR shell capture and HIT; and
   `renderToFlightString`, the escape hatch for pinning the raw wire payload),
   and `@rangojs/router/testing/flight-matchers` (`flightMatchers`). See also
   the [`/testing` skill](../skills/testing/SKILL.md).

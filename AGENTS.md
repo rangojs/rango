@@ -120,7 +120,7 @@ Why: suites bucket dev vs production by grepping describe titles — `production
 
 ## Userland test coverage
 
-RULE: every consumer-touchable feature ships unit coverage **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`) — in addition to internal unit tests and dev+prod e2e, not instead. Dogfood guarantee: if we can't test it with the primitives we hand consumers, neither can they.
+RULE: every consumer-touchable feature ships unit coverage **through the public `@rangojs/router/testing` primitives** (`renderHandler`, `runLoader`, `runMiddleware`, `renderRoute`, `dispatch`, `flight`, and `serveShellRequest` for a PPR shell capture and HIT, partial replay included) — in addition to internal unit tests and dev+prod e2e, not instead. Dogfood guarantee: if we can't test it with the primitives we hand consumers, neither can they.
 
 - If a primitive can't reach the feature, **extend the primitive in the same PR** — wrap stubs with the same production wiring, don't fake methods. (Scar tissue: `renderHandler` stubbed `ctx.use` without production's `withDefer` wrapper, making `.defer()` unreachable from the harness; fix was wrapping the stub in `src/testing/render-handler.ts`.)
 - Put the test where `test:unit:all` runs it: `packages/rangojs-router/src/testing/__tests__/` and/or a consumer dogfood suite (`packages/rangojs-router/e2e/mini/test/*`, `tests/cloudflare-basic/**`).

@@ -1738,7 +1738,10 @@ are not revived.
   `holdUntil` handles hold; the shell store family.
 - Userland dogfood: the store family through the public `@rangojs/router/cache`
   surface in the mini suite; the `/manifest` route carries the `ppr` path
-  option.
+  option. A real MISS → capture → HIT and partial replay run through
+  `serveShellRequest` (`@rangojs/router/testing/flight`, HTML step stubbed) in
+  `src/testing/__tests__/serve-shell-request.rsc-test.tsx` and the
+  cloudflare-basic Cache Lab dogfood (`test/ppr-shell.rsc-test.tsx`).
 - E2e dev + production in cloudflare-basic and test-app: MISS → HIT; HIT
   streaming order + TTFB under the loader delay; hydration-zero-errors;
   loader-carried three-layer streaming; the PHYSICS hole (pending handler

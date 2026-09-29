@@ -137,6 +137,7 @@ expect(decision.segments?.[0].shouldRevalidate).toBe(true);
 | -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Unit** | store family + key identity | `MemorySegmentCacheStore` + `shellCacheKey(url)` + `putShell`/`getShell` / tag eviction — dogfood in `e2e/mini/test/shell-store-family.test.ts` and `src/testing/__tests__/shell-status.test.ts` |
 | **Unit** | header helper contract      | `assertShellStatus` on a Response that already carries the header (characterizes the helper; **never** invent a HIT to claim capture worked)                                                     |
+| **Unit** | real capture → HIT, replay  | `serveShellRequest(router, url, { cacheStore })` (react-server project); only the HTML step is stubbed — [`./serve-shell-request.md`](./serve-shell-request.md)                                  |
 | **E2E**  | live MISS → capture → HIT   | document GET, poll until `x-rango-shell: HIT` (background capture) — `e2e/shell-cache.test.ts`                                                                                                   |
 | **E2E**  | partial replay decision     | soft navigation to a warmed shell and `assertPprReplayStatus(response, { outcome: "HIT", freshness: "fresh" })`                                                                                  |
 
@@ -194,5 +195,5 @@ it("stores the shell under the production key", async () => {
 ## See also
 
 - `/caching`, `/prerender`, `/use-cache`, `/ppr` — the DSL this tests
-- Siblings: [`./e2e-parity.md`](./e2e-parity.md), [`./response-routes.md`](./response-routes.md)
+- Siblings: [`./e2e-parity.md`](./e2e-parity.md), [`./response-routes.md`](./response-routes.md), [`./serve-shell-request.md`](./serve-shell-request.md)
 - Long-form prose: [docs/testing.md](https://github.com/rangojs/rango/blob/main/packages/rangojs-router/docs/testing.md) — section "Cache, SWR, and prerender"
