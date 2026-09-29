@@ -2,18 +2,20 @@
 
 ## Unreleased
 
-### Breaking: a PPR hole reads live data for a `"use cache"` entry the shell also read ([#958](https://github.com/rangojs/rango/pull/958))
+### Breaking: a PPR hole reads the current `"use cache"` entry, not the shell's captured copy ([#958](https://github.com/rangojs/rango/pull/958))
 
 When a `ppr` route's shell and one of its live holes (a loader under
 `loading()` or an inline `<Suspense>`) read the same `"use cache"` entry,
-a shell HIT used to hand the hole the value the capture read, so the hole
-matched the shell until the shell expired. The hole now
-reads the store on every HIT, like any other live read: once the entry
-changes, the hole shows the new value while the shell keeps the value it was
-captured with. Nothing changes for a route with its own `cache()` scope, a
-store with a `keyGenerator`, a route whose handlers re-run on a HIT (a
-handler that calls `ctx.use()` on a loader), or an entry an `ssr: false`
-loader also reads: those keep the captured value for the hole too.
+a shell HIT used to hand the hole the copy frozen in the shell's capture
+snapshot, so the hole matched the shell until the shell expired. The hole now
+reads the entry from the cache store. It is still cached under its own
+profile (ttl, swr, tags) and does not re-execute on every request; once the
+entry expires or is invalidated and refreshes, the hole shows the refreshed
+value while the shell keeps the value it was captured with. Nothing changes
+for a route with its own `cache()` scope, a store with a `keyGenerator`, a
+route whose handlers re-run on a HIT (a handler that calls `ctx.use()` on a
+loader), or an entry an `ssr: false` loader also reads: those keep the
+captured value for the hole too.
 
 ```tsx
 async function getStock(sku: string) {

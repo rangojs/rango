@@ -126,17 +126,16 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    store (a passthrough write would make the NEXT capture's lookup hit the
    previous generation and never re-run handlers, breaking SWR recapture
    freshness).
-3. **Serve side** (rsc-rendering.ts serveShellHit): the seeded tail context
-   sets the marker when the entry is eligible; the tail's `ctx.router.match()`
-   then HITs the seeded doc record and the handler layer is REPLAYED, not
+3. **Serve side** (rsc-rendering.ts serveShellHit): the seeded tail context sets
+   the marker when the entry is eligible; the tail's `ctx.router.match()` then
+   HITs the seeded doc record and the handler layer is REPLAYED, not
    re-executed. Per-request payload metadata (initialTheme replay,
-   locationState, …) is rebuilt by `buildFullPayload` exactly as before —
-   there is no `root` on the wire; only `metadata.segments` content replays.
-   Because the handlers never run here, the capture does not store the
-   `"use cache"` items only they read (`shell-entry-layout.md` §2). A doc
-   record that fails its server-side decode makes this tail re-run the
-   handlers against live values; the marker's `onCorrupt` then schedules a
-   recapture.
+   locationState, …) is rebuilt by `buildFullPayload` exactly as before — there
+   is no `root` on the wire; only `metadata.segments` content replays. Because
+   the handlers never run here, the capture does not store the `"use cache"`
+   items only they read (`shell-entry-layout.md` §2). A doc record that fails
+   its server-side decode makes this tail re-run the handlers against the
+   current store entries; the marker's `onCorrupt` then schedules a recapture.
 4. **Eligibility** (`ShellCacheEntry.handlerLiveHoles`): the capture's
    handle-push funnel (the PR #692 mask) now also attributes each push —
    `isInsideLoaderScope()` read synchronously at push time. A nested thenable

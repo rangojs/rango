@@ -548,12 +548,12 @@ Mechanics (`src/cache/shell-snapshot.ts`):
 
    If the doc record fails to decode on a HIT (`CacheScope` reports
    `cache-corrupt` and evicts the key it read), the tail cannot replay the
-   handler layer and re-runs the handlers against live values for the items
-   the capture pruned. That tail can disagree with the prelude; React repairs
-   the mismatch client-side. The fast-path marker's `onCorrupt` schedules a
-   recapture, so later requests are served from a sound entry. Before pruning
-   the same failure re-ran the handlers against pinned items, and nothing
-   recaptured: every HIT repeated it until the entry expired.
+   handler layer and re-runs the handlers, which read the current store entries
+   for the items the capture pruned. That tail can disagree with the prelude;
+   React repairs the mismatch client-side. The fast-path marker's `onCorrupt`
+   schedules a recapture, so later requests are served from a sound entry.
+   Before pruning the same failure re-ran the handlers against pinned items, and
+   nothing recaptured: every HIT repeated it until the entry expired.
 
 Both tail shapes — seeded and fragment-only — also wire a fresh render barrier
 onto their derived context, closure-bound to that context and the request's
@@ -574,16 +574,17 @@ Two edges worth stating out loud:
 
 - A key read by shell content AND by a live hole (a live-lane loader under
   `loading()` or an inline `<Suspense>`): the shell keeps the capture-time
-  value, which lives inside the doc record, and the hole reads the store on
-  every HIT. Once the value changes, the hole shows live data while the shell
-  still shows capture data. Holes are the live lane (decided in issue #941;
-  before pruning the key was seeded everywhere and the hole showed the capture
-  value too). This holds for pruned entries. An entry that keeps its item
-  records (the route has its own `cache()` scope, the store has a
-  `keyGenerator`, the fast path is declined, or a bake-lane loader read the
-  same key) still pins the value for the hole. The hole's live read happens
-  after the commit, never before the first byte: 7-19 ms in the #941 edge
-  model for a 1-594 KB item, against a seed hit's 0.002 ms.
+  value, which lives inside the doc record, and the hole reads the current
+  `"use cache"` entry from the store on every HIT (still cached under the
+  entry's own profile). Once that entry refreshes, the hole shows the refreshed
+  value while the shell still shows capture data. Holes are the live lane
+  (decided in issue #941; before pruning the key was seeded everywhere and the hole showed the
+  capture value too). This holds for pruned entries. An entry that keeps its
+  item records (the route has its own `cache()` scope, the store has a
+  `keyGenerator`, the fast path is declined, or a bake-lane loader read the same
+  key) still pins the value for the hole. The hole's live read happens after the
+  commit, never before the first byte: 7-19 ms in the #941 edge model for a
+  1-594 KB item, against a seed hit's 0.002 ms.
 - The snapshot pins CACHED reads. UNCACHED nondeterminism in shell content — a raw
   `Date.now()`/`Math.random()`/uncached `fetch` rendered directly in a handler
   outside any cache ring — still drifts and must live under a hole. Same residual
@@ -603,10 +604,10 @@ shell-manifest e2e, which pins the no-clobber contract (a reload replays the
 FOREGROUND's shell generation — handler seq stable — while prices stay live).
 Pruning is pinned through the real serve pipeline and real Flight
 (`src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx`: a pruned HIT is
-byte-identical to the unpruned one and reads no item; each condition keeps
-every record when it fails; partial replay of a pruned entry is byte-identical;
-the shared-key hole reads live; a corrupt doc record recaptures), per condition
-in `shell-capture.test.ts`, and by dev+prod e2e (`/ppr-large`,
+byte-identical to the unpruned one and reads no item; each condition keeps every
+record when it fails; partial replay of a pruned entry is byte-identical; the
+shared-key hole reads the current store entry; a corrupt doc record recaptures),
+per condition in `shell-capture.test.ts`, and by dev+prod e2e (`/ppr-large`,
 `/ppr-large/holes`, `/shell-cache/large`: `records=segment:1 pruned=item:N` and
 a clean hydration; `/ppr-shared-key`, `/shell-cache/shared-key`: the shell keeps
 the capture stamp while the hole moves on, zero hydration errors).

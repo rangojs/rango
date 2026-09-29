@@ -421,12 +421,12 @@ Why each condition:
   re-run handlers.
 - (R2.3, dropped) A live loader under a hole reads the store on every HIT.
   Before pruning, a key it shared with the shell was pinned for it too ("seeded
-  everywhere"). With the record dropped, that hole shows live data for the key
-  while the shell shows capture data. The maintainer chose that semantic: holes
-  are the live lane (decision 3). The live read costs one store read after the
-  commit: 6.95 ms for a 1 KB item, 9.13 ms for 594 KB, 19.33 ms for 594 KB
-  tagged in the #941 edge model, against 0.001-0.002 ms for a seed hit. It is
-  never on the first-byte path.
+  everywhere"). With the record dropped, that hole reads the current store entry
+  for the key (still cached under its own profile) while the shell shows capture
+  data. The maintainer chose that semantic: holes are the live lane (decision
+  3). The live read costs one store read after the commit: 6.95 ms for a 1 KB
+  item, 9.13 ms for 594 KB, 19.33 ms for 594 KB tagged in the #941 edge model,
+  against 0.001-0.002 ms for a seed hit. It is never on the first-byte path.
 - (R2.4) The recording store sees every `"use cache"` call: each call does a
   `store.getItem` before any in-flight join (`cache-runtime.ts`), so marking
   the key as loader-read on every access (hits and misses, in
@@ -444,12 +444,12 @@ Why each condition:
 
 **Residual B (accepted).** If the doc record fails to decode on a HIT
 (`CacheScope` reports `cache-corrupt` and evicts the key it read), the tail
-re-runs the handlers against live values for the items the capture pruned.
-That tail can disagree with the prelude; React repairs the mismatch
-client-side. The HIT's fast-path marker sets `onCorrupt`, which schedules a
-recapture, so the next requests are served from a sound entry. Before this
-change nothing evicted or recaptured a document shell in that state: every HIT
-re-ran the handlers until the entry expired.
+re-runs the handlers, which read the current store entries for the items the
+capture pruned. That tail can disagree with the prelude; React repairs the
+mismatch client-side. The HIT's fast-path marker sets `onCorrupt`, which
+schedules a recapture, so the next requests are served from a sound entry.
+Before this change nothing evicted or recaptured a document shell in that state:
+every HIT re-ran the handlers until the entry expired.
 
 The entry records what was dropped (`ShellCacheEntry.prunedRecords`, the CF
 frame head's `pr`, the Vercel envelope's `pr`), and the HIT tail timing prints
@@ -900,13 +900,13 @@ the marker memo's window).
    families and the shell write gate keep reading their markers. Defaults
    (1 s / 10 s on `CFCacheStore`, 300 ms / 2 s on `VercelCacheStore`) follow
    the measurements there.
-3. **Pruning with live-lane loaders** (rule R2.3). Pruning when a route has
-   live loaders changes "seeded everywhere" for keys the shell and a hole
-   share: the hole shows live data. **Decided:** drop R2.3, holes are the live
-   lane. **Built** (#958); the regression check run before it shipped added
-   R2.5 (a route-derived `cache()` scope keeps every record) and residual B (a
-   HIT whose doc record fails to decode re-runs handlers live and schedules a
-   recapture).
+3. **Pruning with live-lane loaders** (rule R2.3). Pruning when a route has live
+   loaders changes "seeded everywhere" for keys the shell and a hole share: the
+   hole reads the current store entry, not the captured copy. **Decided:** drop
+   R2.3, holes are the live lane. **Built** (#958); the regression check run
+   before it shipped added R2.5 (a route-derived `cache()` scope keeps every
+   record) and residual B (a HIT whose doc record fails to decode re-runs
+   handlers live and schedules a recapture).
 4. **A public split read** (promote `readShellDocument` to the
    `SegmentCacheStore` contract so custom stores can serve the prelude
    first). **Decided:** no; it stays an `@internal` method only built-in
