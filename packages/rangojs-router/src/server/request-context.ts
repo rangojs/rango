@@ -65,6 +65,7 @@ import {
   assertNonCacheableReadAllowed,
   clearPprHeaderScope,
 } from "./context.js";
+import { assertThemeReadAllowed } from "./cookie-store.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -450,14 +451,16 @@ export interface RequestContext<
   _shellFragmentPayload?: boolean;
 
   /**
-   * @internal Set (to the offending fn name) by the cookies()/headers()
-   * capture guard when it throws DURING a capture render. Load-bearing for the
+   * @internal Set by the capture guard (server/context.ts
+   * tripShellCaptureGuard) when it throws DURING a capture render: the read
+   * ("cookies()", "headers()", "ctx.get()", "ctx.theme") and the fix the
+   * refusal warning gives for it. Load-bearing for the
    * bake lane: a guard throw inside an executing loader is swallowed by
    * wrapLoaderPromise into per-loader error UI, which would otherwise bake
    * silently into the shared shell — the capture checks this flag after the
    * render and refuses instead. Deterministic, so the capture does not retry.
    */
-  _shellCaptureGuardTripped?: string;
+  _shellCaptureGuardTripped?: { surface: string; fix: string };
 
   /**
    * @internal The loader $$id whose BODY was executing when the capture guard
@@ -552,6 +555,11 @@ export interface RequestContext<
    * Returns the theme value from the cookie, or the default theme if not set.
    * This is the user's preference ("light", "dark", or "system"), not the resolved value.
    *
+   * The visitor's cookie, so it is guarded like `cookies()`: reading it
+   * refuses a ppr shell capture and throws inside a `cache()` boundary or a
+   * `"use cache"` function (#971). A non-enumerable getter: a spread or
+   * `Object.assign` copy of the context does not carry it.
+   *
    * @example
    * ```typescript
    * route("settings", (ctx) => {
@@ -560,7 +568,7 @@ export interface RequestContext<
    * });
    * ```
    */
-  theme?: Theme;
+  readonly theme?: Theme;
 
   /**
    * Set the theme (only available when theme is enabled in router config)
@@ -583,6 +591,15 @@ export interface RequestContext<
 
   /** @internal Theme configuration (null if theme not enabled) */
   _themeConfig?: ResolvedThemeConfig | null;
+
+  /**
+   * @internal The theme cookie (or the default) read with no identity guard.
+   * The guarded reads (`theme` here, the handler and middleware `ctx.theme`)
+   * call it after assertThemeReadAllowed; the router's own payload read goes
+   * through payloadInitialTheme (rsc/full-payload.ts). Undefined without
+   * theme config.
+   */
+  _readTheme(): Theme | undefined;
 
   /**
    * Attach location state entries to the current response.
@@ -867,6 +884,7 @@ export type PublicRequestContext<
   | "_onResponseCallbacks"
   | "_pendingBackgroundTasks"
   | "_themeConfig"
+  | "_readTheme"
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
@@ -1474,9 +1492,8 @@ export function createRequestContext<TEnv>(
       this._onResponseCallbacks.push(callback);
     },
 
-    get theme() {
-      return themeConfig ? getTheme() : undefined;
-    },
+    // theme: a guarded, non-enumerable getter defined after this literal.
+    _readTheme: getTheme,
     setTheme: themeConfig
       ? (theme: Theme) => {
           assertNotInsideCacheExec(ctx, "setTheme");
@@ -1515,6 +1532,30 @@ export function createRequestContext<TEnv>(
     handleStore,
     loaderPromises,
     getContext: () => ctx,
+  });
+
+  // getRequestContext().theme is the visitor's cookie, guarded like cookies()
+  // (#971); before it was a plain read that a ppr shell, a cache() entry or a
+  // "use cache" entry stored for every visitor. Non-enumerable like the
+  // handler ctx.theme (handler-context.ts THEME_DESCRIPTOR): serializing the
+  // context (React dev debug info) must not count as a read. The guard reads
+  // the ambient context, as cookies() does, and falls back to the receiver.
+  // _readTheme is the unguarded read: non-enumerable too, so a spread copy of
+  // the context (the fetchable-loader ctx, loader-fetch.ts) cannot carry it.
+  Object.defineProperties(ctx, {
+    theme: {
+      get(this: RequestContext<TEnv>): Theme | undefined {
+        if (!themeConfig) return undefined;
+        assertThemeReadAllowed(
+          _getRequestContext() ?? this,
+          "getRequestContext().theme",
+        );
+        return getTheme();
+      },
+      enumerable: false,
+      configurable: true,
+    },
+    _readTheme: { enumerable: false },
   });
 
   (ctx as any)[NOCACHE_SYMBOL] = true;

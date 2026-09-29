@@ -68,7 +68,12 @@ export interface MiddlewareContext<
 
   debugPerformance(): void;
 
-  theme?: Theme;
+  /**
+   * The visitor's theme (cookie or default); undefined without theme config.
+   * Guarded like `cookies()`: a read inside a `"use cache"` function throws
+   * (#971).
+   */
+  readonly theme?: Theme;
 
   setTheme?: (theme: Theme) => void;
 

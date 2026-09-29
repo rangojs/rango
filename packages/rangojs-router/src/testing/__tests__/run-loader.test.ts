@@ -23,6 +23,22 @@ describe("runLoader", () => {
     expect(result).toEqual({ id: "42", routeId: "42" });
   });
 
+  it("the theme option lets a loader body read getRequestContext().theme; the loader ctx has no theme", async () => {
+    const result = await runLoader(
+      async (ctx) => ({
+        onCtx: "theme" in ctx,
+        theme: getRequestContext().theme,
+      }),
+      {
+        theme: true,
+        request: new Request("http://localhost/", {
+          headers: { Cookie: "theme=dark" },
+        }),
+      },
+    );
+    expect(result).toEqual({ onCtx: false, theme: "dark" });
+  });
+
   it("exposes env", async () => {
     const result = await runLoader<string>(
       async (ctx) => (ctx.env as { region: string }).region,

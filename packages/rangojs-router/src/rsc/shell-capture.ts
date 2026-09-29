@@ -82,7 +82,7 @@ import {
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
-import { buildFullPayload } from "./full-payload.js";
+import { buildFullPayload, payloadInitialTheme } from "./full-payload.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { renderRscFlightStage } from "./render-pipeline.js";
 import { stripInternalParams } from "../router/handler-context.js";
@@ -501,21 +501,21 @@ function refuseOnCaptureGuard(
     );
     return true;
   }
-  const fnName = derivedCtx._shellCaptureGuardTripped;
-  if (!fnName) return false;
+  const trip = derivedCtx._shellCaptureGuardTripped;
+  if (!trip) return false;
   // Name the recorded source instead of hardcoding a lane: a trip can come
   // from a bake-lane SEGMENT loader or from handler/render code, including a
-  // loader a handler awaits (issue #672).
+  // loader a handler awaits (issue #672). The guard recorded the read and its
+  // fix (server/context.ts tripShellCaptureGuard): cookies()/headers(), a
+  // { cache: false } variable, and the theme reads (#971).
   const loaderId = derivedCtx._shellCaptureGuardTrippedLoaderId;
   const origin = loaderId
     ? `the loader "${loaderId}"`
     : "handler/render code (no loader body was executing)";
   warnCaptureRefusedOnce(
     key,
-    `${origin} called ${fnName}() during capture; request-scoped data must not bake ` +
-      "into the shared shell. Read it in a loader without ssr: false and consume it " +
-      "with useLoader under loading() or an inline <Suspense> (a live hole). A promise " +
-      "the handler passes or pushes does not help: the capture waits for it.",
+    `${origin} read ${trip.surface} during capture; request-scoped data must not ` +
+      `bake into the shared shell. ${trip.fix}`,
     PPR_LANE_HINT,
   );
   return true;
@@ -2774,10 +2774,10 @@ async function captureAndStoreShell(
           reactVersion: React.version,
           buildVersion: capture.buildVersion,
           // The theme this capture's payload was built with (buildFullPayload
-          // reads reqCtx.theme off the derived context). The serve tail replays
-          // it so the resume tree matches the frozen prelude — see
-          // ShellCacheEntry.initialTheme.
-          initialTheme: reqCtx.theme,
+          // reads payloadInitialTheme off the derived context: the no-cookie
+          // default, #971). The serve tail replays it so the resume tree
+          // matches the frozen prelude — see ShellCacheEntry.initialTheme.
+          initialTheme: payloadInitialTheme(reqCtx),
           snapshot,
           prunedRecords: snapshot ? prunedRecords : undefined,
           // The canonical doc segment record's key, published by the doc

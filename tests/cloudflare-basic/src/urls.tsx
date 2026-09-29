@@ -174,6 +174,11 @@ import { LoaderCtxPage } from "./pages/loader-ctx.js";
 import { SlowCachePage } from "./pages/slow-cache.js";
 import { SwrCtxPage, SwrActionPage } from "./pages/swr-ctx.js";
 import { ThemePage } from "./pages/theme.js";
+import {
+  CfPprThemeClientPage,
+  CfPprThemePage,
+  CfPprThemeRequestContextPage,
+} from "./pages/ppr-theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
   InlineIndexPage,
@@ -1735,6 +1740,18 @@ export const urlpatterns = urls(
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),
+        // ctx.theme / getRequestContext().theme on a ppr route refuse the
+        // capture (#971); the useTheme() route is the HIT control. Fetched only
+        // by ppr-theme.test.ts.
+        path("/ppr-theme", CfPprThemePage, { name: "pprTheme", ppr: true }),
+        path("/ppr-theme/rc", CfPprThemeRequestContextPage, {
+          name: "pprThemeRc",
+          ppr: true,
+        }),
+        path("/ppr-theme/client", CfPprThemeClientPage, {
+          name: "pprThemeClient",
+          ppr: true,
+        }),
 
         // Cookie overlay test route
         path(

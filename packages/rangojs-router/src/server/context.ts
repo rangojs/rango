@@ -920,7 +920,8 @@ export function isInsideCacheScope(): boolean {
  * Only the derived capture context sets `_shellCaptureRun`.
  *
  * Applies only to the READ surfaces (cookies(), headers(), a { cache: false }
- * variable) whose values become markup. Response directives
+ * variable, and the theme reads through tripShellCaptureGuard) whose values
+ * become markup. Response directives
  * (invalidateClientCache(), keepClientCache()) stay callable: during capture
  * they are header effects on a discarded response, and on the live HIT path
  * the full pipeline runs so their headers flow to the client normally.
@@ -934,34 +935,64 @@ export function assertNotInsideShellCapture(
   ctx: unknown,
   fnName: string,
 ): void {
-  if (
-    ctx !== null &&
-    typeof ctx === "object" &&
-    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
-  ) {
-    // Record WHICH loader body (if any) made the read, so the refusal warning
-    // can name the real source instead of hardcoding a lane (issue #672).
-    (ctx as { _shellCaptureGuardTripped?: string })._shellCaptureGuardTripped =
-      fnName;
-    (
-      ctx as { _shellCaptureGuardTrippedLoaderId?: string }
-    )._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
-    const what =
-      fnName === "cookies"
-        ? "cookies"
-        : fnName === "headers"
-          ? "headers"
-          : "per-request variables";
-    throw new Error(
-      `${fnName}() cannot be called while capturing a shared shell ` +
-        `(ppr shell capture). The captured shell is served to every user ` +
-        `of this URL, so request-scoped data read here would leak one user's ` +
-        `${what} to others. Read it ` +
-        `inside a loader without ssr: false and consume it with useLoader, e.g. ` +
-        `createLoader(async () => getUser(cookies().get("session")?.value)). ` +
-        PPR_LANE_HINT,
-    );
+  if (!tripShellCaptureGuard(ctx, `${fnName}()`, REQUEST_READ_CAPTURE_FIX)) {
+    return;
   }
+  const what =
+    fnName === "cookies"
+      ? "cookies"
+      : fnName === "headers"
+        ? "headers"
+        : "per-request variables";
+  throw new Error(
+    `${fnName}() cannot be called while capturing a shared shell ` +
+      `(ppr shell capture). The captured shell is served to every user ` +
+      `of this URL, so request-scoped data read here would leak one user's ` +
+      `${what} to others. Read it ` +
+      `inside a loader without ssr: false and consume it with useLoader, e.g. ` +
+      `createLoader(async () => getUser(cookies().get("session")?.value)). ` +
+      PPR_LANE_HINT,
+  );
+}
+
+/**
+ * The fix the capture refusal warning (shell-capture.ts refuseOnCaptureGuard)
+ * gives for a cookies()/headers()/{ cache: false } variable read. Recorded
+ * with the trip (tripShellCaptureGuard), so each guarded read carries its own
+ * fix; the theme reads (cookie-store.ts assertThemeReadAllowed) record theirs.
+ */
+const REQUEST_READ_CAPTURE_FIX: string =
+  "Read it in a loader without ssr: false and consume it with useLoader under " +
+  "loading() or an inline <Suspense> (a live hole). A promise the handler passes " +
+  "or pushes does not help: the capture waits for it.";
+
+/**
+ * True when `ctx` is the active capture render (assertNotInsideShellCapture
+ * above). On true the capture context is flagged with the read (`surface`,
+ * e.g. "cookies()", "ctx.theme") and the fix the refusal warning gives, plus
+ * the loader body (if any) that made the read, and the caller throws.
+ */
+export function tripShellCaptureGuard(
+  ctx: unknown,
+  surface: string,
+  fix: string,
+): boolean {
+  if (
+    ctx === null ||
+    typeof ctx !== "object" ||
+    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun !== true
+  ) {
+    return false;
+  }
+  // Record WHICH loader body (if any) made the read, so the refusal warning
+  // can name the real source instead of hardcoding a lane (issue #672).
+  const flagged = ctx as {
+    _shellCaptureGuardTripped?: { surface: string; fix: string };
+    _shellCaptureGuardTrippedLoaderId?: string;
+  };
+  flagged._shellCaptureGuardTripped = { surface, fix };
+  flagged._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
+  return true;
 }
 
 /**

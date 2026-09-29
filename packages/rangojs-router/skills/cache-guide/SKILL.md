@@ -387,6 +387,10 @@ Neither mechanism caches response headers or cookies.
   segment outside the cache boundary, or a loader.
 - **"use cache"**: `cookies()` and `headers()` throw inside the cached function
   (both reads and writes), and so do `ctx.headers` mutations. Move them outside.
+- **`ctx.theme`** (handler and middleware) and **`getRequestContext().theme`**
+  are the visitor's theme cookie, so a read throws in both scopes, like
+  `cookies()`. Read it with `useTheme()` in a client component, or in a
+  loader (see the `/theme` skill).
 
 ```typescript
 // Set headers that must appear on every response in middleware
@@ -422,6 +426,7 @@ specifies `cache: false`, the value is non-cacheable.
 | Operation                                 | Inside a `cache()` boundary                            |
 | ----------------------------------------- | ------------------------------------------------------ |
 | `cookies()` / `headers()` (read or write) | Throws (request-scoped, would poison the shared entry) |
+| `ctx.theme`, `getRequestContext().theme`  | Throws, like `cookies()` (#971)                        |
 | `ctx.get(cacheableVar)`                   | Allowed                                                |
 | `ctx.get(nonCacheableVar)`                | Throws (would be baked in)                             |
 | `ctx.set(var, value)` (cacheable)         | Allowed                                                |

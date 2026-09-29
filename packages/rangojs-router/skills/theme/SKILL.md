@@ -86,10 +86,13 @@ from `@rangojs/router/theme` in `<head>` instead. It takes the resolved config
 are rejected with a console warning. Both are typed optional because they only
 exist when `theme` is configured.
 
+`ctx.theme` is the visitor's theme cookie, so a handler reads it only on a
+route whose output is rendered per request:
+
 ```typescript
 import type { Middleware } from "@rangojs/router";
 
-// In a handler
+// In a handler on a route without ppr or cache()
 path("/settings", (ctx) => {
   const currentTheme = ctx.theme; // "light" | "dark" | "system" | undefined
   return <SettingsPage theme={currentTheme} />;
@@ -105,9 +108,39 @@ export const themeFromQuery: Middleware = async (ctx, next) => {
 };
 ```
 
-Loaders do not get `ctx.theme` or `ctx.setTheme`. A loader that needs the
-theme reads the cookie directly (loaders run fresh on every request, so the
-read is safe):
+### On `ppr` and `cache()` routes
+
+A `ppr` shell and a `cache()` entry are shared by every visitor, so a handler
+there must not read the visitor's theme. `ctx.theme` (handler and middleware)
+and `getRequestContext().theme` are guarded like `cookies()`:
+
+| Where the theme is read                                    | What happens                                                                                          |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| a handler on a `ppr` route                                 | The shell capture is refused (warned once per URL); every request stays a MISS                        |
+| inside a `cache()` boundary                                | Throws on a cache miss, like `cookies()`                                                              |
+| inside a `"use cache"` function (handler or middleware)    | Throws; read it outside and pass it in as an argument                                                 |
+| after `ctx.dynamic()` on `ppr`                             | Allowed: that render is never captured                                                                |
+| middleware `ctx.set()` of the theme, read by a handler     | Not guarded: the first visitor's theme bakes into the shell or `cache()` entry, like a session object |
+| a route with no `ppr` or `cache()` above it, or middleware | Allowed: rendered per request                                                                         |
+
+The theme getters are read-only and non-enumerable: `{ ...ctx }` and
+`Object.assign({}, ctx)` do not carry `theme`, and assigning it throws.
+
+`ctx.setTheme()` throws in a handler on these routes too, like any response
+write there; call it from middleware.
+
+Read the theme where it is per request instead:
+
+- `useTheme()` in a client component. The `<html>` class is right before
+  paint (the theme script sets it). On a `ppr` HIT the shell carries the
+  no-cookie default (`defaultTheme`), whoever captured it: a visitor with no
+  stored theme sees the default, and one with a stored theme sees it after
+  hydration.
+- A live loader (no `ssr: false`). Loaders do not get `ctx.theme` or
+  `ctx.setTheme`; read the cookie directly. A live loader runs on every
+  request, HITs included, and on a `ppr` route needs `loading()` or an inline
+  `<Suspense>` above its reader. A bake-lane loader (`ssr: false`) runs at
+  capture, where this `cookies()` read refuses the capture.
 
 ```typescript
 import { cookies, createLoader } from "@rangojs/router";

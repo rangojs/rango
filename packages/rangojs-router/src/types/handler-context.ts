@@ -342,6 +342,12 @@ export type HandlerContext<
    * Current theme (from cookie or default).
    * Only available when theme is enabled in router config.
    *
+   * The visitor's cookie, so it is guarded like `cookies()`: reading it on a
+   * `ppr` route refuses the shell capture, and inside a `cache()` boundary or
+   * a `"use cache"` function it throws (#971). Read it with `useTheme()` in a
+   * client component, or in a live loader, on those routes. A read-only,
+   * non-enumerable getter: `{ ...ctx }` does not carry it.
+   *
    * @example
    * ```typescript
    * route("settings", (ctx) => {
@@ -350,7 +356,7 @@ export type HandlerContext<
    * });
    * ```
    */
-  theme?: Theme;
+  readonly theme?: Theme;
   /**
    * Set the theme (only available when theme is enabled in router config).
    * Sets a cookie with the new theme value.

@@ -223,8 +223,10 @@ global middleware
   for all of it before it freezes anything (`settleCaptureRecord` in
   `src/rsc/shell-capture.ts`), bounded by the one `ppr.captureTimeout`
   deadline; output that does not settle in time stores no shell. The capture
-  guard (`assertNotInsideShellCapture` in `src/server/context.ts`: `cookies()`,
-  `headers()`, a `{ cache: false }` variable read) covers everything the
+  guard (`assertNotInsideShellCapture` / `tripShellCaptureGuard` in
+  `src/server/context.ts`: `cookies()`, `headers()`, a `{ cache: false }`
+  variable read, and the theme reads `ctx.theme` / `getRequestContext().theme`
+  through `assertThemeReadAllowed`, #971) covers everything the
   capture waits for — handler and render code, bake-lane segment loaders, and
   handler-invoked loader bodies (no exemption on this tier; the
   consumption-lane rule below). `ctx.dynamic()` called anywhere the capture

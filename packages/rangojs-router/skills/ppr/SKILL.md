@@ -889,11 +889,15 @@ Four hard edges (each e2e/unit-pinned):
   nested promise does not help here: its body still runs during capture and
   trips the guard. The same refusal covers everything else the capture waits
   for (a handler, a promise it passes or pushes, an async server component, a
-  loader a handler awaits) and a `{ cache: false }` variable
+  loader a handler awaits), a `{ cache: false }` variable
   (`createVar({ cache: false })` or `ctx.set(..., { cache: false })`) read
-  there; see "Security". Per-user state read from a NORMAL middleware-provided
-  variable (`ctx.get("session")`) does NOT refuse — it bakes silently as the
-  capturing user's data (see Pitfalls: the session-object bake trap).
+  there, and the visitor's theme (`ctx.theme`, `getRequestContext().theme`,
+  #971); see "Security". Read the theme with `useTheme()` in a client
+  component, or in a live loader with `cookies().get("theme")`; the shell's
+  `initialTheme` is the no-cookie default. Per-user state read from a NORMAL
+  middleware-provided variable (`ctx.get("session")`) does NOT refuse — it
+  bakes silently as the capturing user's data (see Pitfalls: the
+  session-object bake trap).
 - **A rejecting bake-lane loader refuses.** Error UI never bakes. So does a
   value that fails to encode: a function, a class instance, a promise inside a
   `Map` that rejects, or a server component in the value that throws. The

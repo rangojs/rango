@@ -1924,8 +1924,13 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "promise-holes-no-loader-required",
-        "text": "Promise holes: no loader required"
+        "id": "handler-output-always-bakes",
+        "text": "Handler output always bakes"
+      },
+      {
+        "depth": 3,
+        "id": "migrating-from-the-old-promise-hole-model",
+        "text": "Migrating from the old promise-hole model"
       },
       {
         "depth": 3,
@@ -2456,6 +2461,16 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "read-and-set-it-on-the-server",
         "text": "Read and set it on the server"
+      },
+      {
+        "depth": 3,
+        "id": "on-ppr-and-cache-routes",
+        "text": "On ppr and cache() routes"
+      },
+      {
+        "depth": 3,
+        "id": "in-a-loader",
+        "text": "In a loader"
       },
       {
         "depth": 2,

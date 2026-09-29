@@ -10,9 +10,18 @@ import {
   runWithRequestContext,
   getRequestContext,
 } from "../request-context.js";
-import { cookies, headers } from "../cookie-store.js";
+import { cookies, headers, type ThemeReadSurface } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
-import { RangoContext, runInsideLoaderScope } from "../context.js";
+import {
+  RangoContext,
+  latchCachedHeaderScope,
+  runInsideLoaderBodyScope,
+  runInsideLoaderScope,
+} from "../context.js";
+import { createHandlerContext } from "../../router/handler-context.js";
+import { createMiddlewareContext } from "../../router/middleware.js";
+import { payloadInitialTheme } from "../../rsc/full-payload.js";
+import { resolveThemeConfig } from "../../theme/constants.js";
 
 /** Helper: create a RequestContext and run `fn` inside it. */
 function withContext(
@@ -543,6 +552,16 @@ describe("shell-capture guards", () => {
     });
   });
 
+  it("records the read and the refusal warning's fix on the capture context", () => {
+    withShellCaptureContext(() => {
+      expect(() => headers()).toThrow();
+      expect(getRequestContext()._shellCaptureGuardTripped).toEqual({
+        surface: "headers()",
+        fix: expect.stringContaining("a loader without ssr: false"),
+      });
+    });
+  });
+
   it("cookies()/headers() work normally when the flag is unset", () => {
     const ctx = createRequestContext({
       env: {},
@@ -639,6 +658,307 @@ describe("cache() DSL scope guards", () => {
     withCacheScope(() => {
       runInsideLoaderScope(() => {
         expect(headers().get("authorization")).toBe("Bearer tok");
+      });
+    });
+  });
+});
+
+describe("theme read guards (#971)", () => {
+  /** A theme-enabled request whose visitor has theme=dark. */
+  function themedRequestContext(themed = true) {
+    return createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "theme=dark; session=abc" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+      themeConfig: themed ? resolveThemeConfig(true) : undefined,
+    });
+  }
+
+  function handlerCtx() {
+    return createHandlerContext(
+      {},
+      new Request("https://example.com"),
+      new URLSearchParams(),
+      "/",
+      new URL("https://example.com"),
+    );
+  }
+
+  function middlewareCtx() {
+    return createMiddlewareContext(
+      new Request("https://example.com"),
+      {},
+      {},
+      {},
+      { response: undefined } as any,
+    );
+  }
+
+  /** The public theme reads: [surface, read]. */
+  const READS: Array<[ThemeReadSurface, () => unknown]> = [
+    ["ctx.theme", () => handlerCtx().theme],
+    ["ctx.theme", () => middlewareCtx().theme],
+    ["getRequestContext().theme", () => getRequestContext().theme],
+  ];
+
+  const inCacheScope = (fn: () => void) =>
+    RangoContext.run({ insideCacheScope: true } as any, () => {
+      latchCachedHeaderScope("cache", "r");
+      fn();
+    });
+
+  type Enter = (fn: () => void) => void;
+  type Refusal = "use cache" | "cache()" | "capture";
+  /** The message each refusal gives, ending in its fix. */
+  const REFUSAL_TEXT: Record<Refusal, (surface: string) => string[]> = {
+    "use cache": (s) => [
+      `${s} cannot be read inside a "use cache" function`,
+      "pass it in as an argument",
+    ],
+    "cache()": (s) => [
+      `${s} cannot be read inside a cache() boundary`,
+      "useTheme()",
+      "live loader (no ssr: false)",
+    ],
+    capture: (s) => [
+      `${s} cannot be read while capturing a shared shell`,
+      "useTheme()",
+    ],
+  };
+  /**
+   * Each scope cookies() refuses or exempts: [label, the refusal or
+   * "allowed", capture render, enter, the loader body a capture trip names].
+   */
+  const SCOPES: Array<[string, Refusal | "allowed", boolean, Enter, string?]> =
+    [
+      ["no shared scope", "allowed", false, (fn) => fn()],
+      [
+        'a "use cache" body',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(fn),
+      ],
+      ["a cache() boundary", "cache()", false, inCacheScope],
+      [
+        "a DSL loader under cache()",
+        "allowed",
+        false,
+        (fn) => inCacheScope(() => runInsideLoaderScope(fn)),
+      ],
+      [
+        "a handler-invoked loader body under cache()",
+        "allowed",
+        false,
+        (fn) => inCacheScope(() => runInsideLoaderBodyScope(fn, "L", true)),
+      ],
+      ["a ppr capture render", "capture", true, (fn) => fn()],
+      [
+        "a segment loader body at capture",
+        "capture",
+        true,
+        (fn) => runInsideLoaderBodyScope(fn, "L", false),
+        "L",
+      ],
+      // No loader-body exemption at capture (#969): a HIT replays the
+      // capture's copy of a loader a handler awaits.
+      [
+        "a handler-invoked loader body at capture",
+        "capture",
+        true,
+        (fn) => runInsideLoaderBodyScope(fn, "L", true),
+        "L",
+      ],
+    ];
+
+  /** The error `fn` throws, or "allowed". */
+  function readOutcome(fn: () => unknown): Error | "allowed" {
+    try {
+      fn();
+      return "allowed";
+    } catch (error) {
+      return error as Error;
+    }
+  }
+
+  it.each(SCOPES)(
+    "in %s, every theme read is refused exactly where cookies() is",
+    (_label, expected, capture, enter, loaderId) => {
+      const reqCtx = themedRequestContext();
+      if (capture) (reqCtx as any)._shellCaptureRun = true;
+      runWithRequestContext(reqCtx, () =>
+        enter(() => {
+          expect(readOutcome(() => cookies().get("theme")) !== "allowed").toBe(
+            expected !== "allowed",
+          );
+          for (const [surface, read] of READS) {
+            reqCtx._shellCaptureGuardTripped = undefined;
+            // The ctx is created inside the scope: creating it reads nothing.
+            if (expected === "allowed") {
+              expect(read()).toBe("dark");
+              continue;
+            }
+            const outcome = readOutcome(read);
+            for (const text of REFUSAL_TEXT[expected](surface)) {
+              expect((outcome as Error).message).toContain(text);
+            }
+            if (capture) {
+              expect(reqCtx._shellCaptureGuardTripped).toEqual({
+                surface,
+                fix: expect.stringContaining("useTheme()"),
+              });
+              expect(reqCtx._shellCaptureGuardTrippedLoaderId).toBe(loaderId);
+            }
+          }
+        }),
+      );
+    },
+  );
+
+  it("reads the visitor's theme where nothing is shared, and a theme set earlier in the request", () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      expect([ctx.theme, getRequestContext().theme]).toEqual(["dark", "dark"]);
+      ctx.setTheme!("light");
+      expect([ctx.theme, getRequestContext().theme]).toEqual([
+        "light",
+        "light",
+      ]);
+    });
+  });
+
+  it("a handler ctx read with no ambient request context is guarded by the ctx's own", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    const ctx = runWithRequestContext(reqCtx, () => handlerCtx());
+    expect(() => ctx.theme).toThrow(
+      "ctx.theme cannot be read while capturing a shared shell",
+    );
+    expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+  });
+
+  it("at capture, serializing a ctx does not read the theme; a derived ctx's read does", () => {
+    // React's dev debug info JSON-stringifies server component props and
+    // replayed console.log args; a ctx passed there is not a theme read.
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      const ctx = handlerCtx();
+      for (const serialized of [ctx, reqCtx]) {
+        expect(() => JSON.stringify(serialized)).not.toThrow();
+        expect(Object.keys(serialized)).not.toContain("theme");
+        expect({ ...serialized }).not.toHaveProperty("theme");
+      }
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      // cache-runtime.ts refreshView wraps the ctx with Object.create.
+      expect(() => Object.create(ctx).theme).toThrow(/ctx\.theme/);
+      expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+    });
+  });
+
+  it('the middleware ctx.theme is non-enumerable: spreading the ctx in a "use cache" body does not read it', () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = middlewareCtx();
+      expect(Object.getOwnPropertyDescriptor(ctx, "theme")?.enumerable).toBe(
+        false,
+      );
+      runWithCacheExecScope(() => {
+        expect(() => ({ ...ctx })).not.toThrow();
+        expect(() => ctx.theme).toThrow(
+          'ctx.theme cannot be read inside a "use cache" function',
+        );
+      });
+      expect(ctx.theme).toBe("dark");
+    });
+  });
+
+  it("a spread of the request context (the fetchable-loader ctx) carries no unguarded theme read", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      // loader-fetch.ts builds the fetchable-loader ctx as { ...reqCtx }.
+      const copy = { ...reqCtx } as Record<string, unknown>;
+      expect(copy).not.toHaveProperty("theme");
+      expect(copy).not.toHaveProperty("_readTheme");
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      // The internal read itself still works for the router.
+      expect(reqCtx._readTheme()).toBe("dark");
+    });
+  });
+
+  it("the theme is read-only: assigning it throws", () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      expect(() => {
+        (ctx as { theme?: string }).theme = "light";
+      }).toThrow(TypeError);
+      expect(() => {
+        (getRequestContext() as { theme?: string }).theme = "light";
+      }).toThrow(TypeError);
+      expect(ctx.theme).toBe("dark");
+    });
+  });
+
+  it("the foreground render of a ppr route reads the visitor's theme", () => {
+    const reqCtx = themedRequestContext();
+    (reqCtx as any)._shellCapture = { key: "example.com/:shell", ttl: 300 };
+    runWithRequestContext(reqCtx, () => {
+      expect(READS.map(([, read]) => read())).toEqual(["dark", "dark", "dark"]);
+    });
+  });
+
+  it("without theme config every theme read is undefined and never throws", () => {
+    const reqCtx = themedRequestContext(false);
+    (reqCtx as any)._shellCaptureRun = true;
+    runWithRequestContext(reqCtx, () => {
+      for (const enter of [inCacheScope, runWithCacheExecScope] as Enter[]) {
+        enter(() => {
+          for (const [, read] of READS) expect(read()).toBeUndefined();
+        });
+      }
+      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+    });
+  });
+
+  it("the router's payload read is unguarded; a capture carries the no-cookie default", () => {
+    const reqCtx = themedRequestContext();
+    runWithRequestContext(reqCtx, () => {
+      inCacheScope(() => expect(payloadInitialTheme(reqCtx)).toBe("dark"));
+      runWithCacheExecScope(() =>
+        expect(payloadInitialTheme(reqCtx)).toBe("dark"),
+      );
+    });
+    const derived = Object.create(reqCtx) as typeof reqCtx;
+    derived._shellCaptureRun = true;
+    runWithRequestContext(derived, () => {
+      expect(payloadInitialTheme(derived)).toBe("system");
+      expect(derived._shellCaptureGuardTripped).toBeUndefined();
+    });
+    expect(payloadInitialTheme(themedRequestContext(false))).toBeUndefined();
+  });
+
+  it("ctx.setTheme throws in a cache() boundary like cookies().set, and leaves no cookie", () => {
+    const reqCtx = themedRequestContext();
+    runWithRequestContext(reqCtx, () => {
+      const ctx = handlerCtx();
+      inCacheScope(() => {
+        expect(() => cookies().set("theme", "light")).toThrow();
+        expect(() => ctx.setTheme!("light")).toThrow(
+          /inside a cache\(\) boundary/,
+        );
+      });
+      expect(reqCtx.res.headers.get("Set-Cookie")).toBeNull();
+    });
+  });
+
+  it('ctx.setTheme throws in a "use cache" body like cookies().set', () => {
+    runWithRequestContext(themedRequestContext(), () => {
+      const ctx = handlerCtx();
+      runWithCacheExecScope(() => {
+        expect(() => cookies().set("theme", "light")).toThrow();
+        expect(() => ctx.setTheme!("light")).toThrow(/"use cache"/);
       });
     });
   });
