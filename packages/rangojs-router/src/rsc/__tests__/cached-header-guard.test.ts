@@ -112,16 +112,12 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
   it("ppr + loader (handler-invoked loader body): throws with the loader wording", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("ppr");
-      runInsideLoaderBodyScope(
-        () => {
-          const err = captureError(() =>
-            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-          );
-          expect(err.message).toContain("from a loader");
-        },
-        "TestLoader",
-        true,
-      );
+      runInsideLoaderBodyScope(() => {
+        const err = captureError(() =>
+          assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+        );
+        expect(err.message).toContain("from a loader");
+      }, "TestLoader");
     });
   });
 
@@ -174,19 +170,15 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
   it("cache() + handler-invoked loader body: THROWS (handler skipped on hit, write would vanish)", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("cache", "shop");
-      runInsideLoaderBodyScope(
-        () => {
-          const err = captureError(() =>
-            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-          );
-          expect(err.message).toContain("from a loader");
-          expect(err.message).toContain("cache() boundary");
-          expect(err.message).toContain("the handler is skipped");
-          expect(err.message).toMatch(FAMILY_RE);
-        },
-        "CartLoader",
-        true,
-      );
+      runInsideLoaderBodyScope(() => {
+        const err = captureError(() =>
+          assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+        );
+        expect(err.message).toContain("from a loader");
+        expect(err.message).toContain("cache() boundary");
+        expect(err.message).toContain("the handler is skipped");
+        expect(err.message).toMatch(FAMILY_RE);
+      }, "CartLoader");
     });
   });
 
@@ -197,15 +189,11 @@ describe("assertCachedHeaderWriteAllowed (the seam)", () => {
     RangoContext.run(makeStore() as never, () => {
       latchCachedHeaderScope("cache", "shop");
       runInsideLoaderScope(() => {
-        runInsideLoaderBodyScope(
-          () => {
-            expect(() =>
-              assertCachedHeaderWriteAllowed("ctx.setCookie()"),
-            ).not.toThrow();
-          },
-          "NestedLoader",
-          true,
-        );
+        runInsideLoaderBodyScope(() => {
+          expect(() =>
+            assertCachedHeaderWriteAllowed("ctx.setCookie()"),
+          ).not.toThrow();
+        }, "NestedLoader");
       });
     });
   });

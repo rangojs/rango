@@ -21,11 +21,13 @@ import { isPprEntry, type EntryData } from "../server/context.js";
 import { sortedSearchString } from "../cache/cache-key-utils.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { base64ToBytes } from "../cache/cf/cf-base64.js";
+import { getNonceAttribute } from "../theme/theme-script.js";
 import type {
   DocumentShellCacheEntry,
   ShellCacheEntry,
   ShellDocumentRead,
   ShellReadStats,
+  ShellSnapshotFailure,
   ShellSnapshotRecord,
   SegmentCacheStore,
 } from "../cache/types.js";
@@ -136,6 +138,66 @@ export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
   return `${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
 }
 
+export {
+  navigationShellKey,
+  partitionShellKey,
+} from "./shell-capture-constants.js";
+
+/**
+ * The forced-MISS query marker. A document HIT that cannot finish its tail
+ * reloads the page with it (shellReloadScript); the serve gate renders a
+ * request carrying it on axis 1, with no shell read and no capture, so the
+ * reload can never be a HIT that degrades again. The handler drops it from
+ * the request on entry (withoutShellMissMarker) and keeps only the flag
+ * (RequestContext._shellForcedMiss), so nothing else sees it.
+ */
+export const SHELL_MISS_PARAM: string = "_rsc_shell";
+
+/**
+ * The request without the forced-MISS marker, or undefined when it carries
+ * none. The handler calls it before anything reads the request: left in, the
+ * marker reached `ctx.request.url`, `originalUrl`, middleware, and the SSR
+ * search seed (so `useSearchParams` rendered it), and a `"use cache"` key
+ * built from the request URL was never read again. GET and HEAD only: the
+ * reload is a navigation, and a request with a body cannot be re-created
+ * without re-streaming it. The substring test keeps the URL parse off every
+ * other request.
+ */
+export function withoutShellMissMarker(request: Request): Request | undefined {
+  if (!request.url.includes(SHELL_MISS_PARAM)) return undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") return undefined;
+  const url = new URL(request.url);
+  if (!url.searchParams.has(SHELL_MISS_PARAM)) return undefined;
+  url.searchParams.delete(SHELL_MISS_PARAM);
+  return new Request(url, request);
+}
+
+/**
+ * The inline script a degraded document HIT ends with: reload once into a
+ * forced MISS. The marker in the URL is the loop bound — a request carrying
+ * it is never a HIT, so this script never runs on the reload, and if it ever
+ * did (a server that ignores the marker) it would return without touching
+ * the page. window.stop() runs only when it reloads: it keeps the half-sent
+ * Flight stream from being closed by DOMContentLoaded, which would throw
+ * React's "Connection closed" (#412) before the reload lands. `nonce` is the
+ * request's CSP nonce; a ppr route with an active nonce is axis 1
+ * (rsc-rendering.ts shellServePlan), so on a HIT it is normally absent.
+ */
+export function shellReloadScript(nonce?: string): string {
+  return inlineShellScript(
+    "(function(){var u=new URL(location.href);" +
+      `if(u.searchParams.has(${JSON.stringify(SHELL_MISS_PARAM)}))return;` +
+      `u.searchParams.set(${JSON.stringify(SHELL_MISS_PARAM)},"miss");` +
+      "try{window.stop()}catch(e){}location.replace(u.href)})()",
+    nonce,
+  );
+}
+
+/** An inline script a shell HIT's tail appends, carrying the CSP nonce if any. */
+export function inlineShellScript(body: string, nonce?: string): string {
+  return `<script${getNonceAttribute(nonce)}>${body}</script>`;
+}
+
 /**
  * The shell key's search portion (`?`-prefixed sorted search with the
  * cache.searchParams filter applied, or "") — ALSO the string the capture and
@@ -217,6 +279,8 @@ export interface ShellDocument {
     | ShellSnapshotRecord[]
     | undefined
     | Promise<ShellSnapshotRecord[] | undefined>;
+  /** Why a prelude-first read's snapshot is missing (ShellDocumentRead). */
+  snapshotFailure?: Promise<ShellSnapshotFailure | undefined>;
   /** The prelude-first read's stats, when perf metrics are on. */
   stats?: ShellReadStats;
 }
@@ -235,7 +299,10 @@ export interface ShellDocument {
  */
 export function openShellDocument(
   entry: ShellCacheEntry,
-  read?: Pick<ShellDocumentRead, "prelude" | "snapshot" | "stats">,
+  read?: Pick<
+    ShellDocumentRead,
+    "prelude" | "snapshot" | "snapshotFailure" | "stats"
+  >,
 ): ShellDocument | null {
   if (read) {
     if (!hasParseablePostponed(entry)) return null;
@@ -244,6 +311,7 @@ export function openShellDocument(
       postponed: entry.postponed,
       prelude: read.prelude,
       snapshot: read.snapshot,
+      ...(read.snapshotFailure && { snapshotFailure: read.snapshotFailure }),
       ...(read.stats && { stats: read.stats }),
     };
   }
@@ -451,6 +519,104 @@ export function warnPprNonceActiveOnce(key: string): void {
   );
 }
 
+/** Routes already warned about a ppr window the route cache() caps. */
+const warnedPprWindowCapped = new Set<string>();
+
+/**
+ * Dev only (the caller gates on NODE_ENV): warn once per route that the
+ * route's cache() entry reduces an explicit `ppr.ttl` or `ppr.swr`. `shell`
+ * is what the capture stores for a record written just now
+ * (shell-capture.ts capShellWindow), so the message states the values the
+ * shell actually gets. A ppr value the cap leaves whole (or raises: the
+ * cap can move a record's stale time into the shell's swr) is silent, and
+ * so is a ppr config that sets no ttl/swr.
+ */
+export function warnPprWindowCappedOnce(
+  routeName: string,
+  ppr: { ttl?: number; swr?: number },
+  shell: { ttl: number; swr: number },
+  cache: { ttl: number; swr: number },
+): void {
+  if (warnedPprWindowCapped.has(routeName)) return;
+  const reduced: string[] = [];
+  for (const field of ["ttl", "swr"] as const) {
+    const own = ppr[field];
+    if (own !== undefined && shell[field] < own) {
+      reduced.push(`ppr.${field} ${own}`);
+    }
+  }
+  if (reduced.length === 0) return;
+  warnedPprWindowCapped.add(routeName);
+  console.warn(
+    `[rango] Route "${routeName}": its shell is stored with ttl ${shell.ttl} ` +
+      `and swr ${shell.swr}, below its ${reduced.join(" and ")}. A shell ` +
+      `never outlives the route cache() entry (ttl ${cache.ttl}, swr ` +
+      `${cache.swr}) it was captured from, so a document request and a ` +
+      "client navigation show the same handler output. Keep ppr.ttl within " +
+      "the cache() ttl, and ppr.ttl + ppr.swr within the cache() ttl + swr, " +
+      "to silence this.",
+  );
+}
+
+/** Routes (or paths) already warned that a partition skips their build shell. */
+const partitionBuildShellWarned = new Set<string>();
+
+/**
+ * Paths a partitioned request found without a build shell. Build shells are
+ * per path (a param route prerenders some of its paths), so a negative is
+ * kept per path, not per route; cleared when full, so it stays bounded.
+ */
+const pathsWithoutBuildShell = new Set<string>();
+const PATHS_WITHOUT_BUILD_SHELL_MAX = 1_000;
+
+/**
+ * Whether a partitioned request needs no build-shell probe: its route was
+ * already warned, or its path was already found without one.
+ */
+export function partitionBuildShellCheckDone(
+  pathname: string,
+  routeName: string | undefined,
+): boolean {
+  return (
+    partitionBuildShellWarned.has(routeName ?? pathname) ||
+    pathsWithoutBuildShell.has(pathname)
+  );
+}
+
+/**
+ * Record a partitioned request's build-shell probe, and warn once per route
+ * when it found one: the route has a build-time shell its requests cannot
+ * read. The route's request partition (its `cache({ key })`, or the store's
+ * keyGenerator) keys the shell per partition, and the build captured only
+ * the default one, so each partition captures at runtime. Same
+ * declared-intent-cannot-be-honored doctrine as the warnings above; a path
+ * with no build shell stays silent.
+ */
+export function notePartitionBuildShellCheck(
+  pathname: string,
+  routeName: string | undefined,
+  found: boolean,
+): void {
+  if (!found) {
+    if (pathsWithoutBuildShell.size >= PATHS_WITHOUT_BUILD_SHELL_MAX) {
+      pathsWithoutBuildShell.clear();
+    }
+    pathsWithoutBuildShell.add(pathname);
+    return;
+  }
+  // Concurrent first requests can both probe; one of them warns.
+  const route = routeName ?? pathname;
+  if (partitionBuildShellWarned.has(route)) return;
+  partitionBuildShellWarned.add(route);
+  console.warn(
+    `[rango] Route ${routeName ? `"${routeName}" ` : ""}("${pathname}") has a ` +
+      "build-time shell, but its request partition (the route's cache({ key }), " +
+      "or the store's keyGenerator) keys its shell per partition, so the build " +
+      "shell is not served and each partition captures its own at runtime. A " +
+      "keyGenerator that returns the default key unchanged keeps the build shell.",
+  );
+}
+
 /**
  * @internal Reset the serve path's once-per-key warnings and buffered tail
  * timings. Tests only (testing/serve-shell-request.ts resetShellTestState).
@@ -458,5 +624,8 @@ export function warnPprNonceActiveOnce(key: string): void {
 export function resetShellServeStateForTests(): void {
   warnedMissingStore.clear();
   warnedNonceActive.clear();
+  partitionBuildShellWarned.clear();
+  pathsWithoutBuildShell.clear();
+  warnedPprWindowCapped.clear();
   lastTailTimingsForServerTiming.clear();
 }

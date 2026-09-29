@@ -40,6 +40,8 @@ let buildHistoryState: typeof import("../browser/history-state").buildHistorySta
 let mergeLocationState: typeof import("../browser/history-state").mergeLocationState;
 let resolveNavigationState: typeof import("../browser/history-state").resolveNavigationState;
 let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
+let stripShellMissMarker: typeof import("../browser/history-state").stripShellMissMarker;
+let SHELL_MISS_MARKER: string;
 
 beforeEach(async () => {
   const mod = await import("../browser/history-state");
@@ -47,6 +49,8 @@ beforeEach(async () => {
   mergeLocationState = mod.mergeLocationState;
   resolveNavigationState = mod.resolveNavigationState;
   pushHistoryWithIdx = mod.pushHistoryWithIdx;
+  stripShellMissMarker = mod.stripShellMissMarker;
+  SHELL_MISS_MARKER = mod.SHELL_MISS_MARKER;
 });
 
 describe("buildHistoryState", () => {
@@ -121,6 +125,34 @@ describe("mergeLocationState", () => {
     mergeLocationState({ plain: "data" });
 
     expect(dispatchEventSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("stripShellMissMarker", () => {
+  it("is the server's forced-MISS param", async () => {
+    const { SHELL_MISS_PARAM } = await import("../rsc/shell-serve");
+    expect(SHELL_MISS_MARKER).toBe(SHELL_MISS_PARAM);
+  });
+
+  it("drops the marker from the address bar, keeping the entry's state and the other params", () => {
+    (globalThis as any).window.location.href =
+      "http://localhost/page?probe=1&_rsc_shell=miss#top";
+
+    stripShellMissMarker();
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      { existing: "value" },
+      "",
+      "http://localhost/page?probe=1#top",
+    );
+  });
+
+  it("does nothing for a URL without the marker", () => {
+    (globalThis as any).window.location.href = "http://localhost/page?a=1";
+
+    stripShellMissMarker();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 });
 

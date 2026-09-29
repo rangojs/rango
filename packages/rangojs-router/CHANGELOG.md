@@ -54,6 +54,268 @@ instead of rendering the page a second time. In the production run of
 `tests/cloudflare-basic` `ppr-tag-eviction` (10 repeats, 60 captures), captures
 that re-rendered went from 30 to 0.
 
+### Breaking: a PPR shell HIT never runs a route handler; everything a handler produces is baked into the shell ([#969](https://github.com/rangojs/rango/pull/969))
+
+A `ppr` route's shell HIT used to re-run the route's handlers in several
+cases: a handler that awaited a loader (`ctx.use(Loader)`), a handle push with
+a promise nested in its value, a `transition({ when })` predicate the
+pre-handler gate had not evaluated, a route `cache()`
+whose own tier missed or used `key()`, a store `keyGenerator`, a build-time
+shell, and a capture whose segment record did not settle in time. The re-run
+cost the handlers' work on every HIT, and its output replaced the captured
+output in the page payload, so the payload could disagree with the HTML the
+shell had frozen. A handler promise passed to a component under `<Suspense>`,
+or an async server component, was a hole only when it lost the capture's
+timing race, so whether it streamed per request or froze depended on how fast
+it was.
+
+The capture now waits for everything a handler produces, within
+`ppr.captureTimeout`, stores it as the shell's segment record, and renders the
+shell from that record. Every HIT replays the record; only middleware and
+loaders run (not a promise-free `ssr: false` loader, below). A value you want
+fresh per request belongs in a live loader.
+
+```tsx
+layout(async (ctx) => {
+  const reviews = fetchReviews(ctx.params.id); // not awaited
+  return (
+    <Suspense fallback={<Spinner />}>
+      <Reviews data={reviews} />
+    </Suspense>
+  );
+});
+// Before: when fetchReviews was slower than the capture's quiet window, the
+// shell froze the spinner and every HIT fetched and streamed the reviews.
+// After: the capture waits for fetchReviews; the reviews are in the shell and
+// every HIT serves them until the shell expires or its tags are invalidated.
+```
+
+Migration: everything a handler produces is shell material, as it is under
+`cache()`: a promise it passes to a component under `<Suspense>`, an async
+server component, a nested promise in a handle it pushes, and a loader it
+awaits are all awaited at capture (bounded by `ppr.captureTimeout`) and served
+frozen for the shell's lifetime. A HIT never runs a handler. To keep a value
+fresh per request, load it in a loader without `ssr: false` and read it with
+`useLoader` under `loading()` or an inline `<Suspense>`; inside an
+`ssr: false` loader, return that part as a nested promise. Request-scoped
+reads the capture now waits for refuse it: `cookies()`, `headers()`, a
+`{ cache: false }` variable, and `ctx.dynamic()` inside a handler promise, an
+async component, a handle push, or a loader a handler awaits. A normal
+`ctx.get()` value is not guarded: shell material is shared per host, URL and
+request partition, so a variable your middleware sets per visitor (a tenant,
+a locale, a user) and a handler reads is captured once and served to every
+visitor of that URL in that partition. Declare such a variable with
+`createVar({ cache: false })` to make the capture refuse instead, or
+partition the route by it (below). `cache(false)`, or a `condition()` that returns false, on a
+`ppr` route now renders the request like a cache miss (no shell, no
+`x-rango-shell` header, no capture); before, the document still served shell
+HITs and only the handlers the HIT re-ran saw the opt-out.
+
+Shells are partitioned by the same request keys that partition the route's
+`cache()` record: the route's `cache({ key })`, or the store's
+`keyGenerator`. Each partition captures, serves and replays its own shell;
+a visitor is never served another partition's. A route with neither keeps
+one shell per host, path and filtered search.
+
+```tsx
+cache(
+  { ttl: 300, key: (ctx) => `tier:${ctx.request.headers.get("x-tier")}` },
+  () => [path("/pricing", PricingPage, { ppr: true })],
+);
+// Before: one /pricing shell; a HIT replayed whichever tier captured it.
+// After: /pricing has a shell per tier; gold and silver each capture their own.
+```
+
+A route's `key()` runs once per request: the shell read, the record lookup
+(document or client navigation) and the capture share its result, so a
+`key()` that reads `cookies()` works on a `ppr` route (the capture used to
+run it again and its guard refused the capture). A store `keyGenerator` runs
+once per default key it is given; one that returns the default key unchanged
+partitions nothing. A `key()` or `keyGenerator` that throws serves no shell
+for that request, like the record path renders uncached. A build-time shell
+is never served for a partitioned route: the build captured one partition.
+
+Keep partition values to a small, known set (normalize a header or cookie to
+the tiers or locales you serve before returning it): every distinct value
+captures and stores a shell of its own. Query strings multiply shells the same
+way, since the shell key includes the sorted search: a product page reached as
+`?color=red&size=m` and `?color=blue&size=m` has two shells, and an appended
+tracking param mints another. `createRouter({ cache: { searchParams } })`
+drops params from the key, shell included (for example
+`{ exclude: TRACKING_SEARCH_PARAMS }`); exclude only a param the shell does
+not render from.
+
+A unit test pins both through `serveShellRequest`
+(`@rangojs/router/testing/flight`): count a handler's runs across a MISS and
+the HITs after it (they stay put while a loader under `loading()` runs on
+every HIT), and serve each partition with its own request headers; the
+result's `key` is the key production resolved, partition included.
+
+Also changed:
+
+- `@rangojs/router/testing`: `shellCacheKey(url, searchParams, partition)`
+  takes the request partition (what the route's `key()` or the store's
+  `keyGenerator` returns) for a partitioned route, and appends it
+  URI-encoded, as the serve path does.
+- `@rangojs/router/testing/flight`: `serveShellRequest`'s `key`, and so
+  `readEntry()`, is the shell key the serve path resolved for the document,
+  request partition included.
+- `@rangojs/router/cache`: the `ShellCacheEntry` fields `handlerLiveHoles`
+  and `transitionWhen` are removed. No HIT runs a handler, so no entry marks
+  itself as needing one; a custom store that set or read them can drop them.
+- `@rangojs/router/testing`: the `PprReplayBypassReason` values
+  `"handler-live-holes"` and `"transition-when"` are removed; a partial
+  navigation no longer reports them.
+- A HIT whose segment record cannot be read has already sent the shell and
+  cannot render the rest without running handlers. It ends the response with
+  a script that reloads the page once with a `_rsc_shell=miss` query marker;
+  a request carrying the marker renders like a cache miss (no shell, no
+  capture), so the reload cannot repeat. The router drops the marker from the
+  request before anything reads it, so middleware, handlers, loaders, cache
+  keys and `useSearchParams` see the URL the visitor asked for, and the
+  browser drops it from the address bar before the page hydrates. When the entry is broken (a record
+  that fails to decode, a snapshot that lacks it or does not parse) the HIT
+  also replaces the entry and schedules a recapture; when a `CFCacheStore`
+  snapshot read was only slow (over max(`kvReadTimeoutMs`, 1 s) on the
+  document read) the entry stays. Before, the HIT re-ran the handlers.
+- A shell never outlives the route `cache()` entry it was captured from: it
+  stays fresh no longer than that entry does and is served no longer than
+  that entry can be (its ttl, and its ttl + swr, are capped to what the entry
+  has left, in whole seconds). An entry already in its `swr` window gives a
+  shell that is stale from the start, served while it recaptures; each
+  isolate recaptures a stale shell at most once per second. A capture that
+  outlives the entry it read retries once with a fresh render. No shell is
+  stored when that retry's entry runs out too, when the capture budget
+  leaves no time to retry, or when the capture wrote the entry itself and it
+  ran out before the store; the URL then backs off, and a warning with the
+  entry's `ttl` and `swr` is logged once per route. Before, a
+  document request could replay the capture's handler output for the whole
+  shell ttl after the route's `cache()` entry had expired or refreshed, while
+  a client navigation of the same URL read the newer entry. In dev, an
+  explicit `ppr.ttl`/`ppr.swr` that the entry reduces warns once per route and
+  states what the shell is stored with. A custom store's `putShell` receives
+  a capped window in whole seconds; its ttl is 0 for a shell that is stale
+  from the start.
+- `CFCacheStore` with KV writes every PPR shell to KV. A shell whose lifetime
+  is under KV's 60-second `expirationTtl` minimum is written with that
+  minimum, and its reads still expire it at its own deadline. Before, such a
+  shell (a `ppr` ttl + swr under 60 s, or one capped by a short route
+  `cache()`) stayed in the Cache API of the colo that captured it.
+- A request whose route is partitioned (`cache({ key })` or a store
+  `keyGenerator`) does not serve the route's build-time shell; when the route
+  has one, a once-per-route warning says so. A `keyGenerator` that returns the
+  default key unchanged partitions nothing and keeps it.
+- A capture that runs out of `ppr.captureTimeout` is not retried in place: its
+  handlers may still be running. The no-shell warning names the cause.
+- `ppr.maxSnapshotBytes` bounds only the loader data the snapshot pins; the
+  segment record is always kept. A capture whose whole entry, measured as the
+  store writes it (prelude, snapshot, and a head carrying the postponed state
+  and tags), exceeds the store's value limit is refused with a warning:
+  25 MiB by default (Cloudflare KV), three quarters of `maxItemBytes` on
+  `VercelCacheStore`.
+- A capture that produced no segment record is refused instead of stored.
+- `ppr.captureTimeout` also bounds the capture's match, at runtime and at
+  build time: handlers, and the loaders they await, that have not returned by
+  the deadline store no shell (the warning names them). Before, the deadline
+  started after the match.
+- A shell's tags are its segment record's (what the handlers, the server
+  components they render and the loaders they consume recorded, #965), its
+  bake-lane loaders' and `ppr.tags`, so a capture that renders the page and
+  one that replays the route's `cache()` record store the same set. A tag
+  recorded on the request outside what the shell renders no longer tags it.
+- `debugShellCapture` events carry `recordSettleMs` (`record=`) and
+  `entryBytes` (`entry=`); `snapshotBytes` counts the loader pins only.
+- `ShellCaptureDebugEvent["outcome"]` gains `"expired"`: an attempt whose
+  route `cache()` entry ran out before it could store the shell (retried
+  once in place), and `"skip-stored"`: a document MISS skipped its capture
+  because another request's capture stored the shell while the MISS
+  rendered. Before, that MISS captured the page again, and the new store
+  dropped the isolate's memo of the shell stored a moment earlier, so the
+  next HIT read the store instead. A `switch` over the outcome that checks
+  exhaustiveness needs cases for both.
+
+Measured with `vite preview` against the previous commit: test-app
+`/shell-cache` captured in 288 ms instead of 1,182 ms and reached its first HIT
+in 2.3 s instead of 3.6 s (its segment record used to miss the capture's 1 s
+write window, so the entry stored none and every HIT re-ran the handlers);
+`/shell-cache/baked-only` reached its first HIT in 0.5 s instead of 2.5 s. On
+`tests/cloudflare-basic` the stored `/ppr-large` entry is the same 1,647,731
+bytes and its HIT's first byte on the #941 edge-latency harness is unchanged
+(8.3-8.5 ms untagged, 9.4-9.6 ms tagged).
+
+### Breaking: on a `ppr` route, a loader a handler awaits cannot read `cookies()` or `headers()` ([#969](https://github.com/rangojs/rango/pull/969))
+
+A small, intended limit that follows from the change above. Handler output is
+baked by design, and a loader a handler awaits (`await ctx.use(Loader)`) is
+part of it: it runs at capture, and every HIT serves the captured value. It
+used to be exempt from the capture guard because the handler re-ran on every
+HIT; with no handler on a HIT, an identity read there would show the capturing
+user to every visitor, so the capture now refuses it. Awaiting a loader from a
+handler is not the common path (components read loaders with `useLoader`),
+and `cache()` is unchanged: on a route without `ppr`, such a loader may still
+read `cookies()` and `headers()`.
+
+Symptom: the route answers `x-rango-shell: MISS` on every request, and the
+server logs, once per key:
+
+```
+[rango] Shell capture for "<key>" was refused: the loader "<loader id>" called cookies() during capture; request-scoped data must not bake into the shared shell. Read it in a loader without ssr: false and consume it with useLoader under loading() or an inline <Suspense> (a live hole). …
+```
+
+Fix: register the loader on the route with `loading()` (the live lane, run on
+every request) and read it with `useLoader` in a client component instead of
+awaiting it in the handler:
+
+```tsx
+path("/account", AccountPage, { name: "account", ppr: true }, () => [
+  loader(UserLoader), // reads cookies(); live, fresh on every HIT
+  loading(<AccountSkeleton />),
+]);
+```
+
+When the value has a small, known set of values (a tier, a locale),
+partitioning the route with `cache({ key })` also works: `key()` may read
+`cookies()` or `headers()` and selects which shell a visitor gets. The loader
+itself still must not call them; hand it the value through a variable your
+middleware sets.
+
+### Breaking: a promise-free `ssr: false` loader does not run on a PPR shell HIT ([#969](https://github.com/rangojs/rango/pull/969))
+
+A HIT is rendered from the shell, so live values are meaningless there, the
+same reason no handler runs. A bake-lane (`ssr: false`) loader whose return
+held no promises used to run on every HIT anyway, in the background, and its
+result was discarded. Now it does not run: the container pinned at capture is
+served.
+
+A client navigation that replays the shell (`x-rango-ppr-replay: HIT`) now
+matches the document HIT. Before, it ran every loader and served its fresh
+values. Now a promise-free `ssr: false` loader is served from its pin without
+running, and one whose return holds promises runs with its baked parts pinned
+over the fresh result, including an `ssr: false` loader on an entry that also
+has `loading()`.
+
+```tsx
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(ProductLoader, { ssr: false }), // returns { name, description }
+]);
+// Before: ProductLoader's body ran on every HIT; its result was discarded.
+// After: it runs at capture only; every HIT serves the captured container.
+```
+
+Side effects in such a loader's body (logging, counters, writes) now happen
+once per capture instead of once per request; move per-request work into
+middleware or a live loader. Its own `cache()` is read at capture only, so a
+recapture reads through it. A loader whose return holds promises is unchanged:
+it runs on every HIT, because only its body can create the live promises, and
+its baked parts are overlaid on the fresh result.
+
+The settled handle pushes of the loaders a bake-lane loader awaits with
+`ctx.use()`, and those a loader's own `cache()` entry replays at capture, are
+now recorded with the shell too, so they still appear, once, on a HIT that
+runs neither. A push the capture cannot record (a deferred push, or one
+holding a promise) keeps those loaders running on each HIT, in the
+background, as before.
+
 ### Breaking: a loader's own `cache()` entry is tagged by what its body recorded, so `updateTag()` drops it ([#968](https://github.com/rangojs/rango/pull/968))
 
 A loader bound with its own `cache()` (`loader(Loader, () => [cache({...})])`)
@@ -134,10 +396,8 @@ reads the entry from the cache store. It is still cached under its own
 profile (ttl, swr, tags) and does not re-execute on every request; once the
 entry expires or is invalidated and refreshes, the hole shows the refreshed
 value while the shell keeps the value it was captured with. Nothing changes
-for a route with its own `cache()` scope, a store with a `keyGenerator`, a
-route whose handlers re-run on a HIT (a handler that calls `ctx.use()` on a
-loader), or an entry an `ssr: false` loader also reads: those keep the
-captured value for the hole too.
+for an entry a loader also read during the capture (an `ssr: false` loader,
+or a loader a handler awaits): the hole keeps the captured value for it too.
 
 ```tsx
 async function getStock(sku: string) {
@@ -340,10 +600,18 @@ backoff and stampede guard, and `CFCacheStore`'s isolate memos. Call it in
   still arriving on I/O yields on its own). With the shell memo on local
   workerd, a storefront-sized HIT's first byte over a trivial response went
   from 5.9 ms to 1.3 ms ([#959](https://github.com/rangojs/rango/pull/959)).
+- A PPR shell capture no longer renders the page's server components twice.
+  It rendered them once for the stored segment record and again for the page
+  payload the shell's HTML was frozen from, so uncached nondeterministic
+  server output (an async server component reading a counter or the clock)
+  could differ between the shell's HTML and the payload every HIT replays,
+  and hydration repaired the mismatch on every HIT. The capture now renders
+  the shell from the stored record.
 - A PPR shell HIT whose captured segment record fails to decode now schedules
-  a recapture. The HIT reports `cache-corrupt` and re-renders the handlers;
-  before, nothing replaced the entry, so every HIT repeated that re-render
-  until the shell expired ([#958](https://github.com/rangojs/rango/pull/958)).
+  a recapture. The HIT reports `cache-corrupt` and degrades as described under
+  "a PPR shell HIT never runs a route handler" above; before, nothing replaced
+  the entry, so every HIT re-rendered the handlers until the shell expired
+  ([#958](https://github.com/rangojs/rango/pull/958)).
 - A PPR shell capture no longer gives up while a client component in the
   shell is still loading its module. The capture aborted a fixed number of
   task turns after the page payload arrived, and a client component outside
@@ -396,9 +664,13 @@ backoff and stampede guard, and `CFCacheStore`'s isolate memos. Call it in
   public `getShell`/`putShell` contract is unchanged. Shells move to a new key
   namespace; existing entries are already misses after a deploy (buildVersion)
   and age out. One failure mode changes: a truncated, corrupt, or slow
-  (over `kvReadTimeoutMs`) snapshot used to make the read a MISS; it is now a
-  HIT whose resumed tail runs without the snapshot's pins, and a truncated or
-  corrupt entry is also evicted so the next request recaptures
+  snapshot used to make the read a MISS; on the document read (slow meaning
+  over max(`kvReadTimeoutMs`, 1 s)) it is now a HIT whose resumed tail cannot
+  replay the segment record, so the page reloads once into a cache-miss
+  render (see "a PPR shell HIT never runs a route handler" above), and a
+  truncated or corrupt entry is also evicted, replaced and recaptured.
+  `getShell` (partial navigations, the testing helpers) keeps
+  `kvReadTimeoutMs` and misses
   ([#953](https://github.com/rangojs/rango/pull/953)).
 
 ## 0.17.0 (2026-09-28)

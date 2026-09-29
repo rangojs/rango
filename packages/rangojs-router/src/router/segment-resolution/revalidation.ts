@@ -222,7 +222,8 @@ export async function resolveLoadersWithRevalidation<TEnv>(
   // whole-container-mask every loader on this path (a never-settling promise
   // for a loader that should have executed).
   // Outside capture the key only activates the _shellLoaderSeed overlay,
-  // which document-only serveShellHit seeds — inert for partial requests.
+  // which serveShellHit seeds for a document HIT and the PPR partial replay
+  // (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = !entryLoadingMasksLoaders(entry.loading);
 
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
@@ -241,9 +242,10 @@ export async function resolveLoadersWithRevalidation<TEnv>(
             loaderEntry,
             ctx,
             ctx.pathname,
-            bakeLane || loaderEntry.awaitBeforeFlush === true
-              ? segmentId
-              : null,
+            // `bake`, not awaitBeforeFlush: a navigation evaluation never
+            // carries awaitBeforeFlush, and an ssr: false loader must pin
+            // here exactly as on the document HIT.
+            bakeLane || loaderEntry.bake === true ? segmentId : null,
           ),
         ),
         entry,

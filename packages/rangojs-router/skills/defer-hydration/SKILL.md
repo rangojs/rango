@@ -15,7 +15,7 @@ storefront homepage (shell HIT, production build, M-series laptop): a single
 was dead for ~11s. Fast paint, frozen page.
 
 The obvious fix — wrap the heavy subtree in `<Suspense>` so it hydrates later —
-trades the paint away: under shell capture that boundary postpones, and the
+can trade the paint away: when that boundary postpones under shell capture, the
 frozen prelude ships an empty `<main>`. This recipe gets both: the full body
 HTML in the prelude AND its hydration off the initial task, released on first
 idle at retry-lane priority.
@@ -28,7 +28,9 @@ idle at retry-lane priority.
 | interactive (menu click works)   | ~3.5s    | ~1.6s                            | ~1.6s                     |
 
 Measure your own page before and after — the win depends on how much of the
-hydration cost lives under the boundary (see "Verifying and measuring").
+hydration cost lives under the boundary (see "Verifying and measuring"). These
+numbers were measured before PPR captures baked handler output; see the next
+section for what that changed.
 
 ## The recipe
 
@@ -102,23 +104,39 @@ inside hydrates after first idle.
 
 ## Why `fallback={children}` is load-bearing
 
-This is not a style choice; it is the half of the recipe that makes it
-PPR-compatible.
+This is not a style choice. The recipe was built when the shell capture
+postponed any big `<Suspense>` subtree: the capture froze on Flight byte-quiet
+(`FLIGHT_QUIET_HOPS` in `src/rsc/shell-capture.ts`) while the handler output
+was still rendering, so a boundary over the page body became a hole no matter
+where it sat. Verified both ways at the time: wrapping the client island from
+outside AND placing the boundary inside the island both baked
+`<!--$?--><template id="B:…">` into `<main>`, i.e. an empty body in the frozen
+prelude. With the content as the fallback, the postpone became the delivery
+mechanism: the shell baked the fallback, and the fallback was the body.
 
-Shell capture aborts on flight byte-quiet (`src/rsc/shell-capture.ts`,
-`FLIGHT_QUIET_HOPS`): once the Flight source has been byte-silent for the
-quiet window, the fizz render freezes. A big HTML subtree under _any_
-`<Suspense>` boundary cannot finish inside that window, so the boundary always
-postpones — boundary placement cannot fix it. Verified both ways: wrapping the
-client island from outside AND placing the boundary inside the island both
-baked `<!--$?--><template id="B:…">` into `<main>`, i.e. an empty body in the
-frozen prelude.
+PPR captures now wait for the whole handler layer before freezing anything:
+the capture records the page's segments first (async server components
+rendered, every promise in the handler output settled) and renders its Flight
+payload from that record (`settleCaptureRecord` in `src/rsc/shell-capture.ts`).
+A boundary whose content is only handler output is therefore expected to bake
+its content as a completed boundary instead of postponing. What still
+postpones at capture is a boundary over live data: a loader without
+`ssr: false` read with `useLoader` under `loading()` or an inline
+`<Suspense>`, or a promise nested in an `ssr: false` loader's value. Run the
+prelude check in "Verifying and measuring" on your page rather than assuming
+either shape.
 
-With the content as the fallback, the unavoidable postpone _becomes the
-delivery mechanism_: the shell bakes the fallback, and the fallback IS the
-body. In `/ppr` hole-doctrine terms, this is the PHYSICS class exploited
-deliberately — you cannot stop the boundary from becoming a hole, so you make
-the hole's baked fallback carry the real markup.
+`fallback={children}` stays the safe choice either way:
+
+- If the boundary still postpones (live data inside it), the fallback is what
+  the prelude shows, so it must be the content.
+- The sync-update trap below: a client render of the boundary shows the
+  fallback. With `fallback={children}` that is a visual no-op; with
+  `fallback={null}` it blanks the page.
+
+The hydration deferral does not depend on which shape you get: `HydrationGate`
+suspends during hydration, and React keeps the server DOM of the boundary in
+place until the gate releases.
 
 ## Why the client gate is free
 
@@ -164,13 +182,14 @@ release on interaction instead (see Variations).
 
 ## Known cost: the body rides twice (measure it, don't guess)
 
-On a shell HIT the gated subtree's HTML is in the response twice — once as the
-baked fallback in the prelude, once as the resumed hole content (the resume
-re-renders and re-ships it; there is no bake-through). Homepage measurement:
-234KB → 302KB gzipped (+68KB, +29%; raw +1.05MB). It is post-paint bandwidth,
-not render-blocking — the visible prelude streams first — but it is real bytes
-on every document GET. Weigh it per page; on a small body the recipe may not
-pay for itself.
+When the boundary postpones at capture, a shell HIT carries the gated
+subtree's HTML twice — once as the baked fallback in the prelude, once as the
+resumed hole content (the resume re-renders and re-ships it; there is no
+bake-through). Homepage measurement (postponing boundary): 234KB → 302KB
+gzipped (+68KB, +29%; raw +1.05MB). It is post-paint bandwidth, not
+render-blocking — the visible prelude streams first — but it is real bytes on
+every document GET. Weigh it per page; on a small body the recipe may not pay
+for itself. A boundary that bakes its content ships it once.
 
 ## Verifying and measuring
 
@@ -230,7 +249,8 @@ this exact space. The recipe survives that future; a primitive might not.
 
 ## Related
 
-- `/ppr` — the shell/hole mechanics this recipe rides on (hole doctrine:
-  PHYSICS class), and why the capture postpones any big Suspense subtree
-- `src/rsc/shell-capture.ts` — the byte-quiet capture window
-  (`FLIGHT_QUIET_HOPS`) that makes `fallback={children}` mandatory
+- `/ppr` — the shell/hole mechanics this recipe rides on: what bakes into the
+  shell, and which boundaries stay holes
+- `src/rsc/shell-capture.ts` — the record-first capture (`settleCaptureRecord`)
+  and the byte-quiet window (`FLIGHT_QUIET_HOPS`) that decide what the prelude
+  holds

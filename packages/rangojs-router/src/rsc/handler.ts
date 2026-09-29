@@ -85,6 +85,7 @@ import {
   ORIGIN_CHECK_PHASE_BY_MODE,
 } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
+import { withoutShellMissMarker } from "./shell-serve.js";
 import {
   withTimeout,
   isTimeoutEnabled,
@@ -436,10 +437,16 @@ export function createRSCHandler<
   };
 
   return async function handler(
-    request: Request,
+    incomingRequest: Request,
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+    // A degraded PPR HIT's reload carries the forced-MISS marker: keep only
+    // the flag (set on the request context below) and drop the marker before
+    // anything reads the request, so middleware, handlers, loaders, cache
+    // keys and the SSR search seed see the URL the visitor asked for.
+    const unmarkedRequest = withoutShellMissMarker(incomingRequest);
+    const request = unmarkedRequest ?? incomingRequest;
     // Create the metrics store at handler start so handler:total has startTime=0
     // and all metrics are relative to the request entry point.
     const earlyMetricsStore = router.debugPerformance
@@ -566,6 +573,7 @@ export function createRSCHandler<
       stateCookieName: router.resolvedStateCookieName,
       version,
     });
+    if (unmarkedRequest) requestContext._shellForcedMiss = true;
     // Gate on the SAME enabled-semantics withTimeout uses (isTimeoutEnabled):
     // a `renderStartMs: 0` / negative opt-out disables the timeout, so the
     // driver's cursor bookkeeping (which only the timeout reads) must be off too.

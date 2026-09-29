@@ -26,6 +26,24 @@ vi.mock("../../prerender/store.js", () => ({
   createPrerenderStore: () => ({ get: prerenderStoreGetMock }),
 }));
 
+// The partitioned request's build-shell probe, observed.
+vi.mock("../shell-build-manifest.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../shell-build-manifest.js")>();
+  return { ...actual, hasBuildShell: vi.fn(actual.hasBuildShell) };
+});
+
+// The partial replay's loader seed decode: observed, and stubbed per test
+// (the real decode needs the Flight codec this config cannot load).
+vi.mock("../../cache/shell-snapshot.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../cache/shell-snapshot.js")>();
+  return {
+    ...actual,
+    buildShellLoaderSeed: vi.fn(actual.buildShellLoaderSeed),
+  };
+});
+
 import React from "react";
 import { createRouter } from "../../router.js";
 import { createLoader } from "../../loader.rsc.js";
@@ -34,6 +52,10 @@ import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { scheduleShellCapture } from "../shell-capture.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import {
+  hasBuildShell,
+  resetBuildShellManifestForTests,
+} from "../shell-build-manifest.js";
 import { installNativeBase64 } from "../../cache/cf/__tests__/native-base64.js";
 import {
   CFCacheStore,
@@ -53,6 +75,11 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import type { ShellSnapshotRecord } from "../../cache/types.js";
+import {
+  ShellRecordUnavailableError,
+  buildShellLoaderSeed,
+  type ShellLoaderSeedEntry,
+} from "../../cache/shell-snapshot.js";
 import { contextSet } from "../../context-var.js";
 import { nonce as nonceToken } from "../nonce.js";
 import type { HandlerContext } from "../handler-context.js";
@@ -61,7 +88,14 @@ import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import type { MetricsStore } from "../../server/context.js";
-import { takeShellTailTimingForServerTiming } from "../shell-serve.js";
+import {
+  buildShellKey,
+  partitionShellKey,
+  resetShellServeStateForTests,
+  shellReloadScript,
+  takeShellTailTimingForServerTiming,
+  withoutShellMissMarker,
+} from "../shell-serve.js";
 
 const scheduleMock = vi.mocked(scheduleShellCapture);
 
@@ -85,6 +119,10 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: React.version,
     // Matches makeCtx's ctx.version — the build half of the validity gate.
     buildVersion: "v-test",
+    // A document entry a HIT can serve names its doc record (the serve gate
+    // treats one without it as a MISS). The stubbed router.match never
+    // consults it.
+    docKey: "doc:localhost/p",
     createdAt: Date.now(),
     ...overrides,
   };
@@ -262,6 +300,7 @@ const NAVIGATION_KEY = `${KEY}:navigation`;
 
 beforeEach(() => {
   scheduleMock.mockClear();
+  vi.mocked(buildShellLoaderSeed).mockReset();
 });
 
 describe("handleRscRendering — integrated PPR serve: MISS", () => {
@@ -516,6 +555,351 @@ function asciiPreludeBase64(size: number): string {
   return btoa("a".repeat(size));
 }
 
+// The gate before the commit: a HIT replays the handler layer (the entry's
+// doc record, or a Prerender route's prerender store) and never runs a
+// handler, so whatever cannot be replayed is decided here, before any shell
+// byte.
+describe("handleRscRendering — integrated PPR serve: the gate before the commit", () => {
+  it("serves a document entry without a doc record as a MISS and recaptures it", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ docKey: undefined }), 300, 30);
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({ ssrModule, ppr: true, store });
+
+    expect(response.headers.get("x-rango-shell")).toBe("MISS");
+    expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(scheduleMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves a Prerender route's entry without a doc record as a HIT (the prerender store supplies the handler layer)", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry({ docKey: undefined }), 300, 30);
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({
+      ssrModule,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).matched = { pr: true };
+      },
+    });
+
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    await readAll(response.body!);
+    expect(ssrModule.resumeShellHTML).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["cache(false)", { options: false as const }],
+    [
+      "a condition() that refuses this request",
+      { options: { ttl: 30, condition: () => false } },
+    ],
+  ])(
+    "renders %s on a ppr route like a cache miss: axis 1, no shell header, no capture",
+    async (_label, cache) => {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(KEY, shellEntry(), 300, 30);
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+
+      const { response } = await run({
+        ssrModule,
+        ppr: true,
+        store,
+        arm: (reqCtx) => {
+          (reqCtx._classifiedRoute as any).manifestEntry.cache = cache;
+        },
+      });
+
+      expect(response.headers.get("x-rango-shell")).toBeNull();
+      expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      expect(getShell).not.toHaveBeenCalled();
+      expect(scheduleMock).not.toHaveBeenCalled();
+    },
+  );
+
+  // The degrade's reload (shellReloadScript) carries the forced-MISS marker;
+  // the handler strips it and flags the request context.
+  it("renders a request flagged forced-MISS on axis 1 over a stored shell, with no capture", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry(), 300, 30);
+    const getShell = vi.spyOn(store, "getShell");
+    const ssrModule = fullSsrModule();
+
+    const { response } = await run({
+      ssrModule,
+      ppr: true,
+      store,
+      arm: (reqCtx) => {
+        reqCtx._shellForcedMiss = true;
+      },
+    });
+
+    expect(response.headers.get("x-rango-shell")).toBeNull();
+    expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
+    expect(getShell).not.toHaveBeenCalled();
+    expect(scheduleMock).not.toHaveBeenCalled();
+    // The marker never partitions the shell key.
+    expect(buildShellKey(new URL("http://localhost/p?_rsc_shell=miss"))).toBe(
+      KEY,
+    );
+  });
+
+  it("a partitioned request for a route with no build shell does not warn, and the route is probed once", async () => {
+    resetShellServeStateForTests();
+    vi.mocked(hasBuildShell).mockClear();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = Object.assign(new MemorySegmentCacheStore(), {
+      keyGenerator: (_ctx: RequestContext, defaultKey: string) =>
+        `${defaultKey}|segment`,
+    });
+    try {
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store,
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      await run({ ssrModule: fullSsrModule(), ppr: true, store });
+      expect(
+        warn.mock.calls.filter(([m]) => String(m).includes("build-time shell")),
+      ).toEqual([]);
+      expect(hasBuildShell).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  /** The route-window warnings two dev requests to "product" emit. */
+  async function windowWarnings(
+    ppr: { ttl?: number; swr?: number },
+    cache: { ttl: number; swr?: number },
+  ): Promise<string[]> {
+    resetShellServeStateForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const arm = (reqCtx: RequestContext<unknown>) => {
+      (reqCtx._classifiedRoute as any).routeKey = "product";
+      (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+        options: cache,
+      };
+    };
+    try {
+      await run({ ssrModule: fullSsrModule(), ppr, arm });
+      await run({ ssrModule: fullSsrModule(), ppr, arm });
+      return warn.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.includes("never outlives"));
+    } finally {
+      warn.mockRestore();
+    }
+  }
+
+  it("warns once in dev when the route cache() entry reduces an explicit ppr window, stating what the shell gets", async () => {
+    const warnings = await windowWarnings({ ttl: 300, swr: 30 }, { ttl: 60 });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(
+      'Route "product": its shell is stored with ttl 60 and swr 0, below its ppr.ttl 300 and ppr.swr 30. A shell never outlives the route cache() entry (ttl 60, swr 0)',
+    );
+  });
+
+  it("names only the ppr value the cap reduces: a record's stale time can raise the shell's swr", async () => {
+    const warnings = await windowWarnings({ ttl: 300 }, { ttl: 60, swr: 300 });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(
+      "its shell is stored with ttl 60 and swr 240, below its ppr.ttl 300.",
+    );
+  });
+
+  it("does not warn when the cap leaves an explicit ppr window whole", async () => {
+    expect(await windowWarnings({ ttl: 30, swr: 30 }, { ttl: 60 })).toEqual([]);
+  });
+
+  it("applies the cap silently when ppr sets no window", async () => {
+    resetShellServeStateForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        arm: (reqCtx) => {
+          (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+            options: { ttl: 60 },
+          };
+        },
+      });
+      expect(
+        warn.mock.calls.filter(([m]) => String(m).includes("never outlives")),
+      ).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("withoutShellMissMarker drops the marker from a GET and leaves other requests alone", () => {
+    const marked = new Request("http://localhost/p?a=1&_rsc_shell=miss", {
+      headers: { accept: "text/html", cookie: "s=1" },
+    });
+    const unmarked = withoutShellMissMarker(marked);
+    expect(unmarked?.url).toBe("http://localhost/p?a=1");
+    expect(unmarked?.headers.get("cookie")).toBe("s=1");
+    expect(unmarked?.method).toBe("GET");
+    expect(withoutShellMissMarker(new Request("http://localhost/p?a=1"))).toBe(
+      undefined,
+    );
+    expect(
+      withoutShellMissMarker(
+        new Request("http://localhost/p?_rsc_shell=miss", {
+          method: "POST",
+          body: "x",
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  // A build shell whose tail cannot be replayed at runtime degrades like a
+  // runtime entry; the tombstone it leaves must stop the next request from
+  // serving (and degrading on) the same build shell again.
+  describe("a runtime tombstone over a build shell", () => {
+    beforeEach(() => {
+      resetBuildShellManifestForTests();
+      (globalThis as any).__loadShellManifestModule = async () => ({
+        default: { "/p": "/p" },
+        loadShellAsset: async () => ({
+          default: {
+            entry: shellEntry({ docKey: undefined }),
+            ttl: 300,
+            routeName: "p",
+          },
+        }),
+      });
+    });
+    afterEach(() => {
+      delete (globalThis as any).__loadShellManifestModule;
+      resetBuildShellManifestForTests();
+    });
+
+    it("control: with no runtime entry the build shell serves a HIT", async () => {
+      const ssrModule = fullSsrModule();
+      const { response } = await run({ ssrModule, ppr: true });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      await readAll(response.body!);
+    });
+
+    it("a store keyGenerator returning the default key partitions nothing: the build shell still serves", async () => {
+      const store = Object.assign(new MemorySegmentCacheStore(), {
+        keyGenerator: (_ctx: RequestContext, defaultKey: string) => defaultKey,
+      });
+      const getShell = vi.spyOn(store, "getShell");
+      const ssrModule = fullSsrModule();
+
+      const { response } = await run({ ssrModule, ppr: true, store });
+
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      expect(getShell.mock.calls[0]?.[0]).toBe(KEY);
+      await readAll(response.body!);
+    });
+
+    it("a store keyGenerator that partitions skips the build shell", async () => {
+      const store = Object.assign(new MemorySegmentCacheStore(), {
+        keyGenerator: (_ctx: RequestContext, defaultKey: string) =>
+          `${defaultKey}|segment`,
+      });
+      const ssrModule = fullSsrModule();
+
+      const { response } = await run({ ssrModule, ppr: true, store });
+
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+    });
+
+    it("a partitioned request warns once, naming the route, that it skips the build shell", async () => {
+      resetShellServeStateForTests();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const store = Object.assign(new MemorySegmentCacheStore(), {
+        keyGenerator: (_ctx: RequestContext, defaultKey: string) =>
+          `${defaultKey}|segment`,
+      });
+      const arm = (reqCtx: RequestContext<unknown>) => {
+        (reqCtx._classifiedRoute as any).routeKey = "product";
+      };
+      try {
+        await run({ ssrModule: fullSsrModule(), ppr: true, store, arm });
+        await run({ ssrModule: fullSsrModule(), ppr: true, store, arm });
+        const warnings = warn.mock.calls
+          .map(([message]) => String(message))
+          .filter((message) => message.includes("build-time shell"));
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('Route "product" ("/p")');
+        expect(warnings[0]).toContain("cache({ key })");
+        expect(warnings[0]).toContain(
+          "keyGenerator that returns the default key unchanged keeps the build shell",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("a param route's partitioned path without a build shell does not silence the warning for one that has it", async () => {
+      resetShellServeStateForTests();
+      vi.mocked(hasBuildShell).mockClear();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const store = Object.assign(new MemorySegmentCacheStore(), {
+        keyGenerator: (_ctx: RequestContext, defaultKey: string) =>
+          `${defaultKey}|segment`,
+      });
+      const arm = (reqCtx: RequestContext<unknown>) => {
+        (reqCtx._classifiedRoute as any).routeKey = "product";
+      };
+      const serve = (url: string) =>
+        run({ ssrModule: fullSsrModule(), ppr: true, store, arm, url });
+      try {
+        // /q has no build shell (the manifest holds /p): probed once.
+        await serve("http://localhost/q");
+        await serve("http://localhost/q");
+        await serve("http://localhost/p");
+        await serve("http://localhost/p");
+        const warnings = warn.mock.calls
+          .map(([message]) => String(message))
+          .filter((message) => message.includes("build-time shell"));
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('Route "product" ("/p")');
+        expect(
+          vi.mocked(hasBuildShell).mock.calls.map(([path]) => path),
+        ).toEqual(["/q", "/p"]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("the tombstone makes the request a MISS instead of serving the build shell", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putShell(
+        KEY,
+        {
+          reactVersion: React.version,
+          buildVersion: "v-test",
+          navigationOnly: true,
+          createdAt: Date.now(),
+        },
+        300,
+        0,
+      );
+      const ssrModule = fullSsrModule();
+
+      const { response } = await run({ ssrModule, ppr: true, store });
+
+      expect(response.headers.get("x-rango-shell")).toBe("MISS");
+      expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
+      expect(scheduleMock).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
 describe("handleRscRendering — integrated PPR serve: HIT", () => {
   // Issue #941: the integrity gate decoded the whole base64 prelude to validate
   // it and serveShellHit decoded it again, so a HIT paid two full decodes of a
@@ -718,64 +1102,6 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(scheduleMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["seeded", [{ family: "item", key: "seed", value: { value: "x" } }]],
-    ["fragment-only", undefined],
-  ] as const)(
-    "%s tail gives ctx.rendered() the streamed handle snapshot from its own render",
-    async (_label, snapshot) => {
-      const TailHandle = createHandle<string, string[]>(
-        (values) => values.flat(),
-        "test#ShellHitTailHandle",
-      );
-      const seen: string[][] = [];
-      const TailLoader = (createLoader as Function)(
-        async (loaderCtx: any) => {
-          await loaderCtx.rendered();
-          seen.push(loaderCtx.get(TailHandle));
-          return null;
-        },
-        undefined,
-        "test#ShellHitTailLoader",
-      );
-      const StreamingSlot = async (handlerCtx: any) => {
-        const push = handlerCtx.use(TailHandle);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        push("tail-stream");
-        return React.createElement("div", null, "slot");
-      };
-      const router = createRouter({} as any);
-      router.routes(({ layout, loader, loading, parallel, path }: any) => [
-        layout(React.createElement("main"), () => [
-          parallel({ "@side": StreamingSlot }, () => [
-            loading(React.createElement("span", null, "loading")),
-          ]),
-          path(
-            "/p",
-            () => React.createElement("div", null, "page"),
-            { name: "shellHitTail" },
-            () => [loader(TailLoader)],
-          ),
-        ]),
-      ]);
-      await buildRouterTrieFromUrlpatterns(router);
-
-      const ssrModule = fullSsrModule();
-      const { response } = await run({
-        ssrModule,
-        ppr: true,
-        router: router as unknown as HandlerContext<unknown>["router"],
-        shell: shellEntry({
-          snapshot: snapshot as ShellSnapshotRecord[] | undefined,
-        }),
-      });
-
-      await readAll(response.body!);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(seen).toEqual([["tail-stream"]]);
-    },
-  );
-
   it("ctx.dynamic() during the HIT tail render does NOT un-commit the shell (stays HIT, no recapture)", async () => {
     // The commit already happened by the time the tail renders, so a dynamic()
     // call there is a no-op: x-rango-shell stays HIT and nothing reschedules a
@@ -857,7 +1183,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     // real context — override it).
     Object.defineProperty(reqCtx, "theme", { value: "dark" });
     (reqCtx as any)._classifiedRoute = {
-      manifestEntry: { type: "route", ppr: true },
+      manifestEntry: { type: "route", parent: null, ppr: true },
     };
 
     const response = await runWithRequestContext(reqCtx, () =>
@@ -964,7 +1290,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       }) as RequestContext<unknown>;
       reqCtx._cacheStore = store as any;
       (reqCtx as any)._classifiedRoute = {
-        manifestEntry: { type: "route", ppr: true },
+        manifestEntry: { type: "route", parent: null, ppr: true },
       };
 
       const committed = await Promise.race([
@@ -1211,27 +1537,15 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       vi.resetModules();
     });
 
-    it("a doc record that fails to decode drops the memoized shell before recapturing", async () => {
+    it("a doc record the tail cannot replay tombstones the entry, drops the memo, recaptures, and reloads into a MISS", async () => {
       const cf = createCfShellFixture();
-      await cf.store.putShell(
-        KEY,
-        shellEntry({
-          snapshot: [{ family: "item", key: "k", value: { value: "PINNED" } }],
-        }),
-        300,
-        30,
-      );
+      await cf.store.putShell(KEY, shellEntry(), 300, 30);
       await cf.drain();
-      const corrupt = { onNextMatch: true };
       const router = {
         ...makeCtx(fullSsrModule(), "stream").ctx.router,
-        // The tail's cache lookup reporting the doc record as corrupt.
+        // What withCacheLookup throws when the doc record does not hit.
         match: vi.fn(async () => {
-          if (corrupt.onNextMatch) {
-            corrupt.onNextMatch = false;
-            getRequestContext()._shellImplicitCache?.onCorrupt?.();
-          }
-          return { redirect: undefined, ...emptyMatchResult() };
+          throw new ShellRecordUnavailableError("doc:localhost/p");
         }),
       } as unknown as HandlerContext<unknown>["router"];
 
@@ -1242,20 +1556,86 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
         router,
       });
       expect(first.response.headers.get("x-rango-shell")).toBe("HIT");
-      await readAll(first.response.body!);
+      const body = await readAll(first.response.body!);
+      // The prelude already committed; the tail ends with a reload, and no
+      // handler ran (the only match call threw).
+      expect(body.startsWith(PRELUDE_HTML)).toBe(true);
+      expect(body).toContain(shellReloadScript());
       expect(scheduleMock).toHaveBeenCalledTimes(1);
+      await cf.drain();
 
+      // The tombstone makes the reload a MISS, read past the dropped memo.
       const matchesBefore = cf.counts.matches;
       const second = await run({
         ssrModule: fullSsrModule(),
         ppr: true,
         store: cf.store,
-        router,
       });
-      expect(second.response.headers.get("x-rango-shell")).toBe("HIT");
+      expect(second.response.headers.get("x-rango-shell")).toBe("MISS");
       await readAll(second.response.body!);
       expect(cf.counts.matches).toBe(matchesBefore + 1);
     });
+
+    it.each([
+      ["unavailable", false],
+      ["corrupt", true],
+    ] as const)(
+      "a snapshot read that failed as %s reloads into a forced MISS; only a broken entry is replaced",
+      async (failure, replaced) => {
+        const store = new MemorySegmentCacheStore();
+        await store.putShell(KEY, shellEntry(), 300, 30);
+        const { entry } = (await store.getShell(KEY))!;
+        const dropShellMemo = vi.fn();
+        Object.assign(store, {
+          // A prelude-first read whose snapshot did not arrive.
+          async readShellDocument(): Promise<ShellDocumentRead> {
+            return {
+              entry,
+              prelude: new TextEncoder().encode(PRELUDE_HTML),
+              snapshot: Promise.resolve(undefined),
+              snapshotFailure: Promise.resolve(failure),
+            };
+          },
+          dropShellMemo,
+        });
+        const putShell = vi.spyOn(store, "putShell");
+        const router = {
+          ...makeCtx(fullSsrModule(), "stream").ctx.router,
+          match: vi.fn(async () => {
+            throw new ShellRecordUnavailableError("doc:localhost/p");
+          }),
+        } as unknown as HandlerContext<unknown>["router"];
+
+        const { response } = await run({
+          ssrModule: fullSsrModule(),
+          ppr: true,
+          store,
+          router,
+        });
+        expect(response.headers.get("x-rango-shell")).toBe("HIT");
+        const body = await readAll(response.body!);
+        expect(body.startsWith(PRELUDE_HTML)).toBe(true);
+        expect(body).toContain(shellReloadScript());
+
+        if (replaced) {
+          expect(putShell).toHaveBeenCalledTimes(1);
+          expect(putShell.mock.calls[0]![1]).toMatchObject({
+            navigationOnly: true,
+          });
+          expect(dropShellMemo).toHaveBeenCalledWith(KEY);
+          expect(scheduleMock).toHaveBeenCalledTimes(1);
+        } else {
+          // A slow read is not a broken entry: no tombstone, no memo drop,
+          // no recapture; the next request reads the same entry again.
+          expect(putShell).not.toHaveBeenCalled();
+          expect(dropShellMemo).not.toHaveBeenCalled();
+          expect(scheduleMock).not.toHaveBeenCalled();
+          expect((await store.getShell(KEY))?.entry.docKey).toBe(
+            "doc:localhost/p",
+          );
+        }
+      },
+    );
 
     /** The rows of one HIT under debugPerformance, by label. */
     async function hitRows(
@@ -1469,7 +1849,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     }) as RequestContext<unknown>;
     reqCtx._cacheStore = store as any;
     (reqCtx as any)._classifiedRoute = {
-      manifestEntry: { type: "route", ppr: true },
+      manifestEntry: { type: "route", parent: null, ppr: true },
     };
 
     const response = await runWithRequestContext(reqCtx, () =>
@@ -1524,7 +1904,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     }) as RequestContext<unknown>;
     reqCtx._cacheStore = store as any;
     (reqCtx as any)._classifiedRoute = {
-      manifestEntry: { type: "route", ppr: true },
+      manifestEntry: { type: "route", parent: null, ppr: true },
     };
 
     await runWithRequestContext(reqCtx, () =>
@@ -1579,7 +1959,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       }) as RequestContext<unknown>;
       reqCtx._cacheStore = store as any;
       (reqCtx as any)._classifiedRoute = {
-        manifestEntry: { type: "route", ppr: true },
+        manifestEntry: { type: "route", parent: null, ppr: true },
       };
 
       const response = await runWithRequestContext(reqCtx, () =>
@@ -1608,7 +1988,13 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
   it("a stale (SWR) hit serves the stale shell AND schedules a background recapture", async () => {
     const store = new MemorySegmentCacheStore();
     // ttl 0 => stale as soon as the clock advances; swr 300 keeps it servable.
-    await store.putShell(KEY, shellEntry(), 0, 300);
+    // Captured 2 s ago: past the minimum recapture interval.
+    await store.putShell(
+      KEY,
+      shellEntry({ createdAt: Date.now() - 2_000 }),
+      0,
+      300,
+    );
     await new Promise((r) => setTimeout(r, 5));
     const ssrModule = fullSsrModule();
 
@@ -1618,6 +2004,22 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
     expect(scheduleMock).toHaveBeenCalledTimes(1);
     expect((scheduleMock.mock.calls[0]![6] as any).key).toBe(KEY);
+  });
+
+  it("a stale hit inside the minimum recapture interval serves the stale shell without scheduling a recapture", async () => {
+    const store = new MemorySegmentCacheStore();
+    await store.putShell(KEY, shellEntry(), 0, 300);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      ppr: true,
+      store,
+    });
+
+    expect(response.headers.get("x-rango-shell")).toBe("HIT");
+    await readAll(response.body!);
+    expect(scheduleMock).not.toHaveBeenCalled();
   });
 });
 
@@ -2200,6 +2602,53 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       expect(scheduleMock).not.toHaveBeenCalled();
     }
   }
+
+  // A partitioned route's partial replay reads the visitor's own partition,
+  // never the unpartitioned key or another partition's.
+  it("replays from the visitor's own partition when the route cache() has key()", async () => {
+    const store = new MemorySegmentCacheStore();
+    const silverKey = partitionShellKey(KEY, "tier:silver");
+    await store.putShell(
+      partitionShellKey(KEY, "tier:gold"),
+      shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      300,
+    );
+    await store.putShell(
+      silverKey,
+      shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
+      300,
+    );
+    const getShell = vi.spyOn(store, "getShell");
+
+    const { response } = await run({
+      ssrModule: fullSsrModule(),
+      partial: true,
+      ppr: true,
+      store,
+      headers: { "x-tier": "silver" },
+      arm: (reqCtx) => {
+        (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+          options: {
+            ttl: 30,
+            key: (ctx: RequestContext) =>
+              `tier:${ctx.request.headers.get("x-tier")}`,
+          },
+        };
+      },
+      matchPartial: async () => {
+        const active = getRequestContext();
+        if ((await active._shellImplicitCache?.store?.get(DOC_KEY)) !== null) {
+          active._shellImplicitCache?.onHit?.();
+        }
+        return emptyMatchResult();
+      },
+    });
+
+    expect(response.headers.get("x-rango-ppr-replay")).toBe(
+      "HIT; freshness=fresh",
+    );
+    expect(getShell.mock.calls.map(([key]) => key)).toEqual([silverKey]);
+  });
 
   it("passively replays a stale shell without claiming revalidation ownership", async () => {
     const store = new MemorySegmentCacheStore();
@@ -2806,8 +3255,6 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
   });
 
   it.each([
-    ["handler-live holes", { handlerLiveHoles: true }, "handler-live-holes"],
-    ["conditional transitions", { transitionWhen: true }, "transition-when"],
     ["a missing segment snapshot", { snapshot: [] }, "no-segment-snapshot"],
     [
       "a malformed snapshot record",
@@ -3117,6 +3564,74 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(response.headers.get("x-rango-ppr-replay")).toBe(
       "HIT; freshness=fresh",
     );
+  });
+
+  describe("the bake-lane loader seed", () => {
+    const loaderRecord: ShellSnapshotRecord = {
+      family: "loader",
+      key: "R0D0.app/x#Plain",
+      value: { value: "{}", holes: 0, runs: 0 },
+    };
+    const seed = new Map<string, ShellLoaderSeedEntry>([
+      [
+        "R0D0.app/x#Plain",
+        { container: { plain: 1 }, holes: false, runs: false },
+      ],
+    ]);
+
+    it("is decoded only when the replay hits the doc record, and armed for the match", async () => {
+      vi.mocked(buildShellLoaderSeed).mockResolvedValue(seed);
+      let armed: unknown;
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        partial: true,
+        ppr: true,
+        shell: shellEntry({
+          snapshot: [segmentRecord, loaderRecord],
+          docKey: DOC_KEY,
+        }),
+        matchPartial: async () => {
+          const active = getRequestContext();
+          expect(buildShellLoaderSeed).not.toHaveBeenCalled();
+          await active._shellImplicitCache?.onHit?.();
+          armed = active._shellLoaderSeed;
+          return emptyMatchResult();
+        },
+      });
+
+      expect(response.headers.get("x-rango-ppr-replay")).toBe(
+        "HIT; freshness=fresh",
+      );
+      expect(buildShellLoaderSeed).toHaveBeenCalledTimes(1);
+      expect(armed).toBe(seed);
+    });
+
+    it("is not decoded when the explicit tier supplies the match", async () => {
+      vi.mocked(buildShellLoaderSeed).mockResolvedValue(seed);
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        partial: true,
+        ppr: true,
+        shell: shellEntry({
+          snapshot: [segmentRecord, loaderRecord],
+          docKey: DOC_KEY,
+        }),
+        arm: (reqCtx) => {
+          (reqCtx._classifiedRoute as any).manifestEntry.cache = {
+            options: { ttl: 30 },
+          };
+        },
+        matchPartial: async () => {
+          getRequestContext()._shellImplicitCache?.onExplicitHit?.();
+          return emptyMatchResult();
+        },
+      });
+
+      expect(response.headers.get("x-rango-ppr-replay")).toBe(
+        "BYPASS; reason=explicit-cache-hit",
+      );
+      expect(buildShellLoaderSeed).not.toHaveBeenCalled();
+    });
   });
 
   it("reports explicit-cache-hit when the route-derived tier supplied the match (no false replay HIT)", async () => {

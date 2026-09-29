@@ -44,6 +44,7 @@ import {
   isCaptureBackedOff,
   clearCaptureBackoff,
 } from "../shell-capture.js";
+import { RecordingShellStore } from "../../cache/shell-snapshot.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { ShellSnapshotLoaderValue } from "../../cache/types.js";
 import {
@@ -120,9 +121,21 @@ async function capture(
       strictMode: false,
       onError: undefined,
       match: vi.fn(async () => {
-        getRequestContext()._shellCaptureLoaderRecords?.set(
+        const captureCtx = getRequestContext();
+        captureCtx._shellCaptureLoaderRecords?.set(
           SEGMENT_KEY,
           Promise.resolve(container),
+        );
+        // The doc record a real match's doc scope writes (a capture without
+        // one is refused before its loaders are drained).
+        captureCtx._shellImplicitCache!.docKey = "doc:localhost/p";
+        (captureCtx._cacheStore as RecordingShellStore).recordSegmentWrite(
+          "doc:localhost/p",
+          {
+            segments: [{ encoded: "0:null", metadata: { id: "R0" } } as any],
+            handles: "",
+            expiresAt: Date.now() + 300_000,
+          },
         );
         return {
           redirect: undefined,
@@ -154,6 +167,7 @@ async function capture(
     request,
     url,
     variables: {},
+    cacheStore: store,
   }) as RequestContext;
   (reqCtx as any)._reportBackgroundError = vi.fn();
   const tasks: Array<() => Promise<void>> = [];

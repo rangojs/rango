@@ -418,9 +418,12 @@ Next.js route segment config maps onto Rango's explicit primitives:
 ### Partial prerendering → the `ppr` path option
 
 Next.js PPR statically prerenders a shell at build time and streams the parts
-inside `<Suspense>` at request time. Rango ships the same model as a path
+inside `<Suspense>` at request time. Rango ships a similar model as a path
 option — the shell is captured at runtime into the app cache store and resumed
-on later requests, with the holes rendered fresh per request:
+on later requests, with the holes rendered fresh per request. The difference is
+what counts as a hole: in Rango everything a handler produces is shell
+material, as it is under `cache()`, including a promise it hands to a component
+under `<Suspense>`. A live hole is loader data:
 
 ```typescript
 // Next.js: app/products/[id]/page.tsx
@@ -435,14 +438,14 @@ export default async function Page({ params }) {
   );
 }
 
-// Rango, step 1 — direct carry-over. Your Suspense tree IS the hole model:
-// hand the un-awaited promise down, keep the boundary, add the ppr option.
-// No loader, no loading(), no restructuring.
+// Rango: the direct carry-over BAKES. Under ppr the capture awaits a promise
+// the handler hands down (bounded by ppr.captureTimeout), and every shell HIT
+// shows the captured price.
 import { Suspense } from "react";
 import type { HandlerContext } from "@rangojs/router";
 
 function ProductPage(ctx: HandlerContext) {
-  const price = fetchPrice(ctx.params.id); // pending promise — NOT awaited
+  const price = fetchPrice(ctx.params.id); // awaited at capture, then frozen
   return (
     <ProductShell>
       <Suspense fallback={<PriceSkeleton />}>
@@ -451,41 +454,50 @@ function ProductPage(ctx: HandlerContext) {
     </ProductShell>
   );
 }
-path("/products/:id", ProductPage, {
-  name: "product",
-  ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
-});
 
-// Rango, step 2 (optional refinement) — promote the fetch to a live loader
-// (no ssr: false) for a GUARANTEED hole, even when the value resolves
-// instantly; loading() is its boundary (/ppr → The loader lane rule).
+// Rango, live price: a loader without ssr: false, read with
+// useLoader(LivePriceLoader) in a client component. loading() (or an inline
+// <Suspense> around the reader) is the hole boundary (/ppr → The loader lane
+// rule).
+function ProductPageLive() {
+  return (
+    <ProductShell>
+      <LivePriceFromLoader /> {/* "use client": useLoader(LivePriceLoader) */}
+    </ProductShell>
+  );
+}
 path(
   "/products/:id",
-  ProductPage,
-  { name: "product", ppr: { ttl: 600, swr: 120 } },
+  ProductPageLive,
+  { name: "product", ppr: { ttl: 600, swr: 120 } }, // or ppr: true (ttl 300s)
   () => [loader(LivePriceLoader), loading(<PriceSkeleton />)],
 ),
 ```
 
 Differences that matter during migration:
 
-- **The Suspense/promise model carries over.** As in Next, a still-pending
-  promise handed to a component that suspends under its own `<Suspense>`
-  postpones at capture and becomes a hole — existing Next PPR trees keep
-  working as-is, no `loading()` required. One container rule everywhere
-  (handlers, handles, loaders): awaited/settled data bakes into the shell; a
-  promise nested inside your data stays a live hole. For loaders, `ssr: false`
-  (not `loading()`) selects the lane — see `/ppr` → The loader lane rule.
-  Identity reads (`cookies()`/`headers()`) where the value would bake refuse
-  the capture by construction.
+- **Handler output bakes; loader data is the hole.** Unlike Next, a pending
+  promise the handler hands to a component under `<Suspense>` does NOT make a
+  hole. Everything a handler produces — that promise, an async server
+  component, a nested promise in a handle it pushes, a loader it awaits — is
+  awaited at capture (bounded by `ppr.captureTimeout`) and served frozen for
+  the shell's lifetime; a shell HIT never runs a handler. Keep the parts that
+  must be fresh in loaders without `ssr: false`, read with `useLoader` under
+  `loading()` or an inline `<Suspense>`; inside an `ssr: false` loader, return
+  them as nested promises. For loaders, `ssr: false` (not `loading()`) selects
+  the lane — see `/ppr` → The loader lane rule.
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
   `revalidateTag()` drop the shell (`revalidate()` does not — it is a data
   lever and never touches shell HTML).
-- **`cookies()`/`headers()` in shell material THROW during capture** (in Next
-  they silently force dynamic rendering). Per-user reads must move into a live
-  loader (no `ssr: false`; a nested promise does not help). The refusal
-  surfaces at migration time, which is the point.
+- **Request-scoped reads in shell material refuse the capture** (in Next they
+  silently force dynamic rendering). `cookies()`, `headers()`, a
+  `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
+  capture waits: a handler, a promise it passes or pushes, an async component,
+  a loader it awaits. Per-user reads must move into a live loader (no
+  `ssr: false`; a nested promise does not help). A normal `ctx.get()` value is
+  not guarded and bakes as the capturing request's value. The refusal surfaces
+  at migration time, which is the point.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })`
   store to implement the shell family (`MemorySegmentCacheStore`,
   `CFCacheStore`, `VercelCacheStore`). Without one the route quietly stays

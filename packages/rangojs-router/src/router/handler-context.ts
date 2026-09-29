@@ -279,7 +279,7 @@ export function createHandlerContext<TEnv>(
       // Read-time guard: non-cacheable var inside "use cache" or cache() →
       // throw. Works for both ContextVar tokens and string keys.
       if (isNonCacheable(variables, keyOrVar)) {
-        assertNonCacheableReadAllowed(keyOrVar);
+        assertNonCacheableReadAllowed(keyOrVar, _getRequestContext());
       }
       return contextGet(variables, keyOrVar);
     }) as HandlerContext<any, TEnv>["get"],

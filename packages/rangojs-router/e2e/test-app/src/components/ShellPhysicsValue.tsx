@@ -7,11 +7,10 @@ function Inner({ promise }: { promise: Promise<string> }) {
 }
 
 /**
- * Physics-hole consumer: a handler-created pending promise handed over as a prop
- * and use()'d under this component's OWN <Suspense>. During shell capture the
- * promise (~250ms of real latency) cannot win the task-quantized quiet window, so
- * the boundary postpones — the prelude freezes the fallback and the resume
- * streams the value. Deterministic by latency class, not by registration.
+ * Handler-promise consumer: a handler-created promise handed over as a prop
+ * and use()'d under this component's OWN <Suspense>. It is handler output:
+ * the PPR capture waits for it (~250ms) and bakes the value into the prelude,
+ * and a HIT replays it. A per-request value belongs in a live loader instead.
  */
 export function ShellPhysicsValue({ promise }: { promise: Promise<string> }) {
   return (

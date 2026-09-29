@@ -3,7 +3,7 @@ import React from "react";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { compileSearchParamsFilter } from "../../cache/search-params-filter.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
-import { buildShellKey } from "../../rsc/shell-serve.js";
+import { buildShellKey, partitionShellKey } from "../../rsc/shell-serve.js";
 import {
   assertPprReplayStatus,
   assertShellStatus,
@@ -26,6 +26,31 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
 }
 
 describe("shellCacheKey (production key identity)", () => {
+  it("appends a request partition exactly as the serve path does", () => {
+    const url = new URL("http://shop.test/p?b=2&a=1");
+    expect(shellCacheKey(url, undefined, "tier:gold")).toBe(
+      partitionShellKey(buildShellKey(url), "tier:gold"),
+    );
+    expect(shellCacheKey(url, undefined, "tier:gold")).not.toBe(
+      shellCacheKey(url, undefined, "tier:silver"),
+    );
+  });
+
+  it("encodes the partition, so no partition can end in another key's suffix", () => {
+    const url = new URL("http://shop.test/p");
+    const key = shellCacheKey(url, undefined, "tier:gold:navigation");
+    expect(key).toBe("shop.test/p:shell|tier%3Agold%3Anavigation");
+    expect(key).toBe(
+      partitionShellKey(buildShellKey(url), "tier:gold:navigation"),
+    );
+    expect(key).not.toBe(
+      `${shellCacheKey(url, undefined, "tier:gold")}:navigation`,
+    );
+    expect(shellCacheKey(url, undefined, "a|b")).toBe(
+      "shop.test/p:shell|a%7Cb",
+    );
+  });
+
   it("matches rsc/shell-serve buildShellKey for host+path+search", () => {
     const cases = [
       "http://localhost/products/1",
@@ -114,8 +139,8 @@ describe("assertPprReplayStatus / parsePprReplayStatus", () => {
       { outcome: "BYPASS", reason: "no-entry" } as const,
     ],
     [
-      "BYPASS; reason=transition-when",
-      { outcome: "BYPASS", reason: "transition-when" } as const,
+      "BYPASS; reason=no-segment-snapshot",
+      { outcome: "BYPASS", reason: "no-segment-snapshot" } as const,
     ],
   ])("parses and asserts %s", (raw, expected) => {
     const response = responseWith(raw);
@@ -129,6 +154,10 @@ describe("assertPprReplayStatus / parsePprReplayStatus", () => {
     "HIT; freshness=expired",
     "BYPASS; reason=unbounded-detail",
     "BYPASS; reason=no-entry; extra=true",
+    // Removed with the handler-live fast-path decline: a HIT never runs
+    // handlers, so no entry is ineligible for these reasons.
+    "BYPASS; reason=handler-live-holes",
+    "BYPASS; reason=transition-when",
   ])("rejects absent or malformed value %s", (raw) => {
     expect(parsePprReplayStatus(responseWith(raw))).toBeNull();
   });

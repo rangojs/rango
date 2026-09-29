@@ -47,6 +47,7 @@ import {
   buildCacheSignalSegments,
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { ShellRecordUnavailableError } from "../cache/shell-snapshot.js";
 import { evaluatePprTransitionWhen } from "./transition-when.js";
 
 /**
@@ -380,6 +381,10 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false, error.status);
               throw error;
             }
+            // A document shell HIT tail's doc record could not supply the
+            // handler layer: a serve-path signal serveShellHit degrades, not a
+            // routing error (the record's decode failure was already reported).
+            if (error instanceof ShellRecordUnavailableError) throw error;
             emitter.error(
               error instanceof Error ? error : new Error(String(error)),
               "routing",

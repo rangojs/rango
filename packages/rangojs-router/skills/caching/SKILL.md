@@ -58,7 +58,8 @@ cache({ ttl: 60, swr: 300 }, () => [
 not stored: it renders on every request, hits included, with its parallels and
 loaders, so a per-request shell or a header it writes stays live. On a `ppr`
 route the whole chain bakes into the shell, so there `cache()` covers the whole
-chain.
+chain, and a shell never outlives the route `cache()` entry it was captured
+from (it is fresh and served no longer than that entry; `/ppr`).
 
 ```typescript
 layout(AccountShell, () => [
@@ -163,7 +164,10 @@ cache(
   — document requests, client navigations, and intercept navigations are cached
   separately. The search part honors `cache.searchParams` (below).
 - **`key`** is a full override: it bypasses the default key, the store's
-  `keyGenerator`, and the search-param filter.
+  `keyGenerator`, and the search-param filter. On a `ppr` route the same key
+  (or, without one, the store's `keyGenerator`) partitions the PPR shell: each
+  partition captures and serves its own shell (`/ppr`, "Request-partitioned
+  shells").
 - **`condition`** returning `false` skips both the cache read and write for that
   request (the boundary renders live).
 - `cache(() => [...])` with no options uses the store defaults.
@@ -549,8 +553,9 @@ const router = createRouter<AppBindings>({
 | Cold colo    | MISS           | HIT     | Serve from KV, promote to L1  |
 | First render | MISS           | MISS    | Render, write to both L1 + KV |
 
-KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
-are only cached in L1.
+KV entries require `expirationTtl >= 60s`. Short-lived data entries (< 60s total
+TTL) are only cached in L1. A PPR shell is always written to KV, a short one
+with the 60 s minimum; its reads still expire it at its own deadline.
 
 ### Resilience & latency budgets
 
@@ -573,12 +578,14 @@ a KV timeout — the entry is served rather than wrongly treated as invalidated.
 A PPR shell HIT reads its entry prelude-first: the body budget (or the KV budget
 on a KV read, counted from opening the value) covers only the entry's head and
 prelude, the tag-marker read runs alongside the prelude read, and the capture
-snapshot behind them is read off the commit path, bounded by `kvReadTimeoutMs`.
-A snapshot read that times out lets the HIT's tail run without its pins, the
-same as a shell stored without a snapshot; a truncated or corrupt snapshot does
-the same and also evicts the entry. The snapshot holds only what a HIT reads:
-when every HIT replays the handler layer from the captured segment record, the
-`"use cache"` items only handler code read are not stored (`/ppr`).
+snapshot behind them is read off the commit path, bounded by `kvReadTimeoutMs`
+(at least 1 s: the tail cannot render without it). A HIT whose snapshot read
+times out, or whose snapshot is truncated or corrupt (also evicted), cannot
+replay the captured segment record, so it degrades: the entry is replaced and
+recaptured and the page reloads once into a cache-miss render (`/ppr`). The
+snapshot holds only what a HIT reads: every HIT replays the handler layer from
+the captured segment record, so the `"use cache"` items only handler code read
+are not stored.
 
 **Shell memo.** After a shell read, the same isolate serves that key's next
 HITs from memory for `memo.shellMs` (default 2000; `{ shellMs: 0 }` turns it
@@ -604,11 +611,23 @@ keep reading their markers. `{ markerFreshMs: 0 }` turns the value memo off.
 `revalidateTag()` sets `<state cookie prefix>-fresh` (`rango-state-fresh` by
 default, shared by every router on the host with that prefix; `HttpOnly`,
 `SameSite=Lax`, `Path=/`, `Secure` on https, `Max-Age` 11 s with KV and 3 s
-without at the defaults: the longest memo staleness plus 1 s). The same
-user's requests that carry it skip both memos on every isolate, so a mutating
-user never sees a memoized shell or marker from before their write. Other
-users can, for up to `markerMaxStaleMs` (with KV) or the shell window (KV-less
-purge mode). Set `{ shellMs: 0, markerFreshMs: 0 }` where every user's next
+without at the defaults: the longest memo staleness plus 1 s). It is strictly
+functional: its value is `1`, it identifies no one, and it only sends that
+browser's reads past the memos. The same user's requests that carry it skip
+both memos on every isolate, so a mutating user never sees a memoized shell or
+marker from before their write. What they read past the memos is the store's
+own consistency. `VercelCacheStore`: `expireTag` is global (about 300 ms), so
+they read fresh in any region. `CFCacheStore` with KV: the shell's tag check
+reads that colo's marker (its Cache API copy when `tagCacheTtl` is set, then
+KV), so in the colo that ran the mutation they read fresh, while a request
+another colo serves can still get the old shell until KV propagates the
+marker there (up to about 60 s) and that colo's cached marker (`tagCacheTtl`)
+expires. `CFCacheStore` without KV in purge mode (`tagPurge`) has no markers:
+the purge is what removes the shell, and they see it once it has reached the
+colo serving them. Other users can see a memoized shell or marker for up to
+`markerMaxStaleMs` (with KV) or the shell window (`VercelCacheStore` in
+another region, `CFCacheStore` in KV-less purge mode, where another isolate's
+memo can keep serving the purged shell). Set `{ shellMs: 0, markerFreshMs: 0 }` where every user's next
 request must see an invalidation (with KV, `{ shellMs: 0 }` alone still leaves
 the marker memo); that also means no cookie. The cookie is not set when the
 invalidation runs after the response headers were sent (a streaming loader or
@@ -718,7 +737,8 @@ marker memo refreshes. The tag markers are a regional `cache.set` (only
 the invalidation until its window passes, where without the memo `expireTag`
 removes it within about 300 ms; a platform `expireTag` issued outside rango is
 likewise seen when the window passes. The fresh-reads cookie (`Max-Age` 3 s)
-sends the mutating user's next requests past both memos.
+sends the mutating user's next requests past both memos, and `expireTag` is
+global, so they read fresh in any region.
 
 Writes over 2 MB (the platform limit, `maxItemBytes`) are skipped, and tags
 beyond the per-item cap are dropped with a warning. The official client swallows
@@ -763,10 +783,12 @@ is **not** guarded. `ctx.use()` is a server-side escape hatch for non-rendered
 uses (set a ctx var, make a routing decision); never render its result inside a
 cached handler.
 
-This is the **consumption-lane rule**, and it holds identically for every
-shared artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`):
-handler consumption = baked copy with identity reads permitted; client-side
-`useLoader` = live. It is stated once in `/rango` → Invariants.
+This is the **consumption-lane rule**, and it holds for every shared
+artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`): handler
+consumption = baked copy; client-side `useLoader` = live. The tiers differ on
+identity reads inside a handler-consumed loader: `cache()` and `"use cache"`
+permit them (the leak above), while a PPR shell capture refuses them and the
+route stays uncached. It is stated once in `/rango` → Invariants.
 
 ```typescript
 // WRONG — throws: cookies() read directly in a cached handler
@@ -828,6 +850,12 @@ cache({ ttl: 300 }, () => [
   cache(false, () => [path("/blog/drafts", Drafts, { name: "drafts" })]),
 ]);
 ```
+
+On a `ppr` route the opt-out also means no shell: `cache(false)`, or a
+`condition()` that returns false, renders that route (or that request) like a
+cache miss, with no shell served and none captured. A `ppr` route under a
+layout's `cache()` therefore cannot opt out of that `cache()` and still get a
+shell (`/ppr`).
 
 ## Custom Cache Store
 

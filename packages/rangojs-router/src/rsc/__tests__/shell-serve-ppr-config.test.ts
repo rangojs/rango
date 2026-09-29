@@ -3,6 +3,7 @@ import { createElement } from "react";
 import {
   buildShellKey,
   resolvePprConfig,
+  shellReloadScript,
   shellSearchSeed,
 } from "../shell-serve.js";
 import type { EntryData } from "../../server/context.js";
@@ -212,5 +213,48 @@ describe("shellSearchSeed — the key's search portion IS the render seed", () =
     expect(buildShellKey(url)).toBe(
       `shop.example/products${shellSearchSeed(url)}:shell`,
     );
+  });
+});
+
+// The degrade's client half (serveShellHit): reload once into a forced MISS.
+// Run against a stand-in window, the way a browser runs the inline script.
+describe("shellReloadScript", () => {
+  function runScript(href: string, nonce?: string) {
+    const calls: string[] = [];
+    const html = shellReloadScript(nonce);
+    const body = html.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+    const location = {
+      href,
+      replace: (to: string) => calls.push(`replace ${to}`),
+    };
+    const window = { stop: () => calls.push("stop") };
+    new Function("window", "location", body)(window, location);
+    return { calls, html };
+  }
+
+  it("stops the half-sent page, then replaces it with the forced-MISS URL", () => {
+    const { calls } = runScript("https://shop.test/p?color=blue");
+    expect(calls).toEqual([
+      "stop",
+      "replace https://shop.test/p?color=blue&_rsc_shell=miss",
+    ]);
+  });
+
+  it("does nothing on a URL that already carries the marker (the loop bound)", () => {
+    const { calls } = runScript("https://shop.test/p?_rsc_shell=miss");
+    expect(calls).toEqual([]);
+  });
+
+  it("carries the request's CSP nonce", () => {
+    expect(runScript("https://shop.test/p", "r4nd0m").html).toMatch(
+      /^<script nonce="r4nd0m">/,
+    );
+    expect(runScript("https://shop.test/p").html).toMatch(/^<script>/);
+  });
+
+  it("the marker never partitions the shell key", () => {
+    expect(
+      buildShellKey(new URL("https://shop.test/p?b=2&_rsc_shell=miss&a=1")),
+    ).toBe(buildShellKey(new URL("https://shop.test/p?a=1&b=2")));
   });
 });

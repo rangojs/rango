@@ -14,17 +14,43 @@
  * costs latency-to-HIT only — never a served response — and 5s spuriously
  * refused legitimately-slow deferred shell material (a real storefront's meta
  * chains settle at ~7s). Ceiling math: workerd's waitUntil lifetime is ~30s
- * past response completion, and a guaranteed two-attempt envelope needs
- * 2x budget + the in-place retry delay + store I/O, i.e. budget <= ~14s. The
- * 15s default deliberately sits just past that: attempt 1 always gets its
- * full 15s, but when it consumed the whole budget the in-place RETRY may be
- * truncated by the platform kill on workerd — degrading to the existing
- * best-effort contract (the key stays MISS; a later request re-captures).
+ * past response completion. An attempt that consumed the whole budget is not
+ * retried in place (shell-capture.ts noShellCauses), so the envelope is one
+ * budget plus store I/O; the retry follows only an attempt that ended early
+ * (a cold-module abort). Past the ceiling the platform kill degrades to the
+ * existing best-effort contract (the key stays MISS; a later request
+ * re-captures).
  * Node/dev and build-time captures have no waitUntil ceiling. The per-route
  * `ppr.captureTimeout` knob remains for tightening below the default. See
  * docs/design/ppr-shell-resume.md (Cost model).
  */
 export const SHELL_CAPTURE_MAX_WAIT_MS = 15_000;
+
+/**
+ * The shell key for one request partition (cache-scope.ts
+ * resolveShellPartition): the route cache() `key()` or store keyGenerator
+ * result that partitions the route's record partitions its shell too, so
+ * each partition captures and serves its own. Here, in the leaf module, so
+ * the testing helper `shellCacheKey` (testing/shell-status.ts) calls it
+ * without pulling shell-serve.ts.
+ *
+ * The partition is URI-encoded: it is request-derived, and raw it could end
+ * in a suffix another key is built with (navigationShellKey), so a partition
+ * `gold:navigation` named gold's navigation entry and its document shell
+ * replayed to gold's navigations. Encoded, it holds no `:` or `|`.
+ */
+export function partitionShellKey(key: string, partition: string): string {
+  return `${key}|${encodeURIComponent(partition)}`;
+}
+
+/**
+ * The navigation-only entry beside a document shell key (a cold partial
+ * request's capture, rsc-rendering.ts). A suffix after the (encoded)
+ * partition: partitionShellKey keeps the two unambiguous.
+ */
+export function navigationShellKey(key: string): string {
+  return `${key}:navigation`;
+}
 
 /**
  * Fixed number of macrotask hops between `quiesce` resolving and the abort. These

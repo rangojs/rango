@@ -150,3 +150,34 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
 });
+
+// The PPR bake lane rides on `bake`, which a navigation evaluation carries
+// too: its shell replay pins the loaders a document HIT pins.
+describe("bake stamping (every evaluation)", () => {
+  it.each([
+    ["an SSR", true],
+    ["a navigation-lane", false],
+    ["an isSSR-less", undefined],
+  ] as const)(
+    "stamps bake for ssr: false on %s evaluation",
+    (_label, isSSR) => {
+      const parent = parentEntry();
+      withDslStore(parent, isSSR, () => {
+        loader(testLoaderDef(), { ssr: false });
+      });
+      expect(parent.loader[0]!.bake).toBe(true);
+    },
+  );
+
+  it("does not stamp bake without ssr: false", () => {
+    const parent = parentEntry();
+    withDslStore(parent, true, () => {
+      loader(testLoaderDef(), { ssr: true });
+      loader(testLoaderDef());
+    });
+    expect(parent.loader.map((entry) => entry.bake)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+});

@@ -905,7 +905,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       // this route class showed on every cold graph (dev cold boots, GH
       // runners) while ordinary routes — whose live handler execution keeps
       // Flight noisy long enough — never hit it. Holes the payload carries
-      // block neither wait (masked loaders and physics promises postpone
+      // block neither wait (masked live loaders and loader-nested promises postpone
       // below the root and load no module; the Flight input stays frozen),
       // so this await costs a genuinely hole-y shell nothing; a payload that
       // NEVER settles (hung handles) degrades at the deadline exactly as

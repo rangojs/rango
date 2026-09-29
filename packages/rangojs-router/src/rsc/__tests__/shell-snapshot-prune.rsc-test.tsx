@@ -33,9 +33,9 @@ vi.mock("../../cache/shell-snapshot.js", async (importOriginal) => {
     await importOriginal<typeof import("../../cache/shell-snapshot.js")>();
   return {
     ...actual,
-    pruneShellSnapshot: ((snapshot, readers, loaderKeys) => {
+    pruneShellSnapshot: ((snapshot, readers, loaderKeys, docKey) => {
       pruneInputs.push([...snapshot]);
-      return actual.pruneShellSnapshot(snapshot, readers, loaderKeys);
+      return actual.pruneShellSnapshot(snapshot, readers, loaderKeys, docKey);
     }) satisfies typeof actual.pruneShellSnapshot,
   };
 });
@@ -45,6 +45,7 @@ import { createRouter } from "../../router.js";
 import { createLoader } from "../../loader.rsc.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
+import { shellReloadScript } from "../shell-serve.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type {
   CacheItemOptions,
@@ -228,13 +229,15 @@ async function serve(
   return { response, body };
 }
 
-const SHELL_KEY = (path: string) => `localhost${path}:shell`;
+const SHELL_KEY = (path: string, partition?: string) =>
+  `localhost${path}:shell${partition === undefined ? "" : `|${encodeURIComponent(partition)}`}`;
 
 async function storedEntry(
   store: MemorySegmentCacheStore,
   path: string,
+  partition?: string,
 ): Promise<ShellCacheEntry> {
-  const hit = await store.getShell(SHELL_KEY(path));
+  const hit = await store.getShell(SHELL_KEY(path, partition));
   if (!hit) throw new Error(`no shell stored for ${path}`);
   return hit.entry;
 }
@@ -277,10 +280,11 @@ async function captureThenDrift(
   harness: ReturnType<typeof makeStore>,
   path: string,
   headers?: Record<string, string>,
+  partition?: string,
 ): Promise<ShellCacheEntry> {
   const miss = await serve(router, harness.store, path, { headers });
   expect(miss.response.headers.get("x-rango-shell")).toBe("MISS");
-  const entry = await storedEntry(harness.store, path);
+  const entry = await storedEntry(harness.store, path, partition);
   source.generation = 2;
   harness.dropItems();
   harness.itemReads.length = 0;
@@ -329,13 +333,11 @@ describe("PPR snapshot pruning: a covered document capture", () => {
   });
 });
 
-describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every record", () => {
-  // R2.5: with a route-derived cache() scope the capture still records the
-  // doc record and stamps docKey (recordShellCaptureDocRecord), but the
-  // document HIT tail resolves the route's own scope. When that scope does
-  // not serve the match, the handlers re-run and read the items the capture
-  // pinned.
-  let allowCache = true;
+describe("PPR snapshot pruning: no HIT runs a handler, so every document entry prunes", () => {
+  // Every document HIT replays the handler layer from the entry's own doc
+  // record, looked up by the key the capture wrote. None of these shapes
+  // re-runs a handler any more, so none keeps a handler-read record, and every
+  // HIT renders the capture's generation (@g1) while the source moved on.
   const explicitStore = new MemorySegmentCacheStore();
   const variants: Array<{
     name: string;
@@ -343,34 +345,34 @@ describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every
     capture?: Record<string, string>;
     hit?: Record<string, string>;
     beforeHit?: () => Promise<void> | void;
+    pruned: string;
+    /** The request partition the route's key() gives the capture and HIT. */
+    partition?: string;
   }> = [
     {
       name: "explicit miss: the explicit store lost its record",
       options: { ttl: 300, store: explicitStore },
       beforeHit: () => explicitStore.clear(),
+      pruned: "item:3",
     },
     {
-      name: "bypass: condition() refuses the HIT's read",
-      options: { ttl: 300, condition: () => allowCache },
-      beforeHit: () => {
-        allowCache = false;
-      },
-    },
-    {
-      name: "custom key(): the HIT resolves another explicit key",
+      // The explicit tier writes to the app store here, so its own segment
+      // record was recorded too, and no HIT reads it.
+      pruned: "item:3/segment:1",
+      name: "custom key(): a HIT in the capture's own partition",
       options: {
         ttl: 300,
         key: (ctx) => `variant:${ctx.request.headers.get("x-variant")}`,
       },
       capture: { "x-variant": "a" },
-      hit: { "x-variant": "b" },
+      hit: { "x-variant": "a" },
+      partition: "variant:a",
     },
   ];
 
   it.each(variants)(
-    "R2.5 route-derived cache() scope, $name",
-    async ({ options, capture, hit, beforeHit }) => {
-      allowCache = true;
+    "route-derived cache() scope, $name",
+    async ({ options, capture, hit, beforeHit, pruned, partition }) => {
       const router = await makeRouter(({ layout, path, cache }: any) => [
         layout(ShellLayout, () => [
           cache(options, () => [
@@ -383,26 +385,47 @@ describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every
       ]);
       const harness = makeStore();
 
-      const entry = await captureThenDrift(router, harness, "/scoped", capture);
+      const entry = await captureThenDrift(
+        router,
+        harness,
+        "/scoped",
+        capture,
+        partition,
+      );
       expect(entry.docKey).toBe("doc:localhost/scoped");
-      expect(entry.prunedRecords).toBeUndefined();
-      expect(
-        families(entry.snapshot).filter((f) => f.startsWith("item:")),
-      ).toHaveLength(3);
+      expect(entry.prunedRecords).toBe(pruned);
 
       await beforeHit?.();
       const served = await serve(router, harness.store, "/scoped", {
         headers: hit,
       });
       expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
-      // The handlers re-ran and every item they read came from the seed.
       expect(harness.itemReads).toEqual([]);
       expect(served.body).toContain("header@g1");
       expect(served.body).not.toContain("@g2");
     },
   );
 
-  it("R2.2 a store keyGenerator that sends a visitor's tail to another doc key", async () => {
+  it("route-derived cache() scope, condition() refuses the HIT's read: a genuine MISS before the commit", async () => {
+    let allowCache = true;
+    const router = await makeRouter(({ layout, path, cache }: any) => [
+      layout(ShellLayout, () => [
+        cache({ ttl: 300, condition: () => allowCache }, () => [
+          path("/scoped", CatalogPage, { name: "scoped", ppr: { ttl: 300 } }),
+        ]),
+      ]),
+    ]);
+    const harness = makeStore();
+    await captureThenDrift(router, harness, "/scoped");
+
+    allowCache = false;
+    const served = await serve(router, harness.store, "/scoped");
+    // Decided before any shell byte: no x-rango-shell, a normal render.
+    expect(served.response.headers.get("x-rango-shell")).toBeNull();
+    expect(served.body).toBe("<html><body>AXIS-1</body></html>");
+  });
+
+  it("a store keyGenerator: the shell and its docKey are the partition's own", async () => {
     const router = await makeRouter(({ layout, path }: any) => [
       layout(ShellLayout, () => [
         path("/segmented", CatalogPage, {
@@ -417,14 +440,18 @@ describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every
         `${defaultKey}|${ctx.request.headers.get("x-segment") ?? ""}`,
     });
 
-    const entry = await captureThenDrift(router, harness, "/segmented", {
-      "x-segment": "a",
-    });
+    const entry = await captureThenDrift(
+      router,
+      harness,
+      "/segmented",
+      { "x-segment": "a" },
+      "doc:localhost/segmented|a",
+    );
     expect(entry.docKey).toBe("doc:localhost/segmented|a");
-    expect(entry.prunedRecords).toBeUndefined();
+    expect(entry.prunedRecords).toBe("item:3");
 
     const served = await serve(router, harness.store, "/segmented", {
-      headers: { "x-segment": "b" },
+      headers: { "x-segment": "a" },
     });
     expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
     expect(harness.itemReads).toEqual([]);
@@ -432,9 +459,10 @@ describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every
     expect(served.body).not.toContain("@g2");
   });
 
-  it("R2.1 a declined fast path: a handler-invoked loader re-runs the handlers", async () => {
+  it("a handler-invoked loader: its value is baked and replayed, the handler never re-runs", async () => {
+    let priceRuns = 0;
     const PriceLoader = (createLoader as Function)(
-      async () => ({ price: 42 }),
+      async () => ({ price: `price-${++priceRuns}` }),
       undefined,
       "test#PrunePriceLoader",
     );
@@ -455,11 +483,13 @@ describe("PPR snapshot pruning: entries a HIT can re-run handlers for keep every
     const harness = makeStore();
 
     const entry = await captureThenDrift(router, harness, "/priced");
-    expect(entry.handlerLiveHoles).toBe(true);
-    expect(entry.prunedRecords).toBeUndefined();
+    expect(entry.prunedRecords).toBe("item:2");
+    const capturedPrice = `price-${priceRuns}`;
 
     const served = await serve(router, harness.store, "/priced");
     expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
+    expect(`price-${priceRuns}`).toBe(capturedPrice);
+    expect(served.body).toContain(capturedPrice);
     expect(harness.itemReads).toEqual([]);
     expect(served.body).toContain("/priced-item-0@g1");
     expect(served.body).not.toContain("@g2");
@@ -583,14 +613,18 @@ describe("PPR snapshot pruning: partial navigation replay", () => {
 });
 
 describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () => {
-  // Residual B: the tail cannot replay the handler layer, so handlers re-run
-  // against live values for the items the capture pruned (the resumed payload
-  // may mismatch the prelude; React repairs it client-side). The HIT
-  // schedules a recapture, so the next request is served from a sound entry.
-  it("reports cache-corrupt, re-runs handlers live, and recaptures the entry", async () => {
+  // The tail cannot replay the handler layer and must not run handlers behind
+  // the committed prelude: the entry is replaced with a tombstone, the page
+  // reloads, and that reload is a genuine MISS whose capture heals the key.
+  it("reports cache-corrupt, runs no handler, reloads the page into a MISS, and recaptures", async () => {
+    let pageRuns = 0;
+    async function CountedPage(ctx: { pathname: string }) {
+      pageRuns++;
+      return CatalogPage(ctx);
+    }
     const router = await makeRouter(({ layout, path }: any) => [
       layout(ShellLayout, () => [
-        path("/corrupt", CatalogPage, { name: "corrupt", ppr: { ttl: 300 } }),
+        path("/corrupt", CountedPage, { name: "corrupt", ppr: { ttl: 300 } }),
       ]),
     ]);
     const harness = makeStore();
@@ -614,17 +648,23 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
 
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
+      const runsBefore = pageRuns;
       const hit = await serve(router, harness.store, "/corrupt");
       expect(hit.response.headers.get("x-rango-shell")).toBe("HIT");
-      expect(hit.body).toContain("/corrupt-item-0@g2");
+      expect(hit.body.startsWith(PRELUDE)).toBe(true);
+      expect(hit.body).toContain(shellReloadScript());
+      expect(hit.body).not.toContain("@g");
       expect(
         errors.mock.calls.some((call) =>
           String(call[0]).includes("corrupt cached segments"),
         ),
       ).toBe(true);
+      // The HIT itself ran no handler; the recapture it scheduled did.
+      expect(pageRuns).toBe(runsBefore + 1);
 
-      // The recapture replaced the entry with a sound one at generation 2.
+      // The recapture replaced the tombstone with a sound entry at g2.
       const healed = await storedEntry(harness.store, "/corrupt");
+      expect(healed.navigationOnly).toBeUndefined();
       const healedDoc = healed.snapshot?.find((r) => r.key === healed.docKey)
         ?.value as { segments: unknown[] } | undefined;
       expect(healedDoc?.segments.every((segment) => segment !== null)).toBe(
@@ -640,5 +680,28 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
     } finally {
       errors.mockRestore();
     }
+  });
+
+  it("the tombstone serves the next document request as a MISS until the recapture lands", async () => {
+    const router = await makeRouter(({ layout, path }: any) => [
+      layout(ShellLayout, () => [
+        path("/tomb", CatalogPage, { name: "tomb", ppr: { ttl: 300 } }),
+      ]),
+    ]);
+    const harness = makeStore();
+    const entry = await captureThenDrift(router, harness, "/tomb");
+    // What the degrade writes (rsc-rendering.ts degradeUnreplayableShell).
+    await harness.store.putShell(
+      SHELL_KEY("/tomb"),
+      {
+        reactVersion: entry.reactVersion,
+        buildVersion: entry.buildVersion,
+        navigationOnly: true,
+        createdAt: Date.now(),
+      },
+      300,
+    );
+    const next = await serve(router, harness.store, "/tomb");
+    expect(next.response.headers.get("x-rango-shell")).toBe("MISS");
   });
 });

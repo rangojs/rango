@@ -38,6 +38,7 @@ import type {
   ShellDocumentRead,
   ShellDocumentReadOptions,
   ShellReadStats,
+  ShellSnapshotFailure,
   ShellSnapshotRecord,
   CacheReadError,
 } from "../types.js";
@@ -131,6 +132,7 @@ import {
   EDGE_LOOKUP_TIMEOUT_MS,
   EDGE_READ_TIMEOUT_MS,
   KV_READ_TIMEOUT_MS,
+  SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS,
 } from "./cf-cache-constants.js";
 
 // Re-export the public constants so consumers/tests importing them from
@@ -312,13 +314,11 @@ interface KVItemEnvelope {
  */
 const SHELL_KEY_PREFIX = "shell2:";
 
-/**
- * Whether a ShellDocumentRead's snapshot read failed (timed out, truncated,
- * corrupt), as opposed to the entry storing none: both resolve `snapshot` to
- * undefined, which the serve path treats alike, but getShell misses on a
- * failure.
- */
-const snapshotReadFailures = new WeakMap<ShellDocumentRead, Promise<boolean>>();
+/** A shell snapshot read's timeout, and its warning's consequence text. */
+interface SnapshotReadBudget {
+  ms: number;
+  consequence?: string;
+}
 
 /** A memoized fresh shell read (shell-memo.ts). */
 interface CFShellMemoValue {
@@ -403,8 +403,6 @@ function shellHeadToEntry(head: ShellFrameHead): ShellCacheEntry {
     initialTheme: head.i,
     docKey: head.dk,
     prunedRecords: head.pr,
-    handlerLiveHoles: head.lh,
-    transitionWhen: head.tw,
     navigationOnly: head.no,
     createdAt: head.c,
   };
@@ -484,6 +482,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
+  /**
+   * The shell snapshot read's budgets. `read` (getShell: partial replay, the
+   * testing helpers) has nothing committed, so a slow snapshot is a quick
+   * miss at kvReadTimeoutMs. `document` (readShellDocument, the serve path)
+   * has sent the prelude and cannot finish without the snapshot's doc
+   * record; a timeout there reloads the page, so it waits at least
+   * SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS. `kvReadTimeoutMs <= 0` keeps both
+   * unbounded.
+   */
+  private readonly snapshotBudgets: {
+    read: SnapshotReadBudget;
+    document: SnapshotReadBudget;
+  };
   private readonly memo: ResolvedShellMemoOptions;
   /** @internal SegmentCacheStore.freshReadsWindowMs */
   readonly freshReadsWindowMs: number;
@@ -537,6 +548,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       options.kvReadTimeoutMs,
       KV_READ_TIMEOUT_MS,
     );
+    this.snapshotBudgets = {
+      read: { ms: this.kvReadTimeoutMs },
+      document:
+        this.kvReadTimeoutMs > 0
+          ? {
+              ms: Math.max(
+                this.kvReadTimeoutMs,
+                SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS,
+              ),
+              consequence: "the HIT reloads the page into a cache-miss render",
+            }
+          : { ms: this.kvReadTimeoutMs },
+    };
     this.memo = resolveShellMemoOptions(options.memo, {
       markerFreshMs: DEFAULT_CF_MARKER_FRESH_MS,
       markerMaxStaleMs: DEFAULT_CF_MARKER_MAX_STALE_MS,
@@ -2048,10 +2072,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    const read = await this.readShellDocument(key);
+    const read = await this.readShellDocumentWithin(
+      key,
+      undefined,
+      this.snapshotBudgets.read,
+    );
     if (!read) return null;
     const snapshot = await read.snapshot;
-    if (await snapshotReadFailures.get(read)) return null;
+    if (await read.snapshotFailure) return null;
     const entry: ShellCacheEntry = { ...read.entry };
     if (!entry.navigationOnly) entry.prelude = bytesToBase64(read.prelude);
     if (snapshot) entry.snapshot = snapshot;
@@ -2066,13 +2094,26 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * head and the prelude's bytes, and the tag-marker read runs alongside the
    * prelude read (it starts as soon as the head is parsed, and is awaited
    * before this resolves, so an invalidated shell is never returned). The
-   * snapshot is the rest of the same body, read on its own promise. SWR is a
-   * plain staleness flag; the capture scheduler's in-flight set is the
-   * recapture stampede guard.
+   * snapshot is the rest of the same body, read on its own promise, bounded
+   * by the document read's budget (`snapshotBudgets.document`; getShell uses
+   * `snapshotBudgets.read`). SWR is a plain staleness flag; the capture
+   * scheduler's in-flight set is the recapture stampede guard.
    */
   async readShellDocument(
     key: string,
     options?: ShellDocumentReadOptions,
+  ): Promise<ShellDocumentRead | null> {
+    return this.readShellDocumentWithin(
+      key,
+      options,
+      this.snapshotBudgets.document,
+    );
+  }
+
+  private async readShellDocumentWithin(
+    key: string,
+    options: ShellDocumentReadOptions | undefined,
+    snapshotBudget: SnapshotReadBudget,
   ): Promise<ShellDocumentRead | null> {
     const memoKey = this.shellMemoKey(key);
     const ctx = _getRequestContext();
@@ -2083,10 +2124,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       ? undefined
       : cfShellMemo.get(memoKey, this.memo.shellMs);
     if (memoized) {
-      return this.readMemoizedShell(key, memoKey, memoized, options);
+      return this.readMemoizedShell(
+        key,
+        memoKey,
+        memoized,
+        options,
+        snapshotBudget,
+      );
     }
     const stats = this.shellReadStats("l1");
     const l1StartedAt = stats ? performance.now() : 0;
+    const kvFallback = (reason: string): Promise<ShellDocumentRead | null> =>
+      this.kvReadShellDocument(key, snapshotBudget, stats, l1StartedAt, reason);
     if (stats && freshReads) stats.freshReads = true;
     this.prefetchShellMarkers(memoKey, options?.tagHints, stats);
     if (stats && this.memo.shellMs > 0) {
@@ -2113,7 +2162,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         }
         const reason = matchError ? "error" : timedOut ? "timeout" : "absent";
         this.debugShell(key, "l1-miss", { reason, stats });
-        return this.kvReadShellDocument(key, stats, l1StartedAt, reason);
+        return kvFallback(reason);
       }
       if (response.status !== 200 || !response.body) {
         this.debugShell(key, "l1-miss", {
@@ -2121,7 +2170,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           status: response.status,
           stats,
         });
-        return this.kvReadShellDocument(key, stats, l1StartedAt, "non-200");
+        return kvFallback("non-200");
       }
 
       // Unlike other L1 families, shells with KV always check the durable
@@ -2151,7 +2200,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           request,
           opened.error,
           "getShell",
-          () => this.kvReadShellDocument(key, stats, l1StartedAt, "malformed"),
+          () => kvFallback("malformed"),
         );
       }
       if (opened.status === "timeout" || opened.status === "expired") {
@@ -2160,7 +2209,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           stats,
           expiresAt: opened.head?.e,
         });
-        return this.kvReadShellDocument(key, stats, l1StartedAt, opened.status);
+        return kvFallback(opened.status);
       }
       if (opened.status === "invalidated") {
         this.debugShell(key, "marker-invalidated", {
@@ -2169,7 +2218,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         });
         return null;
       }
-      const read = this.shellDocumentRead(key, opened, stats, response.headers);
+      const read = this.shellDocumentRead(
+        key,
+        opened,
+        snapshotBudget,
+        stats,
+        response.headers,
+      );
       if (INTERNAL_RANGO_DEBUG) {
         this.debugShell(key, "l1-hit", {
           freshness: read.shouldRevalidate ? "stale" : "fresh",
@@ -2181,7 +2236,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch (error) {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell");
       this.debugShell(key, "l1-miss", { reason: "error" });
-      return this.kvReadShellDocument(key, stats, l1StartedAt, "error");
+      return kvFallback("error");
     }
   }
 
@@ -2257,11 +2312,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     memoKey: string,
     memoized: CFShellMemoValue,
     options: ShellDocumentReadOptions | undefined,
+    snapshotBudget: SnapshotReadBudget,
   ): Promise<ShellDocumentRead | null> {
     const { head } = memoized;
     if (!isMemoizableShell(head)) {
       cfShellMemo.delete(memoKey);
-      return this.readShellDocument(key, options);
+      return this.readShellDocumentWithin(key, options, snapshotBudget);
     }
     const stats = this.shellReadStats("memo");
     const markerStartedAt = stats ? performance.now() : 0;
@@ -2404,13 +2460,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   /**
    * The ShellDocumentRead for an opened frame. Its snapshot promise starts
    * reading the rest of the body now (off the commit path, not after it),
-   * bounded by the KV read budget, and is registered with waitUntil so the
-   * KV tier's L1 promotion and a corrupt entry's eviction still run when
-   * nothing awaits it (a read that is not served). A snapshot whose length
-   * differs from the head's `sl`, or that fails to parse, evicts the entry
-   * from both tiers and reports cache-corrupt. Every failure resolves
-   * undefined, and a HIT's tail then runs unpinned (the existing no-snapshot
-   * path); getShell turns a failure into a miss (snapshotReadFailures). Only
+   * bounded by `budget` ({@link snapshotReadBudget}), and is registered with
+   * waitUntil so the KV tier's L1 promotion and a corrupt entry's eviction
+   * still run when nothing awaits it (a read that is not served). A snapshot
+   * whose length differs from the head's `sl`, or that fails to parse, evicts
+   * the entry from both tiers and reports cache-corrupt. Every failure
+   * resolves undefined and names itself on `snapshotFailure` (`unavailable`
+   * for a timeout or read error, `corrupt` otherwise): a document HIT then
+   * degrades (rsc-rendering.ts serveShellHit), and getShell misses. Only
    * a read whose snapshot parsed goes into the per-isolate memo (when still
    * fresh), and `promote` receives its snapshot bytes (the KV tier's L1
    * promotion). `headers` are the L1 response's, kept for the KV-less
@@ -2419,24 +2476,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private shellDocumentRead(
     key: string,
     opened: Extract<OpenedShellFrame, { status: "ok" }>,
+    budget: SnapshotReadBudget,
     stats: ShellReadStats | undefined,
     headers?: Headers,
     promote?: (snapshotBytes: Uint8Array) => void,
   ): ShellDocumentRead {
     const { head, prelude, reader } = opened;
     this.recordShellHit(key, head.t, stats);
-    type SnapshotOutcome = { records?: ShellSnapshotRecord[]; failed: boolean };
+    type SnapshotOutcome = {
+      records?: ShellSnapshotRecord[];
+      failure?: ShellSnapshotFailure;
+    };
     const outcome = (async (): Promise<SnapshotOutcome> => {
       const readStartedAt = stats ? performance.now() : 0;
       const { value: rest, timedOut } = await this.readWithTimeout(
         () => reader.readRest(),
-        this.kvReadTimeoutMs,
+        budget.ms,
         "shell snapshot read",
-        "the HIT's tail runs unpinned",
+        budget.consequence,
       );
       if (timedOut || !rest) {
         reader.cancel();
-        return { failed: true };
+        return { failure: "unavailable" };
       }
       const parseStartedAt = stats ? performance.now() : 0;
       let records: ShellSnapshotRecord[] | undefined;
@@ -2454,7 +2515,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           "[CFCacheStore] getShell: corrupt shell snapshot, evicting",
         );
         this.evictShell(key);
-        return { failed: true };
+        return { failure: "corrupt" };
       }
       if (stats) {
         stats.snapshot = {
@@ -2478,24 +2539,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         );
       }
       promote?.(rest);
-      return { records, failed: false };
+      return { records };
     })().catch((error: unknown): SnapshotOutcome => {
       reportCacheError(error, "cache-read", "[CFCacheStore] getShell snapshot");
-      return { failed: true };
+      return { failure: "unavailable" };
     });
     if (this.waitUntil) this.waitUntil(() => outcome.then(() => {}));
-    const read: ShellDocumentRead = {
+    return {
       entry: shellHeadToEntry(head),
       prelude,
       shouldRevalidate: head.s > 0 && Date.now() > head.s,
       snapshot: outcome.then(({ records }) => records),
+      snapshotFailure: outcome.then(({ failure }) => failure),
       ...(stats && { stats }),
     };
-    snapshotReadFailures.set(
-      read,
-      outcome.then(({ failed }) => failed),
-    );
-    return read;
   }
 
   /** Delete a shell from both tiers (non-blocking). */
@@ -2519,13 +2576,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Store a PPR shell in Cache API and, when KV is configured and the
-   * retention meets its 60-second floor, KV — the same cf-shell-frame bytes
-   * in both. The shared write is registered with waitUntil and awaited so
-   * invalidation rejection can be acknowledged to the capture scheduler.
-   * Short-lived shells remain useful in L1 even though KV rejects them; a
-   * KV-less store is L1-only by design (edge-only ppr — see the section
-   * comment).
+   * Store a PPR shell in Cache API and, when KV is configured, KV — the same
+   * cf-shell-frame bytes in both. The shared write is registered with
+   * waitUntil and awaited so invalidation rejection can be acknowledged to
+   * the capture scheduler. A KV-less store is L1-only by design (edge-only
+   * ppr — see the section comment).
+   *
+   * KV rejects an expirationTtl below KV_MIN_EXPIRATION_TTL, so a shorter
+   * retention (a `ppr` ttl + swr under 60, or a shell capped to a short or
+   * aging route cache() entry) is written with that floor: the frame head's deadlines (`s`, `e`) are the
+   * entry's, and every read checks `e` (openShellFrame), so the extra KV
+   * lifetime is never served, and the shell is readable from every colo, not
+   * only from the capturing colo's L1.
    */
   async putShell(
     key: string,
@@ -2567,7 +2629,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const taggedAt =
         Array.isArray(tags) && tags.length > 0 ? entry.createdAt : undefined;
 
-      const writeKv = !!this.kv && retentionTtl >= KV_MIN_EXPIRATION_TTL;
+      const writeKv = !!this.kv && retentionTtl > 0;
       const kvKey = writeKv
         ? await this.toKVKey(`${SHELL_KEY_PREFIX}${key}`)
         : null;
@@ -2600,8 +2662,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           i: entry.initialTheme,
           dk: entry.docKey,
           pr: entry.prunedRecords,
-          lh: entry.handlerLiveHoles,
-          tw: entry.transitionWhen,
           no: entry.navigationOnly,
           ...(entry.postponed !== undefined ? { po: entry.postponed } : {}),
           pl: prelude.length,
@@ -2633,7 +2693,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             (async () => {
               try {
                 await this.kv!.put(kvKey, shellFrameToText(frame), {
-                  expirationTtl: retentionTtl,
+                  // Whole seconds, at least KV's floor: the frame head keeps
+                  // the exact deadlines the reads check.
+                  expirationTtl: Math.max(
+                    KV_MIN_EXPIRATION_TTL,
+                    Math.ceil(retentionTtl),
+                  ),
                 });
                 this.debugShell(key, "kv-stored", { expiresAt: head.e });
                 return true;
@@ -2684,6 +2749,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    */
   private async kvReadShellDocument(
     key: string,
+    snapshotBudget: SnapshotReadBudget,
     stats?: ShellReadStats,
     l1StartedAt = 0,
     l1MissReason?: string,
@@ -2767,6 +2833,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const read = this.shellDocumentRead(
         key,
         opened,
+        snapshotBudget,
         stats,
         undefined,
         (snapshotBytes) =>

@@ -84,6 +84,28 @@ export function resolveSwrWindow(
 }
 
 /**
+ * Minimum age (ms) of a stale PPR shell before a HIT schedules its recapture.
+ * A shell capped to a route cache() record inside its swr window is stale
+ * from the start (rsc/shell-capture.ts capShellWindow), so without a floor
+ * every HIT of it recaptured, and a capture's store write is one KV write per
+ * key: Cloudflare KV accepts one per second per key. Inside the floor the
+ * stale shell is still served. Per isolate: each isolate's stale HIT past the
+ * floor can schedule one (stampede-guarded per isolate).
+ */
+export const SHELL_MIN_RECAPTURE_INTERVAL_MS = 1_000;
+
+/**
+ * Whether a stale shell HIT schedules its recapture (see the floor above).
+ * Fails open: an entry without a numeric `createdAt` recaptures.
+ */
+export function staleShellRecaptureDue(
+  entry: { readonly createdAt?: number },
+  now: number,
+): boolean {
+  return !(now - (entry.createdAt as number) < SHELL_MIN_RECAPTURE_INTERVAL_MS);
+}
+
+/**
  * Compute staleAt and expiresAt timestamps from TTL and SWR window.
  *
  * - staleAt: when the entry becomes stale (TTL boundary)

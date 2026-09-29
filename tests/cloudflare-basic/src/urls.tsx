@@ -7,6 +7,7 @@ import {
   cookies,
   getRequestContext,
   redirect,
+  type HandlerContext,
 } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import { Suspense, type ReactNode } from "react";
@@ -67,9 +68,13 @@ import {
   PprExecPage,
   PprStaleReplayPage,
   PprWarningsPage,
+  PprNavPinPage,
+  PprShortRecordPage,
   PprScopedChromeLayout,
   PprScopedHomePage,
   PprScopedOptOutPage,
+  PprTieredPage,
+  pprTier,
   PprScopedConditionPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
@@ -102,6 +107,9 @@ import {
   PprBakeSlowLoader,
   PprBakeHoleLoader,
   PprStorefrontLoader,
+  pprStorefrontRuns,
+  PprNavPinLoader,
+  pprNavPinRuns,
   PprRestockLoader,
   PprFlightErrorLoader,
   pprFlightErrorPasses,
@@ -287,6 +295,14 @@ export const urlpatterns = urls(
       () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
       { name: "testLastError" },
     ),
+    // Test utils: body runs of the /ppr-warnings loaders.
+    path.json("/__test/ppr-storefront-runs", () => ({ ...pprStorefrontRuns }), {
+      name: "testPprStorefrontRuns",
+    }),
+    // Test utils: body runs of the /ppr-nav-pin loader.
+    path.json("/__test/ppr-nav-pin-runs", () => ({ ...pprNavPinRuns }), {
+      name: "testPprNavPinRuns",
+    }),
     // Test utils: clear the onError log.
     path.json(
       "/__test/clear-error-log",
@@ -700,13 +716,13 @@ export const urlpatterns = urls(
         // ROUTE via the `ppr` path option — serving is integral to the router
         // (no middleware); the shell store is the app CFCacheStore (KV-backed
         // getShell/putShell) from createRouter({ cache }).
-        // Shell = PprShellLayout (static text + counter + handle reads + the
-        // physics fallback); STRUCTURAL hole = the price route behind loading()
-        // (LoaderBoundary is the Suspense boundary capture postpones at);
-        // PHYSICS hole = the pending handler promise under PprShellPhysicsValue's
-        // own Suspense. A loader route without loading() awaits its loader at
-        // tree-build and can never produce a shell — the /ppr-shell/no-hole
-        // negative below. See pages/ppr-shell.tsx.
+        // Shell = PprShellLayout (static text + counter + handle reads, and
+        // its handler promise + nested handle push, both baked); STRUCTURAL
+        // hole = the price route behind loading() (LoaderBoundary is the
+        // Suspense boundary capture postpones at). A loader route without
+        // loading() awaits its loader at tree-build and can never produce a
+        // shell — the /ppr-shell/no-hole negative below. See
+        // pages/ppr-shell.tsx.
         layout(PprShellLayout, () => [
           path(
             "/ppr-shell",
@@ -810,6 +826,26 @@ export const urlpatterns = urls(
           { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprStorefrontLoader, { ssr: false })],
         ),
+        // A promise-free ssr:false loader on an entry with loading(): a
+        // client navigation that replays the shell pins it like the
+        // document HIT, without running it.
+        path(
+          "/ppr-nav-pin",
+          PprNavPinPage,
+          { name: "pprNavPin", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprNavPinLoader, { ssr: false }),
+            loading(<div data-testid="ppr-nav-pin-loading">Loading...</div>),
+          ],
+        ),
+        // A shell never outlives its route cache() entry: it expires with
+        // this 5 s entry, well inside ppr's own ttl.
+        cache({ ttl: 5, swr: 0 }, () => [
+          path("/ppr-short-record", PprShortRecordPage, {
+            name: "pprShortRecord",
+            ppr: true,
+          }),
+        ]),
         // Issue #941: a tagged shell whose server action runs updateTag(); the
         // action's fresh-reads cookie sends the same user's next requests past
         // the stores' isolate memos (e2e/ppr-fresh-reads.test.ts).
@@ -818,7 +854,7 @@ export const urlpatterns = urls(
           ppr: { ttl: 300, swr: 120 },
         }),
         // Issue #929: the ssr:false loader pushes the string handle itself;
-        // the replayed record keeps it and the loader's re-run replaces it.
+        // the replayed record keeps it and the HIT restores it once.
         path(
           "/ppr-restock",
           PprWarningsPage,
@@ -849,6 +885,14 @@ export const urlpatterns = urls(
           cache({ ttl: 30, condition: () => false }, () => [
             path("/ppr-scoped-condition", PprScopedConditionPage, {
               name: "pprScopedCondition",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
+          // Request-partitioned: the cache() key() partitions the record
+          // and the shell by the visitor's tier header.
+          cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+            path("/ppr-tiered", PprTieredPage, {
+              name: "pprTiered",
               ppr: { ttl: 300, swr: 120 },
             }),
           ]),
@@ -1148,7 +1192,19 @@ export const urlpatterns = urls(
         layout(PprSlotChromeLayout, () => [
           parallel({
             "@badge": {
-              handler: () => <PprShellBadge loader={PprBadgeLoader} />,
+              // The slot handler's own awaited copy (frozen, replayed on every
+              // HIT) next to the useLoader read of the same loader (live).
+              handler: async (ctx: HandlerContext) => {
+                const copy = await ctx.use(PprBadgeLoader);
+                return (
+                  <>
+                    <span data-testid="ppr-badge-copy">
+                      {copy.replace("badge-", "slotcopy-")}
+                    </span>
+                    <PprShellBadge loader={PprBadgeLoader} />
+                  </>
+                );
+              },
               use: () => [
                 loader(PprBadgeLoader),
                 loading(

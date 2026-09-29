@@ -327,9 +327,13 @@ implicitly re-run outer prerender-derived handlers/layouts.
 ## Prerender + PPR Build Shells
 
 A `Prerender` page may also declare `ppr` on the path option. The build still
-stores the Flight payload first. After that, a build-shell step ("producer B"
-in the design docs) tries to bake the HTML shell for each generated URL so the
-first document request can be an `x-rango-shell: HIT`.
+stores the Flight payload first. After that, the build-time shell capture
+tries to bake the HTML shell for each generated URL so the first document
+request can be an `x-rango-shell: HIT`. A route partitioned by
+`cache({ key })` or a store `keyGenerator` never serves that build shell (the
+build captured one partition); each partition captures at runtime, a
+once-per-route warning says so, and a `keyGenerator` that returns the default
+key unchanged keeps it.
 
 That shell capture is request-shaped enough to run middleware safely:
 
@@ -366,7 +370,7 @@ re-runs the handler — it replays the same build-time segments and only refresh
 `cache()`-backed, `ttl` has nothing to refresh** — reach for `updateTag` (or a
 redeploy) instead of a shorter `ttl`.
 
-`ctx.dynamic()` opts a request off the shell axis ONLY. A `Prerender` route has
+`ctx.dynamic()` opts a request off the shell ONLY. A `Prerender` route has
 no live handler to fall back to (it was evicted), so a `dynamic()` request still
 serves the build-baked segments — fresh loaders in their holes, not a fresh
 handler render. There is no "fully dynamic" render for a prerendered route.

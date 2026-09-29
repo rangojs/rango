@@ -181,9 +181,6 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc).toHaveLength(1);
     expect(doc[0]!.key).toBe("doc:localhost/p");
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
-    // The HIT tail resolves the explicit scope, not this doc record: the
-    // capture must not prune the items that scope's handlers re-read.
-    expect(h.reqCtx._shellImplicitCache?.routeDocScope).toBeUndefined();
     // Explicit tier's own write went through (recorded AND persisted)…
     expect(await h.inner.get("consumer-key")).not.toBeNull();
     // …but the doc record stayed snapshot-only: no real-store doc entry that
@@ -196,14 +193,26 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     const explicit = new CacheScope({ ttl: 30, key: () => "consumer-key" });
 
     // cacheHit: the served segments still flowed through the pipeline into
-    // allSegments; onResponse is never registered on this branch.
-    await h.run(explicit, { cacheHit: true, cacheSource: "runtime" }, false);
+    // allSegments. The normal write registers no onResponse on this branch;
+    // the doc record does, and the capture fires it (settleCaptureRecord).
+    await h.run(explicit, { cacheHit: true, cacheSource: "runtime" });
 
     const doc = docRecords(h.drainSnapshot());
     expect(doc).toHaveLength(1);
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
     // The normal write was skipped (cacheHit), so the consumer key is absent.
     expect(await h.inner.get("consumer-key")).toBeNull();
+  });
+
+  it("writes the doc record only when the capture fires onResponse (after the handler pushes settle)", async () => {
+    const h = makeHarness();
+    const explicit = new CacheScope({ ttl: 30, key: () => "consumer-key" });
+
+    await h.run(explicit, {}, false);
+    expect(docRecords(h.drainSnapshot())).toHaveLength(0);
+
+    await h.run(explicit, {}, true);
+    expect(docRecords(h.drainSnapshot())).toHaveLength(1);
   });
 
   it("records nothing for cache(false) — the opt-out is absolute", async () => {
@@ -262,7 +271,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     const h = makeHarness();
     const explicit = new CacheScope({ ttl: 30 });
 
-    await h.run(explicit, { cacheHit: true, cacheSource: "prerender" }, false);
+    await h.run(explicit, { cacheHit: true, cacheSource: "prerender" });
 
     expect(h.drainSnapshot()).toBeUndefined();
   });

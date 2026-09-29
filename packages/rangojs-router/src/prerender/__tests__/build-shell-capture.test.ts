@@ -33,6 +33,19 @@ vi.mock("../../rsc/shell-capture.js", async (importOriginal) => {
 
 const { captureShellForBuild } = await import("../build-shell-capture.js");
 
+/**
+ * A build capture's match is served from the prerender store (no handler
+ * runs, no doc record); cache-lookup.ts tryPrerenderLookup marks that on the
+ * capture context, which settleCaptureRecord reads.
+ */
+function prerenderServed(): {
+  routeName: string;
+  params: Record<string, string>;
+} {
+  getRequestContext()._pprReplayPostMatchReason = "prerender-store";
+  return { routeName: "shop.category", params: { category: "power-set" } };
+}
+
 /** The 5th arg captureAndStoreShell receives — the shell descriptor + sink. */
 interface CaptureDescriptorStub {
   store: {
@@ -84,6 +97,25 @@ describe("captureShellForBuild", () => {
       outcome: "route-mismatch",
       matchedRouteName: "shop.catchall",
     });
+  });
+
+  // The build capture shares the runtime capture's one deadline, the match
+  // included: a match that never returns ends the URL's capture as no-shell
+  // at ppr.captureTimeout instead of holding the build.
+  it("ends a match that outlives ppr.captureTimeout as no-shell, without the in-place retry", async () => {
+    const router = { match: vi.fn(() => new Promise<never>(() => {})) };
+    const started = Date.now();
+
+    const result = await captureShellForBuild({
+      ...makeOptions(router),
+      captureTimeout: 50,
+    });
+
+    expect(result.outcome).toBe("no-shell");
+    expect(result.timedOut).toBe(true);
+    // Not retried: the first match is still running.
+    expect(router.match).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it("does not swallow route-load failures encoded as RouteNotFoundError", async () => {
@@ -194,10 +226,7 @@ describe("captureShellForBuild", () => {
           { handler: routeMiddleware, params: { category: "power-set" } },
         ],
       })),
-      match: vi.fn(async () => ({
-        routeName: "shop.category",
-        params: { category: "power-set" },
-      })),
+      match: vi.fn(async () => prerenderServed()),
     };
 
     const result = await captureShellForBuild(makeOptions(router));
@@ -278,10 +307,7 @@ describe("captureShellForBuild", () => {
           },
         ],
       })),
-      match: vi.fn(async () => ({
-        routeName: "shop.category",
-        params: { category: "power-set" },
-      })),
+      match: vi.fn(async () => prerenderServed()),
     };
 
     setCachedManifest(routeMap);
@@ -313,10 +339,7 @@ describe("captureShellForBuild", () => {
         routeKey: "shop.category",
         params: { category: "power-set" },
       })),
-      match: vi.fn(async () => ({
-        routeName: "shop.category",
-        params: { category: "power-set" },
-      })),
+      match: vi.fn(async () => prerenderServed()),
     };
 
     const result = await captureShellForBuild(makeOptions(router));

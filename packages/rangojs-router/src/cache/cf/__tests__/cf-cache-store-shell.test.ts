@@ -7,6 +7,10 @@ import {
   type ShellFrameHead,
 } from "../cf-shell-frame";
 import type { ShellCacheEntry } from "../../types";
+import {
+  SHELL_ENTRY_HEAD_ALLOWANCE_BYTES,
+  estimateShellEntryBytes,
+} from "../../shell-snapshot";
 import { TAG_HINTS_MAX_ENTRIES } from "../../isolate-tag-memo";
 import {
   createRequestContext,
@@ -194,15 +198,11 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     expect(hit?.entry.buildVersion).toBe("build-abc");
   });
 
-  it("round-trips replay eligibility flags through KV", async () => {
+  it("round-trips the replay fields (docKey, navigationOnly) through KV", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     await store.putShell(
       "k",
-      shellEntry({
-        handlerLiveHoles: true,
-        transitionWhen: true,
-        navigationOnly: true,
-      }),
+      shellEntry({ docKey: "doc:host/p", navigationOnly: true }),
       300,
       30,
     );
@@ -210,8 +210,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     mockCache.store.clear();
 
     const entry = (await store.getShell("k"))?.entry;
-    expect(entry?.handlerLiveHoles).toBe(true);
-    expect(entry?.transitionWhen).toBe(true);
+    expect(entry?.docKey).toBe("doc:host/p");
     expect(entry?.navigationOnly).toBe(true);
   });
 
@@ -509,13 +508,46 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     void store;
   });
 
-  it("stores short-lived shells in L1 while skipping KV below its 60s floor", async () => {
+  it("writes a shell shorter than KV's 60s floor to KV at the floor; a KV read keeps the shell's own deadlines", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
-    await store.putShell("k", shellEntry(), 10, 0); // total 10 < 60
+    const T0 = Date.now();
+    // A shell capped to a route cache() record with 59.7 s left.
+    await store.putShell("k", shellEntry(), 29.7, 30);
     await drain(mockCtx);
-    expect(await store.getShell("k")).not.toBeNull();
     expect(mockCache.store.size).toBe(1);
-    expect(mockKV.store.size).toBe(0);
+    expect([...mockKV.store.values()].map((e) => e.expirationTtl)).toEqual([
+      60,
+    ]);
+
+    // Each read below comes from KV: no L1 copy (a KV read promotes one)
+    // and no isolate memo.
+    const readFromKv = async () => {
+      await drain(mockCtx);
+      mockCache.store.clear();
+      resetCFShellMemoForTests();
+      return store.getShell("k");
+    };
+    vi.setSystemTime(new Date(T0 + 29_000));
+    expect((await readFromKv())?.shouldRevalidate).toBe(false);
+    vi.setSystemTime(new Date(T0 + 30_000));
+    expect((await readFromKv())?.shouldRevalidate).toBe(true);
+    vi.setSystemTime(new Date(T0 + 59_800));
+    expect(await readFromKv()).toBeNull();
+    // Still in KV: its floor outlives the deadline the read refused.
+    expect(mockKV.store.size).toBe(1);
+  });
+
+  it("a fractional ttl keeps exact deadlines and writes whole KV seconds", async () => {
+    const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+    const T0 = Date.now();
+    await store.putShell("k", shellEntry(), 60.5, 0);
+    await drain(mockCtx);
+    expect([...mockKV.store.values()][0]?.expirationTtl).toBe(61);
+
+    vi.setSystemTime(new Date(T0 + 60_400));
+    expect((await store.getShell("k"))?.shouldRevalidate).toBe(false);
+    vi.setSystemTime(new Date(T0 + 60_600));
+    expect(await store.getShell("k")).toBeNull();
   });
 
   it("SWR: fresh before staleAt, shouldRevalidate within the window, gone after expiry", async () => {
@@ -1009,6 +1041,48 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       expect(mockCache.store.size).toBe(1);
     });
 
+    // The capture's whole-entry guard (shell-capture.ts) measures an entry
+    // with estimateShellEntryBytes before any store sees it; it must not
+    // undercount the frame this store writes, or an entry just under the
+    // limit passes the guard and fails the KV put.
+    it("estimateShellEntryBytes bounds the stored frame from above, escaped postponed state included", async () => {
+      const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+      // Quote-heavy postponed state: every quote is escaped in the head.
+      const postponed = JSON.stringify({
+        holes: Array.from({ length: 200 }, (_, i) => ({
+          id: `h${i}`,
+          k: '"q"',
+        })),
+      });
+      const tags = ["products", "product-classic-tee", "menus"];
+      const docKey = "doc:app.test/products/classic-tee";
+      const entry = shellEntry({ snapshot: SNAPSHOT, postponed, docKey });
+      await store.putShell("k", entry, 300, 30, tags);
+      await drain(mockCtx);
+      const [, stored] = [...mockCache.store][0]!;
+      const frameBytes = (await stored.clone().arrayBuffer()).byteLength;
+      const preludeBytes = atob(entry.prelude!).length;
+      const snapshotBytes = new TextEncoder().encode(
+        JSON.stringify(SNAPSHOT),
+      ).length;
+
+      const estimate = estimateShellEntryBytes({
+        preludeBytes,
+        postponed,
+        snapshot: SNAPSHOT,
+        tags,
+        docKey,
+        prunedRecords: undefined,
+      });
+      expect(estimate).toBeGreaterThanOrEqual(frameBytes);
+      expect(estimate - frameBytes).toBeLessThanOrEqual(
+        SHELL_ENTRY_HEAD_ALLOWANCE_BYTES,
+      );
+      // The raw measure the guard used before undercounted this frame.
+      const raw = preludeBytes + postponed.length + snapshotBytes;
+      expect(raw).toBeLessThan(frameBytes);
+    });
+
     // A frame cut exactly at the end of the prelude parses as "no snapshot"
     // unless the head says how long the snapshot is.
     it("treats a frame truncated at the prelude end as corrupt: evicted, and a getShell miss", async () => {
@@ -1030,6 +1104,8 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       const read = await store.readShellDocument("k");
       expect(read).not.toBeNull();
       expect(await read!.snapshot).toBeUndefined();
+      // Broken, not slow: the document HIT replaces the entry.
+      expect(await read!.snapshotFailure).toBe("corrupt");
       await drain(mockCtx);
       expect(mockCache.store.size).toBe(0);
       expect(
@@ -1047,7 +1123,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       consoleError.mockRestore();
     });
 
-    it("getShell misses when the snapshot read times out", async () => {
+    it("getShell misses at kvReadTimeoutMs when the snapshot read is slow, without evicting the entry", async () => {
       vi.useRealTimers();
       const consoleWarn = vi
         .spyOn(console, "warn")
@@ -1062,18 +1138,64 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       const snapshotLength = JSON.stringify(SNAPSHOT).length;
       const release = gateL1Body((bytes) => bytes.length - snapshotLength);
 
-      const read = await store.readShellDocument("k");
-      expect(read).not.toBeNull();
-      expect(await read!.snapshot).toBeUndefined();
+      const started = Date.now();
+      expect(await store.getShell("k")).toBeNull();
+      // Bounded by kvReadTimeoutMs, not the document read's 1 s floor: a
+      // partial navigation's two getShell reads stay quick misses.
+      expect(Date.now() - started).toBeLessThan(500);
       expect(
         consoleWarn.mock.calls.some(([message]) =>
           String(message).includes(
-            "shell snapshot read exceeded 30ms; the HIT's tail runs unpinned",
+            "shell snapshot read exceeded 30ms; treating as miss",
           ),
         ),
       ).toBe(true);
-      expect(await store.getShell("k")).toBeNull();
+      // Slow is not broken: the entry stays for the next read.
+      expect(mockCache.store.size).toBe(1);
       release();
+      consoleWarn.mockRestore();
+    });
+
+    it("the document read waits past kvReadTimeoutMs for the snapshot (at least 1 s), and names a timeout unavailable", async () => {
+      vi.useRealTimers();
+      const consoleWarn = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => {});
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        kvReadTimeoutMs: 30,
+      });
+      await store.putShell("k", shellEntry({ snapshot: SNAPSHOT }), 300, 30);
+      await drain(mockCtx);
+      const snapshotLength = JSON.stringify(SNAPSHOT).length;
+
+      // Arrives after 100 ms: past kvReadTimeoutMs, inside the floor.
+      const release = gateL1Body((bytes) => bytes.length - snapshotLength);
+      const late = await store.readShellDocument("k");
+      setTimeout(release, 100);
+      expect(await late!.snapshot).toEqual(SNAPSHOT);
+      expect(await late!.snapshotFailure).toBeUndefined();
+
+      // Never arrives: resolves undefined at the floor, as unavailable.
+      resetCFShellMemoForTests();
+      vi.restoreAllMocks();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const hold = gateL1Body((bytes) => bytes.length - snapshotLength);
+      const started = Date.now();
+      const slow = await store.readShellDocument("k");
+      expect(await slow!.snapshot).toBeUndefined();
+      expect(await slow!.snapshotFailure).toBe("unavailable");
+      expect(Date.now() - started).toBeGreaterThanOrEqual(990);
+      expect(
+        warn.mock.calls.some(([message]) =>
+          String(message).includes(
+            "shell snapshot read exceeded 1000ms; the HIT reloads the page into a cache-miss render",
+          ),
+        ),
+      ).toBe(true);
+      hold();
+      warn.mockRestore();
       consoleWarn.mockRestore();
     });
   });

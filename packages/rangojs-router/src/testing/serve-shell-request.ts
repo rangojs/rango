@@ -16,8 +16,9 @@
  * - `captureShellHTML` returns, as the prelude, the Flight text the capture
  *   rendered before `quiesce` (plus the post-quiesce task hops the real
  *   capture takes). `postponed` is always null. A capture that does not
- *   quiesce within `ppr.captureTimeout` returns no shell; the real one goes
- *   on to its abort and returns whatever prelude rendered by then.
+ *   quiesce within what `ppr.captureTimeout` leaves after the handler output
+ *   settled returns no shell; the real one goes on to its abort and returns
+ *   whatever prelude rendered by then.
  * - `resumeShellHTML` passes the tail's Flight stream through: a HIT body is
  *   the stored prelude followed by the tail's Flight payload.
  * So there is no HTML: the prelude's `<body` sanity gate, SSR render errors
@@ -43,6 +44,7 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
+import { _getRequestContext } from "../server/request-context.js";
 import {
   parsePprReplayStatus,
   parseShellStatus,
@@ -96,7 +98,14 @@ export interface ServeShellRequestResult {
    * redirect or a middleware response).
    */
   flight: string | undefined;
-  /** The production shell key of the document URL. */
+  /**
+   * The shell key production resolved for this request: for a document the
+   * serve path read and captured (a MISS or a HIT), the key it used, request
+   * partition included (a route partitioned by `cache({ key })` or the
+   * store's `keyGenerator`). Otherwise (a route without `ppr`, a request
+   * passed to axis 1 before its key was resolved, a partial request) the
+   * document URL's key without a partition, as `shellCacheKey` builds it.
+   */
   key: string;
   /**
    * Read the document shell entry under `key` from the request's store
@@ -111,6 +120,8 @@ type ShellHandler = ReturnType<typeof createRSCHandler>;
 /** What one call's cache resolution and SSR step saw. */
 interface Recorder {
   cache?: HandlerCacheConfig;
+  /** The shell key the serve path resolved (RequestContext._shellKey). */
+  shellKey?: string;
   /** A document render reached the HTML step. */
   rendered?: boolean;
   /** The HIT tail's Flight text. */
@@ -123,10 +134,21 @@ function macrotask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * Record the shell key the serve path resolved: every SSR step of a document
+ * the serve path read runs inside its request context (a capture's derived
+ * context inherits it).
+ */
+function recordShellKey(recorder: Recorder | undefined): void {
+  const shellKey = _getRequestContext()?._shellKey;
+  if (recorder && shellKey !== undefined) recorder.shellKey ??= shellKey;
+}
+
 const SSR_STUB: SSRModule = {
   async renderHTML(rscStream) {
     const recorder = recorders.getStore();
     if (recorder) recorder.rendered = true;
+    recordShellKey(recorder);
     return rscStream;
   },
   async captureShellHTML(rscStream, options) {
@@ -162,6 +184,7 @@ const SSR_STUB: SSRModule = {
   },
   async resumeShellHTML(rscStream) {
     const recorder = recorders.getStore();
+    recordShellKey(recorder);
     // The served HIT's tail only, not a background re-render's.
     if (!recorder || recorder.tail !== undefined) return rscStream;
     recorder.tail = "";
@@ -327,7 +350,7 @@ export async function serveShellRequest<TEnv = any>(
     recorder.cache && recorder.cache.enabled !== false
       ? recorder.cache
       : undefined;
-  const key = shellCacheKey(target, config?.searchParams);
+  const key = recorder.shellKey ?? shellCacheKey(target, config?.searchParams);
   const tail = recorder.tail;
   const isFlight =
     recorder.rendered ||

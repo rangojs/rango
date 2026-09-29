@@ -106,7 +106,11 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
-import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
+import {
+  createShellImplicitDocScope,
+  resolveCacheTags,
+} from "../../cache/cache-scope.js";
+import { recordSegmentTags } from "../../cache/cache-tag.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
@@ -316,9 +320,10 @@ export function withCacheStore<TEnv>(
  * store) on the no-eligible-snapshot path, so the lookup's own refusal is
  * still surfaced while the fallback has nothing to serve.
  *
- * Wrapped in requestCtx.waitUntil — during a capture that is the tracked-write
- * override, so captureAndStoreShell's settleWrites awaits the record before
- * draining the snapshot.
+ * Registered through requestCtx.onResponse, which a capture fires only after
+ * the handler pushes settle (settleCaptureRecord), and wrapped in
+ * requestCtx.waitUntil — during a capture that is the tracked-write override,
+ * so settleWrites awaits the record before the capture reads it.
  */
 function recordShellCaptureDocRecord<TEnv>(
   ctx: MatchContext<TEnv>,
@@ -336,12 +341,27 @@ function recordShellCaptureDocRecord<TEnv>(
   if (!scope.allowsCache("write")) return;
 
   const docScope = createShellImplicitDocScope(marker);
-  requestCtx.waitUntil(() =>
-    docScope.cacheRoute(
-      ctx.pathname,
-      ctx.matched.params,
-      segments,
-      ctx.isIntercept,
-    ),
+  // The route scope's cache({ tags }) describe these segments too: on its
+  // HIT they arrive with the replayed record (recordSegmentTags in
+  // lookupRouteDetailed); on a fresh render they are recorded here, so the
+  // doc record, and the shell taking its tags, carries them either way.
+  recordSegmentTags(
+    segments.map((s) => s.id),
+    resolveCacheTags(scope.config, requestCtx),
+    requestCtx,
   );
+  // Through onResponse, like the implicit scope's own write: the capture
+  // fires these callbacks (settleCaptureRecord) only after the handler
+  // pushes settled, so the record's handle encode never races them.
+  requestCtx.onResponse((response) => {
+    requestCtx.waitUntil(() =>
+      docScope.cacheRoute(
+        ctx.pathname,
+        ctx.matched.params,
+        segments,
+        ctx.isIntercept,
+      ),
+    );
+    return response;
+  });
 }

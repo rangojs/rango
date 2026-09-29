@@ -5,9 +5,10 @@ import type { LoaderEntry } from "../../../server/context";
 // container was pinned in the shell snapshot resolves from the pin. The
 // capture-computed hole bit picks the path:
 //   - holes: false (fully pinned) -> PIN-FIRST: the payload promise resolves
-//     immediately from the pin; the fresh run still executes (side effects,
-//     cache read-through) but never gates the stream, and its rejection is
-//     swallowed (the payload already matches the prelude).
+//     immediately from the pin and the body does not run (a HIT is rendered
+//     from the shell). Only a record flagged `runs` (the capture saw a push
+//     it could not keep) still runs the body, ungated, in the background;
+//     its rejection is swallowed (the payload already matches the prelude).
 //   - holes: true  -> gated: the overlay waits for the fresh run, which mints
 //     the live nested promises the hole markers re-slot.
 // See loader-snapshot.ts and docs/design/ppr-shell-resume.md.
@@ -62,14 +63,45 @@ describe("shell-HIT seed overlay lanes", () => {
     mockRequestCtx.executionContext = undefined;
   });
 
-  it("pin-first (holes: false): resolves the pin immediately, fresh run ungated but still executed", async () => {
+  it("pin-first (holes: false): resolves the pin immediately and does not run the body", async () => {
     const loader = vi.fn(async () => {
       await sleep(50);
       return { price: "fresh-1" };
     });
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      [SEGMENT_KEY, { container: { price: "pinned" }, holes: false }],
+      [
+        SEGMENT_KEY,
+        { container: { price: "pinned" }, holes: false, runs: false },
+      ],
+    ]);
+    const waitUntil = vi.fn();
+    mockRequestCtx.executionContext = { waitUntil };
+
+    const result = resolveLoaderData(
+      createLoaderEntry(loader),
+      createMockCtx(),
+      "/x",
+      SEGMENT_KEY,
+    );
+
+    expect(await settlesWithin(result, 15)).toBe(true);
+    expect(await result).toEqual({ price: "pinned" });
+    expect(loader).not.toHaveBeenCalled();
+    expect(waitUntil).not.toHaveBeenCalled();
+  });
+
+  it("pin-first with runs: the body still runs, ungated, lifetime-extended", async () => {
+    const loader = vi.fn(async () => {
+      await sleep(50);
+      return { price: "fresh-1" };
+    });
+    (loader as any).$$id = "L";
+    mockRequestCtx._shellLoaderSeed = new Map([
+      [
+        SEGMENT_KEY,
+        { container: { price: "pinned" }, holes: false, runs: true },
+      ],
     ]);
     const waitUntil = vi.fn();
     mockRequestCtx.executionContext = { waitUntil };
@@ -84,19 +116,20 @@ describe("shell-HIT seed overlay lanes", () => {
     // The payload promise must NOT wait for the 50ms fresh run.
     expect(await settlesWithin(result, 15)).toBe(true);
     expect(await result).toEqual({ price: "pinned" });
-    // Side effects preserved: the fresh loader body DID start, and its
-    // promise was lifetime-extended so the runtime cannot cancel it.
     expect(loader).toHaveBeenCalledTimes(1);
     expect(waitUntil).toHaveBeenCalledTimes(1);
   });
 
-  it("pin-first: a fresh-run rejection is swallowed and the pin still serves", async () => {
+  it("pin-first with runs: a fresh-run rejection is swallowed and the pin still serves", async () => {
     const loader = vi.fn(async () => {
       throw new Error("fresh boom");
     });
     (loader as any).$$id = "L";
     mockRequestCtx._shellLoaderSeed = new Map([
-      [SEGMENT_KEY, { container: { price: "pinned" }, holes: false }],
+      [
+        SEGMENT_KEY,
+        { container: { price: "pinned" }, holes: false, runs: true },
+      ],
     ]);
 
     const result = resolveLoaderData(

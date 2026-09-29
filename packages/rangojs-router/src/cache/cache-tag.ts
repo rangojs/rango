@@ -172,6 +172,38 @@ export function getSegmentTags(
   return out;
 }
 
+/**
+ * Record `tags` onto each of `segmentIds` (a route cache() HIT replaying
+ * those segments): a record written from the replay, such as a shell
+ * capture's doc record (match-middleware/cache-store.ts), then carries them
+ * as a fresh render's record would. Unarmed, a no-op.
+ */
+export function recordSegmentTags(
+  segmentIds: readonly string[],
+  tags: Iterable<string> | undefined,
+  ctx: RequestContext | undefined = _getRequestContext(),
+): void {
+  if (!tags || !ctx || !recordTagOwnersArmed(ctx)) return;
+  for (const id of segmentIds) recordOwnedTags(tags, ctx, segmentOwner(id));
+}
+
+/**
+ * The owner of the loaders a shell capture bakes (loader-cache.ts bake
+ * lane): their data is shell material that no handler reads, so their tags
+ * reach the shell through this owner (shell-capture.ts), not a record.
+ */
+export const SHELL_BAKE_TAG_OWNER: string = "#shell-bake";
+
+/** Link loader `loaderId`'s tags to `ownerId` (see SHELL_BAKE_TAG_OWNER). */
+export function linkLoaderTagsTo(
+  ownerId: string,
+  loaderId: string,
+  ctx: RequestContext | undefined = _getRequestContext(),
+): void {
+  if (!ctx || !recordTagOwnersArmed(ctx)) return;
+  setFor(ownersFor(ctx).uses, segmentOwner(ownerId)).add(loaderOwner(loaderId));
+}
+
 export function normalizeTag(tag: string): string | null {
   // Trim and return the canonical (trimmed) form, not the raw tag. Both the
   // write path (cacheTag) and the invalidate path (updateTag/revalidateTag)

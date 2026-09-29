@@ -125,13 +125,21 @@ stated, greppable contract.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
 - **The consumption-lane rule.** For every shared artifact (`cache()`,
   `"use cache"`, the PPR shell): server-side handler consumption
-  (`await ctx.use(loader)`) yields a BAKED copy — identity reads
-  (`cookies()`/`headers()`) are permitted there and the capture-time value
-  freezes into the shared artifact (a documented footgun; see `/caching` →
-  "Cache purity & tainted objects"). Client-side consumption (`useLoader` in
-  a `"use client"` component) is the LIVE lane. DSL `loader()` segments
-  follow their PPR lane (only `ssr: false` bakes; see `/ppr` → The loader
-  lane rule). Pinned by semantic-matrix row PPR3.
+  (`await ctx.use(loader)`) yields a BAKED copy — the capture-time value
+  freezes into the shared artifact. Identity reads (`cookies()`/`headers()`,
+  a `{ cache: false }` variable) inside that loader are permitted under
+  `cache()`/`"use cache"` (a documented footgun; see `/caching` → "Cache
+  purity & tainted objects") but REFUSE a PPR capture: the route serves
+  uncached until the read moves to a live loader. Client-side consumption
+  (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
+  `loader()` segments follow their PPR lane (only `ssr: false` bakes; see
+  `/ppr` → The loader lane rule). Pinned by semantic-matrix row PPR3.
+- **A PPR shell HIT never runs a handler.** Everything a handler produces
+  (promises it passes under `<Suspense>`, async server components, handle
+  pushes, loaders it awaits) is shell material, as under `cache()`; a HIT
+  runs middleware and loaders only. Live data belongs in a loader without
+  `ssr: false`, read with `useLoader` under `loading()` or an inline
+  `<Suspense>`.
 - Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
   is captured on miss and replayed on hit. A non-cacheable variable read
@@ -162,17 +170,18 @@ stated, greppable contract.
 Same words, different jobs — this is the most common source of the
 `revalidate()`-is-caching misread.
 
-| You may know                            | Maps to Rango axis | Watch out                                                                                                                                                                                                                                                                               |
-| --------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`   | **Axis 1** (cache) | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **axis 2**. Use `cache({ ttl })` for the Next behavior.                                                                                                                          |
-| Next.js `revalidateTag` / `updateTag`   | **Axis 1** (cache) | Cache busting by tag. Tag via `cache({ tags })` / `cacheTag(...tags)`; invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking). Built-in stores index by tag. No `revalidatePath` (path-based busting); use tags. |
-| React Router / Remix `shouldRevalidate` | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                                                                            |
-| HTTP `Cache-Control` / ISR              | Deployment layer   | Complete-response deployment layer. A CDN hit bypasses Rango entirely; the store-backed middleware does not. See `/deployment-caching` and `/document-cache`.                                                                                                                           |
-| Next.js PPR (partial prerendering)      | HTML shell layer   | Same React primitive, different transport: Rango serves shells in-function after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See `/ppr`, `/prerender`, and `/deployment-caching`.                                                              |
-| Remix/RR `loader`                       | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
+| You may know                            | Maps to Rango                | Watch out                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`   | **Value freshness** (cache)  | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **partial-render selection**. Use `cache({ ttl })` for the Next behavior.                                                                                                        |
+| Next.js `revalidateTag` / `updateTag`   | **Value freshness** (cache)  | Cache busting by tag. Tag via `cache({ tags })` / `cacheTag(...tags)`; invalidate with `updateTag(...tags)` (awaitable, read-your-own-writes) or `revalidateTag(...tags)` (background, non-blocking). Built-in stores index by tag. No `revalidatePath` (path-based busting); use tags. |
+| React Router / Remix `shouldRevalidate` | **Partial-render selection** | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                                                                            |
+| HTTP `Cache-Control` / ISR              | Deployment layer             | Complete-response deployment layer. A CDN hit bypasses Rango entirely; the store-backed middleware does not. See `/deployment-caching` and `/document-cache`.                                                                                                                           |
+| Next.js PPR (partial prerendering)      | HTML shell layer             | Same React primitive, different transport: Rango serves shells in-function after middleware. Ordinary `ppr` captures at runtime; `Prerender + ppr` captures at build. See `/ppr`, `/prerender`, and `/deployment-caching`.                                                              |
+| Remix/RR `loader`                       | live data                    | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                                                                                |
 
-See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
-`revalidate()` (axis 2), and `/document-cache` for the edge layer.
+See `/cache-guide` for the cache decision guide, `/loader` and `/route` for
+`revalidate()` (partial-render selection), and `/document-cache` for the edge
+layer.
 
 ## Canonical shape
 
@@ -277,18 +286,18 @@ Grouped by concern — read when you need to…
 
 **Data & caching** — fetch, mutate, and cache:
 
-| Skill                 | Description                                                                                                                                                       |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/loader`             | Data loaders with `createLoader()` and `revalidate()`                                                                                                             |
-| `/server-actions`     | Mutations with `"use server"`, useActionState, validation, revalidation                                                                                           |
-| `/caching`            | Segment caching with memory or KV stores                                                                                                                          |
-| `/use-cache`          | Function-level caching with `"use cache"` directive                                                                                                               |
-| `/cache-guide`        | When to use `cache()` vs `"use cache"` — differences and decision guide                                                                                           |
-| `/document-cache`     | Store-backed complete-response middleware using Cache-Control policy                                                                                              |
-| `/deployment-caching` | Choose between in-function caches, store-backed responses, and an external CDN cache                                                                              |
-| `/ppr`                | PPR shell caching: cached shell served instantly, live holes resumed — a hole is a `loading()` subtree OR a pending promise under `<Suspense>` (no loader needed) |
-| `/prerender`          | Pre-render route segments at build time (Passthrough live fallback)                                                                                               |
-| `/shell-manifest`     | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)                                                                        |
+| Skill                 | Description                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/loader`             | Data loaders with `createLoader()` and `revalidate()`                                                                                                                 |
+| `/server-actions`     | Mutations with `"use server"`, useActionState, validation, revalidation                                                                                               |
+| `/caching`            | Segment caching with memory or KV stores                                                                                                                              |
+| `/use-cache`          | Function-level caching with `"use cache"` directive                                                                                                                   |
+| `/cache-guide`        | When to use `cache()` vs `"use cache"` — differences and decision guide                                                                                               |
+| `/document-cache`     | Store-backed complete-response middleware using Cache-Control policy                                                                                                  |
+| `/deployment-caching` | Choose between in-function caches, store-backed responses, and an external CDN cache                                                                                  |
+| `/ppr`                | PPR shell caching: cached shell served instantly, live holes resumed — a hole is a live loader read under `loading()` or an inline `<Suspense>`; handler output bakes |
+| `/prerender`          | Pre-render route segments at build time (Passthrough live fallback)                                                                                                   |
+| `/shell-manifest`     | Replayed handles as cache metadata read by live loaders (frozen shell, batched live holes)                                                                            |
 
 **Client & presentation** — build the client-side UX:
 

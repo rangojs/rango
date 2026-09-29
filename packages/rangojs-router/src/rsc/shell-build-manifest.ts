@@ -260,6 +260,24 @@ async function fetchDevShellEntry(
 }
 
 /**
+ * Whether a build-time shell exists for `pathname` (the caller checks the
+ * request is search-less, like the entries lookupBuildShell serves): a
+ * manifest entry for the path in production, a Prerender route in dev. No
+ * asset load and no dev capture: it only decides whether a request that
+ * cannot read the build shell deserves a warning.
+ */
+export async function hasBuildShell(
+  pathname: string,
+  dev?: DevShellLookup,
+): Promise<boolean> {
+  if (globalThis.__loadShellManifestModule === undefined) {
+    return dev?.isPrerenderRoute === true;
+  }
+  const mod = await loadManifest();
+  return mod?.default[buildShellManifestKey(pathname)] !== undefined;
+}
+
+/**
  * Look up the baked shell entry for a request, applying every serve gate:
  * search-less requests only (the build captured the bare pathname; a
  * search-bearing URL has its own shell identity owned by runtime capture),

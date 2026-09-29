@@ -71,10 +71,12 @@ import {
   overlayLoaderContainer,
 } from "./loader-snapshot.js";
 import {
+  SHELL_BAKE_TAG_OWNER,
   armLoaderTagSets,
   captureRecordedTags,
   flattenRecordedTags,
   linkLoaderTags,
+  linkLoaderTagsTo,
   linkRecordedTags,
   readValueTags,
   recordLoaderTags,
@@ -211,9 +213,10 @@ function getLoaderStore(
  * keyed on that body scope (executeLoaderData), which would swallow the
  * replay; and the store reads the body scope to tell a live push from a
  * replayed one.
- * Outside it, a PPR shell capture classifies replayed pushes as
- * loader-scoped and unbaked (shell-capture.ts), so a shell HIT gets them
- * from the loader's own re-run, not twice.
+ * A PPR shell capture records the replayed pushes under this loader (its
+ * push funnel reads the pushReplayed owner, shell-capture.ts), so a shell
+ * HIT restores them owned: the claim above then skips this replay when the
+ * loader runs on that HIT, and its live pushes replace the restored ones.
  */
 async function replayLoaderHandles(
   encoded: string,
@@ -279,8 +282,10 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  * never run under a shell capture), so the lane is decided here, per LOADER,
  * never by the entry's loading():
  *
- * - BAKE lane: `loader(Def, { ssr: false })` (awaitBeforeFlush) with a
- *   `bakeSegmentKey` from the caller. The loader EXECUTES at capture (the
+ * - BAKE lane: `loader(Def, { ssr: false })` (LoaderEntry `bake`: the
+ *   caller passes a `bakeSegmentKey` for it on document and navigation
+ *   evaluations alike; a capture, a document evaluation, also has
+ *   awaitBeforeFlush). The loader EXECUTES at capture (the
  *   flag's "data in the HTML before first flush" maps to the frozen prelude)
  *   and its settled non-promise data bakes into the shell. Promises nested in
  *   plain objects, arrays and JSX props are masked (mask-nested.ts) and stay
@@ -325,6 +330,8 @@ export function resolveLoaderData<TEnv>(
       );
       maskedPromise.catch(() => {});
       reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, maskedPromise);
+      // Its data bakes into the shell, so its tags tag the shell.
+      linkLoaderTagsTo(SHELL_BAKE_TAG_OWNER, loaderEntry.loader.$$id, reqCtx);
       return maskedPromise;
     }
     return createMaskedLoaderPromise();
@@ -336,31 +343,31 @@ export function resolveLoaderData<TEnv>(
       const recorded = seed.get(bakeSegmentKey)!;
       if (!recorded.holes) {
         // Pin-first (hole-free record): the pinned container is what the
-        // payload serves either way (recorded paths win wholesale), so
-        // resolve it immediately instead of gating on the fresh run's
-        // latency — a slow bake-lane loader body otherwise stalls the HIT
-        // tail for values that get discarded. The fresh run still executes
-        // for its side effects and cache read-through writes, lifetime-
-        // extended so the runtime cannot cancel it when the stream closes
-        // first; its rejection is swallowed here (the payload already
-        // matches the prelude, which a fresh error value never could).
+        // payload serves (recorded paths win wholesale), resolved
+        // immediately. The body does not run: a HIT is rendered from the
+        // shell, like the handlers it replays, and the loader's settled
+        // pushes (and those of loaders it awaits) are restored from the
+        // record. Only a record whose capture saw a push it could not keep
+        // (`runs`) still runs the body, in the background, lifetime-extended
+        // so the runtime cannot cancel it when the stream closes first; its
+        // rejection is swallowed (the payload already matches the prelude,
+        // which a fresh error value never could).
         //
         // CONTRACT (deliberate divergence from the gated overlay's
         // fresh-only-keys passthrough): a hole-free pin serves the pinned
-        // SHAPE wholesale — a key the fresh run adds mid-TTL is dropped.
-        // It could never render server-side anyway: no hole was postponed
-        // for it at capture, so the prelude froze the without-that-field
-        // branch and the resume pass has nothing to fill; passing it
-        // through only made the hydration payload disagree with the frozen
-        // prelude (client-side mismatch repair — the divergence class the
-        // snapshot exists to prevent). A field that is per-request must be
-        // promise-shaped at capture (masked -> hole marker -> holes: 1 ->
-        // the gated path below, which preserves fresh-only passthrough) or
-        // live behind loading(). Anything else is uncached nondeterminism
-        // in shell material — the documented drift residual.
-        const fresh = executeLoaderData(loaderEntry, ctx, pathname);
-        fresh.catch(() => {});
-        reqCtx?.executionContext?.waitUntil?.(fresh);
+        // SHAPE wholesale. A field the body would return now had no hole
+        // postponed for it at capture, so the prelude froze the
+        // without-that-field branch and the resume pass has nothing to
+        // fill. A field that is per-request must be promise-shaped at
+        // capture (masked -> hole marker -> holes: 1 -> the gated path
+        // below, which preserves fresh-only passthrough) or live behind
+        // loading(). Anything else is uncached nondeterminism in shell
+        // material — the documented drift residual.
+        if (recorded.runs) {
+          const fresh = executeLoaderData(loaderEntry, ctx, pathname);
+          fresh.catch(() => {});
+          reqCtx?.executionContext?.waitUntil?.(fresh);
+        }
         return Promise.resolve(
           overlayLoaderContainer(undefined, recorded.container),
         );

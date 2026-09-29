@@ -152,13 +152,18 @@ export async function createMatchContextForFull<TEnv>(
     Store.metrics = metricsStore;
   }
 
-  // Shell fast path: a capture or an eligible document/navigation HIT may
-  // substitute an implicit doc-level scope (a route-derived scope wins).
+  // A shell capture's implicit doc scope, or a document HIT tail's (which
+  // replaces any route-derived scope: the tail replays the shell's doc
+  // record), or else the route's own scope.
   const cacheScope = resolveShellImplicitCacheScope(snapshot.cacheScope);
   // A scope means a route cache() record may be written: arm its tag owners
-  // before any handler runs (#957). A loader bound with its own cache() needs
-  // the per-execution loader tag sets before any loader runs (#964).
-  if (cacheScope) armRecordTagOwners();
+  // before any handler runs (#957). A document HIT tail writes no record and
+  // runs no handler, so it arms nothing. A loader bound with its own cache()
+  // needs the per-execution loader tag sets before any loader runs (#964):
+  // loaders still run on a HIT.
+  if (cacheScope && !_getRequestContext()?._shellImplicitCache?.docTail) {
+    armRecordTagOwners();
+  }
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
 
   return {

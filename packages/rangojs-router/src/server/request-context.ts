@@ -284,14 +284,59 @@ export interface RequestContext<
   _shellCaptureLoaderRecords?: Map<string, Promise<unknown>>;
 
   /**
+   * @internal Set on a capture's derived context when a loader pushed a
+   * value the record cannot keep (a deferred push, masked nested promises,
+   * or a push outside a loader body): the loader records then carry
+   * `runs: 1`, so a HIT still runs their bodies for those pushes.
+   */
+  _shellCaptureUnrecordedLoaderPush?: true;
+
+  /**
+   * @internal Record keys resolved for this request (CacheScope
+   * resolveKeyFrom): by the scope's `key()` (one result) or its store's
+   * keyGenerator (one per default key). A shell capture's derived context
+   * reads it through the prototype chain, so the capture reuses the
+   * partition its request resolved instead of running `key()` again.
+   */
+  _resolvedCacheKeys?: Map<unknown, Map<string, Promise<string>>>;
+
+  /**
+   * @internal The shell store key the PPR serve path resolved for this
+   * document request (rsc-rendering.ts shellServePlan), request partition
+   * included. Read by the testing helper serveShellRequest.
+   */
+  _shellKey?: string;
+
+  /**
+   * @internal The request carried the forced-MISS reload marker
+   * (shell-serve.ts SHELL_MISS_PARAM). The handler strips the marker from the
+   * request on entry and sets this; the shell gate renders the request like a
+   * cache miss.
+   */
+  _shellForcedMiss?: true;
+
+  /**
+   * @internal The freshness window of the route cache() records this
+   * request read or wrote (cache-scope.ts noteRouteRecordWindow), as ms
+   * timestamps: `freshUntil` is the record's `expiresAt`, `staleUntil` adds
+   * its scope's swr. The narrowest record wins. A shell capture caps its
+   * entry's ttl and ttl+swr to it (shell-capture.ts capShellWindow), so a
+   * shell is never fresher, or served longer, than the route cache() entry
+   * it replayed or wrote.
+   */
+  _routeRecordWindow?: RouteRecordWindow;
+
+  /**
    * @internal Loader-family snapshot seed for a shell HIT's tail render:
    * segment-key -> the capture's elided container (already Flight-deserialized
    * by serveShellHit) plus its capture-computed hole bit. resolveLoaderData
    * overlays it onto the fresh run's container (recorded paths pinned,
    * hole-marker paths keep the fresh nested promises) so the payload's baked
    * bytes match the frozen prelude; a hole-free entry resolves pin-first
-   * without gating on the fresh run. Own property of the HIT tail's derived
-   * context only.
+   * and does not run the loader. Two owners: serveShellHit sets it on the
+   * HIT tail's derived context, and matchPartialWithPprReplay sets it on the
+   * request context of a PPR partial replay once its doc record hits, and
+   * restores the previous value after the match.
    */
   _shellLoaderSeed?: Map<
     string,
@@ -299,16 +344,17 @@ export interface RequestContext<
   >;
 
   /**
-   * @internal Shell fast-path marker: makes the next eligible match treat the
-   * whole matched route as an implicit doc-level cache() boundary (see
+   * @internal The doc record marker: makes the next match treat the whole
+   * matched route as an implicit doc-level cache() boundary (see
    * resolveShellImplicitCacheScope in cache/cache-scope.ts). Set ONLY on
    * (a) the capture's derived context — with a record-only store so the
    * capture's cacheRoute write lands in the snapshot, never the real store —
-   * (b) a HIT tail's seeded context, and (c) an eligible normal-route partial
-   * replay, where `store` is a request-local segment overlay. Handler-live holes
-   * and conditional transitions decline replay.
-   * Routes with their own cache() config are never overridden — their scope's
-   * store/key/ttl/swr/condition semantics stay authoritative. On the
+   * (b) a document HIT tail's seeded context (`docTail`), and (c) an eligible
+   * normal-route partial replay, where `store` is a request-local segment
+   * overlay.
+   * A document HIT tail replays the record even for a route with its own
+   * cache() config (the gate before the commit already evaluated that
+   * scope's opt-outs). Elsewhere the route's scope stays authoritative. On the
    * navigation-replay serve path (`onExplicitHit` set) the marker COMPOSES with
    * such a scope instead of being ignored: the seeded doc record supplies the match
    * only when the explicit tier misses (withCacheLookup). cache(false) and a
@@ -325,12 +371,17 @@ export interface RequestContext<
      * segment record even when the triggering request is partial.
      */
     keyPrefix?: "doc";
-    /** @internal Called only after the implicit cache hit decodes successfully. */
-    onHit?: () => void;
+    /**
+     * @internal Called only after the implicit cache hit decodes
+     * successfully; the lookup awaits it before returning the hit, so work
+     * it starts lands before the route's loaders resolve.
+     */
+    onHit?: () => void | Promise<void>;
     /**
      * @internal Called when the seeded document record fails server-side
      * deserialization. Partial replay uses it to replace the enclosing shell
-     * snapshot after serving the fresh fallback.
+     * snapshot after serving the fresh fallback. A document HIT tail does not
+     * set it: withCacheLookup throws ShellRecordUnavailableError instead.
      */
     onCorrupt?: () => void;
     /**
@@ -342,15 +393,20 @@ export interface RequestContext<
      */
     docKey?: string;
     /**
-     * @internal Set by resolveShellImplicitCacheScope when it minted the doc
-     * scope for a route that derived no cache() scope. Only such a route's
-     * document HIT tail looks the doc record up. Under a route-derived scope
-     * the capture still records one (recordShellCaptureDocRecord) and sets
-     * `docKey`, but the HIT tail resolves the route's own scope and re-runs
-     * the handlers it does not replay. captureAndStoreShell drops handler-only
-     * item and response records only when this is set.
+     * @internal Set on a document HIT tail (serveShellHit). The implicit doc
+     * scope replaces any route-derived cache() scope for the tail's match
+     * (resolveShellImplicitCacheScope), and a lookup that does not hit throws
+     * ShellRecordUnavailableError instead of resolving segments
+     * (withCacheLookup): a HIT never runs a handler.
      */
-    routeDocScope?: true;
+    docTail?: true;
+    /**
+     * @internal The key a document HIT tail looks the doc record up by: the
+     * entry's own `docKey`. Recomputing it could name another key (a store
+     * keyGenerator folding request data, a build-time capture's synthetic
+     * host) and miss the record.
+     */
+    fixedDocKey?: string;
     /**
      * @internal Set ONLY by matchPartialWithPprReplay on the navigation-replay
      * serve path. Its presence arms the explicit-scope composition in
@@ -392,23 +448,6 @@ export interface RequestContext<
    * it as an own property for exactly that reason.
    */
   _shellFragmentPayload?: boolean;
-
-  /**
-   * @internal Handler-layer liveness observed DURING a shell capture, from
-   * three sources: (a) the capture handle-store push wrapper (shell-capture.ts)
-   * when a push made OUTSIDE a DSL loader scope carries a nested thenable
-   * (masked to a never-filling hole); (b) still-pending top-level handler
-   * pushes (liveness unknowable at the barrier); (c) a handler-invoked loader
-   * executing during the capture (loader-resolution.ts — its consumption-lane
-   * value would freeze on a handler-free HIT). captureAndStoreShell folds it
-   * into ShellCacheEntry.handlerLiveHoles at the putShell barrier. Own
-   * property of the capture's derived context only.
-   */
-  _shellCaptureHandleLiveness?: {
-    holes: boolean;
-    pendingPushes: number;
-    handlerInvokedLoader: boolean;
-  };
 
   /**
    * @internal Set (to the offending fn name) by the cookies()/headers()
@@ -773,6 +812,21 @@ export interface RequestContext<
 }
 
 /**
+ * @internal The freshness window of a route cache() record, as ms
+ * timestamps: fresh until `freshUntil` (its `expiresAt`), stale until
+ * `staleUntil` (plus its scope's swr). `ttl`, `swr` and `written` describe
+ * the record that sets `staleUntil`: its cache() config, and whether this
+ * request wrote it (cacheRoute) rather than read it.
+ */
+export interface RouteRecordWindow {
+  freshUntil: number;
+  staleUntil: number;
+  ttl: number;
+  swr: number;
+  written: boolean;
+}
+
+/**
  * Public view of RequestContext, without internal methods and fields.
  *
  * This is the type exported to library consumers. Internal code should
@@ -797,7 +851,11 @@ export type PublicRequestContext<
   | "_shellImplicitCache"
   | "_shellLoaderSeed"
   | "_shellCaptureLoaderRecords"
-  | "_shellCaptureHandleLiveness"
+  | "_shellCaptureUnrecordedLoaderPush"
+  | "_resolvedCacheKeys"
+  | "_shellKey"
+  | "_shellForcedMiss"
+  | "_routeRecordWindow"
   | "_shellFragmentPayload"
   | "_shellCaptureGuardTripped"
   | "_shellCaptureGuardTrippedLoaderId"
@@ -1199,7 +1257,7 @@ export function createRequestContext<TEnv>(
     _dynamic: false,
     get: ((keyOrVar: any) => {
       if (isNonCacheable(variables, keyOrVar)) {
-        assertNonCacheableReadAllowed(keyOrVar);
+        assertNonCacheableReadAllowed(keyOrVar, _getRequestContext());
       }
       return contextGet(variables, keyOrVar);
     }) as RequestContext<TEnv>["get"],

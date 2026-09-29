@@ -13,6 +13,7 @@ import type {
 import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
+import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
 import {
   getCacheExecScope,
   type CacheExecScope,
@@ -134,6 +135,15 @@ export type LoaderEntry = {
    * appears on navigation-lane entries.
    */
   awaitBeforeFlush?: true;
+  /**
+   * loader(Def, { ssr: false }) on every DSL evaluation, document and
+   * navigation: the loader's PPR bake lane (loader-cache.ts
+   * resolveLoaderData). The bake/seed key rides on it, so a client
+   * navigation's shell replay pins exactly the loaders a document HIT pins,
+   * whatever the entry's loading(). awaitBeforeFlush cannot carry that: a
+   * navigation evaluation never has it.
+   */
+  bake?: true;
 };
 
 /**
@@ -846,16 +856,13 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
 // Purity-only scope: marks that a loader FUNCTION BODY is executing, regardless
 // of how the loader was invoked (DSL via runInsideLoaderScope, or handler-
 // invoked via ctx.use). Consulted by isInsideCacheScope() to exempt
-// request-scoped reads, by getCurrentLoaderBodyId() for guard-warning
-// attribution, and by isInsideHandlerInvokedLoaderBody() for the
-// consumption-lane rule (the shell-capture guard exemption). It deliberately
-// does NOT affect isInsideLoaderScope(), so rendered()/barrier/deadlock
-// gating (which must distinguish DSL from handler-invoked loaders) is
-// unchanged.
+// request-scoped reads, and by getCurrentLoaderBodyId() for guard-warning
+// attribution. It deliberately does NOT affect isInsideLoaderScope(), so
+// rendered()/barrier/deadlock gating (which must distinguish DSL from
+// handler-invoked loaders) is unchanged.
 interface LoaderBodyScope {
   active: true;
   loaderId?: string;
-  handlerInvoked?: boolean;
   /** The body scope this one was entered from (a ctx.use(Loader) chain). */
   parent?: LoaderBodyScope;
   /** The "use cache" scope the body was entered in (assertNonCacheableReadAllowed). */
@@ -888,9 +895,82 @@ export function isInsideCacheScope(): boolean {
 }
 
 /**
+ * Throw if called during the ACTIVE background shell-capture render
+ * (`_shellCaptureRun` true on the derived request context built by
+ * shell-capture.ts). The captured shell is shared across every user hitting
+ * the URL, so a request-scoped read here would bake one user's cookies,
+ * headers, or per-request variables into markup served to others — same
+ * hazard as the cache scopes above, at the document tier. DSL segment loaders
+ * need no exemption: the live lane is masked (never executed) during capture,
+ * and the bake lane is exactly what this guard exists for.
+ *
+ * It covers everything the capture waits for, not only synchronous handler
+ * code: a promise the handler passes or pushes, an async server component,
+ * and a loader the handler awaits (`await ctx.use(Loader)`) all run under the
+ * capture context and all bake. The last one used to be exempt (the
+ * consumption-lane rule, #672/#674): while a HIT re-ran handlers, a slot
+ * handler's `ctx.use` of an identity loader rendered per visitor on the HIT.
+ * Now every HIT replays the capture's copy, so the exemption would bake the
+ * capturing request's identity into every visitor's page. The cache()
+ * guards above keep it (a cache() HIT is a separate tier).
+ *
+ * Keys off `_shellCaptureRun`, NOT the `_shellCapture` descriptor: the descriptor
+ * is also present during the FOREGROUND render (it means "a capture is wanted"),
+ * and the foreground must read cookies/headers normally to serve the real user.
+ * Only the derived capture context sets `_shellCaptureRun`.
+ *
+ * Applies only to the READ surfaces (cookies(), headers(), a { cache: false }
+ * variable) whose values become markup. Response directives
+ * (invalidateClientCache(), keepClientCache()) stay callable: during capture
+ * they are header effects on a discarded response, and on the live HIT path
+ * the full pipeline runs so their headers flow to the client normally.
+ *
+ * The throw can be caught by the code that made the read, so the guard also
+ * flags the capture context; the capture refuses on the flag
+ * (shell-capture.ts refuseOnCaptureGuard), nothing is stored, and every
+ * request keeps getting the normal axis-1 render.
+ */
+export function assertNotInsideShellCapture(
+  ctx: unknown,
+  fnName: string,
+): void {
+  if (
+    ctx !== null &&
+    typeof ctx === "object" &&
+    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun === true
+  ) {
+    // Record WHICH loader body (if any) made the read, so the refusal warning
+    // can name the real source instead of hardcoding a lane (issue #672).
+    (ctx as { _shellCaptureGuardTripped?: string })._shellCaptureGuardTripped =
+      fnName;
+    (
+      ctx as { _shellCaptureGuardTrippedLoaderId?: string }
+    )._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
+    const what =
+      fnName === "cookies"
+        ? "cookies"
+        : fnName === "headers"
+          ? "headers"
+          : "per-request variables";
+    throw new Error(
+      `${fnName}() cannot be called while capturing a shared shell ` +
+        `(ppr shell capture). The captured shell is served to every user ` +
+        `of this URL, so request-scoped data read here would leak one user's ` +
+        `${what} to others. Read it ` +
+        `inside a loader without ssr: false and consume it with useLoader, e.g. ` +
+        `createLoader(async () => getUser(cookies().get("session")?.value)). ` +
+        PPR_LANE_HINT,
+    );
+  }
+}
+
+/**
  * Read guard for a non-cacheable variable (`createVar({ cache: false })` or a
  * `ctx.set(..., { cache: false })` write). Callers check isNonCacheable() first
  * so ordinary reads never reach the scope lookups.
+ *
+ * Throws during a PPR shell capture (`requestCtx` is the ambient request
+ * context; assertNotInsideShellCapture): the shell is shared per host+URL.
  *
  * Throws inside a "use cache" body: the key does not include the value, so the
  * first caller's value would be stored and served to later callers (#925). A
@@ -902,7 +982,10 @@ export function isInsideCacheScope(): boolean {
  */
 export function assertNonCacheableReadAllowed(
   keyOrVar: string | ContextVar<unknown>,
+  requestCtx?: unknown,
 ): void {
+  // A shell capture bakes what it reads into a page every visitor gets.
+  assertNotInsideShellCapture(requestCtx, "ctx.get");
   const execScope = getCacheExecScope();
   if (
     execScope !== undefined &&
@@ -1107,14 +1190,12 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
 export function runInsideLoaderBodyScope<T>(
   fn: () => T,
   loaderId?: string,
-  handlerInvoked?: boolean,
   tags?: Set<string>,
 ): T {
   return loaderBodyScopeALS.run(
     {
       active: true,
       loaderId,
-      handlerInvoked,
       parent: loaderBodyScopeALS.getStore(),
       execScope: getCacheExecScope(),
       tags,
@@ -1131,7 +1212,7 @@ export function getLoaderBodyTags(): Set<string> | undefined {
 /**
  * The $$id of the loader whose body is currently executing, or undefined
  * outside any loader body. Used by the shell-capture identity guard
- * (cookie-store.ts) so its refusal warning can name the loader that read
+ * (assertNotInsideShellCapture) so its refusal warning can name the loader that read
  * cookies()/headers() instead of blaming a lane it cannot see — the old
  * hardcoded "bake-lane loader" text misled a live-lane debugging session
  * (issue #672, secondary).
@@ -1151,19 +1232,6 @@ export function isInsideLoaderBody(loaderId: string): boolean {
     if (s.loaderId === loaderId) return true;
   }
   return false;
-}
-
-/**
- * True while a HANDLER-invoked loader body (`await ctx.use(Loader)` from a
- * handler, not the DSL segment funnel) is executing. The consumption-lane
- * rule keys off this: handler consumption yields a BAKED copy in every shared
- * artifact — cache(), "use cache", and the PPR shell — so the shell-capture
- * identity guard (cookie-store.ts) permits cookies()/headers() here, exactly
- * like the cache-purity guards do. DSL segment loaders (live lane masked at
- * capture, bake lane guarded) never set the flag.
- */
-export function isInsideHandlerInvokedLoaderBody(): boolean {
-  return loaderBodyScopeALS.getStore()?.handlerInvoked === true;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

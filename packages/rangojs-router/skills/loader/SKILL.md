@@ -172,10 +172,13 @@ the tree).
   `cache()`, the handler is cached with the loader result baked in —
   defeating the live data guarantee.
 - The same holds under a PPR shell capture (`/ppr`): handler consumption is
-  the BAKED lane — the loader executes at capture (identity reads permitted)
-  and the rendered value is a capture-time copy; `useLoader` client-side is
-  the live lane. One rule across `cache()`, `"use cache"`, and PPR: the
-  consumption-lane rule (`/rango` → Invariants).
+  the BAKED lane — the loader executes at capture and the rendered value is a
+  capture-time copy served on every HIT (a HIT never runs the handler);
+  `useLoader` client-side is the live lane. Unlike `cache()`, an identity read
+  inside that loader (`cookies()`, `headers()`, a `{ cache: false }` variable)
+  refuses the capture, so the route stays uncached. One rule across
+  `cache()`, `"use cache"`, and PPR: the consumption-lane rule (`/rango` →
+  Invariants).
 - Non-cacheable variable reads (`createVar({ cache: false })`) inside the
   handler still throw, even if the data came from a loader.
 - Prefer DSL `loader()` + client `useLoader()` for data that depends on
@@ -889,7 +892,9 @@ they are replayed from the entry (see "Opting a Loader into Caching").
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
-settled `ssr: false` pushes in the shell record — see `/ppr`.)
+the settled pushes of an `ssr: false` loader, and of the loaders it awaits, in
+the shell, and a promise-free `ssr: false` loader does not run on a shell HIT —
+see `/ppr`.)
 
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
 loader first does `await ctx.rendered()` (DSL-registered loaders only —

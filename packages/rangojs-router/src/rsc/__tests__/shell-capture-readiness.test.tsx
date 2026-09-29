@@ -3,8 +3,8 @@
  * (issue #949). A client component used as an element type reaches the SSR
  * Flight client as a lazy reference, so the payload settles while its module
  * is still loading; a capture that aborts first finds the shell pinned on it.
- * The wait covers module loads only: holes (a promise under the consumer's
- * Suspense, a loading() segment waiting on a masked loader) still postpone.
+ * The wait covers module loads only: holes (a row the frozen input never
+ * got, a loading() segment waiting on a masked loader) still postpone.
  *
  * Runs the capture core (captureAndStoreShell: Flight gate, quiesce, store)
  * over the real SSR capture handler: the vendored Flight client resolving
@@ -25,6 +25,7 @@ import { captureAndStoreShell } from "../shell-capture.js";
 import { base64ToBytes } from "../../cache/cf/cf-base64.js";
 import { createShellCaptureHandler } from "../../ssr/index.js";
 import { createHandleStore } from "../../server/handle-store.js";
+import { RecordingShellStore } from "../../cache/shell-snapshot.js";
 import type { ShellCacheEntry } from "../../cache/types.js";
 import type { SSRModule } from "../types.js";
 import { prerender } from "react-dom/static.edge";
@@ -114,6 +115,19 @@ function flightRows(
   });
 }
 
+/** A capture recording store holding a minimal doc record. */
+function recordingWithDocRecord(
+  putShell: (key: string, entry: ShellCacheEntry) => Promise<void>,
+): RecordingShellStore {
+  const recording = new RecordingShellStore({ putShell } as any);
+  recording.recordSegmentWrite("doc:localhost/", {
+    segments: [{ encoded: "0:null", metadata: { id: "R0" } } as any],
+    handles: "",
+    expiresAt: Date.now() + 300_000,
+  });
+  return recording;
+}
+
 /**
  * Capture `rscStream` through captureAndStoreShell and return what it stored.
  * captureTimeout is 60s: a gate that waited on a hole would run into the test
@@ -139,7 +153,10 @@ async function capture(
     rscStream,
     createHandleStore(),
     {
-      _cacheStore: { putShell },
+      // The doc record the capture's match wrote (a capture without one is
+      // refused: a HIT could not replay the handler layer).
+      _cacheStore: recordingWithDocRecord(putShell),
+      _shellImplicitCache: { docKey: "doc:localhost/" },
       _reportBackgroundError: vi.fn(),
       _requestTags: new Set<string>(),
     } as any,
@@ -212,11 +229,13 @@ describe("capture readiness gate: client-reference module loads (#949)", () => {
     expect(result.prelude).toContain("WIDGET-CONTENT");
   });
 
-  it("keeps a physics hole that settles during the module wait a hole", async () => {
-    // A handler-prop promise under the consumer's own Suspense (the
-    // makePprPhysicsPromise shape). Its row lands 8 tasks after the Flight
-    // client asked for the badge module: after the gate froze (2 quiet hops
-    // past the import row) and while the capture still waits on the module.
+  it("keeps a row that lands during the module wait a hole", async () => {
+    // A promise under the consumer's own Suspense whose row lands 8 tasks
+    // after the Flight client asked for the badge module: after the gate froze
+    // (2 quiet hops past the import row) and while the capture still waits on
+    // the module. (Handler promises settle before the capture's Flight render
+    // starts; this pins the gate itself: the frozen input admits no later
+    // row.)
     const badge = slowClientModule("/src/badge.tsx", 64, {
       Badge: () => <p>BADGE-CONTENT</p>,
     });

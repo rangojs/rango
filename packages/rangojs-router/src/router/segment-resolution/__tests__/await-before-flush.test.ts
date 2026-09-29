@@ -51,11 +51,12 @@ function createEntry(loaderEntries: LoaderEntry[]): EntryData {
   } as unknown as EntryData;
 }
 
+/** A document evaluation's entry: loader(Def, { ssr: false }) stamps both. */
 function loaderEntry(loader: any, awaitBeforeFlush?: true): LoaderEntry {
   return {
     loader,
     revalidate: [],
-    ...(awaitBeforeFlush && { awaitBeforeFlush }),
+    ...(awaitBeforeFlush && { awaitBeforeFlush, bake: true }),
   } as LoaderEntry;
 }
 

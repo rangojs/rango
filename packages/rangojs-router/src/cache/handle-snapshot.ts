@@ -140,9 +140,10 @@ export function captureHandleOwners(
  * cache() record owns its segments' arrays, so it REPLACES them.
  *
  * A segment with `owners` is replaced with empty arrays and re-pushed in
- * recorded order, an owned value through pushReplayed: the owning loader
- * re-runs on the HIT (loaders stay live), and its live pushes replace the
- * recorded ones in place instead of appending a second copy. `claim`
+ * recorded order, an owned value through pushReplayed: if the owning loader
+ * runs on the HIT (a live loader, or a promise-carrying `ssr: false` one;
+ * a promise-free one is served from the shell and does not), its live pushes
+ * replace the recorded ones in place instead of appending a second copy. `claim`
  * (setupLoaderAccess _claimLoaderPushes) is asked once per owner, so the
  * loader's own cache() HIT does not replay its pushes a second time
  * (loader-cache.ts replayLoaderHandles); an owner it refuses is skipped. A

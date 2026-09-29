@@ -17,8 +17,9 @@
  */
 
 import React from "react";
-import { isLoaderDataResult } from "../types.js";
+import { isLoaderDataResult, type MatchResult } from "../types.js";
 import { bytesToBase64 } from "../cache/cf/cf-base64.js";
+import { SHELL_BAKE_TAG_OWNER, getSegmentTags } from "../cache/cache-tag.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { runBackground } from "../cache/background-task.js";
 import {
@@ -41,10 +42,17 @@ import {
   wireRenderBarrier,
   UNTRACKED_BACKGROUND_TASK,
   type RequestContext,
+  type RouteRecordWindow,
 } from "../server/request-context.js";
+import {
+  DEFAULT_FUNCTION_TTL,
+  resolveSwrWindow,
+  resolveTtl,
+} from "../cache/cache-policy.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
 import {
   maskNestedContainerThenables,
+  settleNestedThenables,
   type MaskReport,
 } from "../router/segment-resolution/mask-nested.js";
 import {
@@ -53,6 +61,7 @@ import {
 } from "../server/context.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type {
+  CachedEntryData,
   ShellCacheEntry,
   SegmentCacheStore,
   ShellSnapshotRecord,
@@ -65,6 +74,7 @@ import {
   RecordingShellStore,
   SnapshotOnlySegmentStore,
   countSnapshotFamilies,
+  estimateShellEntryBytes,
   getRecordingStore,
   hasDocRecord,
   pruneShellSnapshot,
@@ -363,8 +373,9 @@ function clearCaptureBackoff(key: string): void {
 const warnedNullCaptures = new Set<string>();
 
 /**
- * Warn once per key that a capture produced no usable shell EVEN AFTER the
- * in-place retry (runShellCapture attempt 2). Naming both causes with the
+ * Warn once per key that a capture produced no usable shell: after the
+ * in-place retry (runShellCapture attempt 2), or after one attempt that ran
+ * out of its deadline (no retry: noShellCauses). Naming both causes with the
  * distinguishing signal — does the route ever flip to HIT — is the whole point:
  * the pre-retry version blamed "a loader route without loading()" unconditionally
  * and misled users whose route DID have loading() and was merely cold. Because the
@@ -375,27 +386,31 @@ const warnedNullCaptures = new Set<string>();
  * The pointer is the shared PPR_LANE_HINT: the /ppr skill ships in the npm
  * tarball, so the path resolves for consumers (a05c8251 convention).
  */
-function warnNullCaptureOnce(key: string): void {
+function warnNullCaptureOnce(key: string, retried: boolean): void {
   const pendingStacks = noShellPendingStacks.get(key);
   noShellPendingStacks.delete(key);
+  const cause = noShellCauses.get(key);
+  noShellCauses.delete(key);
   if (warnedNullCaptures.has(key)) return;
   warnedNullCaptures.add(key);
   console.warn(
-    `[rango] Shell capture for "${key}" produced no usable shell after an in-place ` +
-      "retry; nothing was stored, so this request stays on MISS. Causes, told apart " +
-      "by whether the route ever flips to HIT:\n" +
-      "  1. Cold-start warmup (dev module transform, or a cold worker): the capture raced " +
-      "an unfinished shell render. This SELF-HEALS — the route flips to HIT once a later " +
-      "request warms the modules.\n" +
-      "  2. Something suspends above <body> with no Suspense boundary and never settles " +
-      "within the capture window: a live loader (no ssr: false) read without loading() or " +
-      "an inline <Suspense>; a loader(Def, { ssr: false }) or top-level push (e.g. Meta) " +
-      "slower than ppr.captureTimeout; or a pending promise with no Suspense above it. The " +
-      "boundary belongs to the entry or component that owns the data.\n" +
-      "  3. An async server component the handler renders without awaiting, with no " +
-      "Suspense above it, whose data arrives after the capture's quiet window (a slow " +
-      "cache read on a cold colo). Await its data in the handler to bake it, or wrap it " +
-      "in <Suspense> to make it a hole.\n" +
+    `[rango] Shell capture for "${key}" produced no usable shell` +
+      (retried ? " after an in-place retry" : "") +
+      "; nothing was stored, so this request stays on MISS. " +
+      (cause
+        ? `Cause: ${cause}. Every capture waits for the handler layer to finish and ` +
+          'bakes it; make the slow part cheaper (cache() or "use cache"), raise ' +
+          "ppr.captureTimeout, or move it into a live loader (no ssr: false) read under " +
+          "loading() or an inline <Suspense>.\n"
+        : "Causes, told apart by whether the route ever flips to HIT:\n" +
+          "  1. Cold-start warmup (dev module transform, or a cold worker): the capture raced " +
+          "an unfinished shell render. This SELF-HEALS — the route flips to HIT once a later " +
+          "request warms the modules.\n" +
+          "  2. Something suspends above <body> with no Suspense boundary and never settles " +
+          "within the capture window: a live loader (no ssr: false) read without loading() or " +
+          "an inline <Suspense>, or a loader(Def, { ssr: false }) or top-level push (e.g. Meta) " +
+          "slower than ppr.captureTimeout. The boundary belongs to the entry or component " +
+          "that owns the data.\n") +
       (pendingStacks && pendingStacks.length > 0
         ? "Components still pending when the capture froze the shell (one of them " +
           "suspended above <body>):\n" +
@@ -405,6 +420,14 @@ function warnNullCaptureOnce(key: string): void {
       PPR_LANE_HINT,
   );
 }
+
+/**
+ * Why the latest no-shell attempt per key ran out of ppr.captureTimeout (the
+ * match, the handler output, or the prerender after them). Set only for a
+ * deadline outcome, so runShellCapture also reads it to skip the in-place
+ * retry. Printed (and cleared) by warnNullCaptureOnce.
+ */
+const noShellCauses = new Map<string, string>();
 
 /**
  * Dev only: component stacks of the tasks still pending at the latest
@@ -454,6 +477,71 @@ function warnCaptureRefusedOnce(
 }
 
 /**
+ * Refuse the capture when a capture guard tripped: a request-scoped read
+ * (cookies(), headers(), a { cache: false } variable) or ctx.dynamic() made
+ * anywhere the capture waited for — a handler, a promise it passes or pushes,
+ * an async server component, a bake-lane loader. The read throws where it
+ * happens, but the code can catch that throw, so the flag the guard sets on
+ * the capture context is what decides (server/context.ts
+ * assertNotInsideShellCapture). Returns true when it refused (and warned).
+ */
+function refuseOnCaptureGuard(
+  key: string,
+  derivedCtx: RequestContext<any>,
+): boolean {
+  if (derivedCtx._dynamic) {
+    // A build-time capture reports dynamic() as its own outcome
+    // (build-shell-capture.ts): the URL keeps runtime capture.
+    if (derivedCtx.build) return true;
+    warnCaptureRefusedOnce(
+      key,
+      "ctx.dynamic() was called while capturing the shared shell (in a handler, or " +
+        "in a promise or async component the capture waited for). A dynamic render " +
+        "has no shell; the route keeps serving axis 1 for requests that opt out.",
+    );
+    return true;
+  }
+  const fnName = derivedCtx._shellCaptureGuardTripped;
+  if (!fnName) return false;
+  // Name the recorded source instead of hardcoding a lane: a trip can come
+  // from a bake-lane SEGMENT loader or from handler/render code, including a
+  // loader a handler awaits (issue #672).
+  const loaderId = derivedCtx._shellCaptureGuardTrippedLoaderId;
+  const origin = loaderId
+    ? `the loader "${loaderId}"`
+    : "handler/render code (no loader body was executing)";
+  warnCaptureRefusedOnce(
+    key,
+    `${origin} called ${fnName}() during capture; request-scoped data must not bake ` +
+      "into the shared shell. Read it in a loader without ssr: false and consume it " +
+      "with useLoader under loading() or an inline <Suspense> (a live hole). A promise " +
+      "the handler passes or pushes does not help: the capture waits for it.",
+    PPR_LANE_HINT,
+  );
+  return true;
+}
+
+/** The no-shell cause for handler output that missed the capture deadline. */
+const HANDLER_OUTPUT_TIMEOUT_REASON: string =
+  "the handler output (a promise it passes or pushes, or an async server " +
+  "component) did not settle within ppr.captureTimeout";
+
+/** The refusal for a capture that stored no doc record (a HIT needs it). */
+const NO_DOC_RECORD_REASON: string =
+  "the capture produced no doc segment record, so a HIT could not replay the " +
+  "handler layer. Either the route's cache() refused the write (cache(false), or " +
+  "a condition() that returned false for the capture), or rendering the handler " +
+  "output failed (see the cache-write error reported for this key).";
+
+/**
+ * Default limit (bytes) on a whole stored shell entry — prelude, postponed
+ * state, and snapshot — when the store declares none
+ * (SegmentCacheStore.maxShellEntryBytes). Cloudflare KV's 25 MiB value limit:
+ * the tightest common store tier a shell entry lands in.
+ */
+export const DEFAULT_SHELL_ENTRY_MAX_BYTES: number = 25 * 1024 * 1024;
+
+/**
  * Default cap (serialized UTF-8 bytes) on the capture data snapshot riding
  * inside a shell entry, when the route's `ppr` option does not set
  * `maxSnapshotBytes`. 8 MiB: the snapshot shares the stored envelope with the
@@ -462,8 +550,9 @@ function warnCaptureRefusedOnce(
  * while still fitting any sane pinned-ring payload. Applied ONLY in
  * captureAndStoreShell (the single defaulting site — resolvePprConfig passes
  * the option through undefaulted), so every producer and direct caller gets
- * the same policy. Over the cap the snapshot is skipped (shell still stored;
- * pinned reads drift — see PartialPrerenderProps.maxSnapshotBytes).
+ * the same policy. The doc record is exempt; over the cap the other records
+ * are dropped (shell still stored and replayed; the pins' loaders read the
+ * live store — see PartialPrerenderProps.maxSnapshotBytes).
  */
 export const DEFAULT_PPR_MAX_SNAPSHOT_BYTES: number = 8 * 1024 * 1024;
 
@@ -474,12 +563,13 @@ const SNAPSHOT_BYTE_ENCODER = new TextEncoder();
 const warnedOverCapSnapshots = new Set<string>();
 
 /**
- * Warn once per key that the capture data snapshot exceeded the route's
- * `maxSnapshotBytes` cap and was skipped. The shell entry is still stored and
- * served — only the pinned-read replay is lost, so shell-baked cached content
- * can drift from the frozen prelude between capture and HIT and hydration
- * repairs it client-side (the pre-snapshot behavior). Once per key: the same
- * page recaptures on every TTL roll and would otherwise re-warn forever.
+ * Warn once per key that the capture's loader pins exceeded the route's
+ * `maxSnapshotBytes` cap and were dropped. The shell entry is still stored
+ * with its doc record and every HIT replays the handler layer; only the
+ * pinned loaders lose their captured values, so their cached data can drift
+ * from the frozen prelude and hydration repairs it client-side. Once per
+ * key: the same page recaptures on every TTL roll and would otherwise
+ * re-warn forever.
  */
 function warnSnapshotOverCapOnce(
   key: string,
@@ -489,14 +579,15 @@ function warnSnapshotOverCapOnce(
   if (warnedOverCapSnapshots.has(key)) return;
   warnedOverCapSnapshots.add(key);
   console.warn(
-    `[rango] Shell capture for "${key}" recorded a ${snapshotBytes}-byte data ` +
-      `snapshot, over the ${capBytes}-byte cap — the snapshot was skipped and ` +
-      "the shell was stored without it. The page keeps serving, but cached " +
-      "content baked into the shell is no longer pinned: if it drifts before " +
-      "the shell's TTL, hydration repairs the mismatch client-side. Raise the " +
-      "cap via the route's ppr option ({ maxSnapshotBytes }) if the entry " +
-      "still fits your store's value limit (Cloudflare KV: 25 MiB per value), " +
-      "or shrink the cache()'d data the shell bakes.",
+    `[rango] Shell capture for "${key}" recorded ${snapshotBytes} bytes of ` +
+      `loader pins, over the ${capBytes}-byte cap — the pins were dropped and ` +
+      "the shell was stored with its doc record only. HITs still replay the " +
+      "handler layer, but ssr: false loaders now read the live store: if " +
+      "their data drifts before the shell's TTL, hydration repairs the " +
+      "mismatch client-side. Raise the cap via the route's ppr option " +
+      "({ maxSnapshotBytes }) if the entry still fits your store's value limit " +
+      "(Cloudflare KV: 25 MiB per value), or shrink the cache()'d data the " +
+      "loaders read.",
   );
 }
 
@@ -517,8 +608,8 @@ const warnedBakeCosts = new Set<string>();
 
 /**
  * Dev-only, once per key: name the slowest bake source and the three remedies
- * in preference order. The doctrine ("nesting = liveness") makes the cost
- * legitimate, so this is a cost report with an exit, not a deprecation.
+ * in preference order. Handler output and bake-lane values are shell material
+ * by design, so this is a cost report with an exit, not a deprecation.
  */
 function warnBakeCostOnce(key: string, source: string, ms: number): void {
   if (warnedBakeCosts.has(key)) return;
@@ -527,10 +618,11 @@ function warnBakeCostOnce(key: string, source: string, ms: number): void {
     `[rango] Shell capture for "${key}" waited ${ms}ms for ${source} to ` +
       "settle before the shell could freeze. This cost recurs on every capture " +
       "of the route and occupies the per-isolate capture queue; the served " +
-      "response never shows it. To make the value per-request, nest it " +
-      "({ data: promise }) and read it with use() under Suspense; to keep it " +
-      "baked but cheap, wrap the work in cache(); for a loader(Def, { ssr: false }), " +
-      "drop ssr: false to move it to the live lane. " +
+      "response never shows it. To keep it baked but cheap, wrap the work in " +
+      'cache() or "use cache"; to make it per-request, load it in a live ' +
+      "loader (no ssr: false) read under loading() or an inline <Suspense>; for " +
+      "a loader(Def, { ssr: false }), return the slow part as a nested promise " +
+      "or drop ssr: false. " +
       PPR_LANE_HINT,
   );
 }
@@ -547,10 +639,13 @@ export interface ShellCaptureDebugEvent {
   key: string;
   /**
    * What happened:
-   * - stored / redirect / no-shell / refused: one capture ATTEMPT's outcome
-   *   (see CaptureAttemptOutcome for the semantics of each)
+   * - stored / redirect / no-shell / refused / expired: one capture
+   *   ATTEMPT's outcome (see CaptureAttemptOutcome for the semantics of each)
    * - error: the capture task failed with a genuine error (also routed through
    *   reportCacheError; the key is backed off)
+   * - skip-stored: a capture for the key stored after the scheduling request
+   *   read the store and missed (ShellCaptureDescriptor.storedSeqAtRead), so
+   *   the shell that request missed exists now
    * - skip-in-flight: scheduleShellCapture found a capture already running for
    *   the key (stampede guard) and scheduled nothing
    * - skip-backoff: the key is inside its refused-capture backoff window and
@@ -573,8 +668,10 @@ export interface ShellCaptureDebugEvent {
     | "redirect"
     | "no-shell"
     | "refused"
+    | "expired"
     | "error"
     | "skip-in-flight"
+    | "skip-stored"
     | "skip-backoff"
     | "skip-capacity"
     | "skip-inert-store"
@@ -626,6 +723,14 @@ export interface ShellCaptureDebugEvent {
    * it attributable. Absent when nothing held the gate.
    */
   bakeWaitMs?: number;
+  /**
+   * How long the capture waited for its doc record: the handler layer's
+   * promises, async server components and handle pushes settling, then the
+   * record's encode (settleCaptureRecord). Part of the one capture deadline.
+   */
+  recordSettleMs?: number;
+  /** Bytes of the stored entry: prelude, postponed state, and snapshot. */
+  entryBytes?: number;
 }
 
 /**
@@ -684,6 +789,12 @@ export function describeShellCaptureEvent(
   if (event.bakeWaitMs !== undefined) {
     parts.push(`bake=${event.bakeWaitMs}ms`);
   }
+  if (event.recordSettleMs !== undefined) {
+    parts.push(`record=${event.recordSettleMs}ms`);
+  }
+  if (event.entryBytes !== undefined) {
+    parts.push(`entry=${event.entryBytes}b`);
+  }
   return parts.join(" ");
 }
 
@@ -719,6 +830,7 @@ const TIMING_RECORDED_OUTCOMES = new Set<ShellCaptureDebugEvent["outcome"]>([
   "redirect",
   "no-shell",
   "refused",
+  "expired",
   "error",
 ]);
 
@@ -1012,6 +1124,33 @@ export interface ShellCaptureDescriptor {
   debugSink?: (event: ShellCaptureDebugEvent) => void;
   /** Store the snapshot for navigation replay, never the captured HTML prelude. */
   navigationOnly?: true;
+  /**
+   * lastStoredCaptureSeq(key) when a document request read the store and
+   * missed. The request schedules its capture only after rendering the MISS,
+   * so a capture another request started can store in between; a later
+   * sequence number then skips the redundant one (`skip-stored`), which would
+   * re-render the page and drop the isolate's memo of the shell just stored.
+   */
+  storedSeqAtRead?: number;
+}
+
+/** Per key, the sequence number of its latest stored capture (bounded). */
+const storedCaptureSeqs = new Map<string, number>();
+const STORED_CAPTURE_SEQS_MAX = 1_000;
+let storedCaptureSeq = 0;
+
+/** The latest stored capture's sequence number for `key` in this isolate, or 0. */
+export function lastStoredCaptureSeq(key: string): number {
+  return storedCaptureSeqs.get(key) ?? 0;
+}
+
+function noteCaptureStored(key: string): void {
+  storedCaptureSeqs.delete(key);
+  if (storedCaptureSeqs.size >= STORED_CAPTURE_SEQS_MAX) {
+    const oldest = storedCaptureSeqs.keys().next().value;
+    if (oldest !== undefined) storedCaptureSeqs.delete(oldest);
+  }
+  storedCaptureSeqs.set(key, ++storedCaptureSeq);
 }
 
 /**
@@ -1048,6 +1187,13 @@ export function scheduleShellCapture(
     // key as abandoned and schedule a replacement — the set() below installs a
     // new token, and the stale task's token-guarded release can no longer
     // touch it.
+  }
+  if (
+    descriptor.storedSeqAtRead !== undefined &&
+    lastStoredCaptureSeq(key) > descriptor.storedSeqAtRead
+  ) {
+    publishCaptureDebugEvent(descriptor, { key, outcome: "skip-stored" });
+    return;
   }
   // Refused/failed within the window → skip the doomed re-render (one probe per
   // key per window per isolate). Expired entries self-evict inside the check.
@@ -1114,9 +1260,12 @@ export function scheduleShellCapture(
       // Update the negative cache off the terminal outcome. A stored shell clears
       // any prior backoff; a `no-shell` (after the in-place retry) backs the key
       // off so the next requests don't re-probe it. A `redirect` has no shell but
-      // is not a doomed render — leave the backoff untouched.
-      if (outcome === "stored") clearCaptureBackoff(key);
-      else if (outcome === "no-shell") {
+      // is not a doomed render, and an `expired` retry lost a second record to
+      // the same race — leave the backoff untouched.
+      if (outcome === "stored") {
+        clearCaptureBackoff(key);
+        noteCaptureStored(key);
+      } else if (outcome === "no-shell") {
         markCaptureBackoff(key);
         publishCaptureDebugEvent(descriptor, {
           key,
@@ -1230,16 +1379,112 @@ export function scheduleShellCapture(
 }
 
 /**
+ * The ttl/swr a shell is stored with: the route's ppr policy, capped by the
+ * route cache() records the capture replayed or wrote
+ * (RequestContext._routeRecordWindow). A HIT replays the capture's handler
+ * output, while a client navigation reads the route's cache() tier first, so
+ * a shell that outlived its record would show a document request other
+ * handler output than a navigation of the same URL. Freshness and total
+ * lifetime are capped separately, like the record's own SWR: the shell is
+ * fresh while the record is (at most `ttl`), and servable while the record
+ * is (at most `ttl + swr`), so a record already inside its swr window yields
+ * a shell that is stale from the start and serves while it recaptures.
+ *
+ * Whole seconds, rounded up (the SegmentCacheStore.putShell contract), so the
+ * shell may outlast the record by under a second. Null when the record's
+ * total lifetime has run out: the shell would be dead on arrival.
+ */
+export function capShellWindow(
+  ttl: number,
+  swr: number,
+  record: Pick<RouteRecordWindow, "freshUntil" | "staleUntil">,
+  now: number,
+): { ttl: number; swr: number } | null {
+  const total = Math.min(ttl + swr, (record.staleUntil - now) / 1000);
+  if (!(total > 0)) return null;
+  // At most `total`: freshUntil <= staleUntil and swr >= 0.
+  const fresh = Math.max(0, Math.min(ttl, (record.freshUntil - now) / 1000));
+  const wholeTtl = Math.ceil(fresh);
+  return { ttl: wholeTtl, swr: Math.ceil(total) - wholeTtl };
+}
+
+/** Routes already warned that their cache() entry expires before a capture. */
+const warnedExpiredRecordRoutes = new Set<string>();
+
+/**
+ * Warn once per route (dev and production) that no shell was stored because
+ * the route cache() entry ran out before the capture could store one
+ * (capShellWindow returned null) where a retry cannot help: the capture
+ * wrote the entry itself (`written`), or the in-place retry's entry ran out
+ * too, or no budget was left to retry. The key backs off like a refused
+ * capture.
+ */
+function warnRecordRanOutOnce(
+  route: string,
+  record: RouteRecordWindow,
+  detail: string,
+): void {
+  if (warnedExpiredRecordRoutes.has(route)) return;
+  warnedExpiredRecordRoutes.add(route);
+  console.warn(
+    `[rango] Route "${route}": its cache() entry (ttl ${record.ttl}, swr ` +
+      `${record.swr}) ran out before the shell capture could store a shell ` +
+      `(${detail}), so no shell is stored and the route renders without ` +
+      "one. A shell never outlives the route cache() entry it replays: give " +
+      "that cache() a ttl or swr longer than the capture takes, queue wait " +
+      "included.",
+  );
+}
+
+/**
+ * The record an `expired` attempt ran out on, per key, for the warning
+ * runShellCapture prints when that outcome is terminal. Set and consumed
+ * within one capture task.
+ */
+const expiredRecords = new Map<
+  string,
+  { route: string; record: RouteRecordWindow; captureMs: number }
+>();
+
+/**
+ * A terminal `expired`: warn once per route with the record it ran out on,
+ * and return `no-shell` so the caller backs the key off.
+ */
+function expiredTerminal(key: string, reason: string): "no-shell" {
+  const expired = expiredRecords.get(key);
+  expiredRecords.delete(key);
+  if (expired) {
+    warnRecordRanOutOnce(
+      expired.route,
+      expired.record,
+      `${reason}; the last attempt took ${expired.captureMs} ms`,
+    );
+  }
+  return "no-shell";
+}
+
+/**
  * The outcome of one capture attempt.
  * - `stored`: a usable shell was captured (and a putShell was attempted; a store
  *   I/O failure is reported separately and does NOT make the attempt retryable —
  *   the capture itself worked).
  * - `redirect`: the matched route redirects, so there is no shell to capture.
  * - `no-shell`: captureShellHTML returned null because the prelude was unusable
- *   or its private capture abort landed before the shell completed. This is the
- *   only RETRYABLE outcome.
+ *   or its private capture abort landed before the shell completed, or the
+ *   capture ran out of ppr.captureTimeout. Retried once in place, when no
+ *   deadline ran out (noShellCauses).
+ * - `expired`: the route cache() record the capture read (not wrote) ran out
+ *   before the store (capShellWindow null): it was near its end (its age,
+ *   queue wait). Retried once in place, where a fresh match reads or renders
+ *   a newer record; a second `expired`, or no hard-cap budget left for the
+ *   retry, is terminal `no-shell` (backoff, warned once per route).
  */
-type CaptureAttemptOutcome = "stored" | "redirect" | "no-shell" | "refused";
+type CaptureAttemptOutcome =
+  | "stored"
+  | "redirect"
+  | "no-shell"
+  | "refused"
+  | "expired";
 
 function createNavigationCaptureRequest(request: Request, url: URL): Request {
   const headers = new Headers(request.headers);
@@ -1274,6 +1519,8 @@ type CaptureAttemptStats = Pick<
   | "untaggedBake"
   | "storeWrite"
   | "bakeWaitMs"
+  | "recordSettleMs"
+  | "entryBytes"
 >;
 
 /**
@@ -1287,8 +1534,9 @@ type CaptureAttemptStats = Pick<
  * when we froze the shell; the attempt itself warmed the module graph, so a second
  * attempt a short beat later usually completes the shell in the SAME background
  * task. That kills the old multi-request warmup where the caller had to re-issue
- * several HTTP requests before a capture stuck. We retry ONLY on `no-shell`; a
- * genuine render error is NOT retried — it propagates to scheduleShellCapture's
+ * several HTTP requests before a capture stuck. We retry ONLY on `no-shell`
+ * that did not run out of ppr.captureTimeout (noShellCauses); a genuine render
+ * error is NOT retried — it propagates to scheduleShellCapture's
  * reportCacheError. See docs/design/ppr-shell-resume.md.
  *
  * `retryDelayMs` is a parameter (defaulting to the module const) so unit tests can
@@ -1342,24 +1590,58 @@ async function runShellCapture(
     return outcome;
   };
 
+  const taskStartedAt = performance.now();
   const first = await timedAttempt(1);
   // "refused" is deterministic (identity guard / rejected bake-lane loader —
   // its own warning already fired): no retry, and the caller backs the key off
   // exactly like a structural no-shell.
   if (first === "refused") return "no-shell";
-  // "stored" (success) or "redirect" (no shell exists): nothing to retry.
-  if (first !== "no-shell") return first;
+  let second: CaptureAttemptOutcome;
+  if (first === "expired") {
+    // The record attempt 1 read ran out mid-capture: a fresh match reads or
+    // renders a newer one. The whole task races SHELL_CAPTURE_TASK_HARD_CAP_MS,
+    // so a retry that could not finish inside it (barrier + captureTimeout)
+    // is not started.
+    const retryBudgetMs =
+      SHELL_CAPTURE_TASK_HARD_CAP_MS - (performance.now() - taskStartedAt);
+    const retryNeedsMs =
+      SHELL_CAPTURE_WRITE_BARRIER_MS +
+      (descriptor.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS);
+    if (retryBudgetMs < retryNeedsMs) {
+      return expiredTerminal(descriptor.key, "no time was left to retry");
+    }
+    log(
+      `[ShellCache] capture attempt 1/2 for ${descriptor.key} outlived the route cache() record it read — retrying`,
+    );
+    second = await timedAttempt(2);
+    if (second === "expired") {
+      return expiredTerminal(descriptor.key, "twice in a row");
+    }
+    expiredRecords.delete(descriptor.key);
+  } else {
+    // "stored" (success) or "redirect" (no shell exists): nothing to retry.
+    if (first !== "no-shell") return first;
+    // Attempt 1 ran out of ppr.captureTimeout (a cause is recorded): its
+    // handlers may still be running (a match is not cancellable), and a retry
+    // would start the same work beside them. A cold-module abort, the retry's
+    // reason, ends well inside the deadline.
+    if (noShellCauses.has(descriptor.key)) {
+      warnNullCaptureOnce(descriptor.key, false);
+      return "no-shell";
+    }
 
-  // Attempt 1 produced no usable shell. Retry ONCE in place — the first attempt
-  // warmed the dev transform graph / cold worker, so attempt 2 typically completes
-  // the shell without another HTTP request. The concise line is gated on the
-  // middleware's debug flag (threaded via the descriptor) so it replaces the old
-  // full DOMException dump with one readable breadcrumb.
-  log(
-    `[ShellCache] capture attempt 1/2 for ${descriptor.key} aborted before shell completed (cold modules?) — retrying`,
-  );
-  await delay(retryDelayMs);
-  const second = await timedAttempt(2);
+    // Attempt 1 produced no usable shell. Retry ONCE in place — the first
+    // attempt warmed the dev transform graph / cold worker, so attempt 2
+    // typically completes the shell without another HTTP request. The concise
+    // line is gated on the middleware's debug flag (threaded via the
+    // descriptor) so it replaces the old full DOMException dump with one
+    // readable breadcrumb.
+    log(
+      `[ShellCache] capture attempt 1/2 for ${descriptor.key} aborted before shell completed (cold modules?) — retrying`,
+    );
+    await delay(retryDelayMs);
+    second = await timedAttempt(2);
+  }
   if (second === "refused") return "no-shell";
   if (second !== "no-shell") return second;
 
@@ -1372,53 +1654,193 @@ async function runShellCapture(
   log(
     `[ShellCache] capture attempt 2/2 for ${descriptor.key} aborted — giving up until next request`,
   );
-  warnNullCaptureOnce(descriptor.key);
+  warnNullCaptureOnce(descriptor.key, true);
   return "no-shell";
 }
 
-/** Fold the capture's handle-liveness record into the entry flag (true | undefined). */
-function handlerLayerIsLive(
-  liveness: RequestContext["_shellCaptureHandleLiveness"],
-): true | undefined {
-  if (!liveness) return undefined;
-  return liveness.holes ||
-    liveness.pendingPushes > 0 ||
-    liveness.handlerInvokedLoader
-    ? true
-    : undefined;
-}
-
 /**
- * Who reads the snapshot this capture stores beyond its segment family
- * (docs/design/shell-entry-layout.md §2), or undefined when a HIT can re-run
- * handlers, which read any item or response record:
- * - "segments" for a navigation-only entry (R1): only partial replay reads
- *   it, and replay seeds segments alone.
- * - "loaders" for a document entry whose every HIT tail replays the handler
- *   layer from the implicit doc record: the record is in the snapshot and the
- *   fast path arms (R2.1), the store has no keyGenerator that could send a
- *   visitor's tail to another doc key (R2.2), and the doc scope was the
- *   route's own (R2.5; a route-derived cache() scope is what its HIT tail
- *   resolves instead). A build-time capture (producer B) keeps everything:
- *   its doc key carries the synthetic build host, which no request computes,
- *   so its HIT tails re-run handlers.
+ * Who reads the snapshot this capture stores besides its doc record
+ * (docs/design/shell-entry-layout.md §2): partial replay alone for a
+ * navigation-only entry ("segments"), the loaders a document HIT re-runs
+ * otherwise ("loaders"). Undefined when the capture recorded no doc record,
+ * which only a prerender-served capture stores (its HIT tail takes the handler
+ * layer from the prerender store and reads nothing else from the snapshot
+ * beyond the loader records, so nothing is pruned).
  */
 function snapshotReaders(
   capture: ShellCaptureDescriptor,
-  reqCtx: RequestContext<any>,
-  recording: RecordingShellStore<any>,
   snapshot: readonly ShellSnapshotRecord[],
-  fastPath: boolean,
+  docKey: string | undefined,
 ): ShellSnapshotReaders | undefined {
-  if (capture.navigationOnly) return "segments";
-  const marker = reqCtx._shellImplicitCache;
-  return fastPath &&
-    marker?.routeDocScope &&
-    hasDocRecord(snapshot, marker.docKey) &&
-    !recording.keyGenerator &&
-    !reqCtx.build
-    ? "loaders"
-    : undefined;
+  if (!hasDocRecord(snapshot, docKey)) return undefined;
+  return capture.navigationOnly ? "segments" : "loaders";
+}
+
+/**
+ * What the record-first step produced ({@link settleCaptureRecord}):
+ * - `record`: the doc record settled; `match` carries its fragments in place
+ *   of the handler layer's elements, so the capture's Flight payload is the
+ *   bytes every HIT replays.
+ * - `prerender`: the prerender store supplied the handler layer (a
+ *   Prerender route); its HIT tail replays the same build-time segments, so
+ *   the capture renders the match as is.
+ * - `timeout`: handler output did not settle within the capture budget.
+ * - `refused`: a deterministic refusal (a capture guard tripped, the route
+ *   opted out, or the handler output failed); the warning already fired.
+ */
+export type CaptureRecordOutcome =
+  | { kind: "record" | "prerender"; match: MatchResult }
+  | { kind: "timeout"; reason: string }
+  | { kind: "refused" };
+
+/**
+ * Record-first capture: the doc record is both the settle signal and the
+ * parity source.
+ *
+ * Writing the record Flight-serializes every non-loader segment
+ * (serializeSegments), which runs each handler's async server components and
+ * waits for every promise the handler output carries — the capture's "is the
+ * handler layer done" signal. Live-lane loader data is not in the record
+ * (loader segments are excluded and their masked promises never settle), so
+ * the wait never depends on a hole.
+ *
+ * The capture then renders its OWN Flight payload from the record's
+ * fragments (fragmentSegments, the function a HIT tail uses) instead of from
+ * the elements the match produced. Server components therefore render once
+ * per capture, inside the record's encode: before this, the capture's Flight
+ * render and the record's encode each ran them, so an uncached async
+ * component showed one value in the prelude and another on every HIT.
+ *
+ * Order, all bounded by the one capture deadline (`ppr.captureTimeout`):
+ * top-level handle promises, the handler pushes' nested promises, and the
+ * bake-lane loader containers settle first (the record encodes the handles
+ * a HIT restores, and its handle encode has its own 5s timeout that must
+ * never be the one that fires); then the capture's onResponse callbacks fire
+ * with a synthetic 200 (the implicit doc scope's cacheRoute, an explicit
+ * scope's own write), and the deferred writes settle.
+ */
+export async function settleCaptureRecord(
+  match: MatchResult,
+  derivation: CaptureContextDerivation,
+  capture: Pick<ShellCaptureDescriptor, "key">,
+  deadline: number,
+): Promise<CaptureRecordOutcome> {
+  const { derivedCtx, freshHandleStore } = derivation;
+  const recording = getRecordingStore(derivedCtx._cacheStore);
+
+  // cacheRoute waits for handleStore.settled, which needs the seal.
+  freshHandleStore.seal();
+  const loaderRecords = derivedCtx._shellCaptureLoaderRecords;
+  const settled = await withinDeadline(
+    Promise.all([
+      freshHandleStore.getData().then(resolveDeferredHandleValues),
+      derivation.handlerPushesSettled(),
+      loaderRecords && loaderRecords.size > 0
+        ? Promise.allSettled([...loaderRecords.values()])
+        : undefined,
+    ]).catch(() => undefined),
+    deadline,
+  );
+  // Past the deadline the record cannot settle in time: stop before its
+  // write starts (no encode for a capture that already failed).
+  if (!settled.done) {
+    if (refuseOnCaptureGuard(capture.key, derivedCtx))
+      return { kind: "refused" };
+    return { kind: "timeout", reason: HANDLER_OUTPUT_TIMEOUT_REASON };
+  }
+
+  const callbacks = derivedCtx._onResponseCallbacks?.splice(0) ?? [];
+  if (callbacks.length > 0) {
+    const synthetic = new Response(null, { status: 200 });
+    for (const cb of callbacks) {
+      try {
+        cb(synthetic);
+      } catch {
+        // A capture-time cache write that throws is degradation, not failure.
+      }
+    }
+  }
+  const drained = recording
+    ? await recording.settleWrites(Math.max(0, deadline - Date.now()))
+    : true;
+
+  // Capture guards first: a tripped guard usually also fails the record,
+  // and its own message names the cause.
+  if (refuseOnCaptureGuard(capture.key, derivedCtx)) return { kind: "refused" };
+
+  const docKey = derivedCtx._shellImplicitCache?.docKey;
+  const record =
+    recording && docKey !== undefined
+      ? (recording.getRecord("segment", docKey) as CachedEntryData | undefined)
+      : undefined;
+  if (
+    !record ||
+    !Array.isArray(record.segments) ||
+    record.segments.length === 0
+  ) {
+    // Post-match serve-source truth (cache-lookup.ts tryPrerenderLookup).
+    if (derivedCtx._pprReplayPostMatchReason === "prerender-store") {
+      return { kind: "prerender", match };
+    }
+    if (!drained) {
+      return { kind: "timeout", reason: HANDLER_OUTPUT_TIMEOUT_REASON };
+    }
+    warnCaptureRefusedOnce(capture.key, NO_DOC_RECORD_REASON);
+    return { kind: "refused" };
+  }
+
+  // A handle encode that timed out stores "" (handle-snapshot.ts
+  // encodeHandleValue). With every handler push settled above, that only
+  // happens for a promise the walk does not reach (inside a Map, Set, or class
+  // instance), which never settles in time on a retry either.
+  if (!record.handles && recordSegmentsHaveHandles(record, freshHandleStore)) {
+    warnCaptureRefusedOnce(
+      capture.key,
+      "a handle value the handler pushed did not finish encoding into the doc " +
+        "record. A promise inside a Map, Set, or class instance is not awaited " +
+        "before the encode; push plain objects and arrays.",
+    );
+    return { kind: "refused" };
+  }
+
+  const { fragmentSegments } = await import("../cache/segment-codec.js");
+  const fragments = new Map(
+    (await fragmentSegments(record.segments)).map((s) => [s.id, s]),
+  );
+  return {
+    kind: "record",
+    match: {
+      ...match,
+      segments: match.segments.map((segment) => {
+        const fragment =
+          segment.type === "loader" ? undefined : fragments.get(segment.id);
+        return fragment
+          ? {
+              ...segment,
+              component: fragment.component,
+              layout: fragment.layout,
+              loading: fragment.loading,
+            }
+          : segment;
+      }),
+    },
+  };
+}
+
+/** Whether the handle store holds handler pushes for the record's segments. */
+function recordSegmentsHaveHandles(
+  record: CachedEntryData,
+  handleStore: HandleStore,
+): boolean {
+  for (const segment of record.segments) {
+    const id = segment?.metadata?.id;
+    if (id === undefined) continue;
+    const data = handleStore.getDataForSegment(id, true);
+    for (const name in data) {
+      if (data[name]!.length > 0) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1438,6 +1860,7 @@ function snapshotReaders(
  *     set a shell entry should be invalidatable by (loader tags belong to holes).
  *   - _transitionWhen: a fresh [] so the capture's transition gating is its own.
  *   - _shellCaptureRun: true — the switch loaders/cookies/headers guards read.
+ *   - _dynamic / dynamic(): an own latch the capture reads.
  *   - _metricsStore: undefined so the capture never appends to the foreground's
  *     (already-finalized) metrics.
  *   - _renderBarrier family: an own barrier wired to the fresh handle store
@@ -1450,6 +1873,8 @@ function snapshotReaders(
  * capture guard is load-bearing). Middleware is NOT re-run: it already ran for the
  * triggering request, and the derived context inherits its post-middleware state
  * (guarding is serve-time; the shell is never served without the full chain).
+ * After the match, {@link settleCaptureRecord} writes the doc record and the
+ * capture renders from it.
  *
  * A FRESH context (and match/render) per attempt is what makes the retry sound:
  * the second attempt is a clean capture, not a resumption of the first.
@@ -1477,23 +1902,67 @@ async function attemptCapture(
   await settleTrackedBackgroundTasks(reqCtx, SHELL_CAPTURE_WRITE_BARRIER_MS);
   stats.barrierWaitMs = Math.round(performance.now() - barrierStart);
 
-  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(
+  const derivation = deriveShellCaptureContext(
     reqCtx,
     descriptor,
     descriptor.navigationOnly ? { request, url } : undefined,
   );
+  const { derivedCtx, freshHandleStore } = derivation;
   const captureStartedAt = Date.now();
 
   return runWithRequestContext(derivedCtx, async () => {
-    const match = await ctx.router.match(request, { env });
+    // One deadline for the whole capture (see
+    // PartialPrerenderProps.captureTimeout): the match (handlers, and the
+    // loaders they await), then the record, then the prerender with what is
+    // left.
+    const deadline =
+      Date.now() + (descriptor.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS);
+    const matched = await withinDeadline(
+      ctx.router.match(request, { env }),
+      deadline,
+    );
+    if (!matched.done) {
+      noShellCauses.set(
+        descriptor.key,
+        "the handlers (or a loader a handler awaits) did not return within " +
+          "ppr.captureTimeout",
+      );
+      return "no-shell";
+    }
+    const match = matched.value;
     // A route that redirects has no shell to capture — bail (no store write, no
     // retry: a redirect is deterministic).
     if (match.redirect) return "redirect";
 
     setRequestContextParams(match.params, match.routeName);
 
-    const payload = buildFullPayload(
+    const settleStart = performance.now();
+    const settled = await settleCaptureRecord(
       match,
+      derivation,
+      descriptor,
+      deadline,
+    );
+    stats.recordSettleMs = Math.round(performance.now() - settleStart);
+    if (
+      process.env.NODE_ENV !== "production" &&
+      settled.kind === "record" &&
+      stats.recordSettleMs >= SHELL_CAPTURE_BAKE_WARN_MS
+    ) {
+      warnBakeCostOnce(
+        descriptor.key,
+        "the handler output (promises it passes or pushes, async server components)",
+        stats.recordSettleMs,
+      );
+    }
+    if (settled.kind === "refused") return "refused";
+    if (settled.kind === "timeout") {
+      noShellCauses.set(descriptor.key, settled.reason);
+      return "no-shell";
+    }
+
+    const payload = buildFullPayload(
+      settled.match,
       ctx,
       url,
       derivedCtx,
@@ -1517,16 +1986,56 @@ async function attemptCapture(
     // content (and tags propagated by async cache()/"use cache" reads) lands after
     // this synchronous construction point, so snapshotting here dropped it — the
     // shell-tag snapshot must sit behind the quiesce gate (issue #676).
-    return captureAndStoreShell(
+    const outcome = await captureAndStoreShell(
       ssrModule,
       flightStage.stream,
       freshHandleStore,
       derivedCtx,
-      descriptor,
+      {
+        ...descriptor,
+        captureTimeout: Math.max(1, deadline - Date.now()),
+      },
       stats,
       captureStartedAt,
     );
+    if (outcome === "no-shell" && Date.now() >= deadline) {
+      noShellCauses.set(
+        descriptor.key,
+        "the shell render did not finish within what ppr.captureTimeout left " +
+          `after the handler output settled (${stats.recordSettleMs}ms)`,
+      );
+    }
+    return outcome;
   });
+}
+
+/**
+ * Race `work` against an absolute deadline, keeping its value. The losing
+ * work is not cancelled (a router match has no abort signal); callers that
+ * lose do not start it again (runShellCapture skips its in-place retry).
+ */
+export async function withinDeadline<T>(
+  work: Promise<T>,
+  deadline: number,
+): Promise<{ done: true; value: T } | { done: false }> {
+  // The losing branch keeps running; a late rejection must not surface.
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<{ done: false }>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ done: false }),
+      Math.max(0, deadline - Date.now()),
+    );
+    (timer as { unref?: () => void }).unref?.();
+  });
+  try {
+    return await Promise.race([
+      work.then((value) => ({ done: true as const, value })),
+      expired,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -1534,13 +2043,20 @@ async function attemptCapture(
  * shared by BOTH shell producers: the runtime background capture
  * (attemptCapture, producer A) and the build-time prerender shell capture
  * (prerender/build-shell-capture.ts, producer B — issue #699). One
- * implementation so the capture semantics — the nested-thenable mask funnel,
- * handler-liveness bookkeeping, snapshot recording, the implicit doc-cache
- * scope — cannot drift between producers.
+ * implementation so the capture semantics — the handle push funnel (handler
+ * pushes settled, loader pushes masked), the capture guards, snapshot
+ * recording, the implicit doc-cache scope — cannot drift between producers.
  */
 export interface CaptureContextDerivation {
   derivedCtx: RequestContext;
   freshHandleStore: HandleStore;
+  /**
+   * Resolves once every handler handle push has settled at any depth of
+   * plain objects and arrays (top-level promise, then the promises nested
+   * in what it resolved to). The record-first step awaits it before the doc
+   * record encodes its handles, so that encode never races a pending value.
+   */
+  handlerPushesSettled: () => Promise<void>;
 }
 
 /**
@@ -1558,52 +2074,53 @@ export function deriveShellCaptureContext(
 ): CaptureContextDerivation {
   const freshHandleStore = createHandleStore();
   freshHandleStore.onError = reqCtx._handleStore.onError;
-  // Shape = liveness for handles, exactly as for bake-lane loader containers
-  // (mask-nested.ts): nested thenables in a pushed handle container are
-  // per-request by declaration, so the CAPTURE's copy masks them — the
-  // consuming boundary postpones as a hole regardless of settle timing,
-  // instead of a fast-settling nested value baking into the shared shell. A
-  // TOP-LEVEL promise push keeps its documented bake contract (awaited
-  // pre-SSR, gate held open for it), but the container it RESOLVES to gets
-  // the same nested masking. Wrapping THIS store's push is the single funnel:
-  // the store exists only for this capture attempt, so every push wrapper
-  // (setupLoaderAccess, createUseFunction, prerender) inherits the policy and
-  // the foreground store is untouched.
-  // Shell fast path bookkeeping on the same funnel:
-  //  - handleLiveness: a nested thenable in a push made OUTSIDE a DSL loader
-  //    scope (attribution read synchronously at push time — handler bodies,
-  //    handler-invoked ctx.use(loader) callbacks, defers) declares
-  //    handler-layer per-request data. Its mask is a hole only a handler
-  //    re-run can fill, so the entry must not serve handler-free
-  //    (ShellCacheEntry.handlerLiveHoles). Still-pending top-level handler
-  //    pushes at the putShell barrier count too — their liveness is unknowable.
-  //  - loader-push tag: DSL-loader pushes re-run fresh on every HIT, so their
-  //    captured values must NOT enter a segment record's handle snapshot
-  //    (replay would duplicate the fresh push, and their masked nested
-  //    promises would stall the Flight handle encode to its timeout). The
-  //    store tags them by array position (HandleStore.push loaderPush), which
-  //    covers primitives, and only the captureHandles cache-write call site
-  //    excludes tagged pushes — every other getDataForSegment consumer (the
-  //    render-barrier snapshot, prerender) sees every push. Unflagged loaders
-  //    never execute at capture; the tagged pushes come from loaders an
-  //    ssr:false loader awaits via ctx.use and from loader-cache replays
-  //    (loader-cache.ts replayLoaderHandles), both re-run on a HIT.
-  //    EXCEPTION — bake-lane { ssr: false } loaders: they execute at capture
-  //    (fresh.ts awaits them), their pushes are in the captured HTML (<head>
-  //    title/meta, useHandle echoes), and the stored snapshot carries the same
-  //    values so a HIT's handle data is guaranteed to match its own prelude.
-  //    They still re-run on every HIT (resolveLoaderData, loader-cache.ts), so
-  //    each kept push carries its loader as `owner` (HandleStore.push): the
-  //    record stores it (CachedEntryData.handleOwners), the HIT restores it
-  //    through pushReplayed, and the re-run's live pushes replace the
-  //    restored copies in place. Only settled, thenable-free pushes
-  //    qualify — a deferred (thenable) push or one with masked nested promises
-  //    keeps the exclusion so the handle encode cannot stall on a
-  //    never-resolving mask.
-  const handleLiveness = {
-    holes: false,
-    pendingPushes: 0,
-    handlerInvokedLoader: false,
+  // The capture handle store's push is the single funnel every push wrapper
+  // (setupLoaderAccess, createUseFunction, prerender) goes through; the store
+  // exists only for this capture attempt, so the foreground store is
+  // untouched. Two lanes:
+  //  - HANDLER pushes (outside a DSL loader scope: handler bodies, handler-
+  //    invoked ctx.use(loader) bodies, defers) are handler output, baked like
+  //    everything else the handler layer produces. They pass through
+  //    unmasked; settleHandlerPush tracks each one so the record-first step
+  //    (settleCaptureRecord) can wait for its promises, top-level and nested,
+  //    before the doc record encodes the handles a HIT replays. A route
+  //    cache() record's restore (handle-snapshot.ts restoreHandles) lands
+  //    here too: a value it restores through pushReplayed keeps that loader
+  //    as owner, so a HIT that runs the loader replaces it, not appends.
+  //  - DSL-LOADER pushes. Only bake-lane { ssr: false } loaders and the
+  //    loaders they await via ctx.use execute at capture (live loaders are
+  //    masked), their pushes are in the captured HTML (<head> title/meta,
+  //    useHandle echoes), and a HIT does not run a promise-free bake-lane
+  //    loader (loader-cache.ts), so the stored record carries them: each
+  //    settled, thenable-free push from a loader body keeps that loader as
+  //    `owner` (HandleStore.push), the record stores it
+  //    (CachedEntryData.handleOwners), and the HIT restores it through
+  //    pushReplayed; a loader that does run on the HIT (a promise-carrying
+  //    bake-lane loader, a live loader awaiting it) replaces its restored
+  //    copies in place. Nested thenables stay masked (the promise shape is
+  //    the liveness declaration, mask-nested.ts). A deferred (thenable) push,
+  //    one with masked nested promises, or one outside a loader body (a
+  //    loader-cache replay names its loader: pushReplayed below) stays
+  //    tagged (HandleStore.push loaderPush) so the
+  //    handle encode cannot stall on a never-resolving mask; only the
+  //    captureHandles cache-write call site excludes tagged pushes, and the
+  //    loader records then carry `runs: 1` so a HIT runs those bodies for
+  //    them.
+  const handlerPushSettles: Promise<void>[] = [];
+  // A replay (a loader-cache HIT, loader-cache.ts replayLoaderHandles, or a
+  // route cache() record's owned values, restoreHandles) re-pushes a loader's
+  // recorded values through pushReplayed, which calls push() outside any
+  // loader body: name that loader for the funnel so the record keeps them
+  // under it too.
+  let replayOwner: string | undefined;
+  const rawPushReplayed = freshHandleStore.pushReplayed.bind(freshHandleStore);
+  freshHandleStore.pushReplayed = (handleName, segmentId, value, loaderId) => {
+    replayOwner = loaderId;
+    try {
+      rawPushReplayed(handleName, segmentId, value, loaderId);
+    } finally {
+      replayOwner = undefined;
+    }
   };
   const rawCapturePush = freshHandleStore.push.bind(freshHandleStore);
   freshHandleStore.push = (
@@ -1611,49 +2128,55 @@ export function deriveShellCaptureContext(
     segmentId: string,
     value: unknown,
   ) => {
-    const pushedInLoaderScope = isInsideLoaderScope();
-    // Single walk: the mask reports whether it masked any nested thenable
-    // (the liveness declaration) while building the capture copy.
+    if (!isInsideLoaderScope()) {
+      handlerPushSettles.push(settleNestedThenables(value));
+      rawCapturePush(handleName, segmentId, value, false, replayOwner);
+      return;
+    }
     let maskedNestedThenable = false;
-    const maskWithLiveness = (v: unknown): unknown => {
+    const mask = (v: unknown): unknown => {
       const report: MaskReport = { thenable: false };
       const masked = maskNestedContainerThenables(v, undefined, report);
-      if (report.thenable) {
-        maskedNestedThenable = true;
-        if (!pushedInLoaderScope) handleLiveness.holes = true;
-      }
+      if (report.thenable) maskedNestedThenable = true;
       return masked;
     };
     let masked: unknown;
-    let loaderPush = pushedInLoaderScope;
+    let loaderPush = true;
     let owner: string | undefined;
     if (isThenable(value)) {
-      if (!pushedInLoaderScope) {
-        handleLiveness.pendingPushes++;
-        const settle = () => handleLiveness.pendingPushes--;
-        value.then(settle, settle);
-      }
       // Deferred (thenable) loader pushes always keep the tag — the
-      // bake-lane carve-out below is for settled values only.
-      masked = value.then(maskWithLiveness);
+      // carve-out below is for settled values only.
+      masked = value.then(mask);
     } else {
-      masked = maskWithLiveness(value);
-      if (loaderPush && !maskedNestedThenable) {
-        // Bake-lane { ssr: false } loader pushes are shell material (see the
-        // funnel comment above): untagged, the stored snapshot keeps them
-        // when settled and thenable-free; everything else stays tagged.
-        const bodyLoaderId = getCurrentLoaderBodyId();
-        loaderPush =
-          bodyLoaderId === undefined ||
-          derivedCtx._awaitBeforeFlushLoaderIds?.has(bodyLoaderId) !== true;
+      masked = mask(value);
+      if (!maskedNestedThenable) {
+        // A settled, thenable-free push from a loader body is shell
+        // material (see the funnel comment above): only bake-lane loaders
+        // and the loaders they await run at capture, and a HIT does not run
+        // a promise-free bake-lane loader (loader-cache.ts), so the record
+        // keeps the push under the loader that made it.
+        const bodyLoaderId = getCurrentLoaderBodyId() ?? replayOwner;
+        loaderPush = bodyLoaderId === undefined;
         if (!loaderPush) owner = bodyLoaderId;
       }
     }
+    // A push the record cannot keep reaches a HIT only from a live run of
+    // its loader, so the loader records ask for one (runs: 1).
+    if (loaderPush) derivedCtx._shellCaptureUnrecordedLoaderPush = true;
     rawCapturePush(handleName, segmentId, masked, loaderPush, owner);
   };
 
+  // The capture reuses the record keys its request resolved (CacheScope
+  // resolveKeyFrom), read through the prototype: the map must exist on the
+  // request before the derivation, or the capture would start its own and
+  // run key() under the capture guard.
+  reqCtx._resolvedCacheKeys ??= new Map();
   const derivedCtx: RequestContext = Object.assign(Object.create(reqCtx), {
     _handleStore: freshHandleStore,
+    // The capture notes the route records it reads or writes itself; the
+    // foreground's (a partial request's `partial:` record, say) are not the
+    // ones this shell is captured from.
+    _routeRecordWindow: undefined,
   });
   if (identity) {
     derivedCtx.request = identity.request;
@@ -1685,6 +2208,16 @@ export function deriveShellCaptureContext(
   // foreground's never reach it.
   derivedCtx._renderErrors = [];
   derivedCtx._shellCaptureRun = true;
+  // Own dynamic() latch. The inherited method writes the FOREGROUND context
+  // (its closure), which already served, and nothing read it for a runtime
+  // capture: handler code that opts out after an await (a handler promise the
+  // capture now waits for) must refuse THIS capture instead
+  // (settleCaptureRecord and captureAndStoreShell read _dynamic). The ppr
+  // header latch is left alone: a capture's response is never sent.
+  derivedCtx._dynamic = false;
+  derivedCtx.dynamic = (): void => {
+    derivedCtx._dynamic = true;
+  };
   // Own-property reset: an inherited flag would make serializeSegments store
   // a double-encoded fragment. No current arming site reaches a capture
   // render (kept as defense-in-depth for a future one).
@@ -1720,7 +2253,6 @@ export function deriveShellCaptureContext(
   // forwarding to the parent so the write persists and the worker stays alive),
   // then captureAndStoreShell awaits them before draining. Reads that HIT are
   // recorded synchronously during the render and need none of this.
-  derivedCtx._shellCaptureHandleLiveness = handleLiveness;
   if (reqCtx._cacheStore) {
     const recordingStore = new RecordingShellStore(reqCtx._cacheStore);
     derivedCtx._cacheStore = recordingStore;
@@ -1729,12 +2261,13 @@ export function deriveShellCaptureContext(
       recordingStore.trackWrite(p);
       reqCtx.waitUntil(() => p);
     };
-    // Shell fast path (capture side): the implicit doc-cache scope makes the
+    // The doc record (capture side): the implicit doc-cache scope makes the
     // capture's match write ALL matched non-loader segments as one doc-keyed
     // segment record — into the snapshot only (SnapshotOnlySegmentStore), so
     // the record dies with the shell entry and the next capture's lookup
-    // still misses (handlers re-run on recapture). Routes deriving their own
-    // cache scope are untouched (resolveShellImplicitCacheScope).
+    // still misses (handlers re-run on recapture). A route deriving its own
+    // cache() scope keeps it, and recordShellCaptureDocRecord (cache-store.ts)
+    // writes the same record for it.
     derivedCtx._shellImplicitCache = {
       ttl: descriptor.ttl,
       swr: descriptor.swr,
@@ -1743,7 +2276,12 @@ export function deriveShellCaptureContext(
     };
   }
 
-  return { derivedCtx, freshHandleStore };
+  return {
+    derivedCtx,
+    freshHandleStore,
+    handlerPushesSettled: () =>
+      Promise.all(handlerPushSettles).then(() => undefined),
+  };
 }
 
 /**
@@ -1789,17 +2327,19 @@ async function captureAndStoreShell(
   // docs/design/ppr-shell-resume.md ("Loaders and handles").
   handleStore.seal();
 
-  // Handles contract, shell half ("nesting = liveness"): TOP-LEVEL pushed handle
-  // promises are BAKED into the shell — resolvedHandleStream awaits them before
-  // the payload's handles row emits. A pushed promise with real latency would lose
-  // the byte-quiet race (the pending handles row emits no bytes, the gate freezes,
-  // the row is dropped, SsrRoot suspends at the root), so the gate is HELD open
-  // until the same await completes: handlesBaked mirrors resolvedHandleStream's
-  // resolution (getData waits the tracked-handler barrier; resolveDeferredHandleValues
-  // awaits the top-level thenables). NESTED promises inside pushed containers are
-  // shallow-skipped by isThenable and never hold the gate — they stay holes.
-  // Bounded by maxWaitMs like every quiesce input (a defer hanging on a masked
-  // loader still ends in the sanity-gate refusal).
+  // TOP-LEVEL pushed handle promises are BAKED into the shell —
+  // resolvedHandleStream awaits them before the payload's handles row emits. A
+  // pushed promise with real latency would lose the byte-quiet race (the
+  // pending handles row emits no bytes, the gate freezes, the row is dropped,
+  // SsrRoot suspends at the root), so the gate is HELD open until the same
+  // await completes: handlesBaked mirrors resolvedHandleStream's resolution
+  // (getData waits the tracked-handler barrier; resolveDeferredHandleValues
+  // awaits the top-level thenables). On the runtime path settleCaptureRecord
+  // already waited for these (and for handler pushes' nested promises), so the
+  // hold is normally released at once. A DSL loader push's nested promises are
+  // masked and never hold the gate — they stay holes. Bounded by maxWaitMs like
+  // every quiesce input (a defer hanging on a masked loader still ends in the
+  // sanity-gate refusal).
   const handlesBaked = handleStore.getData().then(resolveDeferredHandleValues);
   // Bake-lane loader containers hold the gate the same way (loader-container-
   // bake): a boundary-less container with real latency (a 100ms layout loader)
@@ -1845,35 +2385,12 @@ async function captureAndStoreShell(
     () => {},
   );
 
-  // Deterministic identity-guard refusal, checked at BOTH exits below: the
-  // guard error either rejects the prerender itself (boundary-less segment —
-  // lands in the catch) or is swallowed into per-loader error UI (the render
-  // completes — caught after the try). One helper so the message and the
-  // "refused" mapping cannot drift between the two sites.
-  const refuseOnGuardTrip = (): "refused" | undefined => {
-    const fnName = reqCtx._shellCaptureGuardTripped;
-    if (!fnName) return undefined;
-    // Name the recorded source instead of hardcoding a lane. Under the
-    // consumption-lane rule, handler-INVOKED loader bodies are exempt from
-    // the guard (their value is a baked shared copy, mirroring cache()), so a
-    // trip can only come from a bake-lane SEGMENT loader or from non-loader
-    // handler/render code — the old blanket "bake-lane loader" attribution
-    // sent a live-lane debugging session down the wrong lane (issue #672).
-    const loaderId = reqCtx._shellCaptureGuardTrippedLoaderId;
-    const origin = loaderId
-      ? `segment loader "${loaderId}"`
-      : "handler/render code (no loader body was executing)";
-    warnCaptureRefusedOnce(
-      capture.key,
-      `${origin} called ${fnName}() during capture; identity must not bake into the shared shell. ` +
-        "Segment loader: drop ssr: false and read it under loading() or an inline <Suspense> " +
-        "(a nested promise does not help: its body still runs at capture). Handler/render " +
-        "code: read it in a live loader and consume it with useLoader. Exception: " +
-        "await ctx.use(loader) in a HANDLER bakes as a capture-time copy.",
-      PPR_LANE_HINT,
-    );
-    return "refused";
-  };
+  // Deterministic capture-guard refusal (refuseOnCaptureGuard), checked at
+  // BOTH exits below: the guard error either rejects the prerender itself
+  // (boundary-less segment — lands in the catch) or is swallowed into
+  // per-loader error UI (the render completes — caught after the try).
+  const refuseOnGuardTrip = (): "refused" | undefined =>
+    refuseOnCaptureGuard(capture.key, reqCtx) ? "refused" : undefined;
 
   // Dev diagnostics for a no-shell attempt (warnNullCaptureOnce): the stacks of
   // the tasks React reports as still pending at the capture's abort. React's
@@ -2027,6 +2544,8 @@ async function captureAndStoreShell(
       let serializeContainer:
         | typeof import("../cache/segment-codec.js").serializeResult
         | undefined;
+      // Capture-wide, read once: every record of this snapshot agrees.
+      const runs: 0 | 1 = reqCtx._shellCaptureUnrecordedLoaderPush ? 1 : 0;
       for (const [segmentKey, containerPromise] of loaderRecords) {
         const elided = await elideLoaderContainer(containerPromise);
         if (elided.state === "rejected") {
@@ -2079,7 +2598,11 @@ async function captureAndStoreShell(
               // without rescanning whether the pin can resolve immediately
               // (holes: 0) or must wait for the fresh run's live promises
               // (holes: 1). See ShellSnapshotLoaderValue.
-              value: { value: serialized, holes: elided.hasHole ? 1 : 0 },
+              value: {
+                value: serialized,
+                holes: elided.hasHole ? 1 : 0,
+                runs,
+              },
             });
           }
         } catch {
@@ -2099,27 +2622,19 @@ async function captureAndStoreShell(
     const renderErrors = reqCtx._renderErrors;
     if (renderErrors && renderErrors.length > 0) throw renderErrors[0];
 
-    // Record only what a HIT reads (issue #941): drop the item and response
-    // records no reader of this entry consumes. Before the size guard, so the
-    // cap measures what is stored.
-    const handlerLiveHoles = handlerLayerIsLive(
-      reqCtx._shellCaptureHandleLiveness,
-    );
-    const transitionWhen = reqCtx._transitionWhen?.length ? true : undefined;
+    // Record only what a HIT reads (issue #941): the doc record, plus what
+    // the bake-lane loaders a HIT runs read. Before the size guards, so they measure
+    // what is stored.
+    const docKey = reqCtx._shellImplicitCache?.docKey;
     let prunedRecords: string | undefined;
     if (recording && snapshot) {
-      const readers = snapshotReaders(
-        capture,
-        reqCtx,
-        recording,
-        snapshot,
-        !handlerLiveHoles && !transitionWhen,
-      );
-      if (readers) {
+      const readers = snapshotReaders(capture, snapshot, docKey);
+      if (readers && docKey !== undefined) {
         const { kept, pruned } = pruneShellSnapshot(
           snapshot,
           readers,
           recording.loaderKeys,
+          docKey,
         );
         if (pruned.length > 0) {
           prunedRecords = countSnapshotFamilies(pruned);
@@ -2129,40 +2644,104 @@ async function captureAndStoreShell(
     }
 
     // Snapshot size guard (issue #651): the snapshot duplicates every pinned
-    // cache value inside the shell entry, so a page over a large cache()
-    // segment can push the stored envelope toward store value limits (KV caps
-    // a value at 25 MiB) with no signal — the kv.put rejects deep inside
-    // waitUntil. Measure the serialized snapshot (UTF-8 bytes of the JSON that
-    // rides in the envelope) AFTER the loader family is appended, and over the
-    // cap store the shell WITHOUT it: pinned reads then fall back to the live
-    // store on a HIT (documented drift — hydration repairs a mismatch
-    // client-side, the pre-snapshot behavior), which beats losing the whole
-    // entry to a store-side write rejection. Reported once per key.
+    // cache value inside the shell entry. `maxSnapshotBytes` bounds the PINS
+    // (loader-family records and the item/response records loaders read);
+    // over it they are dropped and the entry keeps its doc record, so every
+    // HIT still replays the handler layer (the pins' loaders then read the
+    // live store: documented drift, repaired client-side). The doc record is
+    // exempt: without it a HIT could not serve at all. The whole entry is
+    // bounded separately below, by the store's value limit.
     if (snapshot && snapshot.length > 0) {
-      const snapshotBytes = SNAPSHOT_BYTE_ENCODER.encode(
-        JSON.stringify(snapshot),
-      ).length;
-      if (stats) stats.snapshotBytes = snapshotBytes;
+      const docRecord =
+        docKey !== undefined
+          ? snapshot.find((r) => r.family === "segment" && r.key === docKey)
+          : undefined;
+      const pins = docRecord
+        ? snapshot.filter((r) => r !== docRecord)
+        : snapshot;
+      const pinBytes =
+        pins.length > 0
+          ? SNAPSHOT_BYTE_ENCODER.encode(JSON.stringify(pins)).length
+          : 0;
+      if (stats) stats.snapshotBytes = pinBytes;
       const cap = capture.maxSnapshotBytes ?? DEFAULT_PPR_MAX_SNAPSHOT_BYTES;
-      if (snapshotBytes > cap) {
-        warnSnapshotOverCapOnce(capture.key, snapshotBytes, cap);
-        snapshot = undefined;
+      if (pinBytes > cap) {
+        warnSnapshotOverCapOnce(capture.key, pinBytes, cap);
+        snapshot = docRecord ? [docRecord] : undefined;
         if (stats) stats.snapshotSkipped = true;
       }
     }
 
-    // Shell tags snapshot at the WRITE BARRIER, not at stream construction: by
-    // here the capture has quiesced and the deferred cache writes were awaited, so
-    // tags recorded AFTER an await in async shell content (and by async
-    // cache()/"use cache" reads propagating through recordRequestTags) are
-    // included — issue #676. Loaders are masked, so loader cache tags — which
-    // belong to the holes, not the shell — never execute during capture and cannot
-    // contribute. Union with the route's static ppr.tags (capture.tags); the
-    // collected set is authoritative, the option only adds what the render cannot
-    // know.
-    const collected = [...reqCtx._requestTags];
+    // A capture that ran handlers must store its doc record: an entry without
+    // it could only be served by running handlers after the commit. Only a
+    // prerender-served capture (the prerender store supplies the handler
+    // layer on every HIT) or a navigation-only entry may lack it.
+    const storedDocKey = hasDocRecord(snapshot, docKey) ? docKey : undefined;
+    if (
+      storedDocKey === undefined &&
+      !capture.navigationOnly &&
+      reqCtx._pprReplayPostMatchReason !== "prerender-store"
+    ) {
+      warnCaptureRefusedOnce(capture.key, NO_DOC_RECORD_REASON);
+      return "refused";
+    }
+
+    // Shell tags: what the shell renders from, and nothing else. The handler
+    // layer is the doc record, whose tags are what its content recorded (the
+    // handlers, the server components its serialization rendered, the loaders
+    // they consumed, the handle values; cache-scope.ts collectRecordTags), or
+    // what a replayed route cache() record carried (recordSegmentTags). So a
+    // capture that rendered fresh and one that replayed the route's record
+    // store the same tags. Bake-lane loaders add theirs (SHELL_BAKE_TAG_OWNER):
+    // their data is in the shell, and no handler reads it. A live-lane loader
+    // never runs at capture, and one whose cache() config tags are recorded
+    // anyway is a hole's, so request-level tags are not the source. Read at
+    // the write barrier: the record settled and the deferred writes were
+    // awaited, so a tag recorded after an await (#676) is in. A capture
+    // without a doc record (the prerender store served its match) keeps the
+    // request-level set. Union with the route's static ppr.tags.
+    const docRecordValue = storedDocKey
+      ? (snapshot?.find((r) => r.family === "segment" && r.key === storedDocKey)
+          ?.value as CachedEntryData | undefined)
+      : undefined;
+    const collected = docRecordValue
+      ? [
+          ...(docRecordValue.tags ?? []),
+          ...getSegmentTags(reqCtx, SHELL_BAKE_TAG_OWNER),
+        ]
+      : [...reqCtx._requestTags];
     const union = new Set<string>([...(capture.tags ?? []), ...collected]);
     const shellTags = union.size > 0 ? [...union] : undefined;
+
+    // Whole-entry guard: the prelude, postponed state, snapshot, and tags
+    // travel in one stored value. Over the store's limit (Cloudflare KV:
+    // 25 MiB) the write would fail inside waitUntil and every MISS would
+    // recapture, so refuse here (the key backs off) instead. Measured as the
+    // stores write it (estimateShellEntryBytes): the postponed state rides a
+    // JSON head as an escaped string.
+    const entryBytes = estimateShellEntryBytes({
+      // A navigation-only entry stores no document half.
+      preludeBytes: capture.navigationOnly ? 0 : result.prelude.length,
+      postponed: capture.navigationOnly ? undefined : result.postponed,
+      snapshot,
+      tags: shellTags,
+      docKey: storedDocKey,
+      prunedRecords: snapshot ? prunedRecords : undefined,
+    });
+    if (stats) stats.entryBytes = entryBytes;
+    const entryLimit =
+      (capture.store ?? reqCtx._cacheStore)?.maxShellEntryBytes ??
+      DEFAULT_SHELL_ENTRY_MAX_BYTES;
+    if (entryBytes > entryLimit) {
+      warnCaptureRefusedOnce(
+        capture.key,
+        `the shell entry is ${entryBytes} bytes (prelude, postponed state, ` +
+          `snapshot, and head), over the store's ${entryLimit}-byte value limit. ` +
+          "Shrink the page the shell bakes, or move large regions under a live " +
+          "loader's boundary.",
+      );
+      return "refused";
+    }
 
     // Missing tags are valid: the shell follows TTL/SWR-only invalidation. Expose
     // that choice only to operators who enabled structured capture diagnostics.
@@ -2202,25 +2781,58 @@ async function captureAndStoreShell(
           snapshot,
           prunedRecords: snapshot ? prunedRecords : undefined,
           // The canonical doc segment record's key, published by the doc
-          // scope's cacheRoute during this capture's match (undefined when no
-          // doc record was recorded — the entry then never claims navigation
-          // replayability). Only meaningful alongside a snapshot.
-          docKey: snapshot ? reqCtx._shellImplicitCache?.docKey : undefined,
+          // scope's cacheRoute during this capture's match. Every HIT tail
+          // looks the record up by this key (serveShellHit fixedDocKey);
+          // undefined only for a prerender-served entry.
+          docKey: storedDocKey,
           navigationOnly: capture.navigationOnly,
-          // Handler-layer liveness folded at the barrier: nested thenables in
-          // handler-scoped pushes, handler pushes still pending (liveness
-          // unknowable), or a handler-invoked loader execution — any of them
-          // refuses the FAST PATH, not the capture. See
-          // _shellCaptureHandleLiveness.
-          handlerLiveHoles,
-          transitionWhen,
           createdAt: captureStartedAt,
         };
+        // Capped to the route record the capture used: the policy the
+        // store would apply (resolveTtl/resolveSwrWindow, as putShell does),
+        // made explicit.
+        const record = reqCtx._routeRecordWindow;
+        let window: { ttl?: number; swr?: number } = {
+          ttl: capture.ttl,
+          swr: capture.swr,
+        };
+        if (record) {
+          const capped = capShellWindow(
+            resolveTtl(capture.ttl, store.defaults, DEFAULT_FUNCTION_TTL),
+            resolveSwrWindow(capture.swr, store.defaults),
+            record,
+            Date.now(),
+          );
+          if (!capped) {
+            // Dead on arrival, not stored. A record this attempt wrote ran
+            // out between its write and the store, which a retry repeats:
+            // warn, refuse, back off. A record it read was near its end (its
+            // age, queue wait): `expired` retries on a fresh match.
+            const route = reqCtx._routeName ?? capture.key;
+            if (record.written) {
+              const sinceWriteMs =
+                Date.now() - (record.freshUntil - record.ttl * 1000);
+              warnRecordRanOutOnce(
+                route,
+                record,
+                `${sinceWriteMs} ms after this capture wrote it`,
+              );
+              return "refused";
+            }
+            expiredRecords.set(capture.key, {
+              route,
+              record,
+              captureMs: Date.now() - captureStartedAt,
+            });
+            return "expired";
+          }
+          window = capped;
+        }
         const storeWrite = await store.putShell(
           capture.key,
           entry,
-          capture.ttl,
-          capture.swr,
+          window.ttl,
+          window.swr,
           shellTags,
         );
         if (stats && storeWrite) stats.storeWrite = storeWrite;
@@ -2296,17 +2908,22 @@ export {
 
 /**
  * @internal Reset this module's per-isolate state: the capture stampede
- * guard, the refused-capture backoff, the once-per-key warnings and the
- * buffered debug events. Tests only (testing/serve-shell-request.ts
+ * guard, the refused-capture backoff, the recorded no-shell causes (which
+ * also skip a timed-out capture's in-place retry), the once-per-key warnings
+ * and the buffered debug events. Tests only (testing/serve-shell-request.ts
  * resetShellTestState), between requests, never while a capture runs.
  */
 export function resetShellCaptureStateForTests(): void {
   inFlightCaptures.clear();
   refusedCaptures.clear();
   warnedNullCaptures.clear();
+  noShellCauses.clear();
   noShellPendingStacks.clear();
   warnedRefusedCaptures.clear();
   warnedOverCapSnapshots.clear();
   warnedBakeCosts.clear();
+  warnedExpiredRecordRoutes.clear();
+  expiredRecords.clear();
+  storedCaptureSeqs.clear();
   lastCaptureEventsForTiming.clear();
 }

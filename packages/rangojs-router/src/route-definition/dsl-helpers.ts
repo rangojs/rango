@@ -909,12 +909,13 @@ const loader: RouteHelpers<any, any>["loader"] = (
   // resolved here, at DSL-evaluation time, for the same reason
   // loading({ ssr: false }) is (below) — per-isSSR entry caching makes the
   // flag request-mode-correct with no isSSR threading; see LoaderEntry.
+  // `bake` is the lane, the same on both evaluations.
   const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
-    ...(optionsGiven?.ssr === false && ctx.isSSR
-      ? { awaitBeforeFlush: true as const }
-      : {}),
+    ...(optionsGiven?.ssr === false && { bake: true as const }),
+    ...(optionsGiven?.ssr === false &&
+      ctx.isSSR && { awaitBeforeFlush: true as const }),
   };
 
   // Merge handler.use defaults (attached to the loader definition) with explicit use
