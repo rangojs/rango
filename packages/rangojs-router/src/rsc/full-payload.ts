@@ -13,6 +13,7 @@ import type { RscPayload } from "./types.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
+import type { Theme } from "../theme/types.js";
 import { gateTransitions } from "./transition-gate.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 
@@ -71,7 +72,30 @@ export function buildFullPayload(
       // entry knows whether to wrap hydration in React.StrictMode. Partial
       // (navigation) payloads omit it by design; StrictMode is decided once.
       strictMode: ctx.router.strictMode,
-      initialTheme: reqCtx.theme,
+      initialTheme: payloadInitialTheme(reqCtx),
     },
   };
+}
+
+/**
+ * The theme a document payload carries as `metadata.initialTheme` (the
+ * ThemeProvider's first state), read with no identity guard: it is the
+ * router's own read, not handler code (#971).
+ *
+ * A shell capture carries the no-cookie default, not the capturing visitor's
+ * theme. The shell and its ShellCacheEntry.initialTheme serve every visitor,
+ * and ThemeProvider re-syncs only from an explicitly stored theme, so a
+ * visitor with none kept the capturer's `useTheme().theme` for the page's
+ * lifetime. A visitor with a stored theme gets it pre-paint (theme script)
+ * and in the provider after mount.
+ */
+export function payloadInitialTheme(
+  reqCtx: Pick<
+    RequestContext<any>,
+    "_themeConfig" | "_shellCaptureRun" | "_readTheme"
+  >,
+): Theme | undefined {
+  const config = reqCtx._themeConfig;
+  if (!config) return undefined;
+  return reqCtx._shellCaptureRun ? config.defaultTheme : reqCtx._readTheme();
 }

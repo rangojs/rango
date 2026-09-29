@@ -114,9 +114,11 @@ export interface RunLoaderOptions<TEnv = any> {
   basename?: string;
   /**
    * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
-   * or `{ themes: [...] }`). Seeds the request's theme config so nested handler
-   * or cache contexts created from this loader observe it. Loaders themselves do
-   * not expose `ctx.theme`/`ctx.setTheme` (those are handler/middleware-only).
+   * or `{ themes: [...] }`). Seeds the request's theme config, so the loader
+   * body reads the visitor's theme (the Cookie on `request`, or the default)
+   * with `getRequestContext().theme`. That read is guarded like `cookies()`: it
+   * throws inside a `"use cache"` function (#971). The loader ctx has no
+   * `theme`/`setTheme` (those are handler/middleware-only).
    */
   theme?: ThemeConfig | true;
   /** Environment bindings surfaced as `ctx.env`. */

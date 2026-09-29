@@ -31,6 +31,7 @@ import {
 } from "./helpers.js";
 import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
+import { payloadInitialTheme } from "./full-payload.js";
 import {
   resolveSoftRedirectUrl,
   resolveExternalRedirect,
@@ -1366,7 +1367,7 @@ export function createRSCHandler<
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               strictMode: router.strictMode,
-              initialTheme: getRequestContext().theme,
+              initialTheme: payloadInitialTheme(getRequestContext()),
             },
           };
 

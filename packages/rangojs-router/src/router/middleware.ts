@@ -31,6 +31,8 @@ import {
 } from "../cache/taint.js";
 import { getCacheExecScope } from "../cache/cache-exec-scope.js";
 import { assertNonCacheableReadAllowed } from "../server/context.js";
+import { assertThemeReadAllowed } from "../server/cookie-store.js";
+import type { Theme } from "../theme/types.js";
 
 // Re-export types consumed through this module's path.
 export type {
@@ -39,6 +41,25 @@ export type {
   MiddlewareEntry,
   MiddlewareFn,
 } from "./middleware-types.js";
+
+/**
+ * Middleware ctx.theme: the visitor's theme cookie, guarded like the handler
+ * ctx.theme and cookies() (#971, #946), so a read inside a "use cache"
+ * function the middleware calls throws. Non-enumerable like the handler and
+ * request-context getters: a spread of the ctx (inside a "use cache"
+ * function, say) does not read it. One shared descriptor, so every ctx keeps
+ * the same property shape.
+ */
+const MIDDLEWARE_THEME_DESCRIPTOR: PropertyDescriptor = {
+  get(): Theme | undefined {
+    const reqCtx = _getRequestContext();
+    if (!reqCtx?._themeConfig) return undefined;
+    assertThemeReadAllowed(reqCtx, "ctx.theme");
+    return reqCtx._readTheme();
+  },
+  enumerable: false,
+  configurable: true,
+};
 
 const MIDDLEWARE_METRIC_DEPTH = 1;
 const POST_METRIC_MIN_DURATION_MS = 0.01;
@@ -320,10 +341,7 @@ export function createMiddlewareContext<TEnv>(
       responseHolder.response.headers.set(name, value);
     },
 
-    get theme(): MiddlewareContext<TEnv>["theme"] {
-      return _getRequestContext()?.theme;
-    },
-
+    // theme: MIDDLEWARE_THEME_DESCRIPTOR, defined after this literal.
     get setTheme(): MiddlewareContext<TEnv>["setTheme"] {
       return _getRequestContext()?.setTheme;
     },
@@ -361,6 +379,7 @@ export function createMiddlewareContext<TEnv>(
       }
     },
   };
+  Object.defineProperty(ctx, "theme", MIDDLEWARE_THEME_DESCRIPTOR);
   (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
 }

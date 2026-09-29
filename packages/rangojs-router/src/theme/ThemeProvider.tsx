@@ -133,12 +133,13 @@ export function ThemeProvider({
     setSystemTheme(getSystemTheme());
     // Re-sync state from an EXPLICITLY stored theme after mount. initialTheme
     // comes from the payload and can legitimately differ from the visitor's
-    // stored theme — on a PPR shell HIT it is deliberately the CAPTURE's theme
-    // (the resume tree must match the frozen prelude; see
-    // ShellCacheEntry.initialTheme). The FOUC script already applied the stored
-    // theme to the document pre-paint; this brings the provider state (toggles,
-    // useTheme readers) in line with it, and is the ONLY place the provider
-    // reads storage (the initializer must not — see the parity note above).
+    // stored theme — on a PPR shell HIT it is deliberately the CAPTURE's
+    // initialTheme, the no-cookie default (the resume tree must match the
+    // frozen prelude; see ShellCacheEntry.initialTheme). The FOUC script
+    // already applied the stored theme to the document pre-paint; this brings
+    // the provider state (toggles, useTheme readers) in line with it, and is
+    // the ONLY place the provider reads storage (the initializer must not —
+    // see the parity note above).
     // Only an explicit cookie/localStorage value re-syncs — a defaultTheme
     // fallback must not override a server-provided initialTheme when the
     // visitor never chose a theme.

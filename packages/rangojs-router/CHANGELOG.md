@@ -65,6 +65,61 @@ raw request input from `key()` (prefix, normalize or encode it), or a value
 containing `|` can name another partition's record
 ([#975](https://github.com/rangojs/rango/issues/975)).
 
+### Breaking: reading the visitor's theme on a `ppr` or `cache()` route refuses the capture or throws, like `cookies()` ([#979](https://github.com/rangojs/rango/pull/979))
+
+`ctx.theme` in a handler, `ctx.theme` in middleware and
+`getRequestContext().theme` are the visitor's theme cookie, but they were
+plain reads. A `ppr` shell, a route `cache()` entry or a `"use cache"` entry
+stored the first visitor's theme and served it to every later visitor until
+the entry expired (#971). The shell also stored the capturing visitor's theme
+as its `initialTheme`, so on a HIT a visitor with no stored theme kept that
+visitor's `useTheme().theme` for the life of the page.
+
+The reads are now guarded like `cookies()`, with the same exemptions:
+
+- On a `ppr` route, a handler that reads the theme has its shell capture
+  refused (warned once per URL). Every request stays an
+  `x-rango-shell: MISS` rendered with that visitor's theme.
+- Inside a `cache()` boundary or a `"use cache"` function the read throws. A
+  `cache()` route that reads it answers 500 where it used to answer 200.
+- The shell's `initialTheme` is the no-cookie default (`defaultTheme`),
+  whoever captured it. A visitor with a stored theme gets it pre-paint from
+  the theme script and in `useTheme()` after hydration.
+- The theme getters are read-only and non-enumerable. `{ ...ctx }` and
+  `Object.assign({}, ctx)` no longer carry `theme`, and `ctx.theme = x` throws
+  (it is typed `readonly`). Read `ctx.theme` directly.
+- A fetchable loader's ctx is a spread of the request context, so an untyped
+  JS fetchable loader no longer sees `ctx.theme` at runtime (`LoaderContext`
+  never typed it). Read `getRequestContext().theme` or the cookie instead.
+- `ctx.theme` is read when it is accessed, so after `ctx.setTheme()` in the
+  same request it returns the new theme, as the middleware ctx already did.
+
+Read the theme where it is per request: `useTheme()` in a client component,
+or a live loader (no `ssr: false`).
+
+```tsx
+// Before: the first visitor's theme was stored in the shell and served to all.
+path("/settings", (ctx) => <SettingsPage theme={ctx.theme} />, { ppr: true });
+
+// After: the page reads the theme on the client.
+path("/settings", () => <SettingsPage />, { ppr: true });
+```
+
+```tsx
+// settings-page.tsx
+"use client";
+import { useTheme } from "@rangojs/router/theme";
+
+export function SettingsPage() {
+  const { theme } = useTheme();
+  return <p>{`theme: ${theme}`}</p>;
+}
+```
+
+A server-side read moves into a live loader, read under `loading()`:
+`createLoader(async () => cookies().get("theme")?.value ?? "system")` (the
+cookie name is `storageKey`).
+
 ### Breaking: a route `cache()` entry is tagged by what its content recorded, so `updateTag()` evicts shells and documents built from it ([#965](https://github.com/rangojs/rango/pull/965))
 
 On a `ppr` route with its own `cache()`, the shell capture replays the route's

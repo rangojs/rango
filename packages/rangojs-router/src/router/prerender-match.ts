@@ -240,6 +240,8 @@ export async function matchForPrerender<TEnv = any>(
       waitUntil: () => {},
       onResponse: () => {},
       _onResponseCallbacks: [],
+      // No theme at build time: no request cookie.
+      _readTheme: () => undefined,
       setLocationState() {},
       _locationState: undefined,
       _renderBarrier: Promise.resolve(),
@@ -541,6 +543,8 @@ export async function renderStaticSegment<TEnv = any>(
     waitUntil: () => {},
     onResponse: () => {},
     _onResponseCallbacks: [],
+    // No theme at build time: no request cookie.
+    _readTheme: () => undefined,
     setLocationState() {},
     _locationState: undefined,
     _renderBarrier: Promise.resolve(),

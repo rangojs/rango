@@ -611,7 +611,10 @@ describe("captureAndStoreShell", () => {
     try {
       const putShell = makePutShell();
       const reqCtx = makeReqCtx(putShell);
-      reqCtx._shellCaptureGuardTripped = "cookies";
+      reqCtx._shellCaptureGuardTripped = {
+        surface: "cookies()",
+        fix: "Read it in a live loader.",
+      };
 
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
@@ -627,9 +630,12 @@ describe("captureAndStoreShell", () => {
         (c) => typeof c[0] === "string" && c[0].includes("/guard-trip:shell"),
       );
       expect(warnings).toHaveLength(1);
-      expect(warnings[0][0]).toContain("cookies()");
+      // The warning names the read and gives the fix the guard recorded.
+      expect(warnings[0][0]).toContain(
+        "handler/render code (no loader body was executing) read cookies() during capture",
+      );
       expect(warnings[0][0]).toContain("refused");
-      expect(warnings[0][0]).toContain("a loader without ssr: false");
+      expect(warnings[0][0]).toContain("Read it in a live loader.");
       expect(warnings[0][0]).toContain("The loader lane rule");
     } finally {
       warnSpy.mockRestore();
@@ -1048,7 +1054,7 @@ describe("captureAndStoreShell", () => {
     expect(entry.reactVersion).toBe(React.version);
   });
 
-  it("stores the capture context's theme as entry.initialTheme (resume theme fidelity)", async () => {
+  it("stores the no-cookie default as entry.initialTheme, not the capturing visitor's theme (#971)", async () => {
     const putShell = makePutShell();
     const ssrModule = {
       renderHTML: vi.fn(),
@@ -1058,9 +1064,12 @@ describe("captureAndStoreShell", () => {
       })),
     } as unknown as SSRModule;
     const reqCtx = makeReqCtx();
-    // The derived capture context's theme — buildFullPayload rendered with it,
-    // so the serve tail must replay it (ShellCacheEntry.initialTheme).
-    (reqCtx as any).theme = "light";
+    // The derived capture context: buildFullPayload rendered with the default
+    // (payloadInitialTheme), so the serve tail must replay the same value
+    // (ShellCacheEntry.initialTheme). The capturing visitor's cookie is dark.
+    reqCtx._shellCaptureRun = true;
+    reqCtx._themeConfig = { defaultTheme: "light" };
+    reqCtx._readTheme = () => "dark";
 
     await captureAndStoreShell(
       ssrModule,

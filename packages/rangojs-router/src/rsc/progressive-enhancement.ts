@@ -15,6 +15,7 @@ import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { gateTransitions } from "./transition-gate.js";
+import { payloadInitialTheme } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
@@ -444,7 +445,7 @@ function renderPeResponse<TEnv>(
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
       strictMode: ctx.router.strictMode,
-      initialTheme: getRequestContext().theme,
+      initialTheme: payloadInitialTheme(getRequestContext()),
     },
   };
 
@@ -646,7 +647,7 @@ function renderPeErrorResponse<TEnv>(
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
       strictMode: ctx.router.strictMode,
-      initialTheme: getRequestContext().theme,
+      initialTheme: payloadInitialTheme(getRequestContext()),
     },
   };
 

@@ -9,7 +9,11 @@
 
 import type { CookieOptions } from "../router/middleware-types.js";
 import { getRequestContext, _getRequestContext } from "./request-context.js";
-import { isInsideCacheScope, assertNotInsideShellCapture } from "./context.js";
+import {
+  isInsideCacheScope,
+  assertNotInsideShellCapture,
+  tripShellCaptureGuard,
+} from "./context.js";
 import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
 
 /**
@@ -110,7 +114,8 @@ type HeadersIterator<T> = IterableIterator<T>;
  * execution window — see cache-exec-scope.ts.)
  */
 function assertNotInsideCacheContext(fnName: string): void {
-  if (isInsideCacheExecScope()) {
+  const scope = refusingCacheScope();
+  if (scope === "use cache") {
     throw new Error(
       `${fnName}() cannot be called inside a "use cache" function. ` +
         `Request-scoped data (cookies, headers) varies per request but is not ` +
@@ -121,7 +126,7 @@ function assertNotInsideCacheContext(fnName: string): void {
         `  const data = await getCachedData(locale); // locale is now in the cache key`,
     );
   }
-  if (isInsideCacheScope()) {
+  if (scope === "cache()") {
     throw new Error(
       `${fnName}() cannot be called inside a cache() boundary. ` +
         `A cache() scope caches everything except loaders, so request-scoped ` +
@@ -129,6 +134,71 @@ function assertNotInsideCacheContext(fnName: string): void {
         `cached shell and served to other users. Read it inside a loader ` +
         `instead — loaders always run fresh on every request, even on a cache hit:\n\n` +
         `  loader("user", () => getUser(cookies().get("session")?.value));`,
+    );
+  }
+}
+
+/**
+ * The cache scope that refuses a request-scoped read here, or undefined. One
+ * owner of the predicates and their order (assertNotInsideCacheContext above),
+ * so cookies()/headers() and the theme reads refuse in the same places.
+ */
+function refusingCacheScope(): "use cache" | "cache()" | undefined {
+  if (isInsideCacheExecScope()) return "use cache";
+  if (isInsideCacheScope()) return "cache()";
+  return undefined;
+}
+
+/** The fix for a theme read that a cache() boundary or a ppr capture refuses. */
+const THEME_READ_FIX =
+  "On ppr and cache() routes, read the theme with useTheme() in a client " +
+  "component, or in a live loader (no ssr: false) with cookies().get(<storageKey>). " +
+  "The <html> theme class needs neither: the theme script sets it before paint. " +
+  "See the /theme skill (node_modules/@rangojs/router/skills/theme/SKILL.md).";
+
+/** The public reads of the visitor's theme cookie that assertThemeReadAllowed guards. */
+export type ThemeReadSurface = "ctx.theme" | "getRequestContext().theme";
+
+/**
+ * Guard for a read of the visitor's theme: the handler and middleware
+ * `ctx.theme` (handler-context.ts, middleware.ts) and `getRequestContext().theme`
+ * (request-context.ts). The theme is the visitor's theme cookie, so it is an
+ * identity read like cookies(): it refuses in the same scopes, in the same
+ * order (refusingCacheScope, then tripShellCaptureGuard in context.ts), with
+ * the same exemption (a loader body under cache(); at capture there is none).
+ * Before #971 each read was a plain cookie read, so a ppr shell, a cache()
+ * entry or a "use cache" entry stored the first visitor's theme and served it
+ * to every later visitor.
+ *
+ * `ctx` is the request context at read time, as cookies() reads it. The
+ * router's own payload read (payloadInitialTheme, rsc/full-payload.ts) goes
+ * through the unguarded `_readTheme()`.
+ */
+export function assertThemeReadAllowed(
+  ctx: unknown,
+  surface: ThemeReadSurface,
+): void {
+  const scope = refusingCacheScope();
+  if (scope === "use cache") {
+    throw new Error(
+      `${surface} cannot be read inside a "use cache" function. The theme ` +
+        `comes from the visitor's cookie and is not in the cache key, so the ` +
+        `first caller's theme would be served to later callers. Read it ` +
+        `before the cached function and pass it in as an argument.`,
+    );
+  }
+  if (scope === "cache()") {
+    throw new Error(
+      `${surface} cannot be read inside a cache() boundary. The theme comes ` +
+        `from the visitor's cookie, so the first visitor's theme would be ` +
+        `stored in the shared entry and served to everyone. ${THEME_READ_FIX}`,
+    );
+  }
+  if (tripShellCaptureGuard(ctx, surface, THEME_READ_FIX)) {
+    throw new Error(
+      `${surface} cannot be read while capturing a shared shell (ppr shell ` +
+        `capture). The captured shell is served to every visitor of this URL, ` +
+        `so the capturing visitor's theme would reach everyone. ${THEME_READ_FIX}`,
     );
   }
 }

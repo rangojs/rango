@@ -162,7 +162,7 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
     expect(loaderBody).toHaveBeenCalledTimes(1);
     // The guard flags the capture (settleCaptureRecord refuses on it) and
     // names the loader that read.
-    expect(derived._shellCaptureGuardTripped).toBe("cookies");
+    expect(derived._shellCaptureGuardTripped?.surface).toBe("cookies()");
     expect(derived._shellCaptureGuardTrippedLoaderId).toBe(
       "test#NavCartLoader672",
     );
@@ -178,7 +178,7 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
 
     expect(slotHandlerRan).toHaveBeenCalledTimes(1);
     expect(loaderBody).toHaveBeenCalledTimes(1);
-    expect(derived._shellCaptureGuardTripped).toBe("cookies");
+    expect(derived._shellCaptureGuardTripped?.surface).toBe("cookies()");
     expect(await settlesWithin(derived, 500)).toBe(true);
   });
 

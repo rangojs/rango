@@ -78,8 +78,8 @@ That loader exemption is also the default contract of `cache()`: cached UI plus 
 
 Rango's caches are built so a hit can't serve another user's data or lose a response side effect. Two guard models, both blocking anything that would be wrong on a hit:
 
-- **`cache()` boundary guard** — fires while the handler runs on a miss. `cookies()` and `headers()` throw (request-scoped data would bake into the shared shell); response side effects such as `ctx.headers.set()` and cookie writes throw even on a miss, because they'd be skipped on a hit and produce inconsistent responses. `ctx.set()` of a cacheable var is allowed — children are cached too and can read it.
-- **`"use cache"` exec guard** — the same request-scoped APIs and response writes throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`. The guard runs only on the cached path: with no store configured the function runs uncached and nothing throws.
+- **`cache()` boundary guard** — fires while the handler runs on a miss. `cookies()`, `headers()` and the visitor's theme (`ctx.theme`, `getRequestContext().theme`) throw (request-scoped data would bake into the shared shell); response side effects such as `ctx.headers.set()` and cookie writes throw even on a miss, because they'd be skipped on a hit and produce inconsistent responses. `ctx.set()` of a cacheable var is allowed — children are cached too and can read it.
+- **`"use cache"` exec guard** — the same request-scoped APIs (the theme reads included) and response writes throw inside the cached function, plus `ctx.set()`, `ctx.setTheme()`, `ctx.setLocationState()`. The guard runs only on the cached path: with no store configured the function runs uncached and nothing throws.
 
 Loaders are exempt from both — they always run fresh, so read request data there. Headers that must appear on every response belong in middleware, outside any boundary.
 

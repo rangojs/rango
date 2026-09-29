@@ -391,12 +391,13 @@ export interface ShellCacheEntry {
    */
   buildVersion?: string;
   /**
-   * The initialTheme the CAPTURE render was built with (the derived context's
-   * reqCtx.theme). The resume tail must render ThemeProvider with the SAME
+   * The initialTheme the CAPTURE render was built with: the no-cookie default
+   * (payloadInitialTheme, rsc/full-payload.ts), never the capturing visitor's
+   * theme (#971). The resume tail must render ThemeProvider with the SAME
    * initialTheme the frozen prelude was rendered with: React resume requires the
    * tree above the holes to match the prerendered tree, and initialTheme is
    * per-request METADATA, not part of the cached segments — a visitor whose
-   * theme differs from the capturer's would otherwise produce a divergent resume
+   * theme differs from the capture's would otherwise produce a divergent resume
    * tree (broken stitching/hydration). The visitor's real theme is applied
    * pre-paint by the FOUC script and re-synced from the cookie post-mount by
    * ThemeProvider.
