@@ -439,23 +439,27 @@ describe("PPR shell capture record vs loader handle pushes", () => {
     expect(withLabel(recorded, "baked-object")).toHaveLength(1);
   });
 
-  it("does not record an object pushed by a loader the bake-lane loader awaits", () => {
-    expect(withLabel(recorded, "awaited-object")).toHaveLength(0);
+  // A HIT does not run a promise-free bake-lane loader, so the loaders it
+  // awaited do not run either: the record keeps their settled pushes too.
+  it("records an object pushed by a loader the bake-lane loader awaits", () => {
+    expect(withLabel(recorded, "awaited-object")).toHaveLength(1);
   });
 
-  it("does not record a primitive pushed by a loader the bake-lane loader awaits", () => {
-    expect(recorded).not.toContain("awaited-string");
+  it("records a primitive pushed by a loader the bake-lane loader awaits", () => {
+    expect(recorded).toContain("awaited-string");
   });
 
-  it("does not record a bake-lane loader's pushes replayed from its own cache(), primitive or object", async () => {
+  // A HIT does not run the promise-free bake-lane loader, so the pushes its
+  // own cache() replayed at capture are recorded under it like live ones.
+  it("records a bake-lane loader's pushes replayed from its own cache(), primitive and object", async () => {
     // Foreground MISS writes the loader-cache entry; the capture then hits it.
     await serve("/ppr-cached-crumbs");
     const cached = await captureDocRecordCrumbs("/ppr-cached-crumbs");
 
     expect(shellCachedBakedLoaderBody).toHaveBeenCalledTimes(1);
     expect(cached).toContain("handler-string");
-    expect(cached).not.toContain("cached-baked-string");
-    expect(withLabel(cached, "cached-baked-object")).toHaveLength(0);
+    expect(cached).toContain("cached-baked-string");
+    expect(withLabel(cached, "cached-baked-object")).toHaveLength(1);
   });
 });
 

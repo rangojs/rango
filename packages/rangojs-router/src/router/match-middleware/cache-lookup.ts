@@ -107,6 +107,7 @@ import {
   createShellImplicitDocScope,
   type CacheScope,
 } from "../../cache/cache-scope.js";
+import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 
@@ -508,6 +509,15 @@ export function withCacheLookup<TEnv>(
       }
     }
 
+    // A document HIT tail replays the handler layer through the implicit doc
+    // scope and never runs a handler: without that scope (a context that lost
+    // the marker before the scope resolved), fail like a lookup miss instead
+    // of falling through to the handlers below.
+    const tailMarker = pipelineReqCtx?._shellImplicitCache;
+    if (tailMarker?.docTail && !ctx.cacheScope?.isShellImplicitDocScope) {
+      throw new ShellRecordUnavailableError(tailMarker.fixedDocKey);
+    }
+
     if (ctx.isAction || !ctx.cacheScope?.enabled) {
       yield* source;
       if (ms) {
@@ -585,6 +595,13 @@ export function withCacheLookup<TEnv>(
     }
 
     if (!cacheResult) {
+      // A document shell HIT tail replays the handler layer from the entry's
+      // doc record and must never run a handler behind the committed prelude:
+      // a record that did not hit (it failed to decode, or the entry lost it)
+      // ends the tail here; serveShellHit degrades the response.
+      if (replayMarker?.docTail) {
+        throw new ShellRecordUnavailableError(replayMarker.fixedDocKey);
+      }
       yield* source;
       if (ms) {
         ms.metrics.push({

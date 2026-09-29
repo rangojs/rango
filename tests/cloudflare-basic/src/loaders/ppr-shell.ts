@@ -1,16 +1,39 @@
 import { createHandle, createLoader } from "@rangojs/router";
 
-// Physics fixture: a handler-created promise passed as a PROP to a client
-// component that use()s it under its own <Suspense>. Genuinely pending real I/O
-// (~250ms) cannot win the capture's task-quantized quiet window, so the boundary
-// postpones — a HOLE by physics, not by registration. Deterministic value (no
-// drift; the resumed HTML and hydration payload come from the same tail render).
+// Handler-promise fixture: a handler-created promise (~250ms) passed as a
+// PROP to a client component that use()s it under its own <Suspense>. It is
+// handler output: the PPR capture waits for it and bakes the value into the
+// prelude, and every HIT replays it (the "PHYSICS" token is historical: this
+// used to be a hole). Deterministic value.
 const PPR_PHYSICS_DELAY_MS = 250;
 
 export function makePprPhysicsPromise(): Promise<string> {
   return new Promise((resolve) =>
     setTimeout(() => resolve("PHYSICS-HOLE-VALUE"), PPR_PHYSICS_DELAY_MS),
   );
+}
+
+// Nested handle push fixture: PprShellLayout pushes a container whose
+// `value` is a pending promise (~200ms). Handler output: the capture waits for
+// the nested promise and bakes it (a DSL loader's nested push would stay
+// live).
+export interface PprNestedHandleItem {
+  label: string;
+  value: Promise<string>;
+}
+
+export const PprNestedHandle = createHandle<
+  PprNestedHandleItem,
+  PprNestedHandleItem[]
+>((values) => values.flat());
+
+export function makePprNestedHandlePush(): PprNestedHandleItem {
+  return {
+    label: "nested",
+    value: new Promise((resolve) =>
+      setTimeout(() => resolve("NESTED-HANDLE-VALUE"), 200),
+    ),
+  };
 }
 
 // The live hole under the frozen PPR shell (docs/design/ppr-shell-resume.md).
@@ -201,24 +224,47 @@ export function makePprStaleReplayData(id: string): Promise<string> {
 }
 
 // Issue #888 fixture: a string handle pushed by an unflagged loader that an
-// ssr:false loader awaits. Both run at capture and re-run on every HIT, so the
-// push must stay out of the doc record the fast-path HIT replays. Default
-// (identity) collect: a duplicate push shows up as a second value.
+// ssr:false loader awaits. Both run at capture and neither runs on a HIT (the
+// promise-free ssr:false loader is served from the shell), so the doc record
+// keeps the push and the HIT restores it once. Default (identity) collect: a
+// duplicate push shows up as a second value.
 export const PprWarnings = createHandle<string>();
 
+/**
+ * Body runs of the /ppr-warnings loaders. A HIT runs neither: the
+ * promise-free bake-lane loader is served from the shell, and the loader it
+ * awaits with it.
+ */
+export const pprStorefrontRuns = { storefront: 0, stock: 0 };
+
 export const PprStockLoader = createLoader(async (ctx) => {
+  pprStorefrontRuns.stock += 1;
   ctx.use(PprWarnings)("Low stock");
   return { lowStock: true };
 });
 
 export const PprStorefrontLoader = createLoader(async (ctx) => {
+  pprStorefrontRuns.storefront += 1;
   const stock = await ctx.use(PprStockLoader);
   return { lowStock: stock.lowStock };
 });
 
+/** Body runs of the /ppr-nav-pin bake-lane loader. */
+export const pprNavPinRuns = { baked: 0 };
+
+/**
+ * A promise-free ssr:false loader on an entry with loading(): served from the
+ * shell, without running, on a document HIT and on a client navigation that
+ * replays the shell.
+ */
+export const PprNavPinLoader = createLoader(async () => {
+  pprNavPinRuns.baked += 1;
+  return { baked: `nav-pin-baked-${pprNavPinRuns.baked}` };
+});
+
 // Issue #929 fixture: the ssr:false loader pushes the string handle itself.
-// The doc record keeps the push (the prelude rendered it) and the loader
-// re-runs on every HIT; the live push must replace the restored one.
+// The doc record keeps the push (the prelude rendered it) and the HIT, which
+// does not run the promise-free loader, restores it once.
 export const PprRestockLoader = createLoader(async (ctx) => {
   ctx.use(PprWarnings)("Restock soon");
   return { restock: true };

@@ -61,19 +61,26 @@ Implementation notes (deltas from the sketch below, all deliberate):
   the HIT tail's derived context. A Flight error in that encode refuses the
   capture like a render error (issue #927).
 - **Handler-side consumption follows the CONSUMPTION-LANE RULE** (issue
-  #672 / #674, post-ship): `await ctx.use(loader)` in a HANDLER executes
-  during capture with identity reads permitted (the shell guard exempts
-  handler-invoked loader bodies — the cache() purity precedent), and the
-  value bakes as a capture-time copy wherever it renders as unshielded shell
-  material. The lane machinery in THIS doc is untouched: it applies to DSL
-  `loader()` SEGMENTS only (renderable loading() = masked live lane; no
-  loading() = bake lane WITH the guard active), and a registered live-lane
-  segment's mask still keeps its boundary a live hole even when a handler
-  also consumes the same loader. An earlier fix MASKED handler consumption
-  instead; it hung the capture's ring-3 cacheRoute serialization on the
-  never-settling slot component (cloudflare-basic /ppr-blog, React #418 on
-  every HIT) and was replaced by the rule. Pinned by semantic-matrix row
-  PPR3. See ppr-shell-resume.md ("Handler-side consumption") and
+  #672 / #674, post-ship; tightened by the handlers-baked change):
+  `await ctx.use(loader)` in a HANDLER executes during capture and the value
+  bakes as a capture-time copy, like everything else the handler produces.
+  Identity reads inside it (`cookies()`, `headers()`, a `{ cache: false }`
+  variable) now REFUSE the capture: the shell guard used to exempt
+  handler-invoked loader bodies (the cache() purity precedent), which was
+  safe only while a HIT re-ran handlers and so rendered that read per
+  visitor. Every HIT now replays the capture's doc record, so the exemption
+  would bake the capturing request's identity into every visitor's page; the
+  cache() purity guards keep theirs. The lane machinery in THIS doc is
+  untouched: it applies to DSL `loader()` SEGMENTS only (unflagged = masked
+  live lane; `ssr: false` = bake lane WITH the guard active). A registered
+  live-lane segment stays a live hole where it is read client-side with
+  `useLoader`; a handler's own `ctx.use` of the same loader bakes. An earlier
+  fix MASKED handler consumption instead; it hung the capture's ring-3
+  cacheRoute serialization on the never-settling slot component
+  (cloudflare-basic /ppr-blog, React #418 on every HIT) and was replaced by
+  the rule. Pinned by semantic-matrix row PPR3 and
+  `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` (`cookies() in a
+loader the handler awaits`). See ppr-shell-resume.md and
   docs/internal/execution-model.md ("The consumption-lane rule").
 - **Nested thenables are MASKED at capture — shape is the liveness
   declaration** (`maskNestedContainerThenables`, applied in loader-cache's
@@ -92,15 +99,22 @@ Implementation notes (deltas from the sketch below, all deliberate):
   handler-side consumption (the consumption-lane rule, PPR3) keeps real
   values. Pinned by the flipped `/shell-cache/settled` + `/ppr-shell/settled`
   e2e twins (outer pins, nested stays fresh) and loader-snapshot unit tests.
-  The SAME mask applies to pushed HANDLE containers via the capture store's
-  push wrap (shell-capture.ts): `ctx.use(H)({ x: promise })` holes its nested
-  promise regardless of settle timing (pinned by the fast-nested assertion in
-  the handles-pair e2e); a TOP-LEVEL promise push keeps its documented bake
-  contract, with the container it resolves to masked the same way. Handler
-  PROP promises (a promise passed into JSX from a path/layout/parallel
-  handler) remain physics-only: they are minted inside a server component's
-  render, invisible to any rango funnel until React renders them — per-request
-  data belongs in loaders or handles, where liveness is now guaranteed.
+  The SAME mask applies to a LOADER's pushed handle containers via the
+  capture store's push wrap (`deriveShellCaptureContext` in
+  shell-capture.ts): a push made inside a DSL loader scope,
+  `ctx.use(H)({ x: promise })`, holes its nested promise regardless of settle
+  timing. HANDLER pushes no longer take the mask: since the handlers-baked
+  change they are handler output, and the capture waits for their nested
+  promises (`settleNestedThenables` in
+  `src/router/segment-resolution/mask-nested.ts`) and bakes the settled
+  values into the doc record every HIT replays. A top-level promise push
+  keeps its documented bake contract. Handler PROP promises (a promise passed
+  into JSX from a path/layout/parallel handler) used to be holes by timing
+  alone (pending when the capture's quiet window closed); they are now baked
+  too: writing the doc record Flight-serializes the handler output and waits
+  for every promise in it. Per-request data belongs in live-lane loaders read
+  with `useLoader`, or in promises nested in an `ssr: false` loader's return
+  value.
 - **SETTLED markers (`$rangoLoaderSettled`) are now legacy-decode-only.** New
   captures cannot record them (nested thenables are masked pending), but
   snapshots stored before the mask still contain them; the overlay keeps
@@ -113,15 +127,23 @@ Implementation notes (deltas from the sketch below, all deliberate):
 
 ## The asymmetry this closes
 
-The PPR hole doctrine has one rule for promises: **a promise nested inside your
-data is never baked; the container settles.** Two of the three data lanes
-already follow it:
+> _Superseded for handlers and handler pushes (the handlers-baked change):_
+> the table below is the doctrine this design started from. Today a promise
+> nested in HANDLER output bakes — a promise a handler passes to a component,
+> and `push({ x: promise })` from handler code — because the capture waits
+> for it before writing the doc record. The rule below still holds for loader
+> data: a promise nested in an `ssr: false` loader's return value, or in a
+> push made from a loader, stays a hole.
 
-| Lane    | Container                                | Nested promise                    |
-| ------- | ---------------------------------------- | --------------------------------- |
-| Handler | awaited data BAKES                       | handed-over pending promise HOLES |
-| Handle  | top-level `push(promise)` awaited, BAKES | `push({ x: promise })` HOLES      |
-| Loader  | **whole value live OR capture refuses**  | streams (axis 1) / n/a (capture)  |
+The PPR hole doctrine had one rule for promises: **a promise nested inside your
+data is never baked; the container settles.** Two of the three data lanes
+followed it when this design was written:
+
+| Lane    | Container                                | Nested promise                                        |
+| ------- | ---------------------------------------- | ----------------------------------------------------- |
+| Handler | awaited data BAKES                       | handed-over pending promise HOLES (now: BAKES)        |
+| Handle  | top-level `push(promise)` awaited, BAKES | `push({ x: promise })` HOLES (now: from loaders only) |
+| Loader  | **whole value live OR capture refuses**  | streams (axis 1) / n/a (capture)                      |
 
 Loaders are the exception, and the exception has two faces:
 
@@ -238,9 +260,9 @@ Two sub-edges:
 > the shipped guard stamps `_shellCaptureGuardTripped` before throwing, and
 > the capture refuses whenever the flag is set, so an identity read inside a
 > nested promise that runs during capture refuses too; the first sub-edge does
-> not hold. The shipped refusal warning (`refuseOnGuardTrip` in
-> `shell-capture.ts`) therefore advises dropping `ssr: false` (the live lane)
-> or moving the read into a separate unflagged loader, not a nested promise.
+> not hold. The shipped refusal warning (`refuseOnCaptureGuard` in
+> `shell-capture.ts`) therefore advises reading the value in a loader without
+> `ssr: false` (the live lane) consumed with `useLoader`, not a nested promise.
 
 ### 3. HIT parity: extend the capture data snapshot with a loader family
 
@@ -251,29 +273,57 @@ with the prelude — hydration mismatch. Same problem the capture data snapshot
 already solves for ring-1/ring-3 reads; loader containers become a third
 recorded family.
 
+> _Since the handlers-baked change:_ a HIT's Flight render no longer runs
+> handlers; it replays the handler layer from the entry's doc record. The
+> bake-lane loaders are now the only shell material a HIT still executes, so
+> the loader family (plus the item/response records those loaders read) is
+> what the snapshot pins besides the doc record (`pruneShellSnapshot` in
+> `src/cache/shell-snapshot.ts`).
+
 - **Recording.** When the capture's tree-build await settles a no-`loading()`
   loader, record `(family: "loader", key: segmentId + loaderId, value:
 container-with-promise-paths-elided)` into the same
   `ShellCacheEntry.snapshot` array (`shell-snapshot.ts`). Promise-valued paths
   are recorded as markers, not values — they are holes, not shell material.
-- **Seeding.** On a HIT the loader RUNS FRESH, and the recorded container is
-  OVERLAID: every recorded (non-promise) path takes the snapshot value;
-  promise-valued paths keep the fresh run's promises. The prelude's baked
-  bytes and the payload's container fields agree by construction; the holes
-  stay live.
+- **Seeding.** On a HIT a hole-carrying loader RUNS FRESH, and the recorded
+  container is OVERLAID: every recorded (non-promise) path takes the snapshot
+  value; promise-valued paths keep the fresh run's promises. The prelude's
+  baked bytes and the payload's container fields agree by construction; the
+  holes stay live. A hole-free loader does not run at all (next bullet).
 - **Pin-first for hole-free records.** Each loader record carries a
   capture-computed hole bit (`ShellSnapshotLoaderValue.holes`, from elide's
   walk — no per-HIT rescan). A record WITH holes gates the overlay on the
   fresh run, because only the loader body can mint the live nested promises
   the markers re-slot. A hole-free record resolves the payload promise
-  IMMEDIATELY from the pin: the fresh values were discarded either way
-  (recorded paths win wholesale), so gating on them only stalled the HIT
-  tail for the loader body's full latency. The fresh run still executes —
-  side effects and cache read-through writes are preserved — but ungated and
-  lifetime-extended (`waitUntil`), and its REJECTION is swallowed: the pin
-  already matches the prelude, which an error value never could (the gated
-  path's fresh-rejection divergence remains only for hole-carrying records).
-  A record stored before the bit existed reads as hole-carrying and keeps the
+  IMMEDIATELY from the pin, and the loader body does NOT run: a HIT is
+  rendered from the shell, like the handler layer it replays, so a live value
+  would be discarded (recorded paths win wholesale) and a body run only cost a
+  backend call per HIT. It used to run ungated in the background (`waitUntil`)
+  for side effects and cache read-through writes; now those happen once per
+  capture. The pushes such a run delivered are recorded instead: the capture
+  keeps every settled, thenable-free push of a loader body (the loader's own,
+  those of loaders it awaits via `ctx.use`, and a loader-cache replay's,
+  which the capture store's `pushReplayed` names) under its loader
+  (`CachedEntryData.handleOwners`), and the HIT restores them. A push the
+  capture cannot keep (a deferred push, one with masked nested promises)
+  sets `runs: 1` on the loader records
+  (`ShellSnapshotLoaderValue.runs`), and those bodies still run in the
+  background, rejection swallowed, so the push reaches the page; a record
+  written with `runs: 0` does not run, and one without the bit (written
+  before it, and lacking the pushes a capture now records) reads as
+  `runs: 1`. A route `cache()` record's owned values that a capture restores
+  keep their owner the same way (the funnel's handler lane reads the
+  `pushReplayed` owner), so a HIT that runs the loader replaces them instead
+  of adding a copy. The seed is also armed for a PPR partial replay, decoded
+  when its doc record hits (`matchPartialWithPprReplay`'s `onHit`, which the
+  lookup awaits before the loaders resolve), so a client navigation matches
+  the document HIT: hole-free loaders are served from the pin and do not run,
+  hole-carrying ones run with their baked paths pinned. Before, a navigation
+  ran every loader and served its fresh values. The partial path passes the
+  bake key by the loader's own flag (`LoaderEntry.bake`, set on navigation
+  evaluations too, unlike `awaitBeforeFlush`), so an `ssr: false` loader on
+  an entry with `loading()` pins there exactly as on the document. A record
+  stored before the hole bit existed reads as hole-carrying and keeps the
   gated path; TTL ages those out.
 - **Pin-first drops fresh-only keys — a deliberate contract divergence.** The
   gated overlay passes fresh-only object keys through ("they cannot

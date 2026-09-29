@@ -7,7 +7,13 @@ import type { LoaderDefinition } from "@rangojs/router";
 // @badge parallel slot registers; the slot's own LoaderBoundary is the Suspense
 // boundary the capture postpones at, so this renders the frozen fallback in the
 // prelude and the live value in the resumed tail.
-export function ShellBadge({ loader }: { loader: LoaderDefinition<string> }) {
+export function ShellBadge({
+  loader,
+  testId = "shell-badge-value",
+}: {
+  loader: LoaderDefinition<string>;
+  testId?: string;
+}) {
   const { data } = useLoader(loader);
-  return <span data-testid="shell-badge-value">{data}</span>;
+  return <span data-testid={testId}>{data}</span>;
 }

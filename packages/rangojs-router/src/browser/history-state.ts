@@ -83,6 +83,29 @@ export function pushHistoryWithIdx(
 }
 
 /**
+ * The forced-MISS reload marker (`SHELL_MISS_PARAM` in rsc/shell-serve.ts,
+ * which the browser bundle must not import): a degraded PPR shell HIT
+ * reloads the page with it, and the server renders a marked request like a
+ * cache miss.
+ */
+export const SHELL_MISS_MARKER: string = "_rsc_shell";
+
+/**
+ * Drop the forced-MISS marker from the address bar at boot, keeping the
+ * history entry's state (initBrowserApp calls it before any location read).
+ * Left in place, a refresh or a shared link would stay off the shell and the
+ * app's search params would carry it. The server strips the same marker from
+ * the request before rendering (shell-serve.ts withoutShellMissMarker), so
+ * the page was rendered for the clean URL and the hydrating client agrees.
+ */
+export function stripShellMissMarker(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(SHELL_MISS_MARKER)) return;
+  url.searchParams.delete(SHELL_MISS_MARKER);
+  window.history.replaceState(window.history.state, "", url.href);
+}
+
+/**
  * Merge server-set location state into the current history entry.
  * Replaces the current history state and dispatches notification event
  * so useLocationState hooks re-read from history.state.

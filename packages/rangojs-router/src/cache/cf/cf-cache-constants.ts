@@ -132,3 +132,15 @@ export const EDGE_READ_TIMEOUT_MS = 20;
  * Override per store via `CFCacheStoreOptions.kvReadTimeoutMs` (<= 0 disables).
  */
 export const KV_READ_TIMEOUT_MS = 170;
+
+/**
+ * Floor (ms) on the budget for reading a PPR shell's snapshot, the rest of a
+ * frame whose head and prelude were already read. A document HIT has sent
+ * its prelude by then and cannot render the rest without the snapshot's doc
+ * record, so a timed-out read degrades the HIT (the entry is replaced, the
+ * page reloads once into a MISS; rsc-rendering.ts degradeUnreplayableShell).
+ * That costs far more than waiting, so a slow body read gets at least this
+ * long; `kvReadTimeoutMs` above it wins, and `kvReadTimeoutMs <= 0` still
+ * disables the bound.
+ */
+export const SHELL_SNAPSHOT_READ_MIN_TIMEOUT_MS = 1000;

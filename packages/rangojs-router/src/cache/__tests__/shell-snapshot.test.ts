@@ -168,7 +168,7 @@ describe("RecordingShellStore", () => {
     );
 
     // Before settling, the record may not exist yet.
-    await rec.settleWrites(1000);
+    await expect(rec.settleWrites(1000)).resolves.toBe(true);
     expect(resolved).toBe(true);
     const snapshot = rec.drainSnapshot()!;
     expect(snapshot.find((r) => r.key === "deferred")).toBeTruthy();
@@ -179,8 +179,17 @@ describe("RecordingShellStore", () => {
     const rec = new RecordingShellStore(inner);
     rec.trackWrite(new Promise(() => {})); // never settles
     const start = Date.now();
-    await rec.settleWrites(30);
+    // False: the capture reads it as "the doc record may be missing because
+    // its write did not settle in time" (settleCaptureRecord's timeout).
+    await expect(rec.settleWrites(30)).resolves.toBe(false);
     expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it("getRecord reads one recorded value by family and key", async () => {
+    const rec = new RecordingShellStore(new MemorySegmentCacheStore());
+    await rec.setItem("k", "V", { ttl: 60 });
+    expect(rec.getRecord("item", "k")).toMatchObject({ value: "V" });
+    expect(rec.getRecord("segment", "k")).toBeUndefined();
   });
 
   it("delegates defaults/keyGenerator to the underlying store", () => {
@@ -359,11 +368,18 @@ describe("SeededShellStore", () => {
 });
 
 describe("buildShellLoaderSeed", () => {
-  it("maps the stored hole bit onto seed entries; a pre-bit record reads as hole-carrying", async () => {
+  it("maps the stored hole and runs bits onto seed entries; a record without a bit reads as hole-carrying and as runs", async () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",
         key: "K-full",
+        value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 0 },
+      },
+      // Written before the runs bit: its snapshot lacks the pushes a capture
+      // now records, so the HIT runs the body for them.
+      {
+        family: "loader",
+        key: "K-pre-runs",
         value: { value: JSON.stringify({ a: 1 }), holes: 0 },
       },
       {
@@ -374,12 +390,24 @@ describe("buildShellLoaderSeed", () => {
       // Legacy record (stored before the hole bit existed): hole-ness is
       // unknown, so the seed must keep the gated path.
       { family: "loader", key: "K-legacy", value: { value: "{}" } },
+      {
+        family: "loader",
+        key: "K-runs",
+        value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 1 },
+      },
     ];
 
     const seed = await buildShellLoaderSeed(snapshot);
-    expect(seed?.get("K-full")).toEqual({ container: { a: 1 }, holes: false });
+    expect(seed?.get("K-full")).toEqual({
+      container: { a: 1 },
+      holes: false,
+      runs: false,
+    });
+    expect(seed?.get("K-pre-runs")).toMatchObject({ holes: false, runs: true });
     expect(seed?.get("K-holey")?.holes).toBe(true);
     expect(seed?.get("K-legacy")?.holes).toBe(true);
+    // A capture that saw an unrecordable loader push asks the HIT to run it.
+    expect(seed?.get("K-runs")).toMatchObject({ holes: false, runs: true });
   });
 
   it("skips a record that fails to decode (that loader drifts, the pre-snapshot behavior)", async () => {
@@ -388,13 +416,17 @@ describe("buildShellLoaderSeed", () => {
       {
         family: "loader",
         key: "K-good",
-        value: { value: JSON.stringify(7), holes: 0 },
+        value: { value: JSON.stringify(7), holes: 0, runs: 0 },
       },
     ];
 
     const seed = await buildShellLoaderSeed(snapshot);
     expect(seed?.has("K-bad")).toBe(false);
-    expect(seed?.get("K-good")).toEqual({ container: 7, holes: false });
+    expect(seed?.get("K-good")).toEqual({
+      container: 7,
+      holes: false,
+      runs: false,
+    });
   });
 
   it("returns undefined when the snapshot carries no loader records", async () => {
@@ -497,28 +529,36 @@ describe("snapshot pruning helpers", () => {
     key: "M0L0D0.bake",
     value: { value: "{}", holes: 0 },
   };
-  const SNAPSHOT = [DOC, HANDLER_ITEM, LOADER_ITEM, RESPONSE, LOADER];
+  const EXPLICIT: ShellSnapshotRecord = {
+    ...DOC,
+    key: "explicit:consumer-key",
+  };
+  const SNAPSHOT = [DOC, EXPLICIT, HANDLER_ITEM, LOADER_ITEM, RESPONSE, LOADER];
   const LOADER_KEYS = new Set(["item\u0000use-cache:loader"]);
 
-  it('"loaders" keeps segments, loader containers and loader-touched records', () => {
+  it('"loaders" keeps the doc record, loader containers and loader-touched records', () => {
     const { kept, pruned } = pruneShellSnapshot(
       SNAPSHOT,
       "loaders",
       LOADER_KEYS,
+      "doc:host/p",
     );
     expect(kept).toEqual([DOC, LOADER_ITEM, LOADER]);
-    expect(pruned).toEqual([HANDLER_ITEM, RESPONSE]);
-    expect(countSnapshotFamilies(pruned)).toBe("item:1/response:1");
+    expect(pruned).toEqual([EXPLICIT, HANDLER_ITEM, RESPONSE]);
+    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:1/response:1");
   });
 
-  it('"segments" keeps only the segment family', () => {
+  it('"segments" keeps only the doc record', () => {
     const { kept, pruned } = pruneShellSnapshot(
       SNAPSHOT,
       "segments",
       LOADER_KEYS,
+      "doc:host/p",
     );
     expect(kept).toEqual([DOC]);
-    expect(countSnapshotFamilies(pruned)).toBe("item:2/response:1/loader:1");
+    expect(countSnapshotFamilies(pruned)).toBe(
+      "segment:1/item:2/response:1/loader:1",
+    );
   });
 
   it("hasDocRecord requires the named segment record with at least one segment", () => {

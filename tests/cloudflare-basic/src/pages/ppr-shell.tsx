@@ -18,7 +18,14 @@ import {
 } from "../loaders/ppr-shell.js";
 import { PprInlineActionHoleLoader } from "../loaders/ppr-shell.js";
 import { PprBakeSlowLoader, PprBakeHoleLoader } from "../loaders/ppr-shell.js";
-import { makePprPhysicsPromise } from "../loaders/ppr-shell.js";
+import {
+  makePprNestedHandlePush,
+  makePprPhysicsPromise,
+  PprNestedHandle,
+} from "../loaders/ppr-shell.js";
+import { PprNestedHandleView } from "../components/PprNestedHandleView.js";
+import { PprMarkerProbe } from "../components/PprMarkerProbe.js";
+import { PprNavPinView } from "../components/PprNavPinView.js";
 import {
   makePprStaleReplayData,
   PprStaleReplayHandle,
@@ -40,6 +47,11 @@ import { PprStaleReplay } from "../components/PprStaleReplay.js";
 import { PprWarningsView } from "../components/PprWarningsView.js";
 
 // PPR shell caching demo (docs/design/ppr-shell-resume.md).
+//
+// Everything this layout's handler produces is baked, however long it takes
+// (bounded by ppr.captureTimeout): the handler promise under
+// PprShellPhysicsValue's Suspense and the nested promise in the
+// PprNestedHandle push included. A HIT replays them and runs no handler.
 //
 // The hole/shell split follows the router's PPR eligibility contract: a hole
 // exists only where a Suspense boundary separates loader consumption from the
@@ -67,6 +79,7 @@ export function PprShellLayout(ctx: HandlerContext) {
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: "/" });
   breadcrumb({ label: "PPR Shell", href: "/ppr-shell" });
+  ctx.use(PprNestedHandle)(makePprNestedHandlePush());
   return (
     <main data-testid="ppr-shell-page">
       <h1 data-testid="ppr-shell-header">PPR Shell Demo</h1>
@@ -75,6 +88,7 @@ export function PprShellLayout(ctx: HandlerContext) {
       </p>
       <PprShellCounter />
       <PprShellPhysicsValue promise={makePprPhysicsPromise()} />
+      <PprNestedHandleView />
       <Outlet />
       <nav>
         <Link to="/counter" data-testid="ppr-nav-counter">
@@ -85,8 +99,17 @@ export function PprShellLayout(ctx: HandlerContext) {
   );
 }
 
-export function PprShellPricePage() {
-  return <PprShellPrice loader={PprShellPriceLoader} />;
+// The request URL's search as the handler reads it, and the rendered search
+// params (PprMarkerProbe): the forced-MISS e2e asserts the reload marker
+// reaches neither.
+export function PprShellPricePage(ctx: { request: Request }) {
+  return (
+    <>
+      <p data-testid="ppr-request-search">{new URL(ctx.request.url).search}</p>
+      <PprMarkerProbe />
+      <PprShellPrice loader={PprShellPriceLoader} />
+    </>
+  );
 }
 
 // Loader-carried-promise page, reused by BOTH /ppr-shell/stream (WITH loading(),
@@ -106,6 +129,26 @@ export function PprWarningsPage() {
       <p>Warnings static shell</p>
       <PprWarningsView />
     </main>
+  );
+}
+
+export function PprNavPinPage() {
+  return (
+    <main data-testid="ppr-nav-pin-page">
+      <PprNavPinView />
+    </main>
+  );
+}
+
+let pprShortRecordRenders = 0;
+
+/** Its render count: a HIT shows the capture's, a MISS a new one. */
+export function PprShortRecordPage() {
+  pprShortRecordRenders += 1;
+  return (
+    <p data-testid="ppr-short-record">
+      {`short-record-render-${pprShortRecordRenders}`}
+    </p>
   );
 }
 
@@ -223,6 +266,20 @@ export function PprScopedHomePage() {
       scoped-home-execution-{pprScopedExecution}
     </p>
   );
+}
+
+/**
+ * A request-partitioned ppr route (urls.tsx): its cache() key() reads the
+ * visitor's tier header, so its record and its shell are per tier. The page
+ * reads the same header (raw request headers are not a capture guard; the
+ * partition key is what keeps a tier's content in that tier's shell).
+ */
+export function pprTier(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-ppr-tier") ?? "none";
+}
+
+export function PprTieredPage(ctx: { request: Request }) {
+  return <p data-testid="ppr-tiered">{`tier-${pprTier(ctx)}`}</p>;
 }
 
 export function PprScopedOptOutPage() {

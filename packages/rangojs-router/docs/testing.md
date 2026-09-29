@@ -1157,10 +1157,10 @@ What the stub cannot reproduce stays e2e:
 - The real prelude HTML and its `<body` sanity gate: a route whose production
   capture refuses for a root postpone (a live loader read with no boundary
   above it) is captured here.
-- The capture deadline: when a shell does not go quiet within
-  `ppr.captureTimeout`, the stub returns no shell, while production goes on to
-  its abort and can still store a prelude with the pending parts as holes (a
-  bake-lane loader pending under an ancestor boundary, for example).
+- The capture deadline: when the handler output settled but the shell render
+  does not go quiet in what `ppr.captureTimeout` leaves, the stub returns no
+  shell, while production goes on to its abort and can still store the
+  prelude rendered by then.
 - SSR render errors: in production a fizz render error during the capture
   refuses it (#915); the stub renders no HTML, so a shell whose client
   component throws during SSR is stored here. A throwing server component
@@ -1177,9 +1177,11 @@ call it in `beforeEach`, never while a request is in flight.
 `VercelCacheStore`'s memos live on the `cache` handle you pass it.
 
 Options: `cacheStore` (replaces the store your `cache` config returns; its
-`searchParams` still applies), `env`, `headers`, and `partial` (`true` or
+`searchParams` still applies), `env`, `headers`, `partial` (`true` or
 `{ from, segments }`) to serve the navigation request the browser sends, whose
-decision is `replayStatus`. Result: `{ response, body, shellStatus,
+decision is `replayStatus`. `key` is the shell key the serve path resolved
+for a document, request partition included (a route whose `cache({ key })`
+or store `keyGenerator` partitions its record partitions its shell too). Result: `{ response, body, shellStatus,
 replayStatus, prelude, flight, key, readEntry }`. `readEntry()` reads the stored
 document entry through a passive `getShell`, which warms a shell memo like any
 read, so call it after the reads you count. A HIT's tail carries replayed
@@ -1188,8 +1190,13 @@ plain text. To evict by tag, call `updateTag()` through
 `runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
 `dispatch`, then request again. A store refuses a capture that starts in the
 invalidation's millisecond, so each `serveShellRequest` starts its request in
-a later millisecond than the call. A capture that never goes quiet stores nothing after `ppr.captureTimeout`
-and one retry, so give such a route a short `captureTimeout` in a test.
+a later millisecond than the call. A capture that runs out of
+`ppr.captureTimeout` stores nothing and is not retried in place, so the call
+waits one deadline: give such a route a short `captureTimeout` in a test.
+
+A HIT runs no handler: it replays the handler output the capture baked. Count
+a handler's runs across the MISS and the HITs after it to pin that; only a
+loader under `loading()` runs again.
 
 ## E2E with dev/prod and PE parity
 

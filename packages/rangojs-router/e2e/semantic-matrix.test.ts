@@ -630,8 +630,8 @@ const matrixRows: SemanticMatrixRow[] = [
   // context that INHERITS the request's post-middleware state instead of
   // re-running the chain: the middleware-run counter advances exactly once per
   // HTTP request, captures included, while the captured shell still carries the
-  // middleware-derived ctx value (scope fidelity). Holes are render-defined
-  // (loading() boundaries and pending promises under Suspense), not config.
+  // middleware-derived ctx value (scope fidelity). Holes are live loaders'
+  // boundaries (loading() or an inline Suspense); handler output is baked.
   {
     id: "PPR1",
     contract:
@@ -680,16 +680,17 @@ const matrixRows: SemanticMatrixRow[] = [
       expect((await readRuns()) - before).toBe(3);
     },
   },
-  // Serve-time guarding: every serve — MISS and HIT — runs the FULL chain (route
-  // middleware + handlers + fresh loaders) via executeRender; only the shell HTML
-  // is cached. So a HIT body carries BOTH the frozen shell AND freshly-rendered live
-  // loader content — proving the chain executed at serve time, not just replayed a
-  // cached document. (Composition is marker-gated, so a short-circuit — 401/redirect
-  // — never composes a shell; the shell-cache middleware unit tests pin that half.)
+  // Serve-time guarding: every serve — MISS and HIT — runs the FULL middleware
+  // chain and fresh loaders via executeRender; a HIT replays the handler layer
+  // from the shell's doc record and runs no handler. So a HIT body carries BOTH
+  // the frozen shell AND freshly-rendered live loader content — proving the
+  // chain executed at serve time, not just replayed a cached document.
+  // (Composition is marker-gated, so a short-circuit — 401/redirect — never
+  // composes a shell; the serve-path unit tests pin that half.)
   {
     id: "PPR2",
     contract:
-      "serve-time guarding: a HIT still runs the full chain — the shell is frozen but the loader hole is fresh",
+      "serve-time guarding: a HIT runs the full middleware chain and fresh loaders; no handler runs — the shell is frozen, the loader hole is fresh",
     transport: "request",
     execution: "shell-capture",
     scope: "n/a",
@@ -708,20 +709,18 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(body).toContain("Live price:");
     },
   },
-  // The CONSUMPTION-LANE RULE (issue #672 / #674): server-side handler
-  // consumption via `await ctx.use(loader)` is the BAKED lane in every shared
-  // artifact — cache(), "use cache", and the PPR shell. During capture the
-  // loader EXECUTES with identity reads (cookies()/headers()) permitted
-  // (mirroring the cache() purity allowance), so the capture is never refused;
-  // the value freezes as a capture-time copy wherever it renders as
-  // unshielded shell material. DSL segment lanes are unchanged — a loader
-  // ALSO registered live-lane (loader() without ssr: false; the slot's
-  // loading() is its boundary) still masks at capture and keeps that boundary
-  // a live hole. Client-side useLoader is the live lane.
+  // Handler consumption (issue #672 / #674): `await ctx.use(loader)` in a
+  // handler is handler output, baked into every shared artifact — cache(),
+  // "use cache", and the PPR shell — and replayed on every HIT. The loader
+  // executes at capture; an identity read (cookies()/headers()) in it refuses
+  // the PPR capture (the capturing request's value would reach every visitor).
+  // A loader ALSO registered live-lane (loader() without ssr: false; the
+  // slot's loading() is its boundary) keeps that boundary a live hole, and a
+  // client useLoader read inside it is the live lane.
   {
     id: "PPR3",
     contract:
-      "consumption-lane rule: handler ctx.use of a cookie-reading loader executes at capture (no refusal); unshielded value bakes frozen; a registered live-lane slot stays a live hole",
+      "handler ctx.use of a loader bakes (frozen across HITs); an identity read in it refuses the capture; the live-lane slot's useLoader read stays fresh",
     transport: "request",
     execution: "shell-capture",
     scope: "layout-parallel",
@@ -729,8 +728,6 @@ const matrixRows: SemanticMatrixRow[] = [
       const html = { headers: { Accept: "text/html" } };
       const url = baseUrl("/shell-cache/slot-use?probe=matrix-lane");
 
-      // No refusal: the route reaches HIT despite the handlers' cookies()
-      // reads (pre-rule these tripped the identity guard -> MISS forever).
       await expect(async () => {
         const r = await request.get(url, html);
         expect(r.headers()["x-rango-shell"]).toBe("HIT");
@@ -738,24 +735,44 @@ const matrixRows: SemanticMatrixRow[] = [
 
       const first = await (await request.get(url, html)).text();
       const prelude = first.slice(0, first.indexOf("</html>"));
-      // BAKED: layout-handler-consumed unregistered loader (capture ran
-      // cookie-less -> "anon") froze into the shared prelude.
-      const chip = prelude.match(/srv-chip-(\d+)-anon/);
+      // BAKED: the layout handler's awaited loader value froze into the
+      // shared prelude.
+      const chip = prelude.match(/srv-chip-(\d+)/);
       expect(chip).not.toBeNull();
-      // Segment lane unchanged: the same-consumption slot whose loader is
-      // registered live-lane still postpones (fallback frozen, hole live).
+      // The registered live-lane slot still postpones (fallback frozen).
       expect(prelude).toContain("srv badge pending...");
       expect(prelude).not.toMatch(/srv-badge-\d/);
+      const live = (h: string) =>
+        Number(
+          h.match(/data-testid="shell-srv-badge-live">srv-badge-(\d+)</)?.[1],
+        );
 
-      // Frozen across HITs AND visitors — the rule's documented footgun.
-      const second = await (
-        await request.get(url, {
-          headers: { ...html.headers, Cookie: "srv_visitor=user-a" },
-        })
-      ).text();
+      const second = await (await request.get(url, html)).text();
       const secondPrelude = second.slice(0, second.indexOf("</html>"));
-      expect(secondPrelude).toContain(`srv-chip-${chip![1]}-anon`);
-      expect(secondPrelude).not.toMatch(/srv-chip-\d+-user-a/);
+      expect(secondPrelude).toContain(`srv-chip-${chip![1]}`);
+      expect(live(second)).toBeGreaterThan(live(first));
+
+      // An identity read in a handler-awaited loader refuses the capture:
+      // wait for the capture's own outcome (the test-app's debugShellCapture
+      // sink), not a timing gap, then confirm the page is still per request.
+      const target = `/shell-cache/identity-use?probe=matrix-lane-${Date.now().toString(36)}`;
+      const miss = await request.get(baseUrl(target), html);
+      expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+      const outcomes = async (): Promise<string[]> => {
+        const res = await request.get(
+          baseUrl(
+            `/shell-cache/__capture-events?path=${encodeURIComponent(target)}`,
+          ),
+        );
+        const { events } = (await res.json()) as {
+          events: Array<{ outcome: string }>;
+        };
+        return events.map((event) => event.outcome);
+      };
+      await expect.poll(outcomes, { timeout: 20_000 }).toContain("refused");
+      expect(await outcomes()).not.toContain("stored");
+      const after = await request.get(baseUrl(target), html);
+      expect(after.headers()["x-rango-shell"]).toBe("MISS");
     },
   },
   {

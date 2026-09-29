@@ -261,7 +261,10 @@ into the shared cache entry like any other computed data. (`cookies()` and
 `headers()` still throw there: that guard follows the cached body's whole
 async chain, loaders included.) Same rule across `cache()` and the PPR shell:
 handler/cached-scope consumption = baked copy, client-side `useLoader` = live
-(the consumption-lane rule, `/rango` → Invariants).
+(the consumption-lane rule, `/rango` → Invariants). The PPR shell is stricter
+about the loader's own reads: during a capture, `cookies()`, `headers()`, and a
+`{ cache: false }` variable read inside a handler-consumed loader refuse the
+capture.
 
 ### Side-Effect Guards
 

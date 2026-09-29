@@ -39,6 +39,7 @@ import {
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
+import { stripShellMissMarker } from "./history-state.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 // Vite HMR types are provided by vite/client
@@ -169,6 +170,10 @@ export async function initBrowserApp(
   } = options;
 
   bootLog("initBrowserApp start");
+  // Before any location read (the history key, the navigation store, the
+  // event controller): the server rendered the marked request for the clean
+  // URL, so the client starts from the same one and hydration agrees.
+  stripShellMissMarker();
   bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);

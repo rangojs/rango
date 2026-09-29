@@ -57,6 +57,7 @@ import {
   resolveSwrWindow,
   computeExpiration,
   DEFAULT_FUNCTION_TTL,
+  staleShellRecaptureDue,
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
 import type { CacheErrorCategory } from "../cache-error.js";
@@ -248,15 +249,6 @@ interface VercelShellEnvelope {
   dk?: string;
   /** ShellCacheEntry.prunedRecords (diagnostic). */
   pr?: string;
-  /**
-   * ShellCacheEntry.handlerLiveHoles. Must round-trip: the serve side arms the
-   * handler-free fast path on `!entry.handlerLiveHoles`, so dropping the flag
-   * here silently fast-pathed handler-live entries after a store round trip —
-   * their holes only a handler re-run can fill.
-   */
-  lh?: boolean;
-  /** ShellCacheEntry.transitionWhen; conditional transitions must re-run. */
-  tw?: true;
   /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
   no?: true;
 }
@@ -489,6 +481,12 @@ export class VercelCacheStore<
   private readonly handleMemos: VercelHandleMemos;
   /** @internal SegmentCacheStore.freshReadsWindowMs */
   readonly freshReadsWindowMs: number;
+  /**
+   * @internal SegmentCacheStore.maxShellEntryBytes: the item cap, less the
+   * base64 expansion of the prelude the shell envelope stores (the capture
+   * measures raw prelude bytes).
+   */
+  readonly maxShellEntryBytes: number;
   private readonly name?: string;
   private readonly debug?: VercelCacheDebug;
 
@@ -504,6 +502,7 @@ export class VercelCacheStore<
     this.keyGenerator = options.keyGenerator;
     this.version = options.version;
     this.maxItemBytes = options.maxItemBytes ?? VERCEL_MAX_ITEM_BYTES;
+    this.maxShellEntryBytes = Math.floor((this.maxItemBytes * 3) / 4);
     this.memo = resolveShellMemoOptions(options.memo, {
       markerFreshMs: DEFAULT_VERCEL_MARKER_FRESH_MS,
       markerMaxStaleMs: DEFAULT_VERCEL_MARKER_MAX_STALE_MS,
@@ -1057,7 +1056,14 @@ export class VercelCacheStore<
 
     const isStale = env.s > 0 && now > env.s;
     let shouldRevalidate = isStale;
-    if (isStale && options?.claimRevalidation !== false) {
+    // Inside the recapture floor the serve path schedules nothing, so the
+    // lock is left for the first stale read past it: claimed here, it held
+    // the shell REVALIDATION_LOCK_MS without a recapture.
+    if (
+      isStale &&
+      options?.claimRevalidation !== false &&
+      staleShellRecaptureDue({ createdAt: env.c }, now)
+    ) {
       shouldRevalidate = await this.claimRevalidation(
         storeKey,
         env.e,
@@ -1082,8 +1088,6 @@ export class VercelCacheStore<
       snapshot: env.sn,
       docKey: env.dk,
       prunedRecords: env.pr,
-      handlerLiveHoles: env.lh,
-      transitionWhen: env.tw,
       navigationOnly: env.no,
       createdAt: env.c,
     };
@@ -1250,8 +1254,6 @@ export class VercelCacheStore<
         sn: entry.snapshot,
         dk: entry.docKey,
         pr: entry.prunedRecords,
-        lh: entry.handlerLiveHoles,
-        tw: entry.transitionWhen,
         no: entry.navigationOnly,
       };
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
@@ -1598,7 +1600,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn, dk, pr, lh, tw, no } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, sn, dk, pr, no } = raw;
     if (typeof rv !== "string") return null;
     // Document half: required unless navigationOnly (`no`), which stores
     // neither field. Tolerate a legacy navigationOnly envelope that still
@@ -1624,8 +1626,6 @@ export class VercelCacheStore<
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
       dk: typeof dk === "string" ? dk : undefined,
       pr: typeof pr === "string" ? pr : undefined,
-      lh: lh === true ? true : undefined,
-      tw: tw === true ? true : undefined,
       no: no === true ? true : undefined,
     };
   }

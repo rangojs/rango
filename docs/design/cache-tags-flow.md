@@ -36,9 +36,12 @@ The three verbs a consumer touches:
 
 `cacheTag(...tags)` has a second, render-callable form: called during a request
 render **outside** any `"use cache"` function, it records onto the request's
-`_requestTags` instead of throwing. PPR shell capture and the document cache union
-that set onto their entry, so a plain server component can tag the shell/full-page
-artifact it renders into — `revalidateTag` then evicts it. On a route that is
+`_requestTags` instead of throwing. The document cache unions that set onto its
+entry. A PPR shell takes the tags of its doc record instead (the segment record
+its handler layer renders into, written like a route `cache()` record below),
+plus its bake-lane loaders' and `ppr.tags`. Either way a plain server component
+can tag the shell/full-page artifact it renders into — `revalidateTag` then
+evicts it. On a route that is
 neither PPR nor document-cached and has no `cache()`, the tag records where
 nothing reads it (a no-op).
 
@@ -47,7 +50,8 @@ Inside a route `cache()` boundary the same tags also land on that route's
 their server components, so the record stores the tags its content recorded
 when it was written — render-callable `cacheTag()` calls and the tags of
 `"use cache"` reads, from handlers and server components alike — and a HIT
-records them onto `_requestTags` again. Two consequences:
+records them onto `_requestTags` and onto the replayed segments again
+(`recordSegmentTags`). Two consequences:
 
 - A PPR shell captured by replaying the record, or a document stored over a
   record HIT, still carries those tags, so `updateTag()` evicts it.

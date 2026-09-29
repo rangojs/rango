@@ -187,8 +187,14 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * upgrade — the reactVersion field on the entry gates that at read time).
    * @param key - Cache key
    * @param entry - The shell prelude/postponed/version/createdAt bundle
-   * @param ttlSeconds - Time-to-live in seconds
-   * @param swrSeconds - Optional stale-while-revalidate window in seconds
+   * @param ttlSeconds - Time-to-live in seconds: the route's `ppr.ttl`
+   *   (undefined: the store's default), capped to the route cache() entry
+   *   the capture replayed or wrote. A capped window arrives in whole
+   *   seconds, rounded up, with ttl + swr at least 1; its ttl can be 0 (a
+   *   shell stale from the start, captured from a record inside its swr
+   *   window).
+   * @param swrSeconds - Optional stale-while-revalidate window in seconds,
+   *   under the same cap
    * @param tags - Optional cache tags for invalidation (participates in
    *   invalidateTags via the same tag machinery as the item family)
    * @returns `invalidated` when a generation marker rejected the write,
@@ -234,11 +240,19 @@ export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * @internal Drop this isolate's memoized copy of a shell (shell-memo.ts) so
    * the next read goes to the store. A HIT whose doc record failed to decode
-   * calls it before scheduling a recapture: the memoized copy holds the same
-   * record, while the store may already hold another isolate's recapture.
-   * Built-in stores only; not part of the custom-store contract.
+   * calls it after replacing the entry with a tombstone: the memoized copy
+   * holds the same record. Built-in stores only; not part of the custom-store
+   * contract.
    */
   dropShellMemo?(key: string): void;
+
+  /**
+   * @internal The largest shell entry (prelude, postponed state, and snapshot
+   * bytes) this store can hold in one value. The capture refuses a bigger
+   * entry instead of letting the write fail inside waitUntil. Absent: the
+   * capture applies DEFAULT_SHELL_ENTRY_MAX_BYTES (Cloudflare KV's 25 MiB).
+   */
+  readonly maxShellEntryBytes?: number;
 
   /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
@@ -410,17 +424,14 @@ export interface ShellCacheEntry {
    */
   prunedRecords?: string;
   /**
-   * The key of the CANONICAL document segment record inside `snapshot` — the
-   * one navigation replay can actually consume (resolved under the implicit
-   * doc namespace at capture; see CacheScope.cacheRoute). Replay eligibility
-   * requires this exact record: the snapshot also carries incidentally
-   * recorded explicit-tier records (RecordingShellStore passthroughs) whose
-   * keys a partial lookup can never resolve, and counting those declared
-   * entries "replayable" that always missed (`snapshot-miss` flip-flop).
-   * Absent on entries captured before the field existed OR when the capture
-   * recorded no doc record (cache(false)/condition-false routes, prerender
-   * short-circuit) — both read as `no-segment-snapshot`; recapture heals the
-   * former.
+   * The key of the document segment record inside `snapshot`: the handler
+   * layer every HIT replays (a document HIT tail looks the record up by this
+   * key, so a store keyGenerator or a build-time capture host cannot send it
+   * elsewhere) and the record navigation replay consumes (resolved under the
+   * implicit doc namespace at capture; see CacheScope.cacheRoute). A capture
+   * that ran handlers always stores it; only a prerender-served entry (the
+   * prerender store supplies the handler layer) has none. A document entry
+   * without it is served as a MISS.
    */
   docKey?: string;
   /**
@@ -429,26 +440,6 @@ export interface ShellCacheEntry {
    * the partial request's headers and middleware state are not document state.
    */
   navigationOnly?: true;
-  /**
-   * True when the capture's HANDLER layer declared per-request liveness: a
-   * handle pushed OUTSIDE a DSL loader scope carried a nested thenable (the
-   * capture mask turns it into a never-filling hole), such a push was still
-   * pending when the entry was written, or a handler-invoked loader
-   * (ctx.use(loader) from a handler body — the consumption lane, #672)
-   * executed during the capture. The serve tail then must NOT take the
-   * handler-free fast path (the implicit doc-cache hit): only a handler
-   * re-run can mint that hole's live promise or refresh that consumed value.
-   * DSL-loader pushes never set this — loaders re-run fresh on every HIT, so
-   * their holes always fill.
-   */
-  handlerLiveHoles?: boolean;
-  /**
-   * Legacy/fallback marker for a transition({ when }) predicate that was not
-   * evaluated by the PPR pre-handler gate. Such an entry stays conservatively
-   * ineligible for handler-free replay. New PPR matches evaluate known segment
-   * predicates before the pipeline and do not set this marker.
-   */
-  transitionWhen?: true;
   /** Capture-generation start time; tag invalidations at or after it win. */
   createdAt: number;
 }
@@ -475,6 +466,14 @@ export interface ShellDocumentReadOptions {
 }
 
 /**
+ * @internal Why a prelude-first read's snapshot is missing although the entry
+ * stored one: `unavailable` (the read timed out or failed; the entry may be
+ * sound) or `corrupt` (the bytes arrived and do not parse; the store evicted
+ * the entry).
+ */
+export type ShellSnapshotFailure = "unavailable" | "corrupt";
+
+/**
  * @internal Result of {@link SegmentCacheStore.readShellDocument}.
  */
 export interface ShellDocumentRead {
@@ -485,10 +484,19 @@ export interface ShellDocumentRead {
   shouldRevalidate?: boolean;
   /**
    * The capture snapshot, read after the prelude. Resolves undefined when the
-   * entry has none or it could not be read (the tail then runs unpinned).
+   * entry has none or it could not be read (`snapshotFailure` says which); a
+   * document HIT then cannot replay its doc record and degrades
+   * (rsc-rendering.ts serveShellHit).
    * Never rejects.
    */
   snapshot: Promise<ShellSnapshotRecord[] | undefined>;
+  /**
+   * Why `snapshot` resolved undefined although the entry stored one, or
+   * undefined when it did not fail. A document HIT that cannot replay its
+   * doc record replaces the entry only when it is broken, not when its read
+   * was merely slow (rsc-rendering.ts serveShellHit). Never rejects.
+   */
+  snapshotFailure?: Promise<ShellSnapshotFailure | undefined>;
   /**
    * Where the read's time and bytes went, for the `debugPerformance` metrics
    * (rsc-rendering.ts) and the store's own debug trace. Present only when one
@@ -581,12 +589,20 @@ export interface ShellSnapshotLoaderValue {
    * container carries hole markers, so a HIT must gate the overlay on the
    * fresh run (only the loader body can mint the live nested promises);
    * 0 = fully pinned, so a HIT resolves the payload promise immediately from
-   * the pin while the fresh run proceeds ungated (side effects and cache
-   * read-through writes preserved; its values were discarded either way —
-   * recorded paths win wholesale). Absent on pre-bit snapshots, which keep
-   * the gated path.
+   * the pin and does not run the loader body (unless `runs`). Absent on
+   * pre-bit snapshots, which keep the gated path.
    */
   holes?: 0 | 1;
+  /**
+   * 1 when the capture saw a loader push it could not record (a deferred
+   * push, one with masked nested promises, or one made outside any loader
+   * body): a HIT then still runs the loader body in the background
+   * (pin-first) so those pushes reach the page. 0: a hole-free record is
+   * served from the pin alone and its body does not run on a HIT. Absent (a
+   * snapshot written before the bit, which lacks the loader-owned pushes)
+   * reads as 1, so the body supplies them.
+   */
+  runs?: 0 | 1;
 }
 
 /** A serialized cached Response for the response family of a shell snapshot. */
@@ -726,8 +742,10 @@ export type SegmentHandleData = Record<string, unknown[]>;
 /**
  * segmentId -> handleName -> the owning loader id of each recorded value, by
  * index (null: not owned). Only a PPR shell capture writes owners: the
- * settled pushes of an `ssr: false` loader's own body, which the record keeps
+ * settled pushes of the loader bodies it ran (an `ssr: false` loader's own,
+ * the loaders it awaits, and its own cache() replays), which the record keeps
  * because the prelude rendered them. restoreHandles replays an owned value
- * through HandleStore.pushReplayed, so that loader's live re-run replaces it.
+ * through HandleStore.pushReplayed, so a loader that does run on the HIT
+ * replaces it with its live push.
  */
 export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

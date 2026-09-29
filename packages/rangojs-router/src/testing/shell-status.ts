@@ -33,6 +33,7 @@
  */
 
 import { sortedSearchString } from "../cache/cache-key-utils.js";
+import { partitionShellKey } from "../rsc/shell-capture-constants.js";
 import {
   compileSearchParamsFilter,
   type CacheSearchParams,
@@ -61,8 +62,6 @@ const PPR_REPLAY_BYPASS_REASONS = [
   "no-entry",
   "invalid-version",
   "corrupt-entry",
-  "handler-live-holes",
-  "transition-when",
   "no-segment-snapshot",
   "snapshot-miss",
   "explicit-cache-hit",
@@ -83,17 +82,24 @@ export type ShellStatusTarget = Response | { headers: Headers };
 /**
  * Shell store key for a document URL — same formula as production
  * `buildShellKey` in `rsc/shell-serve.ts` (host + pathname + sorted search +
- * `:shell`). Kept here so the testing barrel never imports the shell-serve
- * module (it pulls React). A parity test pins the two implementations.
+ * `:shell`), then the production `partitionShellKey` itself (the leaf
+ * `rsc/shell-capture-constants.ts`). The base is kept here so the testing
+ * barrel never imports the shell-serve module (it pulls React). A parity test
+ * pins the two implementations.
  *
  * Accepts a `URL` or an absolute/relative request URL string (relative strings
  * resolve against `http://localhost`). Pass the router's `cache.searchParams`
  * config as `searchParams` when the app under test sets one — the production
- * key applies it, so the expected key must too.
+ * key applies it, so the expected key must too. When the route's record is
+ * partitioned by the request — its `cache({ key })`, or the store's
+ * `keyGenerator` — its shell is too: pass the key that function returns for
+ * the request as `partition` (appended URI-encoded; a result equal to the
+ * default key partitions nothing, so pass none).
  */
 export function shellCacheKey(
   url: URL | string,
   searchParams?: CacheSearchParams,
+  partition?: string,
 ): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
@@ -102,7 +108,8 @@ export function shellCacheKey(
     compileSearchParamsFilter(searchParams),
   );
   const searchSuffix = sorted ? `?${sorted}` : "";
-  return `${resolved.host}${resolved.pathname}${searchSuffix}:shell`;
+  const key = `${resolved.host}${resolved.pathname}${searchSuffix}:shell`;
+  return partition === undefined ? key : partitionShellKey(key, partition);
 }
 
 function getHeaders(target: ShellStatusTarget): Headers {

@@ -4,9 +4,9 @@
  * Runs in the RSC realm of the build's temp server, AFTER all bundles are
  * written (the prelude embeds built client asset URLs — bootstrap module,
  * chunk preloads — that only exist post-client-build). The capture core is
- * producer A's, verbatim: deriveShellCaptureContext (mask funnel, liveness,
- * snapshot recording, implicit doc-cache scope) + captureAndStoreShell (gates,
- * quiesce, tags union, putShell barrier). Build capture first replays global
+ * producer A's, verbatim: deriveShellCaptureContext (push funnel, snapshot
+ * recording, implicit doc-cache scope) + settleCaptureRecord (the record-first
+ * step) + captureAndStoreShell (gates, quiesce, tags union, putShell barrier). Build capture first replays global
  * and route middleware with a synthetic build request context
  * (`ctx.build === true`, inert `ctx.waitUntil()`); middleware can seed vars or
  * call `ctx.dynamic()` to skip this URL. The sink is an entry collector instead
@@ -21,6 +21,7 @@
  */
 
 import type { ShellCacheEntry } from "../cache/types.js";
+import type { MatchResult } from "../types.js";
 import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
 import {
   createRequestContext,
@@ -31,7 +32,10 @@ import {
 import {
   deriveShellCaptureContext,
   captureAndStoreShell,
+  settleCaptureRecord,
+  withinDeadline,
   delay,
+  SHELL_CAPTURE_MAX_WAIT_MS,
   SHELL_CAPTURE_RETRY_DELAY_MS,
   type ShellCaptureDescriptor,
 } from "../rsc/shell-capture.js";
@@ -134,18 +138,25 @@ export interface BuildShellCaptureResult {
   tags?: string[];
   /** On route-mismatch: what this router's match actually landed on. */
   matchedRouteName?: string;
+  /**
+   * On no-shell: the attempt ran out of ppr.captureTimeout. It is not
+   * retried: its match may still be running, and the retry would start the
+   * same work beside it (runtime twin: shell-capture.ts runShellCapture).
+   */
+  timedOut?: true;
 }
 
 /**
  * Capture the PPR shell for one prerendered URL at build time. Retries once
  * in place on `no-shell` (the first attempt warms the temp server's SSR/Flight
- * transform graph, mirroring producer A's cold-start retry — same delay).
+ * transform graph, mirroring producer A's cold-start retry — same delay),
+ * unless the attempt ran out of ppr.captureTimeout (`timedOut`).
  */
 export async function captureShellForBuild(
   opts: BuildShellCaptureOptions,
 ): Promise<BuildShellCaptureResult> {
   const first = await attemptBuildCapture(opts);
-  if (first.outcome !== "no-shell") return first;
+  if (first.outcome !== "no-shell" || first.timedOut) return first;
   if (opts.debug) {
     console.log(
       `[rango] shell capture attempt 1/2 for ${opts.urlPath} produced no shell (cold graph?) — retrying`,
@@ -215,6 +226,7 @@ async function attemptBuildCapture(
   };
 
   let mismatchedRouteName: string | undefined;
+  let timedOut = false;
   const result = await runWithRequestContext(baseCtx, async () => {
     const preview =
       typeof router.previewMatch === "function"
@@ -251,6 +263,9 @@ async function attemptBuildCapture(
         url,
         setMismatchedRouteName: (routeName) => {
           mismatchedRouteName = routeName;
+        },
+        markTimedOut: () => {
+          timedOut = true;
         },
       });
 
@@ -291,6 +306,7 @@ async function attemptBuildCapture(
   if (outcome === "route-mismatch") {
     return { outcome, matchedRouteName: mismatchedRouteName };
   }
+  if (outcome === "no-shell" && timedOut) return { outcome, timedOut: true };
   return { outcome };
 }
 
@@ -310,6 +326,8 @@ interface BuildCaptureFinalOptions {
   router: any;
   url: URL;
   setMismatchedRouteName(routeName: string | undefined): void;
+  /** The attempt ran out of ppr.captureTimeout (BuildShellCaptureResult.timedOut). */
+  markTimedOut(): void;
 }
 
 async function runBuildMiddlewareEnvelope<TEnv>(
@@ -369,15 +387,28 @@ async function runBuildCaptureFinal(
   // invoking this when baseCtx._dynamic is set. A loader/handler opting out
   // DURING the capture render is caught by the derivedCtx._dynamic check below.
 
-  const { derivedCtx, freshHandleStore } = deriveShellCaptureContext(baseCtx, {
+  const derivation = deriveShellCaptureContext(baseCtx, {
     ttl: opts.ttl,
     swr: opts.swr,
   });
+  const { derivedCtx, freshHandleStore } = derivation;
 
   const outcome = await runWithRequestContext(derivedCtx, async () => {
-    let match;
+    // Same one deadline as the runtime capture: the match, the record-first
+    // step, then the prerender with what is left.
+    const deadline =
+      Date.now() + (opts.captureTimeout ?? SHELL_CAPTURE_MAX_WAIT_MS);
+    let match: MatchResult;
     try {
-      match = await router.match(request, { env });
+      const matched = await withinDeadline<MatchResult>(
+        router.match(request, { env }),
+        deadline,
+      );
+      if (!matched.done) {
+        options.markTimedOut();
+        return "no-shell" as const;
+      }
+      match = matched.value;
     } catch (error) {
       if (isPlainPathMiss(error, opts.urlPath)) {
         return "route-mismatch" as const;
@@ -392,8 +423,25 @@ async function runBuildCaptureFinal(
 
     setRequestContextParams(match.params, match.routeName);
 
-    const payload = buildFullPayload(
+    // Same record-first step as the runtime capture. A prerendered URL's
+    // match comes from the prerender store (no handler runs, no doc record),
+    // which settleCaptureRecord reports as `prerender`.
+    const settled = await settleCaptureRecord(
       match,
+      derivation,
+      descriptor,
+      deadline,
+    );
+    if (settled.kind === "refused") {
+      return derivedCtx._dynamic ? ("dynamic" as const) : ("refused" as const);
+    }
+    if (settled.kind === "timeout") {
+      options.markTimedOut();
+      return "no-shell" as const;
+    }
+
+    const payload = buildFullPayload(
+      settled.match,
       // buildFullPayload reads only ctx.router.* and ctx.version.
       { router, version: opts.buildVersion } as unknown as HandlerContext<any>,
       url,
@@ -416,9 +464,15 @@ async function runBuildCaptureFinal(
       rscStream,
       freshHandleStore,
       derivedCtx,
-      descriptor,
+      { ...descriptor, captureTimeout: Math.max(1, deadline - Date.now()) },
     );
-    return derivedCtx._dynamic ? "dynamic" : captureOutcome;
+    if (captureOutcome === "no-shell" && Date.now() >= deadline) {
+      options.markTimedOut();
+    }
+    if (derivedCtx._dynamic) return "dynamic";
+    // A route cache() record that ran out mid-capture: the in-place retry
+    // (captureShellForBuild) reads or renders a newer one.
+    return captureOutcome === "expired" ? "no-shell" : captureOutcome;
   });
 
   return {

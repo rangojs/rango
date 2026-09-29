@@ -18,15 +18,15 @@ of the request live on a hit. The runtime layers share the app-level store
 `revalidateTag`); `Prerender()`/`Static()` output is built into the server
 bundle instead.
 
-| Layer                | Declared with                                  | Stores                                | Still runs on a hit                                  | Skill                 |
-| -------------------- | ---------------------------------------------- | ------------------------------------- | ---------------------------------------------------- | --------------------- |
-| Function / component | `"use cache"`                                  | one function's return value           | everything around the call                           | `/use-cache`          |
-| Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                   | other loaders, handlers, rendering                   | `/caching`, `/loader` |
-| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree | middleware, segments above it, loaders, HTML render  | `/caching`            |
-| Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build     | middleware, loaders, HTML render                     | `/prerender`          |
-| HTML shell           | `ppr` path option                              | HTML prelude + React postponed state  | middleware, handlers, loaders; only the holes resume | `/ppr`                |
-| Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store       | middleware above it; nothing below                   | `/document-cache`     |
-| Whole response (CDN) | `Cache-Control: s-maxage` read by the platform | final response outside the app        | nothing — the app is not invoked                     | `/deployment-caching` |
+| Layer                | Declared with                                  | Stores                                                   | Still runs on a hit                                             | Skill                 |
+| -------------------- | ---------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- | --------------------- |
+| Function / component | `"use cache"`                                  | one function's return value                              | everything around the call                                      | `/use-cache`          |
+| Loader data          | `loader(L, () => [cache({...})])`              | one loader's result                                      | other loaders, handlers, rendering                              | `/caching`, `/loader` |
+| Segments, runtime    | `cache({...}, () => [...])`                    | rendered Flight segments of a subtree                    | middleware, segments above it, loaders, HTML render             | `/caching`            |
+| Segments, build time | `Prerender()` / `Static()`                     | Flight segments rendered at build                        | middleware, loaders, HTML render                                | `/prerender`          |
+| HTML shell           | `ppr` path option                              | HTML prelude + React postponed state + the handler layer | middleware, loaders (handlers never run); only the holes resume | `/ppr`                |
+| Whole response (app) | `createDocumentCacheMiddleware()` + `s-maxage` | final response in the app store                          | middleware above it; nothing below                              | `/document-cache`     |
+| Whole response (CDN) | `Cache-Control: s-maxage` read by the platform | final response outside the app                           | nothing — the app is not invoked                                | `/deployment-caching` |
 
 Quick rules:
 
@@ -53,8 +53,8 @@ execution model, and runtime control.
 
 ## Two axes — do not conflate
 
-Everything on this page is **axis 1: stored-value freshness** — _is a cached
-value still good?_ There is a second, orthogonal axis it is easy to mistake for
+Everything on this page is **stored-value freshness** — _is a cached value
+still good?_ There is a second, orthogonal concern it is easy to mistake for
 caching:
 
 1. **Stored-value freshness** — _is a cached value still good?_
@@ -118,6 +118,12 @@ else they allow:
   `ctx`/`env`/`req` args are excluded from the cache key. The guard runs only on
   the cached path: with no item-capable store configured the function runs
   uncached and nothing throws.
+
+The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`,
+a `{ cache: false }` variable read, and `ctx.dynamic()` refuse the capture
+anywhere it waits — handlers, promises they pass or push, async server
+components, `ssr: false` loaders, and loaders a handler awaits (no loader
+exemption there). The route then serves uncached; see `/ppr`.
 
 ### Cross-deploy safety: version-segmented store keys
 

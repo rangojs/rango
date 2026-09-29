@@ -44,6 +44,7 @@ import { CFCacheStore } from "../../cache/cf/cf-cache-store.js";
 import type { CachedEntryData, SegmentCacheStore } from "../../cache/types.js";
 import {
   createRequestContext,
+  getRequestContext,
   runWithRequestContext,
   setRequestContextParams,
   type ExecutionContext,
@@ -55,6 +56,7 @@ import {
 } from "../../router/request-classification.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload, SSRModule } from "../types.js";
+import type { PartialCacheOptions } from "../../types.js";
 
 const LAYOUT_TAG = "layout-tag";
 const ASYNC_TAG = "async-component-tag";
@@ -64,6 +66,7 @@ const SLOT_RENDER_TAG = "slot-render-tag";
 const SLOT_LOADER_TAG = "slot-loader-tag";
 const UNCONSUMED_LOADER_TAG = "unconsumed-loader-tag";
 const HANDLE_TAG = "handle-render-tag";
+const ROUTE_CONFIG_TAG = "route-config-tag";
 
 const PRELUDE = "<html><body>FROZEN-PRELUDE</body></html>";
 
@@ -160,27 +163,33 @@ async function SideSlot(ctx: UseCtx): Promise<React.ReactNode> {
   return <SlotContent />;
 }
 
-async function makeRouter(): Promise<Router> {
+async function makeRouter(
+  withCache: boolean | PartialCacheOptions = true,
+): Promise<Router> {
   const router = createRouter({} as any);
-  router.routes(({ layout, parallel, loader, loading, cache, path }: any) => [
-    layout(TagLayout, () => [
-      loader(OwnLoader),
-      parallel({ "@side": SideSlot }, () => [
-        loader(SlotLoader),
-        loading(<p>side skeleton</p>),
+  router.routes(({ layout, parallel, loader, loading, cache, path }: any) => {
+    const page = () =>
+      path("/tagged", () => <p>page</p>, {
+        name: "recordTagsPage",
+        ppr: { ttl: 300 },
+      });
+    return [
+      layout(TagLayout, () => [
+        loader(OwnLoader),
+        parallel({ "@side": SideSlot }, () => [
+          loader(SlotLoader),
+          loading(<p>side skeleton</p>),
+        ]),
+        parallel({ "@live": () => <p>live slot</p> }, () => [
+          loader(UnconsumedLoader),
+          loading(<p>live skeleton</p>),
+        ]),
+        withCache
+          ? cache(withCache === true ? { ttl: 60 } : withCache, () => [page()])
+          : page(),
       ]),
-      parallel({ "@live": () => <p>live slot</p> }, () => [
-        loader(UnconsumedLoader),
-        loading(<p>live skeleton</p>),
-      ]),
-      cache({ ttl: 60 }, () => [
-        path("/tagged", () => <p>page</p>, {
-          name: "recordTagsPage",
-          ppr: { ttl: 300 },
-        }),
-      ]),
-    ]),
-  ]);
+    ];
+  });
   await buildRouterTrieFromUrlpatterns(router);
   return router;
 }
@@ -355,6 +364,66 @@ describe("PPR capture over the route's cache() record (#957)", () => {
   );
 });
 
+// The shell's tags are its doc record's (plus bake-lane loaders' and
+// ppr.tags), so a capture that rendered the page fresh and one that replayed
+// the route's cache() record agree, and a tag recorded on the request outside
+// the record cannot reach the shell.
+describe("PPR capture tags without a route cache(): the doc record's tags", () => {
+  beforeEach(() => {
+    calls.layout = 0;
+  });
+
+  it("a fresh capture stores the same shell tags as a capture that replays the route's record", async () => {
+    const fresh = new MemorySegmentCacheStore();
+    await serve(await makeRouter(false), fresh, "/tagged");
+    // No record to replay: the foreground and the capture both ran the layout.
+    expect(calls.layout).toBe(2);
+
+    const replay = new MemorySegmentCacheStore();
+    await serve(await makeRouter(true), replay, "/tagged");
+
+    expect(new Set(shellTags(fresh))).toEqual(new Set(shellTags(replay)));
+    expect(shellTags(fresh)).toEqual(
+      expect.arrayContaining([
+        LAYOUT_TAG,
+        ASYNC_TAG,
+        OWN_LOADER_TAG,
+        SLOT_HANDLER_TAG,
+        SLOT_RENDER_TAG,
+        SLOT_LOADER_TAG,
+        HANDLE_TAG,
+      ]),
+    );
+    expect(shellTags(fresh)).not.toContain(UNCONSUMED_LOADER_TAG);
+  });
+
+  it.each([
+    ["replays the route's record", undefined],
+    [
+      "renders fresh (the route's store never holds its record)",
+      Object.assign(new MemorySegmentCacheStore(), { set: async () => {} }),
+    ],
+  ])(
+    "the route cache()'s own tags are on the shell whether the capture %s",
+    async (_label, routeStore) => {
+      const store = new MemorySegmentCacheStore();
+      await serve(
+        await makeRouter({
+          ttl: 60,
+          tags: [ROUTE_CONFIG_TAG],
+          ...(routeStore ? { store: routeStore } : {}),
+        }),
+        store,
+        "/tagged",
+      );
+      expect(calls.layout).toBe(routeStore ? 2 : 1);
+      expect(shellTags(store)).toEqual(
+        expect.arrayContaining([ROUTE_CONFIG_TAG, LAYOUT_TAG]),
+      );
+    },
+  );
+});
+
 describe("record tag owners run only where a record can be written (#957)", () => {
   /** Segment tag scopes entered (their async-local store is an "s:" key). */
   function segmentScopeRuns(run: { mock: { calls: unknown[][] } }): number {
@@ -408,6 +477,49 @@ describe("record tag owners run only where a record can be written (#957)", () =
     await serve(router, store, "/tagged");
 
     expect(segmentScopeRuns(run)).toBeGreaterThan(0);
+  });
+
+  it("a document HIT tail arms no tag owners: it replays the doc record and writes none", async () => {
+    // A live loader runs in every request's render, the HIT tail's included,
+    // and reads whether its context records tag owners.
+    const armed: Array<boolean | undefined> = [];
+    const ProbeLoader = (createLoader as Function)(
+      async () => {
+        armed.push(getRequestContext()._recordTagOwners);
+        return { ok: true };
+      },
+      undefined,
+      "test#RecordTagsProbe",
+    );
+    const router = createRouter({} as any);
+    router.routes(({ layout, loader, loading, cache, path }: any) => [
+      layout(
+        () => <main>probe</main>,
+        () => [
+          loader(ProbeLoader),
+          loading(<p>probe skeleton</p>),
+          cache({ ttl: 60 }, () => [
+            path("/probe", () => <p>page</p>, {
+              name: "recordTagsProbe",
+              ppr: { ttl: 300 },
+            }),
+          ]),
+        ],
+      ),
+    ]);
+    await buildRouterTrieFromUrlpatterns(router);
+    const store = new MemorySegmentCacheStore();
+    await serve(router, store, "/probe");
+    // The MISS render resolved the route's cache() scope and armed.
+    expect(armed).toEqual([true]);
+    const writes = recordWrites(store);
+
+    const hit = await serve(router, store, "/probe");
+
+    expect(hit.headers.get("x-rango-shell")).toBe("HIT");
+    expect(armed).toHaveLength(2);
+    expect(armed[1]).not.toBe(true);
+    expect(writes).toEqual([]);
   });
 
   it("a stale record's background rewrite keeps its tags (the derived context inherits the flag)", async () => {

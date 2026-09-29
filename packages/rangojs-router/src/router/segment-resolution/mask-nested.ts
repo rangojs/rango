@@ -1,8 +1,10 @@
 /**
- * Capture-side nested-thenable masking — the mechanism behind "nested-promise
- * shape is the liveness declaration" for BOTH bake-lane loader containers
- * (loader-cache.ts) and pushed handle containers (the capture handle store's
- * push wrap in rsc/shell-capture.ts).
+ * Capture-side nested thenables. Masking is the mechanism behind "nested-
+ * promise shape is the liveness declaration" for the loader lane: bake-lane
+ * loader containers (loader-cache.ts) and DSL loader handle pushes (the
+ * capture handle store's push wrap in rsc/shell-capture.ts). Handler handle
+ * pushes are handler output and bake: the capture waits for their nested
+ * promises instead (settleNestedThenables).
  *
  * Deliberately a LEAF module: loader-mask (the other natural home) imports
  * request-context, so any funnel importing the mask from there inherits that
@@ -64,11 +66,50 @@ export function cloneElementWithProps(
 }
 
 /**
+ * Resolves once `value` and every thenable reachable from it through plain
+ * data objects, arrays and React element props has settled, following what
+ * each thenable resolves to. A rejection counts as settled: the consumer that
+ * encodes the value reports it. Other objects are leaves (the same walk as
+ * maskNestedContainerThenables), so a promise inside a Map is not waited for.
+ * An element is walked through its props only (`<X data={promise} />` in a
+ * handle value is handler output too), never its owner or type, and is never
+ * rebuilt: nothing is copied, only awaited.
+ *
+ * The capture waits on this for HANDLER handle pushes (shell-capture.ts):
+ * handler output is baked, so its promises must settle before the doc record
+ * encodes the handles every HIT replays.
+ */
+export function settleNestedThenables(value: unknown): Promise<void> {
+  const pending: Promise<void>[] = [];
+  const seen = new Set<object>();
+  const walk = (v: unknown): void => {
+    if (isThenable(v)) {
+      pending.push(
+        Promise.resolve(v).then(settleNestedThenables, () => undefined),
+      );
+      return;
+    }
+    if (isValidElement<Record<string, unknown>>(v)) {
+      walk(v.props);
+      return;
+    }
+    if (Array.isArray(v) || isPlainDataObject(v)) {
+      if (seen.has(v)) return;
+      seen.add(v);
+      for (const item of Array.isArray(v) ? v : Object.values(v)) walk(item);
+    }
+  };
+  walk(value);
+  return pending.length === 0
+    ? Promise.resolve()
+    : Promise.all(pending).then(() => undefined);
+}
+
+/**
  * Optional single-walk report for maskNestedContainerThenables: `thenable`
- * flips true when the walk masked at least one thenable. The shell fast path
- * reads it at handle-push time — a pushed container with a nested thenable
- * declares per-request data, and a shell entry whose HANDLER layer made such
- * a declaration cannot be served handler-free (the hole would never fill).
+ * flips true when the walk masked at least one thenable. The capture push
+ * funnel reads it for a loader push: a container with a masked nested
+ * promise keeps its loader tag, so the handle encode never waits on a mask.
  * Same single-pass shape as elideLoaderContainer's `hasHole`.
  */
 export interface MaskReport {
@@ -78,9 +119,9 @@ export interface MaskReport {
 /**
  * Copy a container with every NESTED thenable replaced by a masked
  * (never-resolving) promise. Applied during shell capture to (a) bake-lane
- * loader containers (loader-cache.ts) and (b) pushed handle containers
- * (shell-capture.ts capture store push wrap) — the two rango-owned funnels
- * where consumers declare per-request data by promise SHAPE.
+ * loader containers (loader-cache.ts) and (b) DSL loader handle pushes
+ * (shell-capture.ts capture store push wrap) — the rango-owned funnels where
+ * a loader declares per-request data by promise SHAPE.
  *
  * Why: a nested promise that happened to SETTLE before the capture's quiet
  * window closed used to bake its value into the SHARED shell (and, for

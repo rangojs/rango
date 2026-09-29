@@ -1,27 +1,27 @@
 /**
  * Capture data snapshot: recording + seeding stores for PPR shell parity.
  *
- * The scar tissue this fixes: a PPR HIT serves frozen prelude bytes, then a
- * FULL FRESH Flight render for hydration. Any shell-baked (non-hole) content
- * that drifts between capture time and hit time — a cache() segment with a
- * shorter ttl than the shell, a tag-invalidated item — makes the fresh payload
- * disagree with the prelude, so React throws a hydration text mismatch and
- * regenerates the tree client-side (wiping the FOUC theme class, flashing
- * content). See docs/design/ppr-shell-resume.md.
+ * A PPR HIT serves frozen prelude bytes, then a Flight payload for hydration
+ * that must agree with them byte for byte. The handler layer's part of that
+ * payload is the capture's own doc segment record: the capture writes it
+ * first, renders its prelude from it, and every HIT replays it (no handler
+ * runs on a HIT). What still executes on a HIT is the loader layer: live
+ * loaders and promise-carrying bake-lane (`ssr: false`) loaders run, and the
+ * values the bake-lane ones read must match what the capture baked (a
+ * promise-free bake-lane loader is served from its pin and does not run). See docs/design/ppr-shell-resume.md.
  *
- * The fix (Next.js resume-data-cache analog, adapted to Rango's cache rings):
- * the CAPTURE render records every cache-store read-hit and write it performed
- * (the {@link RecordingShellStore}); the record rides inside the ShellCacheEntry
- * as its `snapshot`; on a HIT the tail render reads through a
- * {@link SeededShellStore} overlay that serves those recorded values AS FRESH,
- * so the shell region reproduces byte-identically while everything NOT recorded
- * (the holes — masked loaders were never executed at capture, so their reads
- * were never recorded) stays live.
+ * The mechanism (Next.js resume-data-cache analog, adapted to Rango's cache
+ * rings): the CAPTURE render records every cache-store read-hit and write it
+ * performed (the {@link RecordingShellStore}); the records ride inside the
+ * ShellCacheEntry as its `snapshot`; on a HIT the tail render reads through a
+ * {@link SeededShellStore} overlay that serves those recorded values AS FRESH.
+ * Everything NOT recorded (the holes — masked loaders were never executed at
+ * capture, so their reads were never recorded) stays live.
  *
- * The invariant, verbatim: the snapshot is the set of cache-store reads the
- * capture render performed that a reader of the entry can consume; replaying
- * them on a HIT reproduces the shell content byte-identically; everything not
- * recorded stays live. {@link pruneShellSnapshot} drops the rest.
+ * The invariant, verbatim: the snapshot is the doc record plus the cache-store
+ * reads the capture's loaders performed; replaying them on a HIT reproduces
+ * the shell content byte-identically; everything not recorded stays live.
+ * {@link pruneShellSnapshot} drops the rest.
  */
 
 import type {
@@ -152,30 +152,48 @@ export class RecordingShellStore<
    * cacheRoute path schedules its actual store.set in a second waitUntil while the
    * first is running), so each awaited batch may enqueue more. Loop until the
    * queue empties or the deadline passes. Bounded: a pathologically slow write
-   * must never stall the capture task, so a key that does not settle in time is
-   * left unpinned (it drifts, the pre-snapshot behavior) rather than hanging.
+   * must never stall the capture task. Resolves true when every tracked write
+   * settled, false at the deadline (settleCaptureRecord then fails the capture
+   * when the doc record is among the writes still pending).
    */
-  async settleWrites(timeoutMs: number): Promise<void> {
+  async settleWrites(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (this.writes.length > 0) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) return;
+      if (remaining <= 0) return false;
       // Take the current batch; new writes scheduled while awaiting accumulate in
       // this.writes and are drained on the next iteration.
       const batch = this.writes.splice(0);
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const guard = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, remaining);
+      const guard = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), remaining);
         (timer as { unref?: () => void }).unref?.();
       });
-      await Promise.race([Promise.allSettled(batch).then(() => {}), guard]);
+      const settled = await Promise.race([
+        Promise.allSettled(batch).then(() => true as const),
+        guard,
+      ]);
       if (timer) clearTimeout(timer);
+      if (!settled) {
+        // Keep tracking the batch: a later settleWrites still waits for it.
+        this.writes.unshift(...batch);
+        return false;
+      }
     }
+    return true;
   }
 
   /** The recorded snapshot (last-write-wins per family+key), or undefined if empty. */
   drainSnapshot(): ShellSnapshotRecord[] | undefined {
     return this.records.size > 0 ? [...this.records.values()] : undefined;
+  }
+
+  /** One recorded value, by family and key. */
+  getRecord(
+    family: ShellSnapshotRecord["family"],
+    key: string,
+  ): ShellSnapshotRecord["value"] | undefined {
+    return this.records.get(recordKey(family, key))?.value;
   }
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
@@ -315,41 +333,90 @@ export function hasDocRecord(
 }
 
 /**
- * Who reads a stored snapshot beyond its segment family
+ * Who reads a stored snapshot besides the doc record
  * (docs/design/shell-entry-layout.md §2):
  * - "segments": nobody. A navigation-only entry is read only by partial
- *   replay, which seeds segments alone (SeededShellStore `segmentsOnly`).
- * - "loaders": the loaders a document HIT re-runs. Every HIT tail of the
- *   entry replays the handler layer from the implicit doc record, so the item
- *   and response records only handler code read are dead weight.
+ *   replay, which seeds the doc record alone (SeededShellStore
+ *   `segmentsOnly`, implicit doc scope only).
+ * - "loaders": the loaders a document HIT re-runs. Every HIT tail replays
+ *   the handler layer from the doc record and never runs a handler, so the
+ *   records only handler code read are dead weight.
  */
 export type ShellSnapshotReaders = "segments" | "loaders";
 
 /**
- * Split a capture's snapshot into what its readers consume and the rest.
- * Segment records are always kept; with "loaders", loader-family records and
+ * Split a capture's snapshot into what its readers consume and the rest: the
+ * doc record (`docKey`) always; with "loaders", the loader-family records and
  * the item/response records a loader touched during the capture
- * (RecordingShellStore.loaderKeys) are kept too. The doc record stays a copy
- * inside the entry: a reference to a separately stored record could be
- * evicted on its own, and the HIT that then re-ran handlers would need every
- * record this drops.
+ * (RecordingShellStore.loaderKeys). Every other segment record goes: an
+ * explicit cache() tier's reads and writes are keyed where no HIT tail and no
+ * partial replay looks (both consult only the doc record). The doc record
+ * stays a copy inside the entry: a reference to a separately stored record
+ * could be evicted on its own, and the HIT would have nothing to replay.
  */
 export function pruneShellSnapshot(
   snapshot: readonly ShellSnapshotRecord[],
   readers: ShellSnapshotReaders,
   loaderKeys: ReadonlySet<string>,
+  docKey: string,
 ): { kept: ShellSnapshotRecord[]; pruned: ShellSnapshotRecord[] } {
   const kept: ShellSnapshotRecord[] = [];
   const pruned: ShellSnapshotRecord[] = [];
   for (const record of snapshot) {
     const keep =
-      record.family === "segment" ||
+      (record.family === "segment" && record.key === docKey) ||
       (readers === "loaders" &&
         (record.family === "loader" ||
-          loaderKeys.has(recordKey(record.family, record.key))));
+          (record.family !== "segment" &&
+            loaderKeys.has(recordKey(record.family, record.key)))));
     (keep ? kept : pruned).push(record);
   }
   return { kept, pruned };
+}
+
+/**
+ * The shell entry head's fields estimateShellEntryBytes does not measure
+ * (versions, timestamps, theme, lengths, flags; about 200 bytes in a
+ * CFCacheStore frame) and the frame's 12-byte prefix, with room to spare.
+ */
+export const SHELL_ENTRY_HEAD_ALLOWANCE_BYTES: number = 512;
+
+const ENTRY_BYTE_ENCODER = new TextEncoder();
+
+/**
+ * Bytes (UTF-8) a stored shell entry takes, as the built-in stores write it:
+ * the prelude, the snapshot's JSON, and a JSON head that carries the
+ * postponed state as an escaped string next to the tags and doc key
+ * (CFCacheStore's frame head, VercelCacheStore's envelope), plus
+ * SHELL_ENTRY_HEAD_ALLOWANCE_BYTES for the head's fixed fields and the
+ * frame prefix. Measuring the raw postponed bytes undercounted: every quote
+ * in it is escaped in the head (a /ppr-large/holes entry measured 1,098
+ * bytes under its KV value). The capture's whole-entry guard compares this
+ * with the store's value limit.
+ */
+export function estimateShellEntryBytes(parts: {
+  preludeBytes: number;
+  postponed: string | null | undefined;
+  snapshot: readonly ShellSnapshotRecord[] | undefined;
+  tags: readonly string[] | undefined;
+  docKey: string | undefined;
+  prunedRecords: string | undefined;
+}): number {
+  const head = ENTRY_BYTE_ENCODER.encode(
+    JSON.stringify({
+      po: parts.postponed,
+      t: parts.tags,
+      dk: parts.docKey,
+      pr: parts.prunedRecords,
+    }),
+  ).length;
+  const snapshot =
+    parts.snapshot && parts.snapshot.length > 0
+      ? ENTRY_BYTE_ENCODER.encode(JSON.stringify(parts.snapshot)).length
+      : 0;
+  return (
+    parts.preludeBytes + head + snapshot + SHELL_ENTRY_HEAD_ALLOWANCE_BYTES
+  );
 }
 
 /** Snapshot records by family, e.g. `segment:1/item:5` (no commas: it rides a Server-Timing desc). */
@@ -421,6 +488,12 @@ export interface ShellLoaderSeedEntry {
    * from the pin (loader-cache.ts pin-first path).
    */
   holes: boolean;
+  /**
+   * The record needs its loader body to run on a HIT for pushes the capture
+   * could not record (ShellSnapshotLoaderValue.runs). Only read for a
+   * hole-free record: a hole-carrying one always runs.
+   */
+  runs: boolean;
 }
 
 export async function buildShellLoaderSeed(
@@ -442,9 +515,12 @@ export async function buildShellLoaderSeed(
             rec.key,
             {
               container: await deserializeResult(stored.value),
-              // A record without the bit (pre-bit snapshot) reads as
-              // hole-carrying: unknown hole-ness must keep the gated path.
+              // A record without a bit predates it: without the hole bit it
+              // reads as hole-carrying (unknown hole-ness keeps the gated
+              // path), and without the runs bit as runs (its snapshot lacks
+              // the loader-owned pushes, so the body supplies them).
               holes: stored.holes !== 0,
+              runs: stored.runs !== 0,
             },
           ];
         } catch {
@@ -609,5 +685,22 @@ export class SeededShellStore<
 
   async invalidateTags(tags: string[]): Promise<void> {
     return this.inner.invalidateTags?.(tags);
+  }
+}
+
+/**
+ * Thrown by a document HIT tail's match when its doc record cannot supply the
+ * handler layer (it failed to decode, or the entry lost it). The tail must not
+ * run handlers after the prelude committed, so withCacheLookup throws this
+ * instead of resolving segments, and serveShellHit degrades the response:
+ * the entry is replaced with a tombstone, the memo is dropped, a recapture is
+ * scheduled, and the browser reloads into a MISS.
+ */
+export class ShellRecordUnavailableError extends Error {
+  constructor(docKey: string | undefined) {
+    super(
+      `PPR shell HIT: the doc record${docKey ? ` "${docKey}"` : ""} could not supply the handler layer`,
+    );
+    this.name = "ShellRecordUnavailableError";
   }
 }

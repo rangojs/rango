@@ -540,23 +540,24 @@ describe("VercelCacheStore", () => {
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     });
 
-    it("round-trips replay eligibility flags", async () => {
+    it("round-trips the replay fields (docKey, navigationOnly)", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       await s.putShell(
         "k",
-        shellEntry({
-          handlerLiveHoles: true,
-          transitionWhen: true,
-          navigationOnly: true,
-        }),
+        shellEntry({ docKey: "doc:host/p", navigationOnly: true }),
         60,
         300,
       );
       const entry = (await s.getShell("k"))?.entry;
-      expect(entry?.handlerLiveHoles).toBe(true);
-      expect(entry?.transitionWhen).toBe(true);
+      expect(entry?.docKey).toBe("doc:host/p");
       expect(entry?.navigationOnly).toBe(true);
+    });
+
+    it("declares its shell entry limit below the item cap (base64 prelude)", () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, maxItemBytes: 4000 });
+      expect(s.maxShellEntryBytes).toBe(3000);
     });
 
     it("round-trips a slim navigationOnly entry (no document half)", async () => {

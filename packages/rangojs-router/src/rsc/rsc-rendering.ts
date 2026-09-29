@@ -13,6 +13,7 @@ import {
 } from "../server/request-context.js";
 import {
   SeededShellStore,
+  ShellRecordUnavailableError,
   buildShellLoaderSeed,
   countSnapshotFamilies,
   hasDocRecord,
@@ -48,6 +49,8 @@ import type { HandlerContext } from "./handler-context.js";
 import { gateTransitions } from "./transition-gate.js";
 import { buildFullPayload } from "./full-payload.js";
 import {
+  capShellWindow,
+  lastStoredCaptureSeq,
   scheduleShellCapture,
   resolveShellCaptureDebugSink,
   takeCaptureDebugEventForTiming,
@@ -63,6 +66,13 @@ import {
   isValidShellHit,
   hasIntactShellPayload,
   openShellDocument,
+  navigationShellKey,
+  partitionShellKey,
+  inlineShellScript,
+  shellReloadScript,
+  partitionBuildShellCheckDone,
+  notePartitionBuildShellCheck,
+  warnPprWindowCappedOnce,
   SHELL_PRELUDE_CHUNK_BYTES,
   hasShellFamily,
   warnShellStoreMissingOnce,
@@ -75,10 +85,15 @@ import {
   type ShellTailTiming,
 } from "./shell-serve.js";
 import {
+  hasBuildShell,
   lookupBuildShell,
   type DevShellLookup,
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
+import {
+  resolveSwrWindow,
+  staleShellRecaptureDue,
+} from "../cache/cache-policy.js";
 import {
   getNavigationContextHeader,
   prerenderStoreShortCircuits,
@@ -93,6 +108,8 @@ import {
   safeSameOriginLanding,
 } from "../redirect-origin.js";
 import { nonce as nonceToken } from "./nonce.js";
+import { escapeJsonForScript } from "../escape-script.js";
+import { resolveShellPartition } from "../cache/cache-scope.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
@@ -122,8 +139,6 @@ type PprReplayBypassReason =
   | "no-entry"
   | "invalid-version"
   | "corrupt-entry"
-  | "handler-live-holes"
-  | "transition-when"
   | "no-segment-snapshot"
   | "snapshot-miss"
   | "explicit-cache-hit"
@@ -147,13 +162,6 @@ function describePprReplayStatus(status: PprReplayStatus): string {
   return status.outcome === "HIT"
     ? status.freshness
     : `bypass:${status.reason}`;
-}
-
-function buildNavigationShellKey(
-  url: URL,
-  filter?: SearchParamsFilter,
-): string {
-  return `${buildShellKey(url, filter)}:navigation`;
 }
 
 function createShellCaptureDescriptor(
@@ -248,8 +256,6 @@ function replayableShellSnapshot(
   if (!entry.navigationOnly && !hasIntactShellPayload(entry)) {
     return { reason: "corrupt-entry" };
   }
-  if (entry.handlerLiveHoles) return { reason: "handler-live-holes" };
-  if (entry.transitionWhen) return { reason: "transition-when" };
   // Eligibility requires the CANONICAL doc segment record (`docKey`), not just
   // any segment record: captures under an explicit cache() scope also record
   // that tier's reads/writes under keys a partial lookup can never resolve,
@@ -428,19 +434,46 @@ function* requestRenderPlan<TEnv>(
     response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
 
+  const captureKey = prepared.partialCaptureKey;
   if (
     isPartial &&
     prepared.partialCaptureNeeded &&
+    captureKey !== undefined &&
     !reqCtx._dynamic &&
     response.status === 200
   ) {
-    const captureKey = prepared.partialCaptureKey;
     yield* handoff("navigation-shell-capture", () =>
       scheduleNavigationShellCapture(input, captureKey),
     );
   }
 
   return response;
+}
+
+/**
+ * Dev: warn once per route when the route's cache() entry reduces an explicit
+ * ppr window. The window is what capShellWindow gives a capture from a
+ * record written just now, the widest it can get; null (a cache() ttl + swr
+ * of 0) is the capture's own warning.
+ */
+function warnIfPprWindowReduced(
+  routeName: string,
+  pprOption: { ttl?: number; swr?: number },
+  pprConfig: ResolvedPprConfig,
+  cacheScope: { ttl: number; swr: number | undefined },
+  store: SegmentCacheStore<any>,
+): void {
+  const cache = { ttl: cacheScope.ttl, swr: cacheScope.swr ?? 0 };
+  const shell = capShellWindow(
+    pprConfig.ttl,
+    resolveSwrWindow(pprConfig.swr, store.defaults),
+    {
+      freshUntil: cache.ttl * 1000,
+      staleUntil: (cache.ttl + cache.swr) * 1000,
+    },
+    0,
+  );
+  if (shell) warnPprWindowCappedOnce(routeName, pprOption, shell, cache);
 }
 
 /**
@@ -463,8 +496,13 @@ function* shellServePlan<TEnv>(
   ) {
     return { kind: "pass" };
   }
-  const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
+  const manifestEntry = reqCtx._classifiedRoute?.manifestEntry;
+  const pprConfig = resolvePprConfig(manifestEntry);
   if (!pprConfig) return { kind: "pass" };
+  // A degraded HIT's reload (shellReloadScript) renders like a cache miss:
+  // no shell read, no capture, so it can never degrade again. The handler
+  // stripped the marker from the request and left this flag.
+  if (reqCtx._shellForcedMiss) return { kind: "pass" };
 
   // A per-request CSP nonce pins the route to axis 1: a shared shell would
   // freeze the capture request's nonce and CSP would reject it for every
@@ -473,8 +511,8 @@ function* shellServePlan<TEnv>(
   // the provider-only check missed the latter (issue #656).
   const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
   const store = reqCtx._cacheStore;
-  const key = buildShellKey(url, reqCtx._searchParamsFilter);
-  mirrorPprServerTimings(key, reqCtx);
+  const baseKey = buildShellKey(url, reqCtx._searchParamsFilter);
+  let key = baseKey;
   if (activeNonce !== undefined) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent): a ppr route gated off by an active
@@ -488,7 +526,65 @@ function* shellServePlan<TEnv>(
     warnShellStoreMissingOnce(key);
     return { kind: "pass" };
   }
+  // The route's own cache() opt-out — cache(false), or a condition() that
+  // refuses THIS request — is absolute, and a HIT tail never consults the
+  // route scope (it replays the shell's doc record), so it is decided here,
+  // before any shell byte: the request renders like a cache miss (axis 1) and
+  // schedules no capture (the capture could not record the handler layer).
+  const route = classifiedRouteSnapshot(reqCtx);
+  if (route?.cacheScope && !route.cacheScope.allowsCache("read")) {
+    return { kind: "pass" };
+  }
+  // The shell is capped to the route cache() entry it captures from
+  // (capShellWindow); an explicit ppr window the cap reduces warns in dev.
+  // resolvePprConfig returned a config, so the entry is a ppr route.
+  const pprOption = manifestEntry?.type === "route" && manifestEntry.ppr;
+  if (
+    process.env.NODE_ENV !== "production" &&
+    route?.cacheScope?.enabled &&
+    typeof pprOption === "object" &&
+    (pprOption.ttl !== undefined || pprOption.swr !== undefined)
+  ) {
+    warnIfPprWindowReduced(
+      reqCtx._classifiedRoute?.routeKey ?? url.pathname,
+      pprOption,
+      pprConfig,
+      route.cacheScope,
+      store,
+    );
+  }
+  // A route whose cache() record is partitioned by the request (its `key()`,
+  // or the store's keyGenerator) partitions its shell the same way: each
+  // partition captures and serves its own shell. A failed key resolution
+  // serves no shell, never another partition's.
+  const partitionedKey = partitionedShellKey(
+    baseKey,
+    route?.cacheScope,
+    store,
+    reqCtx.url.pathname,
+    route?.params,
+  );
+  if (partitionedKey) {
+    const resolved = yield* step("shell-partition", () =>
+      partitionedKey.then(
+        (value): string | undefined => value,
+        (error: unknown) => {
+          reportCacheError(error, "cache-read", "[ShellServe] shell key");
+          return undefined;
+        },
+      ),
+    );
+    if (resolved === undefined) return { kind: "pass" };
+    key = resolved;
+  }
+  reqCtx._shellKey = key;
+  // The buffered capture and tail timings are keyed by the partitioned key.
+  mirrorPprServerTimings(key, reqCtx);
 
+  // A MISS schedules its capture after rendering: taken before the read, this
+  // lets that capture skip itself when another request's capture stored the
+  // shell in between (ShellCaptureDescriptor.storedSeqAtRead).
+  const storedSeqAtRead = lastStoredCaptureSeq(key);
   // SSR setup starts before route handling, so read the shell before joining it
   // to overlap the remaining setup work with cache I/O.
   const cached = yield* step("shell-read", () =>
@@ -517,9 +613,13 @@ function* shellServePlan<TEnv>(
     store,
   );
 
+  // A HIT replays the handler layer from the entry's doc record (`docKey`),
+  // or, for a Prerender route, from the prerender store. An entry that has
+  // neither is a MISS: serving it would run handlers after the commit.
   if (
     cached &&
     !cached.entry.navigationOnly &&
+    (cached.entry.docKey !== undefined || route?.matched?.pr === true) &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
     const document = openShellDocumentMetered(
@@ -542,8 +642,12 @@ function* shellServePlan<TEnv>(
       );
     } else {
       // Stale (SWR) hit: serve the stale shell now, recapture in the
-      // background (stampede-guarded + backoff inside scheduleShellCapture).
-      if (cached.shouldRevalidate) {
+      // background (stampede-guarded + backoff inside scheduleShellCapture),
+      // at most once per SHELL_MIN_RECAPTURE_INTERVAL_MS of the shell's age.
+      if (
+        cached.shouldRevalidate &&
+        staleShellRecaptureDue(cached.entry, Date.now())
+      ) {
         yield* handoff("shell-recapture", () =>
           scheduleShellCapture(
             ctx,
@@ -567,33 +671,68 @@ function* shellServePlan<TEnv>(
           ssrModule,
           document,
           descriptor,
+          activeNonce,
         ),
       );
       return { kind: "serve", response };
     }
   }
 
+  // A runtime tombstone (degradeUnreplayableShell: this key's HIT could not
+  // replay its handler layer) shadows the build shell too, or a build shell
+  // whose tail cannot be replayed would degrade on every request until a
+  // runtime capture lands.
+  if (
+    cached?.entry.navigationOnly &&
+    isValidShellHit(cached.entry, ctx.version)
+  ) {
+    return {
+      kind: "miss",
+      descriptor: { ...descriptor, storedSeqAtRead },
+      ssrModule,
+    };
+  }
+
   // Build-time shell read-through (producer B, #699): on a runtime
   // store MISS a Prerender+ppr route serves its `vite build`-baked
-  // shell through the SAME serve path. lookupBuildShell owns the
-  // validity gates and fails to null; openShellDocument below is the
-  // prelude's integrity check and only decode (either failing leaves
-  // the ordinary MISS path); past ppr.ttl the baked entry still serves
-  // while SWR recaptures — the upgrade path from build entry to runtime
-  // entry.
-  const buildHit = yield* step("build-shell-lookup", () =>
-    lookupBuildShell(
-      url,
-      ctx.version,
-      store,
-      // Dev: no build manifest exists; producer B runs on demand via
-      // the dev server's /__rsc_shell endpoint for PRERENDERED routes
-      // only (production's exact candidate set). Folded away in
-      // production builds (NODE_ENV is a compile-time constant).
-      resolveDevShellLookup(reqCtx, pprConfig),
-      reqCtx._searchParamsFilter,
-    ),
-  );
+  // shell through the SAME serve path. A partitioned route has none: the
+  // build captured one partition, which no request may be assumed to
+  // share, and a route that has a build shell says so once. lookupBuildShell
+  // owns the validity gates and fails to null; openShellDocument below is
+  // the prelude's integrity check and only decode (either failing leaves the
+  // ordinary MISS path); past ppr.ttl the baked entry still serves while SWR
+  // recaptures — the upgrade path from build entry to runtime entry.
+  //
+  // Dev: no build manifest exists; producer B runs on demand via the dev
+  // server's /__rsc_shell endpoint for PRERENDERED routes only (production's
+  // exact candidate set). Folded away in production builds (NODE_ENV is a
+  // compile-time constant).
+  const devShellLookup = resolveDevShellLookup(reqCtx, pprConfig);
+  let buildHit: Awaited<ReturnType<typeof lookupBuildShell>> = null;
+  if (key !== baseKey) {
+    // Probed once per path without a build shell, and not again once the
+    // route warned. A search-bearing URL never reads one: nothing to probe.
+    const routeName = reqCtx._classifiedRoute?.routeKey;
+    if (
+      !partitionBuildShellCheckDone(url.pathname, routeName) &&
+      shellSearchSeed(url, reqCtx._searchParamsFilter) === ""
+    ) {
+      const found = yield* step("build-shell-check", () =>
+        hasBuildShell(url.pathname, devShellLookup),
+      );
+      notePartitionBuildShellCheck(url.pathname, routeName, found);
+    }
+  } else {
+    buildHit = yield* step("build-shell-lookup", () =>
+      lookupBuildShell(
+        url,
+        ctx.version,
+        store,
+        devShellLookup,
+        reqCtx._searchParamsFilter,
+      ),
+    );
+  }
   // The document serve decodes the baked prelude once here; an undecodable
   // one is a MISS like a corrupt runtime entry.
   const buildDocument = buildHit
@@ -625,6 +764,7 @@ function* shellServePlan<TEnv>(
         ssrModule,
         buildDocument,
         descriptor,
+        activeNonce,
       ),
     );
     return { kind: "serve", response };
@@ -632,7 +772,11 @@ function* shellServePlan<TEnv>(
 
   // MISS (no entry, invalid reactVersion, or store read failure): axis 1
   // + a background capture scheduled once the response is known servable.
-  return { kind: "miss", descriptor, ssrModule };
+  return {
+    kind: "miss",
+    descriptor: { ...descriptor, storedSeqAtRead },
+    ssrModule,
+  };
 }
 
 /**
@@ -905,6 +1049,22 @@ function openShellDocumentMetered(
 }
 
 /**
+ * The shell key a request reads and captures: `baseKey`, partitioned by the
+ * route's request partition (cache-scope.ts resolveShellPartition; a
+ * partition equal to the default key leaves it unchanged). Undefined,
+ * synchronously and with no work, when nothing partitions the route; a
+ * rejection is a failed key resolution.
+ */
+function partitionedShellKey(
+  baseKey: string,
+  ...partition: Parameters<typeof resolveShellPartition>
+): Promise<string> | undefined {
+  return resolveShellPartition(...partition)?.then((resolved) =>
+    resolved === null ? baseKey : partitionShellKey(baseKey, resolved),
+  );
+}
+
+/**
  * Server-Timing mirror (issue #651): a capture or a HIT tail completes AFTER
  * its triggering response committed, so its numbers can only ride a LATER
  * response's header. Read-and-clear keeps one report per run. The capture
@@ -1033,7 +1193,7 @@ function renderPreparedRscResponse<TEnv>(
  */
 function scheduleNavigationShellCapture<TEnv>(
   input: RequestRenderInput<TEnv>,
-  partialCaptureKey: string | undefined,
+  captureKey: string,
 ): void {
   const { ctx, request, env, url, reqCtx } = input;
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
@@ -1056,8 +1216,7 @@ function scheduleNavigationShellCapture<TEnv>(
     },
     createShellCaptureDescriptor(
       ctx,
-      partialCaptureKey ??
-        buildNavigationShellKey(url, reqCtx._searchParamsFilter),
+      captureKey,
       shellSearchSeed(url, reqCtx._searchParamsFilter),
       url.origin,
       pprConfig,
@@ -1216,8 +1375,26 @@ async function matchPartialWithPprReplay<TEnv>(
     return runMatch({ outcome: "BYPASS", reason: "cache-disabled" });
   }
 
-  const key = buildShellKey(url, reqCtx._searchParamsFilter);
-  const navigationKey = `${key}:navigation`;
+  // The visitor's own partition (resolveShellPartition): replay never
+  // crosses into another partition's shell.
+  const baseKey = buildShellKey(url, reqCtx._searchParamsFilter);
+  let key = baseKey;
+  const partitionedKey = partitionedShellKey(
+    baseKey,
+    routeCacheScope,
+    store,
+    reqCtx.url.pathname,
+    routeSnapshot?.params,
+  );
+  if (partitionedKey) {
+    try {
+      key = await partitionedKey;
+    } catch (error) {
+      reportCacheError(error, "cache-read", "[NavigationPPR] shell key");
+      return runMatch({ outcome: "BYPASS", reason: "read-error" });
+    }
+  }
+  const navigationKey = navigationShellKey(key);
   let cached: Awaited<ReturnType<typeof store.getShell>> = null;
   try {
     cached = await store.getShell(key, { claimRevalidation: false });
@@ -1241,11 +1418,7 @@ async function matchPartialWithPprReplay<TEnv>(
     }
   }
 
-  if (
-    !snapshot &&
-    bypassReason !== "handler-live-holes" &&
-    bypassReason !== "transition-when"
-  ) {
+  if (!snapshot) {
     let navigationCached: Awaited<ReturnType<typeof store.getShell>> = null;
     try {
       navigationCached = await store.getShell(navigationKey, {
@@ -1274,13 +1447,16 @@ async function matchPartialWithPprReplay<TEnv>(
     // Production build manifests are local module data. In dev, resolving a
     // missing build shell would foreground-fetch /__rsc_shell and block an
     // otherwise ordinary navigation on capture, so replay remains runtime-only.
-    const buildHit = await lookupBuildShell(
-      url,
-      ctx.version,
-      store,
-      undefined,
-      reqCtx._searchParamsFilter,
-    );
+    const buildHit =
+      key !== baseKey
+        ? null
+        : await lookupBuildShell(
+            url,
+            ctx.version,
+            store,
+            undefined,
+            reqCtx._searchParamsFilter,
+          );
     if (buildHit?.stale) {
       bypassReason ??= "stale-build-entry";
     } else if (buildHit) {
@@ -1348,6 +1524,7 @@ async function matchPartialWithPprReplay<TEnv>(
             reqCtx._pprReplayPostMatchReason === undefined &&
             (shouldHealReplayMiss(bypassReason) ||
               bypassReason === "no-segment-snapshot"),
+          captureKey: navigationKey,
         };
       } finally {
         reqCtx._shellImplicitCache = previousImplicitCache;
@@ -1362,10 +1539,13 @@ async function matchPartialWithPprReplay<TEnv>(
       captureNeeded:
         reqCtx._pprReplayPostMatchReason === undefined &&
         shouldHealReplayMiss(bypassReason),
+      captureKey: navigationKey,
     };
   }
 
   const previousImplicitCache = reqCtx._shellImplicitCache;
+  const previousLoaderSeed = reqCtx._shellLoaderSeed;
+  let loaderSeed: ReturnType<typeof buildShellLoaderSeed> | undefined;
   let segmentReplayHit = false;
   let segmentReplayCorrupt = false;
   let explicitCacheHit = false;
@@ -1377,8 +1557,18 @@ async function matchPartialWithPprReplay<TEnv>(
       segmentsOnly: true,
     }),
     keyPrefix: "doc",
-    onHit: () => {
+    // Arms the bake-lane loader pins a document HIT serves (loader-cache.ts
+    // resolveLoaderData), decoded only now: the lookup awaits this before
+    // the route's loaders resolve, and an explicit-tier hit or a miss runs
+    // the loaders fresh and never reads a pin.
+    onHit: async () => {
       segmentReplayHit = true;
+      // Never rejects: the lookup awaits this inside its own try, and an
+      // unreadable seed leaves those loaders to run fresh.
+      const seed = await (loaderSeed ??= buildShellLoaderSeed(snapshot).catch(
+        () => undefined,
+      ));
+      if (seed) reqCtx._shellLoaderSeed = seed;
     },
     onCorrupt: () => {
       segmentReplayCorrupt = true;
@@ -1426,6 +1616,7 @@ async function matchPartialWithPprReplay<TEnv>(
     };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;
+    reqCtx._shellLoaderSeed = previousLoaderSeed;
   }
 }
 
@@ -1506,6 +1697,40 @@ async function isSettled(value: unknown): Promise<boolean> {
 }
 
 /**
+ * Evict a shell whose doc record cannot be replayed. The store has no shell
+ * delete, so the entry is overwritten with a tombstone: a navigationOnly
+ * entry with no document half and no snapshot, which document serving
+ * treats as a MISS (shellServePlan, the build shell included) and partial
+ * replay as `no-segment-snapshot`. The recapture overwrites it with a sound
+ * entry. Only for a broken entry: a snapshot read that was merely slow
+ * (`snapshotFailure: "unavailable"`) leaves the entry alone.
+ */
+async function degradeUnreplayableShell(
+  descriptor: ShellCaptureDescriptor,
+  entry: ShellCacheEntry,
+  scheduleRecapture: () => void,
+): Promise<void> {
+  const store = descriptor.store;
+  try {
+    await store?.putShell?.(
+      descriptor.key,
+      {
+        reactVersion: entry.reactVersion,
+        buildVersion: entry.buildVersion,
+        navigationOnly: true,
+        createdAt: Date.now(),
+      },
+      descriptor.ttl,
+      0,
+    );
+  } catch (error) {
+    reportCacheError(error, "cache-write", "[ShellServe] tombstone");
+  }
+  store?.dropShellMemo?.(descriptor.key);
+  scheduleRecapture();
+}
+
+/**
  * Serve a validated shell HIT: commit the stored prelude bytes NOW and run the
  * live tail behind them inside the response stream. Plain byte concatenation is
  * correct — React foster-parents content streamed after the prelude's closing
@@ -1524,6 +1749,7 @@ function serveShellHit(
   ssrModule: SSRModule,
   document: ShellDocument,
   descriptor: ShellCaptureDescriptor,
+  nonce: string | undefined,
 ): Response {
   const { entry, prelude: preludeBytes } = document;
   const metricsStore = reqCtx._metricsStore;
@@ -1540,6 +1766,8 @@ function serveShellHit(
         }
       : null;
   const tailT0 = tailTiming ? performance.now() : 0;
+  const scheduleRecapture = (): void =>
+    scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor);
 
   const createTailContext = (): RequestContext<any> => {
     const tailCtx: RequestContext<any> = Object.create(reqCtx);
@@ -1656,85 +1884,57 @@ function serveShellHit(
         tailTiming.snapshotParseMs = Math.round(snapshotStats.parseMs);
       }
     }
-    if (snapshot && snapshot.length > 0) {
-      const seededCtx = createTailContext();
-      if (reqCtx._cacheStore) {
-        seededCtx._cacheStore = new SeededShellStore(
-          reqCtx._cacheStore,
-          snapshot,
-        );
-      }
-      // Loader-family records (bake-lane containers, loader-container-bake):
-      // decode into a seed Map for the resolveLoaderData overlay, so the
-      // payload's baked container bytes match the frozen prelude while the
-      // hole-marker paths keep the fresh run's live nested promises.
-      const seedStart =
-        INTERNAL_RANGO_DEBUG || tailTiming ? performance.now() : 0;
-      const loaderSeed = await buildShellLoaderSeed(snapshot);
-      if (tailTiming) {
-        const seededAt = performance.now();
-        tailTiming.seedMs = Math.round(seededAt - tailT0);
-        tailTiming.seedCpuMs = Math.round(seededAt - seedStart);
-      }
-      if (INTERNAL_RANGO_DEBUG) {
-        console.log(
-          `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
-        );
-      }
-      if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
-      // Shell fast path (serve side): if the capture recorded the implicit doc
-      // segment record and the handler layer declared no liveness, the tail's
-      // cache lookup HITs the seeded doc entry — the handler layer is REPLAYED,
-      // not re-executed (loaders still run fresh). Anything else degrades to
-      // the full tail automatically.
-      if (!entry.handlerLiveHoles && !entry.transitionWhen) {
-        seededCtx._shellImplicitCache = {
-          ttl: descriptor.ttl,
-          swr: descriptor.swr,
-          keyPrefix: "doc",
-          // A doc record that fails to decode makes this tail re-run the
-          // handlers against live values, and the capture may have pruned
-          // the items they read. Recapture so later HITs do not repeat it.
-          // The store's memoized copy holds the same record: drop it, so the
-          // next HIT reads the store, which may already hold another
-          // isolate's recapture.
-          onCorrupt: () => {
-            descriptor.store?.dropShellMemo?.(descriptor.key);
-            scheduleShellCapture(
-              ctx,
-              request,
-              env,
-              url,
-              reqCtx,
-              ssrModule,
-              descriptor,
-            );
-          },
-        };
-        if (INTERNAL_RANGO_DEBUG) {
-          console.log(
-            `[Server][ppr] shell HIT: fast path armed (implicit doc cache) (abs ${Math.round(performance.now())})`,
-          );
-        }
-      } else if (INTERNAL_RANGO_DEBUG) {
-        console.log(
-          `[Server][ppr] shell HIT: fast path declined — request-dependent handler/transition state; tail re-runs handlers (abs ${Math.round(performance.now())})`,
-        );
-      }
-      // Fragment splice (issue #700): store hits in THIS tail emit their stored
-      // segment fragments verbatim (expanded by segment-fragments.ts). The flag
-      // lives on the derived context so it can never leak into a capture render,
-      // which serializes segments and must see real elements.
-      seededCtx._shellFragmentPayload = true;
-      return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
+    const seededCtx = createTailContext();
+    const records = snapshot ?? [];
+    if (reqCtx._cacheStore && records.length > 0) {
+      seededCtx._cacheStore = new SeededShellStore(reqCtx._cacheStore, records);
     }
-    // No snapshot (e.g. a producer B entry): still a shell-HIT tail, so arm the
-    // fragment splice on a derived context — never the shared reqCtx, from which
-    // scheduleShellCapture derives the capture context (the flag must not be
-    // inherited there).
-    const fragmentCtx = createTailContext();
-    fragmentCtx._shellFragmentPayload = true;
-    return runWithRequestContext(fragmentCtx, () => renderTail(fragmentCtx));
+    // Loader-family records (bake-lane containers, loader-container-bake):
+    // decode into a seed Map for the resolveLoaderData overlay, so the
+    // payload's baked container bytes match the frozen prelude while the
+    // hole-marker paths keep the fresh run's live nested promises.
+    const seedStart =
+      INTERNAL_RANGO_DEBUG || tailTiming ? performance.now() : 0;
+    const loaderSeed =
+      records.length > 0 ? await buildShellLoaderSeed(records) : undefined;
+    if (tailTiming) {
+      const seededAt = performance.now();
+      tailTiming.seedMs = Math.round(seededAt - tailT0);
+      tailTiming.seedCpuMs = Math.round(seededAt - seedStart);
+    }
+    if (INTERNAL_RANGO_DEBUG) {
+      console.log(
+        `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
+      );
+    }
+    if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
+    // The handler layer is REPLAYED from the entry's own doc record, never
+    // executed: the implicit doc scope replaces any route-derived scope
+    // (docTail), looks the record up by the key the capture wrote
+    // (fixedDocKey), and reads it from a segment-only overlay of the snapshot
+    // (the real store never holds a doc: record). A lookup that does not hit
+    // throws ShellRecordUnavailableError (withCacheLookup), handled by the
+    // degrade below. Live and promise-carrying bake-lane loaders still run
+    // fresh; a promise-free bake-lane loader is served from its pin
+    // (_shellLoaderSeed, loader-cache.ts). A Prerender route's tail takes
+    // the handler layer from the prerender store before this scope is
+    // consulted.
+    seededCtx._shellImplicitCache = {
+      ttl: descriptor.ttl,
+      swr: descriptor.swr,
+      store: new SeededShellStore(reqCtx._cacheStore!, records, {
+        segmentsOnly: true,
+      }),
+      keyPrefix: "doc",
+      docTail: true,
+      fixedDocKey: entry.docKey,
+    };
+    // Fragment splice (issue #700): store hits in THIS tail emit their stored
+    // segment fragments verbatim (expanded by segment-fragments.ts). The flag
+    // lives on the derived context so it can never leak into a capture render,
+    // which serializes segments and must see real elements.
+    seededCtx._shellFragmentPayload = true;
+    return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
   })();
   // The stream below is the only consumer; pre-attach a no-op catch so a tail
   // failure before the stream is pulled never surfaces as an unhandled rejection.
@@ -1839,7 +2039,10 @@ function serveShellHit(
           );
           controller.enqueue(
             new TextEncoder().encode(
-              `<script>location.replace(${JSON.stringify(safeTarget)})</script>`,
+              inlineShellScript(
+                `location.replace(${escapeJsonForScript(JSON.stringify(safeTarget))})`,
+                nonce,
+              ),
             ),
           );
           if (tailTiming) {
@@ -1850,6 +2053,31 @@ function serveShellHit(
         publishTailTiming(tailTiming, metricsStore, request, url);
         controller.close();
       } catch (error) {
+        if (error instanceof ShellRecordUnavailableError) {
+          // The doc record could not supply the handler layer, and running
+          // handlers behind a committed prelude is exactly what a HIT must
+          // never do: reload the page into a forced MISS. A broken entry is
+          // also replaced (tombstone, memo dropped, recapture); one whose
+          // snapshot read was only slow stays, and the next request reads it
+          // again.
+          if ((await document.snapshotFailure) !== "unavailable") {
+            await degradeUnreplayableShell(
+              descriptor,
+              entry,
+              scheduleRecapture,
+            );
+          }
+          controller.enqueue(
+            new TextEncoder().encode(shellReloadScript(nonce)),
+          );
+          if (tailTiming) {
+            tailTiming.outcome = "error";
+            tailTiming.completeMs = Math.round(performance.now() - tailT0);
+          }
+          publishTailTiming(tailTiming, metricsStore, request, url);
+          controller.close();
+          return;
+        }
         // Self-heal on a failed tail: errors the pre-commit gates cannot catch
         // (mismatched postponed blob, hard render error above the holes) throw
         // here AFTER the 200 + prelude flushed and would re-fail on every

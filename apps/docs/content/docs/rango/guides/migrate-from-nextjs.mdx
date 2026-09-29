@@ -320,15 +320,16 @@ If the param set really is closed, export the `Prerender()` definition alone and
 
 ### Partial prerendering: the ppr path option
 
-Next.js PPR statically prerenders a shell at build time and streams the parts inside `<Suspense>` at request time. Rango ships the same model as a path option: the shell is captured at runtime into the app cache store and resumed on later requests, with the holes rendered fresh per request. Your existing Suspense tree is the hole model — hand the un-awaited promise down, keep the boundary, add the option:
+Next.js PPR statically prerenders a shell at build time and streams the parts inside `<Suspense>` at request time. Rango ships a similar model as a path option: the shell is captured at runtime into the app cache store and resumed on later requests, with the holes rendered fresh per request. The difference is what counts as a hole. In Rango everything a handler produces is shell material, as it is under `cache()` — including a promise it hands to a component under `<Suspense>`. The capture awaits that promise and bakes its value. A live hole is loader data: move the per-request fetch into a loader (no `ssr: false`) and read it under a boundary:
 
 ```tsx
 import { Suspense } from "react";
 import type { HandlerContext } from "@rangojs/router";
 
-// Step 1 — direct carry-over. No loader, no loading(), no restructuring.
+// Next.js shape: a pending promise under <Suspense>. Under ppr this BAKES:
+// the capture awaits `price`, and every shell HIT shows the captured price.
 function ProductPage(ctx: HandlerContext) {
-  const price = fetchPrice(ctx.params.id); // pending promise — NOT awaited
+  const price = fetchPrice(ctx.params.id);
   return (
     <ProductShell>
       <Suspense fallback={<PriceSkeleton />}>
@@ -337,27 +338,30 @@ function ProductPage(ctx: HandlerContext) {
     </ProductShell>
   );
 }
-path("/products/:id", ProductPage, {
-  name: "product",
-  ppr: { ttl: 600, swr: 120 }, // or ppr: true (default ttl 300s)
-});
 
-// Step 2 (optional refinement) — promote the fetch to a live loader (no
-// ssr: false) for a guaranteed hole, even when the value resolves instantly.
-// loading() is the loader's hole boundary.
+// Rango shape for a live price: a loader without ssr: false, read with
+// useLoader(LivePriceLoader) in a client component. loading() (or an inline
+// <Suspense> around the reader) is the hole boundary.
+function ProductPageLive() {
+  return (
+    <ProductShell>
+      <LivePrice /> {/* "use client": useLoader(LivePriceLoader) */}
+    </ProductShell>
+  );
+}
 path(
   "/products/:id",
-  ProductPage,
-  { name: "product", ppr: { ttl: 600, swr: 120 } },
+  ProductPageLive,
+  { name: "product", ppr: { ttl: 600, swr: 120 } }, // or ppr: true (default ttl 300s)
   () => [loader(LivePriceLoader), loading(<PriceSkeleton />)],
 );
 ```
 
 Differences that matter during migration:
 
-- **The Suspense/promise model carries over.** Awaited or settled data bakes into the shell; a promise nested inside your data stays a live hole. For loaders, `ssr: false` selects the lane, not `loading()` — see [the loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane).
+- **Handler output bakes; loader data is the hole.** A promise the handler passes down, an async server component, a promise nested in a handle it pushes, and a loader it awaits are all awaited at capture (bounded by `ppr.captureTimeout`, 15 seconds by default) and served frozen for the shell's lifetime; a shell HIT never runs a handler. Keep the parts that must be fresh in loaders without `ssr: false`; inside an `ssr: false` loader, return them as nested promises. For loaders, `ssr: false` selects the lane, not `loading()` — see [the loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane).
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` / `revalidateTag()` drop the shell (`revalidate()` does not — it selects what re-renders and never touches shell HTML).
-- **`cookies()`/`headers()` in shell material throw during capture** (in Next they silently force dynamic rendering). Per-user reads must move into a live loader (no `ssr: false`); a nested promise does not help, because its body still runs during capture. The problem surfaces during migration instead of in production.
+- **Request-scoped reads in shell material refuse the capture** (in Next they silently force dynamic rendering). `cookies()`, `headers()`, a `{ cache: false }` variable, and `ctx.dynamic()` throw or refuse anywhere the capture waits for them: a handler, a promise it passes or pushes, an async component, a loader it awaits. Per-user reads must move into a live loader (no `ssr: false`); a nested promise does not help, because its body still runs during capture. A normal `ctx.get()` value is not guarded and bakes as the capturing request's value. The problem surfaces during migration instead of in production.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })` store (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`). Without one the route stays fully dynamic and logs a warning once per key.
 - **Middleware still guards every serve.** Auth middleware runs before any shell byte on a cache hit and a miss alike, so there is no "PPR bypasses middleware" caveat to migrate around.
 
@@ -367,7 +371,7 @@ A route without `ppr` pays nothing for the feature. See [PPR](/docs/rango/guides
 
 Next.js puts two different things under "revalidation." Rango separates them.
 
-**Axis 1: cache invalidation (bust cached values) — direct equivalent.** Tag entries with `cache({ tags })` or runtime `cacheTag(...tags)`. `cacheTag()` works inside a `"use cache"` function and also in a plain server component, where it tags the document or PPR shell the component renders into. Then invalidate by tag:
+**Cache invalidation (bust cached values) — direct equivalent.** Tag entries with `cache({ tags })` or runtime `cacheTag(...tags)`. `cacheTag()` works inside a `"use cache"` function and also in a plain server component, where it tags the document or PPR shell the component renders into. Then invalidate by tag:
 
 ```ts
 // Next.js                       Rango
@@ -375,9 +379,9 @@ Next.js puts two different things under "revalidation." Rango separates them.
 //                            or revalidateTag("products")     // in a route handler / webhook
 ```
 
-`updateTag` is awaitable and immediate — read-your-own-writes, so the action's own re-render sees fresh data. `revalidateTag` is fire-and-forget. Both hard-purge (the next read re-renders fresh); the only difference is awaitability. One exception applies to PPR shells for users other than the one who made the change (that user's requests carry a fresh-reads cookie and skip the memos): `CFCacheStore` and `VercelCacheStore` keep per-isolate memos of shell reads and tag markers, so another isolate can serve the old shell until its memoized marker refreshes (up to `memo.markerMaxStaleMs`, 10 s on `CFCacheStore` and 2 s on `VercelCacheStore` by default), and with `CFCacheStore` without KV in purge mode, or `VercelCacheStore` in another region, until its shell memo window passes (`memo.shellMs`, 2 s). Set `memo: { shellMs: 0, markerFreshMs: 0 }` on the store where every user's next request must see the purge ([PPR](/docs/rango/guides/ppr#options-and-invalidation)). Despite the Next.js name, `revalidateTag` here is not stale-while-revalidate. The built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`) all support tag invalidation. Next's `revalidatePath` has no path-based equivalent — tag the relevant entries instead.
+`updateTag` is awaitable and immediate — read-your-own-writes, so the action's own re-render sees fresh data. `revalidateTag` is fire-and-forget. Both hard-purge (the next read re-renders fresh); the only difference is awaitability. One exception applies to PPR shells for users other than the one who made the change (that user's requests carry a fresh-reads cookie and skip the memos; on `VercelCacheStore` they then read fresh in any region, since `expireTag` is global, and on `CFCacheStore` with KV in the colo that ran the change, other colos once KV propagates the marker and `tagCacheTtl` expires): `CFCacheStore` and `VercelCacheStore` keep per-isolate memos of shell reads and tag markers, so another isolate can serve the old shell until its memoized marker refreshes (up to `memo.markerMaxStaleMs`, 10 s on `CFCacheStore` and 2 s on `VercelCacheStore` by default), and with `CFCacheStore` without KV in purge mode, or `VercelCacheStore` in another region, until its shell memo window passes (`memo.shellMs`, 2 s). Set `memo: { shellMs: 0, markerFreshMs: 0 }` on the store where every user's next request must see the purge ([PPR](/docs/rango/guides/ppr#options-and-invalidation)). Despite the Next.js name, `revalidateTag` here is not stale-while-revalidate. The built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`) all support tag invalidation. Next's `revalidatePath` has no path-based equivalent — tag the relevant entries instead.
 
-**Axis 2: partial-render selection (which segments re-run after an action).** This is not cache invalidation. `revalidate()` controls which segments (layouts, paths, loaders, parallels) recompute when the page re-renders after an action or navigation. Match actions by reference with `ctx.isAction()`, so a renamed action fails at compile time instead of silently not matching:
+**Partial-render selection (which segments re-run after an action).** This is not cache invalidation. `revalidate()` controls which segments (layouts, paths, loaders, parallels) recompute when the page re-renders after an action or navigation. Match actions by reference with `ctx.isAction()`, so a renamed action fails at compile time instead of silently not matching:
 
 ```tsx
 import { updateBlog } from "./actions/blog";

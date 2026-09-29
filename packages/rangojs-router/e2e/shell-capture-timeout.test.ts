@@ -31,9 +31,9 @@ const HTML_HEADERS = { Accept: "text/html" };
 // Parts settle at ~5.5s (slow) and ~6.5s (chained Meta); the capture then
 // needs quiesce + fizz + store. A generous ceiling absorbs CI-runner noise.
 const HIT_POLL_TIMEOUT_MS = 45_000;
-// Two short-budget capture attempts (1.5s + 400ms retry + 1.5s) plus margin —
-// the window in which the sub-settlement route's capture deterministically
-// refuses.
+// One short-budget capture attempt (1.5s; a capture that runs out of its
+// budget is not retried) plus margin — the window in which the
+// sub-settlement route's capture deterministically refuses.
 const SHORT_BUDGET_REFUSAL_MS = 6_000;
 
 /**
@@ -225,9 +225,10 @@ function runSpec(f: Fixture): void {
     expect(first.status()).toBe(200);
     expect(first.headers()["x-rango-shell"]).toBe("MISS");
 
-    // Wait past two full short-budget attempts (1.5s + retry + 1.5s), then
-    // re-probe: still MISS — the capture refused rather than storing a shell
-    // with unsettled meta. Two probes to also cover a backoff-window re-probe.
+    // Wait past the short-budget attempt (a capture that ran out of its
+    // budget is not retried), then re-probe: still MISS — the capture refused
+    // rather than storing a shell with unsettled meta. Two probes to also
+    // cover a backoff-window re-probe.
     await new Promise((r) => setTimeout(r, SHORT_BUDGET_REFUSAL_MS));
     for (let i = 0; i < 2; i++) {
       const res = await request.get(url, {
@@ -242,7 +243,7 @@ function runSpec(f: Fixture): void {
     // server log (isolatedServer exposes the process streams).
     const logs = f.proc().stdout() + f.proc().stderr();
     expect(logs).toMatch(
-      /Shell capture for "[^"]*slow-meta-default[^"]*" produced no usable shell after an in-place retry/,
+      /Shell capture for "[^"]*slow-meta-default[^"]*" produced no usable shell; nothing was stored/,
     );
   });
 }

@@ -8,6 +8,8 @@ import {
   resolveTagsOption,
   DEFAULT_ROUTE_TTL,
   DEFAULT_FUNCTION_TTL,
+  SHELL_MIN_RECAPTURE_INTERVAL_MS,
+  staleShellRecaptureDue,
 } from "../cache-policy.js";
 import {
   getRequestContext,
@@ -272,5 +274,23 @@ describe("resolveTagsOption tag normalization (N3)", () => {
 
   it("returns undefined for an undefined tags option", () => {
     expect(resolveTagsOption(undefined, undefined, "T")).toBeUndefined();
+  });
+});
+
+describe("staleShellRecaptureDue", () => {
+  const now = 1_000_000;
+
+  it("is due once the shell is SHELL_MIN_RECAPTURE_INTERVAL_MS old", () => {
+    const due = (age: number) =>
+      staleShellRecaptureDue({ createdAt: now - age }, now);
+    expect(due(SHELL_MIN_RECAPTURE_INTERVAL_MS - 1)).toBe(false);
+    expect(due(SHELL_MIN_RECAPTURE_INTERVAL_MS)).toBe(true);
+  });
+
+  it("fails open: an entry without a numeric createdAt recaptures", () => {
+    expect(staleShellRecaptureDue({}, now)).toBe(true);
+    expect(
+      staleShellRecaptureDue({ createdAt: "x" as unknown as number }, now),
+    ).toBe(true);
   });
 });

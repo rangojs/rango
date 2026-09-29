@@ -8,6 +8,12 @@ that produced the numbers below shipped in PR #691 and PR #693. The FRAGMENT
 SPLICE that v1 deferred (the per-request Flight re-serialization of replayed
 segments) shipped as issue #700 — see "The fragment splice, as built" below.
 
+**The fast path is now the only HIT path** (the handlers-baked change). Until
+then an entry could decline it and a HIT re-ran the handler layer behind the
+committed prelude. Now every document HIT replays the handler layer from the
+entry's own doc record, and no handler runs on a HIT. "Everything a handler
+produces is baked" below says what that took and what was removed.
+
 ## Why (the measurements that motivated this)
 
 On a consumer storefront (workerd, PPR homepage, SFCC + Builder.io + CIO
@@ -26,7 +32,7 @@ produced once:
   tail in the same isolate.
 - The remaining tail latency was the LIVE lane (per-session upstream auth
   awaited inside chrome loader containers: 709ms fresh session → 247ms warm)
-  — work this design deliberately keeps, because it is the honest floor.
+  — work this design deliberately keeps, because it is the real floor.
 
 So the question: why does a HIT run the handler layer at all?
 
@@ -57,8 +63,12 @@ No handler execution. No full Flight render. Prelude/payload parity holds by
 construction — the payload IS the capture's payload, holes filled fresh.
 
 What stays on the full path (one code path, entered less often): MISS,
-preview/editing modes, actions and progressive enhancement, and anything the
-eligibility rules below exclude.
+preview/editing modes, actions and progressive enhancement, and a request the
+route's own `cache()` refuses (`cache(false)`, or a `condition()` that returns
+false for it). That last one is decided before the commit (`shellServePlan` in
+`rsc-rendering.ts`), so it renders like a cache miss: axis 1, no
+`x-rango-shell` header, no capture. A HIT never falls back to running
+handlers.
 
 ## Eligibility is the cache purity rule — and it already shipped, piecemeal
 
@@ -85,9 +95,18 @@ already encodes the purity contract:
   build-time producer, whose Flight render errors do not refuse (only its
   Fizz errors do) but which calls the same `captureAndStoreShell`. The
   document cache applies the same rule to a whole response.
-- The identity guard refuses captures whose render reads request identity
-  (`cookies()`/`headers()`), so an entry never encodes a handler that
-  branches on the requester.
+- The capture guard refuses captures that read request-scoped data
+  (`cookies()`, `headers()`, `ctx.get` of a `createVar({ cache: false })`
+  variable) or call `ctx.dynamic()`, anywhere the capture waits: a handler, a
+  promise it passes or pushes, an async server component, a bake-lane loader,
+  and a loader a handler awaits (`assertNotInsideShellCapture`,
+  `src/server/context.ts`; `refuseOnCaptureGuard`, `src/rsc/shell-capture.ts`).
+  So an entry never encodes a handler that branches on the requester. A
+  normal `ctx.get()` value and raw `ctx.request.headers` reads are not guarded:
+  they bake, and shell material is shared per host+URL and request partition
+  (the route's `cache({ key })` or the store's `keyGenerator`).
+- The handler layer must settle within `ppr.captureTimeout` (default 15s). A
+  capture whose handler output is still pending at the deadline stores nothing.
 - Per-REQUEST divergence (auth walls, entitlement) lives in middleware —
   which runs live on every HIT.
 - Per-TIME divergence (a URL mapping gains a redirect mid-TTL) heals by TTL
@@ -113,42 +132,61 @@ snapshot machinery (PR #691) already records segment-family writes into the
 
 What was missing was only the connective tissue — the shell had no way to say
 "treat the whole matched route as a cache() boundary" for routes that never
-opted into `cache()`. v1 is exactly that, four small pieces:
+opted into `cache()`. v1 was exactly that, four small pieces. The
+handlers-baked change reshaped three of them (see "Everything a handler
+produces is baked" below):
 
 1. **`resolveShellImplicitCacheScope`** (cache/cache-scope.ts), applied at the
-   FULL MatchContext construction site (match-api.ts): when the route tree
-   derived NO cache scope and the request context carries the
-   `_shellImplicitCache` marker, substitute an enabled doc-level scope. A
-   route-derived scope — including an explicit `cache(false)` — always wins.
+   FULL MatchContext construction site (match-api.ts): when the request
+   context carries the `_shellImplicitCache` marker, substitute an enabled
+   doc-level scope (`createShellImplicitDocScope`). For a capture and for
+   partial navigation replay, a route-derived scope — including an explicit
+   `cache(false)` — still wins. A document HIT tail's marker carries
+   `docTail`, and there the implicit scope wins over a route-derived one: the
+   tail replays the shell's own record, and the route scope's opt-outs were
+   evaluated before the commit (`shellServePlan`).
 2. **Capture side** (shell-capture.ts): the derived capture context sets the
    marker with a `SnapshotOnlySegmentStore` — the capture's `cacheRoute`
    write records the doc segment entry into the snapshot ONLY, never the real
    store (a passthrough write would make the NEXT capture's lookup hit the
    previous generation and never re-run handlers, breaking SWR recapture
-   freshness).
-3. **Serve side** (rsc-rendering.ts serveShellHit): the seeded tail context sets
-   the marker when the entry is eligible; the tail's `ctx.router.match()` then
-   HITs the seeded doc record and the handler layer is REPLAYED, not
-   re-executed. Per-request payload metadata (initialTheme replay,
-   locationState, …) is rebuilt by `buildFullPayload` exactly as before — there
-   is no `root` on the wire; only `metadata.segments` content replays. Because
-   the handlers never run here, the capture does not store the `"use cache"`
-   items only they read (`shell-entry-layout.md` §2). A doc record that fails
-   its server-side decode makes this tail re-run the handlers against the
-   current store entries; the marker's `onCorrupt` then schedules a recapture.
-4. **Eligibility** (`ShellCacheEntry.handlerLiveHoles`): the capture's
-   handle-push funnel (the PR #692 mask) now also attributes each push —
-   `isInsideLoaderScope()` read synchronously at push time. A nested thenable
-   in a push made OUTSIDE a DSL loader scope (handler body, handler-invoked
-   `ctx.use(loader)`, defers), a handler push still pending at the putShell
-   barrier, or a HANDLER-INVOKED LOADER executing during the capture (the
-   consumption lane, #672 — its "fresh per serve" slot value would freeze
-   under replay) sets the flag: those holes only a handler re-run can fill,
-   so the serve side declines the fast path and keeps today's full tail.
-   DSL-loader pushes never disqualify — loaders re-run on every HIT. Loader
-   pushes made during the capture are filtered OUT of the snapshot's handle
-   records (they would duplicate the fresh push and stall the Flight handle
-   encode on their masks). Unflagged loaders never execute at capture, so
+   freshness). A route with its own `cache()` scope keeps that scope at
+   capture, and `recordShellCaptureDocRecord`
+   (match-middleware/cache-store.ts) writes the same doc record for it. The
+   capture writes the record FIRST and renders its prelude from it
+   (`settleCaptureRecord`).
+3. **Serve side** (rsc-rendering.ts serveShellHit): the seeded tail context
+   always sets the marker, with `docTail: true` and `fixedDocKey` set to
+   `entry.docKey`. The tail's `ctx.router.match()` then HITs the seeded doc
+   record and the handler layer is REPLAYED, not re-executed. `fixedDocKey`
+   makes the scope look the record up by the key the capture wrote, so a
+   store `keyGenerator` that folds request data, or a build-time capture's
+   synthetic host, cannot send the lookup to a key the snapshot lacks.
+   Per-request payload metadata (initialTheme replay, locationState, …) is
+   rebuilt by `buildFullPayload` exactly as before — there is no `root` on the
+   wire; only `metadata.segments` content replays. Because the handlers never
+   run here, the capture does not store the `"use cache"` items only they read
+   (`shell-entry-layout.md` §2). A record that does not hit (it failed to
+   decode, or the entry lost it) never falls through to handler resolution:
+   `withCacheLookup` throws `ShellRecordUnavailableError`
+   (`cache/shell-snapshot.ts`) and `serveShellHit` degrades the response
+   ("Failure posture" under the open questions below).
+4. **Handle pushes** (the capture's push funnel in
+   `deriveShellCaptureContext`, built on the PR #692 mask): each push is
+   attributed by `isInsideLoaderScope()`, read synchronously at push time. A
+   push made OUTSIDE a DSL loader scope (handler body, handler-invoked
+   `ctx.use(loader)` bodies, defers) is handler output: it passes through
+   unmasked, and `settleNestedThenables`
+   (`segment-resolution/mask-nested.ts`) tracks it, so the record waits for
+   its promises, top-level and nested in plain objects and arrays, before it
+   encodes the handles every HIT restores. (In v1 such a push with a nested
+   promise made the entry decline the fast path instead.) A promise inside a
+   `Map`, `Set`, or class instance is not walked, so it is not awaited before
+   the encode; if the handle encode times out on it, the capture is refused
+   with a message that says so.
+   DSL-loader pushes are filtered OUT of the snapshot's handle records
+   (loaders re-run on every HIT: a recorded copy would duplicate the fresh
+   push, and a masked one would stall the Flight handle encode). Unflagged loaders never execute at capture, so
    these pushes come from a loader an `ssr: false` loader awaits via
    `ctx.use` and from loader-cache replays. The filter is the store's
    positional tag, the same one `cache()` records use: `HandleStore.push`
@@ -170,6 +208,93 @@ opted into `cache()`. v1 is exactly that, four small pieces:
    channel); until then the client holds the recorded value, which matches
    the prelude. A record written before `handleOwners` existed restores as a
    plain replay.
+
+## Everything a handler produces is baked
+
+v1 left one class of entry on the old full tail, and it is worth knowing why
+that class went away. A handler could hand the page something still pending:
+a promise it passed to a component under the consumer's own `<Suspense>`, an
+async server component, a promise nested in a handle it pushed, or a loader
+it awaited (`await ctx.use(Loader)`, the consumption lane of #672). The
+capture treated such a value as a hole when it was pending at the capture's
+quiet window and marked the entry (`ShellCacheEntry.handlerLiveHoles`, or
+`transitionWhen` for an unevaluated `transition({ when })`). A marked entry
+declined the fast path: every HIT re-ran the handlers behind the committed
+prelude, so the hole had a live promise to fill. That re-run needed snapshot
+pins for every item a handler read, plus a set of pruning exceptions to keep
+them (`shell-entry-layout.md` §2), and it made "is this a hole" a race: the
+same promise baked on a fast capture and stayed live on a slow one.
+
+It also hid a parity bug. The capture rendered its Flight payload from the
+match's elements, and the doc record's encode (`serializeSegments`) ran the
+same server components a second time. An uncached async server component
+rendered twice per capture, so the prelude showed one value and every HIT's
+replayed record another (measured: `quick-2` in the prelude's input, `quick-3`
+on every HIT), and hydration repaired it client-side on every request.
+
+The shell entry is now a `cache()` of the handler layer with no exceptions,
+the contract `cache()` has always had:
+
+- **Handler output is baked.** Promises a handler passes, async server
+  components (with or without `<Suspense>` above them), nested promises in
+  handler handle pushes, top-level pushed promises, and loaders a handler
+  awaits all settle before the shell freezes. None of them is a hole.
+- **Record-first capture** (`settleCaptureRecord`,
+  `src/rsc/shell-capture.ts`). After the capture's `router.match()`, it waits
+  for top-level handle promises, the handler pushes' nested promises, and the
+  bake-lane loader containers. Then it fires its `onResponse` callbacks so the
+  doc record is written: `CacheScope.cacheRoute` Flight-serializes every
+  non-loader segment, which runs the async server components and waits for
+  every promise in the handler output. Then it renders its OWN Flight payload
+  from the record's fragments (`fragmentSegments`, the function a HIT tail
+  uses) and freezes the prelude from that. The record is both the settle
+  signal and the parity source: server components render once per capture,
+  and the prelude and every HIT come from the same bytes.
+- **One deadline.** The match (the handlers and the loaders they await), the
+  wait, and the prerender share `ppr.captureTimeout` (default 15s): each gets
+  what is left of it. Handler output that does not
+  settle in time stores nothing, and after the in-place retry the
+  once-per-key warning names the cause ("did not settle within
+  ppr.captureTimeout"). The capture debug event reports the wait as
+  `recordSettleMs` (`record=` in the debug line).
+- **No doc record, no shell.** A capture that produced no doc record is
+  refused ("the capture produced no doc segment record"), because a HIT could
+  not replay it. Only a prerender-served capture (the prerender store
+  supplies the handler layer) and a navigation-only entry may lack one. On
+  the serve side, a document entry without `docKey` is a MISS (and is
+  recaptured), except for a Prerender route (`matched.pr`), whose tail takes
+  the handler layer from the prerender store.
+- **Live data is a loader's job.** Live-lane loaders (no `ssr: false`) are
+  still masked at capture and run per request on a HIT; that is the only
+  per-request data a HIT renders. Inside an `ssr: false` loader, a nested
+  promise stays a hole by shape.
+- **The capture guard covers everything the capture waits for.**
+  `cookies()`, `headers()`, a `{ cache: false }` variable, and
+  `ctx.dynamic()` refuse the capture from a handler promise, an async
+  component, a handle push, or a loader a handler awaits. The guard flags the
+  capture context (`_shellCaptureGuardTripped`) before it throws, so code
+  that catches the throw still refuses the capture. The handler-invoked
+  loader used to be exempt: its identity reads rendered per visitor on the
+  re-running HIT. With no re-run, the exemption would bake the capturing
+  request's cookie into every visitor's page, so it is gone for PPR captures.
+  The `cache()` purity guards keep it (`isInsideCacheScope`), because a
+  `cache()` hit is a separate tier.
+
+Removed with it: `ShellCacheEntry.handlerLiveHoles` and
+`ShellCacheEntry.transitionWhen` (with the CF frame head keys `lh`/`tw` and
+the Vercel envelope's `lh`/`tw`), and the `x-rango-ppr-replay` bypass tokens
+`handler-live-holes` and `transition-when` (gone from `PprReplayBypassReason`
+in `@rangojs/router/testing`). `transition({ when })` itself is unaffected:
+PPR routes evaluate it from the manifest before handlers on every request, so
+the entry flag had no reader left.
+
+Pinned by `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` (settle,
+parity, a live hole, `rendered()` on replayed handles, the deadline, no
+re-run for a route `cache()` whose explicit tier missed, a custom `key()`, or
+a store `keyGenerator`, `cache(false)` staying axis 1, and the capture-guard
+cases) and `src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx` (a
+handler-invoked loader baked and replayed, a `condition()` that refuses the
+HIT as a genuine MISS, the corrupt-record degrade).
 
 ## What a HIT reads before its first byte
 
@@ -195,9 +320,13 @@ the tail waits for it.
   tags are unioned at the putShell barrier (#676/#680) and evict the whole
   entry, record included.
 - **Deterministic carve-outs**: capture-time masking (mask-nested.ts,
-  PR #692) guarantees every per-request value is a hole — never a settled
-  value — in both the prelude and the recorded segments. The correctness fix
-  is the prerequisite for the fast path, not an orthogonal nicety.
+  PR #692) guarantees every per-request LOADER value is a hole — never a
+  settled value — in both the prelude and the recorded segments: live-lane
+  loader data, and the nested promises of an `ssr: false` loader's data or
+  handle pushes. Handler output is the other side of the line: it is always
+  settled and baked (see "Everything a handler produces is baked"). The
+  correctness fix is the prerequisite for the fast path, not an orthogonal
+  nicety.
 
 ## The fragment splice, as built (issue #700)
 
@@ -269,8 +398,10 @@ never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
   route `cache()` tier hit, and the prerender store (`Prerender()+ppr`
   partials) — all covered by the same client expansion.
 - **Failure posture**: the splice skips the tail-side decode that used to
-  validate a record server-side. The SSR consumer still rejects the tail and
-  `serveShellHit` schedules a healing recapture. A partial-navigation consumer
+  validate a record server-side. A fragment the SSR consumer cannot expand
+  still rejects the tail and `serveShellHit` schedules a healing recapture; a
+  doc record the tail's lookup cannot use at all takes the degrade described
+  under the open questions (question 5). A partial-navigation consumer
   retries once without the capability header, forcing the existing server
   decode-and-evict path; an invalid explicit-cache entry is deleted, while an
   invalid seeded document record additionally schedules a navigation-only
@@ -286,18 +417,19 @@ never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
 
 ## Parity: why this cannot introduce hydration errors
 
-The dynamic surface on a fast-path HIT is exactly what it is on today's HIT —
-narrower, in fact:
+The dynamic surface on a HIT is narrower than on the full tail it replaced
+(the old full-tail column is history: no HIT takes it any more):
 
-| Layer                                        | Today's HIT (full tail)                    | Fast-path HIT                                    |
+| Layer                                        | Old full tail (removed)                    | HIT                                              |
 | -------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
 | Middleware                                   | live                                       | live (unchanged — runs outside the shell branch) |
 | Handlers (path/layout/parallel/intercept)    | re-executed; parity via snapshot pinning   | REPLAYED byte-identically (never executed)       |
+| Handler promises, async server components    | re-rendered by the re-run                  | settled at capture, replayed from the entry      |
 | DSL loaders                                  | re-run; plain paths pinned by seed overlay | re-run; same overlay, same pinning               |
 | `useLoader()` promise-shaped paths           | live (stream into holes)                   | live (identical funnel)                          |
 | Handler-pushed handles (settled)             | re-pushed by handler re-run                | replayed from the entry                          |
-| Handler-pushed handles (nested promise)      | live via handler re-run                    | **entry ineligible** → full tail                 |
-| Handler-invoked `ctx.use(loader)` (#672)     | re-consumed by handler re-run              | **entry ineligible** → full tail                 |
+| Handler-pushed handles (nested promise)      | live via handler re-run                    | settled at capture, replayed from the entry      |
+| Handler-invoked `ctx.use(loader)` (#672)     | re-consumed by handler re-run              | baked at capture, replayed from the entry        |
 | Loader-pushed handles (bake lane, settled)   | re-pushed by loader re-run                 | replayed from the entry; re-run replaces it      |
 | Loader-pushed handles (all others)           | re-pushed by loader re-run                 | re-pushed by loader re-run (identical)           |
 | Per-request metadata (theme/locationState/…) | rebuilt per request                        | rebuilt per request (buildFullPayload)           |
@@ -318,8 +450,11 @@ from the re-run. The bake-lane replay in the table is capture-only.
 
 Replay is byte-identical by construction, which is STRONGER than the full
 tail's re-render-and-pin approach: a handler that computes something the
-snapshot doesn't pin (a timestamp, a random id) drifts today; replayed it
-cannot.
+snapshot doesn't pin (a timestamp, a random id) drifted under the re-run;
+replayed it cannot. Since the capture renders its own prelude from the same
+record (`settleCaptureRecord`), the capture cannot disagree with itself
+either: an uncached async server component renders once per capture, not
+once for the prelude and once more for the record.
 
 There is one browser-observable transition that is not a parity failure. Flight
 can hydrate a postponed boundary before fizz finishes its `$RC`/`$RV` reveal
@@ -341,9 +476,11 @@ consumer:
 - **Producer B (build time)**: SHIPPED (#699). The build's shell prerender
   phase (`vite/discovery/shell-prerender-phase.ts`, buildApp post) replays
   middleware with `ctx.build === true` and then runs the SAME capture core
-  (`deriveShellCaptureContext` + `captureAndStoreShell`, driven by
-  `prerender/build-shell-capture.ts`) over the just-collected prerender
-  payloads. Middleware can call `ctx.dynamic()` to leave that URL for runtime.
+  (`deriveShellCaptureContext` + `settleCaptureRecord` +
+  `captureAndStoreShell`, driven by `prerender/build-shell-capture.ts`) over
+  the just-collected prerender payloads. A prerendered URL's match comes from
+  the prerender store (no handler runs, no doc record), and its HIT tail
+  takes the handler layer from the prerender store as well. Middleware can call `ctx.dynamic()` to leave that URL for runtime.
   The serve path reads the resulting manifest through
   `rsc/shell-build-manifest.ts` on a store MISS — first request after deploy is
   a HIT. Build-time production is the SAFER producer: there is no ambient user
@@ -369,7 +506,7 @@ basket badge still streams live; the homepage is a runtime capture with a
 - PDP prefetch renders: full Dispatcher render (~2.5s cold) → fragment
   replay + loaders. Prefetch starvation of the interactive tail mostly
   disappears.
-- Tail wall-clock becomes exactly "your slowest live loader" — the honest
+- Tail wall-clock becomes exactly "your slowest live loader" — the real
   floor. (The app-side lever for THAT: move session/token acquisition inside
   the nested promise so containers return instantly; see the field notes.)
 - Parity bugs between prelude and payload become impossible by construction
@@ -394,18 +531,41 @@ basket badge still streams live; the homepage is a runtime capture with a
    unioned at the putShell barrier) all evict prelude and record together.
    The SnapshotOnlySegmentStore guarantees no doc record ever outlives its
    entry in the real store.
-5. **Failure posture → self-healing, inherited.** A corrupt record fails
-   `deserializeSegments` inside `lookupRoute`, which evicts and returns null
-   — a MISS — so the tail falls through to full segment resolution (handler
-   re-run), never a broken splice. A missing record, a handler-live entry, or
-   a route-derived cache scope degrade the same way: full tail, today's
-   behavior.
+5. **Failure posture → degrade to a real MISS, never a handler run.** v1
+   let a corrupt record fall through to full segment resolution, which ran
+   the handlers behind the committed prelude; so did a missing record, a
+   handler-live entry, and a route-derived cache scope. That is gone. A
+   record that fails its decode inside `lookupRoute` is reported
+   (`cache-corrupt`), the lookup misses, and `withCacheLookup`
+   throws `ShellRecordUnavailableError` instead of resolving segments (the
+   match pipeline's catch in `match-handlers.ts` rethrows it untouched, so no
+   `onError` report). `serveShellHit` catches it and calls
+   `degradeUnreplayableShell`: it overwrites the entry with a tombstone (a
+   `navigationOnly` entry with no document half and no snapshot, which
+   document serving treats as a MISS; the store has no shell delete), drops
+   the isolate's memo of the key (`dropShellMemo`), and schedules a
+   recapture. A snapshot read that was only slow
+   (`snapshotFailure: "unavailable"`) skips those three: the entry is sound.
+   Either way the response ends with a script that reloads once with the
+   forced-MISS marker (`_rsc_shell=miss`, `shellReloadScript`), which the
+   serve gate renders on axis 1 without a shell read or a capture. The
+   prelude already committed a 200, so a reload is the one way left to get
+   the visitor a page that matches its payload. Pinned by
+   `shell-snapshot-prune.rsc-test.tsx` ("a doc record that fails to decode on
+   a HIT") and `rsc-rendering-shell-ppr.test.ts`.
 
 ## What stays out of v1 (deliberate)
 
-- **Routes with their own `cache()` keep their semantics** — including
-  `cache(false)` (opt-out respected; full tail) and nested boundaries
-  (their records already fast-path the covered subtree today).
+- **Routes with their own `cache()` kept their semantics on a HIT** in v1:
+  the tail consulted the route scope, and an explicit-tier miss, a
+  `condition()` bypass, or a request-dependent `key()` re-ran the handlers.
+  No longer: a document HIT tail replays the shell's own doc record
+  (`docTail`), whatever the route scope would have done. The route scope's
+  opt-out is decided before the commit instead: `cache(false)`, or a
+  `condition()` that returns false for THIS request, makes `shellServePlan`
+  serve the request like a cache miss (axis 1, no `x-rango-shell`, no
+  capture). Captures and partial navigation replay still honor the route
+  scope.
 - **Prefetch renders and partial navigations** — the fragment splice was
   document-HIT-tail only in v1; partial navigation replay (and with it the
   prefetch-warm path) gained the splice since — see "The fragment splice, as
@@ -416,6 +576,8 @@ basket badge still streams live; the homepage is a runtime capture with a
 - **Loader-pushed plain handle values consumed in shell content** drift on
   HITs (fresh push vs frozen prelude) exactly as they do today — the shape
   rule is the contract; not a fast-path regression.
-- **Shell key vs doc key divergence**: both sides derive the doc key from the
-  same request context, so a mismatch (exotic keyGenerator) just misses the
-  seeded record and degrades to the full tail.
+- **Shell key vs doc key divergence** was a v1 limit: both sides derived the
+  doc key from their own request context, so a store `keyGenerator` that
+  folded request data missed the seeded record and degraded to the full
+  tail. The HIT tail now looks the record up by the entry's own `docKey`
+  (`fixedDocKey`), so the key cannot diverge.

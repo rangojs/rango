@@ -221,7 +221,7 @@ path("/blog/:slug", BlogPost, {
 
 The build captures the shell after all environment bundles exist, replaying the just-produced Flight payload rather than executing the evicted handler, so the first production request can already be an `x-rango-shell: HIT`. Global and route middleware run in the build capture with `ctx.build === true`; `ctx.waitUntil()` is inert, and `ctx.dynamic()` skips the build shell for that URL (runtime capture can still own it later). At runtime middleware still runs before the shell is served. The shell is bundled into the worker/function — it is not emitted as a public HTML asset.
 
-A build-baked shell is served for requests without a query string; a URL with search params has its own shell identity and is captured at runtime. It keeps serving until:
+A build-baked shell is served for requests without a query string; a URL with search params has its own shell identity and is captured at runtime. A route partitioned by `cache({ key })` or a store `keyGenerator` never serves it either: each partition captures its own at runtime (a once-per-route warning says so), unless the `keyGenerator` returns the default key unchanged. It keeps serving until:
 
 - **a redeploy** retires it (the new build bakes a new one), or
 - **`updateTag()`** on a tag the shell carries drops it, so the next request misses and a runtime capture takes over. Unlike the Flight payload, a baked shell is reachable by tags.

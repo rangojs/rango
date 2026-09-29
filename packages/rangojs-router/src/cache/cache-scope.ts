@@ -20,6 +20,7 @@ import {
 import {
   getSegmentTags,
   recordRequestTags,
+  recordSegmentTags,
   runInSegmentTagScope,
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
@@ -53,6 +54,38 @@ export function resolveCacheTags(
 ): string[] | undefined {
   if (config === false) return undefined;
   return resolveTagsOption(config.tags, ctx, "CacheScope");
+}
+
+/**
+ * Narrow the request's route-record window (RequestContext._routeRecordWindow)
+ * to a record this request read or wrote: fresh until `freshUntil` (the
+ * record's `expiresAt`), then stale for `swr` seconds. A shell capture starts
+ * with no window of its own (shell-capture.ts deriveShellCaptureContext sets
+ * it undefined), so it narrows only to the records the capture itself read
+ * or wrote.
+ */
+function noteRouteRecordWindow(
+  requestCtx: RequestContext,
+  freshUntil: number,
+  ttl: number,
+  swr: number,
+  written: boolean,
+): void {
+  const next = {
+    freshUntil,
+    staleUntil: freshUntil + swr * 1000,
+    ttl,
+    swr,
+    written,
+  };
+  const current = requestCtx._routeRecordWindow;
+  // The record that runs out first names the config; freshness is the least.
+  requestCtx._routeRecordWindow = current
+    ? {
+        ...(current.staleUntil <= next.staleUntil ? current : next),
+        freshUntil: Math.min(current.freshUntil, freshUntil),
+      }
+    : next;
 }
 
 function debugCacheLog(message: string): void {
@@ -114,7 +147,10 @@ function getDefaultRouteCacheKey(
 // CacheScope
 // ============================================================================
 
-const CACHE_HIT_OBSERVERS = new WeakMap<CacheScope, () => void>();
+const CACHE_HIT_OBSERVERS = new WeakMap<
+  CacheScope,
+  () => void | Promise<void>
+>();
 
 /**
  * Discriminated outcome of a route cache lookup — see
@@ -253,19 +289,76 @@ export class CacheScope {
    * Resolve the cache key using the shared 3-tier priority.
    * @internal
    */
-  private async resolveKey(
+  private resolveKey(
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<string> {
-    const defaultKey = getDefaultRouteCacheKey(
-      pathname,
-      params,
-      isIntercept,
-      this.defaultKeyPrefix,
+    return this.resolveKeyFrom(
+      getDefaultRouteCacheKey(
+        pathname,
+        params,
+        isIntercept,
+        this.defaultKeyPrefix,
+      ),
     );
+  }
+
+  /**
+   * A shell captured from a route record this request read or wrote must not
+   * outlive it (noteRouteRecordWindow). The implicit doc scope's own record
+   * is the shell's, so it notes nothing.
+   */
+  private noteRecordWindow(
+    requestCtx: RequestContext,
+    freshUntil: number,
+    written: boolean,
+  ): void {
+    if (!this.isShellImplicitDocScope) {
+      noteRouteRecordWindow(
+        requestCtx,
+        freshUntil,
+        this.ttl,
+        this.swr ?? 0,
+        written,
+      );
+    }
+  }
+
+  /**
+   * @internal This scope's record key for `defaultKey` (its `key()`, else its
+   * store's keyGenerator, else `defaultKey`: resolveCacheKey), resolved once
+   * per request: a ppr route's shell partition (resolveShellPartition) and
+   * the record lookup share the one call, and a rejection is shared too.
+   *
+   * The results live on the request context (`_resolvedCacheKeys`), so a
+   * shell capture, whose context is `Object.create` of the request's
+   * (shell-capture.ts), reads the foreground's through the prototype chain
+   * and never runs `key()` itself: a `key()` calling `cookies()` would trip
+   * the capture guard there, and a capture must store the partition its
+   * request resolved. A `key()` is a full override that never sees
+   * `defaultKey`, so it runs once per request whatever the default key
+   * (document, partial or `doc` shell prefix); a keyGenerator runs once per
+   * default key.
+   */
+  resolveKeyFrom(defaultKey: string): Promise<string> {
     const keyFn = this.config !== false ? this.config.key : undefined;
-    return resolveCacheKey(keyFn, this.getStore(), defaultKey, "CacheScope");
+    const store = this.getStore();
+    const requestCtx = _getRequestContext();
+    const by = keyFn ?? store?.keyGenerator;
+    if (!requestCtx || !by) {
+      return resolveCacheKey(keyFn, store, defaultKey, "CacheScope");
+    }
+    const memo = (requestCtx._resolvedCacheKeys ??= new Map());
+    let resolved = memo.get(by);
+    if (!resolved) memo.set(by, (resolved = new Map()));
+    const slot = keyFn ? "" : defaultKey;
+    let key = resolved.get(slot);
+    if (!key) {
+      key = resolveCacheKey(keyFn, store, defaultKey, "CacheScope");
+      resolved.set(slot, key);
+    }
+    return key;
   }
 
   /**
@@ -435,7 +528,8 @@ export class CacheScope {
       // expand them (segment-fragments.ts). Read off the ambient context at the
       // same point the cache key was resolved (getDefaultRouteCacheKey), so the
       // flag shares fate with the key: a disrupted ALS already missed the
-      // seeded record and degraded to the full tail.
+      // seeded record, which a document tail turns into the degrade
+      // (ShellRecordUnavailableError).
       let segments: ResolvedSegment[];
       const ambientContext = _getRequestContext();
       try {
@@ -471,8 +565,14 @@ export class CacheScope {
       // A hit serves content that was tagged at write time, so the document
       // tag union must include this entry's tags for updateTag()/revalidateTag()
       // to invalidate any full-page entry built on top of it. The write path
-      // records via cacheRoute (resolveCacheTags); the hit path records here.
+      // records via cacheRoute (resolveCacheTags); the hit path records here,
+      // onto the replayed segments too, for a record written from this replay
+      // (a shell capture's doc record).
       recordRequestTags(cached.tags);
+      recordSegmentTags(
+        segments.map((s) => s.id),
+        cached.tags,
+      );
 
       // Replay handle data. An empty string means the route pushed no handles —
       // skip the decode entirely (the common case). Otherwise decode the
@@ -506,7 +606,10 @@ export class CacheScope {
         );
       }
 
-      CACHE_HIT_OBSERVERS.get(this)?.();
+      if (ambientContext)
+        this.noteRecordWindow(ambientContext, cached.expiresAt, false);
+
+      await CACHE_HIT_OBSERVERS.get(this)?.();
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
@@ -579,6 +682,7 @@ export class CacheScope {
 
     const ttl = this.ttl;
     const swr = this.swr;
+    this.noteRecordWindow(requestCtx, Date.now() + ttl * 1000, true);
 
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
@@ -740,6 +844,36 @@ function collectRecordTags(
 }
 
 /**
+ * @internal The request partition of a ppr route's shell: the record key
+ * that partitions the route's cache() record for this request (its `key()`,
+ * else its store's keyGenerator, both given the document default key) or,
+ * with no route cache(), the app store's keyGenerator result. Undefined
+ * (synchronously, with no work) when neither applies: the shell key stays
+ * host + path + filtered search. Resolves to null when the key is the
+ * default key itself (a keyGenerator that returns it unchanged): that
+ * partitions nothing, so the shell stays unpartitioned and keeps its build
+ * shell. The shell's key, its read and capture, and partial replay all use
+ * it, so a visitor is only served its own partition. A rejected promise is a
+ * failed key resolution: the caller serves no shell.
+ */
+export function resolveShellPartition(
+  routeScope: CacheScope | null | undefined,
+  appStore: SegmentCacheStore | null | undefined,
+  pathname: string,
+  params: Record<string, string> | undefined,
+): Promise<string | null> | undefined {
+  const scope = routeScope?.enabled ? routeScope : undefined;
+  const keyFn = scope && scope.config !== false ? scope.config.key : undefined;
+  const store = scope ? scope.getStore() : appStore;
+  if (!keyFn && !store?.keyGenerator) return undefined;
+  const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+  const key = scope
+    ? scope.resolveKeyFrom(defaultKey)
+    : resolveCacheKey(undefined, store ?? null, defaultKey, "CacheScope");
+  return key.then((resolved) => (resolved === defaultKey ? null : resolved));
+}
+
+/**
  * Create a cache scope from entry's cache config. `shortCode` is the cache()
  * entry's: a scope nested in an enabled parent keeps the parent's boundary
  * (one entry covers both), any other opens its own at this entry.
@@ -765,13 +899,21 @@ type ShellImplicitCacheMarker = NonNullable<
  * {@link resolveShellImplicitCacheScope} (routes that derived no scope) and
  * the explicit-scope composition sites (capture doc record in the cache-store
  * middleware, seeded replay fallback in withCacheLookup) so both ends of the
- * shell contract resolve the SAME canonical document key.
+ * shell contract resolve the SAME canonical document key. A document HIT
+ * tail's marker carries the entry's own key (`fixedDocKey`), which wins over
+ * key resolution.
  */
 export function createShellImplicitDocScope(
   marker: ShellImplicitCacheMarker,
 ): CacheScope {
+  const fixedDocKey = marker.fixedDocKey;
   const implicitScope = new CacheScope(
-    { ttl: marker.ttl, swr: marker.swr, store: marker.store },
+    {
+      ttl: marker.ttl,
+      swr: marker.swr,
+      store: marker.store,
+      ...(fixedDocKey !== undefined && { key: () => fixedDocKey }),
+    },
     null,
     marker.keyPrefix,
   );
@@ -780,32 +922,29 @@ export function createShellImplicitDocScope(
 }
 
 /**
- * Shell fast path: when the route tree derived NO cache scope and the current
- * request context carries the `_shellImplicitCache` marker (a shell capture,
- * an eligible HIT tail, or a normal partial navigation replay), substitute an
- * implicit doc-level scope so withCacheLookup/withCacheStore treat the WHOLE
- * matched route as a cache() boundary — the shell entry IS a cache() of the
- * handler layer, with loaders as the live carve-outs
- * (resolveFreshLoadersAndYield).
+ * The doc record scope: when the current request context carries the
+ * `_shellImplicitCache` marker (a shell capture, a document HIT tail, or a
+ * normal partial navigation replay), substitute an implicit doc-level scope
+ * so withCacheLookup/withCacheStore treat the WHOLE matched route as a
+ * cache() boundary — the shell entry IS a cache() of the handler layer, with
+ * loaders as the live carve-outs (resolveFreshLoadersAndYield).
  *
- * An existing scope — including an explicit cache(false) opt-out — always
- * wins HERE: the consumer's cache() semantics (their ttl/swr/store/condition)
- * are never overridden, and cache(false) keeps the tail on the full handler
- * re-run path. On the navigation-replay serve path the marker still composes
- * with an explicit scope downstream (withCacheLookup's seeded fallback after
- * an explicit-tier miss) — see `onExplicitHit` on `_shellImplicitCache`.
- *
- * Marks the marker `routeDocScope`: the doc scope minted HERE is the one a
- * document HIT tail of the same route consults, which is what lets a capture
- * prune handler-only snapshot records. The explicit-scope composition sites
- * mint the same scope without this mark.
+ * A document HIT tail (`docTail`) always gets the implicit scope: it replays
+ * the shell's own record and never consults a route-derived scope, whose
+ * opt-outs the serve gate evaluated before the commit (shellServePlan). Every
+ * other marker leaves an existing scope — including an explicit cache(false)
+ * — in place: the consumer's cache() semantics (their ttl/swr/store/condition)
+ * are never overridden. On the navigation-replay serve path the marker still
+ * composes with an explicit scope downstream (withCacheLookup's seeded
+ * fallback after an explicit-tier miss) — see `onExplicitHit` on
+ * `_shellImplicitCache`; during a capture, recordShellCaptureDocRecord
+ * (cache-store.ts) writes the record for such a scope.
  */
 export function resolveShellImplicitCacheScope(
   scope: CacheScope | null,
 ): CacheScope | null {
-  if (scope) return scope;
   const marker = getRequestContext()?._shellImplicitCache;
+  if (scope && !marker?.docTail) return scope;
   if (!marker) return null;
-  marker.routeDocScope = true;
   return createShellImplicitDocScope(marker);
 }

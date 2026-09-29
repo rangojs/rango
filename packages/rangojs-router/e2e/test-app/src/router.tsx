@@ -9,6 +9,7 @@ import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
+import { recordShellCaptureEvent } from "./shell-capture-events.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
@@ -184,6 +185,10 @@ export const router = createRouter<AppEnv>({
     store: cacheStore,
     searchParams: { exclude: ["utm_*", "x_e2e_excluded"] },
   },
+  // PPR capture outcomes, read back by /shell-cache/__capture-events so a
+  // suite waits for the capture's outcome instead of a timing gap. A function
+  // sink logs nothing.
+  debugShellCapture: recordShellCaptureEvent,
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },

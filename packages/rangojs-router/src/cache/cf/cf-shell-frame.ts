@@ -51,10 +51,6 @@ export interface ShellFrameHead {
   dk?: string;
   /** ShellCacheEntry.prunedRecords (diagnostic). */
   pr?: string;
-  /** ShellCacheEntry.handlerLiveHoles; arms or declines the handler-free fast path. */
-  lh?: boolean;
-  /** ShellCacheEntry.transitionWhen */
-  tw?: true;
   /** ShellCacheEntry.navigationOnly; its partial-context prelude is not document-safe. */
   no?: true;
   /** ShellCacheEntry.postponed. Absent iff `no` (no document half is stored). */
@@ -85,8 +81,6 @@ function isShellFrameHead(value: unknown): value is ShellFrameHead {
     (head.i === undefined || typeof head.i === "string") &&
     (head.dk === undefined || typeof head.dk === "string") &&
     (head.pr === undefined || typeof head.pr === "string") &&
-    (head.lh === undefined || typeof head.lh === "boolean") &&
-    (head.tw === undefined || head.tw === true) &&
     (head.no === undefined || head.no === true) &&
     // Document half: postponed is required unless the entry is navigationOnly.
     (head.po === null ||
