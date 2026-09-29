@@ -7,6 +7,7 @@ import {
   type ShellFrameHead,
 } from "../cf-shell-frame";
 import type { ShellCacheEntry } from "../../types";
+import { TAG_HINTS_MAX_ENTRIES } from "../../isolate-tag-memo";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -1144,6 +1145,72 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       const { first, shellReads } = await readTwice(store);
       expect(first?.shouldRevalidate).toBe(true);
       expect(shellReads).toBe(1);
+    });
+
+    // A memoized shell that went stale is read from the store again. That
+    // read keeps the caller's hints: the key's own hint can be evicted while
+    // the shell memo still holds the entry.
+    it("a stale memo entry's store read starts the caller-hinted marker read before the Cache API match resolves", async () => {
+      // Only Date is faked: the Cache API match below waits on a real timer.
+      vi.useRealTimers();
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        kv: mockKV as any,
+        memo: { shellMs: 60_000, markerFreshMs: 0 },
+      });
+      await store.putShell("k", shellEntry(), 10, 300, ["home"]);
+      await drain(mockCtx);
+      // Once a clone of a stored Response has been read, a GC (the fill below
+      // makes one likely) leaves the stored body used in Node, and the next
+      // clone throws. Re-seat the L1 entry from its bytes before each read.
+      const [l1Key, stored] = [...mockCache.store][0]!;
+      const frame = new Uint8Array(await stored.arrayBuffer());
+      const reseatL1 = () =>
+        mockCache.store.set(
+          l1Key,
+          new Response(frame, { headers: stored.headers }),
+        );
+      reseatL1();
+      await (
+        await store.readShellDocument("k")
+      )?.snapshot;
+      const memoProbe = vi.spyOn(mockCache, "match");
+      expect(await store.readShellDocument("k")).not.toBeNull();
+      expect(memoProbe).not.toHaveBeenCalled();
+      memoProbe.mockRestore();
+      // Other keys' writes push "k" out of the tag-name hints; the shell
+      // memo, bounded by bytes, keeps its entry.
+      await Promise.all(
+        Array.from({ length: TAG_HINTS_MAX_ENTRIES }, (_, i) =>
+          store.putShell(`other-${i}`, shellEntry(), 300, 30, ["other"]),
+        ),
+      );
+      await drain(mockCtx);
+      reseatL1();
+      vi.setSystemTime(Date.now() + 11_000);
+
+      let matchResolved = false;
+      let markerReadBeforeMatch = false;
+      const kvGet = mockKV.get.bind(mockKV);
+      vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
+        if (key.includes("__tag__/home") && !matchResolved) {
+          markerReadBeforeMatch = true;
+        }
+        return kvGet(key, options);
+      });
+      const match = mockCache.match.bind(mockCache);
+      vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const response = await match(request);
+        matchResolved = true;
+        return response;
+      });
+      const read = await store.readShellDocument("k", { tagHints: ["home"] });
+      expect(matchResolved).toBe(true);
+      expect(read?.shouldRevalidate).toBe(true);
+      expect(markerReadBeforeMatch).toBe(true);
     });
 
     // Decision 2, revised: isolate B's memos (shell and marker) can predate
