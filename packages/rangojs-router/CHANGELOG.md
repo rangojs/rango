@@ -54,6 +54,76 @@ instead of rendering the page a second time. In the production run of
 `tests/cloudflare-basic` `ppr-tag-eviction` (10 repeats, 60 captures), captures
 that re-rendered went from 30 to 0.
 
+### Breaking: a loader's own `cache()` entry is tagged by what its body recorded, so `updateTag()` drops it ([#968](https://github.com/rangojs/rango/pull/968))
+
+A loader bound with its own `cache()` (`loader(Loader, () => [cache({...})])`)
+stored only its `cache({ tags })`. On a HIT its body does not run, so the tags
+the body recorded were lost for that request: `cacheTag()` calls, and the tags
+of `"use cache"` reads inside it. `updateTag()` of such a tag left the loader
+serving its old value until ttl+swr. A route `cache()` record, PPR shell or
+document written over the HIT lacked the tag too, so the fix above (#965)
+could not evict them either.
+
+The entry now stores the tags its body recorded when it was written: its
+`cacheTag()` calls, its `"use cache"` reads, render-time tags of server
+components in its value or handle pushes, and the tags the loaders it reads
+with `ctx.use()` record, including a loader the route or a layout also binds,
+or the handler read first. A loader it reads that has its own `cache()` also
+brings its `cache({ tags })` and, on a HIT, its stored tags. Every HIT records
+them again, so a record, shell or document built over the HIT carries them, and
+so does a loader that reads this one. A stale HIT's background refresh stores
+the refreshed body's tags, not the stale entry's, and runs the loaders it reads
+again rather than reusing the page's stale copies.
+
+The breaking part is that those tags now invalidate the loader's entry.
+Before, only `cache({ tags })` did.
+
+```tsx
+export const ProductLoader = createLoader(async (ctx) => {
+  cacheTag(`product-${ctx.params.id}`);
+  return db.product(ctx.params.id);
+});
+loader(ProductLoader, () => [cache({ ttl: 600 })]);
+
+await updateTag("product-42");
+// Before: /product/42 kept the old product until the entry's ttl.
+// After: the entry is dropped; the next request runs the loader.
+```
+
+Migration: none is needed for correctness. If a tag the body records is meant
+for the page only, and dropping the loader's entry with it costs too much, call
+`cacheTag()` in the handler that reads the loader instead of in the loader
+body. An entry written before this release carries only its `cache({ tags })`
+until it expires or is rewritten. One rare case keeps a loader's
+`cache({ tags })` off a reader's entry: a cached loader reads another loader
+before that loader's own `cache()` binding starts (a cached layout loader
+reading a route's cached loader) and writes its entry first. It still stores
+the tags that loader's body records; add `cacheTag()` for the config tags in
+that loader's body if the reader must drop with them.
+
+### Added: `runLoader()` runs a loader through its own `cache()` ([#968](https://github.com/rangojs/rango/pull/968))
+
+`runLoader()` and `runLoaderResult()` take a `cache` option: the options a
+route binds the loader with (`loader(Loader, () => [cache({...})])`). The call
+goes through the production loader-cache read-through against `cache.store` or
+`cacheStore`, so a HIT returns the stored value without running the body, and
+`updateTag()` of a tag the body recorded drops the entry. Use it in the
+react-server project (real Flight); the write is a background task the call
+does not await.
+
+```ts
+const load = () =>
+  runLoader(ProductLoader, {
+    params: { id: "42" },
+    cacheStore,
+    cache: { ttl: 600 },
+  });
+await load(); // MISS: the body runs
+await load(); // HIT, once the write landed: the body does not run
+await runInRequestContext(() => updateTag("product-42"), { cacheStore });
+await load(); // MISS again
+```
+
 ### Breaking: a PPR hole reads the current `"use cache"` entry, not the shell's captured copy ([#958](https://github.com/rangojs/rango/pull/958))
 
 When a `ppr` route's shell and one of its live holes (a loader under
@@ -253,6 +323,12 @@ backoff and stampede guard, and `CFCacheStore`'s isolate memos. Call it in
   forever on the capture's never-settling stand-in for that promise, so the
   shell was never stored
   ([#967](https://github.com/rangojs/rango/pull/967)).
+- A loader body that reads a loader bound with its own `cache()`
+  (`await ctx.use(ProductLoader)`) gets the binding's value, as a handler read
+  does. On a loader-cache HIT the read used to run the bound loader's body
+  again, so the reader saw a different value from the one the page rendered,
+  and the body ran twice in one request
+  ([#968](https://github.com/rangojs/rango/pull/968)).
 - A `CFCacheStore` PPR shell read whose memoized shell went stale keeps the
   route's `ppr.tags` in its tag-marker prefetch. When the isolate's tag-name
   hints had evicted the key, the store read started those marker reads only

@@ -17,6 +17,7 @@ import {
 } from "../server/request-context.js";
 import {
   getCurrentLoaderBodyId,
+  getLoaderBodyTags,
   isInsideLoaderScope,
 } from "../server/context.js";
 
@@ -133,8 +134,9 @@ export function linkLoaderTags(
 }
 
 /**
- * Record `tags` as loader `loaderId`'s own (its cache() config tags, read
- * outside its body): recordRequestTags with an explicit owner.
+ * Record `tags` as loader `loaderId`'s own, read outside its body (its
+ * cache() config tags, or a loader-cache HIT's stored tags):
+ * recordRequestTags with an explicit owner.
  */
 export function recordLoaderTags(
   loaderId: string,
@@ -280,6 +282,105 @@ export function recordRequestTags(
   );
 }
 
+/**
+ * Recorded-tag sets (#964). A loader with its own cache() skips its body on a
+ * HIT, so its entry stores what its execution recorded, including the tags of
+ * every loader value it read, whoever ran that loader.
+ *
+ * Each loader execution records into its own set, held on its body scope
+ * (runInsideLoaderBodyScope); a loader-cache MISS opens one around its
+ * execution and value encodes (captureRecordedTags). The innermost wins. A
+ * read of a loader's value links the reader's set to the value's
+ * (readValueTags), and the entry write flattens the links
+ * (flattenRecordedTags) after its value settled.
+ *
+ * The per-execution sets and read links run only for a request that resolves
+ * a loader-cache binding (armLoaderTagSets); elsewhere a loader execution
+ * allocates no set and a read links nothing.
+ */
+interface TagCapture {
+  into: Set<string>;
+  /** The loader body set active when the capture opened. */
+  outer: Set<string> | undefined;
+}
+const recordedTagCapture = new AsyncLocalStorage<TagCapture>();
+const tagLinks = new WeakMap<Set<string>, Set<Set<string>>>();
+const loaderValueTags = new WeakMap<object, Set<string>>();
+
+/**
+ * Arm the per-execution loader tag sets for `ctx`: its match resolved a
+ * loader bound with its own cache() (match-api.ts, bindsLoaderCache), or such
+ * a binding started (loader-cache.ts). A loader-cache MISS captures its own
+ * execution and encodes either way.
+ */
+export function armLoaderTagSets(
+  ctx: RequestContext | undefined = _getRequestContext(),
+): void {
+  if (ctx) ctx._recordLoaderTags = true;
+}
+
+/** Whether `ctx` records per-execution loader tag sets (armLoaderTagSets). */
+export function loaderTagSetsArmed(ctx: RequestContext | undefined): boolean {
+  return ctx?._recordLoaderTags === true;
+}
+
+function activeTagSet(): Set<string> | undefined {
+  const capture = recordedTagCapture.getStore();
+  const body = getLoaderBodyTags();
+  if (capture && capture.outer === body) return capture.into;
+  return body ?? capture?.into;
+}
+
+/**
+ * Call `fn`, adding every tag recorded in its async chain
+ * (recordRequestTags, recordLoaderTags) to `into`, until a loader body
+ * started inside it takes over with its own set.
+ */
+export function captureRecordedTags<T>(into: Set<string>, fn: () => T): T {
+  return recordedTagCapture.run({ into, outer: getLoaderBodyTags() }, fn);
+}
+
+/** `into` also answers for every tag `from` records. */
+export function linkRecordedTags(into: Set<string>, from: Set<string>): void {
+  if (into === from) return;
+  let links = tagLinks.get(into);
+  if (!links) tagLinks.set(into, (links = new Set()));
+  links.add(from);
+}
+
+/** Mark a loader's value promise as carrying `tags` (see readValueTags). */
+export function tagLoaderValue(value: object, tags: Set<string>): void {
+  loaderValueTags.set(value, tags);
+}
+
+/** A loader value's tags also answer for `tags` (tagLoaderValue). */
+export function linkValueTags(value: object, tags: Set<string>): void {
+  const own = loaderValueTags.get(value);
+  if (own) linkRecordedTags(own, tags);
+}
+
+/** The current execution reads a loader's value: it takes on its tags. */
+export function readValueTags(value: object): void {
+  const tags = loaderValueTags.get(value);
+  if (!tags) return;
+  const into = activeTagSet();
+  if (into) linkRecordedTags(into, tags);
+}
+
+/** `root`'s tags plus those of every set it links to, transitively. */
+export function flattenRecordedTags(root: Set<string>): Set<string> {
+  const out = new Set<string>();
+  const seen = new Set<Set<string>>();
+  const pending = [root];
+  for (let set = pending.pop(); set !== undefined; set = pending.pop()) {
+    if (seen.has(set)) continue;
+    seen.add(set);
+    for (const tag of set) out.add(tag);
+    for (const linked of tagLinks.get(set) ?? []) pending.push(linked);
+  }
+  return out;
+}
+
 /** recordRequestTags, also recording onto `owner`'s set (#957). */
 function recordOwnedTags(
   tags: Iterable<string> | undefined,
@@ -288,11 +389,13 @@ function recordOwnedTags(
 ): void {
   if (!tags || !ctx?._requestTags) return;
   const set = ctx._requestTags;
+  const captured = activeTagSet();
   let owned: Set<string> | undefined;
   for (const tag of tags) {
     const normalized = normalizeTag(tag);
     if (normalized === null) continue;
     set.add(normalized);
+    captured?.add(normalized);
     if (owner !== undefined) {
       owned ??= setFor(ownersFor(ctx).tags, owner);
       owned.add(normalized);

@@ -48,6 +48,9 @@ import { collectHandle } from "./collect-handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
+import type { PartialCacheOptions } from "../types/cache-types.js";
+import type { HandlerContext } from "../types/handler-context.js";
+import { resolveLoaderData } from "../router/segment-resolution/loader-cache.js";
 import {
   createTestRequestContext,
   buildRunSnapshot,
@@ -151,6 +154,18 @@ export interface RunLoaderOptions<TEnv = any> {
   cacheStore?: SegmentCacheStore;
   /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
   cacheProfiles?: Record<string, CacheProfile>;
+  /**
+   * Run the loader through the `cache()` a route binds it with — the options
+   * `loader(Loader, () => [cache({...})])` takes — using the production
+   * read-through against `cache.store`, else `cacheStore`. A HIT returns the
+   * stored value without running the body and records the tags the body
+   * recorded when the entry was written, so `updateTag()` of any of them drops
+   * the entry. The write is a background task the call does not await (spy
+   * on the store's `setItem` to wait for it). A raw loader body is keyed by
+   * its function reference. `handlePushes` lists the body's pushes, so a HIT
+   * reports none: the replay into the page's handle store is not modeled.
+   */
+  cache?: PartialCacheOptions;
   /**
    * Customize the rango state cookie a loader that calls
    * `invalidateClientCache()` rotates (the name is always seeded — default
@@ -352,6 +367,47 @@ function runWithLoaderContext<R>(
   });
 }
 
+const rawLoaderIds = new WeakMap<object, string>();
+let rawLoaderSeq = 0;
+
+function cacheLoaderId(loader: RunnableLoader<unknown>): string {
+  if (typeof loader !== "function") return loader.$$id;
+  let id = rawLoaderIds.get(loader);
+  if (id === undefined) {
+    id = `runLoader#${++rawLoaderSeq}`;
+    rawLoaderIds.set(loader, id);
+  }
+  return id;
+}
+
+/**
+ * Call the loader: directly, or through its `cache()` binding (the funnel a
+ * route's DSL loaders take, loader-cache.ts resolveLoaderData), whose MISS
+ * reads the binding through the handler ctx's use().
+ */
+function invokeLoader<T>(
+  loader: RunnableLoader<T>,
+  loaderFn: (ctx: TestLoaderContext) => Promise<T> | T,
+  opts: RunLoaderOptions,
+  loaderCtx: TestLoaderContext,
+): Promise<T> {
+  const run = () => Promise.resolve(loaderFn(loaderCtx));
+  if (!opts.cache) return run();
+  const handlerCtx = {
+    params: loaderCtx.params,
+    use: run,
+  } as unknown as HandlerContext<any, any>;
+  return resolveLoaderData(
+    {
+      loader: { __brand: "loader", $$id: cacheLoaderId(loader) },
+      revalidate: [],
+      cache: { options: opts.cache },
+    },
+    handlerCtx,
+    loaderCtx.pathname,
+  );
+}
+
 export async function runLoader<T>(
   loader: RunnableLoader<T>,
   opts: RunLoaderOptions = {},
@@ -359,7 +415,7 @@ export async function runLoader<T>(
   const loaderFn = resolveLoaderFn(loader);
   const { ctx } = createTestRequestContext(buildLoaderCtxOpts(opts));
   return runWithLoaderContext(ctx as RequestContext<any>, opts, (loaderCtx) =>
-    Promise.resolve(loaderFn(loaderCtx)),
+    invokeLoader(loader, loaderFn, opts, loaderCtx),
   );
 }
 
@@ -413,7 +469,7 @@ export async function runLoaderResult<T>(
     result = await runWithLoaderContext(
       reqCtx,
       opts,
-      (loaderCtx) => Promise.resolve(loaderFn(loaderCtx)),
+      (loaderCtx) => invokeLoader(loader, loaderFn, opts, loaderCtx),
       handlePushes,
     );
   } catch (error) {

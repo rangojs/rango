@@ -1,5 +1,7 @@
 import { urls, cacheTag, updateTag, revalidateTag } from "@rangojs/router";
+import type { HandlerContext } from "@rangojs/router";
 import { InvalidateTagButton } from "../components/InvalidateTagButton.js";
+import { LoaderBodyTagDepLoader, LoaderBodyTagLoader } from "../loaders.js";
 
 /**
  * Cache-tag invalidation test fixture (memory store).
@@ -22,7 +24,16 @@ async function getTaggedItem(id: string): Promise<{ ts: number; id: string }> {
   return { ts: Date.now(), id };
 }
 
-export const cacheTagPatterns = urls(({ path, cache }) => [
+async function LoaderBodyTagPage(ctx: HandlerContext) {
+  const data = await ctx.use(LoaderBodyTagLoader);
+  return (
+    <div data-testid="loader-body-tag-page">
+      <span data-testid="lbt-stamp">{data.stamp}</span>
+    </div>
+  );
+}
+
+export const cacheTagPatterns = urls(({ path, cache, loader }) => [
   // Runtime tagging: the response is not cached, but the "use cache" function
   // holds the tagged value, so json.ts is stable until invalidation.
   // path.json serializes the returned value verbatim (no { data } envelope).
@@ -69,6 +80,19 @@ export const cacheTagPatterns = urls(({ path, cache }) => [
       return { ok: true, tag: ctx.params.tag };
     },
     { name: "cacheTagRevalidate" },
+  ),
+
+  // A loader with its own cache() and no cache({ tags }): the tags its body
+  // and its dependency record are the entry's only tags (#964). The
+  // dependency is bound after it, so the DSL starts it, not the body.
+  path(
+    "/loader-body",
+    LoaderBodyTagPage,
+    { name: "cacheTagLoaderBody" },
+    () => [
+      loader(LoaderBodyTagLoader, () => [cache({ ttl: 600 })]),
+      loader(LoaderBodyTagDepLoader),
+    ],
   ),
 
   // Action-driven invalidation: a cached, tagged page segment plus a client

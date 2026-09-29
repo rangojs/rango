@@ -235,6 +235,11 @@ Each tag attaches to one entry, so know which entry you are tagging:
   loader's tags reach the entry only when a handler consumes its value
   (`await ctx.use(Loader)`); a loader nobody reads on the server runs per
   request and stays off.
+- A loader with its own `cache()` stores the tags its body recorded (form 4
+  calls and form 3 reads, including those of the loaders it reads with
+  `ctx.use()`) next to its `cache({ tags })`. They invalidate the loader's
+  entry, and a HIT records them again, so a route `cache()` entry, ppr shell
+  or document built over the HIT carries them.
 
 Invalidate with one of two server-only verbs (both variadic, imported from
 `@rangojs/router`):
@@ -388,8 +393,10 @@ defaults (ttl 60 when the store sets none); it does **not** inherit the options
 of an enclosing `cache()` boundary. Inside `loader()` only the direct form
 `cache({...})` is valid — the wrapper form `cache(opts, () => [...])` throws.
 Handle pushes from the loader body (`Meta`, `Breadcrumbs`) are stored with the
-value and replayed on every hit, stale included. See `/loader` for the full
-loader reference.
+value and replayed on every hit, stale included. The tags the body records
+(`cacheTag()`, `"use cache"` reads, and those of the loaders it reads) are
+stored with it too: `updateTag()` of one drops the entry, as `cache({ tags })`
+does. See `/loader` for the full loader reference.
 
 ## Global Cache Configuration
 

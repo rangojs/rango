@@ -458,6 +458,14 @@ export interface RequestContext<
    */
   _recordTagOwners?: true;
 
+  /**
+   * @internal This request resolves a loader bound with its own cache()
+   * (match-api.ts, or the binding's funnel). Arms the per-execution loader
+   * tag sets (cache-tag.ts armLoaderTagSets); off, a loader execution
+   * allocates no set and a read links nothing. Derived contexts inherit it.
+   */
+  _recordLoaderTags?: true;
+
   /** @internal Cache profiles for "use cache" profile resolution (per-router) */
   _cacheProfiles?: Record<
     string,
@@ -796,6 +804,7 @@ export type PublicRequestContext<
   | "_explicitTaggedStores"
   | "_requestTags"
   | "_recordTagOwners"
+  | "_recordLoaderTags"
   | "_cacheProfiles"
   | "_onResponseCallbacks"
   | "_pendingBackgroundTasks"

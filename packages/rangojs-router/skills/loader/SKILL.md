@@ -579,7 +579,11 @@ loader(ProductLoader, () => [cache({ ttl: 300 })]),
 
 This works wherever the DSL binding is declared, an intercept's `use()`
 included. A handler's `ctx.use(Loader)` read never caches by itself (see
-"ctx.use(Loader) — escape hatch").
+"ctx.use(Loader) — escape hatch"). Once the binding started, every
+`ctx.use(Loader)` in the request, from the handler or from another loader's
+body, gets the binding's value: one value per loader per request, a HIT
+included. A reader that runs before the binding starts (a layout's loader
+reading a route's cached loader) gets the value of its own run, as before.
 
 The loader's data is cached independently from the route's segment cache,
 using the same `SegmentCacheStore` (app-level or per-loader override).
@@ -663,6 +667,34 @@ loader(ProductLoader, () => [
     tags: (ctx) => [`product:${ctx.params.slug}`, "products"],
   }),
 ]),
+```
+
+The tags the loader body records tag the entry too: `cacheTag()` calls, the
+tags of `"use cache"` reads, render-time `cacheTag()` in server components of
+the value or a handle push, and the tags the loaders it reads with `ctx.use`
+record, including one the route, a layout or the handler started first. A
+loader it reads that has its own `cache()` also brings its `cache({ tags })`
+and, on a HIT, its entry's tags. `updateTag()` of any of them drops the entry,
+and a HIT records them again, so a route `cache()`, ppr shell or document built
+over the HIT stays evictable. A stale hit's background refresh stores the
+refreshed body's tags; it runs the loaders it reads again rather than reusing
+the page's (possibly stale) values.
+
+One case keeps a `cache({ tags })` off: a cached loader that reads another
+loader's `cache()` binding before that binding starts (for example a cached
+layout loader reading a route's cached loader), and writes its entry before
+it. That reader's entry has the tags the loader's body records, but not the
+tags only its `cache({ tags })` lists. If the reader must drop with them, record
+them in the loader body with `cacheTag()` too.
+
+```typescript
+export const ProductLoader = createLoader(async (ctx) => {
+  cacheTag(`product:${ctx.params.slug}`);
+  return db.product(ctx.params.slug);
+});
+
+loader(ProductLoader, () => [cache({ ttl: 600 })]),
+// updateTag(`product:${slug}`) drops this entry.
 ```
 
 ### Stale-While-Revalidate

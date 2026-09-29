@@ -65,6 +65,82 @@ off the record. The attribution lives in `src/cache/cache-tag.ts`
 `CacheScope.cacheRoute` (`collectRecordTags`). It runs only for a request whose
 match resolved a cache scope (`armRecordTagOwners`).
 
+A loader with its own `cache()` (`loader(Def, () => [cache({...})])`) has the
+same problem one level down (#964): a HIT does not run the loader body, so the
+tags the body recorded are missing from that request. The loader entry
+therefore stores them next to its `cache({ tags })`, and they invalidate it:
+
+- **What is stored.** Every tag the execution recorded: `cacheTag()` in the
+  body, `"use cache"` reads, render-time tags of server components in the value
+  or a handle push, and the tags of every loader value the body read with
+  `ctx.use()`, whoever ran that loader. You might expect "whoever ran it" to be
+  the hard part: the cached body starts only after `getItem` misses, so by then
+  the route's and layouts' other loaders, and anything the handler read, are
+  already running. The mechanism is built around that:
+  - Every loader execution records into its own set, held on its loader body
+    scope (`runInsideLoaderBodyScope` in `src/server/context.ts`, from
+    `createLoaderExecutor` in `src/router/loader-resolution.ts`). The miss
+    opens one more set around its execution and the two Flight encodes
+    (`captureRecordedTags` in `src/cache/cache-tag.ts`). Whichever was entered
+    last receives the tags.
+  - Every read of a loader's value links the reader's set to that value's set
+    (`readValueTags`): a memo hit, a fresh start, or the value of a loader
+    with its own `cache()`. The latter carries its `cache({ tags })` plus its
+    entry's tags on a HIT, or its execution's on a MISS.
+  - The write flattens the links (`flattenRecordedTags`) after its value
+    settled, so the order of the reads does not matter for the tags the
+    executions record.
+  - A binding's `cache({ tags })` are not recorded by any execution, so they
+    are attached explicitly: at kickoff the binding links an execution a
+    reader already started to them (`_bindLoaderCacheTags` in
+    `setupLoaderAccess`), and every later execution outside the binding
+    (a stale refresh's included) links itself. The one case this misses: a
+    cached reader that started the loader before its binding, and flattened
+    its own write before the binding started (a cached layout loader reading
+    a route's cached loader). That entry has the loader's body tags but not
+    its config-only tags. It needs all three of: a reader that starts a cached
+    loader before its binding, a cached loader downstream, and config tags the
+    body does not also record with `cacheTag()`.
+  - A reader that started a loader before its binding keeps the value of its
+    own run; one value per request holds from the binding's start on (as on
+    main).
+  - The sets and links cost a Set and a WeakMap entry per loader execution,
+    so they run only for a request that can read them: the match arms them
+    when a matched entry, parallel slot, orphan layout or intercept binds a
+    loader with its own `cache()` (`bindsLoaderCache` in `loader-cache.ts`,
+    `armLoaderTagSets`), before any loader starts; the binding's funnel arms
+    them too, for a render the match did not see. Everywhere else a loader
+    execution allocates nothing extra, the same rule #957's owners follow.
+- **One value per loader per request.** A loader body's `ctx.use()` of a
+  loader with its own `cache()` resolves to that binding's value, as a handler
+  read does (`useLoader` checks `_loaderCacheOverrides`). Before #964 it went
+  to the executor memo, which a HIT never fills, so the bound loader ran again
+  and the reader saw a different value from the page.
+- **What a HIT does.** It records the stored tags through the loader's owner
+  (`recordLoaderTags`), so they reach `_requestTags` (document, PPR shell) and
+  — through `linkLoaderTags` — any route `cache()` record whose handler reads
+  the loader. `updateTag()` of a body tag then drops the loader entry, the
+  record and the shell together; dropping only the record would re-serve the
+  same stale loader value.
+- **Stale-while-revalidate.** The background refresh runs its own capture on
+  its own loader executor (`_runLoaderIsolated`), so every execution in it gets
+  a new set, and the refreshed entry stores the refreshed body's tags. The
+  stale entry's tags, re-recorded by the foreground HIT outside any set, never
+  leak into it. The refresh also does not see the page's bindings
+  (`_loaderCacheOverrides` is shadowed on its ctx): a loader it reads runs
+  again, fresh, and links the binding's `cache({ tags })`. Reading the page's
+  binding instead would rebuild the entry from the other loader's stale value
+  whenever both went stale together, leaving it one generation behind on every
+  SWR cycle. This is also why the owner graph from #957 (`l:<loaderId>`) is
+  not the source: it holds the stale HIT's re-recorded tags, and it only runs
+  in requests that can write a route record.
+
+All three stores already carry item tags through `setItem`/`getItem`
+(`MemorySegmentCacheStore`, `CFCacheStore` L1 headers and the KV envelope's
+`t`, `VercelCacheStore`'s envelope `t`), so the change is store-agnostic. An
+entry written before #964 carries only its `cache({ tags })` until it expires
+or is rewritten.
+
 ---
 
 ## ① WRITE — caching a tagged entry

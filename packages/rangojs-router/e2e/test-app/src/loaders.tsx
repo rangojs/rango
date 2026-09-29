@@ -1,4 +1,4 @@
-import { createLoader, cookies, redirect } from "@rangojs/router";
+import { createLoader, cookies, redirect, cacheTag } from "@rangojs/router";
 import { getCartQuantitySync } from "./cart-store.js";
 import { DepCrumbs } from "./urls/dep-crumbs.handle.js";
 
@@ -466,6 +466,21 @@ export const CachedTestLoader = createLoader(async () => {
     message: "Cached loader data",
     loadedAt: new Date().toISOString(),
   };
+});
+
+/**
+ * /cache-tag-test/loader-body (urls/cache-tag.tsx, #964). `stamp` is per run:
+ * an unchanged value is a loader-cache HIT.
+ */
+export const LoaderBodyTagDepLoader = createLoader(async () => {
+  cacheTag("loader-dep-tag");
+  return { dep: crypto.randomUUID().slice(0, 8) };
+});
+
+export const LoaderBodyTagLoader = createLoader(async (ctx) => {
+  cacheTag("loader-body-tag");
+  const { dep } = await ctx.use(LoaderBodyTagDepLoader);
+  return { stamp: `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, dep };
 });
 
 /**

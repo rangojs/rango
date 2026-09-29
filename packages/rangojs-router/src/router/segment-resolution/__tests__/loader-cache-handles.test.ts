@@ -676,7 +676,7 @@ describe("loader-level cache: a dependency also read live", () => {
     expect(hit.handles[Crumbs.$$id]).toEqual(expected);
   });
 
-  it("a loader body reading the cached loader via ctx.use on a HIT: its live push replaces the replayed one", async () => {
+  it("a loader body reading the cached loader via ctx.use on a HIT gets the HIT's value: the body does not run again", async () => {
     const store = new MemorySegmentCacheStore();
     const product = defineLoader("ProductLoader#L", async (ctx) => {
       ctx.use(Crumbs)({ label: `Widget v${product.calls}` });
@@ -695,7 +695,8 @@ describe("loader-level cache: a dependency also read live", () => {
 
     siblingWait = twoMacrotasks;
     const hit = await runRequest(entry);
-    expect(product.calls).toBe(2);
-    expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Widget v2"));
+    expect(product.calls).toBe(1);
+    expect(hit.data).toEqual([{ name: "Widget" }, { name: "Widget" }]);
+    expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Widget v1"));
   });
 });

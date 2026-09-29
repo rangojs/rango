@@ -357,7 +357,16 @@ server projection.
   later run of a replayed dependency replaces the replayed values in place
   (`HandleStore.pushReplayed`). A `"use cache"` record groups the pushes of
   loaders the function reads via `ctx.use` the same way (`useCacheRecordKey`),
-  and its hit replays them under the same claim (`appendHandles`).
+  and its hit replays them under the same claim (`appendHandles`). The entry
+  also stores the tags its execution recorded, those of every loader value it
+  read included, next to its `cache({ tags })`, so they invalidate it; every
+  HIT re-records them (#964; `cache/cache-tag.ts` "Recorded-tag sets",
+  design: `docs/design/cache-tags-flow.md`). The per-execution sets run only
+  for a request whose match binds a loader cache() (`bindsLoaderCache`,
+  `armLoaderTagSets`, `RequestContext._recordLoaderTags`). A loader body's `ctx.use` of a
+  cache()-bound loader gets the binding's value (see `execution-model.md`).
+  `runLoader({ cache })` (`testing/run-loader.ts`) runs a loader through this
+  read-through.
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

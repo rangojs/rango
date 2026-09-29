@@ -9,7 +9,14 @@ import type { EntryData } from "../server/context";
 import { observePhase, PHASES } from "./instrument.js";
 import { contextGet, isNonCacheable } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
-import { linkLoaderTags } from "../cache/cache-tag.js";
+import {
+  linkLoaderTags,
+  linkRecordedTags,
+  linkValueTags,
+  loaderTagSetsArmed,
+  readValueTags,
+  tagLoaderValue,
+} from "../cache/cache-tag.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -389,6 +396,12 @@ function createLoaderExecutor<TEnv>(
      * payload's handle-stream lifetime.
      */
     silentHandles?: boolean;
+    /**
+     * loaderId -> the cache() tags of that loader's binding in this request
+     * (setupLoaderAccess _bindLoaderCacheTags): an execution of it outside
+     * the binding answers for them too (#964).
+     */
+    bindingTags?: ReadonlyMap<string, Set<string>>;
   },
 ): (
   loader: LoaderDefinition<any, any>,
@@ -441,10 +454,22 @@ function createLoaderExecutor<TEnv>(
     // the binding's result.
     //
     // A read is a consumption: the value bakes into the reader's output, so
-    // the loader's tags follow the reader onto a cache() record (#957).
-    linkLoaderTags(loader.$$id, reqCtxRef ?? _getRequestContext());
-    if (loaderPromises.has(loader.$$id)) {
-      return loaderPromises.get(loader.$$id)!;
+    // the loader's tags follow the reader onto a cache() record (#957) and
+    // into the reader's own loader-cache entry (#964, readValueTags; armed
+    // only where a loader cache() can read them).
+    const reqCtx = reqCtxRef ?? _getRequestContext();
+    linkLoaderTags(loader.$$id, reqCtx);
+    const recordTags = loaderTagSetsArmed(reqCtx);
+    // A loader body reads a cache()-bound loader through its binding too, so
+    // every reader in the request gets the one value a HIT served. The
+    // binding's own MISS (callerLoaderId null) runs the loader below.
+    const bound =
+      callerLoaderId !== null &&
+      internal._loaderCacheOverrides?.get(loader.$$id);
+    const memo = bound || loaderPromises.get(loader.$$id);
+    if (memo) {
+      if (recordTags) readValueTags(memo);
+      return memo;
     }
 
     // Get loader function - either from loader object or fetchable registry
@@ -710,17 +735,25 @@ function createLoaderExecutor<TEnv>(
       }
     }
 
+    const recordedTags = recordTags ? new Set<string>() : undefined;
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(
           () => loaderFn(loaderCtx as LoaderContext<any, TEnv>),
           loader.$$id,
           !isDslLoader,
+          recordedTags,
         ),
       ).finally(() => {
         pendingLoaders.delete(loader.$$id);
       }),
     );
+    if (recordedTags) {
+      tagLoaderValue(promise, recordedTags);
+      readValueTags(promise);
+      const bindingTags = executorOptions?.bindingTags?.get(loader.$$id);
+      if (bindingTags) linkRecordedTags(recordedTags, bindingTags);
+    }
 
     // Auxiliary-lane tracking: keeps the handle store open for this body's
     // ctx.handle() pushes without joining `settled` (the handler barrier that
@@ -764,8 +797,6 @@ export function setupLoaderAccess<TEnv>(
   const reqCtxRef = _getRequestContext();
   const handleStoreRef = reqCtxRef?._handleStore;
 
-  const useLoader = createLoaderExecutor(ctx, loaderPromises);
-
   // Loader-cache HIT replay (loader-cache.ts replayLoaderHandles): a cached
   // entry records its ctx.use dependencies' pushes too, and a dependency is
   // memoized here and shared with live readers. A loader that already ran
@@ -778,12 +809,28 @@ export function setupLoaderAccess<TEnv>(
     claimed.add(loaderId);
     return true;
   };
+  // A loader cache() binding's tags reach every execution of that loader
+  // outside the binding: one a reader started before the binding (linked
+  // here), a later one, or a refresh's (bindingTags).
+  const executor: { bindingTags?: Map<string, Set<string>> } = {};
+  internal._bindLoaderCacheTags = (loaderId, tags) => {
+    (executor.bindingTags ??= new Map()).set(loaderId, tags);
+    const started = loaderPromises.get(loaderId);
+    if (started) linkValueTags(started, tags);
+  };
+  const useLoader = createLoaderExecutor(ctx, loaderPromises, executor);
   // A refresh's pushes are diverted, so its loader ctxs never claim
-  // (cache-runtime.ts refreshView).
+  // (cache-runtime.ts refreshView). It reads each loader fresh, not through
+  // the page's bindings: a stale refresh must not rebuild its entry from
+  // another stale entry.
   internal._runLoaderIsolated = (loader) =>
     createLoaderExecutor(
-      Object.create(ctx, { _claimLoaderPushes: { value: undefined } }),
+      Object.create(ctx, {
+        _claimLoaderPushes: { value: undefined },
+        _loaderCacheOverrides: { value: undefined },
+      }),
       new Map(),
+      executor,
     )(loader, null);
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {

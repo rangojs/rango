@@ -860,6 +860,8 @@ interface LoaderBodyScope {
   parent?: LoaderBodyScope;
   /** The "use cache" scope the body was entered in (assertNonCacheableReadAllowed). */
   execScope?: CacheExecScope;
+  /** The tags this execution records (#964, cache-tag.ts "Recorded-tag sets"). */
+  tags?: Set<string>;
 }
 const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
 const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
@@ -1106,6 +1108,7 @@ export function runInsideLoaderBodyScope<T>(
   fn: () => T,
   loaderId?: string,
   handlerInvoked?: boolean,
+  tags?: Set<string>,
 ): T {
   return loaderBodyScopeALS.run(
     {
@@ -1114,9 +1117,15 @@ export function runInsideLoaderBodyScope<T>(
       handlerInvoked,
       parent: loaderBodyScopeALS.getStore(),
       execScope: getCacheExecScope(),
+      tags,
     },
     fn,
   );
+}
+
+/** The innermost loader body's execution tag set (runInsideLoaderBodyScope). */
+export function getLoaderBodyTags(): Set<string> | undefined {
+  return loaderBodyScopeALS.getStore()?.tags;
 }
 
 /**
