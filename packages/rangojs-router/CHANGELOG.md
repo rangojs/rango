@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 (2026-09-30)
 
 ### Breaking: a nested `cache()` keys its records within the enclosing `cache()`'s `key()` partition ([#983](https://github.com/rangojs/rango/pull/983))
 
