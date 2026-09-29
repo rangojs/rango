@@ -2075,7 +2075,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const memoized = freshReads
       ? undefined
       : cfShellMemo.get(memoKey, this.memo.shellMs);
-    if (memoized) return this.readMemoizedShell(key, memoKey, memoized);
+    if (memoized) {
+      return this.readMemoizedShell(key, memoKey, memoized, options);
+    }
     const stats = this.shellReadStats("l1");
     const l1StartedAt = stats ? performance.now() : 0;
     if (stats && freshReads) stats.freshReads = true;
@@ -2239,17 +2241,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * that went stale since it was memoized, or that predates a tag this
    * isolate is invalidating or just invalidated (RecentTagInvalidations), is
    * dropped and read from the store (SWR recapture scheduling and each mode's
-   * invalidation semantics stay with the store read).
+   * invalidation semantics stay with the store read). That read keeps the
+   * caller's `tagHints`: cfTagHints may have evicted the key while the memo
+   * still holds it.
    */
   private async readMemoizedShell(
     key: string,
     memoKey: string,
     memoized: CFShellMemoValue,
+    options: ShellDocumentReadOptions | undefined,
   ): Promise<ShellDocumentRead | null> {
     const { head } = memoized;
     if (!isMemoizableShell(head)) {
       cfShellMemo.delete(memoKey);
-      return this.readShellDocument(key);
+      return this.readShellDocument(key, options);
     }
     const stats = this.shellReadStats("memo");
     const markerStartedAt = stats ? performance.now() : 0;

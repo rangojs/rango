@@ -148,6 +148,10 @@ collected when `debugPerformance` is off.
 
 ### Fixes
 
+- A `CFCacheStore` PPR shell read whose memoized shell went stale keeps the
+  route's `ppr.tags` in its tag-marker prefetch. When the isolate's tag-name
+  hints had evicted the key, the store read started those marker reads only
+  after it parsed the entry's head ([#963](https://github.com/rangojs/rango/pull/963)).
 - A PPR shell HIT whose capture snapshot is already in memory
   (`MemorySegmentCacheStore`, build-time shells, the new shell memo) no longer
   starts the resumed tail's work before the prelude is written: the tail waits
