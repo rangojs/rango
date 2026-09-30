@@ -106,6 +106,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: REACT_VERSION,
     buildVersion: "build-abc",
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }
@@ -179,11 +180,6 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
           family: "item",
           key: "use-cache:x",
           value: { value: "CAPVAL", tags: ["t1"] },
-        },
-        {
-          family: "response",
-          key: "res:y",
-          value: { status: 200, headers: [["x-a", "1"]], body: btoa("BODY") },
         },
       ],
     });

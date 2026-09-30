@@ -164,8 +164,7 @@ function ShellShortRecordPage() {
   );
 }
 
-// No promise-carrying handler push (no handlerLiveHoles): HITs take the fast
-// path and replay the doc record.
+// A plain handler page: every HIT replays its doc record.
 function ShellWarningsPage() {
   return (
     <main data-testid="shell-warnings-page">

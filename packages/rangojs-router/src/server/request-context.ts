@@ -65,7 +65,7 @@ import {
   assertNonCacheableReadAllowed,
   clearPprHeaderScope,
 } from "./context.js";
-import { assertThemeReadAllowed } from "./cookie-store.js";
+import { readGuardedTheme } from "./cookie-store.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -279,7 +279,7 @@ export interface RequestContext<
    * capture task's derived request context (built by shell-capture.ts). This is
    * the switch every capture-specific behavior reads: loader masking
    * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
-   * cookies()/headers() capture guard (cookie-store.ts
+   * cookies()/headers() capture guard (server/context.ts
    * assertNotInsideShellCapture). The foreground render never sets it, so the
    * served response is byte-identical to axis 1. The capture descriptor itself
    * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
@@ -1580,12 +1580,7 @@ export function createRequestContext<TEnv>(
   Object.defineProperties(ctx, {
     theme: {
       get(this: RequestContext<TEnv>): Theme | undefined {
-        if (!themeConfig) return undefined;
-        assertThemeReadAllowed(
-          _getRequestContext() ?? this,
-          "getRequestContext().theme",
-        );
-        return getTheme();
+        return readGuardedTheme(this, "getRequestContext().theme");
       },
       enumerable: false,
       configurable: true,

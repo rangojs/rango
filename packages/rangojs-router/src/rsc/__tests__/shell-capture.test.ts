@@ -307,57 +307,6 @@ describe("gateFlightForCapture", () => {
     await readLoop.catch(() => {});
   });
 
-  it("holdUntil keeps the gate open (no freeze, no quiesce) until the baked handles resolve", async () => {
-    let controller!: ReadableStreamDefaultController<Uint8Array>;
-    const source = new ReadableStream<Uint8Array>({
-      start(c) {
-        controller = c;
-      },
-    });
-    let releaseHold!: () => void;
-    const hold = new Promise<void>((r) => {
-      releaseHold = r;
-    });
-
-    const { stream, quiesce, dispose } = gateFlightForCapture(
-      source,
-      undefined,
-      hold,
-    );
-    const chunks: string[] = [];
-    const reader = stream.getReader();
-    const readLoop = (async () => {
-      for (;;) {
-        const r = await reader.read();
-        if (r.done) break;
-        if (r.value.length > 0) chunks.push(new TextDecoder().decode(r.value));
-      }
-    })();
-
-    controller.enqueue(enc("shell"));
-    // Byte-quiet elapses many times over, but the hold is pending: no quiesce.
-    expect(await settlesWithin(quiesce, 60)).toBe(false);
-
-    // And crucially NO FREEZE: a late byte (the resolved top-level handles row)
-    // still reaches the fizz side while held.
-    controller.enqueue(enc("handles-row"));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(chunks).toEqual(["shell", "handles-row"]);
-
-    // Releasing the hold lets the quiet detection complete and fire.
-    releaseHold();
-    expect(await settlesWithin(quiesce, 100)).toBe(true);
-
-    // Post-quiesce the gate is frozen as usual.
-    controller.enqueue(enc("LATE"));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(chunks).toEqual(["shell", "handles-row"]);
-
-    dispose();
-    await reader.cancel();
-    await readLoop.catch(() => {});
-  });
-
   it("quiets immediately when the source closes (DATA variant / no holes)", async () => {
     const source = new ReadableStream<Uint8Array>({
       start(c) {
@@ -413,6 +362,9 @@ describe("captureAndStoreShell", () => {
       _cacheStore: withDocRecord(
         new RecordingShellStore((putShell ? { putShell } : {}) as any),
       ),
+      // The capture's handle store; settleCaptureRecord sealed it on both
+      // producers before captureAndStoreShell runs.
+      _handleStore: createHandleStore(),
       _shellImplicitCache: { docKey: DOC_KEY },
       _reportBackgroundError: vi.fn(),
       // The real derived context always seeds a fresh _requestTags (shell-capture
@@ -432,15 +384,13 @@ describe("captureAndStoreShell", () => {
     } as unknown as SSRModule;
   }
 
-  // Capture settle budget (issue #715): descriptor.captureTimeout is THE
-  // deadline handed to captureShellHTML — one bound covering the fizz
-  // prerender AND the deferred-material settle window (the holdUntil gate).
+  // Capture settle budget (issue #715): what descriptor.captureTimeout leaves
+  // of the one capture deadline is handed to captureShellHTML.
   it("passes descriptor.captureTimeout to captureShellHTML as maxWaitMs", async () => {
     const ssrModule = makeShellSsrModule();
     await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       makeReqCtx(makePutShell()),
       {
         key: "/budget:shell",
@@ -448,6 +398,7 @@ describe("captureAndStoreShell", () => {
         ttl: 300,
         captureTimeout: 10_000,
       },
+      Date.now(),
     );
     const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
     expect(opts.maxWaitMs).toBe(10_000);
@@ -458,9 +409,9 @@ describe("captureAndStoreShell", () => {
     await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       makeReqCtx(makePutShell()),
       { key: "/budget-default:shell", buildVersion: "test-build", ttl: 300 },
+      Date.now(),
     );
     const opts = vi.mocked(ssrModule.captureShellHTML!).mock.calls[0]![1];
     expect(opts.maxWaitMs).toBe(15_000);
@@ -483,9 +434,9 @@ describe("captureAndStoreShell", () => {
     await captureAndStoreShell(
       makeShellSsrModule(),
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       { key: "/doc-key:shell", buildVersion: "test-build", ttl: 300 },
+      Date.now(),
     );
 
     expect(putShell).toHaveBeenCalledOnce();
@@ -494,30 +445,6 @@ describe("captureAndStoreShell", () => {
     expect(entry.snapshot).toEqual([
       expect.objectContaining({ family: "segment", key: "doc:host/p" }),
     ]);
-  });
-
-  it("refuses a capture whose marker names a doc record the snapshot lacks", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const putShell = makePutShell();
-      const reqCtx = makeReqCtx(putShell);
-      // A stale marker docKey without its record: a HIT could not replay it.
-      reqCtx._cacheStore = new RecordingShellStore({ putShell } as any);
-      reqCtx._shellImplicitCache = { docKey: "doc:host/p" };
-
-      const outcome = await captureAndStoreShell(
-        makeShellSsrModule(),
-        emptyStream(),
-        createHandleStore(),
-        reqCtx,
-        { key: "/doc-key-empty:shell", buildVersion: "test-build", ttl: 300 },
-      );
-
-      expect(outcome).toBe("refused");
-      expect(putShell).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-    }
   });
 
   it("refuses and reports a shell invalidated by its own capture render", async () => {
@@ -541,7 +468,6 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       {
         key: "/self-invalidating:shell",
@@ -549,8 +475,8 @@ describe("captureAndStoreShell", () => {
         ttl: 300,
         tags: ["own-shell"],
       },
-      stats,
       captureStartedAt,
+      stats,
     );
 
     expect(outcome).toBe("refused");
@@ -581,7 +507,6 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       {
         key: "/uncacheable-tags:shell",
@@ -589,8 +514,8 @@ describe("captureAndStoreShell", () => {
         ttl: 300,
         tags: ["t"],
       },
-      stats,
       Date.now(),
+      stats,
     );
 
     expect(outcome).toBe("refused");
@@ -619,9 +544,9 @@ describe("captureAndStoreShell", () => {
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
         emptyStream(),
-        createHandleStore(),
         reqCtx,
         { key: "/guard-trip:shell", buildVersion: "test-build", ttl: 300 },
+        Date.now(),
       );
 
       expect(outcome).toBe("refused");
@@ -660,9 +585,9 @@ describe("captureAndStoreShell", () => {
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
         emptyStream(),
-        createHandleStore(),
         reqCtx,
         { key: "/bake-reject:shell", buildVersion: "test-build", ttl: 300 },
+        Date.now(),
       );
 
       expect(outcome).toBe("refused");
@@ -701,9 +626,9 @@ describe("captureAndStoreShell", () => {
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
         emptyStream(),
-        createHandleStore(),
         reqCtx,
         { key: "/bake-signal:shell", buildVersion: "test-build", ttl: 300 },
+        Date.now(),
       );
 
       expect(outcome).toBe("refused");
@@ -735,9 +660,9 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       { key: "/bake-holes:shell", buildVersion: "test-build", ttl: 300 },
+      Date.now(),
     );
 
     expect(outcome).toBe("stored");
@@ -772,9 +697,9 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       { key: "/bake-pending:shell", buildVersion: "test-build", ttl: 300 },
+      Date.now(),
     );
 
     expect(outcome).toBe("stored");
@@ -811,7 +736,6 @@ describe("captureAndStoreShell", () => {
         return captureAndStoreShell(
           makeShellSsrModule(),
           emptyStream(),
-          createHandleStore(),
           reqCtx,
           {
             key: "/over-cap:shell",
@@ -820,6 +744,7 @@ describe("captureAndStoreShell", () => {
             maxSnapshotBytes: 1024,
             store: { putShell } as any,
           },
+          Date.now(),
         );
       };
 
@@ -860,7 +785,6 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       {
         key: "/under-cap:shell",
@@ -868,6 +792,7 @@ describe("captureAndStoreShell", () => {
         ttl: 300,
         store: { putShell } as any,
       },
+      Date.now(),
     );
 
     expect(outcome).toBe("stored");
@@ -895,7 +820,6 @@ describe("captureAndStoreShell", () => {
     await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       // reqCtx._cacheStore is a DIFFERENT store; the flag's store must win.
       makeReqCtx(makePutShell()),
       {
@@ -906,6 +830,7 @@ describe("captureAndStoreShell", () => {
         tags: ["t1"],
         store: { putShell } as any,
       },
+      Date.now(),
     );
 
     expect(putShell).toHaveBeenCalledTimes(1);
@@ -925,98 +850,6 @@ describe("captureAndStoreShell", () => {
     ).toBe("<html><body>shell</body></html>");
   });
 
-  it("attributes the slowest bake source: bakeWaitMs stat + once-per-key dev warning naming it", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    let now = 0;
-    const perfSpy = vi.spyOn(performance, "now").mockImplementation(() => now);
-    try {
-      let resolveLoader!: (value: unknown) => void;
-      const loaderPromise = new Promise((resolve) => {
-        resolveLoader = resolve;
-      });
-      const reqCtx = makeReqCtx();
-      reqCtx._shellCaptureLoaderRecords = new Map([
-        ["products.list", loaderPromise],
-      ]);
-      const captureShellHTML = vi.fn(async () => {
-        // One macrotask first so the (instant) handles bake records at 0, then
-        // jump the mocked clock and settle the loader — its observer records
-        // the 3456ms hold. The extra microtask lets that observer run before
-        // the capture result is consumed.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        now = 3456;
-        resolveLoader({ ok: true });
-        await loaderPromise;
-        await Promise.resolve();
-        return {
-          prelude: enc("<html><body>shell</body></html>"),
-          postponed: null,
-        };
-      });
-      const ssrModule = {
-        renderHTML: vi.fn(),
-        captureShellHTML,
-      } as unknown as SSRModule;
-
-      const stats: { bakeWaitMs?: number } = {};
-      const outcome = await captureAndStoreShell(
-        ssrModule,
-        emptyStream(),
-        createHandleStore(),
-        reqCtx,
-        {
-          key: "/bake-cost:shell",
-          buildVersion: "test-build",
-          ttl: 300,
-          store: { putShell: makePutShell() } as any,
-        },
-        stats,
-      );
-
-      expect(outcome).toBe("stored");
-      expect(stats.bakeWaitMs).toBe(3456);
-      const bakeWarnings = warn.mock.calls.filter((call) =>
-        String(call[0]).includes("waited 3456ms"),
-      );
-      expect(bakeWarnings).toHaveLength(1);
-      expect(String(bakeWarnings[0]![0])).toContain(
-        'bake-lane segment loader "products.list"',
-      );
-      // Remedy ladder is present: cache() / a live loader / a nested
-      // promise or drop ssr: false, plus the shared lane hint (loading() or an
-      // inline <Suspense>).
-      expect(String(bakeWarnings[0]![0])).toContain("live loader");
-      expect(String(bakeWarnings[0]![0])).toContain("cache()");
-      expect(String(bakeWarnings[0]![0])).toContain("drop ssr: false");
-      expect(String(bakeWarnings[0]![0])).toContain("loading()");
-      expect(String(bakeWarnings[0]![0])).toContain("The loader lane rule");
-
-      // Once per key: a second expensive capture of the SAME key stays silent.
-      now = 0;
-      const again = await captureAndStoreShell(
-        ssrModule,
-        emptyStream(),
-        createHandleStore(),
-        makeReqCtx(),
-        {
-          key: "/bake-cost:shell",
-          buildVersion: "test-build",
-          ttl: 300,
-          store: { putShell: makePutShell() } as any,
-        },
-      );
-      expect(again).toBe("stored");
-      expect(
-        warn.mock.calls.filter((call) =>
-          String(call[0]).includes("/bake-cost:shell"),
-        ),
-      ).toHaveLength(1);
-    } finally {
-      perfSpy.mockRestore();
-      warn.mockRestore();
-    }
-  });
-
   it("navigationOnly capture drops the document half: no prelude/postponed stored", async () => {
     const putShell = makePutShell();
     const captureShellHTML = vi.fn(async () => ({
@@ -1031,7 +864,6 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       makeReqCtx(),
       {
         key: "/p:shell:navigation",
@@ -1040,6 +872,7 @@ describe("captureAndStoreShell", () => {
         store: { putShell } as any,
         navigationOnly: true,
       },
+      Date.now(),
     );
 
     expect(outcome).toBe("stored");
@@ -1074,13 +907,13 @@ describe("captureAndStoreShell", () => {
     await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       {
         key: "/p:shell",
         buildVersion: "test-build",
         store: { putShell } as any,
       },
+      Date.now(),
     );
 
     expect(putShell).toHaveBeenCalledTimes(1);
@@ -1101,13 +934,13 @@ describe("captureAndStoreShell", () => {
     await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       makeReqCtx(ctxPut),
       {
         key: "/p:shell",
         buildVersion: "test-build",
         store: { putShell: flagPut } as any,
       },
+      Date.now(),
     );
 
     expect(flagPut).toHaveBeenCalledTimes(1);
@@ -1126,13 +959,13 @@ describe("captureAndStoreShell", () => {
     const outcome = await captureAndStoreShell(
       ssrModule,
       emptyStream(),
-      createHandleStore(),
       makeReqCtx(putShell),
       {
         key: "/p:shell",
         buildVersion: "test-build",
         store: { putShell } as any,
       },
+      Date.now(),
     );
     expect(outcome).toBe("no-shell");
     expect(putShell).not.toHaveBeenCalled();
@@ -1156,13 +989,13 @@ describe("captureAndStoreShell", () => {
       captureAndStoreShell(
         ssrModule,
         emptyStream(),
-        createHandleStore(),
         makeReqCtx(putShell),
         {
           key: "/p:shell",
           buildVersion: "test-build",
           store: { putShell } as any,
         },
+        Date.now(),
       ),
     ).rejects.toBe(abortErr);
     expect(putShell).not.toHaveBeenCalled();
@@ -1181,13 +1014,13 @@ describe("captureAndStoreShell", () => {
       captureAndStoreShell(
         ssrModule,
         emptyStream(),
-        createHandleStore(),
         makeReqCtx(putShell),
         {
           key: "/p:shell",
           buildVersion: "test-build",
           store: { putShell } as any,
         },
+        Date.now(),
       ),
     ).rejects.toThrow("shell component blew up");
     expect(putShell).not.toHaveBeenCalled();
@@ -1225,9 +1058,9 @@ describe("captureAndStoreShell", () => {
       captureAndStoreShell(
         erroredModule,
         emptyStream(),
-        createHandleStore(),
         reqCtx,
         { key, buildVersion: "test-build", ttl: 300 },
+        Date.now(),
       ),
     ).rejects.toBe(shellError);
     expect(await store.getShell(key)).toBeNull();
@@ -1240,9 +1073,9 @@ describe("captureAndStoreShell", () => {
       await captureAndStoreShell(
         makeShellSsrModule(),
         emptyStream(),
-        createHandleStore(),
         cleanCtx,
         { key, buildVersion: "test-build", ttl: 300 },
+        Date.now(),
       ),
     ).toBe("stored");
     expect(await store.getShell(key)).not.toBeNull();
@@ -1266,13 +1099,13 @@ describe("captureAndStoreShell", () => {
       await captureAndStoreShell(
         ssrModule,
         emptyStream(),
-        createHandleStore(),
         reqCtx,
         {
           key: "/p:shell",
           buildVersion: "test-build",
           store: { putShell } as any,
         },
+        Date.now(),
       );
       expect(reqCtx._reportBackgroundError).toHaveBeenCalledTimes(1);
     } finally {
@@ -1301,7 +1134,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     adjust?: (setup: PruneSetup) => void | Promise<void>,
     options: {
       inner?: MemorySegmentCacheStore;
-      descriptor?: Partial<Parameters<typeof captureAndStoreShell>[4]>;
+      descriptor?: Partial<Parameters<typeof captureAndStoreShell>[3]>;
       expectRefused?: boolean;
       /** The descriptor store's value limit (SegmentCacheStore.maxShellEntryBytes). */
       maxShellEntryBytes?: number;
@@ -1318,9 +1151,9 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     });
     await recording.setItem("use-cache:handler", "H", { ttl: 60 });
     await runInsideLoaderScope(() => recording.getItem("use-cache:loader"));
-    await recording.putResponse("resp:handler", new Response("R"), 60);
     const reqCtx: any = {
       _cacheStore: recording,
+      _handleStore: createHandleStore(),
       _reportBackgroundError: vi.fn(),
       _requestTags: new Set<string>(),
       _shellImplicitCache: { docKey: DOC_KEY },
@@ -1338,7 +1171,6 @@ describe("captureAndStoreShell: snapshot pruning", () => {
         })),
       } as unknown as SSRModule,
       emptyStream(),
-      createHandleStore(),
       reqCtx,
       {
         key: "/p:shell",
@@ -1350,6 +1182,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
         } as any,
         ...options.descriptor,
       },
+      Date.now(),
     );
     if (options.expectRefused) {
       expect(outcome).toBe("refused");
@@ -1363,22 +1196,14 @@ describe("captureAndStoreShell: snapshot pruning", () => {
   const records = (entry: ShellCacheEntry): string[] =>
     (entry.snapshot ?? []).map((r) => `${r.family} ${r.key}`);
 
-  const EVERY_RECORD = [
-    `segment ${DOC_KEY}`,
-    "item use-cache:handler",
-    "item use-cache:loader",
-    "response resp:handler",
-    "loader M0L0D0.bake",
-  ];
-
-  it("drops the item and response records only handler code read", async () => {
+  it("drops the item records only handler code read", async () => {
     const entry = await capturePrunable();
     expect(records(entry)).toEqual([
       `segment ${DOC_KEY}`,
       "item use-cache:loader",
       "loader M0L0D0.bake",
     ]);
-    expect(entry.prunedRecords).toBe("item:1/response:1");
+    expect(entry.prunedRecords).toBe("item:1");
     expect(entry.docKey).toBe(DOC_KEY);
   });
 
@@ -1389,38 +1214,6 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     });
     expect(records(entry)).toContain("item use-cache:joined");
     expect(records(entry)).not.toContain("item use-cache:handler");
-  });
-
-  // A document capture that ran handlers must store its doc record: a HIT
-  // replays the handler layer from it and never runs a handler.
-  it.each([
-    [
-      "the capture recorded no doc record",
-      (reqCtx: any) => {
-        reqCtx._shellImplicitCache = {};
-      },
-    ],
-    [
-      "docKey names a record the snapshot lacks",
-      (reqCtx: any) => {
-        reqCtx._shellImplicitCache.docKey = "doc:host/other";
-      },
-    ],
-  ])("refuses a document capture when %s", async (_label, adjust) => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      await capturePrunable(({ reqCtx }) => adjust(reqCtx), {
-        expectRefused: true,
-        descriptor: { key: `/no-doc-record-${_label.length}:shell` },
-      });
-      expect(
-        warn.mock.calls.some((call) =>
-          String(call[0]).includes("no doc segment record"),
-        ),
-      ).toBe(true);
-    } finally {
-      warn.mockRestore();
-    }
   });
 
   // Every HIT looks the record up by the entry's own docKey and never runs a
@@ -1461,7 +1254,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       });
     });
     expect(records(entry)).not.toContain("segment seg:explicit");
-    expect(entry.prunedRecords).toBe("item:1/response:1/segment:1");
+    expect(entry.prunedRecords).toBe("item:1/segment:1");
   });
 
   it("R1 keeps only the doc record for a navigation-only entry", async () => {
@@ -1469,7 +1262,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       descriptor: { navigationOnly: true },
     });
     expect(records(entry)).toEqual([`segment ${DOC_KEY}`]);
-    expect(entry.prunedRecords).toBe("item:2/response:1/loader:1");
+    expect(entry.prunedRecords).toBe("item:2/loader:1");
   });
 
   it("applies the size cap to the pruned snapshot", async () => {
@@ -1486,7 +1279,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       "item use-cache:loader",
       "loader M0L0D0.bake",
     ]);
-    expect(entry.prunedRecords).toBe("item:2/response:1");
+    expect(entry.prunedRecords).toBe("item:2");
   });
 
   it("keeps the doc record over the cap and drops the loader pins", async () => {
@@ -1721,14 +1514,19 @@ describe("runShellCapture", () => {
       url: rawUrl,
       variables: {},
     }) as RequestContext;
+    const captured: Array<() => Promise<void>> = [];
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
 
-    await runShellCapture(ctx, request, {}, rawUrl, reqCtx, ssrModule, {
+    scheduleShellCapture(ctx, request, {}, rawUrl, reqCtx, ssrModule, {
       key: "/p:shell:navigation",
       buildVersion: "test-build",
       ttl: 300,
       store: { putShell } as any,
       navigationOnly: true,
     });
+    await captured[0]!();
 
     expect(matchedRequestUrl).toBe("http://localhost/p?probe=keep");
     expect(ambientIdentity?.url.toString()).toBe(
@@ -2013,6 +1811,51 @@ describe("runShellCapture", () => {
     }
   });
 
+  // A document capture that ran handlers must store its doc record: a HIT
+  // replays the handler layer from it and never runs a handler.
+  it("refuses a capture whose match wrote no doc record", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const captureShellHTML = vi.fn(async () => ({
+        prelude: enc("<html><body>captured</body></html>"),
+        postponed: null,
+      }));
+      const { ctx, ssrModule } = makeCtx(okMatch, captureShellHTML);
+      // The route's cache() refused the write (a false condition()).
+      vi.mocked(ctx.router.match).mockImplementation(async () => okMatch);
+
+      const outcome = await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/no-doc-record:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell } as any,
+        },
+        0,
+      );
+
+      expect(outcome).toBe("no-shell");
+      // A deterministic refusal: no retry, no prerender.
+      expect(ctx.router.match).toHaveBeenCalledTimes(1);
+      expect(captureShellHTML).not.toHaveBeenCalled();
+      expect(putShell).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes("no doc segment record"),
+        ),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("aborts without storing when the matched route redirects", async () => {
     const putShell = makePutShell();
     const capture = vi.fn(async () => ({
@@ -2098,6 +1941,116 @@ describe("runShellCapture", () => {
     expect(captureShellHTML).toHaveBeenCalledTimes(2);
     expect(putShell).toHaveBeenCalledTimes(1);
     expect(putShell.mock.calls[0]![0]).toBe("/p:shell");
+  });
+
+  // The in-place retry is the last attempt: a retry whose route cache()
+  // record ran out has no budget left, so it is terminal like any no-shell
+  // (the caller backs the key off) and warns once per route.
+  it("a cold first attempt whose retry ran out of its route record is terminal no-shell", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const putShell = makePutShell();
+      const captureShellHTML = vi
+        .fn()
+        .mockResolvedValueOnce(null) // attempt 1: cold, no usable shell
+        .mockResolvedValueOnce({
+          prelude: enc("<html><body>warm</body></html>"),
+          postponed: null,
+        });
+      let matches = 0;
+      const { ctx, ssrModule } = makeCtx(
+        { ...okMatch, routeName: "retry-expired-route" },
+        captureShellHTML as any,
+        {
+          tags: [],
+          // Only the retry's match reads a record already past its end.
+          during: () => {
+            if (++matches < 2) return;
+            getRequestContext()._routeRecordWindow = {
+              freshUntil: Date.now() - 1,
+              staleUntil: Date.now() - 1,
+              ttl: 300,
+              swr: 0,
+              written: false,
+            };
+          },
+        },
+      );
+
+      const outcome = await runShellCapture(
+        ctx,
+        new Request("http://localhost/p"),
+        {},
+        new URL("http://localhost/p"),
+        makeReqCtx(),
+        ssrModule,
+        {
+          key: "/retry-expired:shell",
+          buildVersion: "test-build",
+          ttl: 300,
+          store: { putShell } as any,
+        },
+        0,
+      );
+
+      expect(captureShellHTML).toHaveBeenCalledTimes(2);
+      expect(putShell).not.toHaveBeenCalled();
+      expect(outcome).toBe("no-shell");
+      const warning = warnSpy.mock.calls
+        .map(([message]) => String(message))
+        .find((message) => message.includes('"retry-expired-route"'));
+      expect(warning).toContain("ran out before the shell capture");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // A navigation-only capture can store under a document key (a corrupt
+  // snapshot heal overwrites the key that supplied it), but document serving
+  // reads such an entry as a MISS: it is not the shell a document MISS read
+  // for, so it must not make that MISS's capture skip itself.
+  it("a navigation-only store does not skip a document MISS capture (skip-stored)", async () => {
+    const captured: Array<() => Promise<void>> = [];
+    const events: ShellCaptureDebugEvent[] = [];
+    const { ctx, ssrModule } = makeCtx(
+      okMatch,
+      vi.fn(async () => ({
+        prelude: enc("<html><body>captured</body></html>"),
+        postponed: null,
+      })),
+    );
+    const reqCtx = makeReqCtx();
+    (reqCtx as any).waitUntil = (task: () => Promise<void>) => {
+      captured.push(task);
+    };
+    const key = "/nav-heal-seq:shell";
+    const descriptor = {
+      key,
+      buildVersion: "test-build",
+      ttl: 300,
+      store: { putShell: makePutShell() } as any,
+      debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+    };
+    const request = new Request("http://localhost/p");
+    const url = new URL("http://localhost/p");
+    // The document MISS read the store before the heal stored.
+    const readBeforeHeal = lastStoredCaptureSeq(key);
+
+    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
+      ...descriptor,
+      navigationOnly: true,
+    });
+    await captured[0]!();
+    expect(events.at(-1)?.outcome).toBe("stored");
+
+    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
+      ...descriptor,
+      storedSeqAtRead: readBeforeHeal,
+    });
+    expect(events.at(-1)?.outcome).not.toBe("skip-stored");
+    expect(captured).toHaveLength(2);
+    await captured[1]!();
+    expect(events.at(-1)?.outcome).toBe("stored");
   });
 
   it("does not retry a genuine AbortError from captureShellHTML", async () => {
@@ -2343,7 +2296,7 @@ describe("runShellCapture", () => {
   it("both attempts fail: nothing stored, no throw, and warns at most once per key", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const putShell = makePutShell();
-    // Unique key: warnedNullCaptures is module-level and persists across tests.
+    // Unique key: the once-per-key warnings are module-level and persist across tests.
     const key = "/no-loading-once-per-key:shell";
 
     try {
@@ -3506,6 +3459,146 @@ describe("capture task hard cap + stampede-guard staleness", () => {
       expect(captured).toHaveLength(2);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // The hard cap bounds a capture from when the queue starts it, so the
+  // guard's age counts from there too: a capture that waited in the queue
+  // and is still inside its own cap is not reclaimed, and no duplicate
+  // capture of the key is scheduled beside it.
+  it("staleness counts from the task start, not the schedule: queue wait is not held against it", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const events: ShellCaptureDebugEvent[] = [];
+      const captured: Array<() => Promise<void>> = [];
+      const ctx = makeWedgedCtx();
+      // The capture ahead in the queue fails after 10 s; the one behind it
+      // then wedges in its match.
+      vi.mocked(ctx.router.match).mockImplementationOnce(
+        () =>
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("upstream down")), 10_000),
+          ),
+      );
+      const reqCtx = makeScheduleReqCtx(captured);
+      const schedule = (key: string) =>
+        scheduleShellCapture(
+          ctx,
+          new Request("http://localhost/wedge"),
+          {},
+          new URL("http://localhost/wedge"),
+          reqCtx,
+          validSsr(),
+          {
+            key,
+            buildVersion: "test-build",
+            store: { putShell: vi.fn() } as any,
+            // Past the hard cap: only the cap ends the wedged capture.
+            captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS * 2,
+            debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+          },
+        );
+      const ahead = "/queue-ahead:shell";
+      const key = "/queued-then-running:shell";
+
+      schedule(ahead);
+      schedule(key);
+      expect(captured).toHaveLength(2);
+      const tasks = captured.map((task) => task());
+      // The capture ahead fails at 10 s; the queued one starts then.
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(ctx.router.match).toHaveBeenCalledTimes(2);
+
+      // 30 s after scheduling, 20 s after starting: inside its own cap.
+      await vi.advanceTimersByTimeAsync(20_000);
+      schedule(key);
+      expect(captured).toHaveLength(2);
+      expect(events.at(-1)?.outcome).toBe("skip-in-flight");
+
+      // Let the cap end the wedged capture.
+      await vi.advanceTimersByTimeAsync(SHELL_CAPTURE_TASK_HARD_CAP_MS);
+      await Promise.all(tasks);
+      clearCaptureBackoff(ahead);
+      clearCaptureBackoff(key);
+    } finally {
+      vi.useRealTimers();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("staleness counts from the task start through a slow SSR setup, then from the hard cap's start", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const events: ShellCaptureDebugEvent[] = [];
+      const captured: Array<() => Promise<void>> = [];
+      const ctx = makeWedgedCtx();
+      // The capture ahead in the queue fails after 10 s; the one behind it
+      // then loads its SSR module for 20 s and wedges in its match.
+      vi.mocked(ctx.router.match).mockImplementationOnce(
+        () =>
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("upstream down")), 10_000),
+          ),
+      );
+      const reqCtx = makeScheduleReqCtx(captured);
+      const slowSsr = () =>
+        new Promise<SSRModule>((resolve) =>
+          setTimeout(() => resolve(validSsr()), 20_000),
+        );
+      const schedule = (
+        key: string,
+        ssr: Parameters<typeof scheduleShellCapture>[5],
+      ) =>
+        scheduleShellCapture(
+          ctx,
+          new Request("http://localhost/wedge"),
+          {},
+          new URL("http://localhost/wedge"),
+          reqCtx,
+          ssr,
+          {
+            key,
+            buildVersion: "test-build",
+            store: { putShell: vi.fn() } as any,
+            // Past the hard cap: only the cap ends the wedged capture.
+            captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS * 2,
+            debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
+          },
+        );
+      const ahead = "/queue-ahead-slow-ssr:shell";
+      const key = "/queued-slow-ssr:shell";
+
+      schedule(ahead, validSsr());
+      schedule(key, slowSsr);
+      expect(captured).toHaveLength(2);
+      const tasks = captured.map((task) => task());
+      // The capture ahead fails at 10 s; the queued one starts its SSR setup.
+      await vi.advanceTimersByTimeAsync(10_001);
+
+      // 28 s after scheduling, 18 s into the SSR setup: still in flight.
+      await vi.advanceTimersByTimeAsync(18_000);
+      schedule(key, slowSsr);
+      expect(captured).toHaveLength(2);
+      expect(events.at(-1)?.outcome).toBe("skip-in-flight");
+
+      // The setup resolves at 30 s and the capped run starts; 40 s after the
+      // task started, 20 s into its cap: still in flight.
+      await vi.advanceTimersByTimeAsync(22_000);
+      expect(ctx.router.match).toHaveBeenCalledTimes(2);
+      schedule(key, slowSsr);
+      expect(captured).toHaveLength(2);
+      expect(events.at(-1)?.outcome).toBe("skip-in-flight");
+
+      // Let the cap end the wedged capture.
+      await vi.advanceTimersByTimeAsync(SHELL_CAPTURE_TASK_HARD_CAP_MS);
+      await Promise.all(tasks);
+      clearCaptureBackoff(ahead);
+      clearCaptureBackoff(key);
+    } finally {
+      vi.useRealTimers();
+      errSpy.mockRestore();
     }
   });
 

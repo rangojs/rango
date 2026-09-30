@@ -147,11 +147,6 @@ function getDefaultRouteCacheKey(
 // CacheScope
 // ============================================================================
 
-const CACHE_HIT_OBSERVERS = new WeakMap<
-  CacheScope,
-  () => void | Promise<void>
->();
-
 type CacheKeyFn = NonNullable<PartialCacheOptions["key"]>;
 
 /**
@@ -243,6 +238,12 @@ export class CacheScope {
      * a ppr route).
      */
     readonly boundary?: string,
+    /**
+     * Awaited on every lookup HIT: the implicit doc scope's marker `onHit`
+     * (createShellImplicitDocScope), which arms a partial replay's bake-lane
+     * loader pins before the route's loaders resolve.
+     */
+    private readonly onHit?: () => void | Promise<void>,
   ) {
     this.config = config;
     this.parent = parent;
@@ -468,7 +469,7 @@ export class CacheScope {
   ): Promise<string>[] {
     return this.keyFns.map((keyFn) =>
       memoizedKey(requestCtx, keyFn, "", () =>
-        resolveCacheKey(keyFn, null, defaultKey, "CacheScope"),
+        resolveCacheKey(keyFn, null, defaultKey),
       ),
     );
   }
@@ -483,8 +484,7 @@ export class CacheScope {
   ): Promise<string> {
     const store = this.getStore();
     const keyGenerator = store?.keyGenerator;
-    const resolve = () =>
-      resolveCacheKey(undefined, store, defaultKey, "CacheScope");
+    const resolve = () => resolveCacheKey(undefined, store, defaultKey);
     return requestCtx && keyGenerator
       ? memoizedKey(requestCtx, keyGenerator, defaultKey, resolve)
       : resolve();
@@ -518,11 +518,6 @@ export class CacheScope {
   }
 
   /**
-   * Evaluate the cache `condition` predicate. Returns false (skip the cache
-   * operation) when the predicate returns false or throws; returns true when
-   * there is no condition or no request context to evaluate it against.
-   */
-  /**
    * One WRITE decision per (scope, request), memoized on the request context.
    * A capture render has TWO writers consulting the same predicate — the
    * explicit tier's cacheRoute and the snapshot-only doc record gate
@@ -535,6 +530,12 @@ export class CacheScope {
    */
   private readonly writeConditionMemo = new WeakMap<RequestContext, boolean>();
 
+  /**
+   * Evaluate the cache `condition` predicate. Returns false (skip the cache
+   * operation) when the predicate returns false or throws; returns true when
+   * there is no condition or no request context to evaluate it against. A
+   * write decision is memoized (writeConditionMemo).
+   */
   private conditionAllows(op: "read" | "write"): boolean {
     if (this.config === false || !this.config.condition) return true;
     const requestCtx = getRequestContext();
@@ -738,7 +739,7 @@ export class CacheScope {
       if (ambientContext)
         this.noteRecordWindow(ambientContext, cached.expiresAt, false);
 
-      await CACHE_HIT_OBSERVERS.get(this)?.();
+      await this.onHit?.();
       return { status: "hit", result: { segments, shouldRevalidate } };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
@@ -995,8 +996,8 @@ export function resolveShellPartition(
   if (routeScope?.enabled) return routeScope.resolvePartition(pathname, params);
   if (!appStore?.keyGenerator) return undefined;
   const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
-  return resolveCacheKey(undefined, appStore, defaultKey, "CacheScope").then(
-    (resolved) => (resolved === defaultKey ? null : resolved),
+  return resolveCacheKey(undefined, appStore, defaultKey).then((resolved) =>
+    resolved === defaultKey ? null : resolved,
   );
 }
 
@@ -1034,7 +1035,7 @@ export function createShellImplicitDocScope(
   marker: ShellImplicitCacheMarker,
 ): CacheScope {
   const fixedDocKey = marker.fixedDocKey;
-  const implicitScope = new CacheScope(
+  return new CacheScope(
     {
       ttl: marker.ttl,
       swr: marker.swr,
@@ -1043,9 +1044,9 @@ export function createShellImplicitDocScope(
     },
     null,
     marker.keyPrefix,
+    undefined,
+    marker.onHit,
   );
-  if (marker.onHit) CACHE_HIT_OBSERVERS.set(implicitScope, marker.onHit);
-  return implicitScope;
 }
 
 /**

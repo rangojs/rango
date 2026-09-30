@@ -51,7 +51,9 @@ only prerequisite is an app-level `createRouter({ cache })` store that
 implements the shell family (`getShell`/`putShell`): `MemorySegmentCacheStore`
 (dev/tests), `CFCacheStore` (Cache API L1 + optional KV L2), or
 `VercelCacheStore` (Vercel Runtime Cache). A ppr route on a store without the
-family renders normally (no shell) with a once-per-key warning.
+family renders normally (no shell) with a once-per-key warning. A custom store
+returns each `ShellCacheEntry` field as `putShell` received it, including
+`buildVersion` and `snapshot` (both required; the snapshot can be empty).
 
 ```typescript
 import { createRouter, urls } from "@rangojs/router";
@@ -321,7 +323,7 @@ replay its eligible snapshot. In both cases `matchPartial()`:
 - keeps the existing prefetch key, source scope, and in-flight lock unchanged.
 
 This is deliberately invisible to the browser: the response is the same
-`RscPayload` shape as any other partial navigation. Captured item/response values
+`RscPayload` shape as any other partial navigation. Captured item values
 are NOT replayed on this path. Bake-lane loader pins are, when the replayed
 snapshot is a shell a document request captured, as on a document HIT: a
 promise-free `ssr: false` loader is served from its pin without running
@@ -413,17 +415,17 @@ consumer-invisible.
 
 The bounded bypass tokens, grouped by when they are decided:
 
-| Token                                                                             | Decided           | Meaning                                                                                                                                                                                                              |
-| --------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported`     | pre-read          | request/route/store ineligible for replay                                                                                                                                                                            |
-| `no-navigation-context`                                                           | pre-read          | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                                                                                                               |
-| `prerender-store`                                                                 | pre-read or match | `Prerender()` route served by its baked artifact (pre-read probe of the normal variant; reclassified post-match when the store actually served, either variant)                                                      |
-| `intercept`                                                                       | match             | the navigation resolved to an intercept — replay is never armed for intercepts (they keep their normal cache path); no heal capture                                                                                  |
-| `cache-disabled`                                                                  | pre-read or match | `cache(false)` (pre-read, static) or `condition()` false (decided at the lookup); consumer opt-out is absolute                                                                                                       |
-| `read-error`, `no-entry`, `invalid-version`, `corrupt-entry`, `stale-build-entry` | shell read        | no usable shell entry (`no-entry`/`invalid-version`/`corrupt-entry`/`stale-build-entry` schedule the navigation-only heal capture)                                                                                   |
-| `no-segment-snapshot`                                                             | eligibility       | entry exists but its snapshot has no recorded segments for the page; on a route with an enabled `cache()` scope, it heals when the lookup did not refuse (a `condition()` false-at-capture entry becomes replayable) |
-| `explicit-cache-hit`                                                              | match             | the route's own `cache()` tier supplied the match                                                                                                                                                                    |
-| `snapshot-miss`                                                                   | match             | an eligible snapshot was seeded but matching did not consume it                                                                                                                                                      |
+| Token                                                                         | Decided           | Meaning                                                                                                                                                                                                              |
+| ----------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported` | pre-read          | request/route/store ineligible for replay                                                                                                                                                                            |
+| `no-navigation-context`                                                       | pre-read          | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                                                                                                               |
+| `prerender-store`                                                             | pre-read or match | `Prerender()` route served by its baked artifact (pre-read probe of the normal variant; reclassified post-match when the store actually served, either variant)                                                      |
+| `intercept`                                                                   | match             | the navigation resolved to an intercept — replay is never armed for intercepts (they keep their normal cache path); no heal capture                                                                                  |
+| `cache-disabled`                                                              | pre-read or match | `cache(false)` (pre-read, static) or `condition()` false (decided at the lookup); consumer opt-out is absolute                                                                                                       |
+| `read-error`, `no-entry`, `invalid-version`, `corrupt-entry`                  | shell read        | no usable shell entry (`no-entry`/`invalid-version`/`corrupt-entry` schedule the navigation-only heal capture)                                                                                                       |
+| `no-segment-snapshot`                                                         | eligibility       | entry exists but its snapshot has no recorded segments for the page; on a route with an enabled `cache()` scope, it heals when the lookup did not refuse (a `condition()` false-at-capture entry becomes replayable) |
+| `explicit-cache-hit`                                                          | match             | the route's own `cache()` tier supplied the match                                                                                                                                                                    |
+| `snapshot-miss`                                                               | match             | an eligible snapshot was seeded but matching did not consume it                                                                                                                                                      |
 
 ### Capture-generation invalidation
 
@@ -522,10 +524,9 @@ curl -s -D - -o /dev/null https://app.example.com/products/1 | grep -i x-rango-s
   capture diagnoses itself. A stored attempt reports `recordSettleMs`
   (`record=` in the log line): how long the capture waited for the handler
   layer to settle (promises it passes or pushes, async server components,
-  loaders it awaits) and its segment record to encode; `bakeWaitMs` (`bake=`):
-  how long the slowest remaining bake source (a top-level pushed handle promise
-  or a bake-lane loader container) held the capture gate; and `entryBytes`
-  (`entry=`): the stored entry's size. In dev, past 2s, the slow source is also
+  loaders it awaits, top-level pushed handle promises and bake-lane loader
+  containers) and its segment record to encode; and `entryBytes` (`entry=`):
+  the stored entry's size. In dev, past 2s, the settle is also
   named once per key in a console warning with the remedies (`cache()` the
   work / move it into a live loader / return it as a nested promise or drop
   `ssr: false` in a bake-lane loader). In dev, with
@@ -921,7 +922,7 @@ Four hard edges (each e2e/unit-pinned):
 - **Baked containers show CAPTURE-time data** for the shell's lifetime on
   document GETs, and on soft navigations that replay a shell captured by a
   document request (`x-rango-ppr-replay: HIT`). Live loaders and their
-  item/response reads remain fresh. That IS the bake lane's meaning; if a value
+  `"use cache"` reads remain fresh. That IS the bake lane's meaning; if a value
   must be fresh on every serve, it belongs on the live lane (no `ssr: false`) or
   in a nested promise.
 
@@ -1037,8 +1038,8 @@ Three levers, in preference order:
 
 Head material (Meta) pushed by HANDLERS cannot be a hole — the head is shell —
 so those promises bake by design; make them cheap with lever 2.
-`recordSettleMs` and `bakeWaitMs` on the capture debug event tell you what each
-capture actually paid. A
+`recordSettleMs` on the capture debug event tells you what each capture
+actually paid. A
 Meta pushed by a LIVE-lane loader is different: those loaders are masked at
 capture, so the push happens at request time and applies client-side
 (`metadata.handlesLate`) — it is never in the cached shell's head, by

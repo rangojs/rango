@@ -10,24 +10,18 @@
  * server-component element holding a promise, which is a hole as a whole (see
  * elideLoaderContainer):
  *
- *   - elide:   deep-walk the settled container; a PENDING nested promise is a
- *              hole, replaced by {@link LOADER_HOLE_KEY} — and since
- *              loader-cache masks every nested thenable at capture
- *              ({@link maskNestedContainerThenables}), nested promises are
- *              ALWAYS pending here for new captures. The SETTLED-marker branch
- *              below is legacy: it fires only if a settled thenable reaches
- *              elide anyway, and the overlay keeps decoding SETTLED markers
- *              from pre-mask snapshots. The result is promise-free and
- *              Flight-serializable.
+ *   - elide:   deep-walk the settled container; a nested promise is a hole,
+ *              replaced by {@link LOADER_HOLE_KEY}. loader-cache masks every
+ *              nested thenable at capture ({@link maskNestedContainerThenables},
+ *              a never-settling promise), so the promise shape alone decides:
+ *              a value that settled in time does not bake (#692). The result
+ *              is promise-free and Flight-serializable.
  *   - overlay: on a HIT the loader runs fresh (only the loader body can mint
  *              the live nested promises), then the recorded container is laid
  *              over it: recorded paths win (they are what the prelude froze),
  *              hole-marker paths take the fresh run's value (the live hole),
- *              SETTLED-marker paths become Promise.resolve(pinned) — consumers
- *              wrote use(data.x) against a promise-shaped container, and
- *              handing them the raw value throws React #438 on every HIT (the
- *              storefront PDP regression) — and fresh-only paths pass through
- *              (they cannot contradict prelude bytes that never rendered them).
+ *              and fresh-only paths pass through (they cannot contradict
+ *              prelude bytes that never rendered them).
  */
 
 import { isValidElement, type ReactElement } from "react";
@@ -65,37 +59,6 @@ export function isLoaderHoleMarker(value: unknown): value is LoaderHoleMarker {
 }
 
 /**
- * Marker wrapping the inlined value of a NESTED promise that settled during
- * capture. The value baked (physics), but the container key was a promise —
- * the overlay must hand consumers a Promise.resolve(value), not the raw value,
- * or an unconditional use(data.x) throws React #438 on every HIT. The ROOT
- * container is never wrapped: loader-cache overlays against the awaited fresh
- * container value.
- */
-export const LOADER_SETTLED_KEY = "$rangoLoaderSettled" as const;
-
-export interface LoaderSettledMarker {
-  [LOADER_SETTLED_KEY]: 1;
-  value: unknown;
-  /**
-   * Present when the pinned subtree contains hole markers. Computed once at
-   * capture (elide already visits every node) so the per-HIT overlay never
-   * rescans the pinned structure to pick its rehydration path.
-   */
-  holes?: 1;
-}
-
-export function isLoaderSettledMarker(
-  value: unknown,
-): value is LoaderSettledMarker {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as Record<string, unknown>)[LOADER_SETTLED_KEY] === 1
-  );
-}
-
-/**
  * Probe whether a promise is already settled without waiting for it: races it
  * against an immediately-resolved sentinel across two microtask hops (then
  * chaining means a resolved inner value needs one extra hop to surface).
@@ -128,12 +91,12 @@ export type ElideResult =
   | { state: "rejected" };
 
 /**
- * Deep-elide a settled bake-lane container for recording. Settled nested
- * promises pin their value behind a settled marker (they baked, but consumers
- * hold a promise-shaped key); pending ones become hole markers; a REJECTED
- * nested promise poisons the record (error UI must never bake into a shared
- * shell) — the caller refuses the capture. Plain data objects, arrays and the
- * props of host, Suspense/Fragment and client-reference elements are
+ * Deep-elide a settled bake-lane container for recording. Nested promises
+ * become hole markers: the capture masked each of them (never settles), so
+ * it postponed as a hole. A REJECTED container poisons the record (error UI
+ * must never bake into a shared shell) — the caller refuses the capture.
+ * Plain data objects, arrays and the props of host, Suspense/Fragment and
+ * client-reference elements are
  * traversed copy-on-write (an element through cloneElementWithProps); a shared
  * subtree or a cycle resolves to the same elided result. An element Flight
  * renders by calling user code (see rendersOnServer) is a leaf, or ONE hole
@@ -165,17 +128,7 @@ async function elideNested(
   seen: Map<object, ElideResult>,
 ): Promise<ElideResult> {
   if (isThenable(value)) {
-    const probed = await probeSettled(value);
-    if (probed.state === "pending") {
-      return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 }, hasHole: true };
-    }
-    if (probed.state === "rejected") return { state: "rejected" };
-    const inner = await elideNested(probed.value, seen);
-    if (inner.state === "rejected") return inner;
-    const marker: LoaderSettledMarker = inner.hasHole
-      ? { [LOADER_SETTLED_KEY]: 1, value: inner.value, holes: 1 }
-      : { [LOADER_SETTLED_KEY]: 1, value: inner.value };
-    return { state: "ok", value: marker, hasHole: inner.hasHole };
+    return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 }, hasHole: true };
   }
   if (typeof value !== "object" || value === null) {
     return { state: "ok", value, hasHole: false };
@@ -323,22 +276,6 @@ export function overlayLoaderContainer(
   recorded: unknown,
 ): unknown {
   if (isLoaderHoleMarker(recorded)) return fresh;
-
-  if (isLoaderSettledMarker(recorded)) {
-    const pinned = recorded.value;
-    // Deep holes inside a settled container (capture-computed `holes` bit)
-    // need the fresh promise's resolved value to fill them; a fully-pinned
-    // container resolves immediately (the prelude already shows it — never
-    // gate it on fresh latency). A rejecting fresh run degrades holes to
-    // undefined instead of poisoning the pin.
-    if (recorded.holes === 1) {
-      return Promise.resolve(fresh).then(
-        (freshValue) => overlayLoaderContainer(freshValue, pinned),
-        () => overlayLoaderContainer(undefined, pinned),
-      );
-    }
-    return Promise.resolve(overlayLoaderContainer(undefined, pinned));
-  }
 
   if (Array.isArray(recorded)) {
     const freshArr = Array.isArray(fresh) ? fresh : [];

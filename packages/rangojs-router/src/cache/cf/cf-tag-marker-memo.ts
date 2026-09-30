@@ -6,8 +6,14 @@
 // and in-flight reads, the PPR shell read's own marker record, and the prefix
 // and sentinel of the optional per-colo L1 marker cache. The maps are module
 // singletons keyed by the request-context object, then the store INSTANCE.
+// The request's own invalidations are not here: they are the per-request
+// mask (request-tag-mask.ts), which every marker check consults first.
 
 import type { MarkerMemoOutcome } from "../isolate-tag-memo.js";
+import {
+  perRequestStoreValue,
+  type PerRequestStoreMap,
+} from "../request-tag-mask.js";
 
 /**
  * Cache-API path prefix for the optional per-colo L1 cache of tag-invalidation
@@ -23,32 +29,6 @@ export const TAG_MARKER_CACHE_PREFIX = "__tagmarker__/";
  * never "no marker" - absence is only ever represented by this cached sentinel.
  */
 export const TAG_MARKER_ABSENT = "none";
-
-/**
- * Request context -> store instance -> T, both levels weakly held. Also
- * VercelCacheStore's request tag mask (#973).
- */
-export type PerRequestStoreMap<T> = WeakMap<object, WeakMap<object, T>>;
-
-/** The value for (ctx, store), created on first use. */
-export function perRequestStoreValue<T>(
-  map: PerRequestStoreMap<T>,
-  ctx: object,
-  store: object,
-  create: () => T,
-): T {
-  let byStore = map.get(ctx);
-  if (!byStore) {
-    byStore = new WeakMap();
-    map.set(ctx, byStore);
-  }
-  let value = byStore.get(store);
-  if (value === undefined) {
-    value = create();
-    byStore.set(store, value);
-  }
-  return value;
-}
 
 /**
  * Per-request memo of tag-invalidation markers (tag -> latest invalidatedAt, or
@@ -73,92 +53,23 @@ export function perRequestStoreValue<T>(
  * Without the memo, isGloballyInvalidated() issues a KV read per tag on every
  * tagged cache read, so a page composed of many segments/items sharing a tag
  * pays that cost N times. The memo collapses it to one KV read per distinct tag
- * per (request, store). invalidateTags() writes the new marker here before its
- * first await (maskRequestTags, #973), so the request that ran updateTag() or
- * revalidateTag() reads its own writes: the action's own re-render sees its
- * invalidation from the memo, without waiting for the KV put that
- * revalidateTag() leaves to waitUntil.
+ * per (request, store). It holds only values read from L1 or KV: the request's
+ * own invalidations are the mask (request-tag-mask.ts), checked before any
+ * marker read, so a value in the memo is always safe to publish.
  *
  * It does NOT span requests, so a hot single-entry route still pays one KV read
  * per request; that read hits Cloudflare KV's own edge read cache for hot keys.
  * A context derived from the request (Object.create(reqCtx): a PPR HIT tail, a
- * shell capture) keeps a memo of its own, so its marker reads stay its own; it
- * starts from the request's mask (requestMasks) instead of empty, and takes
- * every mask the request sets later (requestMemos).
+ * shell capture) keeps a memo of its own, so its marker reads stay its own.
  */
 const tagMarkerMemo: PerRequestStoreMap<Map<string, number | null>> =
   new WeakMap();
-
-/**
- * The tags each request invalidated through each store, with the
- * invalidatedAt its mask carries (#973). Keyed by the request's root context
- * (RequestContext._requestRoot) rather than by the context that called, so a
- * derived context sees the request's mask and a mask it sets reaches the
- * request. Its values are unconfirmed until the KV put lands: a marker read
- * that finds one of them publishes nothing to other requests
- * (CFCacheStore.fetchTagMarker).
- */
-const requestMasks: PerRequestStoreMap<Map<string, number>> = new WeakMap();
-
-/**
- * Every memo of a request, whichever context owns it, per (root, store): a
- * mask set later reaches the memos that already exist (maskRequestTags), not
- * only the caller's. They live as long as the request does.
- */
-const requestMemos: PerRequestStoreMap<Set<Map<string, number | null>>> =
-  new WeakMap();
-
-function requestRoot(ctx: object): object {
-  return (ctx as { _requestRoot?: object })._requestRoot ?? ctx;
-}
 
 export function getTagMarkerMemo(
   ctx: object,
   store: object,
 ): Map<string, number | null> {
-  return perRequestStoreValue(tagMarkerMemo, ctx, store, () => {
-    const root = requestRoot(ctx);
-    const memo = new Map<string, number | null>(
-      requestMasks.get(root)?.get(store),
-    );
-    perRequestStoreValue(requestMemos, root, store, () => new Set()).add(memo);
-    return memo;
-  });
-}
-
-/**
- * Mask `tags` at `at` for the rest of the request: in the request's mask and
- * in every memo the request's contexts hold for `store` (a memo created later
- * starts from the mask).
- */
-export function maskRequestTags(
-  ctx: object,
-  store: object,
-  tags: readonly string[],
-  at: number,
-): void {
-  const root = requestRoot(ctx);
-  const mask = perRequestStoreValue(
-    requestMasks,
-    root,
-    store,
-    () => new Map<string, number>(),
-  );
-  getTagMarkerMemo(ctx, store);
-  const memos = requestMemos.get(root)?.get(store) ?? [];
-  for (const tag of tags) {
-    mask.set(tag, at);
-    for (const memo of memos) memo.set(tag, at);
-  }
-}
-
-/** Whether this request masked `tag` through `store` (maskRequestTags). */
-export function isRequestMasked(
-  ctx: object,
-  store: object,
-  tag: string,
-): boolean {
-  return requestMasks.get(requestRoot(ctx))?.get(store)?.has(tag) ?? false;
+  return perRequestStoreValue(tagMarkerMemo, ctx, store, () => new Map());
 }
 
 /**

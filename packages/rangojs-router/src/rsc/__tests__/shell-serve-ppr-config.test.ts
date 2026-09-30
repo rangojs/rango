@@ -219,9 +219,9 @@ describe("shellSearchSeed — the key's search portion IS the render seed", () =
 // The degrade's client half (serveShellHit): reload once into a forced MISS.
 // Run against a stand-in window, the way a browser runs the inline script.
 describe("shellReloadScript", () => {
-  function runScript(href: string, nonce?: string) {
+  function runScript(href: string) {
     const calls: string[] = [];
-    const html = shellReloadScript(nonce);
+    const html = shellReloadScript();
     const body = html.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
     const location = {
       href,
@@ -243,13 +243,6 @@ describe("shellReloadScript", () => {
   it("does nothing on a URL that already carries the marker (the loop bound)", () => {
     const { calls } = runScript("https://shop.test/p?_rsc_shell=miss");
     expect(calls).toEqual([]);
-  });
-
-  it("carries the request's CSP nonce", () => {
-    expect(runScript("https://shop.test/p", "r4nd0m").html).toMatch(
-      /^<script nonce="r4nd0m">/,
-    );
-    expect(runScript("https://shop.test/p").html).toMatch(/^<script>/);
   });
 
   it("the marker never partitions the shell key", () => {

@@ -1483,9 +1483,7 @@ export function createRouterDiscoveryPlugin(
             const body = JSON.stringify({
               entry: result.entry,
               ttl,
-              swr,
               tags: result.tags,
-              routeName,
             });
             devPrerenderCache.set(routerInstance, cacheKey, body);
             res.setHeader("content-type", "application/json");

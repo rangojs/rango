@@ -29,11 +29,13 @@ the cloudflare-basic twin (real KV envelope round-trip), dev + production.
 
 Implementation notes (deltas from the sketch below, all deliberate):
 
-- **The capture gate holds for bake-lane containers.** `FLIGHT_QUIET_HOPS` is
+- **The capture waits for bake-lane containers.** `FLIGHT_QUIET_HOPS` is
   a ~2-macrotask byte-quiet window, so a 100ms layout loader would lose the
-  race and pin. `captureAndStoreShell` extends the gate's `holdUntil` with
-  `Promise.allSettled` over the recorded container promises — same mechanism
-  that already held for top-level handle pushes, bounded by the 5s guard.
+  race and pin. The capture first held the gate open (`holdUntil`,
+  `Promise.allSettled` over the recorded container promises); the
+  record-first step (`settleCaptureRecord`, ppr-shell-resume.md) now waits
+  for them, with the top-level handle pushes, before the capture's Flight
+  render begins, so the gate holds nothing. Bounded by `ppr.captureTimeout`.
 - **`loading(false)` (and `loading(x, { ssr: false })` under the SSR
   manifest) = BAKE lane** — the mask decision is "renderable loading only"
   (`entryLoadingMasksLoaders`, mirroring segment-system's
@@ -90,7 +92,7 @@ loader the handler awaits`). See ppr-shell-resume.md and
   to every visitor — per-request data frozen into the SHARED shell (found
   live: a storefront basket, carrying the capturing session's
   basketId/customer identifiers, served to anonymous requests; the window
-  waits for the slowest material on the page plus the bake-lane holdUntil, so
+  waits for the slowest material on the page plus the bake-lane containers, so
   ANY real data source — a 5ms SQL read, a 200ms basket API — lost the race).
   The capture now deep-copies the container with every nested thenable
   replaced by a never-resolving mask: the consuming boundary postpones as a
@@ -115,15 +117,16 @@ loader the handler awaits`). See ppr-shell-resume.md and
   for every promise in it. Per-request data belongs in live-lane loaders read
   with `useLoader`, or in promises nested in an `ssr: false` loader's return
   value.
-- **SETTLED markers (`$rangoLoaderSettled`) are now legacy-decode-only.** New
-  captures cannot record them (nested thenables are masked pending), but
-  snapshots stored before the mask still contain them; the overlay keeps
-  rehydrating them as `Promise.resolve(pinned)` — the original #438 fix — so
-  pre-mask shells stay servable until their TTL turns them over. History: the
-  first cut inlined a settled nested promise's value directly, so the HIT
+- **SETTLED markers (`$rangoLoaderSettled`) are gone.** Captures cannot
+  record them (nested thenables are masked pending, so elide records every
+  nested promise as a hole), and the overlay no longer decodes them: the
+  buildVersion gate retires the pre-mask shells that carried them. History:
+  the first cut inlined a settled nested promise's value directly, so the HIT
   overlay handed consumers a plain value where their code says `use(data.x)`
   — React #438, root error boundary, whole page down (found live on a
-  storefront PDP whose 165ms price fetch won the quiet window).
+  storefront PDP whose 165ms price fetch won the quiet window); the settled
+  marker rehydrated as `Promise.resolve(pinned)` fixed that until the mask
+  made the pin impossible.
 
 ## The asymmetry this closes
 
@@ -276,7 +279,7 @@ recorded family.
 > _Since the handlers-baked change:_ a HIT's Flight render no longer runs
 > handlers; it replays the handler layer from the entry's doc record. The
 > bake-lane loaders are now the only shell material a HIT still executes, so
-> the loader family (plus the item/response records those loaders read) is
+> the loader family (plus the item records those loaders read) is
 > what the snapshot pins besides the doc record (`pruneShellSnapshot` in
 > `src/cache/shell-snapshot.ts`).
 

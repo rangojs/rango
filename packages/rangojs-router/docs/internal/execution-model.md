@@ -263,8 +263,12 @@ global middleware
   the Flight payload or client runtime.** A normal-route partial request first
   tries to seed the snapshot's canonical
   `doc:` segment record into `matchPartial()`. Existing client segment ids,
-  revalidation rules, and diff collection decide what is returned; loaders run
-  fresh, and captured item/response/loader pins are excluded. The overlay is the
+  revalidation rules, and diff collection decide what is returned; captured
+  item pins are excluded. Live loaders run fresh. When the doc record hits in a
+  shell a document request captured, the replay arms the bake-lane loader seed
+  (`matchPartialWithPprReplay`'s `onHit`), so `ssr: false` loaders are served
+  from their pins as on a document HIT; a navigation-only capture carries no
+  loader pins, and its replay runs them fresh. The overlay is the
   implicit scope's explicit store, not the request's app store, so route-authored
   `cache()` scopes retain their freshness semantics and request effects stay on
   the original render-barrier context. Overlay segment misses and mutations are

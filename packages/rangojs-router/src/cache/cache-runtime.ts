@@ -314,6 +314,18 @@ const IN_FLIGHT_LEADER_MAX_WAIT_MS = 15_000;
 const LEADER_TIMED_OUT = Symbol("leader-timed-out");
 
 /**
+ * @internal Reset this module's per-isolate state: the in-flight leaders a
+ * follower would join for up to IN_FLIGHT_LEADER_MAX_WAIT_MS, and the
+ * once-per-function warnings. Tests only (testing/serve-shell-request.ts
+ * resetShellTestState), never while a request is in flight.
+ */
+export function resetCacheRuntimeForTests(): void {
+  inFlightExecutions.clear();
+  warnedUncachedUnderTest.clear();
+  warnedUnkeyableArgs.clear();
+}
+
+/**
  * Await a leader's envelope for at most `remainingMs`. Resolves with the
  * envelope, `undefined` on leader rejection (the leader already cleared its
  * entry — caller falls through to a fresh run), or {@link LEADER_TIMED_OUT}

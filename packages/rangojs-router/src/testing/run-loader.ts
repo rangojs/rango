@@ -51,6 +51,7 @@ import type { CacheProfile } from "../cache/profile-registry.js";
 import type { PartialCacheOptions } from "../types/cache-types.js";
 import type { HandlerContext } from "../types/handler-context.js";
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache.js";
+import { armLoaderTagSets } from "../cache/cache-tag.js";
 import {
   createTestRequestContext,
   buildRunSnapshot,
@@ -385,7 +386,9 @@ function cacheLoaderId(loader: RunnableLoader<unknown>): string {
 /**
  * Call the loader: directly, or through its `cache()` binding (the funnel a
  * route's DSL loaders take, loader-cache.ts resolveLoaderData), whose MISS
- * reads the binding through the handler ctx's use().
+ * reads the binding through the handler ctx's use(). A binding arms the
+ * per-execution loader tag sets first, as a match that resolves one does
+ * (match-api.ts, bindsLoaderCache).
  */
 function invokeLoader<T>(
   loader: RunnableLoader<T>,
@@ -395,6 +398,7 @@ function invokeLoader<T>(
 ): Promise<T> {
   const run = () => Promise.resolve(loaderFn(loaderCtx));
   if (!opts.cache) return run();
+  armLoaderTagSets();
   const handlerCtx = {
     params: loaderCtx.params,
     use: run,

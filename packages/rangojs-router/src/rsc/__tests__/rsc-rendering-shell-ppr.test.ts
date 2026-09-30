@@ -124,6 +124,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     // consults it.
     docKey: "doc:localhost/p",
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }
@@ -921,6 +922,7 @@ describe("handleRscRendering — integrated PPR serve: the gate before the commi
         {
           reactVersion: React.version,
           buildVersion: "v-test",
+          snapshot: [],
           navigationOnly: true,
           createdAt: Date.now(),
         },

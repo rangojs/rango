@@ -148,19 +148,23 @@ async function capture(
       prerender: prerender as any,
     }),
   } as unknown as SSRModule;
+  // settleCaptureRecord sealed the capture's handle store before this step.
+  const handleStore = createHandleStore();
+  handleStore.seal();
   const outcome = await captureAndStoreShell(
     ssrModule,
     rscStream,
-    createHandleStore(),
     {
       // The doc record the capture's match wrote (a capture without one is
       // refused: a HIT could not replay the handler layer).
       _cacheStore: recordingWithDocRecord(putShell),
+      _handleStore: handleStore,
       _shellImplicitCache: { docKey: "doc:localhost/" },
       _reportBackgroundError: vi.fn(),
       _requestTags: new Set<string>(),
     } as any,
     { key, buildVersion: "test-build", ttl: 300, captureTimeout: 60_000 },
+    Date.now(),
   );
   const entry = putShell.mock.calls[0]?.[1];
   return {

@@ -139,9 +139,9 @@ export interface MaskReport {
  * nodes included, are leaves. Copy-on-write: a subtree without a thenable
  * comes back by identity, so an element is rebuilt only when its props hold
  * one, and then through cloneElementWithProps, which keeps its type, key,
- * owner, dev fields and key validation. The INPUT IS NEVER MUTATED — handler-side loader consumption (the
- * consumption-lane rule, semantic-matrix PPR3) shares the raw container and
- * must keep real values. Cycles are preserved as cycles in the copy.
+ * owner, dev fields and key validation. The INPUT IS NEVER MUTATED: a handler
+ * that reads the loader (`ctx.use`) reads the raw container and must keep
+ * real values. Cycles are preserved as cycles in the copy.
  */
 export function maskNestedContainerThenables(
   value: unknown,

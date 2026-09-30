@@ -290,9 +290,7 @@ export async function runShellPrerenderPhase(
           const value: BuildShellEntry = {
             entry: res.entry,
             ttl: policy.ttl,
-            swr: policy.swr,
             tags: res.tags,
-            routeName: cand.routeName,
           };
           staged.push({
             key: buildShellManifestKey(cand.urlPath),

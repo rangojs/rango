@@ -127,7 +127,6 @@ export async function resolveCacheKey(
   keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
   store: SegmentCacheStore | null,
   defaultKey: string,
-  _label: string,
 ): Promise<string> {
   const requestCtx = _getRequestContext();
 

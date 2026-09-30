@@ -267,6 +267,8 @@ describe("cacheTag() eviction round-trip through updateTag (#648)", () => {
         prelude: "<html></html>",
         postponed: null,
         reactVersion: "19",
+        buildVersion: "test-build",
+        snapshot: [],
         createdAt: Date.now(),
       };
       await store.putShell("k", entry, 300, 120, [...ctx._requestTags]);

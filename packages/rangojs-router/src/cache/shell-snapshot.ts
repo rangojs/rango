@@ -5,23 +5,25 @@
  * that must agree with them byte for byte. The handler layer's part of that
  * payload is the capture's own doc segment record: the capture writes it
  * first, renders its prelude from it, and every HIT replays it (no handler
- * runs on a HIT). What still executes on a HIT is the loader layer: live
- * loaders and promise-carrying bake-lane (`ssr: false`) loaders run, and the
- * values the bake-lane ones read must match what the capture baked (a
- * promise-free bake-lane loader is served from its pin and does not run). See docs/design/ppr-shell-resume.md.
+ * runs on a HIT). The loader layer's part is the bake-lane (`ssr: false`)
+ * loader pins: a promise-free bake-lane loader is served from its pin and
+ * does not run; one whose return carries promises (`holes`), or whose pushes
+ * the record could not keep (`runs`), runs on the HIT, and the cache values
+ * it reads must match what the capture baked. Live loaders run fresh. See
+ * docs/design/ppr-shell-resume.md.
  *
  * The mechanism (Next.js resume-data-cache analog, adapted to Rango's cache
- * rings): the CAPTURE render records every cache-store read-hit and write it
- * performed (the {@link RecordingShellStore}); the records ride inside the
- * ShellCacheEntry as its `snapshot`; on a HIT the tail render reads through a
- * {@link SeededShellStore} overlay that serves those recorded values AS FRESH.
- * Everything NOT recorded (the holes — masked loaders were never executed at
- * capture, so their reads were never recorded) stays live.
+ * rings): the CAPTURE render records the "use cache" item reads and writes it
+ * performed and the doc record (the {@link RecordingShellStore}); the records
+ * ride inside the ShellCacheEntry as its `snapshot`; on a HIT the tail render
+ * reads through a {@link SeededShellStore} overlay that serves those recorded
+ * values AS FRESH. Everything NOT recorded (the holes — masked loaders were
+ * never executed at capture, so their reads were never recorded) stays live.
  *
- * The invariant, verbatim: the snapshot is the doc record plus the cache-store
- * reads the capture's loaders performed; replaying them on a HIT reproduces
- * the shell content byte-identically; everything not recorded stays live.
- * {@link pruneShellSnapshot} drops the rest.
+ * The invariant, verbatim: the snapshot is the doc record, the bake-lane
+ * loader pins and the item records the capture's loaders touched; replaying
+ * them on a HIT reproduces the shell content byte-identically; everything not
+ * recorded stays live. {@link pruneShellSnapshot} drops the rest.
  */
 
 import type {
@@ -33,52 +35,31 @@ import type {
   ShellCacheEntry,
   ShellSnapshotRecord,
   ShellSnapshotItemValue,
-  ShellSnapshotResponseValue,
   ShellSnapshotLoaderValue,
   CacheReadError,
 } from "./types.js";
-import { CACHE_READ_ERROR } from "./types.js";
-import { bufferToBase64, base64ToBuffer } from "./cf/cf-base64.js";
-import { isPerClientSignalHeader } from "../browser/cookie-name.js";
 import { isInsideAnyLoaderScope } from "../server/context.js";
+import { settleGrowing } from "./background-task.js";
 
 /** Compose the last-write-wins map key. NUL (`\u0000`) cannot appear in a cache key. */
 function recordKey(family: ShellSnapshotRecord["family"], key: string): string {
   return `${family}\u0000${key}`;
 }
 
-/** Serialize a Response to the snapshot's stored shape (base64 body). */
-async function serializeResponse(
-  response: Response,
-): Promise<ShellSnapshotResponseValue> {
-  const body = await response.clone().arrayBuffer();
-  const headers: [string, string][] = [];
-  response.headers.forEach((value, name) => {
-    // Mirror putResponse: per-client signal headers never enter a shared entry.
-    if (isPerClientSignalHeader(name)) return;
-    headers.push([name, value]);
-  });
-  return { status: response.status, headers, body: bufferToBase64(body) };
-}
-
-/** Rebuild a live Response from a snapshot's stored response shape. */
-function deserializeResponse(value: ShellSnapshotResponseValue): Response {
-  return new Response(base64ToBuffer(value.body), {
-    status: value.status,
-    headers: new Headers(value.headers),
-  });
-}
-
 /**
  * A store wrapper the CAPTURE render reads through. Every call passes through to
- * the underlying store unchanged; for the item/segment/response families it also
- * RECORDS, last-write-wins per (family, key):
- *   - read-hits (get/getItem/getResponse returning non-null) — the value that
- *     fed the shell,
- *   - writes (set/setItem/putResponse) — the value a MISS computed and baked.
- * The shell family (getShell/putShell) is never recorded (the snapshot rides
- * inside a shell entry). Reads that MISS are not recorded (a miss produced no
- * shell content; if the render then computed and wrote, that write is recorded).
+ * the underlying store unchanged; for the item family it also RECORDS,
+ * last-write-wins per key:
+ *   - read-hits (getItem returning non-null) — the value that fed the shell,
+ *   - writes (setItem) — the value a MISS computed and baked.
+ * The segment family records only the doc record ({@link recordSegmentWrite}):
+ * every other segment record is keyed where no HIT tail and no partial replay
+ * looks (docTail replays the doc record in place of any route scope). The
+ * response family is never reached by a capture (only response routes and the
+ * document cache read it), and the shell family is never recorded (the
+ * snapshot rides inside a shell entry). Reads that MISS are not recorded (a
+ * miss produced no shell content; if the render then computed and wrote, that
+ * write is recorded).
  *
  * Deferred writes: cache writes run under waitUntil (fire-and-forget on Node,
  * executionContext on workerd), so their setItem/set calls — hence their records
@@ -86,12 +67,15 @@ function deserializeResponse(value: ShellSnapshotResponseValue): Response {
  * promises via {@link trackWrite} and awaits them ({@link settleWrites}) before
  * draining, so a MISS-at-capture value is still pinned.
  *
- * Loader attribution: every item/response access made inside a loader scope
- * (hit, miss or write) marks its key in {@link loaderKeys}. A loader re-runs
- * on every HIT, so those records stay pinned when the snapshot is pruned. A
- * miss counts too: a loader that joins a handler's in-flight "use cache" call
- * reads the store first (cache-runtime.ts) and finds nothing, and the record
- * then comes from the handler's write.
+ * Loader attribution: every item access made inside a loader scope (hit, miss
+ * or write) marks its key in {@link loaderKeys}, and pruning keeps those
+ * records for a document entry: a bake-lane loader that runs on a HIT (`holes`
+ * or `runs`) reads them through the tail's seeded store, so its pushes and
+ * nested values match what the capture baked. A promise-free one is served
+ * from its pin without running. A miss counts too: a loader that joins a
+ * handler's in-flight "use cache" call reads the store first
+ * (cache-runtime.ts) and finds nothing, and the record then comes from the
+ * handler's write.
  */
 export class RecordingShellStore<
   TEnv = unknown,
@@ -134,12 +118,12 @@ export class RecordingShellStore<
   }
 
   /**
-   * Record a segment-family write into the snapshot WITHOUT touching the inner
-   * store. The shell fast path's implicit doc-cache scope writes through this
-   * (via {@link SnapshotOnlySegmentStore}): the recorded doc entry must ride
-   * ONLY inside the shell entry — a passthrough write would leave a doc-keyed
-   * entry in the real store that the NEXT capture's lookup would hit, replaying
-   * the previous generation's segments instead of re-running handlers (breaking
+   * Record the doc segment record into the snapshot WITHOUT touching the
+   * inner store. The capture's implicit doc-cache scope writes through this
+   * (via {@link SnapshotOnlySegmentStore}): the record must ride ONLY inside
+   * the shell entry — a passthrough write would leave a doc-keyed entry in the
+   * real store that the NEXT capture's lookup would hit, replaying the
+   * previous generation's segments instead of re-running handlers (breaking
    * SWR recapture freshness).
    */
   recordSegmentWrite(key: string, data: CachedEntryData): void {
@@ -147,40 +131,16 @@ export class RecordingShellStore<
   }
 
   /**
-   * Await the tracked deferred writes so their records are present before drain.
-   * Drains ITERATIVELY: a write task can schedule a NESTED write (the ring-3
-   * cacheRoute path schedules its actual store.set in a second waitUntil while the
-   * first is running), so each awaited batch may enqueue more. Loop until the
-   * queue empties or the deadline passes. Bounded: a pathologically slow write
-   * must never stall the capture task. Resolves true when every tracked write
-   * settled, false at the deadline (settleCaptureRecord then fails the capture
-   * when the doc record is among the writes still pending).
+   * Await the tracked deferred writes so their records are present before
+   * drain, including a NESTED write a settled one scheduled (the ring-3
+   * cacheRoute path schedules its actual store.set in a second waitUntil).
+   * Bounded: a pathologically slow write must never stall the capture task.
+   * Resolves true when every tracked write settled, false at the deadline
+   * (settleCaptureRecord then fails the capture when the doc record is among
+   * the writes still pending); a later call still waits for what is pending.
    */
-  async settleWrites(timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (this.writes.length > 0) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return false;
-      // Take the current batch; new writes scheduled while awaiting accumulate in
-      // this.writes and are drained on the next iteration.
-      const batch = this.writes.splice(0);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const guard = new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), remaining);
-        (timer as { unref?: () => void }).unref?.();
-      });
-      const settled = await Promise.race([
-        Promise.allSettled(batch).then(() => true as const),
-        guard,
-      ]);
-      if (timer) clearTimeout(timer);
-      if (!settled) {
-        // Keep tracking the batch: a later settleWrites still waits for it.
-        this.writes.unshift(...batch);
-        return false;
-      }
-    }
-    return true;
+  settleWrites(timeoutMs: number): Promise<boolean> {
+    return settleGrowing(this.writes, Date.now() + timeoutMs);
   }
 
   /** The recorded snapshot (last-write-wins per family+key), or undefined if empty. */
@@ -197,11 +157,7 @@ export class RecordingShellStore<
   }
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    const result = await this.inner.get(key);
-    if (result && result !== CACHE_READ_ERROR) {
-      this.record("segment", key, result.data);
-    }
-    return result;
+    return this.inner.get(key);
   }
 
   async set(
@@ -210,7 +166,6 @@ export class RecordingShellStore<
     ttl: number,
     swr?: number,
   ): Promise<void> {
-    this.record("segment", key, data);
     return this.inner.set(key, data, ttl, swr);
   }
 
@@ -225,12 +180,7 @@ export class RecordingShellStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    if (!this.inner.getResponse) return null;
-    this.noteLoaderAccess("response", key);
-    const result = await this.inner.getResponse(key);
-    if (result)
-      this.record("response", key, await serializeResponse(result.response));
-    return result;
+    return this.inner.getResponse ? this.inner.getResponse(key) : null;
   }
 
   async putResponse(
@@ -240,10 +190,7 @@ export class RecordingShellStore<
     swr?: number,
     tags?: string[],
   ): Promise<void> {
-    if (!this.inner.putResponse) return;
-    this.noteLoaderAccess("response", key);
-    this.record("response", key, await serializeResponse(response));
-    return this.inner.putResponse(key, response, ttl, swr, tags);
+    return this.inner.putResponse?.(key, response, ttl, swr, tags);
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
@@ -299,7 +246,7 @@ export class RecordingShellStore<
   }
 }
 
-/** True iff `store` is a RecordingShellStore (duck-typed across module copies). */
+/** `store` when it is a RecordingShellStore (an instanceof check). */
 export function getRecordingStore<TEnv>(
   store: SegmentCacheStore<TEnv> | undefined,
 ): RecordingShellStore<TEnv> | undefined {
@@ -308,8 +255,8 @@ export function getRecordingStore<TEnv>(
 
 /**
  * True when `snapshot` carries the canonical doc segment record `docKey`
- * names, with at least one segment: the record partial replay and a
- * fast-path HIT tail consume.
+ * names, with at least one segment: the record partial replay and a document
+ * HIT tail consume.
  */
 export function hasDocRecord(
   snapshot: readonly ShellSnapshotRecord[] | undefined,
@@ -338,21 +285,21 @@ export function hasDocRecord(
  * - "segments": nobody. A navigation-only entry is read only by partial
  *   replay, which seeds the doc record alone (SeededShellStore
  *   `segmentsOnly`, implicit doc scope only).
- * - "loaders": the loaders a document HIT re-runs. Every HIT tail replays
- *   the handler layer from the doc record and never runs a handler, so the
- *   records only handler code read are dead weight.
+ * - "loaders": the bake-lane loaders of a document HIT: their pins, and the
+ *   item records a loader whose body runs on the HIT reads. Every HIT tail
+ *   replays the handler layer from the doc record and never runs a handler,
+ *   so the records only handler code read are dead weight.
  */
 export type ShellSnapshotReaders = "segments" | "loaders";
 
 /**
  * Split a capture's snapshot into what its readers consume and the rest: the
  * doc record (`docKey`) always; with "loaders", the loader-family records and
- * the item/response records a loader touched during the capture
- * (RecordingShellStore.loaderKeys). Every other segment record goes: an
- * explicit cache() tier's reads and writes are keyed where no HIT tail and no
- * partial replay looks (both consult only the doc record). The doc record
- * stays a copy inside the entry: a reference to a separately stored record
- * could be evicted on its own, and the HIT would have nothing to replay.
+ * the item records a loader touched during the capture
+ * (RecordingShellStore.loaderKeys). Every other record goes, a segment
+ * record other than the doc record included. The doc record stays a copy
+ * inside the entry: a reference to a separately stored record could be
+ * evicted on its own, and the HIT would have nothing to replay.
  */
 export function pruneShellSnapshot(
   snapshot: readonly ShellSnapshotRecord[],
@@ -431,13 +378,13 @@ export function countSnapshotFamilies(
 }
 
 /**
- * The store the shell fast path's IMPLICIT doc-cache scope resolves during a
- * capture: reads pass through the recording store (a real-store hit is
- * recorded, exactly like any capture read), but segment WRITES are recorded
- * into the snapshot only — see {@link RecordingShellStore.recordSegmentWrite}
- * for why passthrough would break SWR recapture. Routes with their OWN
- * cache() config never see this store (their scope resolves the app-level
- * recording store and keeps today's record-and-write behavior).
+ * The store the capture's IMPLICIT doc-cache scope resolves: reads pass
+ * through the recording store to the real one, but segment WRITES are
+ * recorded into the snapshot only — see
+ * {@link RecordingShellStore.recordSegmentWrite} for why passthrough would
+ * break SWR recapture. A route with its OWN cache() scope keeps that scope's
+ * real-store reads and writes; recordShellCaptureDocRecord (cache-store.ts)
+ * writes its doc record through this store too.
  */
 export class SnapshotOnlySegmentStore<
   TEnv = unknown,
@@ -464,28 +411,14 @@ export class SnapshotOnlySegmentStore<
   }
 }
 
-/**
- * Materialize the loader-family seed from a shell snapshot for a HIT's tail
- * render: Flight-deserialize each recorded (promise-elided) bake-lane
- * container into a segment-key -> container Map, which serveShellHit assigns
- * to the tail context's `_shellLoaderSeed` for the resolveLoaderData overlay.
- * Lives here so every snapshot family is decoded in this module (the
- * item/segment/response families via {@link SeededShellStore}); the loader
- * family is not a store read, so it seeds the context instead of a store.
- *
- * Deserializations run in parallel; a record that fails to decode is skipped
- * (that loader drifts — the pre-snapshot behavior — instead of failing the
- * HIT). Returns undefined when the snapshot carries no loader records, without
- * touching the Flight codec (kept lazy for cold paths and non-RSC configs).
- */
+/** One decoded loader-family pin (buildShellLoaderSeed). */
 export interface ShellLoaderSeedEntry {
   /** The Flight-deserialized elided container (recorded paths + markers). */
   container: unknown;
   /**
-   * True when the record carries hole markers (or predates the capture-side
-   * hole bit, where hole-ness is unknown): the HIT overlay must gate on the
-   * fresh run. False = fully pinned; the payload promise resolves immediately
-   * from the pin (loader-cache.ts pin-first path).
+   * True when the record carries hole markers: the HIT overlay must gate on
+   * the fresh run. False = fully pinned; the payload promise resolves
+   * immediately from the pin (loader-cache.ts pin-first path).
    */
   holes: boolean;
   /**
@@ -496,6 +429,20 @@ export interface ShellLoaderSeedEntry {
   runs: boolean;
 }
 
+/**
+ * Materialize the loader-family seed from a shell snapshot for a HIT's tail
+ * render: Flight-deserialize each recorded (promise-elided) bake-lane
+ * container into a segment-key -> container Map, which serveShellHit assigns
+ * to the tail context's `_shellLoaderSeed` for the resolveLoaderData overlay.
+ * Lives here so every snapshot family is decoded in this module (the
+ * item/segment families via {@link SeededShellStore}); the loader family is
+ * not a store read, so it seeds the context instead of a store.
+ *
+ * Deserializations run in parallel; a record that fails to decode is skipped
+ * (that loader drifts — the pre-snapshot behavior — instead of failing the
+ * HIT). Returns undefined when the snapshot carries no loader records, without
+ * touching the Flight codec (kept lazy for cold paths and non-RSC configs).
+ */
 export async function buildShellLoaderSeed(
   snapshot: ShellSnapshotRecord[],
 ): Promise<Map<string, ShellLoaderSeedEntry> | undefined> {
@@ -515,10 +462,9 @@ export async function buildShellLoaderSeed(
             rec.key,
             {
               container: await deserializeResult(stored.value),
-              // A record without a bit predates it: without the hole bit it
-              // reads as hole-carrying (unknown hole-ness keeps the gated
-              // path), and without the runs bit as runs (its snapshot lacks
-              // the loader-owned pushes, so the body supplies them).
+              // A record stored before the bits existed (v0.17) lacks the
+              // loader-owned pushes: it reads as hole-carrying and as runs,
+              // so the loader body supplies them.
               holes: stored.holes !== 0,
               runs: stored.runs !== 0,
             },
@@ -537,26 +483,31 @@ export async function buildShellLoaderSeed(
 }
 
 /**
- * A read-through overlay the HIT tail render reads through. For a key present in
- * the snapshot it serves the recorded value AS FRESH (shouldRevalidate: false —
- * a pinned key must NOT kick SWR background revalidation) so the tail's payload
- * matches the frozen prelude. Every other read falls through to the real store
- * (the holes — masked loaders were never recorded — stay live). Writes pass
- * through so a live hole may legitimately write, except that `segmentsOnly`
- * fully isolates the segment family: misses do not fall through, and writes or
- * deletes stay local to the navigation overlay. The shell family always passes
- * through. With `segmentsOnly`, item and response reads also pass through so a
- * partial navigation cannot freeze captured data or write a partial result into
- * the canonical document namespace.
+ * A read-through overlay a HIT tail or a partial replay reads through, in one
+ * of two modes:
+ * - default (the HIT tail's `_cacheStore`): serves the snapshot's item
+ *   records AS FRESH (shouldRevalidate: false — a pinned key must NOT kick
+ *   SWR background revalidation), so a bake-lane loader that runs on the HIT
+ *   reads what the capture baked. Every other read falls through to the real
+ *   store (the holes — masked loaders were never recorded — stay live), and
+ *   writes pass through so a live hole may legitimately write. Segment
+ *   records are not seeded here: the tail's route scope is the implicit doc
+ *   scope, which reads the `segmentsOnly` overlay.
+ * - `segmentsOnly` (the implicit doc scope's store): serves the segment
+ *   records, the doc record among them, and fully isolates the segment
+ *   family: misses do not fall through, and writes or deletes stay local to
+ *   the overlay, so a partial navigation cannot write a partial result into
+ *   the canonical document namespace. Item reads pass through, so a partial
+ *   navigation cannot freeze captured data.
+ * The shell and response families always pass through. Loader-family records
+ * are not store reads: serveShellHit seeds them onto the tail context
+ * (_shellLoaderSeed) for the resolveLoaderData overlay instead.
  */
 export class SeededShellStore<
   TEnv = unknown,
 > implements SegmentCacheStore<TEnv> {
-  private readonly items: Map<string, ShellSnapshotItemValue> | undefined;
+  private readonly items = new Map<string, ShellSnapshotItemValue>();
   private readonly segments = new Map<string, CachedEntryData>();
-  private readonly responses:
-    | Map<string, ShellSnapshotResponseValue>
-    | undefined;
   private readonly segmentsOnly: boolean;
 
   constructor(
@@ -565,22 +516,14 @@ export class SeededShellStore<
     options?: { segmentsOnly?: boolean },
   ) {
     this.segmentsOnly = options?.segmentsOnly === true;
-    this.items = this.segmentsOnly ? undefined : new Map();
-    this.responses = this.segmentsOnly ? undefined : new Map();
+    const family = this.segmentsOnly ? "segment" : "item";
     for (const rec of snapshot) {
-      if (!rec || typeof rec !== "object") continue;
-      if (rec.family === "segment") {
+      if (!rec || typeof rec !== "object" || rec.family !== family) continue;
+      if (family === "segment") {
         this.segments.set(rec.key, rec.value as CachedEntryData);
-      } else if (this.segmentsOnly) {
-        continue;
-      } else if (rec.family === "item") {
-        this.items?.set(rec.key, rec.value as ShellSnapshotItemValue);
-      } else if (rec.family === "response") {
-        this.responses?.set(rec.key, rec.value as ShellSnapshotResponseValue);
+      } else {
+        this.items.set(rec.key, rec.value as ShellSnapshotItemValue);
       }
-      // "loader" family records are not store reads — serveShellHit seeds them
-      // onto the tail context (_shellLoaderSeed) for the resolveLoaderData
-      // overlay instead.
     }
   }
 
@@ -628,10 +571,6 @@ export class SeededShellStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const seeded = this.responses?.get(key);
-    if (seeded) {
-      return { response: deserializeResponse(seeded), shouldRevalidate: false };
-    }
     return this.inner.getResponse ? this.inner.getResponse(key) : null;
   }
 
@@ -646,7 +585,7 @@ export class SeededShellStore<
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const seeded = this.items?.get(key);
+    const seeded = this.items.get(key);
     if (seeded) {
       return {
         value: seeded.value,

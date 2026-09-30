@@ -18,26 +18,32 @@
 
 import React from "react";
 import { isPprEntry, type EntryData } from "../server/context.js";
-import { sortedSearchString } from "../cache/cache-key-utils.js";
-import type { SearchParamsFilter } from "../cache/search-params-filter.js";
 import { base64ToBytes } from "../cache/cf/cf-base64.js";
-import { getNonceAttribute } from "../theme/theme-script.js";
 import type {
   DocumentShellCacheEntry,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellEntryHead,
   ShellReadStats,
   ShellSnapshotFailure,
   ShellSnapshotRecord,
   SegmentCacheStore,
 } from "../cache/types.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture-constants.js";
+import {
+  SHELL_CAPTURE_MAX_WAIT_MS,
+  hasWarnedOnce,
+  resetShellWarningsForTests,
+  warnOnce,
+} from "./shell-capture-constants.js";
 
-/** Debug/status header the browser (and e2e assertions) can read: HIT | MISS. */
-export const SHELL_STATUS_HEADER = "x-rango-shell";
-
-/** Partial-navigation status header set only after captured PPR segments are consumed. */
-export const PPR_REPLAY_STATUS_HEADER = "x-rango-ppr-replay";
+export {
+  PPR_REPLAY_STATUS_HEADER,
+  SHELL_STATUS_HEADER,
+  buildShellKey,
+  navigationShellKey,
+  partitionShellKey,
+  shellSearchSeed,
+} from "./shell-capture-constants.js";
 
 /**
  * Default shell ttl (seconds) for `ppr: true` and for a PartialPrerenderProps
@@ -121,29 +127,6 @@ export function resolvePprConfig(
 }
 
 /**
- * Shell cache key: host + pathname + sorted search + a `:shell` namespace suffix
- * (so it can never collide with a document-cache key; the store further isolates
- * the shell family internally).
- *
- * The key includes the request HOST: in a multi-tenant host-router deployment
- * (one worker, one shared KV/runtime-cache store) a host-less key would serve
- * tenant A's captured shell to tenant B's users.
- *
- * `filter` is the request's compiled `cache.searchParams` config
- * (ctx._searchParamsFilter): excluded params collapse onto one shell slot.
- * Callers on the serve/capture path MUST pass it -- key drift between capture
- * and lookup makes every shell request a permanent miss.
- */
-export function buildShellKey(url: URL, filter?: SearchParamsFilter): string {
-  return `${url.host}${url.pathname}${shellSearchSeed(url, filter)}:shell`;
-}
-
-export {
-  navigationShellKey,
-  partitionShellKey,
-} from "./shell-capture-constants.js";
-
-/**
  * The forced-MISS query marker. A document HIT that cannot finish its tail
  * reloads the page with it (shellReloadScript); the serve gate renders a
  * request carrying it on axis 1, with no shell read and no capture, so the
@@ -179,38 +162,24 @@ export function withoutShellMissMarker(request: Request): Request | undefined {
  * did (a server that ignores the marker) it would return without touching
  * the page. window.stop() runs only when it reloads: it keeps the half-sent
  * Flight stream from being closed by DOMContentLoaded, which would throw
- * React's "Connection closed" (#412) before the reload lands. `nonce` is the
- * request's CSP nonce; a ppr route with an active nonce is axis 1
- * (rsc-rendering.ts shellServePlan), so on a HIT it is normally absent.
+ * React's "Connection closed" (#412) before the reload lands.
  */
-export function shellReloadScript(nonce?: string): string {
+export function shellReloadScript(): string {
   return inlineShellScript(
     "(function(){var u=new URL(location.href);" +
       `if(u.searchParams.has(${JSON.stringify(SHELL_MISS_PARAM)}))return;` +
       `u.searchParams.set(${JSON.stringify(SHELL_MISS_PARAM)},"miss");` +
       "try{window.stop()}catch(e){}location.replace(u.href)})()",
-    nonce,
   );
 }
 
-/** An inline script a shell HIT's tail appends, carrying the CSP nonce if any. */
-export function inlineShellScript(body: string, nonce?: string): string {
-  return `<script${getNonceAttribute(nonce)}>${body}</script>`;
-}
-
 /**
- * The shell key's search portion (`?`-prefixed sorted search with the
- * cache.searchParams filter applied, or "") — ALSO the string the capture and
- * resume SSR renders seed their store location with (SSRRenderOptions.search
- * / ShellCaptureOptions.search / ShellResumeOptions.search). Search is part
- * of shell identity, so static-part `useSearchParams` reads render exactly
- * what the key names; deriving seed and key from this one helper is what
- * keeps capture, resume, and lookup byte-agreed (drift = replay mismatch or
- * permanent MISS).
+ * An inline script a shell HIT's tail appends. It carries no CSP nonce: a
+ * request with an active per-request nonce never reaches a HIT
+ * (rsc-rendering.ts shellServePlan serves it on axis 1).
  */
-export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
-  const sorted = sortedSearchString(url.searchParams, filter);
-  return sorted ? `?${sorted}` : "";
+export function inlineShellScript(body: string): string {
+  return `<script>${body}</script>`;
 }
 
 /**
@@ -219,12 +188,10 @@ export function shellSearchSeed(url: URL, filter?: SearchParamsFilter): string {
  * one exact tree, so resuming it under a different React OR a different app
  * build tree-mismatches inside resume() — after the 200 + prelude committed,
  * with no recovery. Either mismatch is a miss: the recapture overwrites the
- * same key (self-healing) and the entry otherwise ages out via TTL. An entry
- * with no buildVersion (stored before the field existed) is a miss for the
- * same reason — its build is unknown, so it cannot be proven resumable.
+ * same key (self-healing) and the entry otherwise ages out via TTL.
  */
 export function isValidShellHit(
-  entry: ShellCacheEntry,
+  entry: Pick<ShellCacheEntry, "reactVersion" | "buildVersion">,
   buildVersion: string,
 ): boolean {
   return (
@@ -233,9 +200,9 @@ export function isValidShellHit(
 }
 
 /** The postponed blob is stored and parses (null is the DATA variant). */
-function hasParseablePostponed(
-  entry: ShellCacheEntry,
-): entry is ShellCacheEntry & { postponed: string | null } {
+function hasParseablePostponed<T extends ShellEntryHead>(
+  entry: T,
+): entry is T & { postponed: string | null } {
   if (entry.postponed === undefined) return false;
   try {
     if (entry.postponed !== null) JSON.parse(entry.postponed);
@@ -266,7 +233,7 @@ export function hasIntactShellPayload(
 
 /** A document shell ready to serve: its prelude decoded exactly once. */
 export interface ShellDocument {
-  entry: ShellCacheEntry;
+  entry: ShellEntryHead;
   prelude: Uint8Array;
   /** React's postponed state, parse-checked (null = DATA variant). */
   postponed: string | null;
@@ -275,10 +242,7 @@ export interface ShellDocument {
    * after a prelude-first read (SegmentCacheStore.readShellDocument), which
    * only the tail awaits.
    */
-  snapshot:
-    | ShellSnapshotRecord[]
-    | undefined
-    | Promise<ShellSnapshotRecord[] | undefined>;
+  snapshot: ShellSnapshotRecord[] | Promise<ShellSnapshotRecord[] | undefined>;
   /** Why a prelude-first read's snapshot is missing (ShellDocumentRead). */
   snapshotFailure?: Promise<ShellSnapshotFailure | undefined>;
   /** The prelude-first read's stats, when perf metrics are on. */
@@ -297,8 +261,16 @@ export interface ShellDocument {
  * A prelude-first `read` (SegmentCacheStore.readShellDocument) already carries
  * the raw bytes and a pending snapshot, so only its postponed blob is checked.
  */
+export function openShellDocument(entry: ShellCacheEntry): ShellDocument | null;
 export function openShellDocument(
-  entry: ShellCacheEntry,
+  entry: ShellEntryHead,
+  read: Pick<
+    ShellDocumentRead,
+    "prelude" | "snapshot" | "snapshotFailure" | "stats"
+  >,
+): ShellDocument | null;
+export function openShellDocument(
+  entry: ShellEntryHead | ShellCacheEntry,
   read?: Pick<
     ShellDocumentRead,
     "prelude" | "snapshot" | "snapshotFailure" | "stats"
@@ -315,18 +287,20 @@ export function openShellDocument(
       ...(read.stats && { stats: read.stats }),
     };
   }
-  if (!hasIntactShellPayload(entry)) return null;
+  // The read-less overload takes a whole entry (getShell, a build shell).
+  const whole = entry as ShellCacheEntry;
+  if (!hasIntactShellPayload(whole)) return null;
   let prelude: Uint8Array;
   try {
-    prelude = base64ToBytes(entry.prelude);
+    prelude = base64ToBytes(whole.prelude);
   } catch {
     return null;
   }
   return {
-    entry,
-    postponed: entry.postponed,
+    entry: whole,
+    postponed: whole.postponed,
     prelude,
-    snapshot: entry.snapshot,
+    snapshot: whole.snapshot,
   };
 }
 
@@ -472,9 +446,6 @@ export function takeShellTailTimingForServerTiming(
   return timing;
 }
 
-/** Keys already warned about a missing shell store family (once per key). */
-const warnedMissingStore = new Set<string>();
-
 /**
  * Warn once per key that a route declared `ppr` but the app-level cache store
  * does not implement the shell family (getShell/putShell), so the route stays on
@@ -482,19 +453,17 @@ const warnedMissingStore = new Set<string>();
  * honored deserves a diagnostic.
  */
 export function warnShellStoreMissingOnce(key: string): void {
-  if (warnedMissingStore.has(key)) return;
-  warnedMissingStore.add(key);
-  console.warn(
-    `[rango] Route for "${key}" declares the ppr path option, but the app-level ` +
+  warnOnce(
+    "store-missing",
+    key,
+    () =>
+      `[rango] Route for "${key}" declares the ppr path option, but the app-level ` +
       "cache store does not implement the shell family (getShell/putShell), so " +
       "the route is served on axis 1 without a shell. Use MemorySegmentCacheStore, " +
       "CFCacheStore, or VercelCacheStore (or add the family to your custom store) " +
       "via createRouter({ cache }).",
   );
 }
-
-/** Keys already warned about an active per-request nonce (once per key). */
-const warnedNonceActive = new Set<string>();
 
 /**
  * Warn once per key that a route declared `ppr` but a per-request CSP nonce is
@@ -507,10 +476,11 @@ const warnedNonceActive = new Set<string>();
  * the missing-store warning above (an undeclared route stays silent).
  */
 export function warnPprNonceActiveOnce(key: string): void {
-  if (warnedNonceActive.has(key)) return;
-  warnedNonceActive.add(key);
-  console.warn(
-    `[rango] Route for "${key}" declares the ppr path option, but a per-request ` +
+  warnOnce(
+    "nonce-active",
+    key,
+    () =>
+      `[rango] Route for "${key}" declares the ppr path option, but a per-request ` +
       "CSP nonce is active for this request (from createRouter({ nonce }) or a " +
       "ctx.set(nonce, …) token write in middleware), so the route is served on " +
       "axis 1 without a shell. A shell is shared per host+URL; baking one " +
@@ -518,9 +488,6 @@ export function warnPprNonceActiveOnce(key: string): void {
       "ppr option on this route, or stop setting a per-request nonce for it.",
   );
 }
-
-/** Routes already warned about a ppr window the route cache() caps. */
-const warnedPprWindowCapped = new Set<string>();
 
 /**
  * Dev only (the caller gates on NODE_ENV): warn once per route that the
@@ -537,7 +504,7 @@ export function warnPprWindowCappedOnce(
   shell: { ttl: number; swr: number },
   cache: { ttl: number; swr: number },
 ): void {
-  if (warnedPprWindowCapped.has(routeName)) return;
+  if (hasWarnedOnce("ppr-window-capped", routeName)) return;
   const reduced: string[] = [];
   for (const field of ["ttl", "swr"] as const) {
     const own = ppr[field];
@@ -546,9 +513,11 @@ export function warnPprWindowCappedOnce(
     }
   }
   if (reduced.length === 0) return;
-  warnedPprWindowCapped.add(routeName);
-  console.warn(
-    `[rango] Route "${routeName}": its shell is stored with ttl ${shell.ttl} ` +
+  warnOnce(
+    "ppr-window-capped",
+    routeName,
+    () =>
+      `[rango] Route "${routeName}": its shell is stored with ttl ${shell.ttl} ` +
       `and swr ${shell.swr}, below its ${reduced.join(" and ")}. A shell ` +
       `never outlives the route cache() entry (ttl ${cache.ttl}, swr ` +
       `${cache.swr}) it was captured from, so a document request and a ` +
@@ -557,9 +526,6 @@ export function warnPprWindowCappedOnce(
       "to silence this.",
   );
 }
-
-/** Routes (or paths) already warned that a partition skips their build shell. */
-const partitionBuildShellWarned = new Set<string>();
 
 /**
  * Paths a partitioned request found without a build shell. Build shells are
@@ -578,7 +544,7 @@ export function partitionBuildShellCheckDone(
   routeName: string | undefined,
 ): boolean {
   return (
-    partitionBuildShellWarned.has(routeName ?? pathname) ||
+    hasWarnedOnce("partition-build-shell", routeName ?? pathname) ||
     pathsWithoutBuildShell.has(pathname)
   );
 }
@@ -606,11 +572,11 @@ export function notePartitionBuildShellCheck(
     return;
   }
   // Concurrent first requests can both probe; one of them warns.
-  const route = routeName ?? pathname;
-  if (partitionBuildShellWarned.has(route)) return;
-  partitionBuildShellWarned.add(route);
-  console.warn(
-    `[rango] Route ${routeName ? `"${routeName}" ` : ""}("${pathname}") has a ` +
+  warnOnce(
+    "partition-build-shell",
+    routeName ?? pathname,
+    () =>
+      `[rango] Route ${routeName ? `"${routeName}" ` : ""}("${pathname}") has a ` +
       "build-time shell, but its request partition (a cache({ key }) enclosing the route, " +
       "or the store's keyGenerator) keys its shell per partition, so the build " +
       "shell is not served and each partition captures its own at runtime. A " +
@@ -619,14 +585,12 @@ export function notePartitionBuildShellCheck(
 }
 
 /**
- * @internal Reset the serve path's once-per-key warnings and buffered tail
- * timings. Tests only (testing/serve-shell-request.ts resetShellTestState).
+ * @internal Reset the serve path's once-per-key warnings (the shell path's
+ * one registry), its build-shell probe memo and buffered tail timings. Tests
+ * only (testing/serve-shell-request.ts resetShellTestState).
  */
 export function resetShellServeStateForTests(): void {
-  warnedMissingStore.clear();
-  warnedNonceActive.clear();
-  partitionBuildShellWarned.clear();
+  resetShellWarningsForTests();
   pathsWithoutBuildShell.clear();
-  warnedPprWindowCapped.clear();
   lastTailTimingsForServerTiming.clear();
 }

@@ -121,8 +121,7 @@ export function PprShellStreamPage() {
   return <PprShellStream loader={PprShellStreamLoader} />;
 }
 
-// Issue #888 page: no promise-carrying handler push (no handlerLiveHoles), so
-// HITs take the fast path and replay the doc record.
+// Issue #888 page: a plain handler page; every HIT replays its doc record.
 export function PprWarningsPage() {
   return (
     <main data-testid="ppr-warnings-page">

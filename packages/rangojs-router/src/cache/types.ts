@@ -399,11 +399,10 @@ export interface ShellCacheEntry {
    * on dev RSC-module edits). The second read-time gate: a persistent shared
    * store (KV/runtime-cache) survives deploys, and an app-code change that
    * keeps the same React version would otherwise leave a stale-build
-   * prelude+postponed live under the same key. Optional only for entries
-   * stored before the field existed — those are treated as a miss and the
-   * recapture re-stamps them (pre-release, no compat shim).
+   * prelude+postponed live under the same key. A custom store returns it as
+   * putShell received it.
    */
-  buildVersion?: string;
+  buildVersion: string;
   /**
    * The initialTheme the CAPTURE render was built with: the no-cookie default
    * (payloadInitialTheme, rsc/full-payload.ts), never the capturing visitor's
@@ -418,22 +417,20 @@ export interface ShellCacheEntry {
    */
   initialTheme?: string;
   /**
-   * The CAPTURE DATA SNAPSHOT: every cache-store read-hit and write the capture
-   * render performed, in stored/serialized form. Replaying these on a HIT (via
-   * the SeededShellStore overlay, for the tail render only) reproduces the
-   * shell's cached content byte-identically, so the freshly rendered hydration
-   * payload matches the frozen prelude even after the underlying cache entries
-   * have drifted (expired, been recomputed, or been tag-invalidated).
-   *
-   * Optional: an entry captured before this field existed simply has no
-   * snapshot and keeps the pre-snapshot behavior (the tail reads live, so any
-   * shell-baked cached value that drifted mismatches the prelude). Recapture
-   * heals it. See docs/design/ppr-shell-resume.md ("the capture data snapshot").
+   * The CAPTURE DATA SNAPSHOT, in stored/serialized form: the doc segment
+   * record every HIT replays the handler layer from (`docKey`), the bake-lane
+   * loader pins, and the cache records those loaders read at capture
+   * (pruned to what a HIT reads, issue #941). Replaying them on a HIT keeps
+   * the freshly rendered hydration payload equal to the frozen prelude after
+   * the underlying cache entries have drifted. Empty when the capture
+   * recorded nothing (a prerender-served capture without bake-lane loaders,
+   * a tombstone). A custom store returns it as putShell received it. See
+   * docs/design/ppr-shell-resume.md ("the capture data snapshot").
    */
-  snapshot?: ShellSnapshotRecord[];
+  snapshot: ShellSnapshotRecord[];
   /**
    * Records the capture dropped from `snapshot` because no reader of this
-   * entry consumes them, by family (`item:4/response:1`). Diagnostic only: the
+   * entry consumes them, by family (`item:4/loader:1`). Diagnostic only: the
    * HIT tail timing reports it next to the kept records. See
    * docs/design/shell-entry-layout.md ("Record only what a HIT reads").
    */
@@ -458,6 +455,13 @@ export interface ShellCacheEntry {
   /** Capture-generation start time; tag invalidations at or after it win. */
   createdAt: number;
 }
+
+/**
+ * @internal A shell entry without its prelude and snapshot: what a
+ * prelude-first read (SegmentCacheStore.readShellDocument) resolves with
+ * before the snapshot bytes arrive.
+ */
+export type ShellEntryHead = Omit<ShellCacheEntry, "prelude" | "snapshot">;
 
 /**
  * A shell entry whose document half is present — what the document HIT path
@@ -493,7 +497,7 @@ export type ShellSnapshotFailure = "unavailable" | "corrupt";
  */
 export interface ShellDocumentRead {
   /** The entry without its prelude and snapshot (delivered separately). */
-  entry: ShellCacheEntry;
+  entry: ShellEntryHead;
   /** Raw prelude bytes (empty for a navigationOnly entry). */
   prelude: Uint8Array;
   shouldRevalidate?: boolean;
@@ -580,14 +584,16 @@ export interface ShellReadStats {
 }
 
 /**
- * The families a shell snapshot pins. The item/segment/response families are
+ * The families a shell snapshot pins. The item/segment families are
  * cache-store reads/writes (recorded by RecordingShellStore); the loader family
  * pins the settled CONTAINER of a bake-lane loader (lane rule: see
  * resolveLoaderData, loader-cache.ts). Excludes the shell family itself
  * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
- * it would be self-referential.
+ * it would be self-referential — and the response family, which only
+ * response routes and the document cache (HTTP middleware) read, and a
+ * capture runs neither.
  */
-export type ShellSnapshotFamily = "item" | "segment" | "response" | "loader";
+export type ShellSnapshotFamily = "item" | "segment" | "loader";
 
 /**
  * The stored form of a loader-family snapshot value: the bake-lane loader's
@@ -604,29 +610,21 @@ export interface ShellSnapshotLoaderValue {
    * container carries hole markers, so a HIT must gate the overlay on the
    * fresh run (only the loader body can mint the live nested promises);
    * 0 = fully pinned, so a HIT resolves the payload promise immediately from
-   * the pin and does not run the loader body (unless `runs`). Absent on
-   * pre-bit snapshots, which keep the gated path.
+   * the pin and does not run the loader body (unless `runs`).
    */
-  holes?: 0 | 1;
+  holes: 0 | 1;
   /**
    * 1 when the capture saw a loader push it could not record (a deferred
    * push, one with masked nested promises, or one made outside any loader
    * body): a HIT then still runs the loader body in the background
    * (pin-first) so those pushes reach the page. 0: a hole-free record is
-   * served from the pin alone and its body does not run on a HIT. Absent (a
-   * snapshot written before the bit, which lacks the loader-owned pushes)
-   * reads as 1, so the body supplies them.
+   * served from the pin alone and its body does not run on a HIT.
+   *
+   * Both bits are always written. A record stored before they existed (v0.17)
+   * reads each missing bit as 1 (buildShellLoaderSeed): its snapshot lacks
+   * the loader-owned pushes, so the body supplies them.
    */
-  runs?: 0 | 1;
-}
-
-/** A serialized cached Response for the response family of a shell snapshot. */
-export interface ShellSnapshotResponseValue {
-  status: number;
-  /** Client-facing header pairs (per-client signal headers excluded at record). */
-  headers: [string, string][];
-  /** base64-encoded response body (binary-safe, JSON-serializable). */
-  body: string;
+  runs: 0 | 1;
 }
 
 /** The stored form of an item-family (use cache / loader cache) snapshot value. */
@@ -640,21 +638,18 @@ export interface ShellSnapshotItemValue {
 }
 
 /**
- * One recorded cache-store read-hit or write from the capture render. `value`
- * carries the entry in its stored/serialized shape so it round-trips through a
- * JSON-serializing store (KV, CF, Vercel) with the rest of the ShellCacheEntry:
+ * One recorded cache-store read-hit or write from the capture render, or a
+ * bake-lane loader pin. `value` carries the entry in its stored/serialized
+ * shape so it round-trips through a JSON-serializing store (KV, CF, Vercel)
+ * with the rest of the ShellCacheEntry:
  * - `item`    -> {@link ShellSnapshotItemValue}
  * - `segment` -> {@link CachedEntryData} (already JSON-able)
- * - `response`-> {@link ShellSnapshotResponseValue}
+ * - `loader`  -> {@link ShellSnapshotLoaderValue}
  */
 export interface ShellSnapshotRecord {
   family: ShellSnapshotFamily;
   key: string;
-  value:
-    | ShellSnapshotItemValue
-    | CachedEntryData
-    | ShellSnapshotResponseValue
-    | ShellSnapshotLoaderValue;
+  value: ShellSnapshotItemValue | CachedEntryData | ShellSnapshotLoaderValue;
 }
 
 /**

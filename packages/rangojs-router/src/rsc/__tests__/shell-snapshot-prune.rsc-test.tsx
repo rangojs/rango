@@ -356,9 +356,9 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       pruned: "item:3",
     },
     {
-      // The explicit tier writes to the app store here, so its own segment
-      // record was recorded too, and no HIT reads it.
-      pruned: "item:3/segment:1",
+      // The explicit tier writes to the app store here; the capture records
+      // no segment besides the doc record.
+      pruned: "item:3",
       name: "custom key(): a HIT in the capture's own partition",
       options: {
         ttl: 300,
@@ -528,7 +528,8 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
 
     const served = await serve(router, harness.store, "/baked");
     expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
-    // The loader re-ran on the HIT and read its item from the seed.
+    // A promise-free bake-lane loader is served from its pin and does not
+    // run on the HIT: nothing reads the item store.
     expect(harness.itemReads).toEqual([]);
     expect(served.body).toContain("bake-stamp@g1");
     expect(served.body).not.toContain("@g2");
@@ -696,6 +697,7 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
       {
         reactVersion: entry.reactVersion,
         buildVersion: entry.buildVersion,
+        snapshot: [],
         navigationOnly: true,
         createdAt: Date.now(),
       },

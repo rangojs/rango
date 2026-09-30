@@ -26,6 +26,7 @@ import { getSSRSetup, createSsrHtmlStage, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { SSRModule } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
+import type { PprReplayBypassReason } from "./shell-capture-constants.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -117,6 +118,7 @@ import type {
   SegmentCacheStore,
   ShellCacheEntry,
   ShellDocumentRead,
+  ShellEntryHead,
   ShellReadStats,
   ShellSnapshotRecord,
 } from "../cache/types.js";
@@ -124,25 +126,6 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../segment-fragments.js";
-
-type PprReplayBypassReason =
-  | "method"
-  | "dynamic"
-  | "nonce"
-  | "store-unavailable"
-  | "passive-read-unsupported"
-  | "no-navigation-context"
-  | "prerender-store"
-  | "intercept"
-  | "cache-disabled"
-  | "read-error"
-  | "no-entry"
-  | "invalid-version"
-  | "corrupt-entry"
-  | "no-segment-snapshot"
-  | "snapshot-miss"
-  | "explicit-cache-hit"
-  | "stale-build-entry";
 
 type PprReplayStatus =
   | { outcome: "HIT"; freshness: "fresh" | "stale" }
@@ -187,7 +170,6 @@ function createShellCaptureDescriptor(
     tags: pprConfig.tags,
     captureTimeout: pprConfig.captureTimeout,
     store,
-    debug: INTERNAL_RANGO_DEBUG,
     maxSnapshotBytes: pprConfig.maxSnapshotBytes,
     debugSink: resolveShellCaptureDebugSink(ctx.router.debugShellCapture),
     navigationOnly,
@@ -200,8 +182,7 @@ function shouldHealReplayMiss(
   return (
     reason === undefined ||
     reason === "invalid-version" ||
-    reason === "corrupt-entry" ||
-    reason === "stale-build-entry"
+    reason === "corrupt-entry"
   );
 }
 
@@ -256,16 +237,11 @@ function replayableShellSnapshot(
   if (!entry.navigationOnly && !hasIntactShellPayload(entry)) {
     return { reason: "corrupt-entry" };
   }
-  // Eligibility requires the CANONICAL doc segment record (`docKey`), not just
-  // any segment record: captures under an explicit cache() scope also record
-  // that tier's reads/writes under keys a partial lookup can never resolve,
-  // and counting those declared entries "replayable" that then always missed
-  // (a timing-dependent snapshot-miss/no-segment-snapshot flip-flop). Entries
-  // captured before the field existed read as no-segment-snapshot and heal on
-  // recapture (pre-release, same treatment as the buildVersion field).
-  const snapshot = entry.snapshot;
-  return snapshot && hasDocRecord(snapshot, entry.docKey)
-    ? { snapshot }
+  // Eligibility requires the CANONICAL doc segment record (`docKey`): replay
+  // resolves that record and nothing else. An entry without it (a
+  // prerender-served capture, a tombstone) reads as no-segment-snapshot.
+  return hasDocRecord(entry.snapshot, entry.docKey)
+    ? { snapshot: entry.snapshot }
     : { reason: "no-segment-snapshot" };
 }
 
@@ -321,8 +297,8 @@ type PreparedRender =
       payload: RscPayload;
       hasInterceptSlots: boolean;
       pprReplayStatus?: PprReplayStatus;
-      partialCaptureNeeded: boolean;
-      partialCaptureKey?: string;
+      /** The key a navigation-only heal capture stores under, when one is needed. */
+      healKey?: string;
     };
 
 async function handleRscRenderingInner<TEnv>(
@@ -434,16 +410,15 @@ function* requestRenderPlan<TEnv>(
     response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
 
-  const captureKey = prepared.partialCaptureKey;
+  const healKey = prepared.healKey;
   if (
     isPartial &&
-    prepared.partialCaptureNeeded &&
-    captureKey !== undefined &&
+    healKey !== undefined &&
     !reqCtx._dynamic &&
     response.status === 200
   ) {
     yield* handoff("navigation-shell-capture", () =>
-      scheduleNavigationShellCapture(input, captureKey),
+      scheduleNavigationShellCapture(input, healKey),
     );
   }
 
@@ -506,24 +481,21 @@ function* shellServePlan<TEnv>(
 
   // A per-request CSP nonce pins the route to axis 1: a shared shell would
   // freeze the capture request's nonce and CSP would reject it for every
-  // other visitor. BOTH nonce sources must gate — the createRouter({ nonce })
-  // provider (`nonce` param) and a middleware ctx.set(nonce, …) token write;
-  // the provider-only check missed the latter (issue #656).
-  const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
+  // other visitor. Every step below, a HIT included, therefore runs without
+  // one.
   const store = reqCtx._cacheStore;
   const baseKey = buildShellKey(url, reqCtx._searchParamsFilter);
-  let key = baseKey;
-  if (activeNonce !== undefined) {
+  if (activeRequestNonce(nonce, reqCtx) !== undefined) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent): a ppr route gated off by an active
     // per-request nonce warns once per key. Axis 1 after the warning.
-    warnPprNonceActiveOnce(key);
+    warnPprNonceActiveOnce(baseKey);
     return { kind: "pass" };
   }
   if (!hasShellFamily(store)) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent). Axis 1 after the warning.
-    warnShellStoreMissingOnce(key);
+    warnShellStoreMissingOnce(baseKey);
     return { kind: "pass" };
   }
   // The route's own cache() opt-out — cache(false), or a condition() that
@@ -557,26 +529,18 @@ function* shellServePlan<TEnv>(
   // or the store's keyGenerator) partitions its shell the same way: each
   // partition captures and serves its own shell. A failed key resolution
   // serves no shell, never another partition's.
-  const partitionedKey = partitionedShellKey(
+  const requestKey = resolveRequestShellKey(
     baseKey,
-    route?.cacheScope,
+    route,
     store,
-    reqCtx.url.pathname,
-    route?.params,
+    reqCtx,
+    "ShellServe",
   );
-  if (partitionedKey) {
-    const resolved = yield* step("shell-partition", () =>
-      partitionedKey.then(
-        (value): string | undefined => value,
-        (error: unknown) => {
-          reportCacheError(error, "cache-read", "[ShellServe] shell key");
-          return undefined;
-        },
-      ),
-    );
-    if (resolved === undefined) return { kind: "pass" };
-    key = resolved;
-  }
+  const key =
+    typeof requestKey === "string"
+      ? requestKey
+      : yield* step("shell-partition", () => requestKey);
+  if (key === undefined) return { kind: "pass" };
   reqCtx._shellKey = key;
   // The buffered capture and tail timings are keyed by the partitioned key.
   mirrorPprServerTimings(key, reqCtx);
@@ -612,6 +576,14 @@ function* shellServePlan<TEnv>(
     pprConfig,
     store,
   );
+  // MISS (no entry, invalid reactVersion, a tombstone, or store read
+  // failure): axis 1 + a background capture scheduled once the response is
+  // known servable.
+  const miss: ShellServeOutcome = {
+    kind: "miss",
+    descriptor: { ...descriptor, storedSeqAtRead },
+    ssrModule,
+  };
 
   // A HIT replays the handler layer from the entry's doc record (`docKey`),
   // or, for a Prerender route, from the prerender store. An entry that has
@@ -622,11 +594,7 @@ function* shellServePlan<TEnv>(
     (cached.entry.docKey !== undefined || route?.matched?.pr === true) &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
-    const document = openShellDocumentMetered(
-      reqCtx,
-      cached.entry,
-      cached.read,
-    );
+    const document = openShellDocumentMetered(reqCtx, cached);
     if (!document) {
       // Corrupt stored payload (undecodable prelude / unparseable
       // postponed): a store-layer fault worth a diagnostic, unlike the
@@ -671,7 +639,6 @@ function* shellServePlan<TEnv>(
           ssrModule,
           document,
           descriptor,
-          activeNonce,
         ),
       );
       return { kind: "serve", response };
@@ -686,11 +653,7 @@ function* shellServePlan<TEnv>(
     cached?.entry.navigationOnly &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
-    return {
-      kind: "miss",
-      descriptor: { ...descriptor, storedSeqAtRead },
-      ssrModule,
-    };
+    return miss;
   }
 
   // Build-time shell read-through (producer B, #699): on a runtime
@@ -736,7 +699,7 @@ function* shellServePlan<TEnv>(
   // The document serve decodes the baked prelude once here; an undecodable
   // one is a MISS like a corrupt runtime entry.
   const buildDocument = buildHit
-    ? openShellDocumentMetered(reqCtx, buildHit.entry)
+    ? openShellDocumentMetered(reqCtx, { entry: buildHit.entry })
     : null;
   if (buildHit && buildDocument) {
     // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
@@ -764,19 +727,12 @@ function* shellServePlan<TEnv>(
         ssrModule,
         buildDocument,
         descriptor,
-        activeNonce,
       ),
     );
     return { kind: "serve", response };
   }
 
-  // MISS (no entry, invalid reactVersion, or store read failure): axis 1
-  // + a background capture scheduled once the response is known servable.
-  return {
-    kind: "miss",
-    descriptor: { ...descriptor, storedSeqAtRead },
-    ssrModule,
-  };
+  return miss;
 }
 
 /**
@@ -796,10 +752,7 @@ function* preparePayloadPlan<TEnv>(
     );
     const result = replay.result;
     const pprReplayStatus = replay.status;
-    const partialCaptureNeeded =
-      "captureNeeded" in replay && replay.captureNeeded === true;
-    const partialCaptureKey =
-      "captureKey" in replay ? replay.captureKey : undefined;
+    const healKey = "healKey" in replay ? replay.healKey : undefined;
 
     if (!result) {
       // Fall back to full render
@@ -830,8 +783,7 @@ function* preparePayloadPlan<TEnv>(
         payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
         hasInterceptSlots: false,
         pprReplayStatus,
-        partialCaptureNeeded,
-        partialCaptureKey,
+        healKey,
       };
     }
 
@@ -869,8 +821,7 @@ function* preparePayloadPlan<TEnv>(
       },
       hasInterceptSlots: !!result.slots,
       pprReplayStatus,
-      partialCaptureNeeded,
-      partialCaptureKey,
+      healKey,
     };
   }
 
@@ -889,14 +840,10 @@ function* preparePayloadPlan<TEnv>(
     };
   }
 
-  // Caching is now handled in router.match() via cache provider in request context
-  // match.segments already contains cached or fresh segments as appropriate
-
   return {
     kind: "payload",
     payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
     hasInterceptSlots: false,
-    partialCaptureNeeded: false,
   };
 }
 
@@ -926,12 +873,18 @@ async function matchPartialAndRecordParams<TEnv>(
   return replay;
 }
 
-/** A document serve's store read: the entry, plus the prelude-first read when the store has one. */
-interface ShellStoreRead {
-  entry: ShellCacheEntry;
-  shouldRevalidate?: boolean;
-  read?: ShellDocumentRead;
-}
+/**
+ * A document serve's store read: a getShell entry, or a prelude-first read
+ * (readShellDocument) whose entry is the head and whose snapshot arrives on
+ * its own promise.
+ */
+type ShellStoreRead =
+  | { entry: ShellCacheEntry; shouldRevalidate?: boolean; read?: undefined }
+  | {
+      entry: ShellEntryHead;
+      shouldRevalidate?: boolean;
+      read: ShellDocumentRead;
+    };
 
 /**
  * Shell store read that degrades to null on failure (axis 1 MISS, never a 500)
@@ -1030,13 +983,17 @@ function recordShellReadStats(
  */
 function openShellDocumentMetered(
   reqCtx: RequestContext<any>,
-  entry: ShellCacheEntry,
-  read?: ShellDocumentRead,
+  stored: ShellStoreRead,
 ): ShellDocument | null {
+  const read = stored.read;
+  const open = (): ShellDocument | null =>
+    stored.read
+      ? openShellDocument(stored.entry, stored.read)
+      : openShellDocument(stored.entry);
   const store = reqCtx._metricsStore;
-  if (!store) return openShellDocument(entry, read);
+  if (!store) return open();
   const start = performance.now();
-  const document = openShellDocument(entry, read);
+  const document = open();
   appendMetric(
     store,
     "ppr:shell-open",
@@ -1049,19 +1006,79 @@ function openShellDocumentMetered(
 }
 
 /**
+ * The request's per-request CSP nonce. BOTH sources count: the
+ * createRouter({ nonce }) provider (`nonce`) and a middleware
+ * ctx.set(nonce, …) token write; the provider-only check missed the latter
+ * (issue #656). Read at the commit point, after the whole middleware chain.
+ */
+function activeRequestNonce(
+  nonce: string | undefined,
+  reqCtx: RequestContext<any>,
+): string | undefined {
+  return nonce ?? contextGet(reqCtx._variables, nonceToken);
+}
+
+/**
  * The shell key a request reads and captures: `baseKey`, partitioned by the
  * route's request partition (cache-scope.ts resolveShellPartition; a
- * partition equal to the default key leaves it unchanged). Undefined,
- * synchronously and with no work, when nothing partitions the route; a
- * rejection is a failed key resolution.
+ * partition equal to the default key leaves it unchanged). `baseKey` itself,
+ * synchronously and with no work, when nothing partitions the route; else a
+ * promise that resolves undefined when the key failed to resolve (reported
+ * as `[source] shell key`): such a request reads and captures no shell,
+ * never another partition's.
  */
-function partitionedShellKey(
+function resolveRequestShellKey(
   baseKey: string,
-  ...partition: Parameters<typeof resolveShellPartition>
-): Promise<string> | undefined {
-  return resolveShellPartition(...partition)?.then((resolved) =>
-    resolved === null ? baseKey : partitionShellKey(baseKey, resolved),
+  route: RouteSnapshot<any> | null,
+  store: SegmentCacheStore,
+  reqCtx: RequestContext<any>,
+  source: string,
+): string | Promise<string | undefined> {
+  const partition = resolveShellPartition(
+    route?.cacheScope,
+    store,
+    reqCtx.url.pathname,
+    route?.params,
   );
+  if (!partition) return baseKey;
+  return partition.then(
+    (resolved) =>
+      resolved === null ? baseKey : partitionShellKey(baseKey, resolved),
+    (error: unknown) => {
+      reportCacheError(error, "cache-read", `[${source}] shell key`);
+      return undefined;
+    },
+  );
+}
+
+/**
+ * Observe the explicit-scope composition in withCacheLookup: the route's own
+ * cache() scope served the request (`explicit-cache-hit`) or refused it at
+ * lookup time (`cache-disabled`). The two are exclusive per lookup, and
+ * neither fires when the seeded doc record served.
+ */
+function observeExplicitScope(): {
+  onExplicitHit: () => void;
+  onExplicitBypass: () => void;
+  bypassed: () => boolean;
+  status: (otherwise: PprReplayStatus) => PprReplayStatus;
+} {
+  let observed: "hit" | "bypass" | undefined;
+  return {
+    onExplicitHit: () => {
+      observed = "hit";
+    },
+    onExplicitBypass: () => {
+      observed = "bypass";
+    },
+    bypassed: () => observed === "bypass",
+    status: (otherwise) =>
+      observed === "hit"
+        ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
+        : observed === "bypass"
+          ? { outcome: "BYPASS", reason: "cache-disabled" }
+          : otherwise,
+  };
 }
 
 /**
@@ -1229,10 +1246,11 @@ function scheduleNavigationShellCapture<TEnv>(
 /**
  * Reuse a PPR capture's canonical segment record for a partial navigation.
  * The ordinary matchPartial pipeline remains authoritative: it projects the
- * cached target tree against the client's segment ids, evaluates revalidation,
- * and resolves every loader fresh. Only segment-family records are seeded;
- * captured item/response/loader values belong to document parity and must not
- * pin navigation data.
+ * cached target tree against the client's segment ids and evaluates
+ * revalidation. Only the segment family is seeded into the store overlay, so
+ * item and response reads stay live; a record that served also arms the
+ * bake-lane loader pins (onHit), which serve as on a document HIT, while live
+ * loaders run fresh.
  */
 async function matchPartialWithPprReplay<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -1289,7 +1307,7 @@ async function matchPartialWithPprReplay<TEnv>(
     return { result, status: finalStatus };
   };
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry);
-  const activeNonce = nonce ?? contextGet(reqCtx._variables, nonceToken);
+  const activeNonce = activeRequestNonce(nonce, reqCtx);
   const store = reqCtx._cacheStore;
 
   if (!pprConfig) return runMatch();
@@ -1377,22 +1395,15 @@ async function matchPartialWithPprReplay<TEnv>(
 
   // The visitor's own partition (resolveShellPartition): replay never
   // crosses into another partition's shell.
-  const baseKey = buildShellKey(url, reqCtx._searchParamsFilter);
-  let key = baseKey;
-  const partitionedKey = partitionedShellKey(
-    baseKey,
-    routeCacheScope,
+  const key = await resolveRequestShellKey(
+    buildShellKey(url, reqCtx._searchParamsFilter),
+    routeSnapshot,
     store,
-    reqCtx.url.pathname,
-    routeSnapshot?.params,
+    reqCtx,
+    "NavigationPPR",
   );
-  if (partitionedKey) {
-    try {
-      key = await partitionedKey;
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[NavigationPPR] shell key");
-      return runMatch({ outcome: "BYPASS", reason: "read-error" });
-    }
+  if (key === undefined) {
+    return runMatch({ outcome: "BYPASS", reason: "read-error" });
   }
   const navigationKey = navigationShellKey(key);
   let cached: Awaited<ReturnType<typeof store.getShell>> = null;
@@ -1444,35 +1455,6 @@ async function matchPartialWithPprReplay<TEnv>(
   }
 
   if (!snapshot) {
-    // Production build manifests are local module data. In dev, resolving a
-    // missing build shell would foreground-fetch /__rsc_shell and block an
-    // otherwise ordinary navigation on capture, so replay remains runtime-only.
-    const buildHit =
-      key !== baseKey
-        ? null
-        : await lookupBuildShell(
-            url,
-            ctx.version,
-            store,
-            undefined,
-            reqCtx._searchParamsFilter,
-          );
-    if (buildHit?.stale) {
-      bypassReason ??= "stale-build-entry";
-    } else if (buildHit) {
-      const buildDecision = replayableShellSnapshot(
-        buildHit.entry,
-        ctx.version,
-      );
-      if ("snapshot" in buildDecision) {
-        snapshot = buildDecision.snapshot;
-      } else {
-        bypassReason ??= buildDecision.reason;
-      }
-    }
-  }
-
-  if (!snapshot) {
     // Report-only marker for routes with an ENABLED route-derived scope: the
     // lookup's own outcome must stay reportable even without a replayable
     // snapshot. An always-false condition() route never produces a doc
@@ -1486,25 +1468,20 @@ async function matchPartialWithPprReplay<TEnv>(
     // implicit scope over the REAL doc: partition in
     // resolveShellImplicitCacheScope).
     if (routeCacheScope?.enabled) {
-      let explicitCacheHit = false;
-      let explicitCacheBypass = false;
+      const explicit = observeExplicitScope();
       const previousImplicitCache = reqCtx._shellImplicitCache;
       reqCtx._shellImplicitCache = {
-        onExplicitHit: () => {
-          explicitCacheHit = true;
-        },
-        onExplicitBypass: () => {
-          explicitCacheBypass = true;
-        },
+        onExplicitHit: explicit.onExplicitHit,
+        onExplicitBypass: explicit.onExplicitBypass,
       };
       try {
         const result = await matchPartialForReplay();
-        const provisionalStatus: PprReplayStatus = explicitCacheBypass
-          ? { outcome: "BYPASS", reason: "cache-disabled" }
-          : explicitCacheHit
-            ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
-            : { outcome: "BYPASS", reason: bypassReason ?? "no-entry" };
-        const status = finalizeReplayStatus(provisionalStatus);
+        const status = finalizeReplayStatus(
+          explicit.status({
+            outcome: "BYPASS",
+            reason: bypassReason ?? "no-entry",
+          }),
+        );
         return {
           result,
           status,
@@ -1518,13 +1495,14 @@ async function matchPartialWithPprReplay<TEnv>(
           // capture derives from THIS request's context, so its doc record
           // records. Excluding it left replay dead until the document
           // recaptured. The always-false route stays protected: its every
-          // lookup refuses, so explicitCacheBypass suppresses the heal.
-          captureNeeded:
-            !explicitCacheBypass &&
+          // lookup refuses, so its bypass suppresses the heal.
+          healKey:
+            !explicit.bypassed() &&
             reqCtx._pprReplayPostMatchReason === undefined &&
             (shouldHealReplayMiss(bypassReason) ||
-              bypassReason === "no-segment-snapshot"),
-          captureKey: navigationKey,
+              bypassReason === "no-segment-snapshot")
+              ? navigationKey
+              : undefined,
         };
       } finally {
         reqCtx._shellImplicitCache = previousImplicitCache;
@@ -1536,10 +1514,11 @@ async function matchPartialWithPprReplay<TEnv>(
     });
     return {
       ...match,
-      captureNeeded:
+      healKey:
         reqCtx._pprReplayPostMatchReason === undefined &&
-        shouldHealReplayMiss(bypassReason),
-      captureKey: navigationKey,
+        shouldHealReplayMiss(bypassReason)
+          ? navigationKey
+          : undefined,
     };
   }
 
@@ -1548,8 +1527,7 @@ async function matchPartialWithPprReplay<TEnv>(
   let loaderSeed: ReturnType<typeof buildShellLoaderSeed> | undefined;
   let segmentReplayHit = false;
   let segmentReplayCorrupt = false;
-  let explicitCacheHit = false;
-  let explicitCacheBypass = false;
+  const explicit = observeExplicitScope();
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
@@ -1576,27 +1554,18 @@ async function matchPartialWithPprReplay<TEnv>(
     // Arms the explicit-scope composition in withCacheLookup: a route-derived
     // cache() scope stays authoritative, the seeded doc record supplies the
     // match only on its miss. An explicit-tier hit must NOT report a replay
-    // HIT — it served under the consumer's own semantics.
-    onExplicitHit: () => {
-      explicitCacheHit = true;
-    },
-    // Lookup-time condition() refusal (or a scope with no store): the gate
-    // deliberately does not pre-decide predicates, so the truthful
-    // cache-disabled report comes from the lookup that actually refused.
-    onExplicitBypass: () => {
-      explicitCacheBypass = true;
-    },
+    // HIT — it served under the consumer's own semantics. A lookup-time
+    // condition() refusal (or a scope with no store) reports cache-disabled:
+    // the gate deliberately does not pre-decide predicates.
+    onExplicitHit: explicit.onExplicitHit,
+    onExplicitBypass: explicit.onExplicitBypass,
   };
 
   try {
     const result = await matchPartialForReplay();
     const provisionalStatus: PprReplayStatus = segmentReplayHit
       ? { outcome: "HIT", freshness }
-      : explicitCacheHit
-        ? { outcome: "BYPASS", reason: "explicit-cache-hit" }
-        : explicitCacheBypass
-          ? { outcome: "BYPASS", reason: "cache-disabled" }
-          : { outcome: "BYPASS", reason: "snapshot-miss" };
+      : explicit.status({ outcome: "BYPASS", reason: "snapshot-miss" });
     // A prerender serve or intercept resolution leaves the seeded record
     // unconsulted (prerender short-circuits before the scope; intercepts
     // keep snapshot.cacheScope) — the "snapshot-miss" guess would blame the
@@ -1605,14 +1574,15 @@ async function matchPartialWithPprReplay<TEnv>(
     return {
       result,
       status,
-      captureNeeded:
-        segmentReplayCorrupt && reqCtx._pprReplayPostMatchReason === undefined,
       // A corrupt document snapshot must be overwritten at the document key;
       // writing only the secondary navigation key would leave the preferred
       // document entry shadowing the repair forever. The capture remains marked
       // navigationOnly, so a document request ignores it and recaptures a
       // document-safe shell under the same key.
-      captureKey: segmentReplayCorrupt ? snapshotStoreKey : undefined,
+      healKey:
+        segmentReplayCorrupt && reqCtx._pprReplayPostMatchReason === undefined
+          ? snapshotStoreKey
+          : undefined,
     };
   } finally {
     reqCtx._shellImplicitCache = previousImplicitCache;
@@ -1707,7 +1677,7 @@ async function isSettled(value: unknown): Promise<boolean> {
  */
 async function degradeUnreplayableShell(
   descriptor: ShellCaptureDescriptor,
-  entry: ShellCacheEntry,
+  entry: ShellEntryHead,
   scheduleRecapture: () => void,
 ): Promise<void> {
   const store = descriptor.store;
@@ -1717,6 +1687,7 @@ async function degradeUnreplayableShell(
       {
         reactVersion: entry.reactVersion,
         buildVersion: entry.buildVersion,
+        snapshot: [],
         navigationOnly: true,
         createdAt: Date.now(),
       },
@@ -1749,7 +1720,6 @@ function serveShellHit(
   ssrModule: SSRModule,
   document: ShellDocument,
   descriptor: ShellCaptureDescriptor,
-  nonce: string | undefined,
 ): Response {
   const { entry, prelude: preludeBytes } = document;
   const metricsStore = reqCtx._metricsStore;
@@ -2041,7 +2011,6 @@ function serveShellHit(
             new TextEncoder().encode(
               inlineShellScript(
                 `location.replace(${escapeJsonForScript(JSON.stringify(safeTarget))})`,
-                nonce,
               ),
             ),
           );
@@ -2067,9 +2036,7 @@ function serveShellHit(
               scheduleRecapture,
             );
           }
-          controller.enqueue(
-            new TextEncoder().encode(shellReloadScript(nonce)),
-          );
+          controller.enqueue(new TextEncoder().encode(shellReloadScript()));
           if (tailTiming) {
             tailTiming.outcome = "error";
             tailTiming.completeMs = Math.round(performance.now() - tailT0);
@@ -2084,15 +2051,7 @@ function serveShellHit(
         // request until the entry ages out — recapture overwrites the entry.
         // Client disconnects land here too; the recapture is idempotent and
         // bounded by scheduleShellCapture's stampede guard + backoff.
-        scheduleShellCapture(
-          ctx,
-          request,
-          env,
-          url,
-          reqCtx,
-          ssrModule,
-          descriptor,
-        );
+        scheduleRecapture();
         if (tailTiming) {
           tailTiming.outcome = "error";
           tailTiming.completeMs = Math.round(performance.now() - tailT0);
