@@ -163,6 +163,22 @@ stated, greppable contract.
 - Nested caches: the outer cache window bounds the inner — an inner shorter TTL
   only applies when the enclosing cache recomputes; put a value in a loader if it
   must be fresher. See `/cache-guide` → "Combining Both".
+- **A predicate runs where its effect lands.** A server-tree `revalidate()`
+  decides what the server re-sends, so it runs on the server; an `intercept({
+when })` selector decides what the server renders, so it runs on the server;
+  a `clientUrls()` `revalidate()` and `transition({ when })` decide a browser
+  commit, so they run in the browser. A browser predicate sees URLs, params,
+  route names, history state and action data, never `get()`, `env` or handler
+  state; in a server `urls()` it is written inline (the build hoists it into a
+  client module) or imported from a `"use client"` module (`/view-transitions`).
+- **Vocabulary.** `revalidate()` keeps React Router's `shouldRevalidate`
+  dialect (`currentUrl`/`nextUrl`, `currentParams`/`nextParams`). Navigation
+  selectors (`intercept({ when })`, `transition({ when })`) use `from`/`to`
+  locations (`{ url, params, routeName }`, plus `state` in the browser).
+- **A throwing predicate yields the conservative default.** For
+  `transition({ when })` that is no hold (an urgent commit) plus
+  `console.error`; for a `revalidate()` it is the default decision it would
+  have deferred to, logged.
 
 ## Don't confuse
 

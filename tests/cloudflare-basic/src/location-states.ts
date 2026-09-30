@@ -61,3 +61,25 @@ export interface NonSerializableStateShape {
  */
 export const NonSerializableState =
   createLocationState<NonSerializableStateShape>();
+
+export interface TxWhenStateShape {
+  animate: boolean;
+}
+
+/**
+ * transition({ when }) reads it from the destination
+ * (TxWhenState.read(ctx.to)): a Link carrying { animate: false } gates its
+ * navigation off (src/components/transition-when.ts).
+ */
+export const TxWhenState = createLocationState<TxWhenStateShape>();
+
+export interface PprExecMarkShape {
+  middleware: number;
+}
+
+/**
+ * Set by the exec-matrix middleware on every request. A partial navigation
+ * carries it to the browser as metadata.locationState, where the route's
+ * transition({ when }) reads it from `to.state`, a PPR replay HIT included.
+ */
+export const PprExecMark = createLocationState<PprExecMarkShape>();

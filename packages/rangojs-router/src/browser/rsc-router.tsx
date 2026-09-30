@@ -226,6 +226,10 @@ export async function initBrowserApp(
     ...(storeOptions?.cacheSize && { cacheSize: storeOptions.cacheSize }),
   });
 
+  // The document's entry: the transition({ when }) source of the first
+  // navigation, and of a later back/forward that leaves it.
+  store.rememberDisplayedEntry(initialPayload.metadata?.routeName);
+
   // Register the active store on the module-level handle and wire the
   // jar-divergence observer before any getRangoState() read can detect a
   // cross-tab/server rotation. There is no global store singleton, so this

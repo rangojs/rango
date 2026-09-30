@@ -417,10 +417,9 @@ export type PathHelpers<TEnv> = {
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
    *
-   * Pass `when: (ctx) => boolean` to gate the transition per request. It normally
-   * runs after the route handler; `ppr` routes automatically run it before route
-   * handlers and on every replay, where `ctx.get(...)` sees middleware state but
-   * not handler-set values.
+   * Pass `when` (inline, hoisted into a client module by the build, or a
+   * "use client" export) to gate the navigation's hold and view transition in
+   * the browser (never on the server); see TransitionWhenFn.
    */
   transition: {
     (): TransitionItem;

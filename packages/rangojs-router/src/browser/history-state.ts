@@ -2,6 +2,7 @@ import {
   isLocationStateDefinition,
   isLocationStateEntry,
   peekLocationStateKey,
+  replaceCurrentHistoryState,
   resolveLocationStateEntries,
 } from "./react/location-state-shared.js";
 
@@ -167,7 +168,7 @@ export function mergeLocationState(
     ...window.history.state,
     ...locationState,
   };
-  window.history.replaceState(merged, "", window.location.href);
+  replaceCurrentHistoryState(merged);
   if (Object.keys(locationState).some((k) => k.startsWith("__rsc_ls_"))) {
     window.dispatchEvent(new Event("__rsc_locationstate"));
   }

@@ -328,10 +328,10 @@ store. Neither swaps the request's shared `_handleStore` field. The foreground
 is still producing the page when they run (the response body streams, and a
 stale HIT re-runs its loaders), and a loader push reads that field at push
 time, so a swap sent live pushes into the background render and they went
-missing from the page. The derived context also owns an empty
-`_transitionWhen`: a stale HIT replays its stored transition, so the
-foreground's post-match gate must never evaluate the refresh's
-`transition({ when })` predicates. It has no `_metricsStore`, and the render
+missing from the page. (`transition({ when })` needs no isolation here:
+the server never evaluates it, and a stored segment never holds it; the
+foreground attaches the predicate from its own match right before Flight.)
+The derived context has no `_metricsStore`, and the render
 runs under a derived DSL store with `metrics` unset, so neither `track()` nor
 loader phase metrics reach the foreground's perf timeline. Its response writes
 (headers, cookies, status, `onResponse()` callbacks) go to a throwaway context

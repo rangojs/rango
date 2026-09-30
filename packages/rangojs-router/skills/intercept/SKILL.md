@@ -214,24 +214,34 @@ intercept(
   "product",
   <ProductModal />,
   // Only intercept when coming from a different section
-  { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
+  { when: ({ from }) => !from.url.pathname.startsWith("/shop/product/") },
   () => [
     loader(ProductLoader),
   ]
 )
 ```
 
-`when` is a synchronous match-time selector. It receives `from` / `to` (URLs),
-`fromRouteName` / `toRouteName` (named routes only), `params` (the target's),
-`segments` (the client's current segment path and ids), `request`, and `env`.
-Pass an array of predicates for AND logic (all must return true). Omit `when`
-entirely and the intercept always activates. `when` is not re-evaluated during
-action revalidation, so an open modal stays open after an action.
+`when` is a synchronous match-time selector that runs on the server. It
+receives `from` and `to` (the destination), each `{ url, params, routeName }`
+— the shape `transition({ when })` sees, without `state`, because history
+state never reaches the server — plus `segments` (the client's current
+segment path and ids), `request`, and `env`. `from` is the page the
+navigation leaves, except while an intercept is open: then it is the
+intercept's source page, the page under the modal (`match-api.ts`,
+`navigation-snapshot.ts` `effectiveFromUrl`). Opening `/item/1` as a modal
+over `/list/open` and then navigating to `/item/2` from inside the modal
+gives `from.url.pathname === "/list/open"`, not `/item/1`. That differs from
+`transition({ when })`'s `from`, which is always the committed location on
+screen. `routeName` is set for named routes only. Pass an array of predicates
+for AND logic (all must return true). Omit `when` entirely and the intercept
+always activates. `when` is not re-evaluated during action revalidation, so
+an open modal stays open after an action. A selector that throws does not
+intercept: the full page renders and the error is logged with the route name.
 
 ```typescript
 // Intercept only when opened from the shop index
 intercept("@modal", "product", <ProductModal />, {
-  when: ({ fromRouteName }) => fromRouteName === "index",
+  when: ({ from }) => from.routeName === "index",
 })
 ```
 
@@ -242,8 +252,8 @@ intercept(
   <ProductModal />,
   {
     when: [
-      ({ from }) => from.pathname.startsWith("/shop"),
-      ({ params }) => params.slug !== "featured",
+      ({ from }) => from.url.pathname.startsWith("/shop"),
+      ({ to }) => to.params.slug !== "featured",
     ],
   },
   () => [
@@ -401,7 +411,7 @@ layout(ShopLayout, () => [
     "@modal",
     ".detail",
     <ProductModal />,
-    { when: ({ from }) => from.pathname.startsWith("/shop") },
+    { when: ({ from }) => from.url.pathname.startsWith("/shop") },
     () => [loader(ProductLoader)],
   ),
 ])
@@ -482,7 +492,7 @@ export const shopPatterns = urls(({
       "@modal",
       ".product", // dot-local: resolves to "shop.product" in this include
       <ProductModalContent />,
-      { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
+      { when: ({ from }) => !from.url.pathname.startsWith("/shop/product/") },
       () => [
         layout(<ModalWrapper />),
         loading(<ProductModalSkeleton />),

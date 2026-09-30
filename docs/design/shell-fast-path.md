@@ -300,8 +300,9 @@ Removed with it: `ShellCacheEntry.handlerLiveHoles` and
 the Vercel envelope's `lh`/`tw`), and the `x-rango-ppr-replay` bypass tokens
 `handler-live-holes` and `transition-when` (gone from `PprReplayBypassReason`
 in `@rangojs/router/testing`). `transition({ when })` itself is unaffected:
-PPR routes evaluate it from the manifest before handlers on every request, so
-the entry flag had no reader left.
+it is a browser predicate the server never evaluates (a HIT carries it as a
+client reference, attached from the route definition), so the entry flag had
+no reader left.
 
 Pinned by `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` (settle,
 parity, a live hole, `rendered()` on replayed handles, the deadline, no

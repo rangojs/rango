@@ -2,65 +2,65 @@
 
 **Layer:** unit (node) · **Import:** `@rangojs/router/testing` · **DSL it tests:** `transition({ when })` (see `/view-transitions`) and `clientUrls()` `revalidate()` (see `/client-urls`)
 
-Both primitives are synchronous and run the router's own evaluation code on arguments you seed, so a predicate sees the same fields it sees at runtime. Neither renders anything: they answer "would this gate keep the transition?" and "would this `clientUrls()` loader re-run?".
+Both primitives are synchronous and run the router's own evaluation code on arguments you seed, so a predicate sees the same fields it sees at runtime. Neither renders anything: they answer "would this navigation hold?" and "would this `clientUrls()` loader re-run?". Both predicates run in the browser at runtime.
 
-## runTransitionWhen(config, opts?)
+## runTransitionWhen(when | config, opts?)
 
-Runs a `transition()` config through the production gate (`gateTransitions`, plus the PPR pre-handler evaluator when `ppr: true`) and reports whether the transition survives this request.
+Builds the `TransitionWhenContext` the browser builds and evaluates the predicate through the router's own browser code (`browser/transition-when.ts`): a throw counts as `false` and is logged with `console.error`, exactly as at navigation time. Accepts the predicate or a whole `transition()` config (a config without `when` always applies).
 
-### Options — `RunTransitionWhenOptions<TEnv>`
+### Options — `RunTransitionWhenOptions`
 
-Every field is optional. Omitted navigation fields model "source unavailable" (an initial document load); omitted `action*` fields model a plain navigation.
+Every field is optional. A location (`from` / `to`) is a URL string, a `URL`, or a partial `RouteLocation`: `{ url?, params?, routeName?, state? }`. A `state` given as location-state entries (`[Def(value)]`, what `Link` and `router.push` take) is stored the way a push stores it, so `Def.read(ctx.to)` reads it back; any other value is used as the raw `history.state`.
 
-| Field           | Type                     | Meaning                                                                                           |
-| --------------- | ------------------------ | ------------------------------------------------------------------------------------------------- |
-| `request`       | `Request \| string`      | Navigation TARGET (drives `nextUrl`). Defaults to `http://localhost/`.                            |
-| `params`        | `Record<string, string>` | Target params (`nextParams`).                                                                     |
-| `toRouteName`   | `string`                 | Target route name (`toRouteName`).                                                                |
-| `currentUrl`    | `string \| URL`          | Navigation SOURCE (`currentUrl`).                                                                 |
-| `currentParams` | `Record<string, string>` | Source params (`currentParams`).                                                                  |
-| `fromRouteName` | `string`                 | Source route name (`fromRouteName`).                                                              |
-| `actionId`      | `string`                 | Id of the action that triggered the render.                                                       |
-| `actionUrl`     | `string \| URL`          | URL the action was submitted from.                                                                |
-| `actionResult`  | `unknown`                | The action's return value.                                                                        |
-| `formData`      | `FormData`               | Form data from a form action.                                                                     |
-| `env`           | `TEnv`                   | Bindings surfaced as `env`.                                                                       |
-| `vars`          | `VarsInit`               | Values the predicate reads through `get()`. With `ppr`, these model pre-handler middleware state. |
-| `onError`       | `OnErrorCallback`        | Receives an error the predicate throws (the gate reports it with phase `"rendering"`).            |
-| `ppr`           | `boolean`                | Model a `ppr` route, where the predicate runs before route handlers and the cache lookup.         |
+| Field    | Type                                                              | Meaning                                                                                                                                                                       |
+| -------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`   | `"push" \| "replace" \| "pop" \| "action" \| "revalidate"`        | Defaults to `"action"` when `action` is given, `"push"` otherwise.                                                                                                            |
+| `from`   | location                                                          | The committed location being left. Defaults to `http://localhost/`.                                                                                                           |
+| `to`     | location                                                          | The destination. Defaults to `from`; always `from` for `"action"` and `"revalidate"`.                                                                                         |
+| `action` | imported action \| `string` \| `{ ref, formData, result, error }` | The triggering action (`isAction()` matches it; `action.id` is its id). Like `runClientRevalidate`, an imported action outside a built app needs its id passed as the string. |
 
-### Returns — `RunTransitionWhenResult<TEnv>`
+### Returns — `RunTransitionWhenResult`
 
-| Field         | Type                                 | Meaning                                                                                         |
-| ------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `kept`        | `boolean`                            | True when the transition applies (the predicate did not return `false`, or there is no `when`). |
-| `dropped`     | `boolean`                            | `!kept`.                                                                                        |
-| `whenContext` | `TransitionWhenContext \| undefined` | The context the predicate received; `undefined` when the config has no `when`.                  |
-| `ctx`         | `RequestContext<TEnv>`               | The underlying request context, for extra assertions.                                           |
+| Field      | Type                    | Meaning                                                                              |
+| ---------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `applied`  | `boolean`               | True when the navigation holds (the predicate returned true, or there is no `when`). |
+| `gatedOff` | `boolean`               | `!applied`: the navigation commits urgently with no view transition.                 |
+| `context`  | `TransitionWhenContext` | The context the predicate received.                                                  |
 
 ### Recipe
 
 ```ts
 import { it, expect } from "vitest";
-import { runTransitionWhen } from "@rangojs/router/testing";
-import type { TransitionConfig } from "@rangojs/router";
+import {
+  runTransitionWhen,
+  withLocationStateKey,
+} from "@rangojs/router/testing";
+import { slideWhen } from "../src/transitions.js"; // a "use client" module
+import { Slide } from "../src/location-states.js";
 
-const slide: TransitionConfig = {
-  when: (c) => c.fromRouteName === "products",
-};
+withLocationStateKey(Slide, "Slide");
 
-it("animates only when coming from the product list", () => {
+it("animates unless the Link pushed { animate: false }", () => {
   expect(
-    runTransitionWhen(slide, {
-      request: "/products/1",
-      fromRouteName: "products",
-    }).kept,
+    runTransitionWhen(slideWhen, {
+      from: { url: "/photos/1", params: { id: "1" }, routeName: "photo" },
+      to: { url: "/photos/2", params: { id: "2" }, routeName: "photo" },
+    }).applied,
   ).toBe(true);
-  expect(runTransitionWhen(slide, { request: "/products/1" }).dropped).toBe(
-    true,
-  );
+
+  const { gatedOff, context } = runTransitionWhen(slideWhen, {
+    from: "/photos/1",
+    to: { url: "/photos/2", state: [Slide({ animate: false })] },
+  });
+  expect(Slide.read(context.to)).toEqual({ animate: false });
+  expect(gatedOff).toBe(true);
 });
 ```
+
+### Known limits (Vitest)
+
+- A Vitest project runs neither the Vite plugin's hoist nor its validation. An inline `when` in a `urls()` file stays a plain function there, and a `"use client"` import is the plain function outside the RSC graph, so a server function is not told apart and is accepted. The loud error for an invalid `when` belongs to dev startup, the build and HMR.
+- `renderRoute` decides each commit with production's decision code: `router.navigate()` (and `useRouter().push/replace`, `<Link>`) as `kind: "push"` / `"replace"`, `router.refresh()` as `kind: "revalidate"`, and `navigate(url, { transition: false })` without calling the predicate. Pop, action and `clientUrls()` optimistic-swap decisions are e2e territory.
 
 ## runClientRevalidate(fn | fn[], opts?)
 
@@ -111,7 +111,7 @@ it("revalidates only when the tab changes", () => {
 ## Caveats
 
 - Server-tree `revalidate()` predicates have no dedicated primitive: they are plain functions, so call them with a hand-built args object, or assert the post-action result at e2e.
-- `runTransitionWhen` proves the GATE decision only. Whether the browser actually runs a view transition is e2e territory (see `./e2e-parity.md`).
+- `runTransitionWhen` proves the decision only. Whether the browser actually runs a view transition is e2e territory (see `./e2e-parity.md`).
 - Both are synchronous; a predicate returning a Promise is a bug in the predicate, not something to await here.
 
 ## See also

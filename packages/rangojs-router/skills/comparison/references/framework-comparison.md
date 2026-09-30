@@ -489,7 +489,7 @@ layout(<ShopLayout />, () => [
     "@modal",
     "product.detail",
     ProductQuickView,
-    { when: ({ from }) => from.pathname === "/products" },
+    { when: ({ from }) => from.url.pathname === "/products" },
     () => [
       loader(ProductLoader),
       loading(<QuickViewSkeleton />),

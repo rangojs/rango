@@ -2,6 +2,7 @@ import type {
   ServerActionBridge,
   ServerActionBridgeConfig,
   RscPayload,
+  ResolvedSegment,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { enterActionFence, exitActionFence } from "./action-fence.js";
@@ -38,6 +39,11 @@ import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { getAppVersion } from "./app-version.js";
 import { collectClientRevalidationDecisions } from "../client-urls/navigation.js";
+import {
+  decideCommitGatedOff,
+  findActionFormData,
+  type TransitionWhenActionInput,
+} from "./transition-when.js";
 import { CLIENT_REVALIDATION_HEADER } from "../client-urls/revalidation-protocol.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
@@ -138,6 +144,20 @@ export function createServerActionBridge(
   });
 
   /**
+   * transition({ when }) for an action commit: the location on screen,
+   * refreshed by the response's params and route name when it carries them.
+   */
+  const decideActionGatedOff = (
+    segments: readonly ResolvedSegment[],
+    metadata: RscPayload["metadata"] | undefined,
+    action: TransitionWhenActionInput,
+  ): boolean =>
+    decideCommitGatedOff(store, segments, "action", {
+      from: metadata,
+      action,
+    });
+
+  /**
    * Refetch current route via a navigation transaction.
    * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
    * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
@@ -146,6 +166,8 @@ export function createServerActionBridge(
     segments?: string[];
     interceptSourceUrl?: string | null;
     actionId?: string;
+    /** transition({ when }) `action` fields for the refetch commit. */
+    action?: TransitionWhenActionInput;
   }): Promise<void> {
     const src = opts?.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
@@ -169,6 +191,7 @@ export function createServerActionBridge(
           type: "action" as const,
           ...(src ? { interceptSourceUrl: src } : {}),
           ...(opts?.actionId !== undefined ? { actionId: opts.actionId } : {}),
+          ...(opts?.action ? { action: opts.action } : {}),
         },
       );
     } finally {
@@ -560,8 +583,22 @@ export function createServerActionBridge(
         // Reconcile error segments with cached tree
         const errorResult = reconcileErrorSegments(cachedSegments, segments);
 
+        // transition({ when }) decides the error-boundary commit too, with
+        // `action.error` set.
+        const errorGatedOff = decideActionGatedOff(
+          errorResult.segments,
+          metadata,
+          {
+            id,
+            formData: findActionFormData(args),
+            error:
+              returnValue && !returnValue.ok ? returnValue.data : undefined,
+          },
+        );
+
         // Render the full tree with error segment merged with parent layouts
         const errorTree = await renderSegments(errorResult.mainSegments, {
+          transitionGatedOff: errorGatedOff,
           isAction: true,
           interceptSegments:
             errorResult.interceptSegments.length > 0
@@ -605,11 +642,13 @@ export function createServerActionBridge(
           errorResult.segments,
           currentHandleData,
         );
+        store.rememberDisplayedEntry();
 
-        // Update UI with error boundary
-        startTransition(() => {
-          onUpdate({ root: errorTree, metadata: metadata! });
-        });
+        // Update UI with error boundary: urgent when transition({ when })
+        // gated it off, like every gated-off commit.
+        const errorUpdate = { root: errorTree, metadata: metadata! };
+        if (errorGatedOff) onUpdate(errorUpdate);
+        else startTransition(() => onUpdate(errorUpdate));
 
         // Throw the error so the action promise rejects
         if (returnValue && !returnValue.ok) {
@@ -697,6 +736,13 @@ export function createServerActionBridge(
       if (scenario.type !== "navigated-away") {
         applyActionLocationState(handle, metadata?.locationState);
       }
+      // transition({ when }) `action` for this action's commit, whichever
+      // lane applies it (normal, or a refetch below).
+      const whenAction: TransitionWhenActionInput = {
+        id,
+        formData: findActionFormData(args),
+        result: returnData,
+      };
 
       switch (scenario.type) {
         case "navigated-away": {
@@ -712,13 +758,15 @@ export function createServerActionBridge(
             // Invalidation is deferred to finalizeAction(); here we only trigger
             // the revalidation refetch of the new route (suppressed on keep).
             if (!scenario.onInterceptRoute && !keepCache) {
-              refetchRoute({ actionId: id }).catch((error) => {
-                if (isBackgroundSuppressible(error)) return;
-                console.error(
-                  "[Browser] Background revalidation failed:",
-                  error,
-                );
-              });
+              refetchRoute({ actionId: id, action: whenAction }).catch(
+                (error) => {
+                  if (isBackgroundSuppressible(error)) return;
+                  console.error(
+                    "[Browser] Background revalidation failed:",
+                    error,
+                  );
+                },
+              );
             }
             break;
           }
@@ -730,6 +778,7 @@ export function createServerActionBridge(
             await refetchRoute({
               interceptSourceUrl: store.getInterceptSourceUrl(),
               actionId: id,
+              action: whenAction,
             });
           }
           break;
@@ -743,7 +792,11 @@ export function createServerActionBridge(
           // resolving last must discharge a directive-free sibling's repair.
           // See the keep row in docs/design/rango-state-cookie.md (the all-keep
           // edge, and the benign re-mark-stale-after-refetch end-state delta).
-          await refetchRoute({ interceptSourceUrl, actionId: id });
+          await refetchRoute({
+            interceptSourceUrl,
+            actionId: id,
+            action: whenAction,
+          });
           break;
         }
 
@@ -766,6 +819,7 @@ export function createServerActionBridge(
             segments: segmentsToSend,
             interceptSourceUrl,
             actionId: id,
+            action: whenAction,
           });
           break;
         }
@@ -791,8 +845,22 @@ export function createServerActionBridge(
         }
 
         case "normal": {
+          // transition({ when }) for the action commit (kind "action"): the
+          // page does not move, so `to` is `from`. False commits urgently (a
+          // re-suspending segment streams its loading()) and switches every
+          // <ViewTransition> class to "none"; true keeps the startTransition.
+          // This commit runs after awaits, outside the transition React opens
+          // for a form action / useActionState call, so React does not force
+          // a transition on it. The tree shape never changes, so
+          // useActionState and other client state survive (#995).
+          const gatedOff = decideActionGatedOff(
+            fullSegments,
+            metadata,
+            whenAction,
+          );
           // Prepare new tree (await loader data resolution)
           const newTree = await renderSegments(reconciled.mainSegments, {
+            transitionGatedOff: gatedOff,
             isAction: true,
             interceptSegments:
               reconciled.interceptSegments.length > 0
@@ -832,10 +900,11 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
+          store.rememberDisplayedEntry(metadata?.routeName);
 
-          startTransition(() => {
-            onUpdate({ root: newTree, metadata: metadata! });
-          });
+          const actionUpdate = { root: newTree, metadata: metadata! };
+          if (gatedOff) onUpdate(actionUpdate);
+          else startTransition(() => onUpdate(actionUpdate));
           // Invalidation deferred to finalizeAction() (runs after this caches
           // the fresh segments), suppressed when the action called
           // keepClientCache().

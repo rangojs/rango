@@ -516,7 +516,7 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
       }),
       intercept("@modal", ".interceptTarget", InterceptedModal, {
         when: ({ from }) =>
-          from.pathname.startsWith("/handler-use/intercept-source"),
+          from.url.pathname.startsWith("/handler-use/intercept-source"),
       }),
     ]),
   ]),

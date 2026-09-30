@@ -24,6 +24,14 @@ import type { DiscoveryState } from "./state.js";
  */
 const MANIFEST_EXTERNALIZE_THRESHOLD = 512 * 1024;
 
+/**
+ * Strict transition({ when }) validation for the app's RSC realm: under the
+ * plugin a "use client" import is a client reference, so the render-time
+ * backstop (rsc/attach-transition-when.ts) can reject a server function. Off
+ * by default in the router, where unit-test projects cannot tell them apart.
+ */
+const TRANSITION_WHEN_VALIDATION = `enableTransitionWhenValidation();`;
+
 function devDiscoveryBootstrap(state: DiscoveryState): string[] {
   if (
     state.isBuildMode ||
@@ -80,6 +88,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     }
 
     const serverImports = [
+      "enableTransitionWhenValidation",
       "setCachedManifest",
       "setRouterManifest",
       ...(state.isBuildMode ? ["registerRouterManifestLoader"] : []),
@@ -97,6 +106,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       // because it's not in the HMR invalidation chain. Without this clear, the
       // handler finds stale trie data and never rebuilds from updated urlpatterns.
       `clearAllRouterData();`,
+      TRANSITION_WHEN_VALIDATION,
     ];
 
     if (hasClientUrlModules) {
@@ -182,12 +192,12 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     return lines.join("\n");
   }
 
-  const lines: string[] = [];
+  const lines: string[] = [
+    `import { ${hasClientUrlModules ? "clearClientUrlProjections, " : ""}enableTransitionWhenValidation } from "@rangojs/router/server";`,
+    TRANSITION_WHEN_VALIDATION,
+  ];
   if (hasClientUrlModules) {
-    lines.push(
-      `import { clearClientUrlProjections } from "@rangojs/router/server";`,
-      `clearClientUrlProjections();`,
-    );
+    lines.push(`clearClientUrlProjections();`);
   }
   if (!state.isBuildMode) {
     const origin =
@@ -201,7 +211,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     }
   }
   lines.push(...devDiscoveryBootstrap(state));
-  return lines.join("\n") || `// Route manifest will be populated at runtime`;
+  return lines.join("\n");
 }
 
 /**

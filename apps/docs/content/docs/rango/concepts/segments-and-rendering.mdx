@@ -47,8 +47,8 @@ Declaring `transition()` on a layout or route in the matched chain changes this.
 
 Three details worth knowing:
 
-- Without a `when` gate, whether a route sits in a transition scope is a **static property of its position in the tree** — it declares `transition()` or it doesn't. Its identity is therefore the same on SSR, navigation, and action renders.
-- A `transition({ when })` gate is evaluated per request and can drop the transition for that render. The param-agnostic identity is set when the route first mounts, so a gate that returns `false` on the initial full load makes every later same-route navigation remount. Write gates that hold when there is no navigation source. See [View Transitions](/docs/rango/guides/view-transitions#conditional-transitions-with-when).
+- Whether a route sits in a transition scope is a **static property of its position in the tree**: it declares `transition()` or it doesn't. Its identity is therefore the same on SSR, navigation, and action renders.
+- A `transition({ when })` predicate never changes that identity. It runs in the browser per navigation, and a `false` only makes that commit urgent and sets the `<ViewTransition>` classes to `"none"`, so a route whose predicate flips between navigations never remounts. See [View Transitions](/docs/rango/guides/view-transitions#conditional-transitions-with-when).
 - Error and not-found boundaries always keep param-bearing identity, so they reset across param changes even inside a transition scope.
 
 ## What a partial update replaces

@@ -1711,7 +1711,6 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     const readHit = async (): Promise<{
       counters: {
         middleware: number;
-        transitionWhen: number;
         layout: number;
         parallel: number;
         path: number;
@@ -1739,8 +1738,11 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
 
     // Live layers: exactly one execution per HIT.
     expect(second.counters.middleware).toBe(first.middleware + 1);
-    expect(second.counters.transitionWhen).toBe(first.transitionWhen + 1);
     expect(second.counters.loader).toBe(first.loader + 1);
+    // transition({ when }) is a browser predicate: the HIT carries it as a
+    // client reference (its export name rides in the Flight import row),
+    // never a server decision.
+    expect(second.html).toContain("shellExecWhen");
 
     // Handler layers: replayed from the captured record — frozen across HITs.
     expect(second.counters.path).toBe(first.path);
@@ -1794,14 +1796,13 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     const second = await navigateFromFreshDocument();
 
     expect(second.middleware).toBe(first.middleware + 1);
-    expect(second.transitionWhen).toBe(first.transitionWhen + 1);
     expect(second.loader).toBe(first.loader + 1);
     expect(second.path).toBe(first.path);
     expect(second.layout).toBe(first.layout);
     expect(second.parallel).toBe(first.parallel);
   });
 
-  test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({
+  test("a PPR replay navigation is decided in the browser: ?transition=drop gates it off", async ({
     page,
   }) => {
     const target = f.url("/shell-cache/exec-matrix?transition=drop");
@@ -1822,6 +1823,19 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-exec-chrome")).toHaveText(
       "Exec matrix static chrome",
     );
+    const decisions = await page.evaluate(() =>
+      (
+        (window as unknown as { __txWhenLog?: Array<Record<string, unknown>> })
+          .__txWhenLog ?? []
+      ).filter((entry) => entry.name === "shellExec"),
+    );
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        kind: "push",
+        to: "/shell-cache/exec-matrix?transition=drop",
+        result: false,
+      }),
+    ]);
   });
 
   test("a navigation replay keeps the client's list when revalidate() returns false on a route with transition({ when }) (#986)", async ({

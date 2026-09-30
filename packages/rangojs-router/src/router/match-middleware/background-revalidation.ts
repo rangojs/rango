@@ -135,10 +135,6 @@ import {
  *     cache-scope.ts), so a swap sent live pushes into this render.
  *     setupLoaderAccess binds the store at setup, so it runs inside the
  *     derived context too.
- *   - _transitionWhen: fresh resolution appends transition({ when })
- *     predicates; the foreground's gateTransitions reads the array after the
- *     match, and a stale HIT (which replays the stored transition) must not
- *     evaluate this render's predicates.
  *   - _metricsStore: undefined, and the DSL store below has `metrics` unset
  *     (track() reads that one), so nothing lands on the foreground's perf
  *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
@@ -174,7 +170,6 @@ export async function rerenderAndCacheRoute<TEnv>(
     }),
     {
       _handleStore: handleStore,
-      _transitionWhen: [],
       _metricsStore: undefined,
       _onResponseCallbacks: [],
       header: sink.header,

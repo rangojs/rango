@@ -64,6 +64,8 @@ function latchPprHeaderScopeForInterceptTarget(
  * Check if an intercept's when conditions are satisfied.
  * All when() functions must return true for the intercept to activate.
  * If no when() conditions are defined, the intercept always activates.
+ * A selector that throws yields the conservative default, no intercept (the
+ * full page renders), and is logged; it never fails the request.
  *
  * During action revalidation, when() is NOT evaluated.
  */
@@ -84,7 +86,15 @@ export function evaluateInterceptWhen(
     return false;
   }
 
-  return intercept.when.every((fn) => fn(selectorContext));
+  try {
+    return intercept.when.every((fn) => fn(selectorContext));
+  } catch (error) {
+    console.error(
+      `[rango] intercept({ when }) for route "${selectorContext.to.routeName ?? intercept.routeName}" (${intercept.slotName}) threw; rendering the full page without the intercept.`,
+      error,
+    );
+    return false;
+  }
 }
 
 /**

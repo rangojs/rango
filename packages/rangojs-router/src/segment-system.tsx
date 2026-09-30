@@ -126,6 +126,14 @@ export interface RenderSegmentsOptions {
   outletPending?: boolean;
 
   /**
+   * This commit's transition({ when }) decision was false
+   * (browser/transition-when.ts): the navigation is urgent, so no segment
+   * animates. Every router <ViewTransition> stays in the tree with each class
+   * "none", so the element type never changes; keys never read this (#995).
+   */
+  transitionGatedOff?: boolean;
+
+  /**
    * Intercept segments to inject into the tree.
    * These are parallel segments from intercept routes that need to be
    * associated with their parent layout's named outlet.
@@ -143,13 +151,31 @@ export interface RenderSegmentsOptions {
   rootLayout?: ComponentType<RootLayoutProps>;
 }
 
+/**
+ * On a gated-off commit every segment keeps its <ViewTransition> so the
+ * element type never changes with a per-navigation `transition({ when })`
+ * decision (#995), but animates nothing: "none" for every class, whatever the
+ * transition type.
+ */
+const GATED_OFF_CLASSES = {
+  enter: "none",
+  exit: "none",
+  update: "none",
+  share: "none",
+  default: "none",
+} as const;
+
 function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
 ): ReactNode {
-  // `viewTransition` is a router-specific flag (boundary opt-out), not a React
-  // <ViewTransition> prop — strip it so it never reaches React.
-  const { viewTransition: _viewTransition, ...vtProps } = transition;
+  // `viewTransition` (boundary opt-out) and `when` (the browser-run gate) are
+  // router fields, not React <ViewTransition> props — strip them.
+  const {
+    viewTransition: _viewTransition,
+    when: _when,
+    ...vtProps
+  } = transition;
   return createElement(ReactViewTransition, {
     ...vtProps,
     // The commit after an optimistic clientUrls() presentation repaints the
@@ -306,6 +332,7 @@ export async function renderSegments(
     forceAwait,
     outletPending = false,
     rootLayout: RootLayout,
+    transitionGatedOff,
   } = options || {};
 
   const segDebug = INTERNAL_RANGO_DEBUG;
@@ -358,8 +385,11 @@ export async function renderSegments(
   // same-route navigation reconciles (holds content) instead of remounting. The
   // value is a static property of the route's position in the tree, so it is the
   // same on every render of that route (SSR, navigation, action) — the keys
-  // never drift. Cross-route navigation still remounts: different routes have
-  // different segment ids regardless of transition scope.
+  // never drift. It reads the static `transition` config only, never the
+  // per-navigation `when` decision (transitionGatedOff): a server-side `when`
+  // used to delete `transition`, which flipped this value and remounted the
+  // route twice (#995). Cross-route navigation still remounts: different routes
+  // have different segment ids regardless of transition scope.
   const inTransitionScope = normalizedSegments.some(
     (s) =>
       s.transition != null &&
@@ -522,10 +552,13 @@ export async function renderSegments(
       transition &&
       transition.viewTransition !== false
     ) {
+      const boundary = transitionGatedOff
+        ? { ...transition, ...GATED_OFF_CLASSES }
+        : transition;
       if (node.segment.type === "layout") {
-        outletContent = wrapDefaultOutletContent(outletContent, transition);
+        outletContent = wrapDefaultOutletContent(outletContent, boundary);
       } else {
-        nodeContent = createViewTransitionBoundary(transition, nodeContent);
+        nodeContent = createViewTransitionBoundary(boundary, nodeContent);
       }
     }
 

@@ -14,6 +14,7 @@ import {
   setRouterPrecomputedEntries,
 } from "../route-map-builder.js";
 import { mergeFullManifests } from "../build/merge-full-manifests.js";
+import { isTransitionWhenValidationEnabled } from "../transition-when-ref.js";
 
 /**
  * Build a fresh route trie from the router's URL-pattern mounts and store it in
@@ -49,6 +50,9 @@ export async function buildRouterTrieFromUrlpatterns(
       await generateManifestFull(mount.patterns, mount.mountIndex, {
         routerId: router.id,
         ...(router.basename ? { urlPrefix: router.basename } : {}),
+        // Under the Vite plugin the realm validates like discovery does, so
+        // a Cloudflare dev rebuild fails on an invalid when too.
+        validateTransitionWhen: isTransitionWhenValidationEnabled(),
       }),
     );
   }

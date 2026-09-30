@@ -10,6 +10,7 @@ import {
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { useCacheTransform } from "./plugins/use-cache-transform.js";
+import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
 import { clientRefDedup } from "./plugins/client-ref-dedup.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
@@ -563,6 +564,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   });
 
   plugins.push(createLoaderDirectiveGuardPlugin());
+  plugins.push(transitionWhenHoistPlugin());
   plugins.push(createLoaderScanStubPlugin());
   plugins.push(exposeActionId());
   plugins.push(

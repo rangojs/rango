@@ -47,6 +47,7 @@ import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
+import { interceptWhenShapePatterns } from "./urls/intercept-when-shape.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
@@ -816,7 +817,7 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        { when: ({ from }) => shouldInterceptProduct(from.pathname) },
+        { when: ({ from }) => shouldInterceptProduct(from.url.pathname) },
         () => [loader(ProductDetailLoader), loader(CartQuantityLoader)],
       ),
 
@@ -1093,6 +1094,11 @@ export const urlpatterns = urls(
       // Pre-render + intercept test patterns
       include("/prerender-intercept", prerenderInterceptPatterns, {
         name: "prerenderIntercept",
+      }),
+
+      // intercept() when selector: { from, to } locations
+      include("/intercept-when-shape", interceptWhenShapePatterns, {
+        name: "interceptWhenShape",
       }),
 
       // Transform coverage patterns (alias imports + export specifiers)

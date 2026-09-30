@@ -795,8 +795,8 @@ At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
   intercept-resolution middleware runs live. This handles `when` config conditions
   that prevented pre-rendering.
 
-The `when` config selector receives an `InterceptSelectorContext` with `from.pathname`
-which is unknown at build time. All intercepts are pre-rendered unconditionally;
+The `when` config selector receives an `InterceptSelectorContext` whose `from`
+location (the page being left) is unknown at build time. All intercepts are pre-rendered unconditionally;
 `when` is evaluated at runtime by the intercept-resolution middleware.
 
 ### Example: Pre-rendered route with intercept
@@ -820,7 +820,7 @@ layout(ShopLayout, () => [
     "@modal",
     ".detail",
     <ProductModal />,
-    { when: ({ from }) => from.pathname === "/shop" },
+    { when: ({ from }) => from.url.pathname === "/shop" },
     () => [loader(ProductLoader)],
   ),
 ])

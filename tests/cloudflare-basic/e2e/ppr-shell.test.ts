@@ -1414,7 +1414,6 @@ function describePprShell(mode: "dev" | "build") {
       const readHit = async (): Promise<{
         counters: {
           middleware: number;
-          transitionWhen: number;
           layout: number;
           parallel: number;
           path: number;
@@ -1445,8 +1444,11 @@ function describePprShell(mode: "dev" | "build") {
 
       // Live layers: exactly one execution per HIT.
       expect(second.counters.middleware).toBe(first.middleware + 1);
-      expect(second.counters.transitionWhen).toBe(first.transitionWhen + 1);
       expect(second.counters.loader).toBe(first.loader + 1);
+      // transition({ when }) is a browser predicate: the HIT carries it as a
+      // client reference (its export name rides in the Flight import row),
+      // never a server decision.
+      expect(second.html).toContain("pprExecWhen");
 
       // Handler layers: replayed from the captured record — frozen across HITs.
       expect(second.counters.path).toBe(first.path);
@@ -1491,20 +1493,44 @@ function describePprShell(mode: "dev" | "build") {
         await expect(testId(page, "ppr-exec-chrome")).toHaveText(
           "Exec matrix static chrome",
         );
-        return JSON.parse(
+        const counters = JSON.parse(
           (await testId(page, "ppr-exec-counters").textContent())!,
         ) as PprExecCounters;
+        // transition({ when }) decided this navigation in the browser, once,
+        // and read the middleware's location state from `to.state`: state a
+        // live middleware sets reaches the predicate on a replay HIT.
+        const log = await page.evaluate(
+          () =>
+            (window as unknown as { __txWhenLog?: unknown[] }).__txWhenLog ??
+            [],
+        );
+        expect(log).toEqual([
+          expect.objectContaining({
+            name: "pprExec",
+            kind: "push",
+            from: "/",
+            to: "/ppr-shell/exec-matrix",
+            toMiddlewareMark: expect.any(Number),
+            result: true,
+          }),
+        ]);
+        return {
+          counters,
+          mark: (log[0] as { toMiddlewareMark: number }).toMiddlewareMark,
+        };
       };
 
       const first = await navigateFromFreshDocument();
       const second = await navigateFromFreshDocument();
 
-      expect(second.middleware).toBe(first.middleware + 1);
-      expect(second.transitionWhen).toBe(first.transitionWhen + 1);
-      expect(second.loader).toBe(first.loader + 1);
-      expect(second.path).toBe(first.path);
-      expect(second.layout).toBe(first.layout);
-      expect(second.parallel).toBe(first.parallel);
+      expect(second.counters.middleware).toBe(first.counters.middleware + 1);
+      expect(second.counters.loader).toBe(first.counters.loader + 1);
+      expect(second.counters.path).toBe(first.counters.path);
+      expect(second.counters.layout).toBe(first.counters.layout);
+      expect(second.counters.parallel).toBe(first.counters.parallel);
+      // The mark comes from this navigation's live middleware run, not a
+      // captured value: it advances with every navigation.
+      expect(second.mark).toBeGreaterThan(first.mark);
     });
 
     test("a cold partial request captures a PPR snapshot for a later prefetch", async ({
@@ -1751,7 +1777,7 @@ function describePprShell(mode: "dev" | "build") {
       expect(await probe.text()).not.toContain("__rangoFragment");
     });
 
-    test("partial PPR replay applies a fresh transition({ when }) drop decision", async ({
+    test("partial PPR replay applies the browser's transition({ when }) drop decision", async ({
       page,
     }) => {
       const target = f.url("/ppr-shell/exec-matrix?transition=drop");
@@ -1771,6 +1797,19 @@ function describePprShell(mode: "dev" | "build") {
       await expect(testId(page, "ppr-exec-chrome")).toHaveText(
         "Exec matrix static chrome",
       );
+      expect(
+        await page.evaluate(
+          () =>
+            (window as unknown as { __txWhenLog?: unknown[] }).__txWhenLog ??
+            [],
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          name: "pprExec",
+          to: "/ppr-shell/exec-matrix?transition=drop",
+          result: false,
+        }),
+      ]);
     });
 
     test("a navigation replay keeps the client's list when revalidate() returns false on a route with transition({ when }) (#986)", async ({

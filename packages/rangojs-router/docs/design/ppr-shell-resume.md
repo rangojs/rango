@@ -635,8 +635,7 @@ to re-run handlers ("fast path declined") whenever the capture saw
 handler-layer liveness (`ShellCacheEntry.handlerLiveHoles`: a nested promise
 in a handler handle push, a handler push still pending at the barrier, a
 handler-invoked loader), the legacy `ShellCacheEntry.transitionWhen` flag
-(dead by then: PPR routes evaluate `transition({ when })` from the manifest
-before handlers), a route `cache()` scope whose explicit tier missed,
+(dead by then; `transition({ when })` now runs only in the browser), a route `cache()` scope whose explicit tier missed,
 bypassed, or had a custom `key()`, a store `keyGenerator`, a build-time
 capture, or a corrupt doc record. Each of those ran handlers behind a
 committed prelude and needed item/response pins so the re-run matched it, and

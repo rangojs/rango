@@ -303,7 +303,7 @@ The main content always goes through `<Outlet />` via the `path()` handler.
 layout(<ShopLayout />, () => [
   path("/product/:id", ProductPage, { name: "product" }),
   intercept("@modal", ".product", <ProductModal />, {
-    when: ({ from }) => from.pathname.startsWith("/shop"),
+    when: ({ from }) => from.url.pathname.startsWith("/shop"),
   }),
 ])
 ```

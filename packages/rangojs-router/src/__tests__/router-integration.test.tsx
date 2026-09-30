@@ -319,7 +319,7 @@ describe("route tree inspection", () => {
   });
 
   it("detects intercept with when() condition", () => {
-    const whenFn = (ctx: any) => ctx.from.pathname.startsWith("/products");
+    const whenFn = (ctx: any) => ctx.from.url.pathname.startsWith("/products");
 
     const tree = buildRouteTree(
       urls(({ path, layout, intercept }) => [
@@ -1617,7 +1617,8 @@ describe("route tree inspection", () => {
                   ".item.detail",
                   ModalView,
                   {
-                    when: (ctx: any) => ctx.from.pathname.startsWith("/items"),
+                    when: (ctx: any) =>
+                      ctx.from.url.pathname.startsWith("/items"),
                   },
                   () => [loader(DetailLoader)],
                 ),

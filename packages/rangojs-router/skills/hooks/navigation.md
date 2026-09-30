@@ -67,9 +67,10 @@ function NavigationControls() {
 | `forward()`              | `history.forward()`.                                                                                            |
 
 `push` / `replace` options: `scroll` (`false` keeps the current scroll
-position), `revalidate` (default `true`, see below), and `state` (location
-state: `[MyState(value)]` for typed entries, or plain structured-clone-safe
-data; see [`./state.md`](./state.md)).
+position), `revalidate` (default `true`, see below), `transition` (`false`
+skips the route's `transition()` for this navigation, see below), and `state`
+(location state: `[MyState(value)]` for typed entries, or plain
+structured-clone-safe data; see [`./state.md`](./state.md)).
 
 Target resolution: a path starting with `/` is app-absolute and gets the
 router `basename` prefixed. A relative path (`"cart"`, `"./cart"`) resolves
@@ -95,6 +96,25 @@ If the pathname changes, `revalidate: false` is silently ignored and a full navi
 ```
 
 Plain `<a>` tags can opt in via `data-revalidate="false"`.
+
+#### Skipping the transition
+
+Pass `transition: false` to present one navigation without the route's
+`transition()`: the commit is urgent (the `loading()` skeleton streams) and no
+view transition runs, the same result as a `transition({ when })` predicate
+returning `false`. No predicate is called. Back/forward, actions and
+revalidation are unaffected.
+
+```tsx
+router.push("/photos/2", { transition: false });
+
+<Link to="/photos/2" transition={false}>
+  Next
+</Link>;
+```
+
+Plain `<a>` tags can opt in via `data-transition="false"`. See
+`/view-transitions` → "Conditional transitions".
 
 ### useSegments()
 

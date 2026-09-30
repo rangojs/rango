@@ -88,7 +88,7 @@ export function ModalWrapper() {
 
 ## Conditional intercepts with `when`
 
-`when` goes in a config object as the 4th argument; the use items then move to the 5th argument. It is a synchronous match-time selector that receives `from` and `to` (URLs), `fromRouteName` and `toRouteName` (named routes only), `params` (the target's), `segments` (the client's current segment path and ids), `request`, and `env`. Omit it and the intercept always activates. The config type is not exported; pass an object literal.
+`when` goes in a config object as the 4th argument; the use items then move to the 5th argument. It is a synchronous match-time selector that runs on the server. It receives `from` and `to` (the destination), each `{ url, params, routeName }`: the shape [`transition({ when })`](/docs/rango/guides/view-transitions#conditional-transitions-with-when) sees, without `state`, because history state never reaches the server. `from` is the page the navigation leaves, except while an intercept is open: then it is the intercept's source page, the page under the modal. Opening `/item/1` as a modal over `/list/open` and then navigating to `/item/2` from inside the modal gives `from.url.pathname === "/list/open"`, not `/item/1`; `transition({ when })`'s `from` is always the location on screen. `routeName` is set for named routes only. A selector that throws does not intercept: the full page renders and the error is logged with the route name. It also receives `segments` (the client's current segment path and ids), `request`, and `env`. Omit it and the intercept always activates. The config type is not exported; pass an object literal.
 
 ```tsx
 intercept(
@@ -96,13 +96,13 @@ intercept(
   "product",
   <ProductModal />,
   // Only intercept when coming from a different section
-  { when: ({ from }) => !from.pathname.startsWith("/shop/product/") },
+  { when: ({ from }) => !from.url.pathname.startsWith("/shop/product/") },
   () => [loader(ProductLoader)],
 );
 
 // Only intercept when opened from the shop index
 intercept("@modal", "product", <ProductModal />, {
-  when: ({ fromRouteName }) => fromRouteName === "index",
+  when: ({ from }) => from.routeName === "index",
 });
 ```
 
@@ -115,8 +115,8 @@ intercept(
   <ProductModal />,
   {
     when: [
-      ({ from }) => from.pathname.startsWith("/shop"),
-      ({ params }) => params.slug !== "featured",
+      ({ from }) => from.url.pathname.startsWith("/shop"),
+      ({ to }) => to.params.slug !== "featured",
     ],
   },
   () => [loader(ProductLoader)],

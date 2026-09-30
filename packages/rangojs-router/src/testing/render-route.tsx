@@ -30,6 +30,11 @@
  *     model is the held-navigation useLoader().isLoading: a `transition` spec
  *     plus a pending Promise seeded via navigate(url, { loaders }) commits
  *     through production's commitInTransition (browser/partial-update.ts).
+ *   - A spec's transition({ when }) decides every commit with production's
+ *     browser decision: navigate() and useRouter().push model kind "push",
+ *     useRouter().replace kind "replace", refresh() kind "revalidate".
+ *     Back/forward, action and optimistic clientUrls() swap decisions are
+ *     e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
@@ -42,6 +47,7 @@
  * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
+import { decideTransitionGatedOff } from "../browser/transition-when.js";
 import { useEffect, type ReactNode, type ComponentType } from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
@@ -69,7 +75,11 @@ import {
   buildParamsFromMatch,
 } from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
-import type { LoaderDefinition, TransitionConfig } from "../types.js";
+import type {
+  LoaderDefinition,
+  TransitionConfig,
+  TransitionWhenKind,
+} from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
@@ -342,11 +352,20 @@ export interface TestRouterHandle {
    * // reader: isLoading true, old data
    * await act(async () => resolve({ name: "Product 2" }));
    * // reader: isLoading false, new data
+   *
+   * `options.transition: false` is the per-navigation opt-out
+   * (`router.push(url, { transition: false })`, `<Link transition={false}>`):
+   * the commit is urgent and no transition({ when }) predicate is called.
    */
   navigate(
     url: string,
-    options?: Pick<RenderRouteOptions, "loaders">,
+    options?: Pick<RenderRouteOptions, "loaders"> & { transition?: boolean },
   ): Promise<void>;
+  /**
+   * Re-render the current location, as router.refresh() does: a spec's
+   * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
+   */
+  refresh(): Promise<void>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -603,7 +622,12 @@ export async function renderRoute(
   const navigate = async (
     target: string,
     navOptions?: Pick<RenderRouteOptions, "loaders"> & {
-      history?: Pick<NavigateOptionsInternal, "state" | "replace">;
+      history?: Pick<
+        NavigateOptionsInternal,
+        "state" | "replace" | "transition"
+      >;
+      kind?: TransitionWhenKind;
+      transition?: boolean;
     },
   ): Promise<void> => {
     // A useRouter().push/replace or <Link> navigation (`history`) writes its
@@ -645,8 +669,34 @@ export async function renderRoute(
       mount,
     );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
+    // Production's browser-run transition({ when }) decision
+    // (browser/partial-update.ts): the committed location is the source.
+    const kind: TransitionWhenKind =
+      navOptions?.kind ?? (history?.replace ? "replace" : "push");
+    // `transition: false` gates off without calling a predicate
+    // (navigation-bridge.ts navigate).
+    const transitionOptOut =
+      (navOptions?.transition ?? history?.transition) === false;
+    const gatedOff =
+      transitionOptOut ||
+      decideTransitionGatedOff(segments, () => ({
+        kind,
+        from: {
+          url: eventController.getLocation().href,
+          params: eventController.getParams(),
+          routeName: leaf.name,
+          state: window.history.state,
+        },
+        to: {
+          url: nextUrl,
+          params: match.params,
+          routeName: leaf.name,
+          state: historyState ?? null,
+        },
+      }));
     const root = await renderSegments(segments, {
       outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
     });
     eventController.setLocation(nextUrl);
     eventController.setParams(match.params);
@@ -668,7 +718,7 @@ export async function renderRoute(
       // Production's transition() lane (browser/partial-update.ts). Its
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.
-      if (shouldStartViewTransition(segments)) {
+      if (shouldStartViewTransition(segments, gatedOff)) {
         commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
       } else {
         emit({ root, metadata });
@@ -679,11 +729,16 @@ export async function renderRoute(
     });
   };
 
+  const refresh = (): Promise<void> => {
+    const current = new URL(eventController.getLocation().href);
+    return navigate(current.pathname + current.search, { kind: "revalidate" });
+  };
+
   let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target, navigateOptions) =>
       navigate(target, { history: navigateOptions ?? {} }),
-    refresh: () => navigate(url.pathname + url.search),
+    refresh: () => refresh(),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},
     registerDelegatedPrefetch: () =>
@@ -741,6 +796,7 @@ export async function renderRoute(
 
   const router: TestRouterHandle = {
     navigate,
+    refresh,
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,

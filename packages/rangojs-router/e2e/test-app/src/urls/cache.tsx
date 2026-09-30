@@ -566,7 +566,7 @@ export const cachePatterns = urls(
           const data = await ctx.use(InterceptCacheTestLoader);
           return <CacheTestModal data={data} testId="cache-test-modal" />;
         },
-        { when: ({ from }) => from.pathname === "/cache-test/intercept" },
+        { when: ({ from }) => from.url.pathname === "/cache-test/intercept" },
         () => [loader(InterceptCacheTestLoader)],
       ),
     ]),
@@ -594,7 +594,7 @@ export const cachePatterns = urls(
             testId="useloader-modal"
           />
         ),
-        { when: ({ from }) => from.pathname === "/cache-test/useloader" },
+        { when: ({ from }) => from.url.pathname === "/cache-test/useloader" },
         () => [loader(InterceptCacheTestLoader)],
       ),
     ]),

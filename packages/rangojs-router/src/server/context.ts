@@ -1,3 +1,4 @@
+import type { ServerRouteLocation } from "../types/segments.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
 import type {
@@ -164,20 +165,22 @@ export type InterceptSegmentsState = {
  * Context passed to intercept selector functions (when())
  * Contains navigation context to determine if interception should occur.
  *
+ * `from` / `to` have the shape transition({ when }) sees, without `state`:
+ * history state never reaches the server.
+ *
  * Note: when() is evaluated during route matching, BEFORE middleware runs.
  * So ctx.get()/ctx.use() are not available, but env (platform bindings) is.
  *
  * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSelectorContext<TEnv = any> = {
-  from: URL; // Source URL (where user is coming from)
-  to: URL; // Destination URL (where user is navigating to)
-  params: Record<string, string>; // Matched route params
+  /** Where the navigation comes from: the intercept source while one is open. */
+  from: ServerRouteLocation;
+  /** The navigation target. */
+  to: ServerRouteLocation;
   request: Request; // The HTTP request object
   env: TEnv; // Platform bindings (Cloudflare env, etc.)
   segments: InterceptSegmentsState; // Client's current segments (where navigating FROM)
-  fromRouteName?: DefaultRouteName; // Named route being navigated away from (undefined for unnamed routes)
-  toRouteName?: DefaultRouteName; // Named route being navigated to (undefined for unnamed routes)
 };
 
 /**

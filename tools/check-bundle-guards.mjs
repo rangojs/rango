@@ -78,7 +78,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // own document never renders it. Keeping it out would mean lazy-loading the
 // init out of browser/scroll-restoration.ts, whose module state the
 // navigation bridge shares; judged not worth a chunk request for ~0.35KB.
-const ROUTER_CHUNK_GZIP_MAX = 45 * 1024;
+//
+// Raised 45KB -> 46KB on 2026-09-30 (PR #1006), measured 45375B -> 46805B
+// (+1430B gzip). A deliberate call: transition({ when }) moved from the server
+// to the browser, so its decision runs in the router chunk — the per-history-
+// entry memory pop reads `from` from, the one decision helper and its five
+// commit sites (navigation, clientUrls() optimistic swap, pop, action,
+// revalidate), the RouteLocation/context builders and Def.read(location).
+// None of it can load lazily: the decision is made synchronously at commit.
+// Predicate modules themselves land in the entry chunk, not here.
+const ROUTER_CHUNK_GZIP_MAX = 46 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

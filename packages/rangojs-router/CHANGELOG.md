@@ -106,6 +106,111 @@ Migration:
 
 `getRequestContext().theme` has been guarded since 0.18.0 (#971).
 
+### Breaking: `transition({ when })` runs in the browser, with `{ kind, from, to, isAction, action }` ([#1006](https://github.com/rangojs/rango/pull/1006))
+
+`when` used to run on the server while the route resolved, so its decision
+was frozen into whatever response carried it: a prefetch decided against the
+page it fired from, not the page the click left (the prefetch caveat); a
+`cache()` or prerender hit replayed a stored decision; a layout the
+navigation kept never re-ran its `when` at all (#989). The decision also
+changed the rendered tree, so a same-route navigation that flipped
+`true -> false -> true` remounted the route and lost its component state
+(#995).
+
+`when` is now a browser predicate. It runs once per navigation, at the
+first commit that presents the destination, with the committed location
+being left (`from`) and the destination (`to`):
+
+```ts
+// Before: server-side, revalidate()-shaped args
+transition({ when: ({ currentParams }) => currentParams?.n !== "b" });
+transition({ when: (ctx) => ctx.get(KeepScroll) === true });
+
+// After: inline in urls() (the build hoists it into a client module)
+transition({ when: ({ from }) => from.params.n !== "b" });
+// ...or read location state the Link pushed
+transition({ when: ({ to }) => KeepScroll.read(to)?.keep === true });
+```
+
+- `from` / `to` are `{ url, params, routeName, state }`; `state` is the
+  entry's `history.state`, read with `Def.read(location)` (a new overload
+  that reads a snapshot and never clears flash state). `to` is `from` for
+  `kind: "action"` and `kind: "revalidate"`.
+- `kind` is `"push" | "replace" | "pop" | "action" | "revalidate"`;
+  `isAction()` is the `revalidate()` matcher, and `action` carries
+  `{ id, formData, result, error }` on action commits, the error-boundary
+  commit included.
+- The navigation holds only when every committed segment's `when` returns
+  true, kept or re-sent (#989). `false` commits urgently, for every kind
+  (navigations, actions, `refresh()` and stale revalidations): the
+  `loading()` skeleton streams, and every `<ViewTransition>` class is set to
+  `"none"` instead of removing the element, so nothing remounts (#995). A
+  throw counts as `false` and is logged with `console.error`.
+- `from.routeName` / `to.routeName` are typed from the generated route map
+  (`DefaultRouteName`) and are `undefined` for an unnamed route or a hidden
+  include scope; internal names never reach a predicate.
+- It never runs on the document load, on progressive-enhancement paths, or
+  on the server. A prefetch no longer decides anything.
+
+In `urls()`, `when` must reach the browser: write it inline (the Vite
+plugin hoists the literal passed to the router's `transition` into a
+`"use client"` module; a free server binding, a server-only import,
+`import()`, `import.meta` other than `import.meta.env`, or `this` /
+`arguments` of the enclosing function is a build error that names it), or export
+it from a `"use client"` module and import it. A server function or a
+non-function fails dev startup, the build and HMR re-discovery with the
+route name and pattern; a route discovered at runtime throws the same error
+at render. `clientUrls()` accepts `when` inline. Handler and middleware
+context (`get()`, `env`) does not exist in the browser: set location state
+from the handler, middleware or a `Link` and read it from `to.state`.
+Middleware-set location state reaches the predicate on a PPR replay HIT
+too.
+
+`runTransitionWhen(when, { kind, from, to, action })` from
+`@rangojs/router/testing` builds the same context and returns
+`{ applied, gatedOff, context }` (was `{ kept, dropped, whenContext, ctx }` over
+a request). `renderRoute` decides `navigate()` as `kind: "push"` and the new
+`router.refresh()` as `kind: "revalidate"`. In a Vitest project the hoist
+and the validation do not run: an inline `when` stays a plain function.
+
+### Breaking: `intercept({ when })` selectors read `from` / `to` locations ([#1006](https://github.com/rangojs/rango/pull/1006))
+
+An intercept selector now sees the same location shape as
+`transition({ when })`, without `state` (history state never reaches the
+server):
+
+```ts
+// Before
+intercept("@modal", ".product", ProductModal, {
+  when: ({ from, params }) =>
+    from.pathname === "/shop" && params.id !== "gift-card",
+});
+
+// After
+intercept("@modal", ".product", ProductModal, {
+  when: ({ from, to }) =>
+    from.url.pathname === "/shop" && to.params.id !== "gift-card",
+});
+```
+
+`from` and `to` are `{ url, params, routeName }` (`ServerRouteLocation`).
+`from` is the page the navigation leaves, or, while an intercept is open, the
+intercept's source page (the page under the modal), as `from` was before.
+`from.params` are the source route's params, which the selector could not
+read before; `fromRouteName` / `toRouteName` / the top-level `params` are
+gone in favor of `from.routeName`, `to.routeName` and `to.params`.
+`request`, `env` and `segments` are unchanged. A selector that throws no
+longer fails the request: it does not intercept (the full page renders) and
+the error is logged with `console.error` and the route name.
+
+### Added: `transition: false` on a single navigation ([#1006](https://github.com/rangojs/rango/pull/1006))
+
+`router.push(url, { transition: false })`, `router.replace(url, {
+transition: false })` and `<Link transition={false}>` present that one
+navigation the way a `when` returning `false` does: an urgent commit and no
+view transition. No `when` predicate is called. Back/forward, action and
+revalidation commits are not started by these calls and are unaffected.
+
 ### Breaking: a `"use cache"` entry carries the tags of the `"use cache"` functions it calls, so `updateTag()` of an inner tag evicts it ([#996](https://github.com/rangojs/rango/pull/996))
 
 A `"use cache"` function that called another stored the inner value in its

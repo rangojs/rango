@@ -34,6 +34,8 @@ export interface RscPayload {
     resolvedIds?: string[];
     /** Merged route params from the matched route */
     params?: Record<string, string>;
+    /** Matched route name, when named (transition({ when }) route names). */
+    routeName?: string;
     slots?: Record<string, SlotState>;
     /**
      * Intercept TARGET route names reachable from this location as a

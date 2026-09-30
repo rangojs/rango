@@ -125,8 +125,9 @@ export function ClientUrlsRoot({
   const mount = useMount();
   const [intent, setIntent] = useState<ClientUrlNavigationIntent | null>(null);
   useEffect(
-    () => registerClientUrlGroup(definition, mount, namePrefix, setIntent),
-    [definition, mount, namePrefix],
+    () =>
+      registerClientUrlGroup(definition, mount, namePrefix, setIntent, routeId),
+    [definition, mount, namePrefix, routeId],
   );
 
   // Optimistic destination (design: docs/design/client-urls-optimistic-destination.md).
@@ -136,9 +137,12 @@ export function ClientUrlsRoot({
   // own keeps the previous content visible (React's transition hold — the
   // pre-existing contract for routes without loading()), one with loading()
   // or inline <Suspense> at its reads presents immediately. Same-route intents
-  // never swap: held data + transition() own that case.
+  // never swap: held data + transition() own that case. A navigation its
+  // transition({ when }) gated off at the swap presents urgently: no hold,
+  // no view transition, the destination's loading() streams.
   const pending = intent !== null;
-  const presented = useDeferredValue(intent);
+  const deferred = useDeferredValue(intent);
+  const presented = intent?.transitionGatedOff ? intent : deferred;
   const optimisticRoute =
     presented && presented.routeId !== routeId
       ? findRoute(definition, presented.routeId)

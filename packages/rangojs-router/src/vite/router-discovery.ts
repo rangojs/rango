@@ -65,6 +65,8 @@ import {
 } from "./discovery/client-urls-projection.js";
 import { runShellPrerenderPhase } from "./discovery/shell-prerender-phase.js";
 import { describeDiscoveryFailure } from "./discovery/discovery-errors.js";
+import { findTransitionWhenError } from "../transition-when-ref.js";
+import { transitionWhenHoistPlugin } from "./plugins/transition-when-hoist.js";
 import {
   createDevPrerenderCache,
   devPrerenderCacheKey,
@@ -286,6 +288,9 @@ export async function createTempRscServer(
         : []),
       createVirtualStubPlugin(),
       createCloudflareProtocolStubPlugin(),
+      // Inline transition({ when }) literals become client references here
+      // too, or discovery would see (and reject) the plain function.
+      transitionWhenHoistPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
@@ -443,6 +448,37 @@ export function createRouterDiscoveryPlugin(
   let viteCommand: "serve" | "build" = "build";
   let viteMode = "production";
 
+  // Dev: an invalid transition({ when }) is a definition error the user must
+  // see in the browser too, as the Vite error overlay. The overlay does not
+  // survive on its own: a reload clears it, and plugin-rsc closes every
+  // overlay on each "rsc:update" (the edit's own, the gen-file write's), each
+  // followed by the client's RSC refetch. So until a discovery succeeds the
+  // pending error is re-sent to every client that connects and after every
+  // request the dev server answers (configureServer).
+  let transitionWhenOverlay: {
+    message: string;
+    stack: string;
+    plugin: string;
+  } | null = null;
+  const sendTransitionWhenOverlay = (): void => {
+    if (!transitionWhenOverlay) return;
+    (s.devServer?.environments as any)?.client?.hot?.send({
+      type: "error",
+      err: transitionWhenOverlay,
+    });
+  };
+  const showTransitionWhenError = (err: unknown): Error | undefined => {
+    const whenError = findTransitionWhenError(err);
+    if (!whenError) return undefined;
+    transitionWhenOverlay = {
+      message: whenError.message,
+      stack: whenError.stack ?? "",
+      plugin: "@rangojs/router",
+    };
+    sendTransitionWhenOverlay();
+    return whenError;
+  };
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -524,6 +560,32 @@ export function createRouterDiscoveryPlugin(
       // Skip if this is a temp server created by buildStart
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
       s.devServer = server;
+
+      (server.environments as any)?.client?.hot?.on?.(
+        "vite:client:connect",
+        (_payload: unknown, client: any) => {
+          if (transitionWhenOverlay) {
+            client?.send?.({ type: "error", err: transitionWhenOverlay });
+          }
+        },
+      );
+      // The http server's "request" event, not a middleware: plugin-rsc
+      // answers page and RSC requests before a middleware added here runs.
+      let overlayResendQueued = false;
+      server.httpServer?.on("request", (req, res) => {
+        // Documents and RSC fetches only (the refetch that follows each
+        // "rsc:update"), one send per burst.
+        const isPage =
+          req.url?.includes("_rsc") === true ||
+          req.headers.accept?.includes("text/html") === true;
+        if (transitionWhenOverlay && isPage && !overlayResendQueued) {
+          overlayResendQueued = true;
+          res.once("close", () => {
+            overlayResendQueued = false;
+            sendTransitionWhenOverlay();
+          });
+        }
+      });
 
       let workerReadyEpoch: number | undefined;
       const publishDevDiscoveryReady = (epoch: number) => {
@@ -870,6 +932,7 @@ export function createRouterDiscoveryPlugin(
         } else {
           console.error(report.message);
         }
+        showTransitionWhenError(err);
       };
 
       const discover = async () => {
@@ -1627,6 +1690,7 @@ export function createRouterDiscoveryPlugin(
                 );
                 s.lastDiscoveryError = null;
               }
+              transitionWhenOverlay = null;
               // Cloudflare dev: on a successful cycle drop the workerd runner's
               // cached worker-entry chain so the next request re-evaluates
               // createRouter() with the new routes. Fired here in the work path
@@ -1654,9 +1718,17 @@ export function createRouterDiscoveryPlugin(
                 message: err?.message ?? String(err),
                 at: Date.now(),
               };
-              console.warn(
-                `[rango] Runtime re-discovery failed: ${err.message}`,
-              );
+              // An invalid transition({ when }) is a definition error the
+              // user must see: terminal error plus the browser's Vite overlay,
+              // not a warning while the last-good route tree keeps serving.
+              const whenError = showTransitionWhenError(err);
+              if (whenError) {
+                console.error(whenError.message);
+              } else {
+                console.warn(
+                  `[rango] Runtime re-discovery failed: ${err.message}`,
+                );
+              }
               debugDiscovery?.(
                 "hmr: lastDiscoveryError set (%s) — manifest preserved at last-good; recovery mode active (any in-scan source change will trigger rediscovery)",
                 err?.message,

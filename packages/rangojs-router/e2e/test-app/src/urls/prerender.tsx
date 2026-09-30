@@ -9,7 +9,8 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { Suspense } from "react";
-import { ParallelOutlet } from "@rangojs/router/client";
+import { Link, ParallelOutlet } from "@rangojs/router/client";
+import { docsWhen } from "../components/transition-when.js";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
@@ -84,6 +85,13 @@ export const DocsArticle = Prerender(
         <h1 data-testid="docs-article-title">{ctx.params.slug}</h1>
         <p data-testid="docs-article-content">Content for {ctx.params.slug}</p>
         <PrerenderClientTest loader={PrerenderTestLoader} />
+        <Link
+          to="/docs/api-reference"
+          prefetch="none"
+          data-testid="docs-to-api-reference"
+        >
+          api-reference
+        </Link>
       </div>
     );
   },
@@ -360,6 +368,7 @@ export const prerenderPatterns = urls(
     middleware,
     notFoundBoundary,
     revalidate,
+    transition,
   }) => [
     path("/prerender-handle", PrerenderHandle, { name: "prerender-handle" }),
     path("/docs", DocsPage, { name: "docs" }),
@@ -448,6 +457,7 @@ export const prerenderPatterns = urls(
       }),
     ]),
     path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
+      transition({ when: docsWhen }),
       loader(PrerenderTestLoader),
       notFoundBoundary(({ notFound: info }) => (
         <div data-testid="docs-not-found">

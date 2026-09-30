@@ -173,7 +173,7 @@ export const productsPatterns = urls(
               </div>
             );
           },
-          { when: ({ from }) => from.pathname === "/products" },
+          { when: ({ from }) => from.url.pathname === "/products" },
         ),
       ],
     ),

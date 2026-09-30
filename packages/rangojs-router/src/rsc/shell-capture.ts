@@ -1766,7 +1766,6 @@ function recordSegmentsHaveHandles(
  *   - _requestTags: a fresh Set. The capture collects its OWN shell tags here —
  *     non-loader tags only, since loaders are masked — which is exactly the tag
  *     set a shell entry should be invalidatable by (loader tags belong to holes).
- *   - _transitionWhen: a fresh [] so the capture's transition gating is its own.
  *   - _shellCaptureRun: true — the switch loaders/cookies/headers guards read.
  *   - _dynamic / dynamic(): an own latch the capture reads.
  *   - _metricsStore: undefined so the capture never appends to the foreground's
@@ -2110,7 +2109,6 @@ export function deriveShellCaptureContext(
   // the whole capture snapshot in memory. Capture registrations die with this
   // context; module-singleton stores stay registered by normal renders.
   derivedCtx._explicitTaggedStores = new Set();
-  derivedCtx._transitionWhen = [];
   // Own list: the capture's render errors refuse the capture only, and the
   // foreground's never reach it.
   derivedCtx._renderErrors = [];

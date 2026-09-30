@@ -334,6 +334,7 @@ export function setupLinkInterception(
     const scrollAttr = link.getAttribute("data-scroll");
     const replaceAttr = link.getAttribute("data-replace");
     const revalidateAttr = link.getAttribute("data-revalidate");
+    const transitionAttr = link.getAttribute("data-transition");
 
     const navigateOptions: NavigateOptions = {};
     if (scrollAttr === "false") {
@@ -344,6 +345,9 @@ export function setupLinkInterception(
     }
     if (revalidateAttr === "false") {
       navigateOptions.revalidate = false;
+    }
+    if (transitionAttr === "false") {
+      navigateOptions.transition = false;
     }
 
     onNavigate(href, navigateOptions);

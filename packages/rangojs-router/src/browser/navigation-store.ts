@@ -1,4 +1,5 @@
 import type {
+  HistoryEntryMemory,
   NavigationLocation,
   SegmentState,
   NavigationStore,
@@ -13,9 +14,17 @@ import {
   getRangoState,
   getRangoStateCookieName,
 } from "./rango-state.js";
+import { getHistoryStateKey } from "./scroll-restoration.js";
+import { setCurrentHistoryStateListener } from "./react/location-state-shared.js";
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
+
+// Bound on remembered history entries (transition({ when }) sources), matching
+// scroll-restoration's MAX_SCROLL_ENTRIES: deep enough for any realistic
+// back/forward run, bounded for long sessions. An evicted entry reads as
+// unknown (undefined route name and state), never guessed.
+const HISTORY_ENTRY_MEMORY_SIZE = 200;
 
 // Cache entry:
 //   [url-key, segments, stale, handleData?, routerId?, navInstance?, handlesPending?]
@@ -233,6 +242,11 @@ export function createNavigationStore(
   // Current history key (set on navigation, stored in history.state)
   let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
 
+  // Per-history-entry memory (rememberDisplayedEntry), keyed by the entry's
+  // history.state.key — unique per entry, unlike the URL-derived history key.
+  const entryMemory = new Map<string, HistoryEntryMemory>();
+  let displayedEntryKey: string | undefined;
+
   // Store initial segments if provided (not stale)
   if (config?.initialHistoryKey && config?.initialSegments) {
     historyCache.push([
@@ -375,7 +389,7 @@ export function createNavigationStore(
     }
   }
 
-  return {
+  const store: NavigationStore = {
     // ========================================================================
     // Internal Segment State (for bridges)
     // ========================================================================
@@ -424,6 +438,27 @@ export function createNavigationStore(
      */
     setHistoryKey(key: string): void {
       currentHistoryKey = key;
+    },
+
+    rememberDisplayedEntry(routeName?: string): void {
+      if (typeof window === "undefined") return;
+      const key = getHistoryStateKey();
+      const previous = entryMemory.get(key);
+      entryMemory.delete(key);
+      entryMemory.set(key, {
+        routeName: routeName ?? previous?.routeName,
+        state: window.history.state,
+      });
+      if (entryMemory.size > HISTORY_ENTRY_MEMORY_SIZE) {
+        const oldest = entryMemory.keys().next().value;
+        if (oldest !== undefined) entryMemory.delete(oldest);
+      }
+      displayedEntryKey = key;
+    },
+
+    getHistoryEntryMemory(entryKey?: string): HistoryEntryMemory | undefined {
+      const key = entryKey ?? displayedEntryKey;
+      return key === undefined ? undefined : entryMemory.get(key);
     },
 
     /**
@@ -682,4 +717,11 @@ export function createNavigationStore(
       });
     },
   };
+
+  // Writes to the displayed entry after its commit (Def.write()/delete(), a
+  // flash read, merged server state) refresh its memory.
+  if (typeof window !== "undefined") {
+    setCurrentHistoryStateListener(() => store.rememberDisplayedEntry());
+  }
+  return store;
 }

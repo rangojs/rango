@@ -8,6 +8,7 @@ import {
 } from "./revalidate-chain.js";
 import { encodeClientRevalidationDecisions } from "./revalidation-protocol.js";
 import type { ClientUrlPatterns } from "./types.js";
+import type { TransitionWhenFn } from "../types/segments.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
@@ -16,6 +17,26 @@ export interface ClientUrlNavigationIntent {
   /** Absolute destination pathname (mount included) and search ("?..." or ""). */
   readonly pathname: string;
   readonly search: string;
+  /**
+   * transition({ when }) gated this navigation off at the swap: the
+   * destination presents urgently instead of in a transition lane.
+   */
+  readonly transitionGatedOff?: boolean;
+}
+
+/** What the bridge needs to decide transition({ when }) at the swap. */
+export interface ClientUrlDestination {
+  /** Definition-local params of the destination match. */
+  readonly params: Readonly<Record<string, string>>;
+  /** Canonical route name (include prefix applied); undefined when unnamed. */
+  readonly routeName: string | undefined;
+  /** The destination route's own `when`, from its "use client" definition. */
+  readonly when: TransitionWhenFn | undefined;
+  /**
+   * Param names the ORIGIN route matched inside the group: the committed
+   * params minus these are the mount's (include prefix) params.
+   */
+  readonly originLocalParamNames: readonly string[];
 }
 
 interface ActiveClientUrlGroup {
@@ -24,6 +45,8 @@ interface ActiveClientUrlGroup {
   readonly mount: string;
   /** include() route-name prefix ("" at root) for canonical name composition. */
   readonly namePrefix: string;
+  /** The group route on screen (ClientUrlsRoot's committed routeId). */
+  readonly routeId: string | undefined;
   readonly setIntent: (intent: ClientUrlNavigationIntent | null) => void;
   intent: ClientUrlNavigationIntent | null;
 }
@@ -48,6 +71,12 @@ export function setActiveInterceptTargets(
 
 export interface ClientUrlNavigationPresentation {
   readonly routeId: string;
+  /**
+   * The transition({ when }) decision made at the optimistic swap (true =
+   * gated off), or undefined when nothing was swapped (a same-route
+   * navigation decides at the canonical commit).
+   */
+  readonly transitionGatedOff: boolean | undefined;
   clear(): void;
 }
 
@@ -75,11 +104,13 @@ export function registerClientUrlGroup(
   mount: string,
   namePrefix: string,
   setIntent: (intent: ClientUrlNavigationIntent | null) => void,
+  routeId?: string,
 ): () => void {
   const group: ActiveClientUrlGroup = {
     definition,
     mount,
     namePrefix,
+    routeId,
     setIntent,
     intent: null,
   };
@@ -93,6 +124,7 @@ export function registerClientUrlGroup(
 export function beginClientUrlNavigation(
   targetUrl: URL,
   signal: AbortSignal,
+  decideTransition?: (destination: ClientUrlDestination) => boolean,
 ): ClientUrlNavigationPresentation | null {
   const group = activeGroup;
   if (!group) return null;
@@ -110,11 +142,28 @@ export function beginClientUrlNavigation(
   const record = group.definition.routes.find(
     (candidate) => candidate.id === match.routeKey,
   );
-  if (record?.name) {
-    const canonicalName = group.namePrefix
+  const canonicalName = record?.name
+    ? group.namePrefix
       ? `${group.namePrefix}.${record.name}`
-      : record.name;
-    if (activeInterceptTargets.has(canonicalName)) return null;
+      : record.name
+    : undefined;
+  if (canonicalName && activeInterceptTargets.has(canonicalName)) return null;
+
+  // A same-route intent never swaps (ClientUrlsRoot), so transition({ when })
+  // decides at the canonical commit; a cross-route one decides here, at the
+  // navigation's first presentation.
+  let transitionGatedOff: boolean | undefined;
+  if (decideTransition && match.routeKey !== group.routeId) {
+    const originLocal = stripMountPrefix(window.location.pathname, group.mount);
+    const originMatch =
+      originLocal === null ? null : group.definition.match(originLocal);
+    const when = record?.transition?.when;
+    transitionGatedOff = decideTransition({
+      params: match.params,
+      routeName: canonicalName,
+      when: typeof when === "function" ? when : undefined,
+      originLocalParamNames: Object.keys(originMatch?.params ?? {}),
+    });
   }
 
   const intent: ClientUrlNavigationIntent = {
@@ -122,6 +171,7 @@ export function beginClientUrlNavigation(
     params: match.params,
     pathname: targetUrl.pathname,
     search: targetUrl.search,
+    transitionGatedOff,
   };
   group.intent = intent;
   group.setIntent(intent);
@@ -142,6 +192,7 @@ export function beginClientUrlNavigation(
 
   return {
     routeId: match.routeKey,
+    transitionGatedOff,
     clear() {
       signal.removeEventListener("abort", clear);
       clear();

@@ -49,6 +49,8 @@ export type {
 
 export { runTransitionWhen } from "./run-transition-when.js";
 export type {
+  RunTransitionWhenAction,
+  RunTransitionWhenLocation,
   RunTransitionWhenOptions,
   RunTransitionWhenResult,
 } from "./run-transition-when.js";

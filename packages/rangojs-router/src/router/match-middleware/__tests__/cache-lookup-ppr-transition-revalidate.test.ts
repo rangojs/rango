@@ -46,11 +46,12 @@ import type { ResolvedSegment } from "../../../types.js";
 import { seg, gen } from "./helpers.js";
 
 // The cache-hit segment loop decides, per cached segment the client holds,
-// whether the response re-sends it. A PPR transition({ when }) decision
-// (RequestContext._pprTransitionDecisions) must not change that decision: the
+// whether the response re-sends it. A transition({ when }) reference
+// (RequestContext._transitionWhenRefs) must not change that decision: the
 // live partial path omits a non-revalidated segment whatever its transition,
 // and a replay HIT that kept the component replaced the client's segment
-// (#986). Both segments carry a decision in every case below.
+// (#986). The browser decides kept segments too. Both segments carry a
+// reference in every case below.
 
 const LAYOUT = "L0";
 const ROUTE = "L0R0";
@@ -94,9 +95,10 @@ async function drain(
     variables: {},
   }) as RequestContext<any>;
   reqCtx._cacheStore = store;
-  reqCtx._pprTransitionDecisions = new Map([
-    [LAYOUT, true],
-    [ROUTE, true],
+  const when = () => true;
+  reqCtx._transitionWhenRefs = new Map([
+    [LAYOUT, { when, site: { entryType: "layout" } }],
+    [ROUTE, { when, site: { entryType: "route" } }],
   ]);
 
   // Only the rule's presence matters: evaluateRevalidation decides.
