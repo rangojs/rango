@@ -417,9 +417,9 @@ export type PathHelpers<TEnv> = {
    * transition cannot fire without a startTransition. See
    * skills/view-transitions for the startTransition x ViewTransition matrix.
    *
-   * Pass `when`, a function exported from a "use client" module, to gate the
-   * navigation's hold and view transition in the browser (never on the
-   * server); see TransitionWhenFn.
+   * Pass `when` (inline, hoisted into a client module by the build, or a
+   * "use client" export) to gate the navigation's hold and view transition in
+   * the browser (never on the server); see TransitionWhenFn.
    */
   transition: {
     (): TransitionItem;

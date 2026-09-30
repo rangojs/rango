@@ -83,9 +83,12 @@ export interface TransitionWhenContext {
 /**
  * Browser-run predicate that gates whether a navigation holds and animates.
  *
- * In `urls()` export it from a `"use client"` module and import it; in
- * `clientUrls()` it is an inline function. Anything else (a server function,
- * a non-function) fails route discovery.
+ * In `urls()` write it inline (`transition({ when: (ctx) => ... })`, which
+ * the build hoists into a client module; it may reference only its own
+ * bindings, globals and client-safe imports) or export it from a
+ * `"use client"` module and import it; in `clientUrls()` it is an inline
+ * function. Anything else (a server function, a non-function) fails route
+ * discovery.
  *
  * `false` makes the navigation an urgent commit: no hold, no view transition,
  * and a same-route navigation streams its `loading()` fallback. The segment

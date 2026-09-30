@@ -482,6 +482,7 @@ export const NamedRoutes = {
   txAct: "/tx-act/:n",
   "txGroup.a": "/tx-group-a/:id",
   "txGroup.b": "/tx-group-b/:id",
+  txInline: "/tx-inline/:n",
   txKeepA: "/tx-keep/a",
   txKeepB: "/tx-keep/b",
   txKeepC: "/tx-keep/c",

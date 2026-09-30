@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
   ROUTE_REDISCOVERY_PATTERN,
+  waitForHydration,
   writeFileAndAwaitHmr,
   writeFileBumpMtime,
 } from "./helper";
@@ -660,11 +661,12 @@ test.describe.serial("route-types-hmr", () => {
   });
 
   // -- Invalid transition({ when }) --
-  // `when` runs in the browser: a server function in urls() fails
-  // re-discovery. The error must be LOUD on an HMR edit too: the terminal
-  // prints it (an error, not the recovery-mode warning) and the browser shows
-  // it in the Vite error overlay, instead of the last-good route tree serving
-  // silently.
+  // `when` runs in the browser: a server function in urls() (here a
+  // server-module export passed by name; an inline literal would be hoisted
+  // into a client module) fails re-discovery. The error must be LOUD on an
+  // HMR edit too: the terminal prints it (an error, not the recovery-mode
+  // warning) and the browser shows it in the Vite error overlay, instead of
+  // the last-good route tree serving silently.
   test("an invalid transition({ when }) edit prints the error and shows the Vite overlay", async ({
     page,
   }) => {
@@ -677,9 +679,11 @@ test.describe.serial("route-types-hmr", () => {
       'transition({ when }) on route "blog.post" (/blog/:postId) is not a client function.';
 
     await page.goto(f.url("/blog"));
-    await expect(page.locator("vite-error-overlay")).not.toContainText(
-      "is not a client function",
-    );
+    await expect(
+      page.locator("vite-error-overlay", {
+        hasText: "is not a client function",
+      }),
+    ).toHaveCount(0);
     const stdoutAtStart = proc.stdout().length;
     const stderrAtStart = proc.stderr().length;
 
@@ -688,7 +692,7 @@ test.describe.serial("route-types-hmr", () => {
       .replace(
         'path("/:postId", BlogPostHandler, { name: "post" }),',
         `path("/:postId", BlogPostHandler, { name: "post" }, () => [
-      transition({ when: () => true }),
+      transition({ when: BlogIndexHandler as never }),
     ]),`,
       );
     expect(broken).not.toBe(originalBlogContent);
@@ -711,6 +715,83 @@ test.describe.serial("route-types-hmr", () => {
     );
     // The gen file stays at last-good while the definition is invalid.
     expect(await fs.readFile(genFilePath, "utf-8")).toBe(originalGenContent);
+  });
+
+  // -- Inline transition({ when }) (the build hoists the literal into a
+  // "use client" module) --
+  const withInlineWhen = (predicate: string, prelude = ""): string =>
+    originalBlogContent
+      .replace("({ path, cache })", "({ path, cache, transition })")
+      .replace(
+        "export const blogPatterns",
+        `${prelude}export const blogPatterns`,
+      )
+      .replace(
+        'path("/:postId", BlogPostHandler, { name: "post" }),',
+        `path("/:postId", BlogPostHandler, { name: "post" }, () => [
+      transition({ when: ${predicate} }),
+    ]),`,
+      );
+
+  test("an inline transition({ when }) edit republishes the hoisted predicate", async ({
+    page,
+  }) => {
+    const markingWhen = (mark: string) =>
+      withInlineWhen(`() => {
+        (window as unknown as { __hoistMark?: string }).__hoistMark = "${mark}";
+        return true;
+      }`);
+    const readMark = async (): Promise<string | undefined> => {
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+      await page.getByTestId("blog-post-link-1").click();
+      await expect(page).toHaveURL(/\/blog\/post-1$/);
+      return page.evaluate(
+        () => (window as unknown as { __hoistMark?: string }).__hoistMark,
+      );
+    };
+
+    // Written like the suite's other route edits: re-touched between
+    // attempts until the browser runs the new predicate (a single write and
+    // a 10s poll flaked right after the previous test's restore cycle).
+    for (const mark of ["v1", "v2"]) {
+      await writeRouteFileAndAwait(
+        page,
+        blogUrlsPath,
+        markingWhen(mark),
+        async () => {
+          expect(await readMark()).toBe(mark);
+        },
+      );
+    }
+  });
+
+  test("an inline transition({ when }) that captures a server binding prints the error and shows the Vite overlay", async ({
+    page,
+  }) => {
+    test.skip(
+      !f.proc(),
+      "isolatedServer required to observe dev-server output",
+    );
+    const proc = f.proc()!;
+    const ERROR = "`limit` is a server-module binding.";
+
+    await page.goto(f.url("/blog"));
+    const stdoutAtStart = proc.stdout().length;
+    const stderrAtStart = proc.stderr().length;
+    writeFileBumpMtime(
+      blogUrlsPath,
+      withInlineWhen("() => limit > 1", "const limit = 3;\n\n"),
+    );
+
+    await expect(async () => {
+      const fresh =
+        proc.stdout().slice(stdoutAtStart) + proc.stderr().slice(stderrAtStart);
+      expect(fresh).toContain(ERROR);
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+    await expect(page.locator("vite-error-overlay")).toContainText(ERROR, {
+      timeout: WATCHER_TIMEOUT,
+    });
   });
 
   // -- Recovery mode test --

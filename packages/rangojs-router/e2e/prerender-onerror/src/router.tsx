@@ -1,4 +1,5 @@
 import { createRouter, Prerender, Static } from "@rangojs/router";
+import { serverWhen } from "./server-when.js";
 
 function HomePage() {
   return <h1 data-testid="home">prerender-onerror fixture</h1>;
@@ -46,11 +47,11 @@ declare global {
   }
 }
 
-// transition({ when }) is a browser predicate: a plain (server) function fails
-// route discovery at dev startup and at build, naming the route. Registered
-// only when RANGO_TEST_SERVER_WHEN is set, and unnamed so the static route-type
-// parser leaves the committed gen file alone.
-const serverWhen = (): boolean => true;
+// transition({ when }) is a browser predicate: a server-module function (an
+// inline literal would be hoisted into a client module) fails route discovery
+// at dev startup and at build, naming the route. Registered only when
+// RANGO_TEST_SERVER_WHEN is set, and unnamed so the static route-type parser
+// leaves the committed gen file alone.
 
 export const router = createRouter({}).routes(({ path, transition }) => [
   path("/", HomePage, { name: "home" }),

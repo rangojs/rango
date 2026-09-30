@@ -501,8 +501,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * transition({}) is startTransition + ViewTransition under the default and
    * startTransition only when the router sets viewTransition: false.
    *
-   * Conditional hold: pass `when`, a function exported from a "use client"
-   * module, to gate the navigation in the browser. It runs once per
+   * Conditional hold: pass `when` to gate the navigation in the browser,
+   * inline (the build hoists the literal into a client module) or as a
+   * "use client" export. It runs once per
    * navigation with { kind, from, to, isAction, action }, never on the server;
    * false makes the commit urgent (no hold, no view transition). This is
    * distinct from intercept()'s match-time `when` selector.
@@ -524,10 +525,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   transition({ viewTransition: false }),
    * ])
    *
-   * // Hold only when arriving from the list. holdFromList is a "use client"
-   * // export: ({ from }) => from.routeName === "products.list"
+   * // Hold only when arriving from the list (a browser predicate):
    * path("/product/:id", ProductPage, { name: "product" }, () => [
-   *   transition({ when: holdFromList }),
+   *   transition({ when: ({ from }) => from.routeName === "products.list" }),
    * ])
    * ```
    * @param config - ViewTransition configuration (enter, exit, update, share,

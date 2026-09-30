@@ -7,8 +7,10 @@
  * to the browser inside the segment's transition config, as one of:
  *
  * - a React client reference: a function exported from a `"use client"`
- *   module and imported into a server `urls()` file. Flight serializes it as a
- *   module reference and the browser resolves it to the real function;
+ *   module and imported into a server `urls()` file, or an inline literal the
+ *   build hoisted into one (vite/plugins/transition-when-hoist.ts). Flight
+ *   serializes it as a module reference and the browser resolves it to the
+ *   real function;
  * - a clientUrls() when reference, synthesized by the projection materializer
  *   (client-urls/server-projection.ts): the group's definition client
  *   reference plus the route id. The browser resolves it to the `when` the
@@ -171,11 +173,13 @@ export function createTransitionWhenError(
       : `${where} is not a client function.`;
   return new TransitionWhenError(
     `[rango] ${head} ` +
-      '`when` runs in the browser, so it must be exported from a "use client" ' +
-      "module and imported into your urls() file. It receives { kind, from, " +
-      "to, isAction, action }: URLs, params, route names, history state and " +
-      "action data; get(), env and handler state do not exist there. See " +
-      'skills/view-transitions "Conditional transitions".',
+      "`when` runs in the browser: write it inline in the transition() call " +
+      "(transition({ when: (ctx) => ... }), where transition is the urls() helper " +
+      'or imported from "@rangojs/router"; the build hoists that literal into a ' +
+      'client module) or export it from a "use client" module and import it ' +
+      "into your urls() file. It receives { kind, from, to, isAction, action }: " +
+      "URLs, params, route names, history state and action data; get(), env " +
+      'and handler state do not exist there. See skills/view-transitions "Conditional transitions".',
   );
 }
 

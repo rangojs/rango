@@ -60,6 +60,53 @@ function browserDecisionTests(mode: "dev" | "build") {
       ]);
     });
 
+    test("an inline when in urls() is hoisted into a client module and decides in the browser", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const bodies: string[] = [];
+      page.on("response", async (res) => {
+        const u = new URL(res.url());
+        if (!u.pathname.startsWith("/tx-inline/")) return;
+        bodies.push(await res.text().catch(() => ""));
+      });
+      await page.goto(f.url("/tx-inline/a"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-inline-n").last()).toHaveText("a", {
+        timeout: 8000,
+      });
+      const inlineLog = () =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __txInlineLog?: string[] }).__txInlineLog ??
+            [],
+        );
+      expect(await inlineLog(), "no decision on the document load").toEqual([]);
+
+      await watchFlash(page, "tx-inline-loading");
+      await testId(page, "tx-inline-to-b").last().click();
+      await expect(testId(page, "tx-inline-n").last()).toHaveText("b", {
+        timeout: 8000,
+      });
+      expect(await readFlash(page), "into b: gated off").toBe(true);
+      await page.waitForTimeout(600);
+
+      await watchFlash(page, "tx-inline-loading");
+      await testId(page, "tx-inline-to-c").last().click();
+      await expect(testId(page, "tx-inline-n").last()).toHaveText("c", {
+        timeout: 8000,
+      });
+      expect(await readFlash(page), "into c: holds").toBe(false);
+
+      expect(await inlineLog()).toEqual([
+        "push /tx-inline/a->/tx-inline/b:false",
+        "push /tx-inline/b->/tx-inline/c:true",
+      ]);
+      // The payload carries the hoisted module's export as a client
+      // reference, not the function.
+      expect(bodies.join("")).toContain("__rango_when");
+    });
+
     test("Def.read(ctx.to): a Link pushing { animate: false } gates its navigation off", async ({
       page,
     }) => {

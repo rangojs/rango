@@ -1,4 +1,8 @@
-import { urls, type Handler } from "@rangojs/router";
+import {
+  urls,
+  type Handler,
+  type TransitionWhenContext,
+} from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { TxMountProbe } from "../components/TxMountProbe.js";
 import { TxActionProbe, TxFailProbe } from "../components/TxActionProbe.js";
@@ -126,6 +130,34 @@ async function TxKeepPage({ n }: { n: string }) {
   return <div data-testid="tx-keep-n">{n}</div>;
 }
 
+/**
+ * Inline predicate (the build hoists it into a "use client" module): holds
+ * unless the destination is n=b or was pushed with TxWhenState
+ * { animate: false }. It reads TxWhenState, an import of this module that the
+ * hoist re-emits, and logs to window.__txInlineLog.
+ */
+async function TxInlineContent({ n }: { n: string }) {
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  return (
+    <div data-testid="tx-inline-content">
+      <span data-testid="tx-inline-n">{n}</span>
+      <Link to="/tx-inline/a" data-testid="tx-inline-to-a" prefetch="none">
+        a
+      </Link>
+      <Link to="/tx-inline/b" data-testid="tx-inline-to-b" prefetch="none">
+        b
+      </Link>
+      <Link to="/tx-inline/c" data-testid="tx-inline-to-c" prefetch="none">
+        c
+      </Link>
+    </div>
+  );
+}
+
+const TxInlineHandler: Handler<"/tx-inline/:n"> = (ctx) => (
+  <TxInlineContent n={ctx.params.n} />
+);
+
 /** /tx-act/:n: a layout predicate logs the action commits, error lane included. */
 function TxActShell() {
   return (
@@ -152,6 +184,21 @@ export const conditionalTransitionPatterns = urls(
     path("/tx-src/:n", TxSrcHandler, { name: "txSrc" }, () => [
       transition({ when: txSrcWhen }),
       loading(<div data-testid="tx-src-loading">tx-src-loading</div>),
+    ]),
+    path("/tx-inline/:n", TxInlineHandler, { name: "txInline" }, () => [
+      transition({
+        when: (ctx: TransitionWhenContext) => {
+          const result =
+            ctx.to.params.n !== "b" &&
+            TxWhenState.read(ctx.to)?.animate !== false;
+          const w = window as unknown as { __txInlineLog?: string[] };
+          (w.__txInlineLog ??= []).push(
+            `${ctx.kind} ${ctx.from.url.pathname}->${ctx.to.url.pathname}:${result}`,
+          );
+          return result;
+        },
+      }),
+      loading(<div data-testid="tx-inline-loading">tx-inline-loading</div>),
     ]),
     layout(TxKeepShell, () => [
       transition({ when: txKeepWhen }),
