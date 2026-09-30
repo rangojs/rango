@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
-import { updateTag, revalidateTag } from "../tag-invalidation.js";
+import {
+  executionStart,
+  invalidatedSince,
+  predatesInvalidation,
+  updateTag,
+  revalidateTag,
+} from "../tag-invalidation.js";
 import { resolveCacheStore } from "../cache-policy.js";
 import type { SegmentCacheStore } from "../types.js";
 import {
@@ -328,6 +334,84 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
       revalidateTag("products");
       expect(await app.getItem("item")).toBeNull();
     });
+  });
+});
+
+describe("the write gate: an execution that started before an invalidation (#977)", () => {
+  const withStore = (store: SegmentCacheStore) =>
+    makeCtx({ cacheStore: store });
+  const invalidateIn = (store: SegmentCacheStore, ...tags: string[]) =>
+    runWithRequestContext(withStore(store), () => updateTag(...tags));
+
+  it("sees another request's invalidation, not only the calling one's", async () => {
+    const store = new MemorySegmentCacheStore();
+    const start = executionStart();
+    await invalidateIn(store, "gate-other-request");
+
+    expect(invalidatedSince(["gate-other-request"], start.seq)).toBe(true);
+    expect(invalidatedSince(["gate-untouched"], start.seq)).toBe(false);
+    expect(
+      await predatesInvalidation(store, ["gate-other-request"], start),
+    ).toBe(true);
+  });
+
+  it("an invalidation before the start does not count, in the same millisecond too", async () => {
+    const store = new MemorySegmentCacheStore();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      await invalidateIn(store, "gate-before");
+      const start = executionStart();
+      expect(invalidatedSince(["gate-before"], start.seq)).toBe(false);
+      // The store saw the invalidation in the start's millisecond: asked
+      // about the milliseconds after it, it answers no.
+      expect(await predatesInvalidation(store, ["gate-before"], start)).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks the store about another isolate's invalidation after the start's millisecond", async () => {
+    const isTagsInvalidatedSince = vi.fn(async () => true);
+    const store = { isTagsInvalidatedSince } as unknown as SegmentCacheStore;
+    const start = executionStart();
+
+    expect(await predatesInvalidation(store, ["gate-remote"], start)).toBe(
+      true,
+    );
+    expect(isTagsInvalidatedSince).toHaveBeenCalledWith(
+      ["gate-remote"],
+      start.at + 1,
+      { failClosed: true },
+    );
+    expect(await predatesInvalidation(store, [], start)).toBe(false);
+    expect(isTagsInvalidatedSince).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second evaluated copy of the module reads the invalidations the first recorded", async () => {
+    const store = new MemorySegmentCacheStore();
+    vi.resetModules();
+    const copy = await import("../tag-invalidation.js");
+    const start = copy.executionStart();
+    await invalidateIn(store, "gate-module-copy");
+
+    expect(copy.invalidatedSince(["gate-module-copy"], start.seq)).toBe(true);
+  });
+
+  it("stays bounded: an execution older than a forgotten invalidation counts as invalidated", async () => {
+    const store = new MemorySegmentCacheStore();
+    const before = executionStart();
+    await runWithRequestContext(withStore(store), async () => {
+      for (let i = 0; i <= 1024; i++) await updateTag(`gate-bulk-${i}`);
+    });
+    const after = executionStart();
+
+    // gate-bulk-0 was dropped from the history: any tag of an execution that
+    // started before it may have been invalidated.
+    expect(invalidatedSince(["gate-never-invalidated"], before.seq)).toBe(true);
+    expect(invalidatedSince(["gate-never-invalidated"], after.seq)).toBe(false);
+    expect(invalidatedSince([], before.seq)).toBe(false);
   });
 });
 

@@ -532,11 +532,35 @@ on a navigation or action), not a cache bust.
 A route `cache()` entry stores the tags of the `"use cache"` reads inside it,
 so `updateTag()` of one evicts the enclosing entry and any `ppr` shell or
 document built from it. A loader's own `cache()` entry does the same for the
-reads in its body. The exception is a `"use cache"` function called inside
-another `"use cache"` function: its tags do not reach the enclosing entry, so
-invalidating one of them neither evicts the outer entry nor keeps this request
-from joining or storing an outer call that started before the invalidation
-([#980](https://github.com/rangojs/rango/issues/980)).
+reads in its body, and a `"use cache"` function for the `"use cache"`
+functions it calls: the outer entry bakes the inner value, so it carries the
+inner tags, whether the inner call ran or was a hit. That includes calls made
+by the server components a cached component returns, which render when the
+value is stored.
+
+```typescript
+async function getStock(sku: string) {
+  "use cache";
+  cacheTag("stock");
+  return db.stock(sku);
+}
+
+async function getProductCard(sku: string) {
+  "use cache";
+  return { sku, stock: await getStock(sku) };
+}
+
+// getProductCard's entry is tagged "stock": updateTag("stock") evicts both.
+```
+
+A call that started before `updateTag()`/`revalidateTag()` of one of its tags
+returns what it read but does not store it, in any request: written after the
+invalidation, the old value would be served as newer than it. The next call
+runs the function again. The same holds for a stale entry's background
+refresh, a loader's own `cache()`, route `cache()` entries and the document
+cache. Another isolate's invalidation is caught through the store's markers:
+`CFCacheStore` with KV, `VercelCacheStore`. On a KV-less `CFCacheStore` only
+this isolate's invalidations are caught; ttl+swr bounds the rest.
 
 ## Interaction with Other Caching
 

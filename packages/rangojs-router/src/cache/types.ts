@@ -333,12 +333,27 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * freshness). Consulted by build-shell read-through and runtime shell stores:
    * "was it evicted" is answered by tag markers against the entry's createdAt,
    * including when invalidation races a capture that has not been written yet.
+   * Also the store's half of every cache write's gate (#977,
+   * tag-invalidation.ts predatesInvalidation): a "use cache", loader cache(),
+   * route cache() or document-cache write whose execution started before an
+   * invalidation another isolate made is skipped when this answers true, so
+   * it must reflect invalidations made after this request started reading
+   * (not a value memoized earlier in the request).
    * Optional: without it, TAGGED build entries are not served (untagged ones
-   * are unaffected — they are evictable only by deploy/buildVersion anyway).
+   * are unaffected — they are evictable only by deploy/buildVersion anyway),
+   * and writes are gated by this isolate's invalidations only.
    * Fail open to `false` on marker-read errors: a transient store fault must
    * degrade to "still valid", the same posture as the envelope tag checks.
+   * The write gate passes `{ failClosed: true }` instead: a marker it cannot
+   * read (an error, a timed-out read) answers `true`, since a skipped write
+   * only costs a later miss. A store that ignores the option still works;
+   * its fault then lets that write through.
    */
-  isTagsInvalidatedSince?(tags: string[], sinceMs: number): Promise<boolean>;
+  isTagsInvalidatedSince?(
+    tags: string[],
+    sinceMs: number,
+    options?: { failClosed?: boolean },
+  ): Promise<boolean>;
 }
 
 /**

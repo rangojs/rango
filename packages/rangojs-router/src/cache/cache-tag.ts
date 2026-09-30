@@ -22,8 +22,32 @@ import {
   type LoaderIdentityRead,
   type LoaderIdentityReadVerb,
 } from "../server/context.js";
+import type { ExecutionStart } from "./tag-invalidation.js";
 
 const cacheTagStorage = new AsyncLocalStorage<Set<string>>();
+
+/**
+ * Each "use cache" tag scope's enclosing scope when it opened (#980). A tag
+ * recorded in a scope goes to every scope above it: an intermediate call can
+ * return a value holding a nested call still running, whose tags land after
+ * the intermediate call reported its own to its caller. Its caller's encode
+ * awaits the same promise, so the tags are in before it reads its own.
+ */
+const scopeParents = new WeakMap<Set<string>, Set<string>>();
+
+/** Add `tag` to `scope` and every scope enclosing it. */
+function addToScopes(scope: Set<string> | undefined, tag: string): void {
+  for (let s = scope; s; s = scopeParents.get(s)) s.add(tag);
+}
+
+/**
+ * Call `fn` outside any "use cache" tag scope: detached work a cached body
+ * schedules (a stale entry's background refresh) records nothing onto the
+ * entry being filled.
+ */
+export function outsideCacheTagScope<T>(fn: () => T): T {
+  return cacheTagStorage.exit(fn);
+}
 
 /**
  * Tag owners (#957). A route cache() record replays its segments without
@@ -287,7 +311,7 @@ export function cacheTag(...tags: string[]): void {
         }
         continue;
       }
-      store.add(normalized);
+      addToScopes(store, normalized);
     }
     return;
   }
@@ -457,21 +481,76 @@ export function recordedIdentityRead(
   return undefined;
 }
 
-/** `root`'s tags plus those of every set it links to, transitively. */
-export function flattenRecordedTags(root: Set<string>): Set<string> {
-  const out = new Set<string>();
+/** `root` and every set it links to, transitively. */
+function linkedSets(root: Set<string>): Set<Set<string>> {
   const seen = new Set<Set<string>>();
   const pending = [root];
   for (let set = pending.pop(); set !== undefined; set = pending.pop()) {
     if (seen.has(set)) continue;
     seen.add(set);
-    for (const tag of set) out.add(tag);
     for (const linked of tagLinks.get(set) ?? []) pending.push(linked);
+  }
+  return seen;
+}
+
+/** `root`'s tags plus those of every set it links to, transitively. */
+export function flattenRecordedTags(root: Set<string>): Set<string> {
+  const out = new Set<string>();
+  for (const set of linkedSets(root)) {
+    for (const tag of set) out.add(tag);
   }
   return out;
 }
 
-/** recordRequestTags, also recording onto `owner`'s set (#957). */
+/**
+ * Where each execution that records into a set started (#977): a loader
+ * execution (createLoaderExecutor), a loader-cache MISS or refresh, a
+ * loader-cache binding's value.
+ */
+const tagSetStarts = new WeakMap<Set<string>, ExecutionStart>();
+
+/** Record where the execution recording into `set` started. */
+export function markTagSetStart(set: Set<string>, start: ExecutionStart): void {
+  tagSetStarts.set(set, start);
+}
+
+/**
+ * The earliest start among `root` and every set it links to: a value built
+ * from another execution's value is as old as the oldest of them. A
+ * loader-cache write gates on it (loader-cache.ts), because the loader value
+ * it stores can be a run a reader started before the binding executed, and
+ * the values that run read can be older still.
+ */
+export function earliestRecordedStart(
+  root: Set<string>,
+): ExecutionStart | undefined {
+  let earliest: ExecutionStart | undefined;
+  for (const set of linkedSets(root)) {
+    const start = tagSetStarts.get(set);
+    if (!start) continue;
+    earliest = earliest
+      ? {
+          seq: Math.min(earliest.seq, start.seq),
+          at: Math.min(earliest.at, start.at),
+        }
+      : start;
+  }
+  return earliest;
+}
+
+/**
+ * recordRequestTags, also recording onto `owner`'s set (#957), the active
+ * loader tag set (#964), and the enclosing "use cache" execution's tag
+ * scope (#980).
+ *
+ * The last one is how a nested "use cache" call's tags reach the entry that
+ * bakes its value: the inner wrapper records its tags (a miss's, a hit's
+ * stored ones, a joined execution's) after its own scope closed, so the
+ * scope current then is the caller's. Without it an outer entry kept the
+ * inner value past updateTag() of an inner tag, and the same-request gate
+ * (tag-invalidation.ts invalidatedSince) did not see the outer execution
+ * as tagged by it.
+ */
 function recordOwnedTags(
   tags: Iterable<string> | undefined,
   ctx: RequestContext | undefined,
@@ -480,12 +559,14 @@ function recordOwnedTags(
   if (!tags || !ctx?._requestTags) return;
   const set = ctx._requestTags;
   const captured = activeTagSet();
+  const enclosing = cacheTagStorage.getStore();
   let owned: Set<string> | undefined;
   for (const tag of tags) {
     const normalized = normalizeTag(tag);
     if (normalized === null) continue;
     set.add(normalized);
     captured?.add(normalized);
+    addToScopes(enclosing, normalized);
     if (owner !== undefined) {
       owned ??= setFor(ownersFor(ctx).tags, owner);
       owned.add(normalized);
@@ -494,20 +575,31 @@ function recordOwnedTags(
 }
 
 /**
- * Run a function within a cache tag scope. Any cacheTag() calls inside `fn`
- * accumulate into the returned Set.
+ * Run a function within a cache tag scope. Any cacheTag() calls inside `fn`,
+ * and the tags a nested "use cache" call records (recordOwnedTags, #980),
+ * accumulate into the returned Set and every scope enclosing it
+ * (scopeParents).
  *
  * The returned Set is the LIVE reference - the caller must await `result`
  * before reading `tags`, because an async cached function may call cacheTag()
- * after an await boundary.
+ * after an await boundary. Pass `tagSet` to re-enter an execution's scope
+ * (its result's Flight encode, #980); it keeps the parent it opened under.
  *
  * @internal Used by cache-runtime.ts to wrap "use cache" execution.
  */
-export function runWithCacheTagScope<T>(fn: () => T): {
+export function runWithCacheTagScope<T>(
+  fn: () => T,
+  tagSet?: Set<string>,
+): {
   result: T;
   tags: Set<string>;
 } {
-  const tagSet = new Set<string>();
-  const result = cacheTagStorage.run(tagSet, fn);
-  return { result, tags: tagSet };
+  let scope = tagSet;
+  if (!scope) {
+    scope = new Set<string>();
+    const parent = cacheTagStorage.getStore();
+    if (parent) scopeParents.set(scope, parent);
+  }
+  const result = cacheTagStorage.run(scope, fn);
+  return { result, tags: scope };
 }

@@ -238,7 +238,9 @@ Each tag attaches to one entry, so know which entry you are tagging:
 
 - Forms 1 and 2 tag the `cache()` segment entry, and the entries of every
   `cache()` nested under it (see "Conditions and tags inherit").
-- Form 3 tags the `"use cache"` entry (plus any profile `tags`).
+- Form 3 tags the `"use cache"` entry (plus any profile `tags`), and every
+  `"use cache"` entry that calls that function: the outer entry bakes the
+  inner value, so it carries the inner tags.
 - Form 4 tags the request's `ppr` shell entry (`/ppr`) or `/document-cache`
   entry, with no `"use cache"` needed. On a route that is neither `ppr` nor
   document-cached and has no `cache()`, nothing reads the tag — a silent
@@ -290,18 +292,21 @@ request, so an action that calls `revalidateTag()` and then renders gets fresh
 `"use cache"` and `cache()` reads, as with `await updateTag()`. What
 `revalidateTag()` does not wait for is the durable write (the KV marker, the
 tag purge, Vercel's `expireTag`): other requests see the invalidation once it
-lands. A `"use cache"` call that this request started before the
-invalidation, and that carries one of the invalidated tags, is not reused
-after it and does not store its value; neither does a stale entry's
-background refresh. The tags are the call's own (its `cacheTag()` calls and
-profile `tags`): a nested `"use cache"` function's tags do not reach the
-enclosing entry, so invalidating one of them neither evicts the outer entry
-nor stops an outer call already running
-([#980](https://github.com/rangojs/rango/issues/980)). Not covered
-([#977](https://github.com/rangojs/rango/issues/977)): such a call started
-by another request, or a loader's own `cache()` that started before the
-invalidation, still stores its value when it finishes, and reads after that
-can get it.
+lands.
+
+Work that started before the invalidation, in this request or another one,
+is not stored after it. A `"use cache"` call, a stale entry's background
+refresh, a loader's own `cache()`, a route `cache()` render or a
+document-cache render that read its data before one of its tags was
+invalidated still returns what it read, but its store write is skipped:
+every store stamps an entry when it is written, so the old value would be
+served as newer than the invalidation. The next read runs it again. A
+`"use cache"` call already running when one of its tags is invalidated is
+not joined by later calls either. Its tags include those of the
+`"use cache"` functions it calls. Another isolate's invalidation is caught
+through the store's markers (`CFCacheStore` with KV, `VercelCacheStore`); on
+a KV-less `CFCacheStore` only this isolate's invalidations are, and ttl+swr
+bounds the rest.
 
 Both must run inside a request (action, handler, middleware, response route).
 Called from a queue consumer or cron job, there is no request context, so they

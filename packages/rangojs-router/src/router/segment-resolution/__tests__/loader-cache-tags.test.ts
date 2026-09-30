@@ -391,6 +391,43 @@ describe("loader-level cache: the tags of the loaders its body reads", () => {
     },
   );
 
+  // #977: the binding executes after its lookup, but the dependency value it
+  // reads is the run the layout started earlier, before the invalidation.
+  it("a dependency run started before an invalidation of its tag: the entry is not written", async () => {
+    const store = new MemorySegmentCacheStore();
+    const writes = writtenTags(store);
+    let source = "old";
+    const category = defineLoader("CategoryLoader#L", async () => {
+      cacheTag("category:c");
+      return { source };
+    });
+    const product = defineLoader("ProductLoader#L", async (ctx) => ({
+      category: (await ctx.use(category)).source,
+    }));
+    // Another request changes the data and invalidates while the binding
+    // looks its entry up, after the layout started category.
+    const getItem = store.getItem.bind(store);
+    let invalidateOnLookup = true;
+    store.getItem = async (key) => {
+      if (invalidateOnLookup) {
+        invalidateOnLookup = false;
+        source = "new";
+        await invalidate(store, "category:c");
+      }
+      return getItem(key);
+    };
+    const entry = entryWith([cachedEntry(product, store)]);
+    const opts = { layout: layoutWith([uncachedEntry(category)]) };
+
+    const first = await runRequest(entry, opts);
+    expect(first.data.at(-1)).toEqual({ category: "old" });
+    expect(writes()).toEqual([]);
+
+    const second = await runRequest(entry, opts);
+    expect(second.data.at(-1)).toEqual({ category: "new" });
+    expect(writes()).toEqual([["category:c"]]);
+  });
+
   it("a cache()-bound loader it reads: that loader's cache() tags and entry tags, on its MISS and its HIT", async () => {
     const store = new MemorySegmentCacheStore();
     const writes = writtenTags(store);

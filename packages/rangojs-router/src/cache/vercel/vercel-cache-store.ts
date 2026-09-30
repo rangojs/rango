@@ -6,8 +6,9 @@
  * far smaller: Vercel's Runtime Cache already IS a distributed, tag-aware cache
  * (regional storage, global tag-expire within ~300ms), so none of CFCacheStore's
  * L1/L2 tiering or per-tier timeout budgets are needed here - the platform does
- * that work. Tag markers exist only for the shell family (`tm`, see
- * isTagsInvalidatedSince), and only PPR shell reads memoize them. What this
+ * that work. Tag markers (`tm`, see isTagsInvalidatedSince) gate shell reads
+ * and writes and every cache write that started before an invalidation
+ * (#977); only PPR shell reads memoize them. What this
  * store adds on top of the raw primitive is the parts Vercel does NOT give us:
  *
  *   1. Stale-while-revalidate. `getCache` has no stale-but-serve: a TTL'd entry
@@ -75,7 +76,11 @@ import {
   base64ToBuffer,
   base64ToBytes,
 } from "../cf/cf-base64.js";
-import { maskRequestTags, maskedForRequest } from "../request-tag-mask.js";
+import {
+  gateMarkerRead,
+  maskRequestTags,
+  maskedForRequest,
+} from "../request-tag-mask.js";
 import {
   ShellMemo,
   freshReadsWindowMs,
@@ -167,8 +172,9 @@ type CacheFamily = "s" | "i" | "r" | "h" | "tm";
 
 /**
  * TTL for tag-invalidation marker entries ("tm" family), written by
- * invalidateTags for the build-shell read-through's isTagsInvalidatedSince
- * gate. The platform's expireTag() DELETES tagged entries (no queryable
+ * invalidateTags for isTagsInvalidatedSince (the build-shell read-through,
+ * the shell write gate, and the write gate of cache executions, #977).
+ * The platform's expireTag() DELETES tagged entries (no queryable
  * history), so the markers are rango's own record of "tag X was invalidated
  * at T". One year: runtime tagged-shell retention is capped to this lifetime,
  * while buildVersion retires build shells on the next deploy. An expired marker
@@ -1202,8 +1208,10 @@ export class VercelCacheStore<
    * fresh values are used as is, stale ones are used and refreshed in the
    * background, older ones block on the runtime-cache read. A request
    * carrying the fresh-reads cookie skips the memo. A failed read rejects and
-   * is never memoized. The shell write gate and build shells
-   * (isTagsInvalidatedSince) read the runtime cache every time.
+   * is never memoized. The shell write gate, build shells and the data
+   * write gates (isTagsInvalidatedSince) read the runtime cache each time
+   * they ask; gates of a request asking while a read is in flight share it
+   * (gateMarkerRead), and nothing is kept once it settles.
    */
   private async readTagMarker(
     tag: string,
@@ -1299,16 +1307,38 @@ export class VercelCacheStore<
   // --- Tags ---
 
   /**
-   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince).
-   * expireTag() keeps no queryable history, so invalidateTags() writes "tm"
-   * markers for runtime capture races and immutable build shells. Marker >=
-   * generation start wins; read errors fail open like the CF marker check.
+   * SegmentCacheStore.isTagsInvalidatedSince. expireTag() keeps no queryable
+   * history, so invalidateTags() writes "tm" markers for runtime capture
+   * races, immutable build shells and data writes that started before an
+   * invalidation (#977, tag-invalidation.ts predatesInvalidation). Marker >=
+   * generation start wins. Read errors fail open like the CF marker check,
+   * except for the write gate (`failClosed`), which counts them as an
+   * invalidation. Each tag's marker is read through gateMarkerRead
+   * (request-tag-mask.ts): gates asking while a read is in flight share it.
    */
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
+    options?: { failClosed?: boolean },
   ): Promise<boolean> {
-    return this.tagsInvalidatedSince(tags, sinceMs, false);
+    if (this.maskedForRequest(tags, sinceMs)) return true;
+    const ctx = _getRequestContext();
+    const reads = new Map(
+      tags.map((tag) => [
+        tag,
+        gateMarkerRead(ctx, this, tag, sinceMs, () =>
+          this.readTagMarker(tag, false),
+        ),
+      ]),
+    );
+    return this.tagsInvalidatedSince(
+      tags,
+      sinceMs,
+      false,
+      reads,
+      undefined,
+      options?.failClosed === true,
+    );
   }
 
   private async tagsInvalidatedSince(
@@ -1317,6 +1347,8 @@ export class VercelCacheStore<
     isolateMemo: boolean,
     prefetched?: Map<string, Promise<number | null>>,
     outcomes?: Map<string, MarkerMemoOutcome>,
+    /** What a failed marker read answers: true for the write gate (#977). */
+    failClosed = false,
   ): Promise<boolean> {
     if (this.maskedForRequest(tags, sinceMs)) return true;
     try {
@@ -1340,7 +1372,7 @@ export class VercelCacheStore<
         "cache-read",
         "[VercelCacheStore] tag invalidation check",
       );
-      return false;
+      return failClosed;
     }
   }
 

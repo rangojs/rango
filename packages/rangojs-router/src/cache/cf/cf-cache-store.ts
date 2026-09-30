@@ -101,7 +101,11 @@ import {
   getTagMarkerInflight,
   getShellMarkerReads,
 } from "./cf-tag-marker-memo.js";
-import { maskRequestTags, maskedForRequest } from "../request-tag-mask.js";
+import {
+  gateMarkerRead,
+  maskRequestTags,
+  maskedForRequest,
+} from "../request-tag-mask.js";
 import {
   TagMarkerMemo,
   TagNameHints,
@@ -3410,6 +3414,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     tag: string,
     memo: Map<string, number | null> | undefined,
     read?: { timedOut: boolean; masked?: boolean },
+    /** false: populate no L1 marker (isInvalidatedSincePastMemo). */
+    publish = true,
   ): Promise<number | null> {
     // Write the resolved marker into the memo WITHOUT clobbering a value
     // another read of the tag memoized during our await: that value wins and
@@ -3484,7 +3490,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (read) read.masked = masked;
 
     // Populate L1 for subsequent reads in this colo (non-blocking).
-    if (this.tagCacheTtl > 0 && !masked) {
+    if (this.tagCacheTtl > 0 && !masked && publish) {
       const put = () => this.putTagMarkerL1(tag, resolved);
       if (this.waitUntil) this.waitUntil(put);
       else void put();
@@ -3660,18 +3666,93 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Shell tag-generation gate (SegmentCacheStore.isTagsInvalidatedSince): the
-   * SAME KV markers used by runtime envelopes also evict immutable build shells
-   * and captures whose write races updateTag(). Thin public wrapper over the
-   * shell generation check (marker >= since, fail open); KV-less it degrades
-   * to the per-request mask in purge mode and to false otherwise — see
+   * SegmentCacheStore.isTagsInvalidatedSince: the SAME KV markers used by
+   * runtime envelopes also evict immutable build shells, and gate the writes
+   * of cache executions that started before an invalidation (#977,
+   * tag-invalidation.ts predatesInvalidation). Marker >= since. A marker read
+   * that fails or times out answers false (fail open), or true for the write
+   * gate (`failClosed`). With KV each marker is read past the per-request
+   * memo (isInvalidatedSincePastMemo); KV-less it degrades to the per-request
+   * mask in purge mode and to false otherwise — see
    * isShellGenerationInvalidated.
    */
   async isTagsInvalidatedSince(
     tags: string[],
     sinceMs: number,
+    options?: { failClosed?: boolean },
   ): Promise<boolean> {
-    return this.isShellGenerationInvalidated(tags, sinceMs);
+    if (!this.kv) return this.isShellGenerationInvalidated(tags, sinceMs);
+    return this.isInvalidatedSincePastMemo(
+      tags,
+      sinceMs,
+      options?.failClosed === true,
+    );
+  }
+
+  /**
+   * isTagsInvalidatedSince with KV, never answered from a marker value this
+   * request read before the asking gate. A write gate asks after an
+   * execution that can run for seconds, and the per-request memo can hold
+   * the marker the request read before it (a stale hit reads its entry's
+   * markers, then its refresh runs): answered from it, another isolate's
+   * invalidation in between let the refresh write.
+   *
+   * - This request's own invalidations answer from its mask, checked again
+   *   once the reads are back: a read in flight when the request invalidated
+   *   one of the tags resolved to the marker before it.
+   * - Each tag is read through gateMarkerRead (request-tag-mask.ts): gates
+   *   asking while a read is in flight share it; a settled read is not
+   *   reused.
+   * - The read returns its own value from L1 (tagCacheTtl) or KV, not one an
+   *   older read of the tag memoized while it was in flight, and fills the
+   *   memo only when it holds nothing, so a build shell's check still serves
+   *   the request's later reads. A timed-out read fills nothing.
+   * - It publishes to L1 unless the request masked the tag
+   *   (fetchTagMarker), and never without a request context (a detached
+   *   waitUntil task), where a mask cannot be told apart.
+   * - A read that fails or times out answers `failClosed`: the write gate
+   *   counts it as an invalidation, other callers as none.
+   * @internal
+   */
+  private async isInvalidatedSincePastMemo(
+    tags: string[],
+    since: number,
+    failClosed: boolean,
+  ): Promise<boolean> {
+    if (!Array.isArray(tags) || tags.length === 0 || !since) return false;
+    const ctx = _getRequestContext();
+    if (maskedForRequest(ctx, this, tags, since)) return true;
+    const memo = ctx ? getTagMarkerMemo(ctx, this) : undefined;
+    try {
+      const reads = await Promise.all(
+        tags.map((tag) =>
+          gateMarkerRead(ctx, this, tag, since, async () => {
+            const outcome = { timedOut: false };
+            const marker = await this.fetchTagMarker(
+              tag,
+              undefined,
+              outcome,
+              ctx !== undefined,
+            );
+            if (outcome.timedOut) return { marker, answered: false };
+            if (memo && !memo.has(tag)) memo.set(tag, marker);
+            return { marker, answered: true };
+          }),
+        ),
+      );
+      if (maskedForRequest(ctx, this, tags, since)) return true;
+      return reads.some(
+        ({ marker, answered }) =>
+          (!answered && failClosed) || (marker != null && marker >= since),
+      );
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-read",
+        "[CFCacheStore] tag invalidation check",
+      );
+      return failClosed;
+    }
   }
 
   /**

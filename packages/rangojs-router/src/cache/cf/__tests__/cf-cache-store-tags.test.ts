@@ -13,7 +13,12 @@ import {
   CACHE_READ_ERROR,
   type CacheReadError as CacheReadErrorT,
 } from "../../types.js";
-import { revalidateTag, updateTag } from "../../tag-invalidation.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  revalidateTag,
+  updateTag,
+} from "../../tag-invalidation.js";
 
 // get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
 // these tests assert hit/miss shapes, so narrow the sentinel away up front.
@@ -398,6 +403,246 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         vi.advanceTimersByTime(10);
         await store.invalidateTags(["catalog"]);
         expect(await store.getItem("k")).toBeNull();
+      });
+    });
+
+    // #977: the write gate asks after an execution, and a stale hit memoized
+    // the marker before its refresh ran.
+    it("isTagsInvalidatedSince reads past a marker this request memoized earlier", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["catalog"] });
+      await ctx.flush();
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        // Memoizes "catalog" -> no marker.
+        expect(await store.getItem("k")).not.toBeNull();
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        await otherIsolate.invalidateTags(["catalog"]);
+        await ctx.flush();
+
+        expect(await store.isTagsInvalidatedSince(["catalog"], startedAt)).toBe(
+          true,
+        );
+        // Asked about a later millisecond than the invalidation's: no.
+        expect(
+          await store.isTagsInvalidatedSince(["catalog"], Date.now() + 1),
+        ).toBe(false);
+      });
+    });
+
+    // #977: a page's writes finish together and share tags; each gate read
+    // its own marker.
+    it("the write gate shares one marker read among concurrent gates, and a later gate reads again", async () => {
+      const store = makeStore();
+      const getSpy = vi.spyOn(kv, "get");
+      const markerReads = () =>
+        getSpy.mock.calls.filter(([key]) => String(key).includes("__tag__/hot"))
+          .length;
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        await Promise.all(
+          Array.from({ length: 5 }, () =>
+            predatesInvalidation(store, ["hot"], start),
+          ),
+        );
+        expect(markerReads()).toBe(1);
+        // A settled read covers only what was invalidated before it.
+        for (let i = 0; i < 3; i++) {
+          await predatesInvalidation(store, ["hot"], start);
+        }
+        expect(markerReads()).toBe(4);
+      });
+    });
+
+    // #977: a read another gate issued answers only for invalidations before
+    // it; B's execution is older than A's read but asks after it settled.
+    it("a gate asking after another gate's read settled reads again", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startB = executionStart();
+        vi.advanceTimersByTime(10);
+        // A's gate: its read settles with no marker.
+        expect(
+          await predatesInvalidation(store, ["probe"], executionStart()),
+        ).toBe(false);
+        vi.advanceTimersByTime(490);
+        await otherIsolate.invalidateTags(["probe"]);
+        await ctx.flush();
+        vi.advanceTimersByTime(500);
+
+        expect(await predatesInvalidation(store, ["probe"], startB)).toBe(true);
+      });
+    });
+
+    // #977: the write gate fails closed (a skipped write costs a miss); the
+    // store's own contract for other callers (a build shell's read) stays
+    // fail-open.
+    it("the write gate counts a marker read that times out or fails as an invalidation", async () => {
+      const store = makeStore();
+      let mode: "hang" | "throw" = "hang";
+      vi.spyOn(kv, "get").mockImplementation((key: string) => {
+        if (!key.includes(TAG_MARKER_PREFIX)) return Promise.resolve(null);
+        return mode === "hang"
+          ? new Promise(() => {})
+          : Promise.reject(new Error("KV down"));
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        vi.advanceTimersByTime(10);
+        const timedOut = predatesInvalidation(store, ["unread"], start);
+        await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
+        expect(await timedOut).toBe(true);
+
+        mode = "throw";
+        expect(await predatesInvalidation(store, ["unread"], start)).toBe(true);
+        // Asked without the gate's option: fail-open, as before.
+        expect(await store.isTagsInvalidatedSince(["unread"], start.at)).toBe(
+          false,
+        );
+      });
+    });
+
+    it("a gate's marker read that timed out is not reused by a later gate", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      const get = kv.get.bind(kv);
+      let hang = true;
+      vi.spyOn(kv, "get").mockImplementation((key: string, options?: any) =>
+        hang && key.includes(TAG_MARKER_PREFIX)
+          ? new Promise(() => {})
+          : get(key, options),
+      );
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const start = executionStart();
+        vi.advanceTimersByTime(10);
+        const timedOut = predatesInvalidation(store, ["slow"], start);
+        await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS);
+        await timedOut;
+
+        hang = false;
+        await otherIsolate.invalidateTags(["slow"]);
+        await ctx.flush();
+        vi.advanceTimersByTime(10);
+        expect(await predatesInvalidation(store, ["slow"], start)).toBe(true);
+      });
+    });
+
+    // #977: a read of the tag this request started earlier, still in flight,
+    // lands during the gate's own read with the marker from before.
+    it("the write gate answers from its own read, not from an older read that lands meanwhile", async () => {
+      const store = makeStore();
+      const otherIsolate = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["raced"] });
+      await ctx.flush();
+      const markerGets: Array<() => void> = [];
+      const get = kv.get.bind(kv);
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        if (!String(key).includes("__tag__/raced")) return get(key, options);
+        const value = await get(key, options);
+        await new Promise<void>((resolve) => markerGets.push(resolve));
+        return value;
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        // The entry read's marker read: issued now, before the invalidation.
+        const hit = store.getItem("k");
+        await vi.waitFor(() => expect(markerGets).toHaveLength(1));
+        vi.advanceTimersByTime(10);
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        await otherIsolate.invalidateTags(["raced"]);
+        await ctx.flush();
+
+        const gate = store.isTagsInvalidatedSince(["raced"], startedAt + 1);
+        await vi.waitFor(() => expect(markerGets).toHaveLength(2));
+        // The older read lands first and memoizes "no marker".
+        markerGets[0]!();
+        expect(await hit).not.toBeNull();
+        markerGets[1]!();
+        expect(await gate).toBe(true);
+      });
+    });
+
+    it("isTagsInvalidatedSince: a tag this request masks while the read is in flight counts", async () => {
+      const store = makeStore();
+      const heldReads: Array<() => void> = [];
+      const get = kv.get.bind(kv);
+      vi.spyOn(kv, "get").mockImplementation(async (key, options) => {
+        const value = await get(key, options);
+        if (String(key).includes("__tag__/in-flight")) {
+          await new Promise<void>((resolve) => heldReads.push(resolve));
+        }
+        return value;
+      });
+
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        const gate = store.isTagsInvalidatedSince(["in-flight"], startedAt + 1);
+        await vi.waitFor(() => expect(heldReads).toHaveLength(1));
+        // The request's own invalidation, straight through the store.
+        void store.invalidateTags(["in-flight"]);
+        heldReads[0]!();
+        expect(await gate).toBe(true);
+      });
+    });
+
+    it("isTagsInvalidatedSince memoizes a tag it reads first in the request, so a later read of it does no KV read", async () => {
+      const store = makeStore();
+      await store.setItem("k", "v", { ttl: 300, tags: ["first"] });
+      await ctx.flush();
+      const getSpy = vi.spyOn(kv, "get");
+
+      await runWithRequestContext(makeReqCtx(), async () => {
+        expect(await store.isTagsInvalidatedSince(["first"], 1)).toBe(false);
+        expect(await store.getItem("k")).not.toBeNull();
+      });
+
+      const markerReads = getSpy.mock.calls.filter(([key]) =>
+        String(key).includes("__tag__/first"),
+      );
+      expect(markerReads).toHaveLength(1);
+    });
+
+    it("isTagsInvalidatedSince without a request context publishes no L1 marker", async () => {
+      const store = makeStore({ tagCacheTtl: 60 });
+      const putSpy = vi.spyOn(mockCaches._default, "put");
+
+      expect(await store.isTagsInvalidatedSince(["detached"], 1)).toBe(false);
+      await ctx.flush();
+
+      expect(
+        putSpy.mock.calls.some(([req]) =>
+          decodeURIComponent((req as Request).url).includes(
+            "__tagmarker__/detached",
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it("isTagsInvalidatedSince answers a tag this request masked from its mask, without a KV read", async () => {
+      const store = makeStore();
+      await runWithRequestContext(makeReqCtx(store), async () => {
+        const startedAt = Date.now();
+        vi.advanceTimersByTime(10);
+        revalidateTag("masked");
+        const getSpy = vi.spyOn(kv, "get");
+
+        expect(await store.isTagsInvalidatedSince(["masked"], startedAt)).toBe(
+          true,
+        );
+        expect(
+          getSpy.mock.calls.filter(([key]) =>
+            String(key).includes("__tag__/masked"),
+          ),
+        ).toEqual([]);
       });
     });
   });

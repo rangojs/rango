@@ -48,6 +48,7 @@ import { runBackground } from "./background-task.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   normalizeTags,
+  outsideCacheTagScope,
   recordRequestTags,
   runWithCacheTagScope,
 } from "./cache-tag.js";
@@ -58,7 +59,12 @@ import {
   type CacheExecScope,
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
-import { currentCacheSeq, invalidatedSince } from "./tag-invalidation.js";
+import {
+  executionStart,
+  invalidatedSince,
+  predatesInvalidation,
+  type ExecutionStart,
+} from "./tag-invalidation.js";
 import type { CacheItemResult } from "./types.js";
 import type { InternalHandlerContext } from "../types.js";
 
@@ -267,6 +273,12 @@ interface CacheEnvelope {
   tags: string[];
   /** RSC-encoded handle blob captured during execution, if any. */
   handles?: string;
+  /**
+   * One of `tags` was invalidated after the leader started, as the store
+   * tells it (another isolate, #977): the leader does not write it, and a
+   * follower does not serve it.
+   */
+  predates?: boolean;
 }
 
 /**
@@ -295,8 +307,8 @@ interface InFlightExecution {
   promise: Promise<CacheEnvelope>;
   /** Date.now() at registration, for IN_FLIGHT_LEADER_MAX_WAIT_MS. */
   registeredAt: number;
-  /** currentCacheSeq() at registration, for invalidatedSince (#973). */
-  startSeq: number;
+  /** Where the leader started, for invalidatedSince (#973, #977). */
+  start: ExecutionStart;
 }
 
 const inFlightExecutions = new Map<string, InFlightExecution>();
@@ -442,6 +454,20 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           `Define it in createRouter({ cacheProfiles: { "${resolvedProfileName}": { ttl: ... } } }).`,
       );
     }
+
+    // An entry's tags: the profile/DSL tags plus what its execution
+    // recorded, normalized (drops empty profile tags, matching the
+    // invalidate path) and deduped.
+    const entryTags = (recorded: Set<string>): string[] => [
+      ...new Set(normalizeTags([...(profile.tags ?? []), ...recorded])),
+    ];
+    // The value's Flight encode runs back inside its execution's tag scope:
+    // it renders the server components in the value, and a "use cache" call
+    // or cacheTag() among them belongs to this entry (#980).
+    const inTagScope = <T>(
+      recorded: Set<string>,
+      encode: () => Promise<T>,
+    ): Promise<T> => runWithCacheTagScope(encode, recorded).result;
 
     // Separate request-scoped args (ctx, a Request, the request's env) from
     // key-generating args. For those that carry route context (ctx params,
@@ -643,124 +669,121 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         const liveStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
         const recordKey = ownerKeyed ? useCacheRecordKey() : undefined;
         // Background revalidation — must capture handles if tainted args present.
-        runBackground(requestCtx, async () => {
-          // The background body's handle pushes belong to the refreshed entry
-          // only: the foreground already replayed the stale entry's. They
-          // reach the REQUEST's store (a handler ctx.use(Handle) binds it at
-          // setupLoaderAccess, so a derived context with its own store never
-          // sees them), so the capture accepts only this body's chain and
-          // diverts what it records away from the live store. The foreground
-          // is still rendering here (runBackground starts on the next
-          // microtask), and its concurrent pushes are neither recorded nor
-          // diverted (issue #684, plan 010). A root scope: the task is
-          // detached, so an outer "use cache" body that scheduled it must not
-          // record the refresh's pushes.
-          const bgScope: CacheExecScope = {};
-          const bgCapture = liveStore
-            ? startHandleCapture(liveStore, {
-                accept: () => isInCacheExecChain(bgScope),
-                divert: true,
-                key: recordKey,
-              })
-            : undefined;
+        // Scheduled outside the caller's tag scope: an enclosing "use cache"
+        // entry bakes the stale value, not the refreshed one (#980).
+        outsideCacheTagScope(() =>
+          runBackground(requestCtx, async () => {
+            // The background body's handle pushes belong to the refreshed entry
+            // only: the foreground already replayed the stale entry's. They
+            // reach the REQUEST's store (a handler ctx.use(Handle) binds it at
+            // setupLoaderAccess, so a derived context with its own store never
+            // sees them), so the capture accepts only this body's chain and
+            // diverts what it records away from the live store. The foreground
+            // is still rendering here (runBackground starts on the next
+            // microtask), and its concurrent pushes are neither recorded nor
+            // diverted (issue #684, plan 010). A root scope: the task is
+            // detached, so an outer "use cache" body that scheduled it must not
+            // record the refresh's pushes.
+            const bgScope: CacheExecScope = {};
+            const bgCapture = liveStore
+              ? startHandleCapture(liveStore, {
+                  accept: () => isInCacheExecChain(bgScope),
+                  divert: true,
+                  key: recordKey,
+                })
+              : undefined;
 
-          // Tainted args are NOT stamped here, in contrast to the foreground
-          // miss path below. The args include the live HandlerContext the
-          // still-rendering foreground holds, and INSIDE_CACHE_EXEC is a
-          // property stamped onto that SHARED object — so for the whole
-          // revalidation window a concurrent foreground ctx.set() /
-          // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
-          // never stamped anywhere for the same reason. In-body misuse IS
-          // still guarded here: runWithCacheExecScope below follows only this
-          // body's async chain, so a conditional cookies()/headers() read
-          // that fires only during revalidation throws instead of baking one
-          // user's value into the shared entry — with zero visibility to the
-          // concurrent foreground.
+            // Tainted args are NOT stamped here, in contrast to the foreground
+            // miss path below. The args include the live HandlerContext the
+            // still-rendering foreground holds, and INSIDE_CACHE_EXEC is a
+            // property stamped onto that SHARED object — so for the whole
+            // revalidation window a concurrent foreground ctx.set() /
+            // ctx.headers.*() would throw (issue #684, plan 010). requestCtx is
+            // never stamped anywhere for the same reason. In-body misuse IS
+            // still guarded here: runWithCacheExecScope below follows only this
+            // body's async chain, so a conditional cookies()/headers() read
+            // that fires only during revalidation throws instead of baking one
+            // user's value into the shared entry — with zero visibility to the
+            // concurrent foreground.
 
-          try {
-            // Re-establish the request-context ALS so a "use cache" body that
-            // reads the ambient getRequestContext() (e.g.
-            // getRequestContext().env.ApiKey) resolves during the background
-            // revalidation instead of throwing "called outside of a request
-            // context". runWithRequestContext sets the store for fn's
-            // synchronous kickoff; its async continuations inherit it.
-            //
-            // The span opens inside the request ALS and wraps the WHOLE task —
-            // fn kickoff through the store write — so its platform spans nest
-            // under rango.background and a slow or failing setItem is part of
-            // the traced revalidation, not an untraced tail.
-            await runWithRequestContext(requestCtx, () =>
-              observePhase(
-                PHASES.background("use-cache-revalidation"),
-                async () => {
-                  const refreshArgs = args.map(refreshView);
-                  // The refresh reads its data from here on (#973).
-                  const startSeq = currentCacheSeq();
-                  const scoped = runWithCacheTagScope(() =>
-                    runWithCacheExecScope(
-                      () => fn.apply(this, refreshArgs),
-                      bgScope,
-                    ),
-                  );
-                  const freshResult = await scoped.result;
-                  bgCapture?.stop();
-                  // Merge profile/DSL tags with runtime cacheTag() tags, read
-                  // after awaiting so post-await cacheTag() calls are included.
-                  // Normalize (drops empty profile tags, matching the
-                  // invalidate path) + dedupe.
-                  const freshTags = [
-                    ...new Set(
-                      normalizeTags([...(profile.tags ?? []), ...scoped.tags]),
-                    ),
-                  ];
-                  recordRequestTags(freshTags, requestCtx);
-                  const flightErrors: unknown[] = [];
-                  const onFlightError = (error: unknown): void => {
-                    flightErrors.push(error);
-                  };
-                  const serialized = await serializeResult(
-                    freshResult,
-                    onFlightError,
-                  );
-                  if (serialized !== null) {
-                    const encodedHandles = bgCapture
-                      ? await encodeHandles(
-                          bgCapture.capture.data,
-                          onFlightError,
-                        )
-                      : undefined;
-                    // An error row would replace the stale entry; the catch
-                    // below reports it and the stale entry keeps serving.
-                    if (flightErrors.length > 0) throw flightErrors[0];
-                    // The request invalidated one of the refreshed value's
-                    // tags after the refresh started: the value may predate
-                    // it, and written now it would outlive it.
-                    if (invalidatedSince(requestCtx, freshTags, startSeq)) {
-                      return;
+            try {
+              // Re-establish the request-context ALS so a "use cache" body that
+              // reads the ambient getRequestContext() (e.g.
+              // getRequestContext().env.ApiKey) resolves during the background
+              // revalidation instead of throwing "called outside of a request
+              // context". runWithRequestContext sets the store for fn's
+              // synchronous kickoff; its async continuations inherit it.
+              //
+              // The span opens inside the request ALS and wraps the WHOLE task —
+              // fn kickoff through the store write — so its platform spans nest
+              // under rango.background and a slow or failing setItem is part of
+              // the traced revalidation, not an untraced tail.
+              await runWithRequestContext(requestCtx, () =>
+                observePhase(
+                  PHASES.background("use-cache-revalidation"),
+                  async () => {
+                    const refreshArgs = args.map(refreshView);
+                    // The refresh reads its data from here on (#973, #977).
+                    const start = executionStart();
+                    const scoped = runWithCacheTagScope(() =>
+                      runWithCacheExecScope(
+                        () => fn.apply(this, refreshArgs),
+                        bgScope,
+                      ),
+                    );
+                    const freshResult = await scoped.result;
+                    bgCapture?.stop();
+                    recordRequestTags(entryTags(scoped.tags), requestCtx);
+                    const flightErrors: unknown[] = [];
+                    const onFlightError = (error: unknown): void => {
+                      flightErrors.push(error);
+                    };
+                    const serialized = await inTagScope(scoped.tags, () =>
+                      serializeResult(freshResult, onFlightError),
+                    );
+                    if (serialized !== null) {
+                      const encodedHandles = bgCapture
+                        ? await inTagScope(scoped.tags, () =>
+                            encodeHandles(
+                              bgCapture.capture.data,
+                              onFlightError,
+                            ),
+                          )
+                        : undefined;
+                      // An error row would replace the stale entry; the catch
+                      // below reports it and the stale entry keeps serving.
+                      if (flightErrors.length > 0) throw flightErrors[0];
+                      const freshTags = entryTags(scoped.tags);
+                      // One of the refreshed value's tags was invalidated after
+                      // the refresh started: written now, a value that may
+                      // predate it would outlive it.
+                      if (await predatesInvalidation(store, freshTags, start)) {
+                        return;
+                      }
+                      await store.setItem!(cacheKey, serialized, {
+                        handles: encodedHandles,
+                        ttl: profile.ttl,
+                        swr: profile.swr,
+                        tags: freshTags.length > 0 ? freshTags : undefined,
+                      });
                     }
-                    await store.setItem!(cacheKey, serialized, {
-                      handles: encodedHandles,
-                      ttl: profile.ttl,
-                      swr: profile.swr,
-                      tags: freshTags.length > 0 ? freshTags : undefined,
-                    });
-                  }
-                },
-              ),
-            );
-          } catch (bgError) {
-            bgCapture?.stop();
-            // Pass requestCtx explicitly: this runs in a detached background
-            // task where the ALS context is gone, so onError can only fire if
-            // we hand it the context captured up front.
-            reportCacheError(
-              bgError,
-              "stale-revalidation",
-              "[use cache] background revalidation failed",
-              requestCtx,
-            );
-          }
-        });
+                  },
+                ),
+              );
+            } catch (bgError) {
+              bgCapture?.stop();
+              // Pass requestCtx explicitly: this runs in a detached background
+              // task where the ALS context is gone, so onError can only fire if
+              // we hand it the context captured up front.
+              reportCacheError(
+                bgError,
+                "stale-revalidation",
+                "[use cache] background revalidation failed",
+                requestCtx,
+              );
+            }
+          }),
+        );
         return result;
       } catch (error) {
         // Stale value is corrupt/partial; report and fall through to a fresh
@@ -809,7 +832,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Leader rejected: its map entry is already cleared; run fresh.
       if (!raced) break;
       // Checked after the wait, so an invalidation made meanwhile counts too.
-      if (!invalidatedSince(requestCtx, raced.tags, existing.startSeq)) {
+      if (
+        !raced.predates &&
+        !invalidatedSince(raced.tags, existing.start.seq)
+      ) {
         try {
           return await serveCached({
             value: raced.serialized,
@@ -826,11 +852,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           break; // Run fresh below.
         }
       }
-      // This request invalidated one of the leader's tags after it started
-      // (#973): its value may predate the invalidation. The leader cleared
-      // its entry before resolving, so an entry now is a newer execution
-      // (another caller that made this same decision): join it rather than
-      // start one more.
+      // One of the leader's tags was invalidated after it started, in any
+      // request or, as the store tells it, another isolate (#973, #977): its
+      // value may predate the invalidation. The leader cleared its entry
+      // before resolving, so an entry now is a newer execution (another
+      // caller that made this same decision): join it rather than start one
+      // more.
       const next = inFlightExecutions.get(cacheKey);
       existing = next !== existing ? next : undefined;
     }
@@ -849,11 +876,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Followers attach their own catch; guard the map's own reference so a
     // rejected envelope with no waiter is not an unhandled rejection.
     envelopePromise.catch(() => {});
-    const startSeq = currentCacheSeq();
+    const start = executionStart();
     inFlightExecutions.set(cacheKey, {
       promise: envelopePromise,
       registeredAt: Date.now(),
-      startSeq,
+      start,
     });
     const clearSelf = (): void => {
       if (inFlightExecutions.get(cacheKey)?.promise === envelopePromise) {
@@ -916,13 +943,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       capture?.stop();
     }
 
-    // Merge profile/DSL tags with runtime cacheTag() tags. Read scoped.tags
-    // after awaiting result so post-await cacheTag() calls are included.
-    // Normalize (drops empty profile tags, matching the invalidate path) + dedupe.
-    const allTags = [
-      ...new Set(normalizeTags([...(profile.tags ?? []), ...scoped!.tags])),
-    ];
-    recordRequestTags(allTags, requestCtx);
+    // Read scoped.tags after awaiting result so post-await cacheTag() calls
+    // are included.
+    const recorded = scoped!.tags;
+    recordRequestTags(entryTags(recorded), requestCtx);
 
     // Serialize + encode handles ONCE, resolve the in-flight envelope so any
     // concurrent followers can serve a synthetic hit, then persist to the store.
@@ -936,9 +960,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         flightErrors.push(error);
       };
       try {
-        serialized = await serializeResult(result, onFlightError);
+        serialized = await inTagScope(recorded, () =>
+          serializeResult(result, onFlightError),
+        );
         encodedHandles = capture
-          ? await encodeHandles(capture.capture.data, onFlightError)
+          ? await inTagScope(recorded, () =>
+              encodeHandles(capture.capture.data, onFlightError),
+            )
           : undefined;
         // Flight encodes an async component that throws, or a rejected
         // promise in the result or a handle value, as an error row and
@@ -952,8 +980,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         requestCtx?._reportBackgroundError?.(buildError, "cache-write");
         return;
       }
-      clearSelf();
       if (serialized === null) {
+        clearSelf();
         // Non-serializable result: no store write (matches the prior silent
         // skip); reject so any waiter falls through to a fresh execution.
         rejectEnvelope(
@@ -963,19 +991,32 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         );
         return;
       }
+      const tags = entryTags(recorded);
+      // One of the value's tags was invalidated after the execution started
+      // (#973, #977): written now, a value that may predate it would outlive
+      // it. Asked before the followers get the value: another isolate's
+      // invalidation is only in the store's answer, and a follower serving
+      // the value would bake it into its own entries. Yes also when the store
+      // cannot read a marker (predatesInvalidation asks it fail-closed) or
+      // throws: the cost is a later miss.
+      let predates = true;
+      try {
+        predates = await predatesInvalidation(store, tags, start);
+      } catch (gateError) {
+        requestCtx?._reportBackgroundError?.(gateError, "cache-write");
+      }
+      clearSelf();
       // Hand followers the envelope before the store write so a slow/failed
       // write never stalls them.
-      resolveEnvelope({ serialized, tags: allTags, handles: encodedHandles });
-      // This request invalidated one of the value's tags after the execution
-      // started (#973): the value may predate the invalidation, and written
-      // now it would outlive it. Skip the write; the next read runs fresh.
-      if (invalidatedSince(requestCtx, allTags, startSeq)) return;
+      resolveEnvelope({ serialized, tags, handles: encodedHandles, predates });
+      // Skipped, the next read runs fresh.
+      if (predates) return;
       try {
         await store.setItem!(cacheKey, serialized, {
           handles: encodedHandles,
           ttl: profile.ttl,
           swr: profile.swr,
-          tags: allTags.length > 0 ? allTags : undefined,
+          tags: tags.length > 0 ? tags : undefined,
         });
       } catch (writeError) {
         requestCtx?._reportBackgroundError?.(writeError, "cache-write");

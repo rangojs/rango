@@ -348,6 +348,39 @@ describe("SeededShellStore", () => {
   });
 });
 
+// A capture and a HIT tail run on these wrappers as the request's store; the
+// writes they pass through gate on the inner store's markers (#977).
+describe("the shell store wrappers forward isTagsInvalidatedSince", () => {
+  it.each([
+    [
+      "RecordingShellStore",
+      (inner: SegmentCacheStore) => new RecordingShellStore(inner),
+    ],
+    [
+      "SeededShellStore",
+      (inner: SegmentCacheStore) => new SeededShellStore(inner, []),
+    ],
+  ] as const)(
+    "%s: to the inner store, and is absent without one",
+    async (_label, wrap) => {
+      const isTagsInvalidatedSince = vi.fn(async () => true);
+      const inner = { isTagsInvalidatedSince } as unknown as SegmentCacheStore;
+
+      expect(
+        await wrap(inner).isTagsInvalidatedSince?.(["t"], 5, {
+          failClosed: true,
+        }),
+      ).toBe(true);
+      expect(isTagsInvalidatedSince).toHaveBeenCalledWith(["t"], 5, {
+        failClosed: true,
+      });
+      expect(
+        wrap({} as SegmentCacheStore).isTagsInvalidatedSince,
+      ).toBeUndefined();
+    },
+  );
+});
+
 describe("buildShellLoaderSeed", () => {
   it("maps the stored hole and runs bits onto seed entries", async () => {
     const snapshot: ShellSnapshotRecord[] = [

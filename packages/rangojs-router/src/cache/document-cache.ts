@@ -24,6 +24,7 @@ import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { cacheKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import { executionStart, predatesInvalidation } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
@@ -345,6 +346,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
+    // The write gate's start (#977): the request's, not this middleware's. A
+    // middleware ahead of this one can read tagged data the document bakes,
+    // and a stale refresh re-runs the handler over what they set.
+    const start = requestCtx._requestStart ?? executionStart();
+
     // Determine request type for cache key differentiation.
     // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
     // detection. Full-document RSC fetches must not share the HTML cache slot.
@@ -448,12 +454,16 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   // (same render-complete barrier as the miss path).
                   const body = await new Response(fresh.body).arrayBuffer();
                   throwIfRenderErrored(requestCtx);
+                  // Not written when one of its tags was invalidated since
+                  // the render started (#977).
+                  const tags = collectRequestTags(requestCtx);
+                  if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
                     cacheKey,
                     new Response(body, fresh),
                     directives.sMaxAge!,
                     directives.staleWhileRevalidate,
-                    collectRequestTags(requestCtx),
+                    tags,
                   );
                   log(
                     `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
@@ -513,12 +523,16 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // body and its tag set consistent.
             const body = await new Response(cacheStream).arrayBuffer();
             throwIfRenderErrored(requestCtx);
+            // Not written when one of its tags was invalidated since the
+            // render started (#977).
+            const tags = collectRequestTags(requestCtx);
+            if (await predatesInvalidation(store, tags, start)) return;
             await store.putResponse!(
               cacheKey,
               new Response(body, originalResponse),
               directives.sMaxAge!,
               directives.staleWhileRevalidate,
-              collectRequestTags(requestCtx),
+              tags,
             );
           } catch (error) {
             // Detached waitUntil task — pass the captured requestCtx so onError
