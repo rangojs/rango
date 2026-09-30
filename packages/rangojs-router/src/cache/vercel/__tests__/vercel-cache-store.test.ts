@@ -615,9 +615,9 @@ describe("VercelCacheStore", () => {
         initialTheme: "dark",
         snapshot: [
           {
-            family: "item",
-            key: "use-cache:x",
-            value: { value: "CAPVAL", tags: ["t1"] },
+            family: "loader",
+            key: "M0L0D0.x",
+            value: { value: "CAPVAL", holes: 0, runs: 0 },
           },
         ],
       });
@@ -964,19 +964,23 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       const snapshot: ShellCacheEntry["snapshot"] = [
-        { family: "item", key: "use-cache:kept", value: { value: "KEPT" } },
+        {
+          family: "loader",
+          key: "M0L0D0.kept",
+          value: { value: "KEPT", holes: 0, runs: 0 },
+        },
       ];
       await s.putShell(
         "k",
-        shellEntry({ snapshot, prunedRecords: "item:4" }),
+        shellEntry({ snapshot, prunedRecords: "loader:4" }),
         60,
         300,
       );
       const reads = countShellReads(cache);
-      expect((await s.getShell("k"))!.entry.prunedRecords).toBe("item:4");
+      expect((await s.getShell("k"))!.entry.prunedRecords).toBe("loader:4");
       const hit = await s.getShell("k");
       expect(reads()).toBe(1);
-      expect(hit!.entry.prunedRecords).toBe("item:4");
+      expect(hit!.entry.prunedRecords).toBe("loader:4");
       expect(hit!.entry.snapshot).toEqual(snapshot);
     });
 
@@ -1070,7 +1074,11 @@ describe("VercelCacheStore", () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       const snapshot: ShellCacheEntry["snapshot"] = [
-        { family: "item", key: "use-cache:x", value: { value: "PINNED" } },
+        {
+          family: "loader",
+          key: "M0L0D0.x",
+          value: { value: "PINNED", holes: 0, runs: 0 },
+        },
       ];
       await s.putShell("k", shellEntry({ snapshot }), 60, 300);
       const read = await s.readShellDocument("k");

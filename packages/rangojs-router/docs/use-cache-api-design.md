@@ -129,8 +129,10 @@ Request-scoped reads and response/render mutations are different:
   forbidden inside `"use cache"`. On a middleware ctx, `set()`, `header()` and
   the mutating `ctx.headers` methods throw as well.
 - `ctx.get()` of a `{ cache: false }` variable throws through every ctx `get`
-  (`assertNonCacheableReadAllowed`); a loader body entered inside the function
-  stays exempt.
+  (`assertNonCacheableReadAllowed`, over the same `guardIdentityRead` as
+  `cookies()`), including a read in a loader body entered inside the function
+  (`await ctx.use(Loader)` there): the loader's value is part of what the
+  function returns.
 
 For caching full route behavior, including request-scoped rendering semantics,
 use the route-level `cache()` DSL instead.

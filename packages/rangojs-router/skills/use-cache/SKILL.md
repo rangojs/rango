@@ -259,17 +259,16 @@ Ordinary (cacheable) variables stay readable. Calling the cached function from
 a loader does not exempt it: the loader re-runs on every request, but the
 cached body does not.
 
-The non-cacheable variable guard does not reach into LOADER bodies consumed
-inside the cached function (`await ctx.use(loader)`): loaders always run
-fresh, so their variable reads are exempt — but the CONSUMED VALUE is captured
-into the shared cache entry like any other computed data. (`cookies()` and
-`headers()` still throw there: that guard follows the cached body's whole
-async chain, loaders included.) Same rule across `cache()` and the PPR shell:
-handler/cached-scope consumption = baked copy, client-side `useLoader` = live
-(the consumption-lane rule, `/rango` → Invariants). The PPR shell is stricter
-about the loader's own reads: during a capture, `cookies()`, `headers()`, and a
-`{ cache: false }` variable read inside a handler-consumed loader refuse the
-capture.
+A LOADER body consumed inside the cached function (`await ctx.use(loader)`)
+is part of that body: its value is captured into the shared cache entry like
+any other computed data, so a `{ cache: false }` variable read there throws,
+exactly as `cookies()`, `headers()` and a theme read do (one guard follows the
+cached body's whole async chain, loaders included). Read the value outside
+and pass it in as an argument. Handler/cached-scope consumption = baked copy,
+client-side `useLoader` = live (the consumption-lane rule, `/rango` →
+Invariants). Under a route `cache()` a loader body's reads stay allowed (the
+route entry never stores a loader's value); during a PPR capture they refuse
+the capture, a handler-consumed loader's included.
 
 ### Side-Effect Guards
 

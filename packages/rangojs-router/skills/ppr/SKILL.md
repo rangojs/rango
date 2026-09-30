@@ -789,7 +789,8 @@ identifiers — served to anonymous visitors.)
   consumer's `<Suspense>` on every HIT (the same mask as bake-lane loader data,
   at any depth of plain objects, arrays and JSX props; a promise inside a
   `Map`, `Set`, or class instance is not masked). A live-lane
-  loader never runs at capture, so all of its pushes happen per request.
+  loader never runs at capture unless an `ssr: false` loader awaits it; either
+  way its pushes, and those of the loaders it awaits, are live on every HIT.
 
 ### Want a hole for already-resolved data?
 
@@ -878,18 +879,41 @@ loader(ProductLoader, { ssr: false }), // promise-free: baked, not run on a HIT
 loader(ReviewsLoader),                 // live: the hole, under loading()
 ```
 
+**A hole never reads the shell's copy of a value.** The shell stores its
+recorded segments and the `ssr: false` loaders' baked containers, and no
+`"use cache"` or loader `cache()` value. Every cache read on a HIT goes to
+the store: a live loader's, a nested promise's, and the body of an
+`ssr: false` loader that runs on the HIT. So a live loader that reads the
+same `"use cache"` key as an `ssr: false` loader shows the store's current
+value once it refreshes, while the baked container keeps the capture's. If a
+hole needs a stable value, give it its own cache (`"use cache"` with a
+profile, or a loader `cache()`); the shell never provides one.
+
 **Handle pushes from a bake-lane loader appear once.** The capture records
 the settled, thenable-free handle pushes of every loader body it runs (the
 prelude rendered them): the `ssr: false` loader's own, those of the loaders
-it awaits with `ctx.use()`, and those its own `cache()` entry replays. Every HIT restores them with the handler layer. A
-loader that does run on the HIT (a hole-carrying bake-lane loader, or a live
-loader awaiting the same loader) replaces its restored pushes in place, so
-any handle, deduping or not, shows each value once; a push that lands after
-the document's handle snapshot reaches the client after hydration. A push the
-capture cannot record (a deferred push, or one holding a promise) marks the
-loader records to run: those
-bodies then still run on each HIT, in the background, so the push reaches the
-page.
+it awaits with `ctx.use()`, and those its own `cache()` entry replays. Every
+HIT restores them with the handler layer, and they stand: a bake-lane loader
+that does run on the HIT (a hole-carrying one) reads the store, so its settled
+pushes, and those a `"use cache"` hit inside its body replays, are dropped
+instead of replacing the restored ones. Any handle, deduping or not, shows
+each value once, and it is the value the prelude rendered. A loader the route
+also registers on the live lane is a hole: its live run replaces its restored
+pushes, and those of the loaders it awaits, so they show its live value, even
+when a bake-lane loader running on the HIT awaits it. A run that throws or
+makes no push shows none of the capture's once its run ends; a hole slower
+than the handler barrier shows the shell's copy in the first snapshot until
+then. A hole with its own loader `cache()` that hits shows the pushes that
+entry recorded, none if it recorded none, matching its data. A dependency the route does not
+register, which an `ssr: false` loader awaited at capture outside any live
+loader, is on neither lane: its settled pushes stay as the prelude rendered
+them, even where a live loader also awaits it, while its data is fresh. To
+keep its pushes live, declare it as its own `loader()` on the route. A push the capture cannot record (a
+deferred push, or one holding a promise) marks every loader record of the
+page to run: those bodies then still run on each HIT, in the background, and
+that push reaches the page (from the loader's own `cache()` entry when it
+hits) with the run's value; a push that lands after the document's handle snapshot
+reaches the client after hydration.
 
 Four hard edges (each e2e/unit-pinned):
 

@@ -134,6 +134,29 @@ export function captureHandleOwners(
   return owners;
 }
 
+/** How restoreHandles delivers a record's loader-owned values. */
+export interface OwnedPushDelivery {
+  /**
+   * Asked once per owner delivered through pushReplayed
+   * (setupLoaderAccess _claimLoaderPushes); an owner it refuses is skipped.
+   */
+  claim?: (loaderId: string) => boolean;
+  /**
+   * A PPR shell's record (capture, document HIT tail, navigation replay): the
+   * loaders the route runs on the live lane (liveLaneLoaderIds), marked on
+   * the store (HandleStore.markLiveLane). A hole's values are replayed
+   * unclaimed, so its own cache() HIT redelivers its entry's pushes in their
+   * place (HandleStore.redeliverReplays), and its run ending without a push
+   * drops them (HandleStore.settleLoaderRun).
+   */
+  liveLane?: ReadonlySet<string>;
+  /**
+   * A document HIT tail: every owner outside `liveLane` goes through
+   * pushRestored and stands, unclaimed.
+   */
+  restore?: boolean;
+}
+
 /**
  * Restore handle data from a cached snapshot into the handle store.
  * Used when serving cached segments to replay their handle data: a route
@@ -141,21 +164,32 @@ export function captureHandleOwners(
  *
  * A segment with `owners` is replaced with empty arrays and re-pushed in
  * recorded order, an owned value through pushReplayed: if the owning loader
- * runs on the HIT (a live loader, or a promise-carrying `ssr: false` one;
- * a promise-free one is served from the shell and does not), its live pushes
- * replace the recorded ones in place instead of appending a second copy. `claim`
- * (setupLoaderAccess _claimLoaderPushes) is asked once per owner, so the
- * loader's own cache() HIT does not replay its pushes a second time
- * (loader-cache.ts replayLoaderHandles); an owner it refuses is skipped. A
- * record without owners restores as a plain replay.
+ * runs (a client navigation replaying a ppr route's cache() record runs its
+ * `ssr: false` loaders), its live pushes replace the recorded ones in place
+ * instead of appending a second copy. `owned.claim` is asked once per
+ * owner, so the loader's own cache() HIT does not replay its pushes a second
+ * time (loader-cache.ts replayLoaderHandles). A record without owners
+ * restores as a plain replay.
+ *
+ * `owned.restore`: a document HIT tail restoring the shell's doc record
+ * (withCacheLookup). A bake-lane owner's values are the prelude's, so they go
+ * through pushRestored and stand: a run of that loader on the HIT (a
+ * promise-carrying `ssr: false` loader, one whose record asks for a run)
+ * reads the store, and its settled pushes are dropped, not swapped in.
+ * Nothing is claimed, so the loader's own cache() HIT still replays the
+ * pushes the record could not keep (the thenable ones pushRestored lets
+ * through). A loader the route also runs on the live lane is a hole: its
+ * values keep pushReplayed, unclaimed, and its live run replaces them
+ * (#936), even inside a restored loader's body (`owned.liveLane`).
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
   owners?: HandleOwners,
-  claim?: (loaderId: string) => boolean,
+  owned?: OwnedPushDelivery,
 ): void {
   let delivers: Map<string, boolean> | undefined;
+  if (owned?.liveLane) handleStore.markLiveLane(owned.liveLane);
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length === 0) continue;
     const segOwners = owners?.[segId];
@@ -174,10 +208,19 @@ export function restoreHandles(
           handleStore.push(handleName, segId, values[i]);
           continue;
         }
+        const hole = owned?.liveLane?.has(owner) === true;
+        if (owned?.restore && !hole) {
+          handleStore.pushRestored(handleName, segId, values[i], owner);
+          continue;
+        }
+        if (hole) {
+          handleStore.pushReplayed(handleName, segId, values[i], owner);
+          continue;
+        }
         delivers ??= new Map();
         let deliver = delivers.get(owner);
         if (deliver === undefined) {
-          deliver = claim ? claim(owner) : true;
+          deliver = owned?.claim ? owned.claim(owner) : true;
           delivers.set(owner, deliver);
         }
         if (deliver) {

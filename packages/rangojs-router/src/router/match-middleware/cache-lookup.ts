@@ -92,12 +92,14 @@
  *   - Action context (if POST)
  */
 import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
+import type { OwnedPushDelivery } from "../../cache/handle-snapshot.js";
 import type { EntryData } from "../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
+import { liveLaneLoaderIds } from "../segment-resolution/loader-cache.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import {
   _getRequestContext,
@@ -549,14 +551,24 @@ export function withCacheLookup<TEnv>(
     }
 
     // A record's loader-owned handle values claim their loader, so its own
-    // cache() HIT does not replay them again (restoreHandles).
-    const claimLoaderPushes = (ctx.handlerContext as InternalHandlerContext)
-      ._claimLoaderPushes;
+    // cache() HIT does not replay them again (restoreHandles). A document
+    // HIT tail restores a bake-lane owner's values as the prelude's, unclaimed:
+    // they stand against any later push of that loader
+    // (HandleStore.pushRestored). An owner the route runs on the live lane is
+    // a hole, so its live run still replaces them, even inside a restored
+    // loader's body.
+    const ownedPushes: OwnedPushDelivery = {
+      claim: (ctx.handlerContext as InternalHandlerContext)._claimLoaderPushes,
+    };
+    if (tailMarker) {
+      ownedPushes.liveLane = liveLaneLoaderIds(ctx.entries);
+      ownedPushes.restore = tailMarker.docTail === true;
+    }
     const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
       ctx.matched.params,
       ctx.isIntercept,
-      claimLoaderPushes,
+      ownedPushes,
     );
     let cacheResult =
       explicitLookup.status === "hit" ? explicitLookup.result : null;
@@ -600,7 +612,7 @@ export function withCacheLookup<TEnv>(
           ctx.pathname,
           ctx.matched.params,
           ctx.isIntercept,
-          claimLoaderPushes,
+          ownedPushes,
         );
       } else if (explicitLookup.status === "bypass") {
         // condition() refused at lookup time (the gate only pre-decides the

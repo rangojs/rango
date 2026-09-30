@@ -406,6 +406,8 @@ export const NamedRoutes = {
   shellCacheLarge: "/shell-cache/large",
   shellCacheLayoutLoader: "/shell-cache/layout-loader",
   shellCacheLayoutLoaderBare: "/shell-cache/layout-loader-bare",
+  shellCacheLiveDep: "/shell-cache/live-dep",
+  shellCacheLiveDepBump: "/shell-cache/__live-dep-bump",
   shellCacheLoadMore: "/shell-cache/load-more",
   shellCacheNoHole: "/shell-cache/no-hole",
   shellCacheNonceToken: "/shell-cache/nonce-token",

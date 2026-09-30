@@ -99,7 +99,7 @@ already encodes the purity contract:
   (`cookies()`, `headers()`, `ctx.get` of a `createVar({ cache: false })`
   variable) or call `ctx.dynamic()`, anywhere the capture waits: a handler, a
   promise it passes or pushes, an async server component, a bake-lane loader,
-  and a loader a handler awaits (`assertNotInsideShellCapture`,
+  and a loader a handler awaits (`guardIdentityRead`,
   `src/server/context.ts`; `refuseOnCaptureGuard`, `src/rsc/shell-capture.ts`).
   So an entry never encodes a handler that branches on the requester. A
   normal `ctx.get()` value and raw `ctx.request.headers` reads are not guarded:
@@ -165,8 +165,10 @@ produces is baked" below):
    Per-request payload metadata (initialTheme replay, locationState, …) is
    rebuilt by `buildFullPayload` exactly as before — there is no `root` on the
    wire; only `metadata.segments` content replays. Because the handlers never
-   run here, the capture does not store the `"use cache"` items only they read
-   (`shell-entry-layout.md` §2). A record that does not hit (it failed to
+   run here, the capture stores no `"use cache"` items at all: the snapshot is
+   the doc record plus the bake-lane loader pins, and a hole or a bake-lane
+   loader body that runs on the HIT reads the store (`shell-entry-layout.md`
+   §2). A record that does not hit (it failed to
    decode, or the entry lost it) never falls through to handler resolution:
    `withCacheLookup` throws `ShellRecordUnavailableError`
    (`cache/shell-snapshot.ts`) and `serveShellHit` degrades the response
@@ -196,18 +198,28 @@ produces is baked" below):
    pushed by an awaited loader was recorded and showed twice on a HIT. The
    capture's push wrapper passes `loaderPush: false` for a bake-lane loader's
    own settled, thenable-free pushes, so they are kept, because the prelude
-   rendered them. The loader re-runs on every HIT and pushes them again, so
-   the wrapper also passes the loader's id as `owner`. The record carries the
-   owners in `CachedEntryData.handleOwners`, and `restoreHandles` puts those
-   values back through `HandleStore.pushReplayed`, the mechanism a loader's
-   own `cache()` replay uses. The re-run's first push removes them and takes
-   the first one's position, so each value appears once and the live value
-   wins. Until issue #929 they were restored as plain values and showed twice
-   unless the handle deduped by key. A re-run push that lands after the
-   document's handle snapshot reaches the client after hydration (the late
-   channel); until then the client holds the recorded value, which matches
-   the prelude. A record written before `handleOwners` existed restores as a
-   plain replay.
+   rendered them. A run of the loader on a HIT would push them again, so the
+   wrapper also passes the loader's id as `owner` (the innermost loader body
+   the push was made in, else the loader a replay names). The record carries
+   the owners in `CachedEntryData.handleOwners`. On a document HIT,
+   `restoreHandles` puts a bake-lane owner's values back through
+   `HandleStore.pushRestored`, and they stand: the loader's run on the HIT
+   reads the store, so its settled pushes, and those made anywhere inside its
+   body (a `"use cache"` hit replaying a dependency's push), are dropped, and
+   only its thenable pushes are added. An owner the route also runs on the
+   live lane is a hole, so its values go back through `pushReplayed` (the
+   mechanism a loader's own `cache()` replay uses) and its live run's first
+   push removes them and takes the first one's position: each value appears
+   once and the live value wins, even when a restored loader running on the
+   HIT awaits it. A dependency the route registers on neither lane is
+   credited at capture to the first registered loader around it: under a
+   live-lane loader its pushes are that hole's and stay live; run only under
+   a bake-lane loader, they are restored and stand. A client navigation replaying the record
+   uses `pushReplayed` for every owner. Until issue #929 they were restored
+   as plain values and showed twice unless the handle deduped by key. A push
+   that lands after the document's handle snapshot reaches the client after
+   hydration (the late channel). A record written before `handleOwners`
+   existed restores as a plain replay.
 
 ## Everything a handler produces is baked
 

@@ -399,6 +399,12 @@ function createLoaderExecutor<TEnv>(
      */
     silentHandles?: boolean;
     /**
+     * A stale refresh's executor (setupLoaderAccess _runLoaderIsolated): its
+     * runs' pushes are diverted from the page's store, so a run's end says
+     * nothing about the page's replayed values (HandleStore.settleLoaderRun).
+     */
+    detached?: boolean;
+    /**
      * loaderId -> the cache() tags of that loader's binding in this request
      * (setupLoaderAccess _bindLoaderCacheTags): an execution of it outside
      * the binding answers for them too (#964).
@@ -412,6 +418,8 @@ function createLoaderExecutor<TEnv>(
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
   const silentHandles = executorOptions?.silentHandles === true;
+  // A run's end reports to the page's store only when its pushes reach it.
+  const reportsRunEnd = !silentHandles && executorOptions?.detached !== true;
   const internal = ctx as InternalHandlerContext<any, TEnv>;
 
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
@@ -714,13 +722,17 @@ function createLoaderExecutor<TEnv>(
     //
     // The CONSUMPTION-LANE RULE: a handler-consumed loader's value is a
     // BAKED copy in every shared artifact (cache(), "use cache", the PPR
-    // shell). The cache-purity guards permit its identity reads; the PPR
-    // capture guard does not (server/context.ts assertNotInsideShellCapture).
+    // shell). The cache() guard permits its identity reads; a "use cache"
+    // body it was entered in and a PPR capture do not (server/context.ts
+    // guardIdentityRead).
 
     const recordedTags = recordTags ? new Set<string>() : undefined;
     // A loader-cache write that stores or reads this value gates on the
     // earliest start behind it (#977, earliestRecordedStart).
     if (recordedTags) markTagSetStart(recordedTags, executionStart());
+    const runEndStore = reportsRunEnd
+      ? (reqCtxRef ?? _getRequestContext())?._handleStore
+      : undefined;
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(
@@ -730,6 +742,9 @@ function createLoaderExecutor<TEnv>(
         ),
       ).finally(() => {
         pendingLoaders.delete(loader.$$id);
+        // Its pushes are made: values replayed for it that none replaced
+        // go (a hole that throws or skips its push shows none).
+        runEndStore?.settleLoaderRun(loader.$$id);
       }),
     );
     if (recordedTags) {
@@ -814,7 +829,12 @@ export function setupLoaderAccess<TEnv>(
         _loaderCacheOverrides: { value: undefined },
       }),
       new Map(),
-      executor,
+      {
+        get bindingTags() {
+          return executor.bindingTags;
+        },
+        detached: true,
+      },
     )(loader, null);
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {

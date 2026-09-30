@@ -44,7 +44,8 @@ Implementation notes (deltas from the sketch below, all deliberate):
   `resolveLoaderData` — `ssr: false` bakes, everything else masks.
   `entryLoadingMasksLoaders` only decides whether an unflagged loader's
   segment key rides as the bake/seed key, which is inert at capture.
-- **Guard refusal is flag-based**: `assertNotInsideShellCapture` stamps
+- **Guard refusal is flag-based**: the capture guard (today the first step
+  of `guardIdentityRead`, `src/server/context.ts`) stamps
   `_shellCaptureGuardTripped` on the capture context BEFORE throwing, because
   the throw is swallowed by wrapLoaderPromise (boundary UI) or rejects the
   prerender promise itself (boundary-less segment) — both paths check the
@@ -241,9 +242,10 @@ stay masked. Whether `loading(false)` counts as "absent" (bake) or "present"
 
 ### 2. Identity guard: loaders lose their capture exemption when unmasked
 
-`cookies()`/`headers()` currently throw during capture in handler-land
-(`assertNotInsideShellCapture`) and loaders are EXEMPT — safe only because
-masked loaders never run. An unmasked loader executing at capture MUST run with
+`cookies()`/`headers()` threw during capture in handler-land only (the capture
+guard, today the first step of `guardIdentityRead` in `src/server/context.ts`)
+and loaders were EXEMPT — safe only because masked loaders never ran. An
+unmasked loader executing at capture MUST run with
 the guard ACTIVE: an identity read throws, the capture refuses, and the
 refusal warning names the loader — "loader X reads cookies()/headers(); give
 its entry loading() (the live lane) or move the identity-dependent part into a
@@ -279,9 +281,10 @@ recorded family.
 > _Since the handlers-baked change:_ a HIT's Flight render no longer runs
 > handlers; it replays the handler layer from the entry's doc record. The
 > bake-lane loaders are now the only shell material a HIT still executes, so
-> the loader family (plus the item records those loaders read) is
-> what the snapshot pins besides the doc record (`pruneShellSnapshot` in
-> `src/cache/shell-snapshot.ts`).
+> the loader family alone is what the snapshot pins besides the doc record
+> (`pruneShellSnapshot` in `src/cache/shell-snapshot.ts`). The capture no
+> longer records ring-1 `"use cache"` item reads at all: a bake-lane loader
+> body that runs on a HIT reads the store, not the snapshot.
 
 - **Recording.** When the capture's tree-build await settles a no-`loading()`
   loader, record `(family: "loader", key: segmentId + loaderId, value:
@@ -316,8 +319,8 @@ container-with-promise-paths-elided)` into the same
   before it, and lacking the pushes a capture now records) reads as
   `runs: 1`. A route `cache()` record's owned values that a capture restores
   keep their owner the same way (the funnel's handler lane reads the
-  `pushReplayed` owner), so a HIT that runs the loader replaces them instead
-  of adding a copy. The seed is also armed for a PPR partial replay, decoded
+  `pushReplayed` owner), so a document HIT restores them as that loader's
+  (`HandleStore.pushRestored`) and a run of the loader there adds no copy. The seed is also armed for a PPR partial replay, decoded
   when its doc record hits (`matchPartialWithPprReplay`'s `onHit`, which the
   lookup awaits before the loaders resolve), so a client navigation matches
   the document HIT: hole-free loaders are served from the pin and do not run,

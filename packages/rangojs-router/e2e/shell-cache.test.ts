@@ -765,8 +765,8 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
 
   // Issue #941, snapshot pruning: every HIT tail of /shell-cache/large replays
   // the handler layer from the doc record, so the capture stores that record
-  // and drops the "use cache" catalog item that produced it. The HIT still
-  // hydrates cleanly with the live price hole.
+  // and records none of the "use cache" catalog reads that produced it. The
+  // HIT still hydrates cleanly with the live price hole.
   test("large shell: the stored snapshot keeps only the doc record and the HIT hydrates", async ({
     page,
   }) => {
@@ -781,7 +781,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     const tail = /ppr-tail;dur=[\d.]+;desc="([^"]*)"/.exec(
       res.headers()["server-timing"] ?? "",
     )?.[1];
-    expect(tail).toContain(" records=segment:1 pruned=item:1 ");
+    expect(tail).toContain(" records=segment:1 seed=");
 
     const response = await page.goto(url);
     expect(response?.headers()["x-rango-shell"]).toBe("HIT");
@@ -791,12 +791,15 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   });
 
   // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
-  // decision 3): /shell-cache/shared-key's layout and its live hole read the
-  // SAME "drift" item (ttl 1s). The capture pins the layout's value inside
-  // the doc record and drops the item record, so the hole's loader reads the
+  // decision 3): /shell-cache/shared-key's layout, its ssr: false loader and
+  // its live hole read the SAME "drift" item (ttl 1s). The capture bakes the
+  // layout's value inside the doc record and pins the ssr: false loader's
+  // container; it records no cache read, so the hole's loader reads the
   // store: once the item expires the hole shows a newer stamp while the shell
-  // keeps the capture stamp, and the page still hydrates cleanly.
-  test("shared key: the shell keeps the capture value while the live hole reads the store", async ({
+  // and the pin keep the capture stamp, and the page still hydrates cleanly.
+  // Before, the bake-lane loader's read pinned the item for every reader on a
+  // HIT and the hole never moved on.
+  test("shared key: the shell and an ssr: false loader keep the capture value while the live hole reads the store", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -816,6 +819,9 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
       expect(prelude).toContain(
         `data-testid="shell-shared-shell">shared-${captureStamp}<`,
       );
+      expect(prelude).toContain(
+        `data-testid="shell-shared-baked">shared-${captureStamp}<`,
+      );
       const holeStamp = /data-testid="shell-shared-hole">shared-(\d+)</.exec(
         resumed,
       )?.[1];
@@ -828,10 +834,101 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-shared-shell")).toHaveText(
       `shared-${captureStamp}`,
     );
+    await expect(testId(page, "shell-shared-baked")).toHaveText(
+      `shared-${captureStamp}`,
+    );
     await expect(testId(page, "shell-shared-hole")).not.toHaveText(
       `shared-${captureStamp}`,
     );
     await expect(testId(page, "shell-shared-hole")).toHaveText(/^shared-\d+$/);
+  });
+
+  // /shell-cache/live-dep: the ssr: false loader returns a nested promise, so
+  // it runs on every HIT, and the route declares it before the live loader it
+  // awaits, whose body then runs inside it. The live loader awaits a
+  // dependency the route registers on neither lane. The live loader is a
+  // hole: on a HIT and on a client navigation that replays the shell, its
+  // handle push and its dependency's carry that request's generation, once,
+  // like its data. Before, the restored ssr: false loader counted the live
+  // loader's push as its own, and the dependency's record copy stood for its
+  // push, so the capture's copies showed.
+  const bumpLiveDep = async (
+    request: Page["request"],
+    probe: string,
+  ): Promise<number> =>
+    (
+      (await (
+        await request.get(f.url(`/shell-cache/__live-dep-bump?probe=${probe}`))
+      ).json()) as { generation: number }
+    ).generation;
+
+  test("live dep: a live loader a running ssr false loader awaits keeps its live push on a HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    const url = f.url("/shell-cache/live-dep?probe=livedep-doc");
+    await warmToHit(page.request, url);
+    const generation = await bumpLiveDep(page.request, "livedep-doc");
+
+    const response = await page.goto(url);
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "shell-live-dep")).toHaveText(
+      `live-dep@g${generation}`,
+    );
+    await expect(testId(page, "shell-live-dep-note")).toHaveText([
+      `live-dep-note@g${generation}`,
+    ]);
+    await expect(testId(page, "shell-inner-dep")).toHaveText(
+      `inner@g${generation}`,
+    );
+    await expect(testId(page, "shell-inner-note")).toHaveText([
+      `inner-note@g${generation}`,
+    ]);
+  });
+
+  test("live dep: the live push stays live on a client navigation that replays the shell", async ({
+    page,
+  }) => {
+    const url = f.url("/shell-cache/live-dep?probe=livedep-nav");
+    await warmToHit(page.request, url);
+    const generation = await bumpLiveDep(page.request, "livedep-nav");
+
+    using _ = expectNoPageError(page);
+    using __ = guardHydrationErrors(page);
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await using ___ = await expectNoReload(page);
+    const partialResponsePromise = page.waitForResponse((response) => {
+      const responseUrl = new URL(response.url());
+      return (
+        responseUrl.pathname === "/shell-cache/live-dep" &&
+        responseUrl.searchParams.has("_rsc_partial")
+      );
+    });
+    await testId(page, "nav-ppr-live-dep").click();
+    const partialResponse = await partialResponsePromise;
+    await waitForNavigation(
+      page,
+      /\/shell-cache\/live-dep\?probe=livedep-nav$/,
+    );
+    assertPprReplayStatus(
+      { headers: new Headers(partialResponse.headers()) },
+      { outcome: "HIT", freshness: "fresh" },
+    );
+    await expect(testId(page, "shell-live-dep")).toHaveText(
+      `live-dep@g${generation}`,
+    );
+    await expect(testId(page, "shell-live-dep-note")).toHaveText([
+      `live-dep-note@g${generation}`,
+    ]);
+    await expect(testId(page, "shell-inner-dep")).toHaveText(
+      `inner@g${generation}`,
+    );
+    await expect(testId(page, "shell-inner-note")).toHaveText([
+      `inner-note@g${generation}`,
+    ]);
   });
 
   // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---

@@ -365,11 +365,12 @@ migration is needed.
 
 ## 2. Record only what a HIT reads
 
-**Implemented** (`pruneShellSnapshot`, `src/cache/shell-snapshot.ts`; the
-decision in `snapshotReaders`, `src/rsc/shell-capture.ts`). Shipped in #958
+**Implemented** (`pruneShellSnapshot`, `src/cache/shell-snapshot.ts`, called
+from `captureAndStoreShell`, `src/rsc/shell-capture.ts`). Shipped in #958
 with five conditions; the handlers-baked change reduced them to one rule,
 because the reader they protected (a HIT that re-ran handlers) no longer
-exists.
+exists, and the hole rule removed the last recorded read: a PPR hole never
+reads the shell snapshot, so the capture records no cache read at all.
 
 The snapshot used to be "exactly the set of cache-store reads the capture
 render performed". But no HIT runs a handler: every document HIT tail replays
@@ -380,58 +381,64 @@ is to drop exactly those, and nothing a HIT or a navigation can still read.
 
 ### Who reads which family
 
-| reader                    | segment |     item     |   response   | loader |
-| ------------------------- | :-----: | :----------: | :----------: | :----: |
-| document HIT tail         | `doc:`  | loaders only | loaders only |  yes   |
-| partial navigation replay | `doc:`  |      no      |      no      |   no   |
+| reader                    | segment | loader |
+| ------------------------- | :-----: | :----: |
+| document HIT tail         | `doc:`  |  yes   |
+| partial navigation replay | `doc:`  |   no   |
 
-Partial replay installs `SeededShellStore(..., { segmentsOnly: true })` for the
-implicit doc scope only, so it never reads the item, response, or loader
-families, and a route's own `cache()` scope reads its own store, not the
-snapshot (`rsc-rendering.ts`, `matchPartialWithPprReplay`). Intercepts over a
+Both install `SeededShellStore` (segments only) for the implicit doc scope,
+and a route's own `cache()` scope reads its own store, not the snapshot
+(`rsc-rendering.ts`, `matchPartialWithPprReplay`). Every `"use cache"` and
+loader `cache()` read either one makes goes to the store. Intercepts over a
 ppr route only render on partial navigations, so they follow the same row.
 
 ### The rule
 
-**Keep the doc record. For a document entry, also keep what the loaders a HIT
-re-runs read. Drop everything else.**
+**Keep the doc record. For a document entry, also keep the bake-lane loader
+pins. Record nothing else.**
 
 - The doc record (the `segment` record whose key is the entry's `docKey`) is
   always kept, as a copy inside the entry ("By copy vs. by reference" below).
-- A document entry (`snapshotReaders` returns `"loaders"`) also keeps every
-  `loader`-family record (the bake-lane containers,
-  `packages/rangojs-router/docs/design/loader-container-bake.md`) and every
-  item or response record a loader read or wrote during the capture (R2.4).
-- A navigation-only entry (`"segments"`) keeps the doc record only: partial
-  replay reads nothing else. (R1 used to keep every segment record.)
+- A document entry also keeps every `loader`-family record (the bake-lane
+  containers, `packages/rangojs-router/docs/design/loader-container-bake.md`).
+- A navigation-only entry keeps the doc record only: partial replay reads
+  nothing else. (R1 used to keep every segment record.)
 - Every other segment record goes, including an explicit `cache()` tier's own
   records: no HIT tail and no partial replay reads them.
+- No `"use cache"` or loader `cache()` item is recorded: `RecordingShellStore`
+  passes reads and writes through and records only the doc record.
 
-**R2.4, loader attribution** (the one condition that survived, under its old
-name so older PRs and test titles still line up). A bake-lane loader whose
-body runs on a HIT (a promise-carrying one, or one whose pushes the record
-could not keep; a promise-free one is served from its pin and does not run)
-must read the values the capture baked, so its reads stay pinned. The recording store sees every `"use cache"` call: each call does a
-`store.getItem` before any in-flight join (`cache-runtime.ts`), so marking the
-key as loader-read on every access (hits and misses, in
-`isInsideAnyLoaderScope()`, collected in `RecordingShellStore.loaderKeys`) is
-complete, including a loader that joins a handler's in-flight leader.
-Loader-cache reads (`loader-cache.ts`) run inside the same scope.
+**R2.4, loader attribution, removed.** Until the hole rule was made uniform,
+the one condition that survived kept every item record a loader read or
+wrote during the capture (`RecordingShellStore.loaderKeys`, marked inside
+`isInsideAnyLoaderScope()`), and the HIT tail served those records as fresh
+through a `SeededShellStore` overlay on its `_cacheStore`. It existed for a
+bake-lane loader whose body runs on a HIT (a promise-carrying one, or one
+whose pushes the record could not keep): re-deriving its settled handle
+pushes from the same values kept them equal to the prelude. The overlay did
+not know who was reading, though. A live loader sharing the key, and a
+promise nested in the bake-lane loader's own return, read the capture's copy
+too, for the shell's whole lifetime, past the entry's ttl and past a
+same-request `revalidateTag()` mask. The handles are now kept equal by rule
+instead: a document HIT restores the bake-lane loader's settled pushes as
+authoritative (`HandleStore.pushRestored`) and drops the settled pushes a run
+of the loader makes there, so nothing needs the item records.
 
-`snapshotReaders` reduces to "the record exists": when the snapshot lacks the
-doc record it returns undefined and nothing is pruned. Only a prerender-served
-capture stores such an entry (its HIT tail takes the handler layer from the
-prerender store). Any other capture without a doc record is refused ("the
-capture produced no doc segment record", `settleCaptureRecord` and
-`captureAndStoreShell`), because a HIT could not replay it.
+A capture without a doc record keeps its loader pins alone. Only a
+prerender-served capture stores such an entry (its HIT tail takes the handler
+layer from the prerender store). Any other capture without a doc record is
+refused ("the capture produced no doc segment record", `settleCaptureRecord`
+and `captureAndStoreShell`), because a HIT could not replay it.
 
 **Holes read the store, not the capture** (decision 3; this was R2.3). A live
-loader under a hole reads the store on every HIT. Before pruning, a key it
-shared with the shell was pinned for it too ("seeded everywhere"). With the
-record dropped, that hole reads the current store entry for the key (still
-cached under its own profile) while the shell shows capture data. That is the
-semantic: holes are the live lane. With no handler re-run left, it now holds
-for every entry. The live read costs one store read after the commit:
+loader under a hole, and a promise nested in a bake-lane loader's return,
+read the store on every HIT. Before pruning, a key a hole shared with the
+shell was pinned for it too ("seeded everywhere"). With nothing but the doc
+record and the loader pins stored, that hole reads the current store entry for
+the key (still cached under its own profile) while the shell shows capture
+data. That is the semantic: holes are the live lane, and it holds for every
+entry, a key a bake-lane loader also read included. The live read costs one
+store read after the commit:
 6.95 ms for a 1 KB item, 9.13 ms for 594 KB, 19.33 ms for 594 KB tagged in the
 #941 edge model, against 0.001-0.002 ms for a seed hit. It is never on the
 first-byte path.
@@ -489,17 +496,20 @@ decode on a HIT") and `src/rsc/__tests__/rsc-rendering-shell-ppr.test.ts`.
 
 The entry records what was dropped (`ShellCacheEntry.prunedRecords`, the CF
 frame head's `pr`, the Vercel envelope's `pr`), and the HIT tail timing prints
-it next to the kept records: `records=segment:1 pruned=item:5`.
+it next to the kept records: `records=segment:1 pruned=loader:1` for a
+navigation-only entry whose bake-lane pins it dropped. A document entry
+records nothing else to drop, so its tail prints `records=` alone (it printed
+`pruned=item:5` for `/ppr-large` while handler reads were recorded).
 
 ### Size
 
 `maxSnapshotBytes` (the route's `ppr` option, default 8 MiB,
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds only the pins: the loader-family
-records and the item records loaders read. The doc record is exempt,
+records. The doc record is exempt,
 because without it a HIT cannot serve at all. Over the cap the pins are dropped
 and the entry keeps its doc record: HITs still replay the handler layer, and
-the bake-lane loaders read the live store instead (drift that hydration
-repairs client-side), with a once-per-key warning.
+the bake-lane loaders run on the HIT instead (drift that hydration repairs
+client-side), with a once-per-key warning.
 
 The whole entry has its own guard: prelude + postponed state + snapshot bytes
 against the store's value limit, `SegmentCacheStore.maxShellEntryBytes`
@@ -573,16 +583,22 @@ branch; 0.1-0.2 ms from the shell memo either way.
 
 - `src/rsc/__tests__/shell-snapshot-prune.rsc-test.tsx` drives a MISS, the
   real capture, and a document HIT through `handleRscRendering` with real
-  Flight. A covered capture stores only its doc record; its HIT reads no item
-  and its body (prelude + tail Flight payload) is byte-identical to the HIT
-  served from the unpruned snapshot. The former keep cases now prune and
+  Flight. A covered capture records only its doc record (the handler
+  layer's three `"use cache"` reads are not recorded), and its HIT reads no
+  item and renders the capture's generation. Until the hole rule, the same
+  file compared that HIT byte for byte with one served from the unpruned
+  snapshot; with nothing else recorded there is no unpruned snapshot left to
+  compare. The former keep cases now prune and
   replay without running a handler: a route `cache()` whose explicit tier
   missed, a custom `key()`, a store `keyGenerator` (the HIT looks the record
   up by the entry's `docKey`), and a handler-invoked loader (its value baked
   and replayed). A `condition()` that refuses the HIT's read is a genuine MISS
-  before the commit. R2.4 keeps a bake-lane loader's item. The shared-key case
-  shows the shell's capture value and the hole's live one. Partial replay of a
-  pruned entry is byte-identical to the unpruned one. A corrupt doc record
+  before the commit. A promise-free bake-lane loader is served from its pin
+  without an item read; a promise-carrying one's push derived from
+  `"use cache"` carries the captured value once while its body reads the
+  store; a nested promise that calls `"use cache"` reads the store. The
+  shared-key case shows the shell's capture value and the hole's live one.
+  Partial replay replays the capture's segments. A corrupt doc record
   degrades (tombstone, reload, recapture) and the tombstone serves a MISS.
 - `src/rsc/__tests__/shell-capture.test.ts` ("captureAndStoreShell: snapshot
   pruning"): R1 keeps only the doc record for a navigation-only entry, the
@@ -593,9 +609,10 @@ branch; 0.1-0.2 ms from the shell memo either way.
   for a route `cache()` explicit miss, a custom `key()`, or a store
   `keyGenerator`.
 - e2e, dev + production: `/ppr-large`, `/ppr-large/holes` and
-  `/shell-cache/large` report `records=segment:1 pruned=item:N` and hydrate
-  with zero errors; `/ppr-shared-key` and `/shell-cache/shared-key` keep the
-  shell's capture stamp while the hole moves on, with zero hydration errors.
+  `/shell-cache/large` report `records=segment:1` and hydrate with zero
+  errors; `/ppr-shared-key` and `/shell-cache/shared-key` keep the shell's
+  and the `ssr: false` loader's capture stamp while the hole moves on, with
+  zero hydration errors.
 
 The unit test pins the tail's Flight payload, not the resumed HTML: it stubs
 SSR, because `react-dom/server` does not load under the react-server

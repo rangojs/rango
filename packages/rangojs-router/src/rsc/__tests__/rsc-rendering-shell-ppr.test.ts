@@ -1055,7 +1055,13 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     await store.putShell(
       KEY,
       shellEntry({
-        snapshot: [{ family: "item", key: "k", value: { value: "PINNED" } }],
+        snapshot: [
+          {
+            family: "segment",
+            key: "k",
+            value: { segments: [], handles: "", expiresAt: 0 },
+          },
+        ],
       }),
       300,
       30,
@@ -1084,7 +1090,11 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
   // the tail starts at once (Node clamps setTimeout(0) to 1 ms).
   it("adds no macrotask before the tail when the snapshot arrives on I/O", async () => {
     const records: ShellSnapshotRecord[] = [
-      { family: "item", key: "k", value: { value: "PINNED" } },
+      {
+        family: "segment",
+        key: "k",
+        value: { segments: [], handles: "", expiresAt: 0 },
+      },
     ];
     const { prelude: _prelude, ...entry } = shellEntry();
     const afterSnapshot = vi.fn();
@@ -1246,11 +1256,10 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect((seen[0] as any).metadata.initialTheme).toBe("light");
   });
 
-  // Capture data snapshot: on a HIT the tail render (a FULL fresh render for
-  // hydration) reads through a SeededShellStore overlay so every cache-store key
-  // the capture pinned returns its capture-time value AS FRESH — the fresh
-  // payload matches the frozen prelude even after the underlying entries drifted.
-  // Everything not pinned falls through to the real store and stays live. See
+  // Capture data snapshot: on a HIT the tail render replays the doc record
+  // through the implicit doc scope's SeededShellStore (segments only), so the
+  // payload matches the frozen prelude even after the underlying entries
+  // drifted; every cache read the tail makes goes to the real store. See
   // cache/shell-snapshot.ts and docs/design/ppr-shell-resume.md.
   // Issue #941: the HIT read and parsed the whole stored entry, the capture
   // snapshot included, before its first byte. With CFCacheStore's
@@ -1302,7 +1311,15 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
         } as any,
       });
       const snapshot: ShellSnapshotRecord[] = [
-        { family: "item", key: "it1", value: { value: "PINNED".repeat(1000) } },
+        {
+          family: "segment",
+          key: "seg1",
+          value: {
+            segments: [],
+            handles: "PINNED".repeat(1000),
+            expiresAt: 0,
+          },
+        },
       ];
       await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
       await Promise.all(pending);
@@ -1314,9 +1331,11 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       const { ctx } = makeCtx(ssrModule, "stream");
       const seen: (string | undefined)[] = [];
       (ctx as any).renderToReadableStream = () => {
-        void getRequestContext()._cacheStore!.getItem!("it1").then((r) =>
-          seen.push(r?.value),
-        );
+        void getRequestContext()
+          ._shellImplicitCache!.store!.get("seg1")
+          .then((r) =>
+            seen.push((r as { data?: CachedEntryData } | null)?.data?.handles),
+          );
         return new ReadableStream();
       };
       const request = new Request("http://localhost/p", {
@@ -1853,14 +1872,12 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     });
   });
 
-  it("seeds the tail render's cache reads from the snapshot (pinned value served fresh, real store untouched)", async () => {
+  it("the tail render's cache reads go to the store: an item record in the snapshot (an entry stored before holes read live) is not served", async () => {
     const store = new MemorySegmentCacheStore();
-    // The real store has NO "it1" entry — proving the SEED serves it (the capture
-    // pinned it), not a live read. This is exactly the drift case: at HIT time the
-    // underlying cache has expired/changed, but the shell must stay byte-identical.
-    const snapshot: ShellSnapshotRecord[] = [
+    await store.setItem("it1", "LIVE", { ttl: 60 });
+    const snapshot = [
       { family: "item", key: "it1", value: { value: "PINNED-AT-CAPTURE" } },
-    ];
+    ] as unknown as ShellSnapshotRecord[];
     await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
     const getItemSpy = vi.spyOn(store, "getItem");
 
@@ -1869,8 +1886,8 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     const reads: Promise<unknown>[] = [];
     const seen: (string | undefined)[] = [];
     (ctx as any).renderToReadableStream = () => {
-      // Model a shell "use cache" read during the tail render — it must resolve
-      // to the pinned value, and must NOT reach the real store.
+      // A cache read during the tail render (a hole's, a bake-lane loader
+      // body's that runs on the HIT) reads the store, not the capture.
       const p = getRequestContext()._cacheStore!.getItem!("it1").then((r) =>
         seen.push(r?.value),
       );
@@ -1908,10 +1925,8 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     await readAll(response.body!); // drive the tail render
     await Promise.all(reads);
 
-    expect(seen).toEqual(["PINNED-AT-CAPTURE"]);
-    // The pinned key never reached the real store (served fresh from the seed).
-    expect(getItemSpy).not.toHaveBeenCalledWith("it1");
-    // The shared foreground store is untouched: the seed lives on a derived ctx.
+    expect(seen).toEqual(["LIVE"]);
+    expect(getItemSpy).toHaveBeenCalledWith("it1");
     expect(reqCtx._cacheStore).toBe(store);
   });
 
@@ -1976,7 +1991,13 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     it(`arms _shellFragmentPayload on the HIT tail context (${withSnapshot ? "snapshot-seeded" : "no snapshot"}) without touching the shared reqCtx`, async () => {
       const store = new MemorySegmentCacheStore();
       const snapshot: ShellSnapshotRecord[] | undefined = withSnapshot
-        ? [{ family: "item", key: "it1", value: { value: "PINNED" } }]
+        ? [
+            {
+              family: "segment",
+              key: "k",
+              value: { segments: [], handles: "", expiresAt: 0 },
+            },
+          ]
         : undefined;
       await store.putShell(KEY, shellEntry({ snapshot }), 300, 30);
 
@@ -2152,8 +2173,16 @@ describe("handleRscRendering — integrated PPR serve: debugPerformance rows", (
   it("records the read, marker, open, and commit rows with sizes and counts", async () => {
     const cf = createCfShellFixture();
     const snapshot: ShellSnapshotRecord[] = [
-      { family: "item", key: "it1", value: { value: "PINNED" } },
-      { family: "item", key: "it2", value: { value: "PINNED" } },
+      {
+        family: "segment",
+        key: "seg1",
+        value: { segments: [], handles: "PINNED", expiresAt: 0 },
+      },
+      {
+        family: "segment",
+        key: "seg2",
+        value: { segments: [], handles: "PINNED", expiresAt: 0 },
+      },
       {
         family: "segment",
         key: "doc:none",
@@ -2210,7 +2239,7 @@ describe("handleRscRendering — integrated PPR serve: debugPerformance rows", (
         .map(([line]) => String(line))
         .find((line) => line.startsWith("[RSC Perf] GET /p shell tail:"));
       expect(tail).toMatch(
-        /snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms records=item:2\/segment:1 seed=\d+ms seed-cpu=\d+ms /,
+        /snapshot=\d+ms snapshot-read=\d+ms snapshot-bytes=\d+b snapshot-parse-cpu=\d+ms records=segment:3 seed=\d+ms seed-cpu=\d+ms /,
       );
     } finally {
       log.mockRestore();
@@ -2780,7 +2809,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     });
   }
 
-  it("seeds the captured document segments while item reads and loaders stay live", async () => {
+  it("seeds the captured document segments; item reads go to the store", async () => {
     const store = new MemorySegmentCacheStore();
     await store.setItem("loader-item", "LIVE", { ttl: 60 });
     let segmentHit = false;
@@ -2795,14 +2824,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       store,
       shell: shellEntry({
         docKey: DOC_KEY,
-        snapshot: [
-          segmentRecord,
-          {
-            family: "item",
-            key: "loader-item",
-            value: { value: "CAPTURED" },
-          },
-        ],
+        snapshot: [segmentRecord],
       }),
       arm: (active) => {
         baseContext = active;
@@ -2814,7 +2836,8 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
         expect(active._cacheStore).toBe(store);
         segmentHit = (await replayStore.get(DOC_KEY)) !== null;
         if (segmentHit) active._shellImplicitCache!.onHit?.();
-        itemValue = (await replayStore.getItem!("loader-item"))?.value;
+        expect("getItem" in replayStore).toBe(false);
+        itemValue = (await active._cacheStore!.getItem!("loader-item"))?.value;
         marker = active._shellImplicitCache;
         active.setLocationState({
           __rsc_ls_key: "flash",

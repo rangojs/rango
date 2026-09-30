@@ -387,8 +387,9 @@ async function captureDocRecordCrumbs(pathname: string): Promise<unknown[]> {
 
 /**
  * Serve a shell HIT tail armed as serveShellHit arms it: the snapshot seeds
- * the store and the bake-lane loader seed, and the implicit doc scope HITs
- * the recorded doc record (handler layer replayed, loaders re-run).
+ * the bake-lane loader seed, and the document tail's implicit doc scope
+ * (`docTail`) HITs the recorded doc record (handler layer replayed, a
+ * promise-carrying bake-lane loader run). Cache reads go to the store.
  */
 async function serveShellHitTail(
   pathname: string,
@@ -404,7 +405,7 @@ async function serveShellHitTail(
     variables: {},
   } as any) as RequestContext<any>;
   const inner = new MemorySegmentCacheStore();
-  reqCtx._cacheStore = new SeededShellStore(inner, snapshot);
+  reqCtx._cacheStore = inner;
   const loaderSeed = await buildShellLoaderSeed(snapshot);
   if (loaderSeed) reqCtx._shellLoaderSeed = loaderSeed;
   reqCtx._shellImplicitCache = {
@@ -412,8 +413,9 @@ async function serveShellHitTail(
     swr: 0,
     // The doc record is read through the implicit scope's own segment
     // overlay, as serveShellHit arms it.
-    store: new SeededShellStore(inner, snapshot, { segmentsOnly: true }),
+    store: new SeededShellStore(inner, snapshot),
     keyPrefix: "doc",
+    docTail: true,
   };
   await runWithRequestContext(reqCtx, async () => {
     await router.match(request, { env: {} });
@@ -489,21 +491,23 @@ describe("PPR shell HIT vs a bake-lane loader's recorded handle pushes", () => {
     expect(bakeRepushRun).toBe(2);
   });
 
-  it("a string and an object push appear once, with the live value in the recorded position", async () => {
+  // The prelude rendered the record's values, and the loader's run on the HIT
+  // reads the store: its settled pushes are dropped, not swapped in.
+  it("a string and an object push appear once, the record's values in the recorded position", async () => {
     expect(await crumbValues(hit)).toEqual([
-      "bake-string-2",
-      { label: "bake-object-2" },
+      "bake-string-1",
+      { label: "bake-object-1" },
       "handler-string",
     ]);
   });
 
-  it("Meta (deduped by key) collects one title, the live one", async () => {
+  it("Meta (deduped by key) collects one title, the record's", async () => {
     const data = await hit._handleStore.getData();
     const order = Object.keys(data[Meta.$$id] ?? {});
     const titles = collectHandleData(Meta, data, order).filter(
       (d) => "title" in d,
     );
-    expect(titles).toEqual([{ title: "bake-title-2" }]);
+    expect(titles).toEqual([{ title: "bake-title-1" }]);
   });
 
   it("a record without owner info (written before it) restores every recorded value as before", async () => {

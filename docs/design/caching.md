@@ -412,7 +412,7 @@ Cache keys combine request type prefix, pathname, sorted route params, and sorte
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
 
-Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. Loader bodies stay exempt in both scopes, but under `"use cache"` the exemption covers a loader body entered inside the cached function (`await ctx.use(Loader)`), not a cached function a loader calls: the loader re-runs on every request, the cached body does not. Each loader body scope records the exec scope it was entered in (`runInsideLoaderBodyScope`), and the exemption holds only while that exec scope is still the innermost one.
+Request data the key does not see must not reach the stored value, so the non-cacheable variable guard applies in both scopes. A `ctx.get()` of a `createVar({ cache: false })` variable (or a value written with `{ cache: false }`) throws inside a `cache()` boundary and inside a `"use cache"` body, whether it reads through `getRequestContext()`, a handler ctx, or a response-route ctx. The fix at the call site is to read the value outside and pass it in as an argument, which puts it in the key. The guard is `assertNonCacheableReadAllowed` (`src/server/context.ts`), called only after `isNonCacheable()` matches, so ordinary reads skip it. It is a wrapper over `guardIdentityRead`, the one guard `cookies()`, `headers()` and the theme reads go through too, so all four refuse in the same places: a PPR capture first, then a `"use cache"` body, then a `cache()` boundary. Loader bodies stay exempt under `cache()` (a route `cache()` never stores a loader's value). Under `"use cache"` nothing is exempt: a loader body entered inside the cached function (`await ctx.use(Loader)`) runs as part of that body, and its value is part of what the function returns and stores. Before, a non-cacheable `ctx.get()` there was exempt while `cookies()` threw, and the entry kept the first request's value under a key that did not include it.
 
 ### Search param filtering (`cache.searchParams`) — shipped
 
@@ -642,9 +642,30 @@ record keeps, with the loader's id as `owner`. The record carries those owners
 in `CachedEntryData.handleOwners`, and `restoreHandles` replays an owned value
 through `HandleStore.pushReplayed`, so a run of that loader on the HIT (a
 promise-carrying one, or one whose pushes the record could not keep; a
-promise-free one is served from its pin and does not run) replaces it instead
-of appending a second copy. A record without `handleOwners`
-restores as a plain replay (see `docs/design/shell-fast-path.md`).
+promise-free one is served from its pin and does not run) does not append a
+second copy. On a document HIT a bake-lane owner's values go through
+`HandleStore.pushRestored` instead: the prelude rendered them, so they stand,
+and the settled pushes a run of that loader makes on the HIT (it reads the
+store, not the capture), anywhere inside its body, are dropped; only its
+thenable pushes, which the record could not keep, are added. An owner the
+route also runs on the live lane is a hole and keeps `pushReplayed`, as does
+every owner on a client navigation replaying the record: there the run's
+pushes replace the restored copies. A hole's body also ends the search for a
+restored loader around a push (`pushRestored`'s `liveLane`), so a live loader
+that a running bake-lane loader awaits keeps its live pushes. A dependency
+the route registers on neither lane is credited at capture to the first
+registered loader around it: under a live-lane loader its pushes are that
+hole's and stay live; run only under a bake-lane loader, its pushes are
+restored under its own id and stand, even where a live loader runs it on the
+HIT. A record without `handleOwners` restores
+as a plain replay (see `docs/design/shell-fast-path.md`).
+
+A bake-lane loader that runs on a HIT (a promise-carrying one, or every
+promise-free one on a page whose capture saw a loader push it could not
+record, since `runs` is capture-wide) reads the real store for its
+`"use cache"` and `cache()` values, not the snapshot: on `CFCacheStore` that
+is a Cache API or KV read per HIT, and a stale entry can start a background
+refresh.
 
 ## Stale-While-Revalidate (SWR)
 
@@ -823,7 +844,7 @@ inside a loader counts even when the view was taken outside it, but a method
 pulled off the view beforehand, `const get = headers().get`, is not seen; both
 in `src/server/cookie-store.ts`) and
 non-cacheable `ctx.get()` (`assertNonCacheableReadAllowed`) and the theme getters
-(`assertThemeReadAllowed`, after #971's refusals) call
+(`readGuardedTheme`), both through `guardIdentityRead` after its refusals, call
 `recordLoaderIdentityRead` (`src/server/context.ts`), which marks the current
 execution's recorded-tag set (`src/cache/cache-tag.ts`). Those are the #964
 sets, so the read travels the same links the tags do: a loader read with
@@ -853,9 +874,8 @@ value. So a declared-key entry whose MISS recorded a read stores that read with
 the value: an identity mark (`~identity:{read}\n`) ahead of the Flight payload
 (`markIdentity`/`unmarkIdentity` in `loader-cache.ts`). A HIT or stale hit puts
 the read back on the value's set (`markIdentityRead`), and an unkeyed reader
-fails as it would have on the MISS. The value string is loader-cache's own:
-the store only holds it, and the PPR shell snapshot copies it unchanged
-(`src/cache/shell-snapshot.ts`), so the mark needs no change to the store
+fails as it would have on the MISS. The value string is loader-cache's own
+and the store only holds it, so the mark needs no change to the store
 contract. A keyed dependency that read no identity carries no mark. Entries
 written before the mark existed carry none: on a store that does not version
 its keys per deploy (`VercelCacheStore` without `version`, a pinned
@@ -886,17 +906,17 @@ recorder is installed there too, and a second evaluated copy of `cache-tag.ts`
 (a duplicated package, a dev re-evaluation) replaced it with one that wrote
 where no fill looked, which switched the check off.
 
-| Execution                                                                                           | Refused       | Why                                                           |
-| --------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------- |
-| The MISS body                                                                                       | yes           | its value is stored under a user-free key                     |
-| A run a reader started before the binding                                                           | yes           | the MISS reuses it; its set carries the read                  |
-| The stale refresh (`_runLoaderIsolated`)                                                            | yes           | same entry; the refresh fails, the stale entry keeps serving  |
-| A loader value the body reads via `ctx.use`                                                         | yes           | the value lands in the entry; the read link carries it        |
-| A keyed cached loader's HIT the body reads via `ctx.use`                                            | yes           | its entry's identity mark                                     |
-| A read that settles after the value (nested promise, pending handle push within the encode timeout) | write only    | the value is already served; the write is refused, `onError`  |
-| A live loader running beside the fill                                                               | no            | its set is not linked to the fill                             |
-| A loader under a route `cache()` with no `cache()` of its own                                       | no            | not stored; re-runs on every HIT                              |
-| A bake-lane loader during a PPR shell capture                                                       | capture guard | `assertNotInsideShellCapture` still throws at the read, first |
+| Execution                                                                                           | Refused       | Why                                                                 |
+| --------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------- |
+| The MISS body                                                                                       | yes           | its value is stored under a user-free key                           |
+| A run a reader started before the binding                                                           | yes           | the MISS reuses it; its set carries the read                        |
+| The stale refresh (`_runLoaderIsolated`)                                                            | yes           | same entry; the refresh fails, the stale entry keeps serving        |
+| A loader value the body reads via `ctx.use`                                                         | yes           | the value lands in the entry; the read link carries it              |
+| A keyed cached loader's HIT the body reads via `ctx.use`                                            | yes           | its entry's identity mark                                           |
+| A read that settles after the value (nested promise, pending handle push within the encode timeout) | write only    | the value is already served; the write is refused, `onError`        |
+| A live loader running beside the fill                                                               | no            | its set is not linked to the fill                                   |
+| A loader under a route `cache()` with no `cache()` of its own                                       | no            | not stored; re-runs on every HIT                                    |
+| A bake-lane loader during a PPR shell capture                                                       | capture guard | `guardIdentityRead` trips the capture and throws at the read, first |
 
 Response directives (`invalidateClientCache()`, `keepClientCache()`) and cookie
 writes record nothing: a `key()` cannot make a skipped body's side effect
@@ -973,7 +993,11 @@ This requires separating:
 
   The live pushes go through `push()`, so a capture that accepts them sees
   them: another cached loader whose miss reads the same dependency records
-  them. A live run that pushes nothing leaves the replayed values in place.
+  them. A live run that pushes nothing leaves the replayed values in place,
+  unless the loader is a PPR hole (`HandleStore.markLiveLane`): a hole's run
+  ending without a push drops them (`settleLoaderRun`), and a hole's own
+  entry HIT delivers its recorded pushes (none when it recorded none) in
+  place of the shell's copies (`redeliverReplays`).
 
   The stale revalidation runs on its own loader executor
   (`ctx._runLoaderIsolated`, a fresh memo map). Sharing the request's
@@ -1388,7 +1412,7 @@ The mask lives in the stores, so three more paths needed the request itself; all
 - **This isolate's order** (`invalidatedSince`): `markInvalidated` keeps tag → the `seq` of its latest invalidation for every request, bounded at 1024 tags, on a `globalThis` slot so a second evaluated copy of the module reads it too. Dropping the oldest raises a floor, and an execution that started before a forgotten invalidation counts as invalidated whatever its tags: a miss, never a stale read. It lives in `invalidation-order.ts`, which imports nothing, so `createRequestContext` can take each request's start there (`RequestContext._requestStart`). It is keyed by tag name alone: two routers in one isolate that share a tag name skip each other's writes started before an invalidation, which costs them a miss.
 - **The store's markers** (`isTagsInvalidatedSince`), for another isolate's invalidation, as far as the store can tell: KV markers on `CFCacheStore`, `tm` markers on `VercelCacheStore`, the process markers on `MemorySegmentCacheStore`. It is asked about the milliseconds after the start's (`start.at + 1`): this isolate's own invalidation that preceded the start usually shares its millisecond on Workers, and `>=` would skip every write started right after it (the #973 same-millisecond case). Another isolate's invalidation within the start's own millisecond is not caught. `CFCacheStore` never answers here from a marker the request read earlier: a stale hit reads its entry's markers before its refresh runs, and answered from the memo, an invalidation that landed during the refresh let it write. A tag the request masked answers from the mask, checked again when the reads are back. Each other tag is read through `gateMarkerRead` (`request-tag-mask.ts`, shared with `VercelCacheStore`'s `tm` reads): a page's writes finish together and share tags, and a read per tag per write cost a cold page with a 40-tag document, a 40-tag record and ten 3-tag `"use cache"` misses 110 KV reads. Gates that ask while a read is in flight share it, if it was issued at or after their execution started; the read is dropped when it settles. A read answers only for invalidations before it was issued, and the first version reused settled reads: a capture's `putShell` could be answered by a `"use cache"` write's read from the start of the capture, missing another instance's `expireTag()` in between, and a timed-out read's fail-open `null` answered every later gate of the request. Sharing only in-flight reads keeps the window to one marker round-trip. The read returns its own KV or L1 value, not one an older read of the tag memoized while it was in flight, and it fills the per-request memo only when the memo holds nothing, so a build shell's check still serves the request's later reads. It publishes to L1 unless the request masked the tag, and never without a request context (a detached `waitUntil` task), where a mask cannot be told apart. The gate asks fail-closed (`isTagsInvalidatedSince(tags, since, { failClosed: true })`): a marker read that fails or times out answers "invalidated", since a skipped write costs a miss. Other callers, a build shell's read-through among them, keep the store's fail-open answer.
 
-One more race, found in review: the isolate order is read before the store's marker read, and that read can be in flight while this isolate invalidates. An action awaits a `"use cache"` miss (its write runs in `waitUntil`), updates its data, then awaits `updateTag()`; the write's gate had passed the order check and its KV read answered with the marker from before, so the write landed after the invalidation and served `"old"` to the action's own render and the next request (#973's read-your-own-writes, broken). `predatesInvalidation` reads the order again once the store answers; `markInvalidated` is synchronous, so the second look sees every invalidation made before the answer. The shell-store wrappers a capture and a HIT tail run on (`RecordingShellStore`, `SeededShellStore`) forward the method, or the writes they pass through would skip this half.
+One more race, found in review: the isolate order is read before the store's marker read, and that read can be in flight while this isolate invalidates. An action awaits a `"use cache"` miss (its write runs in `waitUntil`), updates its data, then awaits `updateTag()`; the write's gate had passed the order check and its KV read answered with the marker from before, so the write landed after the invalidation and served `"old"` to the action's own render and the next request (#973's read-your-own-writes, broken). `predatesInvalidation` reads the order again once the store answers; `markInvalidated` is synchronous, so the second look sees every invalidation made before the answer. The shell-store wrapper a capture runs on (`RecordingShellStore`) forwards the method, or the writes it passes through would skip this half. A HIT tail reads and writes through the request's own store, and the implicit doc scope's `SeededShellStore` keeps its segment writes local.
 
 The writers and where each takes its start:
 

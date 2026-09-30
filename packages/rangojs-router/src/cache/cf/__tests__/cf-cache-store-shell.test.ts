@@ -177,9 +177,9 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       initialTheme: "dark",
       snapshot: [
         {
-          family: "item",
-          key: "use-cache:x",
-          value: { value: "CAPVAL", tags: ["t1"] },
+          family: "loader",
+          key: "M0L0D0.x",
+          value: { value: "CAPVAL", holes: 0, runs: 0 },
         },
       ],
     });
@@ -690,9 +690,9 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
   describe("prelude-first read (readShellDocument)", () => {
     const SNAPSHOT: ShellCacheEntry["snapshot"] = [
       {
-        family: "item",
-        key: "use-cache:big",
-        value: { value: "X".repeat(4096) },
+        family: "loader",
+        key: "M0L0D0.big",
+        value: { value: "X".repeat(4096), holes: 0, runs: 0 },
       },
     ];
 
@@ -1215,7 +1215,13 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     it("a memo hit skips the Cache API and KV read", async () => {
       const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
       const entry = shellEntry({
-        snapshot: [{ family: "item", key: "it", value: { value: "v" } }],
+        snapshot: [
+          {
+            family: "loader",
+            key: "M0L0D0.it",
+            value: { value: "v", holes: 0, runs: 0 },
+          },
+        ],
       });
       await store.putShell("k", entry, 300, 30);
       await drain(mockCtx);
@@ -1652,11 +1658,15 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
         baseUrl: "https://test.internal/",
       });
       const snapshot: ShellCacheEntry["snapshot"] = [
-        { family: "item", key: "use-cache:kept", value: { value: "KEPT" } },
+        {
+          family: "loader",
+          key: "M0L0D0.kept",
+          value: { value: "KEPT", holes: 0, runs: 0 },
+        },
       ];
       await store.putShell(
         "k",
-        shellEntry({ snapshot, prunedRecords: "item:4" }),
+        shellEntry({ snapshot, prunedRecords: "loader:4" }),
         300,
         30,
       );
@@ -1673,7 +1683,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       await withMetrics();
       const hit = await withMetrics();
       expect(hit!.stats!.tier).toBe("memo");
-      expect(hit!.entry.prunedRecords).toBe("item:4");
+      expect(hit!.entry.prunedRecords).toBe("loader:4");
       expect(await hit!.snapshot).toEqual(snapshot);
       expect(hit!.stats!.memo).toEqual({
         hit: true,

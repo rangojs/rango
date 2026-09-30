@@ -207,8 +207,11 @@ describe('"use cache": non-cacheable variable reads (#925)', () => {
   });
 });
 
-describe('"use cache": loader-body exemption (#925)', () => {
-  it("a loader body reached from inside the cached function stays exempt", async () => {
+describe('"use cache": a loader body entered inside the function', () => {
+  // Its value is part of what the function returns, so it is stored in the
+  // entry, keyed without the variable: it refuses like cookies() does. Before,
+  // it was exempt and the first request's value was served to the next.
+  it("throws, and nothing is stored for the next caller", async () => {
     const store = new MemorySegmentCacheStore();
     const TenantLoader = loaderDef("test#925:TenantLoader", async () =>
       getRequestContext().get(Tenant),
@@ -219,10 +222,14 @@ describe('"use cache": loader-body exemption (#925)', () => {
       "default",
     );
 
-    expect(await inRequest(store, "a", (hctx) => getNav(hctx))).toBe("nav:a");
+    for (const tenant of ["a", "b"]) {
+      await expect(
+        inRequest(store, tenant, (hctx) => getNav(hctx)),
+      ).rejects.toThrow(USE_CACHE_READ);
+    }
   });
 
-  it("a cached function called FROM a loader body is not exempt", async () => {
+  it("a cached function called FROM a loader body throws; the loader body alone reads", async () => {
     const store = new MemorySegmentCacheStore();
     const getNav = registerCachedFunction(
       async () => `nav:${getRequestContext().get(Tenant)}`,
@@ -234,7 +241,6 @@ describe('"use cache": loader-body exemption (#925)', () => {
     await expect(
       inRequest(store, "a", (hctx) => hctx.use(NavLoader)),
     ).rejects.toThrow(USE_CACHE_READ);
-    // The loader body itself stays exempt.
     const TenantLoader = loaderDef("test#925:TenantLoader2", async () =>
       getRequestContext().get(Tenant),
     );
@@ -243,12 +249,12 @@ describe('"use cache": loader-body exemption (#925)', () => {
     );
   });
 
-  it("a cached function called inside an exempt loader body is not exempt", () => {
+  it("throws at any depth of loader body inside the function", () => {
     const store = new MemorySegmentCacheStore();
     inRequest(store, "a", (_hctx, reqCtx) => {
       runWithCacheExecScope(() =>
         runInsideLoaderBodyScope(() => {
-          expect(reqCtx.get(Tenant)).toBe("a");
+          expect(() => reqCtx.get(Tenant)).toThrow(USE_CACHE_READ);
           runWithCacheExecScope(() => {
             expect(() => reqCtx.get(Tenant)).toThrow(USE_CACHE_READ);
           });
@@ -317,7 +323,7 @@ describe('"use cache": loader and middleware ctx reads (#940)', () => {
     ).rejects.toThrow(USE_CACHE_READ);
   });
 
-  it("a loader body the function consumes through the passed loader ctx stays exempt", async () => {
+  it("a loader body the function consumes through the passed loader ctx throws too", async () => {
     const store = new MemorySegmentCacheStore();
     const TenantLoader = loaderDef("test#940:TenantLoader", async (ctx) =>
       ctx.get(Tenant),
@@ -329,9 +335,9 @@ describe('"use cache": loader and middleware ctx reads (#940)', () => {
     );
     const NavLoader = loaderDef("test#940:NavLoader2", (ctx) => getNav(ctx));
 
-    expect(await inRequest(store, "a", (hctx) => hctx.use(NavLoader))).toBe(
-      "nav:a",
-    );
+    await expect(
+      inRequest(store, "a", (hctx) => hctx.use(NavLoader)),
+    ).rejects.toThrow(USE_CACHE_READ);
   });
 
   it("reads outside any cache scope are unchanged", async () => {

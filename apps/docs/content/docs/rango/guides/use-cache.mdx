@@ -139,7 +139,7 @@ async function NavLayout(ctx) {
 }
 ```
 
-One nuance: the read guard doesn't reach into loader bodies consumed inside the cached function (`await ctx.use(loader)`) — loaders always run fresh, so their reads are exempt. But the _consumed value_ is captured into the shared entry like any other computed data. If loader data must stay per-request live, consume it client-side with `useLoader` instead — see [Loaders](/docs/rango/features/loaders).
+The guard reaches into loader bodies consumed inside the cached function (`await ctx.use(loader)`): the consumed value is captured into the shared entry like any other computed data, so a `{ cache: false }` variable read there throws, as `cookies()` and `headers()` do. If loader data must stay per-request live, consume it client-side with `useLoader` instead — see [Loaders](/docs/rango/features/loaders).
 
 The key is only what the function declares: its id and arguments. Called inside a route `cache()` that has a `key()`, the function does not inherit that key, so pass the value the route partitions by as an argument. A loader's own `cache()` works the same way: its body's request-scoped reads must be in its own `key()`.
 

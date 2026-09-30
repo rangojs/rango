@@ -25,7 +25,11 @@ import {
   makeShellStaleReplayData,
   getDriftStamp,
   getSharedStamp,
+  ShellSharedBakedStampLoader,
   ShellSharedStampLoader,
+  ShellHoleyDepLoader,
+  ShellLiveDepLoader,
+  bumpLiveDepGeneration,
   getCapStamp,
   getShellLargeCatalog,
   outlinedRenderCounter,
@@ -55,6 +59,7 @@ import { ShellSettledValue } from "../components/ShellSettledValue.js";
 import { ShellGuardValue } from "../components/ShellGuardValue.js";
 import { ShellCachePrice } from "../components/ShellCachePrice.js";
 import { ShellSharedStamp } from "../components/ShellSharedStamp.js";
+import { ShellLiveDepView } from "../components/ShellLiveDepView.js";
 import { ShellCacheStream } from "../components/ShellCacheStream.js";
 import { ShellCacheCounter } from "../components/ShellCacheCounter.js";
 import { ShellPhysicsValue } from "../components/ShellPhysicsValue.js";
@@ -302,7 +307,25 @@ async function ShellSharedLayout(ctx: HandlerContext) {
 }
 
 function ShellSharedPage() {
-  return <ShellSharedStamp loader={ShellSharedStampLoader} />;
+  return (
+    <>
+      <ShellSharedStamp
+        loader={ShellSharedBakedStampLoader}
+        testId="shell-shared-baked"
+      />
+      <ShellSharedStamp loader={ShellSharedStampLoader} />
+    </>
+  );
+}
+
+// Live-dep fixture page: the whole view is the hole under the route's
+// loading(), rendered on a HIT from that request's loader data and handles.
+function ShellLiveDepPage() {
+  return (
+    <main data-testid="shell-live-dep-page">
+      <ShellLiveDepView loader={ShellLiveDepLoader} />
+    </main>
+  );
 }
 
 // Large-shell fixture page (issue #941): a cached catalog rendered into a
@@ -771,15 +794,17 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Shared-key route (issue #941): the shell layout and the live hole read
-    // the same "drift" item. Snapshot pruning drops the shell's item record,
-    // so after the item expires the hole shows a newer stamp than the shell.
+    // Shared-key route (issue #941): the shell layout, an ssr: false loader
+    // and the live hole read the same "drift" item. The snapshot records no
+    // cache read, so after the item expires the hole shows a newer stamp than
+    // the shell and the ssr: false loader's pin.
     layout(ShellSharedLayout, () => [
       path(
         "/shell-cache/shared-key",
         ShellSharedPage,
         { name: "shellCacheSharedKey", ppr: { ttl: 300, swr: 120 } },
         () => [
+          loader(ShellSharedBakedStampLoader, { ssr: false }),
           loader(ShellSharedStampLoader),
           loading(
             <p data-testid="shell-shared-hole-fallback">Loading stamp...</p>,
@@ -787,6 +812,22 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
+    // Live-dep route: the ssr: false loader runs on every HIT (its return holds
+    // a promise) and awaits the live loader declared after it, so the live
+    // loader's body runs inside the restored loader's body. Its push stays
+    // live on a HIT and a client navigation, like its data.
+    path(
+      "/shell-cache/live-dep",
+      ShellLiveDepPage,
+      { name: "shellCacheLiveDep", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellHoleyDepLoader, { ssr: false }),
+        loader(ShellLiveDepLoader),
+        loading(
+          <p data-testid="shell-live-dep-fallback">Loading live dep...</p>,
+        ),
+      ],
+    ),
     // Large-shell route (issue #941): a prelude over several 32 KB enqueue
     // chunks with a live hole resumed behind it.
     path(
@@ -1291,6 +1332,14 @@ export const shellCachePatterns = urls(
       "/shell-cache/__baked-only-runs",
       (): { runs: number } => ({ runs: shellBakedOnlyRuns() }),
       { name: "shellCacheBakedOnlyRuns" },
+    ),
+    // Test-only: moves /shell-cache/live-dep's generation for one ?probe= on.
+    path.json(
+      "/shell-cache/__live-dep-bump",
+      (ctx): { generation: number } => ({
+        generation: bumpLiveDepGeneration(ctx.searchParams.get("probe") ?? ""),
+      }),
+      { name: "shellCacheLiveDepBump" },
     ),
   ],
 );

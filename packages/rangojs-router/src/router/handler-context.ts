@@ -38,7 +38,7 @@ const THEME_REQUEST_CONTEXT = Symbol("rango:theme-request-context");
 
 /**
  * ctx.theme is the visitor's theme cookie, guarded like cookies() (#971,
- * assertThemeReadAllowed): a getter, so creating the ctx reads nothing and
+ * readGuardedTheme): a getter, so creating the ctx reads nothing and
  * only a handler that reads the theme refuses a ppr capture or throws on a
  * cache() miss. Non-enumerable, so serializing the ctx does not read it:
  * React's dev Flight debug info JSON-stringifies server component props and

@@ -488,11 +488,11 @@ specifies `cache: false`, the value is non-cacheable.
 response side effects, and non-cacheable `ctx.get()` — because each would leak
 per-request data into a shared cache entry. The `cache()` boundary tracks the
 scope via `isInsideCacheScope()`; `"use cache"` uses the exec guard and also
-excludes tainted `ctx`/`env`/`req` args from the cache key. Loaders are exempt in
-both — see "Headers and Cookies" and the precise guarantee below. Under `"use
-cache"` the exemption covers a loader body the cached function consumes
-(`await ctx.use(Loader)`), not a cached function a loader calls: the loader
-re-runs on every request, the cached body does not.)
+excludes tainted `ctx`/`env`/`req` args from the cache key. Loaders are exempt
+under `cache()` — see "Headers and Cookies" and the precise guarantee below.
+Under `"use cache"` nothing is exempt: a loader body the cached function
+consumes (`await ctx.use(Loader)`) is part of the cached result, and a cached
+function a loader calls does not re-run with the loader.)
 
 Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
 Enforcement happens at read time (`ctx.get()`), where ALS detects the cache

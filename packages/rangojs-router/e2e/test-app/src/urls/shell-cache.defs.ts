@@ -43,10 +43,12 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   return `drift-${driftExecutions}`;
 }
 
-// Shared-key fixture (issue #941): the shell and a live hole read the SAME
-// "drift" item (ttl 1s). The capture pins the shell's read. The hole's loader
-// runs on every HIT and reads the store, so once the item expires the hole
-// shows a newer stamp than the frozen shell. The probe keys the item per URL.
+// Shared-key fixture (issue #941): the shell, an ssr: false loader and a live
+// hole read the SAME "drift" item (ttl 1s). The capture bakes the shell's read
+// and pins the ssr: false loader's value. The hole's loader runs on every HIT
+// and reads the store, so once the item expires the hole shows a newer stamp
+// than the frozen shell. It did not while the bake-lane loader's read of the
+// key was pinned for every reader on a HIT. The probe keys the item per URL.
 let sharedStampExecutions = 0;
 
 export async function getSharedStamp(probe: string): Promise<string> {
@@ -65,6 +67,66 @@ export const ShellSharedStampLoader = createLoader(
     stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
   }),
 );
+
+/** The same read, bound with ssr: false: shell material, pinned on a HIT. */
+export const ShellSharedBakedStampLoader = createLoader(
+  async (ctx): Promise<ShellSharedStampData> => ({
+    stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
+  }),
+);
+
+// Live-dep fixture: a live loader that a running ssr: false loader awaits. The
+// ssr: false loader returns a nested promise, so it runs on every HIT; the
+// route declares it before the live loader, so the live loader's body runs
+// inside its body. The live loader awaits a dependency the route registers on
+// neither lane. All stamp the per-probe generation the suite bumps
+// (/shell-cache/__live-dep-bump). The live loader's push, and its
+// dependency's, must carry the HIT's generation, like its data; the
+// ssr: false loader's settled push is the prelude's.
+const liveDepGenerations = new Map<string, number>();
+
+export function liveDepGeneration(probe: string): number {
+  return liveDepGenerations.get(probe) ?? 1;
+}
+
+export function bumpLiveDepGeneration(probe: string): number {
+  const next = liveDepGeneration(probe) + 1;
+  liveDepGenerations.set(probe, next);
+  return next;
+}
+
+export const ShellLiveDepNotes = createHandle<string>();
+
+export interface ShellLiveDepData {
+  liveDep: string;
+  inner: string;
+}
+
+/** Awaited only by ShellLiveDepLoader: the route registers it on neither lane. */
+export const ShellInnerDepLoader = createLoader(async (ctx) => {
+  const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+  ctx.use(ShellLiveDepNotes)(`inner-note@g${generation}`);
+  return { inner: `inner@g${generation}` };
+});
+
+export const ShellLiveDepLoader = createLoader(
+  async (ctx): Promise<ShellLiveDepData> => {
+    const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+    ctx.use(ShellLiveDepNotes)(`live-dep-note@g${generation}`);
+    const { inner } = await ctx.use(ShellInnerDepLoader);
+    return { liveDep: `live-dep@g${generation}`, inner };
+  },
+);
+
+export const ShellHoleyDepLoader = createLoader(async (ctx) => {
+  const generation = liveDepGeneration(ctx.searchParams.get("probe") ?? "");
+  ctx.use(ShellLiveDepNotes)(`holey-note@g${generation}`);
+  const { liveDep } = await ctx.use(ShellLiveDepLoader);
+  return {
+    holey: `holey-${liveDep}`,
+    later: Promise.resolve("holey-later"),
+  };
+});
 
 // Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
 // into the shell above loading(). The route caps ppr.maxSnapshotBytes far below

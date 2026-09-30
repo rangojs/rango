@@ -81,28 +81,53 @@ export function cloneElementWithProps(
  */
 export function settleNestedThenables(value: unknown): Promise<void> {
   const pending: Promise<void>[] = [];
-  const seen = new Set<object>();
-  const walk = (v: unknown): void => {
-    if (isThenable(v)) {
-      pending.push(
-        Promise.resolve(v).then(settleNestedThenables, () => undefined),
-      );
-      return;
-    }
-    if (isValidElement<Record<string, unknown>>(v)) {
-      walk(v.props);
-      return;
-    }
-    if (Array.isArray(v) || isPlainDataObject(v)) {
-      if (seen.has(v)) return;
-      seen.add(v);
-      for (const item of Array.isArray(v) ? v : Object.values(v)) walk(item);
-    }
-  };
-  walk(value);
+  someNestedThenable(value, (thenable) => {
+    pending.push(
+      Promise.resolve(thenable).then(settleNestedThenables, () => undefined),
+    );
+    return false;
+  });
   return pending.length === 0
     ? Promise.resolve()
     : Promise.all(pending).then(() => undefined);
+}
+
+/**
+ * The walk settleNestedThenables and holdsThenable share: visit each thenable
+ * reachable from `value` through plain data objects, arrays and React element
+ * props (never an element's owner or type), the shapes
+ * maskNestedContainerThenables masks; every other object is a leaf. Stops at
+ * the first visit that returns true and reports whether one did.
+ */
+function someNestedThenable(
+  value: unknown,
+  visit: (thenable: PromiseLike<unknown>) => boolean,
+): boolean {
+  let seen: Set<object> | undefined;
+  const walk = (v: unknown): boolean => {
+    if (isThenable(v)) return visit(v);
+    if (typeof v !== "object" || v === null) return false;
+    if (isValidElement<Record<string, unknown>>(v)) return walk(v.props);
+    if (!Array.isArray(v) && !isPlainDataObject(v)) return false;
+    seen ??= new Set();
+    if (seen.has(v)) return false;
+    seen.add(v);
+    // Own enumerable values, as maskNestedContainerThenables walks
+    // Object.keys: an array's non-index properties are walked too.
+    return Object.values(v).some(walk);
+  };
+  return walk(value);
+}
+
+/**
+ * True when `value` is a thenable or holds one where the capture's loader
+ * push funnel masks it (maskNestedContainerThenables): through plain data
+ * objects, arrays and React element props. Such a push stays out of a shell's
+ * record and reaches a HIT only from a run of its loader there, so a HIT
+ * keeps it; a push without one is the record's (HandleStore.pushRestored).
+ */
+export function holdsThenable(value: unknown): boolean {
+  return someNestedThenable(value, () => true);
 }
 
 /**
