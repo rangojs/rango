@@ -30,6 +30,11 @@
  *     model is the held-navigation useLoader().isLoading: a `transition` spec
  *     plus a pending Promise seeded via navigate(url, { loaders }) commits
  *     through production's commitInTransition (browser/partial-update.ts).
+ *   - A spec's transition({ when }) decides every commit with production's
+ *     browser decision: navigate() and useRouter().push model kind "push",
+ *     useRouter().replace kind "replace", refresh() kind "revalidate".
+ *     Back/forward, action and optimistic clientUrls() swap decisions are
+ *     e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
@@ -70,7 +75,11 @@ import {
   buildParamsFromMatch,
 } from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
-import type { LoaderDefinition, TransitionConfig } from "../types.js";
+import type {
+  LoaderDefinition,
+  TransitionConfig,
+  TransitionWhenKind,
+} from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
@@ -348,6 +357,11 @@ export interface TestRouterHandle {
     url: string,
     options?: Pick<RenderRouteOptions, "loaders">,
   ): Promise<void>;
+  /**
+   * Re-render the current location, as router.refresh() does: a spec's
+   * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
+   */
+  refresh(): Promise<void>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -605,6 +619,7 @@ export async function renderRoute(
     target: string,
     navOptions?: Pick<RenderRouteOptions, "loaders"> & {
       history?: Pick<NavigateOptionsInternal, "state" | "replace">;
+      kind?: TransitionWhenKind;
     },
   ): Promise<void> => {
     // A useRouter().push/replace or <Link> navigation (`history`) writes its
@@ -648,16 +663,20 @@ export async function renderRoute(
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
     // Production's browser-run transition({ when }) decision
     // (browser/partial-update.ts): the committed location is the source.
+    const kind: TransitionWhenKind =
+      navOptions?.kind ?? (history?.replace ? "replace" : "push");
     const gatedOff = decideTransitionGatedOff(segments, () => ({
-      kind: "push",
+      kind,
       from: {
         url: eventController.getLocation().href,
         params: eventController.getParams(),
+        routeName: leaf.name,
         state: window.history.state,
       },
       to: {
         url: nextUrl,
         params: match.params,
+        routeName: leaf.name,
         state: historyState ?? null,
       },
     }));
@@ -696,11 +715,16 @@ export async function renderRoute(
     });
   };
 
+  const refresh = (): Promise<void> => {
+    const current = new URL(eventController.getLocation().href);
+    return navigate(current.pathname + current.search, { kind: "revalidate" });
+  };
+
   let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target, navigateOptions) =>
       navigate(target, { history: navigateOptions ?? {} }),
-    refresh: () => navigate(url.pathname + url.search),
+    refresh: () => refresh(),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},
     registerDelegatedPrefetch: () =>
@@ -758,6 +782,7 @@ export async function renderRoute(
 
   const router: TestRouterHandle = {
     navigate,
+    refresh,
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,

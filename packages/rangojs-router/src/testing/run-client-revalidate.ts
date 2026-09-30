@@ -10,7 +10,8 @@
  * Synchronous: client revalidate functions must be sync.
  */
 
-import { makeIsAction, resolveActionRefId } from "../router/is-action.js";
+import { makeIsAction } from "../router/is-action.js";
+import { resolveTestActionId } from "./internal/action-id.js";
 import {
   lockedClientDefault,
   runClientRevalidateChain,
@@ -22,23 +23,6 @@ import type {
 } from "../client-urls/types.js";
 
 const DEFAULT_URL = "http://localhost/";
-
-function resolveActionId(
-  action: ((...args: never[]) => unknown) | string | undefined,
-): string | undefined {
-  if (action === undefined) return undefined;
-  if (typeof action === "string") return action;
-  const id = resolveActionRefId(action);
-  if (id === undefined) {
-    throw new Error(
-      "runClientRevalidate: `action` must be a single imported server action " +
-        "(carrying its build-injected id) or an actionId string. The passed " +
-        "function has no $id/$$id — outside a built app, pass the id string " +
-        'your predicate should match (e.g. "src/actions/cart.ts#addToCart").',
-    );
-  }
-  return id;
-}
 
 /**
  * Options for {@link runClientRevalidate}. Defaults model a same-URL
@@ -80,7 +64,7 @@ export function runClientRevalidate(
   const currentParams = opts.currentParams ?? {};
   const nextParams = opts.nextParams ?? currentParams;
   const inAction = opts.action !== undefined;
-  const actionId = resolveActionId(opts.action);
+  const actionId = resolveTestActionId(opts.action, "runClientRevalidate");
   const defaultShouldRevalidate = lockedClientDefault({
     actionRequest: opts.actionRequest ?? inAction,
     currentParams,
