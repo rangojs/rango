@@ -421,6 +421,26 @@ export async function createMatchContextForPartial<TEnv>(
     clientSegmentSet.delete(snapshot.manifestEntry.shortCode);
   }
 
+  // Whether an intercept targets this route at all: the same walk as above
+  // with isAction=true, which skips when(). If one does, the response depends
+  // on the source even when none applied (a when() that rejected it, a
+  // same-route navigation), so it must not share the source-agnostic prefetch
+  // slot (#1007). The walk is over the TARGET's chain, so a route no
+  // intercept targets never depends on the source this way.
+  const targetsIntercept = (routeKey: string): boolean =>
+    findInterceptForRoute(
+      routeKey,
+      snapshot.manifestEntry.parent,
+      null,
+      true,
+    ) !== null;
+  const interceptTargeted =
+    !!interceptResult ||
+    (!skipInterceptForAction &&
+      (targetsIntercept(matched.routeKey) ||
+        (snapshot.localRouteName !== matched.routeKey &&
+          targetsIntercept(snapshot.localRouteName))));
+
   const isIntercept = !!interceptResult;
   // A normal-route navigation may replay a PPR shell's canonical segment
   // snapshot. Intercepts remain source-dependent and always use their normal
@@ -458,6 +478,7 @@ export async function createMatchContextForPartial<TEnv>(
     interceptSelectorContext,
     isSameRouteNavigation: nav.isSameRouteNavigation,
     interceptResult,
+    interceptTargeted,
     cacheScope,
     isIntercept,
     actionContext,

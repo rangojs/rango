@@ -102,6 +102,14 @@ async function TxSrcContent({ n }: { n: string }) {
       <Link to="/tx-src/e" data-testid="tx-src-to-e" prefetch="none">
         e
       </Link>
+      {/* #1007: the product modal intercept does not apply from /tx-src. */}
+      <Link
+        to="/product/product-a"
+        data-testid="tx-src-to-product-a-pf"
+        prefetch="hover"
+      >
+        product a (hover prefetch)
+      </Link>
     </div>
   );
 }

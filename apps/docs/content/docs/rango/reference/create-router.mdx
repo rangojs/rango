@@ -299,7 +299,7 @@ Speculative requests carry the `X-Rango-Prefetch: 1` header, so middleware and l
 
 ### prefetchCacheTTL, prefetchCacheSize, prefetchConcurrency
 
-- `prefetchCacheTTL`: `number | false`, default `300` (seconds). How long prefetched responses stay in the client's in-memory cache, and the `Cache-Control: private, max-age` on prefetch responses. Server actions invalidate the cache regardless of TTL. `false` turns the prefetch subsystem off entirely, including per-Link opt-ins and `useRouter().prefetch()`.
+- `prefetchCacheTTL`: `number | false`, default `300` (seconds). How long prefetched responses stay in the client's in-memory cache, and the `Cache-Control: private, max-age` on prefetch responses. A route an intercept targets gets no prefetch `Cache-Control`, because whether its response is the modal or the full page depends on the source page. Server actions invalidate the cache regardless of TTL. `false` turns the prefetch subsystem off entirely, including per-Link opt-ins and `useRouter().prefetch()`.
 - `prefetchCacheSize`: default `100`. The maximum number of decoded prefetch payloads kept in memory; the oldest is evicted first (FIFO).
 - `prefetchConcurrency`: default `2`. The maximum number of viewport/render prefetches in flight at once. Hover prefetches bypass the queue.
 

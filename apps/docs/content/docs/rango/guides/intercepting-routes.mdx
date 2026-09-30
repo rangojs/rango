@@ -90,6 +90,8 @@ export function ModalWrapper() {
 
 `when` goes in a config object as the 4th argument; the use items then move to the 5th argument. It is a synchronous match-time selector that runs on the server. It receives `from` and `to` (the destination), each `{ url, params, routeName }`: the shape [`transition({ when })`](/docs/rango/guides/view-transitions#conditional-transitions-with-when) sees, without `state`, because history state never reaches the server. `from` is the page the navigation leaves, except while an intercept is open: then it is the intercept's source page, the page under the modal. Opening `/item/1` as a modal over `/list/open` and then navigating to `/item/2` from inside the modal gives `from.url.pathname === "/list/open"`, not `/item/1`; `transition({ when })`'s `from` is always the location on screen. `routeName` is set for named routes only. A selector that throws does not intercept: the full page renders and the error is logged with the route name. It also receives `segments` (the client's current segment path and ids), `request`, and `env`. Omit it and the intercept always activates. The config type is not exported; pass an object literal.
 
+A prefetch of a route an intercept targets is kept per source page, whether or not the intercept applies there, so a full page prefetched from a page where `when` is false never serves a click from a page where it is true. Routes no intercept targets share one prefetch entry across pages.
+
 ```tsx
 intercept(
   "@modal",

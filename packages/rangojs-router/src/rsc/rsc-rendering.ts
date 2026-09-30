@@ -297,7 +297,8 @@ type PreparedRender =
   | {
       kind: "payload";
       payload: RscPayload;
-      hasInterceptSlots: boolean;
+      /** The response depends on the source page: an intercept targets the route. */
+      sourceScoped: boolean;
       pprReplayStatus?: PprReplayStatus;
       /** The key a navigation-only heal capture stores under, when one is needed. */
       healKey?: string;
@@ -783,7 +784,7 @@ function* preparePayloadPlan<TEnv>(
       return {
         kind: "payload",
         payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
-        hasInterceptSlots: false,
+        sourceScoped: false,
         pprReplayStatus,
         healKey,
       };
@@ -818,7 +819,7 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      hasInterceptSlots: !!result.slots,
+      sourceScoped: result.interceptTargeted === true,
       pprReplayStatus,
       healKey,
     };
@@ -842,7 +843,7 @@ function* preparePayloadPlan<TEnv>(
   return {
     kind: "payload",
     payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
-    hasInterceptSlots: false,
+    sourceScoped: false,
   };
 }
 
@@ -1132,7 +1133,7 @@ function renderPreparedRscResponse<TEnv>(
 ): Promise<Response> {
   const { ctx, request, env, url, isPartial, nonce, reqCtx, renderSpan } =
     input;
-  const { payload, pprReplayStatus, hasInterceptSlots } = prepared;
+  const { payload, pprReplayStatus, sourceScoped } = prepared;
   const metricsStore = reqCtx._metricsStore;
 
   const rscHeaders: Record<string, string> = {
@@ -1149,18 +1150,20 @@ function renderPreparedRscResponse<TEnv>(
       serializePprReplayStatus(pprReplayStatus);
   }
   // Tell the client's prefetch cache to scope this response to its source
-  // URL (instead of the default source-agnostic wildcard). Intercept
-  // responses depend on the source page matching an intercept rule, so
-  // they must not be reused for navigations from other sources.
-  if (hasInterceptSlots) {
+  // URL (instead of the default source-agnostic wildcard). A route an
+  // intercept targets renders the modal or the full page depending on the
+  // source, so neither response may be reused from another source: a full
+  // page prefetched where the intercept does not apply would otherwise
+  // serve a later click where it does (#1007).
+  if (sourceScoped) {
     rscHeaders["x-rsc-prefetch-scope"] = "source";
   }
   // Enable browser HTTP caching for prefetch responses only.
   // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
-  // non-intercept context (intercept responses depend on source page),
-  // and a configured cache-control value (false disables caching).
+  // a source-agnostic response (see sourceScoped above), and a configured
+  // cache-control value (false disables caching).
   const isPrefetch = requestHeaders(request).has("X-Rango-Prefetch");
-  if (isPrefetch && isPartial && !hasInterceptSlots) {
+  if (isPrefetch && isPartial && !sourceScoped) {
     const cc = ctx.router.prefetchCacheControl;
     if (cc) {
       rscHeaders["cache-control"] = cc;

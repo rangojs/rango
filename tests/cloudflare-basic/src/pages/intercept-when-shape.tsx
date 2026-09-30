@@ -31,6 +31,35 @@ const IwsList: Handler<"interceptWhenShape.list"> = (ctx) => (
     <Link to="/intercept-when-shape/item/throw" data-testid="iws-to-throw">
       throw
     </Link>
+    {/* #1007 prefetch source scope (prefetch-intercept-source.test.ts). */}
+    <Link
+      to="/intercept-when-shape/item/1"
+      data-testid="iws-to-1-pf"
+      prefetch="hover"
+    >
+      1 (hover prefetch)
+    </Link>
+    <Link
+      to="/intercept-when-shape/list/other"
+      data-testid="iws-to-other-pf"
+      prefetch="hover"
+    >
+      other (hover prefetch)
+    </Link>
+    <Link
+      to="/intercept-when-shape/list/open"
+      data-testid="iws-to-open"
+      prefetch="none"
+    >
+      open
+    </Link>
+    <Link
+      to="/intercept-when-shape/list/closed"
+      data-testid="iws-to-closed"
+      prefetch="none"
+    >
+      closed
+    </Link>
   </div>
 );
 

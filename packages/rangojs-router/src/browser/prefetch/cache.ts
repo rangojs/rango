@@ -15,11 +15,11 @@
  * - Source-scoped: built by `buildSourceKey(rangoState, sourceHref, target)`
  *   — shape `rangoState\0sourceHref\0/target?...`. Embeds the Rango state
  *   (so rotation invalidates source-scoped entries too), the source href, and
- *   the exact source segment tree. Populated when the
- *   server tags a response with `X-RSC-Prefetch-Scope: source` (intercept
- *   modals etc.), OR when a Link opts in with `prefetchKey=":source"` — in
- *   both cases so source-sensitive responses cannot bleed into navigations
- *   from other pages.
+ *   the exact source segment tree. Populated when the server tags a
+ *   response with `X-RSC-Prefetch-Scope: source` (a route an intercept
+ *   targets, matched or not), OR when a Link opts in with
+ *   `prefetchKey=":source"` — in both cases so source-sensitive responses
+ *   cannot bleed into navigations from other pages.
  *
  * Also tracks in-flight prefetch promises. Each promise resolves to the
  * decoded prefetch entry (or null), letting navigation adopt a
@@ -172,7 +172,7 @@ let generation = 0;
  *   rotation invalidates source-scoped entries alongside wildcard ones,
  *   plus the source page href so the key is unique per originating page.
  *   Populated either when the server tags a response with
- *   `X-RSC-Prefetch-Scope: source` (intercept modals, etc.) or when a
+ *   `X-RSC-Prefetch-Scope: source` (a route an intercept targets) or when a
  *   Link opts in via `prefetchKey=":source"`.
  *
  * Source-scoped keys retain `_rsc_segments` because their exact source tree is

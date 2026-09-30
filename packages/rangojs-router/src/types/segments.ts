@@ -283,6 +283,12 @@ export interface MatchResult {
    */
   interceptTargets?: string[];
   /**
+   * Set on a partial match when an intercept targets the matched route,
+   * whether or not it applied from this source. The response depends on the
+   * source, so the RSC handler scopes its prefetch entry to it (#1007).
+   */
+  interceptTargeted?: true;
+  /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL
    * instead of rendering the page.

@@ -281,6 +281,7 @@ export function buildMatchResult<TEnv>(
     routeName: ctx.routeKey,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
+    ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };

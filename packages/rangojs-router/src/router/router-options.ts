@@ -518,7 +518,10 @@ export interface RangoOptions<TEnv = any> {
    *
    * Controls how long prefetch responses are kept in the client-side
    * in-memory cache and sets `Cache-Control: private, max-age=<ttl>`
-   * on server responses for CDN/edge caching.
+   * on prefetch responses, so the browser's HTTP cache may reuse them
+   * (`private`: shared caches such as a CDN do not store them). A route an
+   * intercept targets gets no prefetch `Cache-Control`: whether its
+   * response is the modal or the full page depends on the source page.
    *
    * The cache is automatically invalidated on server actions regardless
    * of TTL, so this is primarily a staleness safety net.

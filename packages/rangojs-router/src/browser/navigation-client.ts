@@ -122,9 +122,10 @@ export function createNavigationClient(
 
       // Check completed in-memory prefetch cache before making a network
       // request. Try the source-scoped key first (populated when the server
-      // tagged the prefetch response as source-sensitive, e.g. intercepts,
-      // or when a Link opted in with `prefetchKey=":source"`), then fall
-      // back to the wildcard slot shared across source pages.
+      // tagged the prefetch response as source-sensitive, e.g. a route an
+      // intercept targets, or when a Link opted in with
+      // `prefetchKey=":source"`), then fall back to the wildcard slot shared
+      // across source pages.
       // Both keys embed the Rango state, so state rotation (deploy or
       // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
