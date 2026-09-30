@@ -611,7 +611,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
     expect(goldMiss.key).toBe(
       shellCacheKey("http://localhost/tiered", undefined, "tier:gold"),
     );
-    expect(goldMiss.key).toBe("localhost/tiered:shell|tier%3Agold");
+    expect(goldMiss.key).toBe("localhost/tiered:shell|key%3Atier%253Agold");
     expect(await goldMiss.readEntry()).not.toBeNull();
 
     // Another partition never reads gold's shell: its own MISS and capture.
@@ -661,7 +661,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
     expect(miss.shellStatus).toBe("MISS");
     // The shell key, the record lookup and write, and the capture share it.
     expect(keyRuns.cookie).toBe(1);
-    expect(miss.key).toBe("localhost/cookie-tiered:shell|tier%3Agold");
+    expect(miss.key).toBe("localhost/cookie-tiered:shell|key%3Atier%253Agold");
     expect(await miss.readEntry()).not.toBeNull();
 
     const hit = await serve("/cookie-tiered", gold);
@@ -709,7 +709,7 @@ describe("serveShellRequest: request-partitioned shells", () => {
       for (const tierName of ["gold", "silver"]) {
         expect(
           await cacheStore.get(
-            `tier%3A${tierName}|doc%3Alocalhost%2Fnested-record`,
+            `key:tier%3A${tierName}|doc%3Alocalhost%2Fnested-record`,
           ),
         ).not.toBeNull();
       }
@@ -1227,7 +1227,9 @@ describe("serveShellRequest: a shell never outlives its route cache() entry", ()
 
     expect((await serve("/nested-short-cache", gold)).shellStatus).toBe("MISS");
     expect(
-      await cacheStore.get("tier%3Agold|doc%3Alocalhost%2Fnested-short-cache"),
+      await cacheStore.get(
+        "key:tier%3Agold|doc%3Alocalhost%2Fnested-short-cache",
+      ),
     ).not.toBeNull();
     // Capped to that record (ttl 1, swr 0), not ppr.ttl 300.
     expect(putShell.mock.calls.map(([, , ttl, swr]) => [ttl, swr])).toEqual([
@@ -1349,7 +1351,7 @@ describe("serveShellRequest: tags", () => {
   it("updateTag of a nested cache({ tags }) evicts its composed-key record and the shell captured from it (#970)", async () => {
     const { serve, cacheStore } = setup();
     const goldA = { headers: { "x-tier": "gold", "x-variant": "a" } };
-    const recordKey = "tier%3Agold|tagged-v%3Aa";
+    const recordKey = "key:tier%3Agold|key:tagged-v%3Aa";
 
     expect((await serve("/nested-tagged", goldA)).shellStatus).toBe("MISS");
     const hit = await serve("/nested-tagged", goldA);

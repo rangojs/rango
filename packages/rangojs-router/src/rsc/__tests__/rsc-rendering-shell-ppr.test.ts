@@ -88,6 +88,7 @@ import type { RscPayload, SSRModule } from "../types.js";
 import type { PartialPrerenderProps } from "../../urls/pattern-types.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import type { MetricsStore } from "../../server/context.js";
+import { composeCacheKeys } from "../../cache/cache-key-utils.js";
 import {
   buildShellKey,
   partitionShellKey,
@@ -2647,9 +2648,9 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
   // never the unpartitioned key or another partition's.
   it("replays from the visitor's own partition when the route cache() has key()", async () => {
     const store = new MemorySegmentCacheStore();
-    const silverKey = partitionShellKey(KEY, "tier:silver");
+    const silverKey = partitionShellKey(KEY, composeCacheKeys(["tier:silver"]));
     await store.putShell(
-      partitionShellKey(KEY, "tier:gold"),
+      partitionShellKey(KEY, composeCacheKeys(["tier:gold"])),
       shellEntry({ snapshot: [segmentRecord], docKey: DOC_KEY }),
       300,
     );

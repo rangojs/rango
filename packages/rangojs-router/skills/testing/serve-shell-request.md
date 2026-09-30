@@ -135,6 +135,8 @@ expect(silver.shellStatus).toBe("MISS"); // its own capture, never gold's shell
 const gold = await serveShellRequest(router, "/pricing", tier("gold"));
 expect(gold.shellStatus).toBe("HIT");
 expect(gold.key).toBe(shellCacheKey("/pricing", undefined, "tier:gold"));
+// "localhost/pricing:shell|key%3Atier%253Agold": the key() result is
+// namespaced as production stores it (issue #975).
 expect(await gold.readEntry()).not.toBeNull();
 ```
 
@@ -148,6 +150,18 @@ Under nested keyed `cache()` boundaries the partition is their `key()` results c
 // ])
 expect(result.key).toBe(
   shellCacheKey("/plans", undefined, ["tier:gold", "v:a"]),
+);
+```
+
+A store `keyGenerator` result that partitions the record partitions the shell too, an enclosing `cache({ store })` on another store included (issue #974). Pass those results as `generated`, with any `key()` results as `keys`:
+
+```ts
+// createRouter({ cache: { store: localeStore } }), where localeStore's
+// keyGenerator returns `${defaultKey}|${locale}`
+expect(result.key).toBe(
+  shellCacheKey("/pricing", undefined, {
+    generated: ["doc:localhost/pricing|de"],
+  }),
 );
 ```
 

@@ -413,7 +413,10 @@ describe("route cache condition enforcement", () => {
   it("skips cache read when condition returns false", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({ store, condition: () => false } as any);
     const result = await scope.lookupRoute("/test", {});
 
@@ -425,7 +428,10 @@ describe("route cache condition enforcement", () => {
   it("proceeds with cache read when condition returns true", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({ store, condition: () => true } as any);
     await scope.lookupRoute("/test", {});
 
@@ -457,7 +463,10 @@ describe("route cache condition enforcement", () => {
   it("fails open when condition throws", async () => {
     const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    // condition() reads the ambient context through _getRequestContext.
+    const ctx = makeRequestContext("");
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue(ctx);
     const scope = new CacheScope({
       store,
       condition: () => {

@@ -714,11 +714,11 @@ describe("dispatch", () => {
       await get("/nested/composed", composed);
       await get("/nested/composed", { ...composed, "x-tier": "silver" });
       expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-        "response:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
-        "response:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
-        "response:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Fsibling",
-        "response:tier%3Agold|v%3Aa",
-        "response:tier%3Asilver|v%3Aa",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
+        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Finherit",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Fsibling",
+        "response:key:tier%3Agold|key:v%3Aa",
+        "response:key:tier%3Asilver|key:v%3Aa",
       ]);
       putSpy.mockRestore();
     });
@@ -768,9 +768,9 @@ describe("dispatch", () => {
       expect(await get("gold", "de")).toMatchObject({ lang: "de" });
       expect(await get("silver", "en")).toMatchObject({ tier: "silver" });
       expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
-        "response:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
-        "response:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Dde",
-        "response:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
+        "response:key:tier%3Agold|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Dde",
+        "response:key:tier%3Asilver|response%3Ajson%3Alocalhost%2Fnested%2Flang%7Clang%3Den",
       ]);
       putSpy.mockRestore();
     });
@@ -864,10 +864,12 @@ describe("dispatch", () => {
       ).json();
 
       // A HIT returns the byte-identical cached body, and the entry was written
-      // under the custom key (response:tenant-a/cached-keyok).
+      // under the custom key, namespaced (response:key:tenant-a%2Fcached-keyok).
       expect(second).toEqual(first);
       expect(putSpy).toHaveBeenCalled();
-      expect(putSpy.mock.calls[0]?.[0]).toBe("response:tenant-a/cached-keyok");
+      expect(putSpy.mock.calls[0]?.[0]).toBe(
+        "response:key:tenant-a%2Fcached-keyok",
+      );
       putSpy.mockRestore();
     });
   });

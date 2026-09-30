@@ -75,6 +75,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * 2. Store-level `keyGenerator` (modifies default key)
    * 3. Default key generation (prefix:pathname:params)
    *
+   * Return `defaultKey` unchanged to leave a request unpartitioned. An empty
+   * string is not a key: where the result partitions a nested cache() on
+   * another store, or a ppr shell, it fails key resolution, so the request
+   * renders uncached (as when the keyGenerator throws), and the router warns
+   * once naming the store.
+   *
    * @example Using headers for cache segmentation
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {

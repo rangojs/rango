@@ -167,14 +167,20 @@ cache(
   — document requests, client navigations, and intercept navigations are cached
   separately. The search part honors `cache.searchParams` (below).
 - **`key`** is a full override: it bypasses the default key, the store's
-  `keyGenerator`, and the search-param filter. A nested `cache()` keys its
-  records within that partition (see "Keys nest" under "Nested Cache
-  Boundaries"). On a `ppr` route the same key
-  (or, without one, the store's `keyGenerator`) partitions the PPR shell: each
-  partition captures and serves its own shell (`/ppr`, "Request-partitioned
-  shells").
+  `keyGenerator`, and the search-param filter. The result is stored
+  namespaced (`key:` plus its URI encoding), so whatever it returns, request
+  input included, never names another route's default-keyed record or a
+  nested partition's. A nested `cache()` keys its records within that
+  partition (see "Keys nest" under "Nested Cache Boundaries"). On a `ppr`
+  route the same key (or, without one, the store's `keyGenerator`)
+  partitions the PPR shell: each partition captures and serves its own shell
+  (`/ppr`, "Request-partitioned shells").
 - **`condition`** returning `false` skips both the cache read and write for that
-  request (the boundary renders live).
+  request (the boundary renders live). It gates every `cache()` nested under
+  it too: an inner boundary caches only when every enclosing `condition()`
+  allows it.
+- **`tags`** tag this boundary's records and those of every `cache()` nested
+  under it, so `updateTag()` of an outer tag evicts the inner records too.
 - `cache(() => [...])` with no options uses the store defaults.
 - `cache(false, () => [...])` disables caching for a subtree (see "Nested Cache
   Boundaries").
@@ -230,7 +236,8 @@ function CampaignBanner() {
 
 Each tag attaches to one entry, so know which entry you are tagging:
 
-- Forms 1 and 2 tag the `cache()` segment entry.
+- Forms 1 and 2 tag the `cache()` segment entry, and the entries of every
+  `cache()` nested under it (see "Conditions and tags inherit").
 - Form 3 tags the `"use cache"` entry (plus any profile `tags`).
 - Form 4 tags the request's `ppr` shell entry (`/ppr`) or `/document-cache`
   entry, with no `"use cache"` needed. On a route that is neither `ppr` nor
@@ -874,9 +881,11 @@ See `/cache-guide` for the full decision guide and the `cache()` vs `"use cache"
 
 ## Nested Cache Boundaries
 
-An inner boundary overrides the settings of the outer one for its subtree
-(`key` composes instead, see below); `cache(false)` turns caching off for a
-subtree:
+An inner boundary overrides `ttl`, `swr` and `store` for its subtree;
+`cache(false)` turns caching off for a subtree. The options that decide
+whether and where a record may be shared build up instead: `key` composes
+(see below), every enclosing `condition()` must allow the inner boundary, and
+the inner records carry the enclosing `tags` too:
 
 ```typescript
 cache({ ttl: 300 }, () => [
@@ -898,6 +907,39 @@ cache miss, with no shell served and none captured. A `ppr` route under a
 layout's `cache()` therefore cannot opt out of that `cache()` and still get a
 shell (`/ppr`).
 
+### Conditions and tags inherit
+
+```typescript
+cache(
+  {
+    condition: (ctx) => !ctx.request.headers.has("x-preview"),
+    tags: ["catalog"],
+  },
+  () => [
+    cache({ ttl: 60, tags: ["prices"] }, () => [
+      path("/prices", PricesPage, { name: "prices" }),
+    ]),
+  ],
+);
+```
+
+- A preview request renders the prices page live: the outer `condition()` bypasses
+  the inner record's read and write, and a `ppr` route's shell. Conditions
+  combine with AND, through a `cache(false)` with a `cache()` re-enabled
+  below it too.
+- The prices record carries `catalog` and `prices` (static and function
+  `tags` alike), so `updateTag("catalog")` evicts it, and the `ppr` shells
+  and documents built from it.
+- `cache(false)` is unchanged: it caches nothing below it until a `cache()`
+  re-enables caching.
+- A loader's own `cache()` and `"use cache"` are separate layers: they take
+  neither the route's `condition()` nor its `tags`, nor its `key()`
+  partition.
+
+Before issue #974, only the innermost boundary's `condition` and `tags`
+applied: a request an outer `condition()` refused still read and wrote the
+inner record, and `updateTag()` of an outer tag left it in place.
+
 ### Keys nest: a partition covers the whole subtree
 
 A `key()` partitions every record under its `cache()`. A nested `cache()`
@@ -911,14 +953,14 @@ const tier = (ctx) =>
 cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
   layout(TierLayout, () => [
     // No key() of its own: the outer key() result, then this boundary's own
-    // default key ("tier%3Agold|doc%3Aexample.com%2Fpricing"), so /pricing
-    // and /faq keep their own records
+    // default key ("key:tier%3Agold|doc%3Aexample.com%2Fpricing"), so
+    // /pricing and /faq keep their own records
     cache({ ttl: 60 }, () => [
       path("/pricing", PricingPage, { name: "pricing" }),
       path("/faq", FaqPage, { name: "faq" }),
     ]),
 
-    // Its own key() composes with the outer one ("tier%3Agold|v%3Ab")
+    // Its own key() composes with the outer one ("key:tier%3Agold|key:v%3Ab")
     cache(
       { ttl: 60, key: (ctx) => `v:${ctx.searchParams.get("v") ?? "a"}` },
       () => [path("/plans", PlansPage, { name: "plans" })],
@@ -927,26 +969,29 @@ cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
 ]);
 ```
 
-The parts are joined by `|`, outermost first, each URI-encoded:
+Every `key()` result is stored as `key:` plus its URI encoding; a default
+key in a composed key is URI-encoded. The parts are joined by `|`, `key()`
+results first, outermost first:
 
-| Boundary the route sits in                     | Record key                                                                                                              |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `cache({ ttl })`, no `key`, under a keyed one  | The chain's `key()` results, then this boundary's default key (its store's `keyGenerator` result, else the default key) |
-| `cache({ key })` under a keyed one             | The chain's `key()` results                                                                                             |
-| deeper nesting                                 | Composes the same way; only the innermost boundary's missing `key` adds its default key                                 |
-| `cache(false)`                                 | No caching, as before; a `cache()` re-enabled below it stays in the partition                                           |
-| a single keyed `cache()`, or no `key` anywhere | Its raw `key()` result, or the default key, as before                                                                   |
+| Boundary the route sits in                    | Record key                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| a single keyed `cache()`                      | Its `key()` result, namespaced (`tier:gold` is stored as `key:tier%3Agold`)                                                                                  |
+| `cache({ ttl })`, no `key`, under a keyed one | The chain's `key()` results, then this boundary's default key (its store's `keyGenerator` result, else the default key), encoded                             |
+| `cache({ key })` under a keyed one            | The chain's `key()` results                                                                                                                                  |
+| deeper nesting                                | Composes the same way; only the innermost boundary's missing `key` adds its default key                                                                      |
+| under a `cache({ store })` on another store   | Also that store's `keyGenerator` result, one part per store: empty for a store that returns the default key while another's differs, none when all return it |
+| `cache(false)`                                | No caching, as before; a `cache()` re-enabled below it stays in the partition                                                                                |
+| no `key` anywhere                             | The default key, or the store's `keyGenerator` result, as before                                                                                             |
 
-- The encoding is unambiguous among composed keys: an encoded part holds no
-  `|`, so no two partitions, and no two inner keys, compose to the same
-  record key.
-- A single keyed `cache()` stores its `key()` result as is, so a raw result
-  can equal a composed key: a header value `gold|doc%3Aexample.com%2Fpricing`
-  returned raw names the record gold's pricing page keeps under the inner
-  `cache()` in the example above. Never return raw
-  request input from `key()`: normalize it to the values you serve, prefix
-  it (`tier:${value}`), or encode it. A composed key holds no `:` (every
-  part is URI-encoded), so a prefixed result never equals one.
+- No `key()` result, whatever it returns, equals a default key or a
+  composed key, and no two composed keys are equal: a namespaced result
+  starts with `key:` and holds no `|`, a default key never starts with
+  `key:`, and each part of a composed key is encoded, so the parts and their
+  kinds are recoverable. Returning request input from `key()` cannot name
+  another route's record (before issue #975 a header value
+  `doc:example.com/pricing` returned raw named the pricing page's default-keyed
+  record). A prefix (`tier:${value}`) is still worth it for readable keys,
+  and normalizing to the values you serve keeps the partition count bounded.
 - An inner boundary without `key` keeps everything its default key tells
   apart (path, params, search, document vs navigation), so its routes never
   share a record, even when the outer `key()` names no route.
@@ -954,17 +999,31 @@ The parts are joined by `|`, outermost first, each URI-encoded:
   single `key()` does.
 - Each `key()` runs once per request, however many boundaries and lookups use
   it.
+- A store's `keyGenerator` partitions the records of a `cache()` on that
+  store without a `key()` of its own. A `cache({ store })` on another store
+  nested under it keys its records by that `keyGenerator` result too, so a
+  locale-partitioned outer boundary never shares an inner record across
+  locales. With several such stores each keeps its position: one that
+  returns the default key for a request adds an empty part while another's
+  differs, and when all return it the key is unchanged. A `keyGenerator` must
+  return the default key, not `""`, to leave a request unpartitioned: an
+  empty result there fails key resolution, so the request renders uncached,
+  and the router warns once naming the store. On the same store the inner
+  boundary's own default key already carries it (or its own `key()`
+  overrides it).
 - A response route's entry (`path.json()` and the other response routes) is
-  keyed the same way. A `ppr` route's shell is partitioned by the chain's
-  `key()` results alone, since the shell key already carries the URL (plus the
-  store `keyGenerator`'s result for an inner boundary without `key`).
+  keyed the same way, behind a `response:` prefix. A `ppr` route's shell is
+  partitioned by the chain's `key()` results, namespaced the same way, since
+  the shell key already carries the URL (plus the `keyGenerator` results
+  above, and the store's for an inner boundary without `key`).
 - To share an inner cache across partitions, move it outside the keyed
   `cache()`.
 
 Before issue #970, the innermost boundary alone decided the key: an inner
 `cache()` without `key` wrote under the default key and an inner `key()`
 dropped the outer partition, so a silver visitor could HIT what a gold
-visitor's request had cached.
+visitor's request had cached. Before issue #974 an outer `cache({ store })`'s
+`keyGenerator` did not reach an inner boundary on another store.
 
 ## Custom Cache Store
 

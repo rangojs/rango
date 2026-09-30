@@ -91,6 +91,7 @@ export {
 export type {
   PprReplayBypassReason,
   PprReplayStatus,
+  ShellCachePartition,
   ShellStatus,
   ShellStatusTarget,
 } from "./shell-status.js";

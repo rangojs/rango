@@ -53,6 +53,7 @@ export {
   SHELL_STATUS_HEADER,
   type PprReplayBypassReason,
   type PprReplayStatus,
+  type ShellCachePartition,
   type ShellStatus,
   type ShellStatusTarget,
 } from "../shell-status.js";

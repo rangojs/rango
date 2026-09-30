@@ -96,22 +96,58 @@ export function cacheKeyBase(
   return key;
 }
 
+/** The prefix of a `key()` result's part in a record key (#975). */
+const KEY_PART_PREFIX = "key:";
+
 /**
- * The record key, or shell partition, of nested keyed cache() scopes (#970)
- * from its parts, outermost first: the chain's `key()` results and, for an
- * inner scope without its own `key()`, that scope's default key
- * (CacheScope.resolveKeyFrom). One part is returned raw, so a single keyed
- * scope keeps its key byte for byte. Two or more are joined by `|`, each
- * URI-encoded (like partitionShellKey, rsc/shell-capture-constants.ts): an
- * encoded part holds no `|`, so every tuple maps to its own key, of any
- * depth. Raw, `("a|b", "c")` and `("a", "b|c")` named one record. A composed
- * key holds no `:` either, so a single raw result with one (a prefixed
- * `tier:...`, a `doc:` default key) never equals it; an unprefixed raw result
- * can. Shared with the testing helper `shellCacheKey`, which composes a
- * nested partition the same way.
+ * A cache() record key, or ppr shell partition, from its parts
+ * (CacheScope.resolveKeyFrom, CacheScope.resolvePartition): the `key()`
+ * results of the scope's cache() chain, outermost first, then its default
+ * parts: the keyGenerator results of enclosing scopes on another store
+ * (#974) and, for a record key under a scope without its own `key()`, its
+ * default key (or its store's keyGenerator result, #970).
+ *
+ * Key scheme invariant (#975). A `key()` result is often request input,
+ * and a record key has no route or scope discriminator (the store reads
+ * `store.get(key)`), so a result that equals another record's key writes
+ * one route's content under the other's entry. Before #975 a single
+ * `key()` result was stored raw: the header value `doc:localhost/pricing`
+ * named /pricing's default-keyed record, and `gold|doc%3Alocalhost%2Fpricing`
+ * named gold's nested /pricing record (#970). So every part is encoded:
+ *
+ * - a `key()` part is `key:` plus `encodeURIComponent(result)`: it starts
+ *   with `key:` and holds no `|` and no other `:`;
+ * - a default part is `encodeURIComponent(value)`: it holds no `:` or `|`;
+ *   an enclosing store's keyGenerator result equal to the default key is an
+ *   empty part, so each store keeps its position (CacheScope
+ *   positionalParts);
+ * - one `key()` part is the key; two or more parts are joined by `|`,
+ *   `key()` parts first;
+ * - a lone default part stays raw: with no `key()` on the chain the record
+ *   key is the default key or the store's keyGenerator result, unchanged.
+ *
+ * Why nothing collides: the router's default keys (`doc:`, `partial:`,
+ * `intercept:`, `response:<type>:`) never start with `key:` and hold a `:`.
+ * A namespaced `key()` result starts with `key:` and holds no `|`. A
+ * composed key holds a `|` and either starts with `key:` or holds no `:`.
+ * Among composed keys, splitting on `|` recovers each part, a part's kind
+ * (a `key:` prefix, or no `:` at all) and its value. Pinned by the collision
+ * probe in src/cache/__tests__/cache-scope-chain.test.ts. A keyGenerator
+ * result is the store's own namespace, as before.
+ *
+ * Shared with the testing helper `shellCacheKey`, so a test builds the
+ * production partition.
  */
-export function composeCacheKeys(parts: readonly string[]): string {
-  return parts.length === 1
-    ? parts[0]
-    : parts.map((part) => encodeURIComponent(part)).join("|");
+export function composeCacheKeys(
+  keyResults: readonly string[],
+  defaultParts: readonly string[] = [],
+): string {
+  if (keyResults.length === 0 && defaultParts.length === 1) {
+    return defaultParts[0];
+  }
+  const parts = keyResults.map(
+    (result) => KEY_PART_PREFIX + encodeURIComponent(result),
+  );
+  for (const part of defaultParts) parts.push(encodeURIComponent(part));
+  return parts.join("|");
 }

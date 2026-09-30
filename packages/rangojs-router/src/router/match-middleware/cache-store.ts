@@ -106,10 +106,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
-import {
-  createShellImplicitDocScope,
-  resolveCacheTags,
-} from "../../cache/cache-scope.js";
+import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { recordSegmentTags } from "../../cache/cache-tag.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
@@ -341,13 +338,14 @@ function recordShellCaptureDocRecord<TEnv>(
   if (!scope.allowsCache("write")) return;
 
   const docScope = createShellImplicitDocScope(marker);
-  // The route scope's cache({ tags }) describe these segments too: on its
-  // HIT they arrive with the replayed record (recordSegmentTags in
-  // lookupRouteDetailed); on a fresh render they are recorded here, so the
-  // doc record, and the shell taking its tags, carries them either way.
+  // The route scope's cache({ tags }), and its enclosing scopes' (#974),
+  // describe these segments too: on its HIT they arrive with the replayed
+  // record (recordSegmentTags in lookupRouteDetailed); on a fresh render they
+  // are recorded here, so the doc record, and the shell taking its tags,
+  // carries them either way.
   recordSegmentTags(
     segments.map((s) => s.id),
-    resolveCacheTags(scope.config, requestCtx),
+    scope.resolveTags(requestCtx),
     requestCtx,
   );
   // Through onResponse, like the implicit scope's own write: the capture

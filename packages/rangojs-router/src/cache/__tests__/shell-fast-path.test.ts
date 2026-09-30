@@ -311,12 +311,12 @@ describe("resolveShellPartition (request-partitioned ppr shells)", () => {
       async () => {
         await expect(
           resolveShellPartition(scope, inner, "/p", {}),
-        ).resolves.toBe("tier:gold");
+        ).resolves.toBe("key:tier%3Agold");
         await scope.lookupRouteDetailed("/p", {});
       },
     );
     expect(keyFn).toHaveBeenCalledTimes(1);
-    expect(inner.gets).toEqual(["tier:gold"]);
+    expect(inner.gets).toEqual(["key:tier%3Agold"]);
   });
 
   it("is the store keyGenerator result given the document default key, with no route cache()", async () => {
@@ -347,10 +347,10 @@ describe("resolveShellPartition (request-partitioned ppr shells)", () => {
     const scope = new CacheScope({ ttl: 60, key: keyFn });
     await runWithRequestContext(ctxFor(), async () => {
       await expect(scope.resolveKeyFrom("doc:localhost/p")).resolves.toBe(
-        "tier:gold",
+        "key:tier%3Agold",
       );
       await expect(scope.resolveKeyFrom("partial:localhost/p")).resolves.toBe(
-        "tier:gold",
+        "key:tier%3Agold",
       );
     });
     expect(keyFn).toHaveBeenCalledTimes(1);
@@ -369,7 +369,7 @@ describe("resolveShellPartition (request-partitioned ppr shells)", () => {
     }) as RequestContext;
     await runWithRequestContext(capture, async () => {
       await expect(scope.resolveKeyFrom("doc:localhost/p")).resolves.toBe(
-        "tier:gold",
+        "key:tier%3Agold",
       );
     });
     expect(keyFn).toHaveBeenCalledTimes(1);

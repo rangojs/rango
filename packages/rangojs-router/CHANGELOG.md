@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+### Breaking: `cache({ key })` results are stored namespaced, so a `key()` result can't name another record ([#991](https://github.com/rangojs/rango/pull/991))
+
+A route or response-route `cache({ key })` result was stored as the record
+key verbatim (#975). A record key has no route discriminator, and a `key()`
+often returns request input, so a client could send a value equal to another
+record's key and write one route's content under the other route's entry:
+the header value `doc:<host>/pricing` returned raw by a `key()` on `/other`
+named `/pricing`'s default-keyed record, and `gold|doc%3A<host>%2Fpricing`
+named gold's nested `/pricing` record (#970). On a response route, the
+header `json:<host>/api/b` made `/api/b` serve `/api/a`'s body.
+
+Every `key()` result is now stored as `key:` plus its URI encoding, and a
+default key inside a composed key is URI-encoded, so no `key()` result can
+equal a default key or a composed key, and no two composed keys are equal:
+
+```tsx
+cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+  path("/pricing", PricingPage),
+]);
+// Before: the record key was "tier:gold".
+// After:  it is "key:tier%3Agold"; nested, "key:tier%3Agold|key:v%3Aa" or
+//         "key:tier%3Agold|doc%3A<host>%2Fpricing"; a response route's
+//         entry is "response:key:tier%3Agold".
+```
+
+The same scheme keys route records, response-route entries, the `ppr` shell
+partition (`<host><path>:shell|key%3Atier%253Agold`) and client navigation
+replay. A `cache()` chain with no `key()` keeps its default key or store
+`keyGenerator` result unchanged.
+
+The breaking parts:
+
+- Stored key strings change, so keyed entries miss once. `CFCacheStore` and
+  shells on every store are versioned per build, and `MemorySegmentCacheStore`
+  starts cold on restart, so for them a deploy is already cold. The one-time
+  miss for existing keyed entries applies to `VercelCacheStore` without
+  `version` and to any custom `SegmentCacheStore` that doesn't version its
+  keys.
+- Tests that assert raw keys need the namespaced form. `shellCacheKey(url,
+searchParams, partition)` namespaces a `key()` result as production does, so
+  a string `partition` now means a `key()` result. For a store `keyGenerator`
+  partition, pass `{ generated: [result] }` (with `keys` for `key()` results
+  alongside; the new `ShellCachePartition` type).
+
+Migration: nothing to change in `key()` functions. The old advice to prefix
+or encode request input in `key()` is no longer needed for isolation; a
+readable prefix is still good practice, and normalizing to the values you
+serve keeps the number of entries (and `ppr` shells) bounded.
+
+### Breaking: a nested `cache()` inherits the enclosing `condition()` and `tags`, and an enclosing store's `keyGenerator` partitions it ([#991](https://github.com/rangojs/rango/pull/991))
+
+A nested `cache()` took `condition` and `tags` from its own config only, and
+an enclosing `cache({ store })`'s `keyGenerator` did not reach a nested
+`cache()` on another store (#974):
+
+- a request an outer `condition()` refused still read and wrote the nested
+  record, and a `ppr` route under it served and captured a shell;
+- `updateTag(outerTag)` left the nested records, and the shells built from
+  them, in place;
+- the nested store's records, and a `ppr` shell under them, were shared
+  across the outer store's `keyGenerator` partitions (a locale, say).
+
+Now `condition` combines with AND (an inner boundary caches only when every
+enclosing `condition()` allows it; record reads, writes and the `ppr` shell
+alike), `tags` combine by union (static and function forms), and each
+enclosing no-`key()` scope on another store (the app-level store included)
+adds its `keyGenerator` result to the nested record key and shell partition.
+A result equal to the default key keeps its position as an empty part, and
+when every one equals the default key the key is unchanged. `ttl`, `swr` and `store` still come from the nearest `cache()`,
+and `cache(false)` is unchanged. A loader's own `cache()` and `"use cache"`
+stay independent layers.
+
+```tsx
+cache({ condition: (ctx) => !isPreview(ctx), tags: ["catalog"] }, () => [
+  cache({ ttl: 60, tags: ["prices"] }, () => [path("/prices", PricesPage)]),
+]);
+// Before: a preview request read and wrote the /prices record, which was
+// tagged "prices" only, so updateTag("catalog") left it.
+// After: a preview request renders /prices live, and the record is tagged
+// "catalog" and "prices": updateTag("catalog") evicts it and its shells.
+```
+
+Migration: a nested `cache()` that relied on caching despite an outer
+`condition()` needs to move out from under it. Records under a nested
+`cache({ store })` whose outer store has a partitioning `keyGenerator` move
+to new keys and miss once. Records whose key does not change (a nested chain
+with no `key()`) and that were written before the upgrade keep only their own
+tags until they expire: on a store that doesn't version its keys
+(`VercelCacheStore` without `version`, a custom store), `updateTag(outerTag)`
+won't evict them, so purge those records or set `version` when you deploy.
+
 ### Breaking: PPR shell types lose fields nothing produced, and custom stores round-trip every entry field ([#988](https://github.com/rangojs/rango/pull/988))
 
 These public types change. What they drop, the built-in paths never produced.
