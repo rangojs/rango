@@ -119,8 +119,11 @@ export interface LinkProps extends Omit<
    * therefore serve the wrong diff to a navigation from a different
    * source.
    *
-   * Intercept responses are auto-scoped to the source via a server-side
-   * tag, so `":source"` is only needed for custom revalidation logic.
+   * A route an intercept targets is scoped to the source automatically
+   * (server-side `x-rsc-prefetch-scope: source`), whether or not the
+   * intercept applies from this page: the modal and the full page are
+   * both source-specific. Every other route stays shared, so `":source"`
+   * is only needed for custom revalidation logic.
    *
    * @example
    * ```tsx

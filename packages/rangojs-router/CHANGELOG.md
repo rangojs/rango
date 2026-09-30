@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Fixed: a prefetched intercept target opens the modal from a page where the intercept applies ([#1008](https://github.com/rangojs/rango/pull/1008))
+
+A prefetch of a route an intercept targets, made from a page where the
+intercept does not apply (its `when` returned false), was stored in the
+prefetch slot every page shares. A later click on the same link from a page
+where the intercept applies reused it and rendered the full page instead of
+the modal, for the prefetch cache lifetime (#1007). The server marked a
+response source-specific only when the intercept matched.
+
+```tsx
+intercept("@modal", "product", <ProductModal />, {
+  when: ({ from }) => from.url.pathname === "/",
+});
+
+// On /about: <Link to="/product/a" prefetch="hover" /> is hovered (full page).
+// Then on /: <Link to="/product/a" /> is clicked.
+// Before: the full product page renders (the /about prefetch was reused).
+// After: the modal opens over /.
+```
+
+Now partial (navigation and prefetch) responses for a route an intercept
+targets carry `x-rsc-prefetch-scope: source`, matched or not, so the browser
+keeps them per source page, and they get no prefetch `cache-control`. A route
+no intercept targets keeps the shared entry. Document responses, and the full
+payload a partial request without navigation context falls back to, do not
+carry the header: they have no source page.
+
+| Target route                                   | Before           | After                               |
+| ---------------------------------------------- | ---------------- | ----------------------------------- |
+| An intercept targets it and applies here       | per source       | per source                          |
+| An intercept targets it, `when` false here     | shared (the bug) | per source                          |
+| An intercept targets it, same-route navigation | shared (the bug) | per source                          |
+| No intercept targets it                        | shared           | shared                              |
+| Custom `revalidate()` reading `currentUrl`     | shared           | shared: use `prefetchKey=":source"` |
+
 ### Breaking: `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()` refuse where `cookies()` does ([#999](https://github.com/rangojs/rango/pull/999))
 
 The identity guards stopped `cookies()`, `headers()`, the theme reads and a

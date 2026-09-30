@@ -238,6 +238,13 @@ always activates. `when` is not re-evaluated during action revalidation, so
 an open modal stays open after an action. A selector that throws does not
 intercept: the full page renders and the error is logged with the route name.
 
+A prefetch of a route an intercept targets is stored per source page, whether
+or not the intercept applies from that page (`rsc-rendering.ts`
+`x-rsc-prefetch-scope: source`, set from `MatchResult.interceptTargeted`). A
+full page prefetched from a page where `when` is false never serves a click
+from a page where it is true. Routes no intercept targets keep one shared
+prefetch entry.
+
 ```typescript
 // Intercept only when opened from the shop index
 intercept("@modal", "product", <ProductModal />, {

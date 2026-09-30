@@ -508,8 +508,10 @@ middleware, layout, loaders, loading state, and loader-level caching and
 `intercept()`) can choose by navigation source.
 
 This is integrated with the rest of the runtime rather than implemented as URL
-masking plus local component state. Intercepts get source-scoped prefetch entries
-so a modal Flight payload cannot leak into direct navigation. A prerendered target
+masking plus local component state. A route an intercept targets gets
+source-scoped prefetch entries whether or not the intercept applied, so neither a
+modal Flight payload nor a full page prefetched from another page is reused where
+the intercept decides differently. A prerendered target
 can store a separate intercept variant while its loaders still run live at
 request time. An action can revalidate the open intercept without remounting its
 subtree or forcing the preserved background to render. See the
@@ -578,7 +580,8 @@ the bounded cache uses a configurable TTL. `Save-Data`,
 Correctness is part of the prefetch contract. Keys include Rango state, destination
 URL, and the mounted segment set used to compute the diff. Server actions rotate
 state and abort stale speculative work; a generation check prevents a late result
-from repopulating an invalidated cache. Intercepts are automatically source-scoped,
+from repopulating an invalidated cache. Routes an intercept targets are automatically
+source-scoped, matched or not,
 and malformed, cross-origin, foreign-router, redirect, and reload responses are
 dropped rather than warmed. `useLinkStatus()` exposes `{ pending }` for the owning
 link.

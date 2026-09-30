@@ -189,8 +189,8 @@ function buildPrefetchUrl(
  * - Otherwise: dual inflight registration under both `wildcardKey` and
  *   `sourceKey` so same-source navigations adopt directly via their own
  *   source key. Storage key is chosen at response time from the
- *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (intercept
- *   modals etc.), anything else → `wildcardKey`. The entry records its scope
+ *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (a route an
+ *   intercept targets), anything else → `wildcardKey`. The entry records its scope
  *   so cross-source navigations that adopted via `wildcardKey` can bail out
  *   in `navigation-client.ts` when the adopted entry turns out source-scoped.
  */
