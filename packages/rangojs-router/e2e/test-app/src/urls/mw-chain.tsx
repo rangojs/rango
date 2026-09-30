@@ -317,7 +317,7 @@ export const mwChainPatterns = urls(
               </div>
             );
           },
-          { when: ({ from }) => from.pathname.startsWith("/mw-chain") },
+          { when: ({ from }) => from.url.pathname.startsWith("/mw-chain") },
           () => [
             loader(MwChainInterceptLoader),
             middleware(async (ctx, next) => {

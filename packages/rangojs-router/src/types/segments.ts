@@ -32,6 +32,13 @@ export interface RouteLocation {
 }
 
 /**
+ * A navigation side as the server sees it, for intercept's `when` selector:
+ * a {@link RouteLocation} without `state` (history state never reaches the
+ * server).
+ */
+export type ServerRouteLocation = Omit<RouteLocation, "state">;
+
+/**
  * How the navigation being decided was started.
  *
  * - `"push"` / `"replace"`: a Link click, `router.push()` / `router.replace()`

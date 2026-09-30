@@ -510,7 +510,7 @@ describe("client URL server projection", () => {
     expect(interceptEntry.when).toHaveLength(1);
     expect(
       interceptEntry.when[0]({
-        from: new URL("http://localhost/anywhere"),
+        from: { url: new URL("http://localhost/anywhere"), params: {} },
       } as Parameters<(typeof interceptEntry.when)[0]>[0]),
     ).toBe(true);
     expect(
@@ -596,7 +596,7 @@ describe("client URL server projection", () => {
     const activates = (pathname: string): boolean =>
       interceptEntry!.when.every((selector) =>
         selector({
-          from: new URL(`http://localhost${pathname}`),
+          from: { url: new URL(`http://localhost${pathname}`), params: {} },
         } as Parameters<typeof selector>[0]),
       );
     expect(activates("/client")).toBe(true);

@@ -514,7 +514,7 @@ export const useCachePatterns = urls(
           },
           {
             when: ({ from }) =>
-              from.pathname.startsWith("/use-cache-test/intercept-"),
+              from.url.pathname.startsWith("/use-cache-test/intercept-"),
           },
         ),
       ],

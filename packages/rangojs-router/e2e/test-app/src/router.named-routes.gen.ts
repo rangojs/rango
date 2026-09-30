@@ -219,6 +219,8 @@ export const NamedRoutes = {
   index: "/",
   inlineAction: "/inline-action",
   inlineBoundAction: "/inline-bound-action",
+  "interceptWhenShape.item": "/intercept-when-shape/item/:id",
+  "interceptWhenShape.list": "/intercept-when-shape/list/:section",
   "isAction.index": "/is-action",
   keyRefreshDistinct: "/key-refresh-distinct",
   keyRefreshError: "/key-refresh-error",

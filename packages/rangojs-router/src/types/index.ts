@@ -53,6 +53,7 @@ export type {
   TransitionWhenContext,
   TransitionWhenKind,
   RouteLocation,
+  ServerRouteLocation,
   ResolvedSegment,
   SegmentMetadata,
   SlotState,

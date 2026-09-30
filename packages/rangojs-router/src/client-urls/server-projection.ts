@@ -616,7 +616,8 @@ function materializeRouteItems(
   const isInGroupOrigin = ({ from }: InterceptSelectorContext): boolean =>
     mount === "/"
       ? true
-      : from.pathname === mount || from.pathname.startsWith(`${mount}/`);
+      : from.url.pathname === mount ||
+        from.url.pathname.startsWith(`${mount}/`);
   const slotNames = [...new Set(intercepts.map((record) => record.slotName))];
   const buildInterceptItems = (): AllUseItems[] =>
     intercepts.map(

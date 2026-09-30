@@ -125,6 +125,47 @@ describe("createMatchContextForPartial intercept source", () => {
     vi.mocked(getRequestContext).mockReset();
   });
 
+  it("gives from/to the url, params and route name of the source and the target", async () => {
+    const deps = makeDeps({
+      findMatch: vi.fn((pathname: string) => ({
+        params: pathname.startsWith("/product/")
+          ? { productId: pathname.split("/")[2]! }
+          : {},
+        route: routeKeyForPath(pathname),
+        routeKey: routeKeyForPath(pathname),
+        entry: {},
+      })) as MatchApiDeps["findMatch"],
+    });
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/product/product-b",
+        },
+      },
+    );
+
+    const ctx = (await createMatchContextForPartial(
+      request,
+      {},
+      deps,
+      vi.fn(() => null),
+    ))!;
+
+    // The source's params come from matching its URL, like its route name.
+    expect(ctx.interceptSelectorContext.from).toEqual({
+      url: new URL("http://localhost:5173/product/product-b"),
+      params: { productId: "product-b" },
+      routeName: "product.detail",
+    });
+    expect(ctx.interceptSelectorContext.to.url.pathname).toBe(
+      "/product/product-a",
+    );
+    expect(ctx.interceptSelectorContext.to.routeName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext).not.toHaveProperty("params");
+    expect(ctx.interceptSelectorContext).not.toHaveProperty("fromRouteName");
+  });
+
   it("uses interceptSourceUrl for selector context from and segments.path", async () => {
     const findInterceptSpy = vi.fn(() => null);
     const deps = makeDeps();
@@ -153,7 +194,7 @@ describe("createMatchContextForPartial intercept source", () => {
 
     // The selector context's "from" should be the intercept source (/)
     // not the current URL (/product/product-a)
-    expect(ctx.interceptSelectorContext.from.pathname).toBe("/");
+    expect(ctx.interceptSelectorContext.from.url.pathname).toBe("/");
     expect(ctx.interceptSelectorContext.segments.path).toEqual([]);
   });
 
@@ -182,7 +223,7 @@ describe("createMatchContextForPartial intercept source", () => {
     const ctx = result!;
 
     // Without intercept source, "from" should be the previous URL (/shop)
-    expect(ctx.interceptSelectorContext.from.pathname).toBe("/shop");
+    expect(ctx.interceptSelectorContext.from.url.pathname).toBe("/shop");
     expect(ctx.interceptSelectorContext.segments.path).toEqual(["shop"]);
   });
 
@@ -207,7 +248,7 @@ describe("createMatchContextForPartial intercept source", () => {
     // from derived from the intercept source URL
     expect(findInterceptSpy).toHaveBeenCalled();
     const selectorCtx = findInterceptSpy.mock.calls[0][2];
-    expect(selectorCtx.from.pathname).toBe("/shop/items");
+    expect(selectorCtx.from.url.pathname).toBe("/shop/items");
     expect(selectorCtx.segments.path).toEqual(["shop", "items"]);
   });
 });
@@ -217,7 +258,7 @@ describe("createMatchContextForPartial when() route names", () => {
     vi.clearAllMocks();
   });
 
-  it("sets fromRouteName and toRouteName for named routes", async () => {
+  it("sets from.routeName and to.routeName for named routes", async () => {
     const findInterceptSpy = vi.fn(() => null);
     const deps = makeDeps();
 
@@ -240,11 +281,11 @@ describe("createMatchContextForPartial when() route names", () => {
 
     expect(result).not.toBeNull();
     const ctx = result!;
-    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
-    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+    expect(ctx.interceptSelectorContext.to.routeName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.from.routeName).toBe("shop.items");
   });
 
-  it("sets fromRouteName to undefined for auto-generated source route", async () => {
+  it("sets from.routeName to undefined for an auto-generated source route", async () => {
     const findInterceptSpy = vi.fn(() => null);
     const deps = makeDeps();
 
@@ -267,11 +308,11 @@ describe("createMatchContextForPartial when() route names", () => {
 
     expect(result).not.toBeNull();
     const ctx = result!;
-    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
-    expect(ctx.interceptSelectorContext.fromRouteName).toBeUndefined();
+    expect(ctx.interceptSelectorContext.to.routeName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.from.routeName).toBeUndefined();
   });
 
-  it("sets toRouteName to undefined for auto-generated target route", async () => {
+  it("sets to.routeName to undefined for an auto-generated target route", async () => {
     const findInterceptSpy = vi.fn(() => null);
     const deps = makeDeps();
 
@@ -291,11 +332,11 @@ describe("createMatchContextForPartial when() route names", () => {
 
     expect(result).not.toBeNull();
     const ctx = result!;
-    expect(ctx.interceptSelectorContext.toRouteName).toBeUndefined();
-    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+    expect(ctx.interceptSelectorContext.to.routeName).toBeUndefined();
+    expect(ctx.interceptSelectorContext.from.routeName).toBe("shop.items");
   });
 
-  it("uses intercept source for fromRouteName when header is present", async () => {
+  it("uses the intercept source for from.routeName when the header is present", async () => {
     const findInterceptSpy = vi.fn(() => null);
     const deps = makeDeps();
 
@@ -319,10 +360,10 @@ describe("createMatchContextForPartial when() route names", () => {
 
     expect(result).not.toBeNull();
     const ctx = result!;
-    // fromRouteName should be derived from the intercept source (/shop/items),
-    // consistent with from.pathname which also uses the intercept source
-    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
-    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+    // from.routeName should be derived from the intercept source (/shop/items),
+    // consistent with from.url.pathname which also uses the intercept source
+    expect(ctx.interceptSelectorContext.to.routeName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.from.routeName).toBe("shop.items");
   });
 });
 

@@ -96,6 +96,7 @@ export type {
   TransitionWhenContext,
   TransitionWhenKind,
   RouteLocation,
+  ServerRouteLocation,
   ViewTransitionClass,
 } from "./types.js";
 

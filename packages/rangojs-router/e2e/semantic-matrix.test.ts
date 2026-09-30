@@ -356,8 +356,8 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/",
     assert: async ({ build, page }) => {
-      // Home page (from.pathname="/") does not match the prerender-intercept
-      // when condition: from.pathname.startsWith("/prerender-intercept")
+      // Home page (from.url.pathname="/") does not match the prerender-intercept
+      // when condition: from.url.pathname.startsWith("/prerender-intercept")
       const prefetchResponsePromise =
         build === "prod"
           ? page.waitForResponse((response) => {

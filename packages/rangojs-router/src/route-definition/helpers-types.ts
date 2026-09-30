@@ -188,7 +188,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * // Conditional activation via the config object's `when` selector
    * intercept("@modal", "card", <CardModal />, {
-   *   when: ({ from }) => from.pathname.startsWith("/board"),
+   *   when: ({ from }) => from.url.pathname.startsWith("/board"),
    * })
    *
    * // Config + other use-items: config is arg 4, use is arg 5
@@ -196,7 +196,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   "@modal",
    *   "card",
    *   <CardModal />,
-   *   { when: ({ from }) => from.pathname.startsWith("/board") },
+   *   { when: ({ from }) => from.url.pathname.startsWith("/board") },
    *   () => [loader(CardDetailLoader)],
    * )
    * ```

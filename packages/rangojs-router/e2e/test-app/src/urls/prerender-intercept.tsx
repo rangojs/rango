@@ -110,7 +110,8 @@ export const prerenderInterceptPatterns = urls(
           );
         },
         {
-          when: ({ from }) => from.pathname.startsWith("/prerender-intercept"),
+          when: ({ from }) =>
+            from.url.pathname.startsWith("/prerender-intercept"),
         },
         () => [loader(FreshTimestampLoader)],
       ),
