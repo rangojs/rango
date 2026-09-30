@@ -90,7 +90,8 @@ path, not only ProductChrome.
 
 The consumer rule: **want it cached? render it inline. Want it live? put it in a
 loader and read it with `useLoader()` in a client component.** Anything read
-with `cookies()`, `headers()`, or a non-cacheable variable belongs in a loader:
+with `cookies()`, `headers()`, `ctx.request.headers`, or a non-cacheable
+variable belongs in a loader:
 a route `cache()` does not store loader values, so a loader runs on every
 request. A loader bound with its own `cache()` is stored, so without a `key()`
 its miss fails; any `key()` switches that check off, so it must include the
@@ -440,8 +441,9 @@ does. See `/loader` for the full loader reference.
 
 The entry's default key is the loader, host, path and params. It does not
 inherit an enclosing `cache()` boundary's `key()` either, so it is shared
-across users: a body that reads `cookies()`, `headers()` or a non-cacheable
-variable fails on a miss unless the loader `cache()` has a `key()` or its store
+across users: a body that reads `cookies()`, `headers()`, `ctx.request.headers`
+or a non-cacheable variable fails on a miss unless the loader `cache()` has a
+`key()` or its store
 a `keyGenerator`. Either one switches the check off, so it must itself include
 the value (`/loader` → "Cache Key").
 
@@ -799,22 +801,49 @@ cached handler is **frozen into the shared cache entry** and served to every
 subsequent visitor. To stop one user's request-scoped data from leaking to
 another, request-scoped APIs are guarded inside a cache scope:
 
-| Inside a `cache()` boundary                                                        | Behavior                                            |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `cookies()` / `headers()` (read or write)                                          | **throws** — request-scoped, would poison the entry |
-| Response writes: `ctx.headers.set()`, `setCookie()`, `setStatus()`, `onResponse()` | **throws** — response side effects lost on a hit    |
-| `ctx.get(var)` where the var is `{ cache: false }`                                 | **throws** on read                                  |
-| `ctx.theme`, `getRequestContext().theme`                                           | **throws** — the theme is the visitor's cookie      |
-| `ctx.set(var, value)` for a cacheable var                                          | allowed (children are cached too)                   |
-| Any of the above **inside a registered loader** (`loader(...)`)                    | **allowed** — loaders always run fresh              |
+| Inside a `cache()` boundary                                                        | Behavior                                                   |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `cookies()` / `headers()` (read or write)                                          | **throws** — request-scoped, would poison the entry        |
+| `ctx.request.headers`, `getRequestContext().cookie()` / `.cookies()`               | **throws** on read, like `headers()` / `cookies()`         |
+| Response writes: `ctx.headers.set()`, `setCookie()`, `setStatus()`, `onResponse()` | **throws** — response side effects lost on a hit           |
+| `ctx.get(var)` where the var is `{ cache: false }`                                 | **throws** on read                                         |
+| `ctx.theme`, `getRequestContext().theme`                                           | **throws** — the theme is the visitor's cookie             |
+| `ctx.set(var, value)` for a cacheable var                                          | allowed (children are cached too)                          |
+| Any of the above **inside a registered loader** (`loader(...)`)                    | **allowed** — loaders always run fresh                     |
+| Any read in the boundary's own `key()`, `keyGenerator`, `condition()` or `tags()`  | **allowed** — it picks or labels the entry, never rendered |
 
 A loader body invoked from a handler with `await ctx.use(Loader)` may read
 `cookies()`/`headers()`, but its response writes still throw: on a hit the
 handler is skipped, so that loader never runs.
 
+`ctx.request.clone()` is guarded the same way. `fetch(ctx.request)` and
+`new Request(ctx.request)` don't throw, but the guard can't see through them:
+a fetch forwards the visitor's `Cookie` and `Authorization`, so its response
+is per visitor and must not be rendered inside the boundary. A handler that
+must render a header its `key()` partitions by reads a copy middleware set:
+
+```tsx
+const Tier = createVar<string>();
+const tierOf = (ctx: { request: Request }) =>
+  ctx.request.headers.get("x-tier") === "gold" ? "gold" : "silver";
+
+middleware(
+  async (ctx, next) => {
+    ctx.set(Tier, tierOf(ctx)); // middleware runs outside the boundary
+    return next();
+  },
+  () => [
+    cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+      path("/pricing", (ctx) => <Pricing tier={ctx.get(Tier)} />),
+    ]),
+  ],
+);
+```
+
 A loader bound with its **own** `cache()` (`loader(Def, () => [cache({...})])`)
 stores its value, and its key does not inherit the route's. A miss whose body
-read `cookies()`, `headers()` or a non-cacheable `ctx.get()` fails unless the
+read `cookies()`, `headers()`, `ctx.request.headers` or a non-cacheable
+`ctx.get()` fails unless the
 binding has a `key()` or its store a `keyGenerator`, which must then include
 the value (`/loader` → "Cache Key").
 

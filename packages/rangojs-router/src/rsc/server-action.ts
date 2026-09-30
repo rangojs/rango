@@ -15,6 +15,7 @@
  * wraps revalidation inside route middleware — identical to a normal render.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
@@ -93,7 +94,7 @@ export async function executeServerAction<TEnv>(
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
   // Decode action arguments from request body
-  const contentType = request.headers.get("content-type") || "";
+  const contentType = requestHeaders(request).get("content-type") || "";
   let args: unknown[] = [];
   let actionFormData: FormData | undefined;
 

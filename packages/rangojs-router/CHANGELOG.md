@@ -2,6 +2,110 @@
 
 ## Unreleased
 
+### Breaking: `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()` refuse where `cookies()` does ([#999](https://github.com/rangojs/rango/pull/999))
+
+The identity guards stopped `cookies()`, `headers()`, the theme reads and a
+`{ cache: false }` variable from reaching a shared entry, but three raw reads
+went around them (#976): `ctx.request.headers` (the same `Request` in
+handlers, middleware, loaders and `getRequestContext().request`) and
+`getRequestContext().cookie()` / `.cookies()`. A `"use cache"` function keys
+a `ctx` or a `Request` argument by its route and URL only, so a header read
+in its body stored the first caller's value and served it to every later
+caller. A handler under `cache()` or on a `ppr` route stored it in the
+shared record or shell, and a loader's own `cache()` without `key()` stored
+it in its entry.
+
+Each of these reads now goes through the same guard as `cookies()`, with
+the same scopes, order and error style:
+
+```ts
+// Before: the first caller's accept-language was stored in the entry.
+// After: throws `ctx.request.headers cannot be read inside a "use cache"
+// function`.
+async function getGreeting(ctx: HandlerContext) {
+  "use cache";
+  return greet(ctx.request.headers.get("accept-language"));
+}
+
+// Migration: read it outside and pass it in; it becomes part of the key.
+async function getGreeting(language: string | null) {
+  "use cache";
+  return greet(language);
+}
+const greeting = await getGreeting(ctx.request.headers.get("accept-language"));
+```
+
+| Where the read runs                                              | Before                      | After                                                               |
+| ---------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------- |
+| Middleware; a handler outside `cache()` and `ppr`; a live loader | reads                       | reads (unchanged)                                                   |
+| A handler or layout under `cache()`                              | stored in the shared record | throws `... cannot be read inside a cache() boundary`               |
+| A `"use cache"` body, and a loader it awaits                     | stored in the entry         | throws `... cannot be read inside a "use cache" function`           |
+| A `ppr` capture render                                           | baked into the shell        | refuses the capture (once-per-key warning); the route keeps MISSing |
+| A loader's own `cache()` without `key()`                         | stored in the entry         | the fill fails with the identity error and stores nothing           |
+
+`ctx.request.clone()` returns a clone guarded the same way.
+`new Request(ctx.request)` and `fetch(ctx.request)` never throw (the platform
+copies the headers without calling the getter), but they are not guarded
+either: the copy is a plain `Request`, and a fetch forwards the visitor's
+`Cookie` and `Authorization`, so its response is per visitor. Don't make
+either in a cached body. `console.log(ctx.request)` on Node reads no header
+through the guard. `ctx.request` stays a real `Request` (the guard is an own,
+non-enumerable `headers` getter on it, not a Proxy), and the router's own
+header reads bypass it.
+
+A cache's own `key()`, store `keyGenerator`, `condition()` and `tags()`
+function, and `onError`, read request identity freely, in every scope above
+and at capture: the value picks or labels the entry, or is only observed; it
+is never rendered. A `"use cache"` body, a loader body or a segment render
+they start is guarded as usual.
+
+| Callback                                                 | Before                                                                                              | After                      |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------- |
+| A route `key()`                                          | reads (a capture reuses the request's result)                                                       | reads (unchanged)          |
+| A store `keyGenerator`, `condition()`, `tags()` function | `cookies()` / `headers()` refused a `ppr` capture (a capture resolves them again); raw reads passed | every identity read passes |
+| `onError`                                                | `cookies()` / `headers()` refused a capture or threw in a cached scope; raw reads passed            | every identity read passes |
+
+The breaking part: code that reads `ctx.request.headers` or
+`getRequestContext().cookie()` / `.cookies()` in the scopes above now
+throws or refuses the capture. The most common case is a handler under a
+keyed `cache()` that renders the header its `key()` partitions by:
+
+```tsx
+// Before: the handler read the header directly.
+// After: copy it in middleware; the key() keeps each value in its own record.
+const Tier = createVar<string>();
+
+middleware(
+  async (ctx, next) => {
+    ctx.set(Tier, ctx.request.headers.get("x-tier") ?? "free");
+    return next();
+  },
+  () => [
+    cache(
+      {
+        ttl: 300,
+        key: (ctx) => `tier:${ctx.request.headers.get("x-tier") ?? "free"}`,
+      },
+      () => [path("/pricing", (ctx) => <Pricing tier={ctx.get(Tier)} />)],
+    ),
+  ],
+);
+```
+
+Migration:
+
+- `"use cache"`: read the header before the call and pass it in as an
+  argument.
+- A handler under `cache()` or on a `ppr` route: copy the value in
+  middleware (`ctx.set()`) and include it in the `key()` or the store
+  `keyGenerator`, or read it in a live loader (no `ssr: false`), which runs on
+  every request, HITs included.
+- A loader's own `cache()`: add a `key()` that includes the header.
+- `getRequestContext().cookie()` / `.cookies()` were never on the public
+  type; use `cookies()`, which answers the same way.
+
+`getRequestContext().theme` has been guarded since 0.18.0 (#971).
+
 ### Breaking: a `"use cache"` entry carries the tags of the `"use cache"` functions it calls, so `updateTag()` of an inner tag evicts it ([#996](https://github.com/rangojs/rango/pull/996))
 
 A `"use cache"` function that called another stored the inner value in its

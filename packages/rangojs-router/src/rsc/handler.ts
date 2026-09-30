@@ -7,6 +7,7 @@
  * and progressive enhancement (no-JS form submissions).
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import { isRouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
@@ -924,8 +925,10 @@ export function createRSCHandler<
         originPhase,
       );
       if (originResult) {
+        const origin = requestHeaders(request).get("origin");
+        const host = requestHeaders(request).get("host");
         const originError = new Error(
-          `Origin check rejected: ${request.headers.get("origin") ?? "none"} vs ${request.headers.get("host") ?? "none"}`,
+          `Origin check rejected: ${origin ?? "none"} vs ${host ?? "none"}`,
         );
         originError.name = "OriginCheckError";
 
@@ -934,11 +937,7 @@ export function createRSCHandler<
           url,
           env,
           handledByBoundary: false,
-          metadata: {
-            phase: originPhase,
-            origin: request.headers.get("origin"),
-            host: request.headers.get("host"),
-          },
+          metadata: { phase: originPhase, origin, host },
         });
 
         if (router.telemetry) {
@@ -949,8 +948,8 @@ export function createRSCHandler<
             method: request.method,
             pathname: url.pathname,
             phase: originPhase,
-            origin: request.headers.get("origin"),
-            host: request.headers.get("host"),
+            origin,
+            host,
           });
         }
 

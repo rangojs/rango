@@ -27,6 +27,7 @@ declare global {
  * - KV L2 for cross-colo cache persistence
  */
 
+import { requestHeaders } from "../../server/request-headers.js";
 import type {
   SegmentCacheStore,
   CachedEntryData,
@@ -725,7 +726,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const request = _getRequestContext()?.request as
       | (Request & { cf?: { colo?: unknown } })
       | undefined;
-    const ray = request?.headers.get("cf-ray") ?? undefined;
+    const ray = request
+      ? (requestHeaders(request).get("cf-ray") ?? undefined)
+      : undefined;
     const cfColo = request?.cf?.colo;
     const colo =
       typeof cfColo === "string"

@@ -104,6 +104,7 @@ The guards are correctness-first: anything that would bake one user's request in
 | Call                                                                                                                    | Inside `"use cache"` | Why                                                                              |
 | ----------------------------------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
 | `cookies()`, `headers()`                                                                                                | Throws               | Per-request values aren't in the cache key — one user's data would serve another |
+| `ctx.request.headers` (any `ctx` passed in), `getRequestContext().cookie()` / `.cookies()`                              | Throws               | Same reason: a `ctx` or `Request` argument is keyed by its route and URL only    |
 | `ctx.set()`, `ctx.headers.set()` (and the other mutating `Headers` methods), `ctx.setTheme()`, `ctx.setLocationState()` | Throws               | Effects are lost on a hit (the body is skipped)                                  |
 | Request-context writers: `header()`, `setCookie()`, `deleteCookie()`, `setStatus()`, `onResponse()`                     | Throws               | Same reason                                                                      |
 | `ctx.get()`                                                                                                             | Allowed              | It's a read                                                                      |
@@ -116,7 +117,13 @@ For cookie- or header-dependent data, extract the value first and pass it as an 
 ```ts
 const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
+
+// the same for a header read from ctx.request
+const language = ctx.request.headers.get("accept-language") ?? "en";
+const greeting = await getGreeting(language);
 ```
+
+A `ctx` or `Request` argument keys the entry by its route and URL only. `ctx.request.clone()` is guarded like `ctx.request.headers`. `fetch(ctx.request)` and `new Request(ctx.request)` don't throw, but the guard can't see through them: a fetch forwards the visitor's `Cookie` and `Authorization`, so its response is per visitor, and the copy's headers are the visitor's. Don't make either inside a cached body; fetch outside it, or pass the values the fetch depends on in as arguments.
 
 And keep ctx side effects outside the cached function:
 

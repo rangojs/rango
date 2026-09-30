@@ -1,3 +1,4 @@
+import { requestHeaders } from "../server/request-headers.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
@@ -61,10 +62,11 @@ function nextId(prefix: string, counter: number): string {
 }
 
 function getHeaderRequestId(request: Request): string | null {
+  const headers = requestHeaders(request);
   const candidate =
-    request.headers.get("x-rsc-router-request-id") ??
-    request.headers.get("x-request-id") ??
-    request.headers.get("cf-ray");
+    headers.get("x-rsc-router-request-id") ??
+    headers.get("x-request-id") ??
+    headers.get("cf-ray");
   if (!candidate) return null;
   const trimmed = candidate.trim();
   return trimmed.length > 0 ? trimmed : null;

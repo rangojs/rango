@@ -96,15 +96,18 @@ already encodes the purity contract:
   Fizz errors do) but which calls the same `captureAndStoreShell`. The
   document cache applies the same rule to a whole response.
 - The capture guard refuses captures that read request-scoped data
-  (`cookies()`, `headers()`, `ctx.get` of a `createVar({ cache: false })`
-  variable) or call `ctx.dynamic()`, anywhere the capture waits: a handler, a
+  (`cookies()`, `headers()`, `ctx.request.headers`,
+  `getRequestContext().cookie()` / `.cookies()`, `ctx.get` of a
+  `createVar({ cache: false })` variable) or call `ctx.dynamic()`, anywhere
+  the capture waits: a handler, a
   promise it passes or pushes, an async server component, a bake-lane loader,
   and a loader a handler awaits (`guardIdentityRead`,
   `src/server/context.ts`; `refuseOnCaptureGuard`, `src/rsc/shell-capture.ts`).
   So an entry never encodes a handler that branches on the requester. A
-  normal `ctx.get()` value and raw `ctx.request.headers` reads are not guarded:
-  they bake, and shell material is shared per host+URL and request partition
-  (the route's `cache({ key })` or the store's `keyGenerator`).
+  normal `ctx.get()` value is not guarded: it bakes, and shell material is
+  shared per host+URL and request partition (the route's `cache({ key })` or
+  the store's `keyGenerator`, which read the request freely at capture too,
+  `runIdentityExempt`).
 - The handler layer must settle within `ppr.captureTimeout` (default 15s). A
   capture whose handler output is still pending at the deadline stores nothing.
 - Per-REQUEST divergence (auth walls, entitlement) lives in middleware —

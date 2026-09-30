@@ -101,6 +101,7 @@ import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
+import { identityRawPatterns } from "./urls/identity-raw.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { colocatedFastRefreshPatterns } from "./urls/colocated-fast-refresh.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
@@ -1698,6 +1699,9 @@ export const urlpatterns = urls(
       include("/cache-scope-guard", cacheScopeGuardPatterns, {
         name: "cacheScopeGuard",
       }),
+
+      // Raw request-identity reads refuse like cookies() (#976)
+      include("/identity-raw", identityRawPatterns, { name: "identityRaw" }),
 
       // rendered() barrier tests (loader reads handle data after handlers settle)
       include("/rendered-barrier", renderedBarrierPatterns, {

@@ -140,7 +140,8 @@ lifetime. A HIT never runs a handler. To keep a value fresh per request, load
 it in a loader without `ssr: false` and read it with `useLoader` under
 `loading()` or an inline `<Suspense>`; inside an `ssr: false` loader, return
 that part as a nested promise. Request-scoped reads the capture now waits for
-refuse it: `cookies()`, `headers()`, a `{ cache: false }` variable, and
+refuse it: `cookies()`, `headers()`, `ctx.request.headers`, a
+`{ cache: false }` variable, and
 `ctx.dynamic()` inside a handler promise, an async component, a handle push, or
 a loader a handler awaits. A normal `ctx.get()` value is not guarded: shell
 material is shared per host+URL and request partition. `cache(false)`, or a
@@ -187,8 +188,11 @@ cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
 ```
 
 This is the sanctioned way to vary shell material by request: the capture
-guards still refuse `cookies()`/`headers()` in handler work, while the key
-function reads what it needs (`cookies()` included). A `key()` runs once per
+guards still refuse `cookies()`/`headers()`/`ctx.request.headers` in handler
+work, while the key function, a store `keyGenerator`, a `condition()` and a `tags()` function read
+what they need (`cookies()` and `ctx.request.headers` included, at capture
+too). To render the partition value, copy it in middleware with `ctx.set()`
+and read `ctx.get()` in the handler (see `/middleware`). A `key()` runs once per
 request: the shell read, the record lookup and the capture share its result
 (each `key()` of a nested chain once).
 One that throws serves no shell (like the record path renders uncached); a
@@ -1115,8 +1119,9 @@ serve-time: the commit point runs the full chain on EVERY serve.
 
 Because handlers on uncached segments EXECUTE during capture — along with
 everything they produce and every BAKE-lane loader — the capture guard is
-load-bearing: `cookies()`, `headers()`, a theme read, and a `{ cache: false }`
-variable read THROW during a capture render, and the capture
+load-bearing: `cookies()`, `headers()`, `ctx.request.headers`,
+`getRequestContext().cookie()` / `.cookies()`, a theme read, and a
+`{ cache: false }` variable read THROW during a capture render, and the capture
 is refused even when the code catches that throw, so identity can never leak
 into a shared shell through them. Live-lane loaders (every loader without
 `ssr: false`) are exempt: masked at capture, they never run there.
@@ -1139,7 +1144,8 @@ middleware on every serve. A 401/redirect short-circuit returns before any
 shell byte.
 
 **(b) Request-scoped reads refuse the capture.** During the background capture
-render, `cookies()`, `headers()`, the visitor's theme (`ctx.theme`,
+render, `cookies()`, `headers()`, the raw reads `ctx.request.headers` and
+`getRequestContext().cookie()` / `.cookies()`, the visitor's theme (`ctx.theme`,
 `getRequestContext().theme`), and `ctx.get()` of a `{ cache: false }` variable
 (`createVar({ cache: false })`, or a value written with
 `ctx.set(..., { cache: false })`) THROW, wherever the capture waits for them:
@@ -1153,8 +1159,8 @@ runs there.
 **(c) Residual hazard — middleware-derived per-user state.** A NORMAL `ctx`
 variable (no `cache: false`) set by an upstream auth middleware and rendered by
 shell material is photographed into the SHARED shell (the capture inherits
-post-middleware state), and so is a raw `ctx.request.headers` read. The guard
-cannot see either. That is scope fidelity working as designed — for shared
+post-middleware state). The guard cannot see it. That is scope fidelity
+working as designed — for shared
 values. It reaches handlers and BAKE-LANE LOADERS alike: a loader reading a
 middleware-provided session object (`ctx.get("session")`) never calls
 `cookies()` itself, so whatever it returns as settled container data is
@@ -1336,8 +1342,9 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   bake-lane loader data — plain BAKE-lane loader data bakes just like handler
   material.
 - **The session-object bake trap (the guard cannot save you here)**: the
-  capture guard sees `cookies()`, `headers()`, and `{ cache: false }` variable
-  reads ONLY. A handler or bake-lane loader reading a NORMAL middleware-provided
+  capture guard sees `cookies()`, `headers()`, `ctx.request.headers`, the theme
+  and `{ cache: false }` variable reads ONLY. A handler or bake-lane loader
+  reading a NORMAL middleware-provided
   session object (`ctx.get("session")`) refuses nothing. Inside a bake-lane
   loader, per-user data survives ONLY behind a nested promise — the shape is
   the declaration, and it holds for BOTH branches regardless of settle timing

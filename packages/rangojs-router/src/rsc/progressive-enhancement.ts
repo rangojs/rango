@@ -6,6 +6,7 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
@@ -64,7 +65,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   nonce: string | undefined,
   routeMwInfo?: PeRouteMiddlewareInfo,
 ): Promise<Response | null> {
-  const contentType = request.headers.get("content-type") || "";
+  const contentType = requestHeaders(request).get("content-type") || "";
   const isFormSubmission =
     contentType.includes("multipart/form-data") ||
     contentType.includes("application/x-www-form-urlencoded");
@@ -312,7 +313,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
     // custom headers) so loaders that read request headers/cookies behave
     // identically under PE and the JS action path. Drop body-framing headers
     // from the bodyless GET and force the HTML accept.
-    const headers = new Headers(request.headers);
+    const headers = new Headers(requestHeaders(request));
     headers.delete("content-type");
     headers.delete("content-length");
     headers.delete("content-encoding");

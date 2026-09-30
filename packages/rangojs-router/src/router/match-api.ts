@@ -1,3 +1,4 @@
+import { requestHeaders } from "../server/request-headers.js";
 import {
   CacheScope,
   createCacheScope,
@@ -65,7 +66,7 @@ export async function createMatchContextForFull<TEnv>(
 
   const metricsStore = deps.getMetricsStore();
 
-  const isHmr = !!request.headers.get("X-RSC-HMR");
+  const isHmr = !!requestHeaders(request).get("X-RSC-HMR");
   // HMR: clear the manifest cache so stale handler references are discarded.
   if (isHmr) {
     clearManifestCache();
@@ -240,7 +241,7 @@ export async function createMatchContextForPartial<TEnv>(
 
   const metricsStore = deps.getMetricsStore();
 
-  const isHmr = !!request.headers.get("X-RSC-HMR");
+  const isHmr = !!requestHeaders(request).get("X-RSC-HMR");
 
   // HMR: clear manifest cache so stale handler references are discarded
   if (isHmr) {

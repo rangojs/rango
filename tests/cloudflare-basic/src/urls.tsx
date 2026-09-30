@@ -7,7 +7,9 @@ import {
   cookies,
   getRequestContext,
   redirect,
+  createVar,
   type HandlerContext,
+  type Middleware,
 } from "@rangojs/router";
 import { CFCacheStore, MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Suspense, type ReactNode } from "react";
@@ -80,6 +82,7 @@ import {
   PprTieredLayout,
   PprTieredNestedPage,
   pprTier,
+  copyPprTier,
   PprScopedConditionPage,
   PprInlineActionPage,
   PprPrerenderedArticle,
@@ -196,6 +199,18 @@ import {
   CfPprThemePage,
   CfPprThemeRequestContextPage,
 } from "./pages/ppr-theme.js";
+import {
+  IdentityRawCachedPage,
+  IdentityRawCopiesPage,
+  IdentityRawError,
+  IdentityRawKeyedPage,
+  IdentityRawPprControlPage,
+  IdentityRawPprPage,
+  IdentityRawUseCacheArgPage,
+  IdentityRawUseCachePage,
+  answerForwarded,
+  visitorOf,
+} from "./pages/identity-raw.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
   InlineIndexPage,
@@ -297,18 +312,30 @@ function nestedKeyTier(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-cache-tier") ?? "none";
 }
 
-function NestedKeyPage(ctx: { request: Request }): ReactNode {
+// The pages under the keyed cache() render middleware's copy of the request
+// headers (issue #976: a handler read of ctx.request.headers under cache()
+// throws); the key() and the keyGenerator read the headers themselves.
+const CacheTier = createVar<string>();
+const CacheLocale = createVar<string>();
+
+const copyCacheHeaders: Middleware = async (ctx, next) => {
+  ctx.set(CacheTier, nestedKeyTier(ctx));
+  ctx.set(CacheLocale, crossStoreLocale(ctx));
+  return next();
+};
+
+function NestedKeyPage(ctx: HandlerContext): ReactNode {
   return (
     <p data-testid="nested-key-render">
-      {`${nestedKeyTier(ctx)}:${crypto.randomUUID()}`}
+      {`${ctx.get(CacheTier)}:${crypto.randomUUID()}`}
     </p>
   );
 }
 
-function NestedKeySiblingPage(ctx: { request: Request }): ReactNode {
+function NestedKeySiblingPage(ctx: HandlerContext): ReactNode {
   return (
     <p data-testid="nested-key-render">
-      {`sibling-${nestedKeyTier(ctx)}:${crypto.randomUUID()}`}
+      {`sibling-${ctx.get(CacheTier)}:${crypto.randomUUID()}`}
     </p>
   );
 }
@@ -329,10 +356,10 @@ const crossStoreLocaleStore = new MemorySegmentCacheStore({
   keyGenerator: (ctx, defaultKey) => `${defaultKey}|${crossStoreLocale(ctx)}`,
 });
 
-function CrossStorePage(ctx: { request: Request }): ReactNode {
+function CrossStorePage(ctx: HandlerContext): ReactNode {
   return (
     <p data-testid="nested-scope-render">
-      {`${crossStoreLocale(ctx)}:${crypto.randomUUID()}`}
+      {`${ctx.get(CacheLocale)}:${crypto.randomUUID()}`}
     </p>
   );
 }
@@ -1019,21 +1046,25 @@ export const urlpatterns = urls(
             }),
           ]),
           // Request-partitioned: the cache() key() partitions the record
-          // and the shell by the visitor's tier header.
-          cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
-            path("/ppr-tiered", PprTieredPage, {
-              name: "pprTiered",
-              ppr: { ttl: 300, swr: 120 },
-            }),
-            // The same partition through a cache() nested in the keyed one,
-            // without a key() of its own (issue #970): its record, keyed by
-            // the tier and its own default key, never names /ppr-tiered's.
-            layout(PprTieredLayout, () => [
-              cache({ ttl: 300 }, () => [
-                path("/ppr-tiered-nested", PprTieredNestedPage, {
-                  name: "pprTieredNested",
-                  ppr: { ttl: 300, swr: 120 },
-                }),
+          // and the shell by the visitor's tier header; the pages render
+          // middleware's copy of it (issue #976).
+          middleware(copyPprTier, () => [
+            cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+              path("/ppr-tiered", PprTieredPage, {
+                name: "pprTiered",
+                ppr: { ttl: 300, swr: 120 },
+              }),
+              // The same partition through a cache() nested in the keyed
+              // one, without a key() of its own (issue #970): its record,
+              // keyed by the tier and its own default key, never names
+              // /ppr-tiered's.
+              layout(PprTieredLayout, () => [
+                cache({ ttl: 300 }, () => [
+                  path("/ppr-tiered-nested", PprTieredNestedPage, {
+                    name: "pprTieredNested",
+                    ppr: { ttl: 300, swr: 120 },
+                  }),
+                ]),
               ]),
             ]),
           ]),
@@ -1583,33 +1614,35 @@ export const urlpatterns = urls(
         // route; with one, the key() results compose. The page renders the
         // tier it served and a token a HIT replays unchanged. The probe gives
         // each test its own entries.
-        cache(
-          {
-            ttl: 60,
-            key: (ctx) =>
-              `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
-          },
-          () => [
-            cache({ ttl: 60 }, () => [
-              path("/nested-key", NestedKeyPage, { name: "nestedKey" }),
-              path("/nested-key-sibling", NestedKeySiblingPage, {
-                name: "nestedKeySibling",
-              }),
-            ]),
-            cache(
-              {
-                ttl: 60,
-                key: (ctx) =>
-                  `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
-              },
-              () => [
-                path("/nested-key-composed", NestedKeyPage, {
-                  name: "nestedKeyComposed",
+        middleware(copyCacheHeaders, () => [
+          cache(
+            {
+              ttl: 60,
+              key: (ctx) =>
+                `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
+            },
+            () => [
+              cache({ ttl: 60 }, () => [
+                path("/nested-key", NestedKeyPage, { name: "nestedKey" }),
+                path("/nested-key-sibling", NestedKeySiblingPage, {
+                  name: "nestedKeySibling",
                 }),
-              ],
-            ),
-          ],
-        ),
+              ]),
+              cache(
+                {
+                  ttl: 60,
+                  key: (ctx) =>
+                    `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
+                },
+                () => [
+                  path("/nested-key-composed", NestedKeyPage, {
+                    name: "nestedKeyComposed",
+                  }),
+                ],
+              ),
+            ],
+          ),
+        ]),
 
         // An outer condition() gates the cache() nested in it (issue #974):
         // a request it refuses (x-cache-bypass: 1) renders live, and neither
@@ -1647,9 +1680,11 @@ export const urlpatterns = urls(
         // An outer cache({ store }) whose keyGenerator partitions by locale
         // partitions the cache() nested in it on the app store (issue #974):
         // a locale never reads another locale's inner record.
-        cache({ store: crossStoreLocaleStore }, () => [
-          cache({ ttl: 60 }, () => [
-            path("/cross-store", CrossStorePage, { name: "crossStore" }),
+        middleware(copyCacheHeaders, () => [
+          cache({ store: crossStoreLocaleStore }, () => [
+            cache({ ttl: 60 }, () => [
+              path("/cross-store", CrossStorePage, { name: "crossStore" }),
+            ]),
           ]),
         ]),
 
@@ -1969,6 +2004,53 @@ export const urlpatterns = urls(
           name: "pprThemeClient",
           ppr: true,
         }),
+
+        // Raw request-identity reads refuse like cookies() (#976); fetched
+        // only by identity-raw-reads.test.ts.
+        path("/identity-raw/ppr", IdentityRawPprPage, {
+          name: "identityRawPpr",
+          ppr: true,
+        }),
+        path("/identity-raw/ppr-control", IdentityRawPprControlPage, {
+          name: "identityRawPprControl",
+          ppr: true,
+        }),
+        cache({ ttl: 300 }, () => [
+          path(
+            "/identity-raw/cached",
+            IdentityRawCachedPage,
+            { name: "identityRawCached" },
+            () => [errorBoundary(IdentityRawError)],
+          ),
+        ]),
+        middleware(answerForwarded, () => [
+          cache({ ttl: 300 }, () => [
+            path("/identity-raw/copies", IdentityRawCopiesPage, {
+              name: "identityRawCopies",
+            }),
+          ]),
+        ]),
+        path(
+          "/identity-raw/use-cache",
+          IdentityRawUseCachePage,
+          { name: "identityRawUseCache" },
+          () => [errorBoundary(IdentityRawError)],
+        ),
+        path("/identity-raw/use-cache-arg", IdentityRawUseCacheArgPage, {
+          name: "identityRawUseCacheArg",
+        }),
+        cache(
+          {
+            ttl: 300,
+            key: (ctx) =>
+              `visitor:${visitorOf(ctx)}:${ctx.url.searchParams.get("probe") ?? ""}`,
+          },
+          () => [
+            path("/identity-raw/keyed", IdentityRawKeyedPage, {
+              name: "identityRawKeyed",
+            }),
+          ],
+        ),
 
         // Cookie overlay test route
         path(

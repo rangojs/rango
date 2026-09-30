@@ -38,6 +38,53 @@ export interface CacheExecScope {
 
 const cacheExecStorage = new AsyncLocalStorage<CacheExecScope>();
 
+// Global key: the value must survive HMR re-evaluation of this module, like
+// the other request-scoped ALS instances (server/context.ts RangoContext).
+const IDENTITY_EXEMPT_KEY = Symbol.for("rangojs-router:identity-exempt");
+const identityExemptStorage: AsyncLocalStorage<boolean> = ((globalThis as any)[
+  IDENTITY_EXEMPT_KEY
+] ??= new AsyncLocalStorage<boolean>());
+
+/**
+ * Run a callback whose identity reads never reach a shared entry, so
+ * guardIdentityRead (server/context.ts) lets them through and records
+ * nothing (#976):
+ *
+ * - a cache's own decisions and metadata: a `key()`, a store `keyGenerator`
+ *   (cache-policy.ts resolveCacheKey), a `condition()` (cache-scope.ts
+ *   conditionAllows, loader-cache.ts) and a `tags()` function
+ *   (cache-policy.ts resolveTagsOption). The value picks the entry, whether
+ *   one is used, or how it is invalidated; it is never rendered. Reading the
+ *   request there is the documented way to partition an entry;
+ * - the router's `onError` (router/error-handling.ts invokeOnError): it
+ *   observes, and a render error can reach it inside a capture or a cached
+ *   scope.
+ *
+ * Scar: a ppr capture resolves its doc record key, and the record's tags,
+ * again under the capture context; once `ctx.request.headers` was guarded, a
+ * keyGenerator or tags() reading it refused every capture of the route.
+ *
+ * The exemption is async-local, so it would follow everything the callback
+ * starts. A "use cache" body (runWithCacheExecScope), a loader body
+ * (server/context.ts runInsideLoaderBodyScope) and a segment funnel
+ * (getContext().runWithStore) end it on entry (endIdentityExempt). Scar: a
+ * key() that awaited a "use cache" function reading cookies() stored the
+ * first visitor's cookie and served it to the next.
+ */
+export function runIdentityExempt<T>(fn: () => T): T {
+  return identityExemptStorage.run(true, fn);
+}
+
+/** True inside runIdentityExempt, and not in a scope started from it. */
+export function isInsideIdentityExempt(): boolean {
+  return identityExemptStorage.getStore() === true;
+}
+
+/** Run `fn` with the identity exemption ended (see runIdentityExempt). */
+export function endIdentityExempt<T>(fn: () => T): T {
+  return isInsideIdentityExempt() ? identityExemptStorage.run(false, fn) : fn();
+}
+
 /**
  * Run fn with the "use cache" execution scope active. Continuations spawned
  * from fn's synchronous kickoff inherit the scope; parallel chains do not.
@@ -48,7 +95,7 @@ export function runWithCacheExecScope<T>(
   fn: () => T,
   scope: CacheExecScope = createCacheExecScope(),
 ): T {
-  return cacheExecStorage.run(scope, fn);
+  return endIdentityExempt(() => cacheExecStorage.run(scope, fn));
 }
 
 /** A scope nested in the calling chain's current one, if any. */

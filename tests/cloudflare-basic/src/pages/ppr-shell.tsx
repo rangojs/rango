@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import {
+  createVar,
   getRequestContext,
   Meta,
   Prerender,
   Passthrough,
 } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router";
+import type { HandlerContext, Middleware } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { PprShellPriceLoader } from "../loaders/ppr-shell.js";
@@ -269,22 +270,30 @@ export function PprScopedHomePage() {
 
 /**
  * A request-partitioned ppr route (urls.tsx): its cache() key() reads the
- * visitor's tier header, so its record and its shell are per tier. The page
- * reads the same header (raw request headers are not a capture guard; the
- * partition key is what keeps a tier's content in that tier's shell).
+ * visitor's tier header, so its record and its shell are per tier. The pages
+ * render middleware's copy of the header (copyPprTier): a handler read of
+ * ctx.request.headers refuses the capture (issue #976), and the partition
+ * key is what keeps a tier's content in that tier's shell.
  */
 export function pprTier(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-ppr-tier") ?? "none";
 }
 
-export function PprTieredPage(ctx: { request: Request }) {
-  return <p data-testid="ppr-tiered">{`tier-${pprTier(ctx)}`}</p>;
+const PprTier = createVar<string>();
+
+export const copyPprTier: Middleware = async (ctx, next) => {
+  ctx.set(PprTier, pprTier(ctx));
+  return next();
+};
+
+export function PprTieredPage(ctx: HandlerContext) {
+  return <p data-testid="ppr-tiered">{`tier-${ctx.get(PprTier)}`}</p>;
 }
 
-export function PprTieredNestedPage(ctx: { request: Request }) {
+export function PprTieredNestedPage(ctx: HandlerContext) {
   return (
     <>
-      <p data-testid="ppr-tiered">{`tier-${pprTier(ctx)}`}</p>
+      <p data-testid="ppr-tiered">{`tier-${ctx.get(PprTier)}`}</p>
       <p>ppr-tiered-nested-route</p>
     </>
   );
@@ -294,10 +303,10 @@ export function PprTieredNestedPage(ctx: { request: Request }) {
  * The layout between the keyed cache() and the cache() nested in it on
  * /ppr-tiered-nested (issue #970); it reads the tier too.
  */
-export function PprTieredLayout(ctx: { request: Request }) {
+export function PprTieredLayout(ctx: HandlerContext) {
   return (
     <div data-testid="ppr-tiered-layout">
-      <p>{`layout-tier-${pprTier(ctx)}`}</p>
+      <p>{`layout-tier-${ctx.get(PprTier)}`}</p>
       <Outlet />
     </div>
   );

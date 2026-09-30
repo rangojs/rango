@@ -11,6 +11,7 @@
  * has already extracted params from it.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { isDataNotFoundError } from "../errors.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
@@ -144,7 +145,7 @@ export async function handleLoaderFetch<TEnv>(
 
   if (isBodyMethod) {
     try {
-      const contentType = request.headers.get("content-type") || "";
+      const contentType = requestHeaders(request).get("content-type") || "";
       if (contentType.includes("multipart/form-data")) {
         // FormData body — sent by load() when body is a FormData instance.
         // Preserves File objects and binary data.

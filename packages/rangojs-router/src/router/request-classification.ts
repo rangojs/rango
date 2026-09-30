@@ -15,6 +15,7 @@
  * Builds on RouteSnapshot from route-snapshot.ts.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import { RouteNotFoundError } from "../errors.js";
 import type { EntryData } from "../server/context.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
@@ -149,10 +150,11 @@ export async function classifyRequest<TEnv = any>(
 ): Promise<RequestPlan<TEnv>> {
   const pathname = url.pathname;
   const isAction =
-    request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+    requestHeaders(request).has("rsc-action") ||
+    url.searchParams.has("_rsc_action");
   const isLoaderFetch = url.searchParams.has("_rsc_loader");
   const isPartialReq = url.searchParams.has("_rsc_partial");
-  const contentType = request.headers.get("content-type") || "";
+  const contentType = requestHeaders(request).get("content-type") || "";
   const isFormSubmission =
     contentType.includes("multipart/form-data") ||
     contentType.includes("application/x-www-form-urlencoded");
@@ -176,7 +178,7 @@ export async function classifyRequest<TEnv = any>(
   ) {
     let reloadUrl = stripInternalParams(url).toString();
     if (isAction) {
-      const referer = request.headers.get("referer");
+      const referer = requestHeaders(request).get("referer");
       if (referer) {
         try {
           const refererUrl = new URL(referer);
@@ -248,7 +250,8 @@ export async function classifyRequest<TEnv = any>(
   }
 
   const actionId =
-    request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+    requestHeaders(request).get("rsc-action") ||
+    url.searchParams.get("_rsc_action");
 
   const hasVariants =
     snapshot.matched.negotiateVariants &&

@@ -1,5 +1,10 @@
 import { Suspense } from "react";
-import { urls } from "@rangojs/router";
+import {
+  createVar,
+  urls,
+  type HandlerContext,
+  type Middleware,
+} from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { onErrorLog } from "../error-log.js";
@@ -57,18 +62,30 @@ function nestedKeyTier(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-cache-tier") ?? "none";
 }
 
-function NestedKeyPage(ctx: { request: Request }) {
+// The pages under the keyed cache() render middleware's copy of the request
+// headers (issue #976: a handler read of ctx.request.headers under cache()
+// throws); the key() and the keyGenerator read the headers themselves.
+const CacheTier = createVar<string>();
+const CacheLocale = createVar<string>();
+
+const copyCacheHeaders: Middleware = async (ctx, next) => {
+  ctx.set(CacheTier, nestedKeyTier(ctx));
+  ctx.set(CacheLocale, crossStoreLocale(ctx));
+  return next();
+};
+
+function NestedKeyPage(ctx: HandlerContext) {
   return (
     <p data-testid="nested-key-render">
-      {`${nestedKeyTier(ctx)}:${++nestedKeyRenders}`}
+      {`${ctx.get(CacheTier)}:${++nestedKeyRenders}`}
     </p>
   );
 }
 
-function NestedKeySiblingPage(ctx: { request: Request }) {
+function NestedKeySiblingPage(ctx: HandlerContext) {
   return (
     <p data-testid="nested-key-render">
-      {`sibling-${nestedKeyTier(ctx)}:${++nestedKeyRenders}`}
+      {`sibling-${ctx.get(CacheTier)}:${++nestedKeyRenders}`}
     </p>
   );
 }
@@ -95,10 +112,10 @@ const crossStoreLocaleStore = new MemorySegmentCacheStore({
   keyGenerator: (ctx, defaultKey) => `${defaultKey}|${crossStoreLocale(ctx)}`,
 });
 
-function CrossStorePage(ctx: { request: Request }) {
+function CrossStorePage(ctx: HandlerContext) {
   return (
     <p data-testid="nested-scope-render">
-      {`${crossStoreLocale(ctx)}:${++nestedScopeRenders}`}
+      {`${ctx.get(CacheLocale)}:${++nestedScopeRenders}`}
     </p>
   );
 }
@@ -141,6 +158,7 @@ export const cachePatterns = urls(
     cache,
     errorBoundary,
     notFoundBoundary,
+    middleware,
   }) => [
     // A layout ABOVE a cache() boundary is live: it renders and writes its
     // header on every request, cache HITs included. Only the route inside the
@@ -186,35 +204,37 @@ export const cachePatterns = urls(
     // tier partition with its own default key, so its two routes keep their
     // own records though the outer key() names no route; with one, the key()
     // results compose. The probe gives each test its own entries.
-    cache(
-      {
-        ttl: 600,
-        key: (ctx) =>
-          `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
-      },
-      () => [
-        cache({ ttl: 600 }, () => [
-          path("/cache-test/nested-key", NestedKeyPage, {
-            name: "cacheTest.nestedKey",
-          }),
-          path("/cache-test/nested-key-sibling", NestedKeySiblingPage, {
-            name: "cacheTest.nestedKeySibling",
-          }),
-        ]),
-        cache(
-          {
-            ttl: 600,
-            key: (ctx) =>
-              `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
-          },
-          () => [
-            path("/cache-test/nested-key-composed", NestedKeyPage, {
-              name: "cacheTest.nestedKeyComposed",
+    middleware(copyCacheHeaders, () => [
+      cache(
+        {
+          ttl: 600,
+          key: (ctx) =>
+            `nested-key:${nestedKeyTier(ctx)}?${ctx.url.searchParams.get("probe") ?? ""}`,
+        },
+        () => [
+          cache({ ttl: 600 }, () => [
+            path("/cache-test/nested-key", NestedKeyPage, {
+              name: "cacheTest.nestedKey",
             }),
-          ],
-        ),
-      ],
-    ),
+            path("/cache-test/nested-key-sibling", NestedKeySiblingPage, {
+              name: "cacheTest.nestedKeySibling",
+            }),
+          ]),
+          cache(
+            {
+              ttl: 600,
+              key: (ctx) =>
+                `variant:${ctx.url.searchParams.get("variant") ?? "none"}`,
+            },
+            () => [
+              path("/cache-test/nested-key-composed", NestedKeyPage, {
+                name: "cacheTest.nestedKeyComposed",
+              }),
+            ],
+          ),
+        ],
+      ),
+    ]),
 
     // An outer condition() gates the cache() nested in it (issue #974): a
     // request it refuses (x-cache-bypass: 1) renders live, and neither reads
@@ -253,11 +273,13 @@ export const cachePatterns = urls(
     // An outer cache({ store }) whose keyGenerator partitions by locale
     // partitions the cache() nested in it on the app store (issue #974): a
     // locale never reads another locale's inner record.
-    cache({ store: crossStoreLocaleStore }, () => [
-      cache({ ttl: 600 }, () => [
-        path("/cache-test/cross-store", CrossStorePage, {
-          name: "cacheTest.crossStore",
-        }),
+    middleware(copyCacheHeaders, () => [
+      cache({ store: crossStoreLocaleStore }, () => [
+        cache({ ttl: 600 }, () => [
+          path("/cache-test/cross-store", CrossStorePage, {
+            name: "cacheTest.crossStore",
+          }),
+        ]),
       ]),
     ]),
 

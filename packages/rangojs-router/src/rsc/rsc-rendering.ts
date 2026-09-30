@@ -5,6 +5,7 @@
  * (initial page load) requests.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
@@ -1160,7 +1161,7 @@ function renderPreparedRscResponse<TEnv>(
   // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
   // non-intercept context (intercept responses depend on source page),
   // and a configured cache-control value (false disables caching).
-  const isPrefetch = request.headers.has("X-Rango-Prefetch");
+  const isPrefetch = requestHeaders(request).has("X-Rango-Prefetch");
   if (isPrefetch && isPartial && !hasInterceptSlots) {
     const cc = ctx.router.prefetchCacheControl;
     if (cc) {
@@ -1343,8 +1344,8 @@ async function matchPartialWithPprReplay<TEnv>(
   // one-shot corruption recovery request still replay the same segment record,
   // but through the server decode path.
   armFragments =
-    request.headers.get(SEGMENT_FRAGMENT_RECOVERY_HEADER) !== "1" &&
-    request.headers.get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) === "1";
+    requestHeaders(request).get(SEGMENT_FRAGMENT_RECOVERY_HEADER) !== "1" &&
+    requestHeaders(request).get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) === "1";
   // The prerender probe and the cache-opt-out gate below both need the
   // classified snapshot; resolve (and persist) it once.
   const routeSnapshot = classifiedRouteSnapshot(reqCtx);

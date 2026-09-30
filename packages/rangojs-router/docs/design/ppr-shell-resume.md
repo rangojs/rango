@@ -1197,9 +1197,12 @@ await baked anyway. The derived context now has its own `_dynamic` and
 `dynamic()`, and the capture refuses when it flips.
 
 Not guarded: `ctx.get` of a NORMAL variable (for example a
-session object middleware set) and raw `ctx.request.headers` reads. Those bake
-the capturing request's value silently. Treat anything the handler layer reads
-as shared per host+URL and request partition.
+session object middleware set). It bakes the capturing request's value
+silently. Treat anything the handler layer reads as shared per host+URL and
+request partition. Raw `ctx.request.headers` reads were in this list until
+#976; they now trip the capture like `headers()` (an own getter on the
+request, `guardRequestHeaders`), as do `getRequestContext().cookie()` /
+`.cookies()`.
 
 ### Request-partitioned shells
 
@@ -1207,8 +1210,9 @@ A route's `cache()` record is partitioned by the request when the route
 declares `cache({ key })` or the store has a `keyGenerator`. Before this, the
 shell was not: one shell per host+URL was captured from whichever partition
 came first, and every HIT replayed that partition's handler layer to every
-visitor (the capture guards cannot see what a key function reads, which is
-the point of a key function). Now the shell is partitioned by the same key.
+visitor (the capture guards let a key function read the request, which is
+the point of a key function; `runIdentityExempt`). Now the shell is
+partitioned by the same key.
 `resolveShellPartition` (`src/cache/cache-scope.ts`) resolves it with the
 record path's own resolution (`resolveCacheKey`, given the document default
 key), and `partitionShellKey` (`src/rsc/shell-capture-constants.ts`, the

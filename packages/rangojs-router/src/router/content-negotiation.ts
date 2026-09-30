@@ -6,6 +6,7 @@
  * RSC routes and response routes (JSON, text, image, stream, etc.).
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { EntryData } from "../server/context.js";
 import type { NegotiateVariant } from "../build/route-trie.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
@@ -245,7 +246,9 @@ export async function negotiateRoute(
     return null;
   }
 
-  const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
+  const acceptEntries = parseAcceptTypes(
+    requestHeaders(request).get("accept") || "",
+  );
 
   // Variants carry the variant's own pa (positional param names); the synthetic
   // primary/RSC candidates have none (their params are already keyed correctly).

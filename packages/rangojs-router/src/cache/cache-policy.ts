@@ -8,6 +8,7 @@
 
 import type { CacheDefaults, SegmentCacheStore } from "./types.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { runIdentityExempt } from "./cache-exec-scope.js";
 import type { RequestContext } from "../server/request-context.js";
 import { normalizeTags } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
@@ -130,12 +131,15 @@ export async function resolveCacheKey(
 ): Promise<string> {
   const requestCtx = _getRequestContext();
 
+  // A key reads the request to partition the entry (runIdentityExempt): the
+  // identity guards let it through, a ppr capture included.
   if (keyFn && requestCtx) {
-    return await keyFn(requestCtx);
+    return await runIdentityExempt(() => keyFn(requestCtx));
   }
 
   if (store?.keyGenerator && requestCtx) {
-    return await store.keyGenerator(requestCtx, defaultKey);
+    const keyGenerator = store.keyGenerator;
+    return await runIdentityExempt(() => keyGenerator(requestCtx, defaultKey));
   }
 
   return defaultKey;
@@ -156,7 +160,9 @@ export function resolveTagsOption<TEnv>(
       return undefined;
     }
     try {
-      return normalizeTagList(tags(ctx));
+      // Tags label the entry, never render: identity reads pass
+      // (runIdentityExempt), a ppr capture's record write included.
+      return normalizeTagList(runIdentityExempt(() => tags(ctx)));
     } catch (error) {
       reportCacheError(
         error,

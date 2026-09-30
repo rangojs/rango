@@ -369,8 +369,10 @@ server projection.
   cache()-bound loader gets the binding's value (see `execution-model.md`).
   `runLoader({ cache })` (`testing/run-loader.ts`) runs a loader through this
   read-through. The same per-execution sets carry request-identity reads
-  (`cookies()`/`headers()`/non-cacheable `ctx.get()`, recorded by
-  `recordLoaderIdentityRead` in `server/context.ts`). With no `key()` and no
+  (`cookies()`/`headers()`/`ctx.request.headers`/`getRequestContext().cookie()`
+  and `.cookies()`/non-cacheable `ctx.get()`, recorded by
+  `recordLoaderIdentityRead` in `server/context.ts`; a `key()`,
+  `keyGenerator`, `condition()` or `tags()` read records nothing, `runIdentityExempt`). With no `key()` and no
   store `keyGenerator`, a MISS or stale refresh whose execution, or a loader
   value it read, recorded one fails with `loaderCacheIdentityError` and stores
   nothing, whoever started that execution (`recordedIdentityRead`, #972). A
@@ -387,7 +389,25 @@ server projection.
 
 - `cookies()` -- `CookieStore` with `get`/`getAll`/`has`/`set`/`delete`
 - `headers()` -- read-only header proxy
-- PPR holes are render-defined, not API-defined, and come from loaders only: live-loader boundaries (structural) and promises nested in an `ssr: false` loader's value (masked by shape). Everything a handler produces bakes, as under `cache()` — including a promise it passes under `<Suspense>`, an async server component, and a nested promise in its handle push. To force a hole, put the data in a live loader read with `useLoader` (lane rule: [`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule)). During a capture, `cookies()`, `headers()`, a theme read, a `{ cache: false }` variable read, and `ctx.dynamic()` refuse it wherever the capture waits (`guardIdentityRead`, `server/context.ts`). A hole never reads the shell snapshot: it is dynamic or has its own cache. See `docs/design/ppr-shell-resume.md`. (A `live()` primitive shipped briefly in #641 and was removed in #645.)
+- `ctx.request.headers` (every ctx's `request`, one `Request` object) -- an own,
+  non-enumerable getter (`guardRequestHeaders` in `server/cookie-store.ts`,
+  over `shadowRequestHeaders` in `server/request-headers.ts`) that runs
+  `guardIdentityRead` like `headers()` (#976). Installed by
+  `createRequestContext` and `createHandlerContext` (a request the router
+  builds and matches: the progressive-enhancement re-render, a
+  navigation-only capture). The object stays a real `Request` (no Proxy):
+  `fetch()` and `new Request()` copy the headers natively without the
+  getter, so they don't throw, and they are not guarded (a fetch forwards the
+  visitor's `Cookie`/`Authorization`; the docs tell users not to make one in
+  a cached body). `clone()` is shadowed to return a guarded clone. A lazy
+  srvx `NodeRequest`'s `_request` (Node dev/preview, vercel output) and
+  Node's `util.inspect` hook run with the guard off, so srvx's own
+  clone/body reads and a `console.log` never count as reads. Router code
+  reads headers only through `requestHeaders()`.
+  `getRequestContext().cookie()` / `.cookies()` (internal, off the public type)
+  are guarded the same way (`guardRawCookieRead`); the cookies() store reads
+  the unguarded `_readCookie()` / `_readCookies()`.
+- PPR holes are render-defined, not API-defined, and come from loaders only: live-loader boundaries (structural) and promises nested in an `ssr: false` loader's value (masked by shape). Everything a handler produces bakes, as under `cache()` — including a promise it passes under `<Suspense>`, an async server component, and a nested promise in its handle push. To force a hole, put the data in a live loader read with `useLoader` (lane rule: [`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule)). During a capture, `cookies()`, `headers()`, `ctx.request.headers`, `getRequestContext().cookie()` / `.cookies()`, a theme read, a `{ cache: false }` variable read, and `ctx.dynamic()` refuse it wherever the capture waits (`guardIdentityRead`, `server/context.ts`); a `key()`, store `keyGenerator`, `condition()` or `tags()` reads freely (`runIdentityExempt`, `cache/cache-exec-scope.ts`), and a cached body, loader body or funnel it starts is guarded again. A hole never reads the shell snapshot: it is dynamic or has its own cache. See `docs/design/ppr-shell-resume.md`. (A `live()` primitive shipped briefly in #641 and was removed in #645.)
 - `getRequestContext()` -- full request data server-side, plus shared variable access via `ctx.get()`/`ctx.set()`
 - `ctx.build` is true in build-time prerender and build-shell capture contexts, false for live requests. Build-shell middleware gets the same flag and an inert `ctx.waitUntil()` so apps can skip side-effectful runtime work during producer B.
 - `ctx.dynamic()` is the request-level PPR opt-out. Middleware calls happen before the shell HIT commit point and force axis 1; handler calls during a MISS suppress the follow-up shell capture. Build-shell middleware calls produce a `dynamic` shell outcome and leave that URL for runtime. It gates the PPR SHELL axis only — a `Prerender()` route's build-baked B-segments still replay at runtime — and is inert in the prerender-collect / static-render contexts. Unit-testable through `runMiddleware`/`renderHandler` (`build` option + `dynamic` result field).

@@ -198,7 +198,8 @@ A cache hit streams the stored UI instantly while `StockLoader` resolves
 fresh alongside it. Caching a loader's data is a separate, explicit opt-in
 (`loader(Fn, () => [cache({ ttl })])`). The guards are correctness-first:
 `cookies()` and `headers()` throw inside cache scopes rather than silently
-baking one visitor's data into a shared shell.
+baking one visitor's data into a shared shell, and so does a raw
+`ctx.request.headers` read.
 
 **Fetchable on demand.** `createLoader(fn, true)` makes a loader callable
 from any client component via `useFetchLoader()` / `load()` — typed params,

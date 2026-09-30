@@ -65,7 +65,12 @@ import {
   assertNonCacheableReadAllowed,
   clearPprHeaderScope,
 } from "./context.js";
-import { readGuardedTheme } from "./cookie-store.js";
+import {
+  guardRawCookieRead,
+  guardRequestHeaders,
+  readGuardedTheme,
+} from "./cookie-store.js";
+import { requestHeaders } from "./request-headers.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -150,10 +155,24 @@ export interface RequestContext<
   /** @internal Request-local PPR opt-out marker set by ctx.dynamic(). */
   _dynamic?: boolean;
 
-  /** @internal Get a cookie value (effective: request + response mutations). Use cookies().get() instead. */
+  /**
+   * @internal Get a cookie value (effective: request + response mutations).
+   * Use cookies().get() instead. Guarded like cookies() (#976).
+   */
   cookie(name: string): string | undefined;
-  /** @internal Get all cookies (effective merged view). Use cookies().getAll() instead. */
+  /**
+   * @internal Get all cookies (effective merged view). Use
+   * cookies().getAll() instead. Guarded like cookies() (#976).
+   */
   cookies(): Record<string, string>;
+  /**
+   * @internal `cookie()` without the identity guard: the read behind the
+   * cookies() store, which guards at its own call and records per read
+   * method. Non-enumerable, like `_readTheme`.
+   */
+  _readCookie(name: string): string | undefined;
+  /** @internal `cookies()` without the identity guard (see `_readCookie`). */
+  _readCookies(): Record<string, string>;
   /** @internal Set a cookie on the response. Use cookies().set() instead. */
   setCookie(name: string, value: string, options?: CookieOptions): void;
   /** @internal Delete a cookie. Use cookies().delete() instead. */
@@ -903,6 +922,8 @@ export type PublicRequestContext<
   RequestContext<TEnv, TParams>,
   | "cookie"
   | "cookies"
+  | "_readCookie"
+  | "_readCookies"
   | "setCookie"
   | "deleteCookie"
   | "_handleStore"
@@ -1168,7 +1189,10 @@ export function createRequestContext<TEnv>(
     stateCookieName,
     version: stateVersion,
   } = options;
-  const cookieHeader = request.headers.get("Cookie");
+  // ctx.request.headers is guarded like headers() (#976); every router read
+  // of this request's headers goes through requestHeaders().
+  guardRequestHeaders(request);
+  const cookieHeader = requestHeaders(request).get("Cookie");
   let rangoStateRotated = false;
   const freshCookie = stateCookieName
     ? freshReadsCookieName(stateCookieName)
@@ -1267,6 +1291,26 @@ export function createRequestContext<TEnv>(
     return getParsedCookies()[name];
   };
 
+  // The effective jar: request cookies minus deletions plus same-request writes.
+  const effectiveCookies = (): Record<string, string> => {
+    const parsed = getParsedCookies();
+    const mutations = getResponseCookies();
+    if (mutations.size === 0) return { ...parsed };
+    // Build result without delete (avoids V8 dictionary-mode de-opt)
+    const deleted = new Set<string>();
+    for (const [k, v] of mutations) {
+      if (v === null) deleted.add(k);
+    }
+    const result: Record<string, string> = {};
+    for (const key of Object.keys(parsed)) {
+      if (!deleted.has(key)) result[key] = parsed[key];
+    }
+    for (const [k, v] of mutations) {
+      if (v !== null) result[k] = v;
+    }
+    return result;
+  };
+
   const getTheme = (): Theme | undefined => {
     if (!themeConfig) return undefined;
 
@@ -1346,28 +1390,22 @@ export function createRequestContext<TEnv>(
       );
     },
 
+    // The visitor's cookies, guarded like cookies() (#976): before, a plain
+    // read that a ppr shell, a cache() entry or a "use cache" entry stored
+    // for every visitor.
     cookie(name: string): string | undefined {
+      guardRawCookieRead(ctx, "getRequestContext().cookie()");
       return effectiveCookie(name);
     },
 
     cookies(): Record<string, string> {
-      const parsed = getParsedCookies();
-      const mutations = getResponseCookies();
-      if (mutations.size === 0) return { ...parsed };
-      // Build result without delete (avoids V8 dictionary-mode de-opt)
-      const deleted = new Set<string>();
-      for (const [k, v] of mutations) {
-        if (v === null) deleted.add(k);
-      }
-      const result: Record<string, string> = {};
-      for (const key of Object.keys(parsed)) {
-        if (!deleted.has(key)) result[key] = parsed[key];
-      }
-      for (const [k, v] of mutations) {
-        if (v !== null) result[k] = v;
-      }
-      return result;
+      guardRawCookieRead(ctx, "getRequestContext().cookies()");
+      return effectiveCookies();
     },
+
+    // Non-enumerable, defined after this literal.
+    _readCookie: effectiveCookie,
+    _readCookies: effectiveCookies,
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
@@ -1417,7 +1455,7 @@ export function createRequestContext<TEnv>(
       // decodeStateValue decodes exactly once) AND is the same parser the client
       // mirror uses, so both seats read the same jar entry.
       const prevRaw =
-        (request.headers.get("x-rango-state") || null) ??
+        (requestHeaders(request).get("x-rango-state") || null) ??
         getRawCookieValue(cookieHeader, stateCookieName);
       const value = mintStateValue(stateVersion ?? "0", prevRaw);
       // rawStubHeaders: guard-exempt internal writer — invalidateClientCache()
@@ -1594,6 +1632,7 @@ export function createRequestContext<TEnv>(
   // the ambient context, as cookies() does, and falls back to the receiver.
   // _readTheme is the unguarded read: non-enumerable too, so a spread copy of
   // the context (the fetchable-loader ctx, loader-fetch.ts) cannot carry it.
+  // The same holds for the unguarded cookie reads (#976).
   Object.defineProperties(ctx, {
     theme: {
       get(this: RequestContext<TEnv>): Theme | undefined {
@@ -1603,6 +1642,8 @@ export function createRequestContext<TEnv>(
       configurable: true,
     },
     _readTheme: { enumerable: false },
+    _readCookie: { enumerable: false },
+    _readCookies: { enumerable: false },
   });
 
   (ctx as any)[NOCACHE_SYMBOL] = true;

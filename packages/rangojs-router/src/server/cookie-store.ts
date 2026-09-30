@@ -21,6 +21,7 @@ import {
   requestReadCaptureFix,
   type IdentityReadWording,
 } from "./context.js";
+import { requestHeaders, shadowRequestHeaders } from "./request-headers.js";
 
 /**
  * A single cookie entry returned by get() and getAll().
@@ -139,6 +140,56 @@ function requestReadWording(what: string): IdentityReadWording {
 const COOKIES_READ: IdentityReadWording = requestReadWording("cookies");
 const HEADERS_READ: IdentityReadWording = requestReadWording("headers");
 
+/**
+ * The raw reads (#976): `ctx.request.headers` and `getRequestContext()
+ * .cookie()` / `.cookies()`. Same wording as cookies()/headers(), but each
+ * returns the data itself, so the read is recorded at the access.
+ */
+const REQUEST_HEADERS_READ: IdentityReadWording = {
+  verb: "read",
+  fix: HEADERS_READ.fix,
+};
+const RAW_COOKIES_READ: IdentityReadWording = {
+  verb: "called",
+  fix: COOKIES_READ.fix,
+};
+
+/**
+ * Run the identity guard for a raw cookie read on `ctx`
+ * (request-context.ts `cookie()` / `cookies()`). Before #976 they were plain
+ * reads of the Cookie header that no shared scope refused. The guard reads
+ * the ambient context, as cookies() does, and falls back to `ctx`.
+ */
+export function guardRawCookieRead(
+  ctx: RequestContext<any>,
+  surface: "getRequestContext().cookie()" | "getRequestContext().cookies()",
+): void {
+  guardIdentityRead(_getRequestContext() ?? ctx, surface, RAW_COOKIES_READ);
+}
+
+function guardRequestHeadersRead(): void {
+  guardIdentityRead(
+    _getRequestContext(),
+    "ctx.request.headers",
+    REQUEST_HEADERS_READ,
+  );
+}
+
+/**
+ * Guard `request.headers` like headers() (#976): the request every ctx
+ * exposes (request context, handler, middleware and loader `ctx.request`)
+ * gets an own getter that runs guardIdentityRead against the ambient request
+ * context, so a read inside a ppr capture, a cache() boundary, a "use cache"
+ * body or an unkeyed loader cache() fill refuses as cookies() does. A Request
+ * argument keys a "use cache" entry by its URL only (cache-runtime.ts), so a
+ * header read there baked the first caller's value into the shared entry.
+ * The router's own reads go through requestHeaders() (request-headers.ts).
+ * Idempotent; returns `request`.
+ */
+export function guardRequestHeaders(request: Request): Request {
+  return shadowRequestHeaders(request, guardRequestHeadersRead);
+}
+
 /** The fix for a theme read that a cache() boundary or a ppr capture refuses. */
 const THEME_READ_FIX =
   "On ppr and cache() routes, read the theme with useTheme() in a client " +
@@ -223,7 +274,7 @@ const HEADERS_READ_PROPS = new Set<string | symbol>([
 export function headers(): ReadonlyHeaders {
   const ctx = getRequestContext();
   guardIdentityRead(ctx, "headers()", HEADERS_READ);
-  return new Proxy(ctx.request.headers, {
+  return new Proxy(requestHeaders(ctx.request), {
     get(target, prop, receiver) {
       if (HEADERS_READ_PROPS.has(prop)) recordLoaderIdentityRead("headers()");
       if (typeof prop === "string" && HEADERS_MUTATION_METHODS.has(prop)) {
@@ -292,28 +343,26 @@ export function keepClientCache(): void {
 }
 
 /**
- * Create a CookieStore backed by a RequestContext.
- * @internal Shared between cookies() shorthand and context methods.
+ * Create a CookieStore backed by a RequestContext. Reads go through the
+ * context's unguarded `_readCookie()` / `_readCookies()`: cookies() ran the
+ * guard at its call and records on each read method here.
  */
-function createCookieStore(ctx: {
-  cookie(name: string): string | undefined;
-  cookies(): Record<string, string>;
-  setCookie(name: string, value: string, options?: CookieOptions): void;
-  deleteCookie(
-    name: string,
-    options?: Pick<CookieOptions, "domain" | "path">,
-  ): void;
-}): CookieStore {
+function createCookieStore(
+  ctx: Pick<
+    RequestContext<any>,
+    "_readCookie" | "_readCookies" | "setCookie" | "deleteCookie"
+  >,
+): CookieStore {
   return {
     get(name: string): Cookie | undefined {
       recordLoaderIdentityRead("cookies()");
-      const value = ctx.cookie(name);
+      const value = ctx._readCookie(name);
       return value !== undefined ? { name, value } : undefined;
     },
 
     getAll(name?: string): Cookie[] {
       recordLoaderIdentityRead("cookies()");
-      const all = ctx.cookies();
+      const all = ctx._readCookies();
       if (name !== undefined) {
         const value = all[name];
         return value !== undefined ? [{ name, value }] : [];
@@ -323,7 +372,7 @@ function createCookieStore(ctx: {
 
     has(name: string): boolean {
       recordLoaderIdentityRead("cookies()");
-      return ctx.cookie(name) !== undefined;
+      return ctx._readCookie(name) !== undefined;
     },
 
     set(name: string, value: string, options?: CookieOptions): void {

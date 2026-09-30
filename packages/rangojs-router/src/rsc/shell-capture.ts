@@ -70,6 +70,7 @@ import {
   isInsideLoaderScope,
 } from "../server/context.js";
 import { isThenable } from "../handles/is-thenable.js";
+import { requestHeaders } from "../server/request-headers.js";
 import type {
   CachedEntryData,
   ShellCacheEntry,
@@ -1403,7 +1404,7 @@ type CaptureAttemptOutcome =
 type CaptureTaskOutcome = "stored" | "redirect" | "no-shell";
 
 function createNavigationCaptureRequest(request: Request, url: URL): Request {
-  const headers = new Headers(request.headers);
+  const headers = new Headers(requestHeaders(request));
   headers.set("accept", "text/html");
   for (const name of [
     "rsc-action",
