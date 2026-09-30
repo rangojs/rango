@@ -603,3 +603,26 @@ export const ShellBakeHoleLoader = createLoader(
     return { price: 42, seq: shellBakeHoleSeq, loadedAt: Date.now() };
   },
 );
+
+// Client-managed paging (issue #986): /shell-cache/load-more renders the page
+// its URL names, and its "Load more" button appends the next page fetched
+// through this loader, then soft-navigates to ?page=N.
+export function shellLoadMoreItems(page: number): string[] {
+  return [1, 2, 3].map((item) => `item-${page}-${item}`);
+}
+
+export const ShellLoadMoreLoader = createLoader(
+  async (ctx): Promise<{ items: string[] }> => ({
+    items: shellLoadMoreItems(Number(ctx.params.page ?? "1")),
+  }),
+  true,
+);
+
+// The page the URL names, read on every request (ssr: false bakes it into a
+// document shell only). Its data reaches the list in the same commit as the
+// navigation's segments, so the list shows page N once ?page=N has rendered.
+export const ShellLoadMorePageLoader = createLoader(
+  async (ctx): Promise<{ page: number }> => ({
+    page: Number(ctx.searchParams.get("page") ?? "1"),
+  }),
+);

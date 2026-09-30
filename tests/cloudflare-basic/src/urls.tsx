@@ -120,6 +120,8 @@ import {
   pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
 import { PprJsxPage } from "./pages/ppr-jsx.js";
+import { PprLoadMorePage } from "./pages/ppr-load-more.js";
+import { PprLoadMorePageLoader } from "./loaders/ppr-load-more.js";
 import { PprJsxLoader } from "./loaders/ppr-jsx.js";
 import {
   PprDriftLayout,
@@ -858,6 +860,28 @@ export const urlpatterns = urls(
           name: "pprStaleReplay",
           ppr: { ttl: 4, swr: 120 },
         }),
+        // Issue #986: client-managed paging on a route with
+        // transition({ when }). revalidate() false keeps the client's
+        // accumulated list on a ?page navigation, whether the live path or a
+        // replay HIT serves it, whatever the predicate returns.
+        path(
+          "/ppr-load-more",
+          PprLoadMorePage,
+          { name: "pprLoadMore", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            transition({
+              when: ({ currentUrl, nextUrl }) =>
+                currentUrl?.pathname === nextUrl.pathname,
+            }),
+            revalidate(({ currentUrl, nextUrl }) =>
+              currentUrl.pathname === nextUrl.pathname &&
+              nextUrl.searchParams.has("page")
+                ? false
+                : undefined,
+            ),
+            loader(PprLoadMorePageLoader, { ssr: false }),
+          ],
+        ),
         // Issue #888: the ssr:false loader awaits an unflagged loader that
         // pushes a string handle. A fast-path HIT replays the doc record,
         // which must not carry the push (see pages/ppr-shell.tsx).

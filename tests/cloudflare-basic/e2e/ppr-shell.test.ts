@@ -1762,6 +1762,72 @@ function describePprShell(mode: "dev" | "build") {
       );
     });
 
+    test("a navigation replay keeps the client's list when revalidate() returns false on a route with transition({ when }) (#986)", async ({
+      page,
+    }) => {
+      const probe = crypto.randomUUID();
+      const start = f.url(`/ppr-load-more?probe=${probe}`);
+      const pages = (...numbers: number[]) =>
+        numbers.flatMap((n) => [1, 2, 3].map((item) => `item-${n}-${item}`));
+
+      using _ = expectNoPageError(page);
+      // One session: a fresh document, then "Load more" appends page 2 on the
+      // client and soft-navigates to ?page=2.
+      const loadMoreInFreshSession = async () => {
+        await page.goto(start);
+        await waitForHydration(page);
+        const items = testId(page, "ppr-load-more-items").locator("li");
+        await expect(items).toHaveText(pages(1));
+        await using __ = await expectNoReload(page);
+        const partialPromise = page.waitForResponse((response) => {
+          const url = new URL(response.url());
+          return (
+            url.pathname === "/ppr-load-more" &&
+            url.searchParams.get("probe") === probe &&
+            url.searchParams.get("page") === "2" &&
+            url.searchParams.has("_rsc_partial")
+          );
+        });
+        await testId(page, "ppr-load-more-button").click();
+        const partial = await partialPromise;
+        // The ?page=2 response has committed: read the list after it.
+        await expect(testId(page, "ppr-load-more-list")).toHaveAttribute(
+          "data-route-page",
+          "2",
+        );
+        await expect(items).toHaveText(pages(1, 2));
+        return partial;
+      };
+
+      // Session 1: no snapshot for ?page=2, so the live path serves it and
+      // schedules the navigation-only capture.
+      const live = await loadMoreInFreshSession();
+      assertPprReplayStatus(
+        { headers: new Headers(live.headers()) },
+        { outcome: "BYPASS", reason: "no-entry" },
+      );
+      await expect(async () => {
+        const replay = await page.request.get(live.url(), {
+          headers: {
+            "X-RSC-Router-Client-Path": start,
+            "X-Rango-Prefetch": "1",
+          },
+        });
+        assertPprReplayStatus(
+          { headers: new Headers(replay.headers()) },
+          { outcome: "HIT", freshness: "fresh" },
+        );
+      }).toPass({ timeout: 10000 });
+
+      // Session 2: the same steps replay ?page=2 from the snapshot, and the
+      // accumulated list survives as it did on the live path.
+      const replayed = await loadMoreInFreshSession();
+      assertPprReplayStatus(
+        { headers: new Headers(replayed.headers()) },
+        { outcome: "HIT", freshness: "fresh" },
+      );
+    });
+
     test("passthrough prerender: a baked param reports prerender-store, a live param keeps replay", async ({
       request,
     }) => {

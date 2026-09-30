@@ -89,7 +89,11 @@ transition predicates do not decline replay either: PPR hoists them before
 route handlers and evaluates them from the matched manifest on every
 runtime-cache, prerender, and shell replay. Their
 request-specific result is projected only onto the outgoing payload, never the
-reusable segment record. A transition already frozen by an explicit
+reusable segment record, and only onto segments that payload sends: a segment
+the client holds and `revalidate()` does not re-render is omitted, as on the
+live path. (Replay once kept such a segment's component whenever it had a
+decision, so a HIT replaced the client's segment with the snapshot's copy
+despite `revalidate()` returning false: #986.) A transition already frozen by an explicit
 `cache()`/prerender hit keeps that cache tier's normal no-re-evaluation semantics.
 The replay store belongs only to that implicit scope: a consumer `cache()` scope
 continues to use its own store, key, TTL/SWR, tags, and condition. Segment misses,

@@ -297,8 +297,7 @@ async function* yieldFromStore<TEnv>(
       !paramsChanged &&
       ctx.clientSegmentSet.has(segment.id)
     ) {
-      segment.component = null;
-      segment.loading = undefined;
+      keepClientSegment(segment);
     }
     yield segment;
   }
@@ -403,6 +402,25 @@ async function* tryPrerenderLookup<TEnv>(
     resolveLoadersOnlyWithRevalidation,
   );
   return true;
+}
+
+/**
+ * Keep the client's copy of a stored (runtime cache, prerender, or shell
+ * replay) segment this navigation does not re-render. collectMatchResult
+ * (match-result.ts) omits a null-component segment the client holds, as the
+ * live partial path omits a segment whose revalidation said no
+ * (segment-resolution/revalidation.ts).
+ *
+ * A PPR transition({ when }) decision (RequestContext._pprTransitionDecisions)
+ * is no exception. evaluatePprTransitionWhen (transition-when.ts) records one
+ * for every entry with a predicate, whatever it returns, and the live path
+ * sends no non-revalidated segment to carry it either. Keeping the component
+ * for it made a navigation replay HIT replace the client's segment with the
+ * snapshot's copy even when revalidate() returned false (#986).
+ */
+function keepClientSegment(segment: ResolvedSegment): void {
+  segment.component = null;
+  segment.loading = undefined;
 }
 
 /**
@@ -675,7 +693,6 @@ export function withCacheLookup<TEnv>(
       ...liveMatchedIds,
       ...cacheResult.segments.map((s) => s.id),
     ];
-    const pprTransitionDecisions = pipelineReqCtx?._pprTransitionDecisions;
 
     const canCheckSegmentRevalidation =
       !ctx.isFullMatch &&
@@ -751,13 +768,7 @@ export function withCacheLookup<TEnv>(
             reason: "cached-no-rules",
           });
         }
-        // A PPR transition decision must reach the client even when this cached
-        // segment otherwise needs no update. Keep its replayed component so the
-        // partial result retains the segment for gateTransitions().
-        if (!pprTransitionDecisions?.has(segment.id)) {
-          segment.component = null;
-          segment.loading = undefined;
-        }
+        keepClientSegment(segment);
         yield segment;
         continue;
       }
@@ -789,10 +800,7 @@ export function withCacheLookup<TEnv>(
         shouldRevalidate,
       });
 
-      if (!shouldRevalidate && !pprTransitionDecisions?.has(segment.id)) {
-        segment.component = null;
-        segment.loading = undefined;
-      }
+      if (!shouldRevalidate) keepClientSegment(segment);
 
       yield segment;
     }
