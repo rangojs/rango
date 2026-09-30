@@ -1,76 +1,58 @@
 import { getParallelSlotEntries, type EntryData } from "../server/context.js";
 import type { RequestContext } from "../server/request-context.js";
-import type { TransitionWhenContext } from "../types/segments.js";
+import type { TransitionWhenSite } from "../transition-when-ref.js";
+import type { TransitionWhenFn } from "../types/segments.js";
 
-export type TransitionWhenErrorReporter = (
-  error: unknown,
-  segmentId: string,
-) => void;
-
-export function createTransitionWhenContext<TEnv>(
-  ctx: RequestContext<TEnv>,
-  target?: {
-    params: Record<string, string>;
-    routeName?: string;
-  },
-): TransitionWhenContext<Record<string, string>, TEnv> {
-  return {
-    currentUrl: ctx._gateCurrentUrl,
-    currentParams: ctx._gateCurrentParams,
-    fromRouteName: ctx._prevRouteKey as TransitionWhenContext["fromRouteName"],
-    nextUrl: ctx.url,
-    nextParams: target?.params ?? ctx.params,
-    toRouteName: (target?.routeName ??
-      ctx.routeName) as TransitionWhenContext["toRouteName"],
-    actionId: ctx._gateActionId,
-    actionUrl: ctx._gateActionUrl,
-    actionResult: ctx._gateActionResult,
-    formData: ctx._gateFormData,
-    method: ctx.request.method,
-    get: ctx.get,
-    env: ctx.env,
-  };
+/** A matched entry's transition({ when }) and where it was declared. */
+export interface TransitionWhenRecord {
+  readonly when: TransitionWhenFn;
+  readonly site: TransitionWhenSite;
 }
 
-/** Evaluate server-only transition gates before handlers on a PPR route. */
-export function evaluatePprTransitionWhen<TEnv>(
-  entries: EntryData[],
+/**
+ * Record the transition({ when }) references of a matched entry chain, keyed
+ * by the segment id each entry resolves to. The server never calls them:
+ * rsc/attach-transition-when.ts attaches them to the payload's segments right
+ * before Flight, and the browser decides (browser/transition-when.ts).
+ *
+ * Recorded from the static route definition on EVERY match (fresh, cache hit,
+ * prerender, PPR replay) because stored segments never carry them:
+ * applyViewTransitionDefault strips `when` at resolution, since segment stores
+ * JSON-serialize the transition config (dropping a function on some stores,
+ * keeping it by reference on others). Segment ids follow resolution: an
+ * entry's shortCode, and `${owner.shortCode}.${slot}` for a rendered parallel
+ * slot.
+ */
+export function recordTransitionWhenRefs<TEnv>(
+  entries: readonly EntryData[] | undefined,
   ctx: RequestContext<TEnv>,
-  target: {
-    params: Record<string, string>;
-    routeName?: string;
-  },
-  reportError: TransitionWhenErrorReporter,
+  route: { routeName?: string; pattern?: string } = {},
 ): void {
-  const decisions = new Map<string, boolean>();
-  const whenContext = createTransitionWhenContext(ctx, target);
+  const refs = new Map<string, TransitionWhenRecord>();
   const visited = new Set<EntryData>();
 
-  const evaluate = (entry: EntryData, segmentId: string): void => {
+  const record = (entry: EntryData, segmentId: string): void => {
     const when = entry.transition?.when;
-    if (!when) return;
-    try {
-      decisions.set(segmentId, when(whenContext) !== false);
-    } catch (error) {
-      decisions.set(segmentId, false);
-      reportError(error, segmentId);
-    }
+    if (when === undefined) return;
+    refs.set(segmentId, {
+      when,
+      site: { ...route, entryType: entry.type },
+    });
   };
 
   const visitEntryAndOrphanLayouts = (entry: EntryData): void => {
     if (visited.has(entry)) return;
     visited.add(entry);
-    evaluate(entry, entry.shortCode);
+    record(entry, entry.shortCode);
 
     for (const orphan of entry.layout) visitEntryAndOrphanLayouts(orphan);
-    // Rendered parallel slots are leaves identified by their owning segment.
     for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
       entry.parallel,
     )) {
-      evaluate(parallelEntry, `${entry.shortCode}.${slot}`);
+      record(parallelEntry, `${entry.shortCode}.${slot}`);
     }
   };
 
-  for (const entry of entries) visitEntryAndOrphanLayouts(entry);
-  ctx._pprTransitionDecisions = decisions.size > 0 ? decisions : undefined;
+  for (const entry of entries ?? []) visitEntryAndOrphanLayouts(entry);
+  ctx._transitionWhenRefs = refs.size > 0 ? refs : undefined;
 }

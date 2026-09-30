@@ -36,6 +36,13 @@ import {
   collectClientRevalidationDecisions,
   setActiveInterceptTargets,
 } from "../client-urls/navigation.js";
+import {
+  decideCommitGatedOff,
+  mergeSegmentParams,
+  type TransitionWhenActionInput,
+} from "./transition-when.js";
+import { buildHistoryState } from "./history-state.js";
+import type { TransitionWhenKind } from "../types/segments.js";
 
 function toScrollPayload(
   scroll: boolean | undefined,
@@ -43,9 +50,16 @@ function toScrollPayload(
   return { enabled: scroll !== false ? scroll : false };
 }
 
+/**
+ * Hold/animate decision for a commit: a non-intercept segment carries a
+ * transition, no intercept is presented, and this navigation's
+ * transition({ when }) decision did not gate it off.
+ */
 export function shouldStartViewTransition(
-  segments: ResolvedSegment[],
+  segments: readonly ResolvedSegment[],
+  transitionGatedOff: boolean = false,
 ): boolean {
+  if (transitionGatedOff) return false;
   let hasIntercept = false;
   let hasTransition = false;
   for (const s of segments) {
@@ -107,6 +121,8 @@ export interface CommitOverrides {
   interceptSourceUrl?: string;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
+  /** The committed route's name (payload metadata), remembered per history entry. */
+  routeName?: string;
 }
 
 /**
@@ -132,10 +148,21 @@ export type UpdateMode =
        * boundaries do not animate the identical repaint.
        */
       optimisticPresented?: boolean;
+      /**
+       * A router.refresh() (or cross-tab refresh) of the current URL:
+       * transition({ when }) sees kind "revalidate", not "replace".
+       */
+      refresh?: boolean;
     }
   | { type: "leave-intercept"; interceptSourceUrl?: string }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
-  | { type: "action"; interceptSourceUrl?: string; actionId?: string };
+  | {
+      type: "action";
+      interceptSourceUrl?: string;
+      actionId?: string;
+      /** The action's FormData and result, for transition({ when }) `action`. */
+      action?: TransitionWhenActionInput;
+    };
 
 /**
  * Type for the fetchPartialUpdate function
@@ -212,6 +239,54 @@ export function createPartialUpdater(
         debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
       }
     }
+
+    // transition({ when }). Every decision below runs before tx.commit()
+    // moves the store, so `from` is still the location being left:
+    // segmentState.currentUrl is the committed URL even on a popstate cache
+    // miss, where tx.currentUrl and window.location already point at the
+    // target.
+    const whenKind: TransitionWhenKind =
+      mode.type === "action"
+        ? "action"
+        : mode.type === "stale-revalidation" ||
+            (mode.type === "navigate" && mode.refresh)
+          ? "revalidate"
+          : tx.traversal
+            ? "pop"
+            : tx.replace
+              ? "replace"
+              : "push";
+    // Decide once per navigation (browser/transition-when.ts): reuse the
+    // decision the optimistic clientUrls() swap made; otherwise decide over
+    // every segment this commit presents, kept or re-sent (#989). The
+    // destination state is what the commit will leave on the entry.
+    const decideGatedOff = (
+      segmentsToCommit: readonly ResolvedSegment[],
+      metadata: {
+        params?: Record<string, string>;
+        routeName?: string;
+        locationState?: Record<string, unknown>;
+      },
+    ): boolean =>
+      tx.transitionGatedOff ??
+      // A stale revalidation the user navigated away from is discarded after
+      // the render (history-key check below): its predicate must not run.
+      ((mode.type === "stale-revalidation" &&
+        store.getHistoryKey() !== historyKeyAtStart) ||
+        decideCommitGatedOff(store, segmentsToCommit, whenKind, {
+          to: () => ({
+            url,
+            params: metadata.params ?? mergeSegmentParams(segmentsToCommit),
+            routeName: metadata.routeName,
+            state: tx.traversal
+              ? { ...window.history.state, ...metadata.locationState }
+              : buildHistoryState(tx.state, undefined, metadata.locationState),
+          }),
+          action:
+            mode.type === "action"
+              ? { ...mode.action, id: mode.actionId }
+              : undefined,
+        }));
 
     const targetCache =
       mode.type === "navigate" && mode.targetCacheSegments?.length
@@ -349,13 +424,19 @@ export function createPartialUpdater(
             "[Browser] No diff but navigating with cached segments - rendering target route",
           );
 
+          const cachedGatedOff = decideGatedOff(
+            existingSegments,
+            payload.metadata,
+          );
           const newTree = await renderSegments(existingSegments, {
             forceAwait: true,
+            transitionGatedOff: cachedGatedOff,
           });
 
           const { scroll: commitScroll } = tx.commit(
             matchedIds,
             existingSegments,
+            { routeName: payload.metadata.routeName },
           );
 
           if (mode.targetCacheHandleData) {
@@ -376,7 +457,7 @@ export function createPartialUpdater(
             scroll: toScrollPayload(commitScroll),
           };
 
-          if (shouldStartViewTransition(existingSegments)) {
+          if (shouldStartViewTransition(existingSegments, cachedGatedOff)) {
             commitInTransition(onUpdate, existingSegments, cachedUpdate, [
               "navigation",
             ]);
@@ -400,6 +481,7 @@ export function createPartialUpdater(
           const { scroll: leaveScroll } = tx.commit(
             matchedIds,
             existingSegments,
+            { routeName: payload.metadata.routeName },
           );
 
           onUpdate({
@@ -415,7 +497,9 @@ export function createPartialUpdater(
         debugLog(
           "[Browser] No changes - all revalidations returned false, keeping existing UI",
         );
-        tx.commit(matchedIds, existingSegments);
+        tx.commit(matchedIds, existingSegments, {
+          routeName: payload.metadata.routeName,
+        });
         debugLog("[Browser] Navigation complete (no re-render)");
         return;
       }
@@ -477,7 +561,13 @@ export function createPartialUpdater(
         return;
       }
 
+      // Decide before the tree is built: on a gated-off commit every segment
+      // keeps its <ViewTransition> with "none" classes, so the decision must
+      // reach renderSegments. The response carries no decision, so a reused
+      // prefetch is decided against the real source.
+      const gatedOff = decideGatedOff(reconciled.segments, payload.metadata);
       const renderOptions = {
+        transitionGatedOff: gatedOff,
         isAction: mode.type === "action",
         // forceAwait unwraps the ROUTER loader promises during render so they
         // land without a loading()/fallback frame. A fully-prefetched nav has
@@ -557,16 +647,15 @@ export function createPartialUpdater(
 
       const allSegmentIds = matchedIds;
       const serverLocationState = payload.metadata?.locationState;
-      const overrides: CommitOverrides | undefined = isInterceptResponse
-        ? {
-            scroll: false,
-            intercept: true,
-            interceptSourceUrl: effectiveInterceptSource,
-            ...(serverLocationState && { serverState: serverLocationState }),
-          }
-        : serverLocationState
-          ? { serverState: serverLocationState }
-          : undefined;
+      const overrides: CommitOverrides = {
+        routeName: payload.metadata?.routeName,
+        ...(isInterceptResponse && {
+          scroll: false,
+          intercept: true,
+          interceptSourceUrl: effectiveInterceptSource,
+        }),
+        ...(serverLocationState && { serverState: serverLocationState }),
+      };
       const { scroll: navScroll } = tx.commit(
         allSegmentIds,
         reconciled.segments,
@@ -585,7 +674,10 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      const hasTransition = shouldStartViewTransition(reconciled.segments);
+      const hasTransition = shouldStartViewTransition(
+        reconciled.segments,
+        gatedOff,
+      );
       const optimisticPresented =
         mode.type === "navigate" && mode.optimisticPresented === true;
       // [VT-DIAG] Gated behind INTERNAL_RANGO_DEBUG. Reports which reconciled
@@ -600,6 +692,7 @@ export function createPartialUpdater(
           withTransition: reconciled.segments
             .filter((s) => s.transition)
             .map((s) => s.id),
+          transitionGatedOff: gatedOff,
           all: reconciled.segments.map((s) => s.id),
         });
       }
@@ -617,7 +710,10 @@ export function createPartialUpdater(
         metadata: payload.metadata!,
         scroll: scrollPayload,
       };
-      if (mode.type === "action" || mode.type === "stale-revalidation") {
+      if (
+        !gatedOff &&
+        (mode.type === "action" || mode.type === "stale-revalidation")
+      ) {
         commitInTransition(
           onUpdate,
           reconciled.mainSegments,
@@ -633,7 +729,10 @@ export function createPartialUpdater(
             ? ["navigation", OPTIMISTIC_COMMIT_TRANSITION_TYPE]
             : ["navigation"],
         );
-      } else if (fullyPrefetched || isSameStructureNav || optimisticPresented) {
+      } else if (
+        !gatedOff &&
+        (fullyPrefetched || isSameStructureNav || optimisticPresented)
+      ) {
         // Content-hold commit, two triggers. Fully-prefetched nav: the payload
         // is fully resolved (forceAwait above), so the transition commits
         // synchronously — no fallback flash. Same-structure nav: the re-run
@@ -663,10 +762,14 @@ export function createPartialUpdater(
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
         );
       } else {
-        // Cold/partially-prefetched nav that mounts NEW segments: normal
-        // commit so fallbacks stream like a first load and the click has
-        // visible feedback. Explicit transition() routes keep the
-        // content-hold via the hasTransition branch above (the opt-in).
+        // Cold/partially-prefetched nav that mounts NEW segments, or any
+        // commit transition({ when }) gated off (navigation, action refetch,
+        // stale revalidation): normal commit so fallbacks stream
+        // like a first load and the click has visible feedback. A gated-off
+        // segment keeps its key, so its loading() fallback comes from its
+        // boundary re-suspending on this urgent commit, not from a remount
+        // (#995). Explicit transition() routes keep the content-hold via the
+        // hasTransition branch above (the opt-in).
         onUpdate(update);
       }
 
@@ -684,7 +787,10 @@ export function createPartialUpdater(
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
-      const newTree = await renderSegments(segments);
+      const fullGatedOff = decideGatedOff(segments, payload.metadata ?? {});
+      const newTree = await renderSegments(segments, {
+        transitionGatedOff: fullGatedOff,
+      });
 
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
@@ -692,13 +798,15 @@ export function createPartialUpdater(
       }
 
       const fullUpdateServerState = payload.metadata?.locationState;
-      const { scroll: fullScroll } = fullUpdateServerState
-        ? tx.commit(segmentIds, segments, {
-            serverState: fullUpdateServerState,
-          })
-        : tx.commit(segmentIds, segments);
+      const { scroll: fullScroll } = tx.commit(segmentIds, segments, {
+        routeName: payload.metadata?.routeName,
+        ...(fullUpdateServerState && { serverState: fullUpdateServerState }),
+      });
 
-      const fullHasTransition = shouldStartViewTransition(segments);
+      const fullHasTransition = shouldStartViewTransition(
+        segments,
+        fullGatedOff,
+      );
       const fullScrollPayload = toScrollPayload(fullScroll);
       const fullUpdate: NavigationUpdate = {
         root: newTree,
@@ -720,13 +828,16 @@ export function createPartialUpdater(
           );
           return;
         }
-        commitInTransition(
-          onUpdate,
-          segments,
-          fullUpdate,
-          fullHasTransition ? ["action"] : [],
-        );
-      } else if (mode.type === "action") {
+        if (fullGatedOff) onUpdate(fullUpdate);
+        else {
+          commitInTransition(
+            onUpdate,
+            segments,
+            fullUpdate,
+            fullHasTransition ? ["action"] : [],
+          );
+        }
+      } else if (mode.type === "action" && !fullGatedOff) {
         commitInTransition(
           onUpdate,
           segments,

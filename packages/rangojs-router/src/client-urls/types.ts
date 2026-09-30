@@ -123,14 +123,21 @@ export interface ClientUrlLoaderRecord {
 }
 
 /**
- * The data-only subset of TransitionConfig a clientUrls() route may declare:
- * ViewTransition classes/name plus the boundary opt-out. The `when` gate is a
- * server-executed predicate and stays in the server tree — it cannot cross the
- * "use client" projection boundary.
+ * The TransitionConfig subset a clientUrls() route may declare: ViewTransition
+ * classes/name, the boundary opt-out, and the browser-run `when` gate. The
+ * projection carries only a "has when" marker; the browser calls the function
+ * this module declares (transition-when-ref.ts resolveTransitionWhen).
  */
 export type ClientTransitionConfig = Pick<
   TransitionConfig,
-  "enter" | "exit" | "update" | "share" | "default" | "name" | "viewTransition"
+  | "enter"
+  | "exit"
+  | "update"
+  | "share"
+  | "default"
+  | "name"
+  | "viewTransition"
+  | "when"
 >;
 
 export interface ClientUrlRouteRecord {

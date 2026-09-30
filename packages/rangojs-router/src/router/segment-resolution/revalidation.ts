@@ -708,7 +708,6 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       transition: applyViewTransitionDefault(
         parallelEntry.transition,
         deps.viewTransitionDefault,
-        parallelId,
       ),
       params,
       slot,
@@ -920,7 +919,6 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       entry.transition,
       deps.viewTransitionDefault,
-      entry.shortCode,
     ),
     params,
     belongsToRoute,
@@ -1261,7 +1259,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     transition: applyViewTransitionDefault(
       orphan.transition,
       deps.viewTransitionDefault,
-      orphan.shortCode,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });

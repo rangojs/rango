@@ -48,7 +48,8 @@ import {
   type RoutinePlan,
 } from "./routine-plan.js";
 import type { HandlerContext } from "./handler-context.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
+import { publicRouteName } from "../route-name.js";
 import { buildFullPayload } from "./full-payload.js";
 import {
   capShellWindow,
@@ -799,15 +800,12 @@ function* preparePayloadPlan<TEnv>(
           // intercepted server-side (X-RSC-Reload) and never delivers a
           // different-router payload to the client.
           routerId: ctx.router.id,
-          segments: gateTransitions(
-            result.segments,
-            reqCtx,
-            ctx.router.onError,
-          ),
+          segments: attachTransitionWhen(result.segments, reqCtx),
           matched: result.matched,
           diff: result.diff,
           resolvedIds: result.resolvedIds,
           params: result.params,
+          routeName: publicRouteName(result.routeName),
           isPartial: true,
           slots: result.slots,
           interceptTargets: result.interceptTargets,

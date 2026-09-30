@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { LocationStateDefinition } from "./location-state-shared.js";
+import {
+  replaceCurrentHistoryState,
+  type LocationStateDefinition,
+} from "./location-state-shared.js";
 
 export {
   createLocationState,
@@ -124,7 +127,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
     if (isFlash && key && state !== undefined) {
       const cleaned = { ...window.history.state };
       delete cleaned[key];
-      window.history.replaceState(cleaned, "", window.location.href);
+      replaceCurrentHistoryState(cleaned);
     }
   }, [isFlash, key, state]);
 

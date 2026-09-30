@@ -1,4 +1,8 @@
 import { Suspense } from "react";
+import {
+  shellExecWhen,
+  shellLoadMoreWhen,
+} from "../components/transition-when.js";
 import { urls, Meta, Breadcrumbs, nonce, createVar } from "@rangojs/router";
 import type { HandlerContext, Middleware } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -953,12 +957,7 @@ export const shellCachePatterns = urls(
             ShellExecPage,
             { name: "shellCacheExecMatrix", ppr: { ttl: 300, swr: 120 } },
             () => [
-              transition({
-                when: ({ nextUrl }) => {
-                  shellExecCounters.transitionWhen += 1;
-                  return nextUrl.searchParams.get("transition") !== "drop";
-                },
-              }),
+              transition({ when: shellExecWhen }),
               loader(ShellExecLoader),
               loading(
                 <div data-testid="shell-exec-fallback">
@@ -1080,10 +1079,7 @@ export const shellCachePatterns = urls(
       ShellLoadMorePage,
       { name: "shellCacheLoadMore", ppr: { ttl: 300, swr: 120 } },
       () => [
-        transition({
-          when: ({ currentUrl, nextUrl }) =>
-            currentUrl?.pathname === nextUrl.pathname,
-        }),
+        transition({ when: shellLoadMoreWhen }),
         revalidate(({ currentUrl, nextUrl }) =>
           currentUrl.pathname === nextUrl.pathname &&
           nextUrl.searchParams.has("page")

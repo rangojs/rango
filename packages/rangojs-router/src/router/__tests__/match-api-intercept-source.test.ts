@@ -350,11 +350,9 @@ describe("createMatchContextForPartial revalidation _prevRouteKey with intercept
 
     // _prevRouteKey should be the intercept source route (shop.items), not the
     // plain previous URL route (product.detail), so revalidation callbacks see
-    // the same fromRouteName as the intercept selector context. The setter now
-    // also carries the source URL + params for the transition({ when }) gate.
+    // the same fromRouteName as the intercept selector context.
     const call = vi.mocked(setRequestContextPrevRouteKey).mock.calls[0];
-    expect(call[0]).toBe("shop.items");
-    expect((call[1] as URL).pathname).toBe("/shop/items");
+    expect(call).toEqual(["shop.items"]);
   });
 
   it("stores prevMatch route key when no intercept source", async () => {
@@ -373,10 +371,9 @@ describe("createMatchContextForPartial revalidation _prevRouteKey with intercept
 
     await createMatchContextForPartial(request, {}, deps, findInterceptSpy);
 
-    // Without intercept source, _prevRouteKey + the gate source URL come from
-    // the previous URL (/shop).
+    // Without intercept source, _prevRouteKey comes from the previous URL
+    // (/shop).
     const call = vi.mocked(setRequestContextPrevRouteKey).mock.calls[0];
-    expect(call[0]).toBe("shop.items");
-    expect((call[1] as URL).pathname).toBe("/shop");
+    expect(call).toEqual(["shop.items"]);
   });
 });

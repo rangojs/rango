@@ -15,7 +15,7 @@ import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
 import { payloadInitialTheme } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
@@ -327,15 +327,9 @@ async function handleProgressiveEnhancementInner<TEnv>(
     // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
     // matching — a stale `foregroundOnAction` cache entry must re-execute in the
     // foreground during the re-render, exactly as the JS path's
-    // revalidateAfterAction does. PPR transition({ when }) runs during match,
-    // while foregroundOnAction reads _inActionRevalidation there too, so all
-    // action metadata must be available before matching.
+    // revalidateAfterAction does.
     const peReqCtx = getRequestContext();
     peReqCtx._inActionRevalidation = true;
-    peReqCtx._gateActionId = directActionId ?? undefined;
-    peReqCtx._gateActionUrl = new URL(url);
-    peReqCtx._gateActionResult = actionResult;
-    peReqCtx._gateFormData = formData;
 
     return runRoutine(
       peRenderPlan({
@@ -428,11 +422,7 @@ function renderPeResponse<TEnv>(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: gateTransitions(
-        match.segments,
-        getRequestContext(),
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(match.segments, getRequestContext()),
       matched: match.matched,
       diff: match.diff,
       resolvedIds: match.resolvedIds,
@@ -604,16 +594,6 @@ async function matchPeErrorBoundary<TEnv>(
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
-  // Only the failing action id + URL are in scope here (no formData/actionResult
-  // thread into this helper). Expose the URL only when the action id is known:
-  // this helper also handles malformed form bodies before action detection, and
-  // those should not look like action-triggered renders to transition({ when }).
-  if (actionId != null) {
-    const peErrCtx = getRequestContext();
-    peErrCtx._gateActionId = actionId;
-    peErrCtx._gateActionUrl = new URL(url);
-  }
-
   return errorResult;
 }
 
@@ -629,11 +609,7 @@ function renderPeErrorResponse<TEnv>(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: gateTransitions(
-        errorResult.segments,
-        getRequestContext(),
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(errorResult.segments, getRequestContext()),
       matched: errorResult.matched,
       diff: errorResult.diff,
       resolvedIds: errorResult.resolvedIds,

@@ -46,6 +46,9 @@ test.describe.serial("route-types-hmr", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    // The Vite error overlay (off on the shared server) for the invalid
+    // transition({ when }) test below.
+    cliOptions: { env: { RANGO_E2E_HMR_OVERLAY: "1" } },
   });
 
   test.setTimeout(isCI ? 60_000 : 30_000);
@@ -654,6 +657,60 @@ test.describe.serial("route-types-hmr", () => {
       expect(result["factoryHmr.beta"]).toBe("/factory-hmr/beta");
       expect(result["factoryHmr.gamma"]).toBeNull();
     }).toPass({ timeout: WATCHER_TIMEOUT });
+  });
+
+  // -- Invalid transition({ when }) --
+  // `when` runs in the browser: a server function in urls() fails
+  // re-discovery. The error must be LOUD on an HMR edit too: the terminal
+  // prints it (an error, not the recovery-mode warning) and the browser shows
+  // it in the Vite error overlay, instead of the last-good route tree serving
+  // silently.
+  test("an invalid transition({ when }) edit prints the error and shows the Vite overlay", async ({
+    page,
+  }) => {
+    test.skip(
+      !f.proc(),
+      "isolatedServer required to observe dev-server output",
+    );
+    const proc = f.proc()!;
+    const ERROR =
+      'transition({ when }) on route "blog.post" (/blog/:postId) is not a client function.';
+
+    await page.goto(f.url("/blog"));
+    await expect(page.locator("vite-error-overlay")).not.toContainText(
+      "is not a client function",
+    );
+    const stdoutAtStart = proc.stdout().length;
+    const stderrAtStart = proc.stderr().length;
+
+    const broken = originalBlogContent
+      .replace("({ path, cache })", "({ path, cache, transition })")
+      .replace(
+        'path("/:postId", BlogPostHandler, { name: "post" }),',
+        `path("/:postId", BlogPostHandler, { name: "post" }, () => [
+      transition({ when: () => true }),
+    ]),`,
+      );
+    expect(broken).not.toBe(originalBlogContent);
+    writeFileBumpMtime(blogUrlsPath, broken);
+
+    await expect(async () => {
+      const fresh =
+        proc.stdout().slice(stdoutAtStart) + proc.stderr().slice(stderrAtStart);
+      expect(fresh).toContain(ERROR);
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+    await expect(page.locator("vite-error-overlay")).toContainText(
+      "is not a client function",
+      { timeout: WATCHER_TIMEOUT },
+    );
+    // It stays up: a reload re-sends it.
+    await page.reload();
+    await expect(page.locator("vite-error-overlay")).toContainText(
+      "is not a client function",
+      { timeout: WATCHER_TIMEOUT },
+    );
+    // The gen file stays at last-good while the definition is invalid.
+    expect(await fs.readFile(genFilePath, "utf-8")).toBe(originalGenContent);
   });
 
   // -- Recovery mode test --

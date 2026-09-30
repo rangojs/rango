@@ -5,10 +5,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import type { HandlerContext } from "../handler-context.js";
-import type {
-  ResolvedSegment,
-  TransitionWhenContext,
-} from "../../types/segments.js";
+import type { ResolvedSegment } from "../../types/segments.js";
 
 // C1: a no-JS (PE) action that throws with NO matching error boundary must
 // re-render with HTTP 500, matching the JS path (server-action.ts sets
@@ -73,11 +70,13 @@ function makeTransitionBoundaryResult(): unknown {
   };
 }
 
-function seedTransitionGate(
-  reqCtx: ReturnType<typeof makeReqCtx>,
-  onContext: (ctx: TransitionWhenContext) => boolean,
-) {
-  reqCtx._transitionWhen = [{ id: "pe-error-seg", when: onContext }];
+/** Record a transition({ when }) reference for the error segment, as a match does. */
+function seedTransitionWhen(reqCtx: ReturnType<typeof makeReqCtx>) {
+  const when = vi.fn(() => true);
+  reqCtx._transitionWhenRefs = new Map([
+    ["pe-error-seg", { when, site: { routeName: "pe.error" } }],
+  ]);
+  return when;
 }
 
 interface StubCtxOptions {
@@ -252,50 +251,21 @@ describe("handleProgressiveEnhancement — PE re-render preserves request header
   });
 });
 
-describe("handleProgressiveEnhancement — transition action metadata", () => {
-  it("does not expose actionUrl when a malformed form fails before action detection", async () => {
-    const request = buildMalformedFormRequest();
-    const reqCtx = makeReqCtx(request);
-    let seen: TransitionWhenContext | undefined;
-    seedTransitionGate(reqCtx, (ctx) => {
-      seen = ctx;
-      return true;
-    });
-    const ctx = makeStubCtx({
-      actionThrows: false,
-      matchErrorResult: makeTransitionBoundaryResult(),
-    });
-
-    const res = await runWithRequestContext(reqCtx, () =>
-      handleProgressiveEnhancement(
-        ctx,
-        request,
-        {},
-        new URL(request.url),
-        false,
-        reqCtx._handleStore,
-        undefined,
-      ),
-    );
-
-    expect(res).not.toBeNull();
-    expect(seen?.actionId).toBeUndefined();
-    expect(seen?.actionUrl).toBeUndefined();
-    expect(seen?.actionResult).toBeUndefined();
-    expect(seen?.formData).toBeUndefined();
-  });
-
-  it("exposes actionId and actionUrl when a known PE action renders an error boundary", async () => {
+describe("handleProgressiveEnhancement — transition({ when }) never runs on the server", () => {
+  // A no-JS action has no browser commit to decide: the predicate is carried
+  // (SSR strips it from <ViewTransition>) and never called.
+  it.each([
+    ["a malformed form that fails before action detection", false],
+    ["a known PE action that renders an error boundary", true],
+  ])("%s", async (_label, actionThrows) => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const request = buildDirectActionRequest();
+    const request = actionThrows
+      ? buildDirectActionRequest()
+      : buildMalformedFormRequest();
     const reqCtx = makeReqCtx(request);
-    let seen: TransitionWhenContext | undefined;
-    seedTransitionGate(reqCtx, (ctx) => {
-      seen = ctx;
-      return true;
-    });
+    const when = seedTransitionWhen(reqCtx);
     const ctx = makeStubCtx({
-      actionThrows: true,
+      actionThrows,
       matchErrorResult: makeTransitionBoundaryResult(),
     });
 
@@ -312,9 +282,7 @@ describe("handleProgressiveEnhancement — transition action metadata", () => {
     );
 
     expect(res).not.toBeNull();
-    expect(seen?.actionId).toBe(ACTION_ID);
-    expect(seen?.actionUrl?.pathname).toBe("/pe");
-    expect(seen?.method).toBe("POST");
+    expect(when).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
 });

@@ -55,7 +55,8 @@ export default defineConfig(({ command }) => ({
       // Several e2e routes intentionally throw to verify router error payloads.
       // Vite's dev overlay is broadcast to connected clients and can block
       // unrelated parallel tests that are running against the shared dev server.
-      overlay: false,
+      // route-types-hmr's isolated server turns it on to assert the overlay.
+      overlay: process.env.RANGO_E2E_HMR_OVERLAY === "1",
     },
   },
   oxc: {

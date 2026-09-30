@@ -9,7 +9,6 @@ import type {
   NotFoundBoundaryHandler,
 } from "../types";
 import {
-  isPprEntry,
   type EntryData,
   type InterceptEntry,
   type InterceptSelectorContext,
@@ -48,7 +47,7 @@ import {
 } from "./telemetry.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { ShellRecordUnavailableError } from "../cache/shell-snapshot.js";
-import { evaluatePprTransitionWhen } from "./transition-when.js";
+import { recordTransitionWhenRefs } from "./transition-when.js";
 
 /**
  * Per-call telemetry lifecycle emitter for match()/matchPartial(). Each method
@@ -235,33 +234,14 @@ export function createMatchHandlers<TEnv = any>(
     if (reqCtx) reqCtx._cacheSignal = segments;
   };
 
-  const evaluatePprTransitionWhenForMatch = (
-    ctx: MatchContext<TEnv>,
-    isPartial: boolean,
-  ): void => {
+  const recordTransitionWhenRefsForMatch = (ctx: MatchContext<TEnv>): void => {
     const reqCtx = _getRequestContext();
     if (!reqCtx) return;
-    reqCtx._pprTransitionDecisions = undefined;
-    if (!isPprEntry(ctx.manifestEntry)) return;
-
-    evaluatePprTransitionWhen(
-      ctx.entries,
-      reqCtx,
-      {
-        params: ctx.matched.params,
-        routeName: ctx.interceptSelectorContext.toRouteName,
-      },
-      (error, segmentId) =>
-        callOnError(error, "rendering", {
-          request: ctx.request,
-          url: ctx.url,
-          env: ctx.env,
-          params: ctx.matched.params,
-          segmentId,
-          isPartial,
-          handledByBoundary: false,
-        }),
-    );
+    const entry = ctx.manifestEntry;
+    recordTransitionWhenRefs(ctx.entries, reqCtx, {
+      routeName: ctx.routeKey,
+      pattern: entry?.type === "route" ? entry.pattern : undefined,
+    });
   };
 
   async function createMatchContextForFull(
@@ -350,7 +330,7 @@ export function createMatchHandlers<TEnv = any>(
           }
 
           const ctx = result as MatchContext<TEnv>;
-          evaluatePprTransitionWhenForMatch(ctx, false);
+          recordTransitionWhenRefsForMatch(ctx);
 
           try {
             const state = createPipelineState();
@@ -466,7 +446,7 @@ export function createMatchHandlers<TEnv = any>(
               emitter.end(0, false);
               return null;
             }
-            evaluatePprTransitionWhenForMatch(ctx, true);
+            recordTransitionWhenRefsForMatch(ctx);
 
             if (isRouterDebugEnabled()) {
               startRevalidationTrace({

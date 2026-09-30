@@ -23,7 +23,8 @@ import {
 import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
+import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -382,14 +383,6 @@ async function revalidateAfterActionInner<TEnv>(
 ): Promise<Response> {
   const reqCtx = getRequestContext();
   const { actionContext } = continuation;
-  // Expose the action that triggered this revalidation to the transition({ when })
-  // gate (covers both the error-boundary and success gate calls below). Mirrors
-  // the action fields a revalidate() predicate sees.
-  reqCtx._gateActionId = actionContext?.actionId;
-  reqCtx._gateActionUrl = actionContext?.actionUrl;
-  reqCtx._gateActionResult = actionContext?.actionResult;
-  reqCtx._gateFormData = actionContext?.formData;
-
   // Mark the rest of this request as an action revalidation render. The "use
   // cache" runtime reads this to re-execute a stale entry in the foreground
   // (fresh data in the action response) rather than serving stale + revalidating
@@ -524,16 +517,13 @@ function renderActionBoundaryResponse<TEnv>(
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
-      segments: gateTransitions(
-        errorBoundary.segments,
-        reqCtx,
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(errorBoundary.segments, reqCtx),
       isPartial: true,
       matched: errorBoundary.matched,
       diff: errorBoundary.diff,
       resolvedIds: errorBoundary.resolvedIds,
       params: errorBoundary.params,
+      routeName: publicRouteName(errorBoundary.routeName),
       isError: true,
       handles: handleStore.stream(),
       version: ctx.version,
@@ -590,16 +580,13 @@ function renderRevalidationResponse<TEnv>(
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
-      segments: gateTransitions(
-        matchResult.segments,
-        reqCtx,
-        ctx.router.onError,
-      ),
+      segments: attachTransitionWhen(matchResult.segments, reqCtx),
       isPartial: true,
       matched: matchResult.matched,
       diff: matchResult.diff,
       resolvedIds: matchResult.resolvedIds,
       params: matchResult.params,
+      routeName: publicRouteName(matchResult.routeName),
       slots: matchResult.slots,
       handles: handleStore.stream(),
       version: ctx.version,

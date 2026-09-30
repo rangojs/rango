@@ -28,6 +28,7 @@ import {
   ClientUrlsLoading,
   ClientUrlsRoot,
 } from "./client-root.js";
+import { createClientUrlsWhenRef } from "../transition-when-ref.js";
 import type {
   ClientTransitionConfig,
   ClientUrlInterceptRecord,
@@ -95,9 +96,12 @@ export interface ClientUrlProjectionRoute {
    *  document renders await them before first flush. Absent (= none) in
    *  projections serialized before the option existed. */
   readonly awaitedLoaderIndices?: readonly number[];
-  /** Data-only transition config (no `when` — server-tree only); absent in
-   *  projections serialized before transition support. */
+  /** Data-only transition config (never `when`); absent in projections
+   *  serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
+  /** The route's transition() declares a browser-run `when`. Materialization
+   *  attaches a clientUrls when reference (definition + route id). */
+  readonly transitionWhen?: true;
 }
 
 export interface ClientUrlProjectionIntercept {
@@ -250,11 +254,12 @@ function serializeTransition(
 ): Readonly<ClientTransitionConfig> | undefined {
   const source = route.transition;
   if (!source) return undefined;
-  // The DSL already validated shape and rejected `when`; re-copy defensively
-  // so the projection is a plain JSON value (class maps included).
+  // The DSL already validated shape; re-copy defensively so the projection is
+  // a plain JSON value (class maps included). `when` is a function: the
+  // projection records only that it exists (transitionWhen).
   const config: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
-    if (value === undefined) continue;
+    if (value === undefined || key === "when") continue;
     config[key] =
       typeof value === "object" && value !== null
         ? Object.freeze({ ...(value as Record<string, string>) })
@@ -290,6 +295,9 @@ function serializeRoute(route: ClientUrlRouteRecord): ClientUrlProjectionRoute {
       ? { awaitedLoaderIndices: Object.freeze(awaitedLoaderIndices) }
       : {}),
     ...(transition ? { transition } : {}),
+    ...(typeof route.transition?.when === "function"
+      ? { transitionWhen: true as const }
+      : {}),
   });
 }
 
@@ -562,9 +570,20 @@ function materializeRouteItems(
                   ),
                 ]
               : []),
-            // Data-only per-route transition config: same child position as a
-            // hand-written server transition(config) — no `when`.
-            ...(route.transition ? [transition({ ...route.transition })] : []),
+            // Per-route transition config: same child position as a
+            // hand-written server transition(config). A declared `when` rides
+            // as a reference to the definition + route id; the browser calls
+            // the function the "use client" module declares.
+            ...(route.transition
+              ? [
+                  transition({
+                    ...route.transition,
+                    ...(route.transitionWhen
+                      ? { when: createClientUrlsWhenRef(reference, route.id) }
+                      : {}),
+                  }),
+                ]
+              : []),
           ],
         ) as AllUseItems,
     );

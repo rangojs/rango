@@ -73,3 +73,11 @@ export interface NonSerializableStateShape {
 
 export const NonSerializableState =
   createLocationState<NonSerializableStateShape>();
+
+// transition({ when }) reads it from the destination (TxWhenState.read(ctx.to)):
+// a Link carrying { animate: false } gates its navigation off.
+export interface TxWhenStateShape {
+  animate: boolean;
+}
+
+export const TxWhenState = createLocationState<TxWhenStateShape>();

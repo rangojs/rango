@@ -46,8 +46,21 @@ declare global {
   }
 }
 
-export const router = createRouter({}).routes(({ path }) => [
+// transition({ when }) is a browser predicate: a plain (server) function fails
+// route discovery at dev startup and at build, naming the route. Registered
+// only when RANGO_TEST_SERVER_WHEN is set, and unnamed so the static route-type
+// parser leaves the committed gen file alone.
+const serverWhen = (): boolean => true;
+
+export const router = createRouter({}).routes(({ path, transition }) => [
   path("/", HomePage, { name: "home" }),
+  ...(process.env.RANGO_TEST_SERVER_WHEN
+    ? [
+        path("/server-when/:id", HomePage, () => [
+          transition({ when: serverWhen }),
+        ]),
+      ]
+    : []),
   ...(process.env.RANGO_TEST_PRERENDER_ERROR
     ? [path("/prerender-boom", PrerenderBoom)]
     : []),

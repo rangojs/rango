@@ -107,6 +107,33 @@ export async function prerenderTestAction(): Promise<{ ok: true }> {
 }
 
 /**
+ * useActionState counter for the transition({ when }) probe: the browser calls
+ * it with (prevState, formData), so the predicate sees `action.formData` and
+ * the returned count as `action.result`. Touches a cookie so the route
+ * revalidates.
+ */
+export async function txCountAction(
+  count: number,
+  formData: FormData,
+): Promise<number> {
+  await delay(50);
+  cookies().set("tx-count", String(formData.get("probe") ?? ""), {
+    path: "/",
+    maxAge: 60,
+  });
+  return count + 1;
+}
+
+/**
+ * Always fails: the route's errorBoundary() renders, so the browser commits
+ * the action's error lane (transition({ when }) sees `action.error`).
+ */
+export async function txFailingAction(): Promise<never> {
+  await delay(50);
+  throw new Error("tx-action-failed");
+}
+
+/**
  * Simple action that triggers revalidation.
  * Mutating a cookie makes the current route re-render so loader-based tests can
  * verify that registered loaders are re-executed after the action completes.

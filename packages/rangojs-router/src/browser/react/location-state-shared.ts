@@ -254,6 +254,13 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    */
   read(): TState | undefined;
   /**
+   * Read this definition's slot from a location snapshot instead of the
+   * current entry: a transition({ when }) context's `from` / `to`, or any
+   * `{ state }` holding a `history.state` object. A snapshot read never clears
+   * flash state.
+   */
+  read(location: { readonly state: unknown }): TState | undefined;
+  /**
    * Statically write the value into the current history entry under this
    * definition's key, preserving any other keys already on history.state
    * (e.g. router bookkeeping, other LocationState slots).
@@ -323,6 +330,26 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * ProductState.delete();
  * ```
  */
+let onCurrentStateReplaced: (() => void) | undefined;
+
+/**
+ * @internal The navigation store registers here (navigation-store.ts) to
+ * refresh its per-entry memory: back/forward reads the entry being left from
+ * that memory (at popstate history.state already belongs to the destination),
+ * so a write after the entry's commit must reach it.
+ */
+export function setCurrentHistoryStateListener(
+  listener: (() => void) | undefined,
+): void {
+  onCurrentStateReplaced = listener;
+}
+
+/** Replace the current entry's history.state in place (same URL). */
+export function replaceCurrentHistoryState(state: unknown): void {
+  window.history.replaceState(state, "", window.location.href);
+  onCurrentStateReplaced?.();
+}
+
 export function createLocationState<TState>(
   options?: LocationStateOptions,
 ): LocationStateDefinition<
@@ -380,7 +407,13 @@ export function createLocationState<TState>(
   });
 
   Object.defineProperty(fn, "read", {
-    value: (): TState | undefined => {
+    value: (location?: { readonly state: unknown }): TState | undefined => {
+      if (location !== undefined) {
+        const state = location.state;
+        return state !== null && typeof state === "object"
+          ? ((state as Record<string, unknown>)[getKey()] as TState | undefined)
+          : undefined;
+      }
       if (typeof window === "undefined") return undefined;
       return window.history.state?.[getKey()] as TState | undefined;
     },
@@ -404,11 +437,7 @@ export function createLocationState<TState>(
       const existing = window.history.state;
       const current =
         existing !== null && typeof existing === "object" ? existing : {};
-      window.history.replaceState(
-        { ...current, [key]: value },
-        "",
-        window.location.href,
-      );
+      replaceCurrentHistoryState({ ...current, [key]: value });
     },
     enumerable: true,
   });
@@ -431,7 +460,7 @@ export function createLocationState<TState>(
         return;
       const next = { ...current };
       delete next[key];
-      window.history.replaceState(next, "", window.location.href);
+      replaceCurrentHistoryState(next);
     },
     enumerable: true,
   });

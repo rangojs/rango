@@ -24,6 +24,8 @@ import { createNavigationBridge } from "../browser/navigation-bridge";
 function createStore() {
   return {
     getHistoryKey: vi.fn(() => "http://localhost/current"),
+    rememberDisplayedEntry: vi.fn(),
+    getHistoryEntryMemory: vi.fn(() => undefined),
     getCachedSegments: vi.fn((): any => undefined),
     hasHistoryCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),

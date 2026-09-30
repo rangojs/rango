@@ -42,6 +42,7 @@
  * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
+import { decideTransitionGatedOff } from "../browser/transition-when.js";
 import { useEffect, type ReactNode, type ComponentType } from "react";
 import type { RenderResult } from "@testing-library/react";
 import { renderSegments } from "../segment-system.js";
@@ -645,8 +646,24 @@ export async function renderRoute(
       mount,
     );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
+    // Production's browser-run transition({ when }) decision
+    // (browser/partial-update.ts): the committed location is the source.
+    const gatedOff = decideTransitionGatedOff(segments, () => ({
+      kind: "push",
+      from: {
+        url: eventController.getLocation().href,
+        params: eventController.getParams(),
+        state: window.history.state,
+      },
+      to: {
+        url: nextUrl,
+        params: match.params,
+        state: historyState ?? null,
+      },
+    }));
     const root = await renderSegments(segments, {
       outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
     });
     eventController.setLocation(nextUrl);
     eventController.setParams(match.params);
@@ -668,7 +685,7 @@ export async function renderRoute(
       // Production's transition() lane (browser/partial-update.ts). Its
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.
-      if (shouldStartViewTransition(segments)) {
+      if (shouldStartViewTransition(segments, gatedOff)) {
         commitInTransition(emit, segments, { root, metadata }, ["navigation"]);
       } else {
         emit({ root, metadata });

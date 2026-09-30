@@ -778,7 +778,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "PPR4",
     contract:
-      "conditional transition predicates rerun on every PPR shell HIT while route handlers replay",
+      "transition({ when }) never runs on the server: a PPR shell HIT carries the predicate as a client reference while route handlers replay",
     transport: "request",
     execution: "shell-capture",
     scope: "in-scope-child",
@@ -794,12 +794,14 @@ const matrixRows: SemanticMatrixRow[] = [
         const response = await request.get(url, htmlHeaders);
         expect(response.headers()["x-rango-shell"]).toBe("HIT");
         const body = await response.text();
+        // The browser decides: the payload carries the "use client" export
+        // (Flight import row), not a server decision.
+        expect(body).toContain("shellExecWhen");
         const match = body.match(
           /data-testid="shell-exec-counters"[^>]*>(\{[^<]+\})</,
         );
         expect(match).toBeTruthy();
         return JSON.parse(match![1].replace(/&quot;/g, '"')) as {
-          transitionWhen: number;
           path: number;
           layout: number;
           parallel: number;
@@ -808,7 +810,6 @@ const matrixRows: SemanticMatrixRow[] = [
 
       const first = await readCounters();
       const second = await readCounters();
-      expect(second.transitionWhen).toBe(first.transitionWhen + 1);
       expect(second.path).toBe(first.path);
       expect(second.layout).toBe(first.layout);
       expect(second.parallel).toBe(first.parallel);

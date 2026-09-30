@@ -273,12 +273,14 @@ global middleware
   HIT — runs the full middleware chain and the live loaders. A MISS renders
   like axis 1, handlers included; a HIT replays the handler layer from the
   shell's own doc record and never runs a handler (see "PPR HIT: no handler
-  runs" below). A PPR route's `transition({ when })`
-  predicates run after middleware but before cache lookup and route handlers
-  on every match, then project the request-specific decision onto the
-  outgoing payload without mutating the reusable segment record. Pinned by the
+  runs" below). `transition({ when })` never runs on the server, on a PPR
+  route or any other: the predicate is a browser function the payload carries
+  as a client reference (attached from the route definition right before
+  Flight, `rsc/attach-transition-when.ts`, so no stored record holds it), and
+  the browser decides at the navigation's first commit. Pinned by the
   `[PPR2]` row ("a HIT runs the full middleware chain and live loaders; no
-  handler runs") and the `[PPR4]` row.
+  handler runs") and the `[PPR4]` row (a HIT carries the predicate, handlers
+  replay).
 - **Partial navigations cache and reuse the PPR handler layer without changing
   the Flight payload or client runtime.** A normal-route partial request first
   tries to seed the snapshot's canonical
@@ -300,13 +302,13 @@ global middleware
   safely replace it. The capture rebinds its request identity to the stripped
   target document URL, so route-authored `cache()` scopes use `doc:` keys and
   document completeness guards remain armed.
-  Intercepts remain source-resolved. Conditional
-  transition predicates are evaluated from the matched manifest before replay,
-  so they stay request-specific without re-running handlers. A decision gates
-  only the transition of a segment the response sends: a segment the client
-  holds that its `revalidate()` (or the default) does not re-render is omitted
-  on a replay HIT exactly as on the live path, `transition({ when })` or not
-  (#986; `keepClientSegment` in `match-middleware/cache-lookup.ts`, pinned by
+  Intercepts remain source-resolved. A replay HIT carries each segment's
+  `transition({ when })` reference exactly as the live path does; the browser
+  decides over every committed segment, kept ones included (#989), so no
+  segment is re-sent to carry a decision: a segment the client holds that its
+  `revalidate()` (or the default) does not re-render is omitted on a replay
+  HIT exactly as on the live path, `transition({ when })` or not (#986;
+  `keepClientSegment` in `match-middleware/cache-lookup.ts`, pinned by
   `serve-shell-request-replay-revalidate.rsc-test.tsx` and the dev+production
   load-more e2e in both apps). Production may use
   a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh

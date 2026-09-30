@@ -51,6 +51,8 @@ export type {
   TransitionConfig,
   TransitionWhenFn,
   TransitionWhenContext,
+  TransitionWhenKind,
+  RouteLocation,
   ResolvedSegment,
   SegmentMetadata,
   SlotState,

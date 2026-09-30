@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { assertTransitionWhenShape } from "../transition-when-ref.js";
 import type {
   PartialCacheOptions,
   Handler,
@@ -1007,6 +1008,7 @@ const transition = (
   const { store, ctx } = requireDslContext(
     "transition() must be called inside urls()",
   );
+  assertTransitionWhenShape(config.when);
 
   // Allocate a single index for this transition() call (used in all paths),
   // mirroring cache() — the child form uses it for the name, the wrapper form

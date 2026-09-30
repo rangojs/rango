@@ -32,8 +32,21 @@ import {
   urls,
   type HandlerContext,
   type Revalidate,
+  type TransitionWhenContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import * as RSDServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
+
+/**
+ * transition({ when }) is a browser predicate. In a real app it is an export
+ * of a "use client" module, so the RSC graph sees a client reference; here the
+ * same shape is made by tagging the function in place.
+ */
+let whenIds = 0;
+function clientWhen<T extends (...args: never[]) => unknown>(fn: T): T {
+  RSDServer.registerClientReference(fn, "test/when.ts", `when${whenIds++}`);
+  return fn;
+}
 
 /** Renders the page named by `?page` (default 1), as a paged list would. */
 function ListPage(ctx: HandlerContext): React.ReactNode {
@@ -64,8 +77,10 @@ type Placement = "route" | "layout";
  * route or on the list's layout (which has no revalidate()).
  */
 function makeRouter(mode: Mode, on: Placement) {
-  const when = (ctx: { currentUrl?: URL; nextUrl: URL }): boolean =>
-    mode === "hold" && ctx.currentUrl?.pathname === ctx.nextUrl.pathname;
+  const when = clientWhen(
+    (ctx: TransitionWhenContext): boolean =>
+      mode === "hold" && ctx.from.url.pathname === ctx.to.url.pathname,
+  );
   return createRouter({}).routes(
     urls(({ path, layout, transition, revalidate }) => {
       // DSL items bind to the entry whose callback calls them.
@@ -104,7 +119,20 @@ function payloadOf(result: ServeShellRequestResult) {
       id: segment.id as string,
       component: present(segment.component),
       loading: present(segment.loading),
-      transition: present(segment.transition) ? segment.transition : undefined,
+      // A client reference serializes as a "$<row>" pointer to an I row; the
+      // row number is not part of the contract.
+      transition: present(segment.transition)
+        ? Object.fromEntries(
+            Object.entries(segment.transition as Record<string, unknown>).map(
+              ([k, v]) => [
+                k,
+                k === "when" && typeof v === "string" && v.startsWith("$")
+                  ? "client-ref"
+                  : v,
+              ],
+            ),
+          )
+        : undefined,
     })),
     matched,
     diff,
@@ -159,7 +187,7 @@ const keptSegmentScenarios: Array<{
         urls(({ path, layout, parallel, transition, revalidate }) => [
           layout(ListChrome, () => [
             parallel({ "@aside": () => <aside>list-aside</aside> }, () => [
-              transition({ when: () => true }),
+              transition({ when: clientWhen(() => true) }),
               revalidate(() => false),
             ]),
             path("/list", ListPage, { name: "list", ppr: true }, () => [
@@ -177,7 +205,7 @@ const keptSegmentScenarios: Array<{
       createRouter({}).routes(
         urls(({ path, transition, revalidate }) => [
           path("/item/:id", ItemPage, { name: "item", ppr: true }, () => [
-            transition({ when: () => true }),
+            transition({ when: clientWhen(() => true) }),
             revalidate(() => false),
           ]),
         ]),
@@ -190,7 +218,7 @@ const keptSegmentScenarios: Array<{
     router: () =>
       createRouter({}).routes(
         urls(({ path, transition }) => [
-          transition({ when: () => true }, () => [
+          transition({ when: clientWhen(() => true) }, () => [
             path("/a", () => <p>page-a</p>, { name: "a", ppr: true }),
             path("/b", () => <p>page-b</p>, { name: "b", ppr: true }),
           ]),
@@ -207,7 +235,7 @@ const keptSegmentScenarios: Array<{
           cache({ ttl: 300 }, () => [
             layout(ListChrome, () => [
               path("/list", ListPage, { name: "list", ppr: true }, () => [
-                transition({ when: () => true }),
+                transition({ when: clientWhen(() => true) }),
                 revalidate(listRevalidate),
               ]),
             ]),
@@ -260,15 +288,16 @@ describe("serveShellRequest: a replay HIT honours revalidate() (#986)", () => {
 
           const sent = payloadOf(live);
           expect(payloadOf(replay)).toEqual(sent);
-          // Only the route re-renders, and only when revalidate() says so;
-          // its transition survives only where the predicate holds.
-          const held = mode === "hold" && on === "route";
+          // Only the route re-renders, and only when revalidate() says so.
+          // The payload carries the static config with the predicate as a
+          // client reference, hold or drop alike: no decision is serialized.
+          const carries = mode !== "none" && on === "route";
           expect(sent.segments).toEqual(
             revalidates
               ? [
                   expect.objectContaining({
                     component: true,
-                    transition: held ? {} : undefined,
+                    transition: carries ? { when: "client-ref" } : undefined,
                   }),
                 ]
               : [],

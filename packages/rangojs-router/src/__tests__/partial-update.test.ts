@@ -71,6 +71,8 @@ function createMockStore(opts?: {
     setHistoryKey: vi.fn((k: string) => {
       currentHistoryKey = k;
     }),
+    rememberDisplayedEntry: vi.fn(),
+    getHistoryEntryMemory: vi.fn(() => undefined),
     getCachedSegments: vi.fn((key: string) => cache.get(key)),
     getSegmentState: vi.fn(() => ({
       path: "/",
@@ -205,11 +207,11 @@ describe("partial-update", () => {
         "new-route",
       );
 
-      // tx.commit called with all segment IDs
+      // tx.commit called with all segment IDs (and the payload's route name)
       expect(tx.commit).toHaveBeenCalledWith(
         ["L0", "L0R0"],
         expect.any(Array),
-        undefined,
+        { routeName: undefined },
       );
 
       // onUpdate called with rendered tree
@@ -1163,10 +1165,14 @@ describe("partial-update", () => {
       await updater("http://localhost/new", [], false, undefined, tx);
 
       // Should render ALL segments (not merge with cache)
-      expect(renderSegments).toHaveBeenCalledWith(serverSegments);
+      expect(renderSegments).toHaveBeenCalledWith(serverSegments, {
+        transitionGatedOff: false,
+      });
 
       // Commit with segment IDs from server
-      expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments);
+      expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments, {
+        routeName: undefined,
+      });
 
       expect(onUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2321,6 +2327,247 @@ describe("partial-update", () => {
       ).resolves.toBeUndefined();
 
       expect(onUpdate).toHaveBeenCalledOnce();
+    });
+  });
+});
+
+describe("partial-update transition({ when })", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A same-structure navigation (every id on screen) on a transition() route:
+   * without a decision it commits held (transition lane).
+   */
+  function runWhenNav(opts: {
+    when: (ctx: any) => boolean;
+    tx?: Record<string, unknown>;
+    mode?: any;
+    metadata?: Record<string, unknown>;
+    memory?: { routeName?: string; state?: unknown };
+    /** History keys getHistoryKey returns, in call order (the last repeats). */
+    historyKeys?: string[];
+  }) {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/items/1",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k-from", __rsc_ls_s: "from-state" } },
+    });
+    const route = seg("L0R0", {
+      params: { id: "1" },
+      transition: { when: opts.when },
+    } as any);
+    const store = {
+      ...createMockStore({
+        cachedSegments: [seg("L0", { type: "layout" }), route],
+        currentUrl: "http://localhost/items/1",
+      }),
+      getHistoryEntryMemory: vi.fn(() => ({
+        routeName: opts.memory?.routeName ?? "items.detail",
+        state: opts.memory?.state ?? { key: "k-from", mark: "memory" },
+      })),
+    };
+    if (opts.historyKeys) {
+      const entry = store.getCachedSegments(store.getHistoryKey());
+      store.getCachedSegments = vi.fn(() => entry);
+      const keys = [...opts.historyKeys];
+      store.getHistoryKey = vi.fn(() =>
+        keys.length > 1 ? keys.shift()! : keys[0]!,
+      );
+    }
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [
+          seg("L0R0", {
+            component: "refreshed",
+            params: { id: "2" },
+            transition: { when: opts.when },
+          } as any),
+        ],
+        matched: ["L0", "L0R0"],
+        diff: ["L0R0"],
+        params: { id: "2" },
+        routeName: "items.detail",
+        ...opts.metadata,
+      },
+    });
+    const commitLanes: boolean[] = [];
+    const onUpdate = vi.fn(() => {
+      commitLanes.push(transitionState.inTransition);
+    });
+    const renderSegments = vi.fn(async (..._args: any[]) => "tree");
+    const tx = { ...createMockTx("http://localhost/items/1"), ...opts.tx };
+    const updater = createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    });
+    return {
+      commitLanes,
+      renderSegments,
+      tx,
+      run: () =>
+        updater(
+          "http://localhost/items/2",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx as any,
+          opts.mode,
+        ),
+    };
+  }
+
+  it("decides once with the committed source and the destination the commit leaves, and false commits urgently", async () => {
+    const seen: any[] = [];
+    const when = vi.fn((ctx: any) => {
+      seen.push(ctx);
+      return false;
+    });
+    const nav = runWhenNav({
+      when,
+      tx: { state: { __rsc_ls_s: "pushed" } },
+      metadata: { locationState: { __rsc_ls_srv: "server" } },
+    });
+    await nav.run();
+
+    expect(when).toHaveBeenCalledTimes(1);
+    const ctx = seen[0];
+    expect(ctx.kind).toBe("push");
+    expect(ctx.from.url.href).toBe("http://localhost/items/1");
+    expect(ctx.from.params).toEqual({ id: "1" });
+    expect(ctx.from.routeName).toBe("items.detail");
+    // Push: the live entry is still the source's.
+    expect(ctx.from.state).toEqual({ key: "k-from", __rsc_ls_s: "from-state" });
+    expect(ctx.to.url.href).toBe("http://localhost/items/2");
+    expect(ctx.to.params).toEqual({ id: "2" });
+    expect(ctx.to.routeName).toBe("items.detail");
+    expect(ctx.to.state).toEqual({
+      __rsc_ls_s: "pushed",
+      __rsc_ls_srv: "server",
+    });
+    // Gated off: urgent commit (no hold), render told to "none" every class.
+    expect(nav.commitLanes).toEqual([false]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: true,
+    });
+  });
+
+  it("true holds the same-structure transition() commit", async () => {
+    const nav = runWhenNav({ when: () => true });
+    await nav.run();
+    expect(nav.commitLanes).toEqual([true]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: false,
+    });
+  });
+
+  it("reuses the decision the optimistic swap carried on the transaction", async () => {
+    const when = vi.fn(() => true);
+    const nav = runWhenNav({ when, tx: { transitionGatedOff: true } });
+    await nav.run();
+    expect(when).not.toHaveBeenCalled();
+    expect(nav.commitLanes).toEqual([false]);
+  });
+
+  it.each([
+    ["a stale revalidation", { type: "stale-revalidation" }],
+    ["a refresh()", { type: "navigate", refresh: true }],
+  ])(
+    "%s gated off commits urgently, so a re-suspending segment streams its loading()",
+    async (_label, mode) => {
+      const off = runWhenNav({ when: () => false, mode });
+      await off.run();
+      expect(off.commitLanes).toEqual([false]);
+      const on = runWhenNav({ when: () => true, mode });
+      await on.run();
+      expect(on.commitLanes).toEqual([true]);
+    },
+  );
+
+  it("a stale revalidation the user navigated away from never calls when", async () => {
+    // Stale Back, then a shallow push moves the history key before the
+    // background response lands: the UI update is discarded, so no decision.
+    const when = vi.fn(() => true);
+    const nav = runWhenNav({
+      when,
+      mode: { type: "stale-revalidation" },
+      historyKeys: ["/items/1", "/items/1?tab=b"],
+    });
+    await nav.run();
+    expect(when).not.toHaveBeenCalled();
+    expect(nav.commitLanes).toEqual([]);
+  });
+
+  it("reports kind revalidate for a refresh, with to === from", async () => {
+    const seen: any[] = [];
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return true;
+      },
+      tx: { replace: true },
+      mode: { type: "navigate", refresh: true },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("revalidate");
+    expect(seen[0].to).toBe(seen[0].from);
+  });
+
+  it("reports kind pop on a traversal, reading the entry left from memory", async () => {
+    const seen: any[] = [];
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return true;
+      },
+      tx: { traversal: true },
+      memory: { routeName: "items.detail", state: { mark: "left" } },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("pop");
+    expect(seen[0].from.state).toEqual({ mark: "left" });
+    // The destination is the entry the browser restored.
+    expect(seen[0].to.state).toEqual({
+      key: "k-from",
+      __rsc_ls_s: "from-state",
+    });
+  });
+
+  it("passes the action fields on an action refetch commit", async () => {
+    const seen: any[] = [];
+    const addToCart = Object.assign(() => {}, { $$id: "cart#add" });
+    const formData = new FormData();
+    const nav = runWhenNav({
+      when: (ctx) => {
+        seen.push(ctx);
+        return false;
+      },
+      mode: {
+        type: "action",
+        actionId: "cart#add",
+        action: { formData, result: { ok: true } },
+      },
+    });
+    await nav.run();
+    expect(seen[0].kind).toBe("action");
+    expect(seen[0].isAction(addToCart)).toBe(true);
+    expect(seen[0].action).toEqual({
+      id: "cart#add",
+      formData,
+      result: { ok: true },
+      error: undefined,
+    });
+    // false: urgent, like every other gated-off commit.
+    expect(nav.commitLanes).toEqual([false]);
+    expect(nav.renderSegments.mock.calls[0]![1]).toMatchObject({
+      transitionGatedOff: true,
     });
   });
 });

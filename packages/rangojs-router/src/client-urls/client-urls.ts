@@ -29,6 +29,7 @@ const TRANSITION_CONFIG_KEYS = new Set<PropertyKey>([
   "default",
   "name",
   "viewTransition",
+  "when",
 ]);
 
 const PPR_NUMBER_KEYS = new Set<PropertyKey>([
@@ -431,12 +432,6 @@ function createHelpers(): ClientUrlHelpers {
       );
     }
     for (const key of Reflect.ownKeys(config)) {
-      if (key === "when") {
-        throw new Error(
-          "clientUrls() transition() does not support `when` — the gate is a " +
-            "server-executed predicate; declare it with a server-tree transition()",
-        );
-      }
       if (!TRANSITION_CONFIG_KEYS.has(key)) {
         throw new Error(
           `clientUrls() transition() option ${JSON.stringify(String(key))} is not supported`,
@@ -445,6 +440,13 @@ function createHelpers(): ClientUrlHelpers {
     }
     if (config.name !== undefined && typeof config.name !== "string") {
       throw new Error("clientUrls() transition() name must be a string");
+    }
+    if (config.when !== undefined && typeof config.when !== "function") {
+      throw new TypeError(
+        process.env.NODE_ENV !== "production"
+          ? `clientUrls() transition() when must be a function (it runs in the browser), got ${config.when === null ? "null" : typeof config.when}`
+          : "clientUrls() transition() when must be a function",
+      );
     }
     if (
       config.viewTransition !== undefined &&

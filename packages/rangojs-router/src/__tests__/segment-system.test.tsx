@@ -944,6 +944,58 @@ describe("segment-system", () => {
         }
       });
 
+      it("a transition({ when }) gated-off commit keeps the same ViewTransition element with every class none (#995)", async () => {
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+          const when = () => false;
+          const route = seg({
+            id: "L0R0",
+            type: "route",
+            transition: { default: "fade", name: "hero", when } as any,
+          });
+
+          const held = findFirst(
+            toTreeNode(await renderSegmentsFresh([route])),
+            MockViewTransition,
+          );
+          const gated = findFirst(
+            toTreeNode(
+              await renderSegmentsFresh([route], { transitionGatedOff: true }),
+            ),
+            MockViewTransition,
+          );
+
+          // Same element type either way: the decision never remounts.
+          expect(held?.type).toBe(MockViewTransition);
+          expect(gated?.type).toBe(MockViewTransition);
+          expect(held?.props.when).toBeUndefined();
+          expect(gated?.props.name).toBe("hero");
+          // Every class resolves to "none" for every transition type.
+          for (const phase of ["enter", "exit", "update", "share", "default"]) {
+            const value = gated?.props[phase];
+            const classes =
+              typeof value === "string" ? [value] : Object.values(value);
+            expect(new Set(classes), phase).toEqual(new Set(["none"]));
+          }
+          expect(gated?.props.when).toBeUndefined();
+          expect(gated?.props.viewTransition).toBeUndefined();
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
+
       it("pushes ancestor layout ViewTransition into descendant default outlet content", async () => {
         function MockViewTransition(props: any) {
           return props.children;

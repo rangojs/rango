@@ -211,6 +211,9 @@ export async function discoverRouters(
           routerId: id,
           ...(router.__basename ? { urlPrefix: router.__basename } : {}),
           ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
+          // Discovery evaluates the tree in the react-server graph, where a
+          // "use client" import is a client reference: reject server `when`s.
+          validateTransitionWhen: true,
         }),
       );
       routerMountIndex++;

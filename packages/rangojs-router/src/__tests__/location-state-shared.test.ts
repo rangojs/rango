@@ -90,6 +90,39 @@ describe("location-state-shared", () => {
     expect(ProductState.read()).toEqual({ id: "p1" });
   });
 
+  it("read(location) reads a snapshot's state (a transition({ when }) from/to), not history.state", () => {
+    const ProductState = createLocationState<{ id: string }>();
+    (ProductState as any).__rsc_ls_key = "product";
+    vi.stubGlobal("window", {
+      history: { state: { product: { id: "current" } } },
+    });
+
+    expect(ProductState.read({ state: { product: { id: "to" } } })).toEqual({
+      id: "to",
+    });
+    expect(ProductState.read({ state: null })).toBeUndefined();
+    expect(ProductState.read({ state: "primitive" })).toBeUndefined();
+    // Works without a window (a snapshot read never touches history).
+    vi.unstubAllGlobals();
+    expect(ProductState.read({ state: { product: { id: "p" } } })).toEqual({
+      id: "p",
+    });
+  });
+
+  it("read(location) of a flash definition never clears the slot", () => {
+    const Flash = createLocationState<string>({ flash: true });
+    (Flash as any).__rsc_ls_key = "flash";
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      history: { state: { flash: "hi" }, replaceState },
+      location: { href: "http://localhost/" },
+    });
+    const state = { flash: "hi" };
+    expect(Flash.read({ state })).toBe("hi");
+    expect(state).toEqual({ flash: "hi" });
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+
   it("validates location state entry shape", () => {
     expect(
       isLocationStateEntry({ __rsc_ls_key: "key", __rsc_ls_value: "value" }),

@@ -359,11 +359,7 @@ export async function createMatchContextForPartial<TEnv>(
     });
   }
 
-  setRequestContextPrevRouteKey(
-    nav.effectiveFromMatch?.routeKey,
-    nav.effectiveFromUrl,
-    nav.effectiveFromMatch?.params ?? nav.prevParams,
-  );
+  setRequestContextPrevRouteKey(nav.effectiveFromMatch?.routeKey);
 
   const interceptSelectorContext: InterceptSelectorContext = {
     from: nav.effectiveFromUrl,

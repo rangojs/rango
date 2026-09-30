@@ -15,7 +15,8 @@ import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
 import { documentCacheStoresRender } from "../cache/document-cache.js";
-import { gateTransitions } from "./transition-gate.js";
+import { attachTransitionWhen } from "./attach-transition-when.js";
+import { publicRouteName } from "../route-name.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 
 /**
@@ -40,11 +41,12 @@ export function buildFullPayload(
       pathname: url.pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
-      segments: gateTransitions(m.segments, reqCtx, ctx.router.onError),
+      segments: attachTransitionWhen(m.segments, reqCtx),
       matched: m.matched,
       diff: m.diff,
       resolvedIds: m.resolvedIds,
       params: m.params,
+      routeName: publicRouteName(m.routeName),
       isPartial: false,
       interceptTargets: m.interceptTargets,
       rootLayout: ctx.router.rootLayout,

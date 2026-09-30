@@ -413,12 +413,8 @@ async function* tryPrerenderLookup<TEnv>(
  * live partial path omits a segment whose revalidation said no
  * (segment-resolution/revalidation.ts).
  *
- * A PPR transition({ when }) decision (RequestContext._pprTransitionDecisions)
- * is no exception. evaluatePprTransitionWhen (transition-when.ts) records one
- * for every entry with a predicate, whatever it returns, and the live path
- * sends no non-revalidated segment to carry it either. Keeping the component
- * for it made a navigation replay HIT replace the client's segment with the
- * snapshot's copy even when revalidate() returned false (#986).
+ * A transition({ when }) is no exception: it is decided in the browser for
+ * kept segments too, so no segment is re-sent to carry a decision (#986).
  */
 function keepClientSegment(segment: ResolvedSegment): void {
   segment.component = null;

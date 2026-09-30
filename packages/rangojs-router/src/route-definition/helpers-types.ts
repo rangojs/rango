@@ -501,12 +501,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * transition({}) is startTransition + ViewTransition under the default and
    * startTransition only when the router sets viewTransition: false.
    *
-   * Conditional hold: pass `when: (ctx) => boolean` to gate the transition per
-   * request. It normally runs server-side after the route handler. On a `ppr`
-   * route it is automatically hoisted before route handlers and reevaluated on
-   * every replay, so it may read URL/params/action/env and middleware-set context
-   * but not handler-set context. Returning false drops this transition for the
-   * request. This is distinct from intercept()'s match-time `when` selector.
+   * Conditional hold: pass `when`, a function exported from a "use client"
+   * module, to gate the navigation in the browser. It runs once per
+   * navigation with { kind, from, to, isAction, action }, never on the server;
+   * false makes the commit urgent (no hold, no view transition). This is
+   * distinct from intercept()'s match-time `when` selector.
    *
    * ```typescript
    * // Attach to a single route
@@ -525,15 +524,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   transition({ viewTransition: false }),
    * ])
    *
-   * // Hold only when the handler decided to (post-handler predicate):
+   * // Hold only when arriving from the list. holdFromList is a "use client"
+   * // export: ({ from }) => from.routeName === "products.list"
    * path("/product/:id", ProductPage, { name: "product" }, () => [
-   *   transition({ when: (ctx) => ctx.get(KeepScroll) === true }),
+   *   transition({ when: holdFromList }),
    * ])
    * ```
    * @param config - ViewTransition configuration (enter, exit, update, share,
    *   default, name), `viewTransition: "auto" | false` to toggle the router
    *   boundary (createRouter({ viewTransition }) sets the app-wide default), and
-   *   `when: (ctx) => boolean` to gate the transition per request
+   *   `when` to gate the transition per navigation (a browser predicate)
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

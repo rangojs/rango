@@ -51,6 +51,14 @@ interface CommitOptions {
    * merged in. The page left was saved by handleTraversalStart.
    */
   traversal?: boolean;
+  /** The committed route's name (payload metadata), remembered per history entry. */
+  routeName?: string;
+  /**
+   * transition({ when }) decision already made at this navigation's first
+   * presentation (the optimistic clientUrls() swap). Not a commit input: the
+   * partial updater reuses it instead of deciding again.
+   */
+  transitionGatedOff?: boolean;
 }
 
 /**
@@ -71,6 +79,8 @@ interface BoundCommitOverrides {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
+  /** The committed route's name (payload metadata), remembered per history entry. */
+  routeName?: string;
 }
 
 /**
@@ -78,6 +88,14 @@ interface BoundCommitOverrides {
  */
 export interface BoundTransaction {
   readonly currentUrl: string;
+  /** Bound `replace` option (history replace instead of push). */
+  readonly replace?: boolean;
+  /** Bound `traversal` option: a back/forward navigation. */
+  readonly traversal?: boolean;
+  /** Bound user state (resolved), pushed with the entry at commit. */
+  readonly state?: unknown;
+  /** Bound `transitionGatedOff`: the decision made at first presentation. */
+  readonly transitionGatedOff?: boolean;
   /** Start streaming and get a token to end it when the stream completes */
   startStreaming(): StreamingToken;
   /** Commit the navigation. Returns the effective scroll option for the caller to handle. */
@@ -160,6 +178,9 @@ export function createNavigationTransaction(
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     if (storeOnly) {
+      // Same entry (an action refetch): refresh its state, keep its name
+      // unless the payload names it.
+      store.rememberDisplayedEntry(opts.routeName);
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       return { scroll: false };
@@ -169,6 +190,7 @@ export function createNavigationTransaction(
       if (serverState && Object.keys(serverState).length > 0) {
         mergeLocationState(serverState);
       }
+      store.rememberDisplayedEntry(opts.routeName);
       handle.complete(parsedUrl);
       debugLog("[Browser] Traversal committed, historyKey:", historyKey);
       return { scroll };
@@ -184,6 +206,7 @@ export function createNavigationTransaction(
 
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
+    store.rememberDisplayedEntry(opts.routeName);
 
     if (hasLocationState(oldState) || hasLocationState(historyState)) {
       window.dispatchEvent(new Event("__rsc_locationstate"));
@@ -211,6 +234,10 @@ export function createNavigationTransaction(
         get currentUrl() {
           return currentUrl;
         },
+        replace: opts.replace,
+        traversal: opts.traversal,
+        state: opts.state,
+        transitionGatedOff: opts.transitionGatedOff,
         startStreaming() {
           return handle.startStreaming();
         },
@@ -241,6 +268,7 @@ export function createNavigationTransaction(
             interceptSourceUrl,
             cacheOnly,
             serverState,
+            routeName: overrides?.routeName ?? opts.routeName,
           });
         },
       };

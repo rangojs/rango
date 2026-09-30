@@ -5,6 +5,7 @@ vi.mock("../browser/scroll-restoration", () => ({
   handleNavigationStart: vi.fn(),
   handleNavigationEnd: vi.fn(),
   ensureHistoryKey: vi.fn(),
+  getHistoryStateKey: vi.fn(() => "entry-key"),
 }));
 
 // Mock logging to keep test output clean

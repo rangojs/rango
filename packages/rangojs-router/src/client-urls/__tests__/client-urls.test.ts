@@ -496,13 +496,21 @@ describe("clientUrls", () => {
     });
   });
 
-  it("validates transition config and rejects the server-only when gate", () => {
+  it("validates transition config; `when` must be a function (it runs in the browser)", () => {
+    const when = () => true;
+    const accepted = clientUrls(({ path, transition }) => [
+      path("/", HomePage, () => [transition({ when })]),
+    ]);
+    expect(accepted.routes[0]?.transition?.when).toBe(when);
+
     expect(() =>
       clientUrls(({ path, transition }) => [
-        path("/", HomePage, () => [transition({ when: () => true } as never)]),
+        path("/", HomePage, () => [transition({ when: "yes" } as never)]),
       ]),
     ).toThrow(
-      "transition() does not support `when` — the gate is a server-executed predicate",
+      new TypeError(
+        "clientUrls() transition() when must be a function (it runs in the browser), got string",
+      ),
     );
 
     expect(() =>

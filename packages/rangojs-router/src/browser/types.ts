@@ -49,6 +49,12 @@ export interface RscMetadata {
   /** Merged route params from the matched route */
   params?: Record<string, string>;
   /**
+   * The matched route's name (include name prefix applied), when the route is
+   * named. The browser keeps it per history entry for transition({ when })'s
+   * `from.routeName` / `to.routeName` (browser/transition-when.ts).
+   */
+  routeName?: string;
+  /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state
    * Slots are used for intercepting routes during soft navigation
@@ -274,6 +280,18 @@ export interface SegmentState {
   path: string;
   currentUrl: string;
   currentSegmentIds: string[];
+}
+
+/**
+ * What the router remembers about one history entry for transition({ when })
+ * (NavigationStore.rememberDisplayedEntry).
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export interface HistoryEntryMemory {
+  readonly routeName: string | undefined;
+  /** The entry's `history.state` as last recorded. */
+  readonly state: unknown;
 }
 
 /**
@@ -529,6 +547,22 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
+
+  /**
+   * Per-history-entry memory for transition({ when }) sources: record the
+   * entry on screen (keyed by its `history.state.key`) with its current
+   * `history.state` and, when given, its route name (kept from the last
+   * record otherwise; every push/replace creates a new key, so a stale name
+   * never carries to another entry). Called after every commit, restore and
+   * state merge.
+   */
+  rememberDisplayedEntry(routeName?: string): void;
+  /**
+   * The memory of the entry on screen, or of `entryKey`. At popstate
+   * history.state already belongs to the destination, so back/forward reads
+   * the entry being LEFT from here. In-memory only: empty after a reload.
+   */
+  getHistoryEntryMemory(entryKey?: string): HistoryEntryMemory | undefined;
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
   cacheSegmentsForHistory(

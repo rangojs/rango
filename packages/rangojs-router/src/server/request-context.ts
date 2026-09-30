@@ -49,7 +49,7 @@ import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import type { ExecutionContext, RequestScope } from "../types/request-scope.js";
-import type { TransitionWhenFn } from "../types/segments.js";
+import type { TransitionWhenRecord } from "../router/transition-when.js";
 import type { ResolvedTracing } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import {
@@ -264,16 +264,13 @@ export interface RequestContext<
   readonly _handleStore: HandleStore;
 
   /**
-   * @internal transition({ when }) predicates for segments matched this request,
-   * keyed by segment id. Collected during resolution (the function is stripped
-   * from the serialized segment config), then evaluated post-handler in
-   * rsc-rendering — outside any cache scope — to drop the transition of any
-   * segment whose predicate returns false.
+   * @internal transition({ when }) client references of the matched entry
+   * chain, keyed by segment id. Recorded at match time from the static route
+   * definition (router/transition-when.ts) and attached to the payload's
+   * segments right before Flight (rsc/attach-transition-when.ts). The server
+   * never calls them, and no cache or snapshot stores them.
    */
-  _transitionWhen?: Array<{ id: string; when: TransitionWhenFn }>;
-
-  /** @internal PPR transition decisions evaluated before cache lookup/handlers. */
-  _pprTransitionDecisions?: Map<string, boolean>;
+  _transitionWhenRefs?: ReadonlyMap<string, TransitionWhenRecord>;
 
   /**
    * @internal Post-match serve-source truth for the PPR replay reporter.
@@ -711,20 +708,6 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
-   * @internal Navigation/action source data the transition({ when }) gate reads
-   * to build its ShouldRevalidateFn-shaped predicate context. currentUrl/Params
-   * come from the navigation snapshot (set at match time); action* are stashed
-   * at the action-bearing gate call sites. All undefined when there is no source
-   * (initial full load) or no action (plain navigation).
-   */
-  _gateCurrentUrl?: URL;
-  _gateCurrentParams?: Record<string, string>;
-  _gateActionId?: string;
-  _gateActionUrl?: URL;
-  _gateActionResult?: unknown;
-  _gateFormData?: FormData;
-
-  /**
    * @internal True while the post-action revalidation render is running (set by
    * revalidateAfterAction). The "use cache" runtime reads this to prefer
    * freshness over a fast stale response during an action: a stale entry
@@ -927,8 +910,7 @@ export type PublicRequestContext<
   | "setCookie"
   | "deleteCookie"
   | "_handleStore"
-  | "_transitionWhen"
-  | "_pprTransitionDecisions"
+  | "_transitionWhenRefs"
   | "_pprReplayPostMatchReason"
   | "_cacheStore"
   | "_searchParamsFilter"
@@ -959,12 +941,6 @@ export type PublicRequestContext<
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
-  | "_gateCurrentUrl"
-  | "_gateCurrentParams"
-  | "_gateActionId"
-  | "_gateActionUrl"
-  | "_gateActionResult"
-  | "_gateFormData"
   | "_inActionRevalidation"
   | "_reportedErrors"
   | "_renderErrors"
@@ -1097,17 +1073,10 @@ export function setRequestContextParams(
  */
 export function setRequestContextPrevRouteKey(
   prevRouteKey: string | undefined,
-  currentUrl?: URL,
-  currentParams?: Record<string, string>,
 ): void {
   const ctx = requestContextStorage.getStore();
   if (!ctx) return;
   if (prevRouteKey !== undefined) ctx._prevRouteKey = prevRouteKey;
-  // Source URL/params for the transition({ when }) gate (effectiveFromUrl /
-  // effectiveFromMatch.params from the navigation snapshot). Same write point as
-  // _prevRouteKey, which doubles as fromRouteName.
-  if (currentUrl !== undefined) ctx._gateCurrentUrl = currentUrl;
-  if (currentParams !== undefined) ctx._gateCurrentParams = currentParams;
 }
 
 /**
@@ -1532,7 +1501,6 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
-    _transitionWhen: [],
     _cacheStore: cacheStore,
     _searchParamsFilter: searchParamsFilter,
     _explicitTaggedStores: explicitTaggedStores,

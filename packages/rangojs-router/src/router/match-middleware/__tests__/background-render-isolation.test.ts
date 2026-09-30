@@ -9,9 +9,9 @@
  *     the page. Proactive caching (a partial navigation whose layout the client
  *     already has) re-renders the same way once the response exists, while the
  *     body is still streaming.
- *   - transition({ when }) predicates: fresh resolution records them on
- *     `_transitionWhen`, which the foreground's gateTransitions reads after the
- *     match. A stale HIT collects none (it replays the stored transition).
+ *   - transition({ when }) references: the foreground records them from the
+ *     route definition at match time (`_transitionWhenRefs`) and attaches them
+ *     before Flight; the refresh must neither replace them nor call them.
  *   - perf metrics: the foreground's `_metricsStore` feeds its Server-Timing.
  *   - response writes: header/setCookie/setStatus/onResponse are closures over
  *     (or `this`-reads of) the live request's stub response and callback list.
@@ -60,7 +60,7 @@ import { createLoader } from "../../../loader.rsc.js";
 import { createHandle } from "../../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import { MemorySegmentCacheStore } from "../../../cache/memory-segment-store.js";
-import { gateTransitions } from "../../../rsc/transition-gate.js";
+import { attachTransitionWhen } from "../../../rsc/attach-transition-when.js";
 import { createResponseWithMergedHeaders } from "../../../rsc/helpers.js";
 import { cookies } from "../../../server/cookie-store.js";
 import { notFound } from "../../../errors.js";
@@ -92,6 +92,7 @@ function gate() {
 let handlerCalls = 0;
 let layoutCalls = 0;
 let transitionHandlerCalls = 0;
+const staleTransitionWhen = vi.fn(() => false);
 let metricsHandlerCalls = 0;
 let writerLayoutCalls = 0;
 let bgOnResponseCalls = 0;
@@ -181,7 +182,7 @@ beforeAll(async () => {
           return createElement("div", null, "t");
         },
         { name: "bgRenderStaleTransition" },
-        () => [transition({ enter: "fade", when: () => false })],
+        () => [transition({ enter: "fade", when: staleTransitionWhen })],
       ),
       path(
         "/stale-metrics",
@@ -362,7 +363,7 @@ describe("background re-render of a stale cached route", () => {
     expect(partialNav).toEqual(["loader"]);
   });
 
-  it("the refresh adds no transition({ when }) predicate to the stale HIT's gate", async () => {
+  it("the refresh leaves the foreground's transition({ when }) reference, and nothing calls it", async () => {
     await serve("/stale-transition");
     serveStale = true;
     await serve("/stale-transition");
@@ -370,14 +371,21 @@ describe("background re-render of a stale cached route", () => {
     // The HIT skips the handler, so the second call is the refresh's.
     expect(transitionHandlerCalls).toBe(2);
 
-    // serve() awaited the refresh, so the gate below runs after it: the
-    // interleaving where the refresh resolves before the foreground's gate.
-    expect(lastReqCtx._transitionWhen).toEqual([]);
-    const [route] = gateTransitions(lastSegments as any, lastReqCtx).filter(
-      (s) => s.type === "route",
-    );
-    // The stale HIT replays the stored transition; the predicate never runs.
-    expect(route?.transition).toEqual({ enter: "fade" });
+    // serve() awaited the refresh, so the attach below runs after it: the
+    // interleaving where the refresh resolves before the foreground's payload.
+    const [stored] = lastSegments.filter((s) => s.type === "route");
+    const [route] = attachTransitionWhen(
+      lastSegments as any,
+      lastReqCtx,
+    ).filter((s) => s.type === "route");
+    // The stored segment carries the static config only; the reference rides
+    // from the route definition. The server never calls the predicate.
+    expect(stored?.transition).toEqual({ enter: "fade" });
+    expect(route?.transition).toEqual({
+      enter: "fade",
+      when: staleTransitionWhen,
+    });
+    expect(staleTransitionWhen).not.toHaveBeenCalled();
   });
 
   it("the refresh records no metrics on the foreground's perf timeline", async () => {
