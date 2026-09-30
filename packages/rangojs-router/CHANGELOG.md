@@ -73,6 +73,22 @@ These public types change. What they drop, the built-in paths never produced.
   stored shell made a document MISS that read the store just before skip its
   capture (`skip-stored`), for one extra MISS
   ([#988](https://github.com/rangojs/rango/pull/988)).
+- A `ppr` client navigation served from stored segments (a shell replay,
+  `x-rango-ppr-replay: HIT`, or the route's own `cache()`,
+  `BYPASS; reason=explicit-cache-hit`) no longer re-sends a segment with
+  `transition({ when })` that the navigation does not re-send on the live path
+  (`BYPASS; reason=no-entry`): a segment whose `revalidate()` returns false, or
+  a layout the default keeps, including the `transition(config, () => [...])`
+  wrapper. The stored copy replaced the segment the client held, so a list the
+  client had built up ("Load more" appending a page, then navigating to
+  `?page=N`) showed only the captured page, while the live path kept it. Such a
+  segment is now omitted from the response, whatever the predicate returns,
+  and the client keeps its copy. The predicate still gates the transition of
+  every segment the response sends. A kept layout's `when` result, which the
+  replay used to deliver with the re-sent layout, no longer applies, the same
+  as on the live path: the client holds by the `transition` its copy carries
+  ([#989](https://github.com/rangojs/rango/issues/989)) (#986,
+  [#990](https://github.com/rangojs/rango/pull/990)).
 
 ## 0.18.0 (2026-09-30)
 

@@ -282,7 +282,13 @@ global middleware
   document completeness guards remain armed.
   Intercepts remain source-resolved. Conditional
   transition predicates are evaluated from the matched manifest before replay,
-  so they stay request-specific without re-running handlers. Production may use
+  so they stay request-specific without re-running handlers. A decision gates
+  only the transition of a segment the response sends: a segment the client
+  holds that its `revalidate()` (or the default) does not re-render is omitted
+  on a replay HIT exactly as on the live path, `transition({ when })` or not
+  (#986; `keepClientSegment` in `match-middleware/cache-lookup.ts`, pinned by
+  `serve-shell-request-replay-revalidate.rsc-test.tsx` and the dev+production
+  load-more e2e in both apps). Production may use
   a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
   and stale-within-SWR runtime generations replay via a non-claiming passive
   read; those usable reads never schedule recapture. Missing, invalid-version,

@@ -39,6 +39,8 @@ import {
   ShellRestockLoader,
   ShellFlightErrorLoader,
   shellFlightErrorPasses,
+  shellLoadMoreItems,
+  ShellLoadMorePageLoader,
 } from "./shell-cache.defs.js";
 import { ShellJsxLoader, ShellJsxPage } from "./shell-cache-jsx.js";
 import {
@@ -61,6 +63,7 @@ import { ShellWarningsView } from "../components/ShellWarningsView.js";
 import { ShellExecMatrix } from "../components/ShellExecMatrix.js";
 import { ShellBakeSlow } from "../components/ShellBakeSlow.js";
 import { ShellStaleReplay } from "../components/ShellStaleReplay.js";
+import { ShellLoadMoreList } from "../components/ShellLoadMoreList.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 import { onErrorLog } from "../error-log.js";
 
@@ -588,6 +591,19 @@ function ShellStaleReplayPage(ctx: HandlerContext<{ id: string }>) {
   );
 }
 
+// Issue #986: renders the page its URL names. Keyed by that page, so a server
+// render of another page starts a new list instead of merging into this one.
+function ShellLoadMorePage(ctx: HandlerContext) {
+  const page = Number(ctx.url.searchParams.get("page") ?? "1");
+  return (
+    <ShellLoadMoreList
+      key={page}
+      page={page}
+      items={shellLoadMoreItems(page)}
+    />
+  );
+}
+
 // Slow deferred-shell-material layout (issue #715, the storefront meta
 // pattern): three TOP-LEVEL pushes settling in parts — immediate, ~5.5s slow,
 // and a Meta title CHAINED off the slow promise (+1s, ~6.5s total). The
@@ -653,6 +669,7 @@ export const shellCachePatterns = urls(
     middleware,
     parallel,
     transition,
+    revalidate,
     cache,
   }) => [
     layout(ShellCacheLayout, () => [
@@ -1005,6 +1022,28 @@ export const shellCachePatterns = urls(
       name: "shellCacheStaleReplay",
       ppr: { ttl: 300, swr: 120 },
     }),
+    // Issue #986: client-managed paging on a route with transition({ when }).
+    // revalidate() false keeps the client's accumulated list on a ?page
+    // navigation, whether the live path or a replay HIT serves it, whatever
+    // the predicate returns.
+    path(
+      "/shell-cache/load-more",
+      ShellLoadMorePage,
+      { name: "shellCacheLoadMore", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        transition({
+          when: ({ currentUrl, nextUrl }) =>
+            currentUrl?.pathname === nextUrl.pathname,
+        }),
+        revalidate(({ currentUrl, nextUrl }) =>
+          currentUrl.pathname === nextUrl.pathname &&
+          nextUrl.searchParams.has("page")
+            ? false
+            : undefined,
+        ),
+        loader(ShellLoadMorePageLoader, { ssr: false }),
+      ],
+    ),
     // Storefront shape: ppr routes under an ancestor cache() scope (the
     // rsc-cloudflare-app diagnosis shape — an app-wide cache() wrapping the
     // whole tree). Navigation replay COMPOSES with the explicit tier: the

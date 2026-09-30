@@ -86,6 +86,7 @@ export const NamedRoutes = {
   pprHeaderGuardLoader: "/ppr-header-guard/loader",
   pprLarge: "/ppr-large",
   pprLargeHoles: "/ppr-large/holes",
+  pprLoadMore: "/ppr-load-more",
   pprMwLive: "/ppr-mw-live",
   pprNavPin: "/ppr-nav-pin",
   pprNonce: "/ppr-nonce",

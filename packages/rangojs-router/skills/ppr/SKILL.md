@@ -357,7 +357,12 @@ opt-outs as a cache miss before any shell read: see the serve pipeline above.)
 `transition({ when })` is evaluated from the
 matched manifest before route handlers on every PPR match, so it can vary by
 URL/params/action or middleware context without disabling replay; handler-set
-context is unavailable by design. Intercepts, an active nonce, and an
+context is unavailable by design. Its result gates only the transition of a
+segment the response sends; it never makes a replay send one. A replay `HIT`
+makes the same segment decision as the live partial path: a segment the client
+holds that the navigation does not re-send (`revalidate()` false, or a layout
+the default keeps) is omitted from the response, so the client keeps its tree
+(a list the client built up, "Load more" style, stays as it is). Intercepts, an active nonce, and an
 absent/corrupt segment snapshot fall open to the ordinary partial path when
 encountered by the shell capture. A transition already replayed from an
 explicit cache tier remains frozen by that tier's normal semantics.

@@ -608,6 +608,8 @@ whether the routes mount.
 
 A route can configure its own `transition()` — the wrap goes around the route's component itself (routes are leaves; they have no separate default outlet channel). If the route component renders a `<ParallelOutlet />` directly, that slot remains inside the route's VT subtree, so prefer mounting parallel slots in a layout when combining intercept modals with route-level transitions. See [skills/view-transitions](../view-transitions/SKILL.md) for examples and the wrap-location rules across layouts, routes, and slots.
 
+`transition({ when })` and `revalidate()` decide different things: `when` gates the hold, `revalidate()` decides whether the route segment is re-sent. A `revalidate()` returning false keeps the client's segment on a navigation whatever `when` returns, including a `ppr` navigation replayed from the shell.
+
 ## Handler-attached `.use`
 
 Page handlers can carry their own loader, middleware, error boundaries, parallels, and other defaults via a `.use` callback — so the page is self-contained and reusable across mount sites without re-wiring the same items.
