@@ -159,6 +159,32 @@ flowchart TD
 The entry carries its tags and the moment it was cached (`taggedAt`). That
 timestamp is the only thing reads need to make the freshness decision.
 
+Which is why a write must not carry data older than its stamp
+([#977](https://github.com/rangojs/rango/issues/977)). An execution that
+read its data before `updateTag("x")` and finished after it would be stamped
+after the invalidation and served as fresh. So before the store write, every
+writer asks `predatesInvalidation(store, tags, start)` (`tag-invalidation.ts`)
+and skips the write when one of the entry's tags was invalidated after the
+execution started:
+
+```mermaid
+flowchart TD
+  S["execution starts: record { seq, at }"] --> R["read data, render, serialize"]
+  R --> Q{"a tag invalidated since the start?<br/>this isolate's order (seq), any request<br/>or the store's markers after at (another isolate)"}
+  Q -- yes --> K["skip the write: the next read misses"]
+  Q -- no --> W["WRITE as above"]
+```
+
+The execution still returns what it read. A skipped write only costs a later
+miss, never a stale read. `caching.md` "The write gate" has the writers, the
+store answers and what stays open.
+
+An entry's tags are everything its content recorded: a `"use cache"` entry
+also carries the tags of the `"use cache"` functions it calls, from their
+miss or their stored entry
+([#980](https://github.com/rangojs/rango/issues/980)), as a route `cache()`
+record and a loader's own `cache()` do for the reads inside them.
+
 ---
 
 ## ② READ — the freshness decision
@@ -220,11 +246,13 @@ flowchart TD
   landed. The mask only turns that request's hits into misses: if the put
   then fails, the request paid extra misses and other requests read KV as it
   is (a marker read in flight when the mask is set publishes nothing to L1
-  or the isolate memo). Details, the per-store table, and what is not
-  covered ([#977](https://github.com/rangojs/rango/issues/977): another
-  request's `"use cache"` execution, or a loader `cache()`, that started
-  before the call and writes after it): [caching.md](./caching.md)
-  "Read-your-own-writes in the invalidating request".
+  or the isolate memo). Details and the per-store table:
+  [caching.md](./caching.md) "Read-your-own-writes in the invalidating
+  request".
+- Both verbs also record the tags in the isolate's invalidation order, for
+  every request. Work any request started before the call (a `"use cache"`
+  execution or refresh, a loader's own `cache()`, a route `cache()` render, a
+  document-cache render) does not write its value after it: see "① WRITE".
 - The colo that runs the invalidation is correct **immediately** (KV marker +
   write-through). Other colos either converge within `tagCacheTtl`, or — if a
   purge is wired — are evicted promptly by the batched purge.

@@ -30,23 +30,27 @@
  * Invariant: the mask only turns the invalidating request's hits into misses.
  * If the durable write then fails, that request paid extra misses, never a
  * stale read, and other requests read the durable state. Both also record
- * the tags on the request (markInvalidated), so a "use cache" execution or
- * stale refresh this request started before one of its own tags was
- * invalidated is neither joined nor written (cache-runtime.ts). Its own tags
- * only: a nested "use cache" function's tags do not reach the enclosing
- * entry (#980), for this gate as for eviction. Not covered (#977): such an
- * execution in another request, or a loader cache() write, still lands, and
- * the store accepts it (docs/design/caching.md "Read-your-own-writes").
+ * the tags in the isolate's invalidation order (markInvalidated), so a cache
+ * execution that started before one of its tags was invalidated, in any
+ * request, is neither joined nor written (#973, #977): see
+ * predatesInvalidation, and docs/design/caching.md "Read-your-own-writes".
  */
 
-import {
-  _getRequestContext,
-  type RequestContext,
-} from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
-import { requestRoot } from "./request-tag-mask.js";
 import type { SegmentCacheStore } from "./types.js";
+import {
+  invalidatedSince,
+  markInvalidated,
+  type ExecutionStart,
+} from "./invalidation-order.js";
+
+export {
+  executionStart,
+  invalidatedSince,
+  type ExecutionStart,
+} from "./invalidation-order.js";
 
 /**
  * Collect every store that may hold entries tagged for this request's handler:
@@ -140,48 +144,49 @@ function markFreshReads(stores: SegmentCacheStore[]): void {
 }
 
 /**
- * The isolate's order of tag invalidations and "use cache" execution starts
- * (#973). A counter, not Date.now(): Workers advance the clock only on I/O,
- * so an execution started right after an invalidation would share its
- * millisecond and read as older.
+ * The write gate of every cache execution (#977): whether one of `tags` was
+ * invalidated after the execution that produced the value started.
+ *
+ * Every built-in store stamps an entry when it is written (CFCacheStore's
+ * `taggedAt`, VercelCacheStore's `ta`) or checks nothing on write
+ * (MemorySegmentCacheStore), so a value read before an invalidation and
+ * written after it would be served as newer than the invalidation until it
+ * expires. Two answers, either one skips the write:
+ *
+ * - this isolate's order (invalidatedSince), which sees every request's
+ *   updateTag()/revalidateTag() here, the calling one included;
+ * - the store's markers (isTagsInvalidatedSince), for another isolate's
+ *   invalidation, as far as the store can tell: KV markers on CFCacheStore
+ *   (KV-less, only this request's own), `tm` markers on VercelCacheStore,
+ *   the process markers on MemorySegmentCacheStore. Asked about the
+ *   milliseconds after the start's: this isolate's own invalidation that
+ *   preceded the start usually shares its millisecond (Workers freeze
+ *   Date.now() between I/O), and `>=` would skip every write started right
+ *   after it. Another isolate's invalidation in the start's own millisecond
+ *   is not caught. Asked fail-closed: a marker the store cannot read
+ *   counts as an invalidation.
+ *
+ * The order is read again once the store answers: its read can be in flight
+ * while this isolate invalidates (an action awaits a "use cache" miss, whose
+ * write waits on the read, then runs updateTag()), and it then answers with
+ * the markers from before. markInvalidated is synchronous, so this second
+ * look sees every invalidation made before the answer.
+ *
+ * Invariant: a skipped write only costs a later miss, never a stale read.
+ * The caller still returns the value it computed.
  */
-let cacheSeq = 0;
-
-/** The current position in that order; an execution records it at start. */
-export function currentCacheSeq(): number {
-  return cacheSeq;
-}
-
-/**
- * Whether the request invalidated any of `tags` after `since` (a
- * currentCacheSeq() value an execution recorded when it started): its value
- * may predate the invalidation, so the request neither joins nor writes it.
- */
-export function invalidatedSince(
-  ctx: RequestContext<any, any> | undefined,
+export async function predatesInvalidation(
+  store: SegmentCacheStore,
   tags: readonly string[] | undefined,
-  since: number,
-): boolean {
-  const record = ctx && requestRoot(ctx)._tagInvalidations;
-  if (!record || !tags) return false;
-  for (const tag of tags) {
-    const at = record.get(tag);
-    if (at !== undefined && at > since) return true;
-  }
-  return false;
-}
-
-/**
- * Record the invalidation on the request (RequestContext._tagInvalidations,
- * on the root so derived contexts share it), before any store sees it.
- */
-function markInvalidated(tags: readonly string[]): void {
-  const ctx = _getRequestContext();
-  if (!ctx) return;
-  const root = requestRoot(ctx);
-  const at = ++cacheSeq;
-  const record = (root._tagInvalidations ??= new Map());
-  for (const tag of tags) record.set(tag, at);
+  start: ExecutionStart,
+): Promise<boolean> {
+  if (!tags || tags.length === 0) return false;
+  if (invalidatedSince(tags, start.seq)) return true;
+  if (!store.isTagsInvalidatedSince) return false;
+  const marked = await store.isTagsInvalidatedSince([...tags], start.at + 1, {
+    failClosed: true,
+  });
+  return marked || invalidatedSince(tags, start.seq);
 }
 
 async function invalidateAcross(

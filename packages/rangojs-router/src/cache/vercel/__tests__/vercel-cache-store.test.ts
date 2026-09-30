@@ -16,7 +16,11 @@ import {
   runWithRequestContext,
 } from "../../../server/request-context.js";
 import { createMetricsStore } from "../../../router/metrics.js";
-import { revalidateTag } from "../../tag-invalidation.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  revalidateTag,
+} from "../../tag-invalidation.js";
 
 // get() may return CACHE_READ_ERROR (backend failure, distinct from a miss);
 // these tests assert hit/miss shapes, so narrow the sentinel away up front.
@@ -84,6 +88,17 @@ function makeFakeCache(): {
       expireTagHook = fn;
     },
   };
+}
+
+/** A request context whose app store is `store`. */
+function requestFor(store: VercelCacheStore) {
+  return createRequestContext({
+    env: {},
+    request: new Request("https://example.com/"),
+    url: new URL("https://example.com/"),
+    variables: {},
+    cacheStore: store,
+  });
 }
 
 function segment(tags?: string[]): CachedEntryData {
@@ -220,6 +235,77 @@ describe("VercelCacheStore", () => {
       expect(await s.isTagsInvalidatedSince(["home"], t0 + 1)).toBe(false);
       expect(await s.isTagsInvalidatedSince(["absent"], 0)).toBe(false);
       expect(await s.isTagsInvalidatedSince(["absent", "home"], t0)).toBe(true);
+    });
+
+    // #977: a page's writes finish together and share tags; each gate read
+    // its own tm marker.
+    it("the write gate shares one tm marker read among concurrent gates, and a later gate reads again", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const getSpy = vi.spyOn(cache, "get");
+      const markerReads = () =>
+        getSpy.mock.calls.filter(([key]) => String(key).includes("hot")).length;
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const start = executionStart();
+        await Promise.all(
+          Array.from({ length: 5 }, () =>
+            predatesInvalidation(s, ["hot"], start),
+          ),
+        );
+        expect(markerReads()).toBe(1);
+        for (let i = 0; i < 3; i++) {
+          await predatesInvalidation(s, ["hot"], start);
+        }
+        expect(markerReads()).toBe(4);
+      });
+    });
+
+    // #977: the write gate fails closed; other callers stay fail-open.
+    it("the write gate counts a tm marker read that fails as an invalidation", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation((key) =>
+        String(key).includes("unread")
+          ? Promise.reject(new Error("runtime cache down"))
+          : get(key),
+      );
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const start = executionStart();
+        expect(await predatesInvalidation(s, ["unread"], start)).toBe(true);
+        expect(await s.isTagsInvalidatedSince(["unread"], start.at)).toBe(
+          false,
+        );
+      });
+    });
+
+    // #977: a gate read made during the capture must not answer the
+    // capture's putShell: another instance's expireTag() in between has to
+    // reject the shell.
+    it("putShell rejects a shell invalidated after a gate read made during its capture", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      const otherInstance = new VercelCacheStore({ cache });
+
+      await runWithRequestContext(requestFor(s), async () => {
+        const createdAt = Date.now();
+        vi.advanceTimersByTime(10);
+        // A "use cache" write during the capture: its gate reads the marker.
+        expect(
+          await predatesInvalidation(s, ["shell-tag"], executionStart()),
+        ).toBe(false);
+        vi.advanceTimersByTime(10);
+        await otherInstance.invalidateTags(["shell-tag"]);
+        vi.advanceTimersByTime(10);
+
+        expect(
+          await s.putShell("k", shellEntry({ createdAt }), 60, 300, [
+            "shell-tag",
+          ]),
+        ).toBe("invalidated");
+      });
     });
 
     it("tag markers survive expireTag (untagged) and live in the tm family", async () => {

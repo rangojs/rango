@@ -47,6 +47,21 @@ function recordKey(family: ShellSnapshotRecord["family"], key: string): string {
 }
 
 /**
+ * The inner store's isTagsInvalidatedSince, absent when it has none. A
+ * capture and a HIT tail run on these wrappers as the request's store, and
+ * the writes they pass through gate on it (#977, tag-invalidation.ts
+ * predatesInvalidation).
+ */
+function forwardTagHistory<TEnv>(
+  inner: SegmentCacheStore<TEnv>,
+): SegmentCacheStore<TEnv>["isTagsInvalidatedSince"] {
+  return inner.isTagsInvalidatedSince
+    ? (tags, sinceMs, options) =>
+        inner.isTagsInvalidatedSince!(tags, sinceMs, options)
+    : undefined;
+}
+
+/**
  * A store wrapper the CAPTURE render reads through. Every call passes through to
  * the underlying store unchanged; for the item family it also RECORDS,
  * last-write-wins per key:
@@ -95,6 +110,9 @@ export class RecordingShellStore<
   }
   get supportsPassiveShellReads(): true | undefined {
     return this.inner.supportsPassiveShellReads;
+  }
+  get isTagsInvalidatedSince(): SegmentCacheStore<TEnv>["isTagsInvalidatedSince"] {
+    return forwardTagHistory(this.inner);
   }
 
   private record(
@@ -535,6 +553,9 @@ export class SeededShellStore<
   }
   get supportsPassiveShellReads(): true | undefined {
     return this.inner.supportsPassiveShellReads;
+  }
+  get isTagsInvalidatedSince(): SegmentCacheStore<TEnv>["isTagsInvalidatedSince"] {
+    return forwardTagHistory(this.inner);
   }
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {

@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### Breaking: a `"use cache"` entry carries the tags of the `"use cache"` functions it calls, so `updateTag()` of an inner tag evicts it ([#996](https://github.com/rangojs/rango/pull/996))
+
+A `"use cache"` function that called another stored the inner value in its
+own entry, but not the inner function's tags (#980). `updateTag()` or
+`revalidateTag()` of an inner tag dropped the inner entry and left the outer
+one serving the old inner value until it expired. The same-request check
+from 0.18.0 did not see the outer call as tagged by it either, so a request
+that invalidated the inner tag could still reuse an outer call it started
+earlier.
+
+```ts
+async function getStock(sku: string) {
+  "use cache";
+  cacheTag("stock");
+  return db.stock(sku);
+}
+
+async function getProductCard(sku: string) {
+  "use cache";
+  return { sku, stock: await getStock(sku) };
+}
+
+// Before: updateTag("stock") dropped getStock's entry; getProductCard's
+// entry kept serving the old stock until it expired.
+// After: getProductCard's entry is tagged "stock" too and goes with it.
+```
+
+The outer entry takes the inner call's tags whether the inner call ran, was
+read from the store (its stored tags) or joined another call's execution. A
+`"use cache"` component whose returned JSX renders a server component that
+calls another `"use cache"` function takes that call's tags too: the call
+runs while the value is encoded for the store write, after the body
+returned. So does every entry above an intermediate call whose value holds
+a nested call still running (`{ stock: getStock(sku) }`, unawaited). A
+stale inner entry's background refresh adds nothing to the outer entry,
+which holds the stale value. A route `cache()` record and a loader's own `cache()` entry
+already stored the tags of the `"use cache"` reads inside them; nested
+`"use cache"` now does the same.
+
+The breaking part: an outer entry is evicted by every tag of the calls
+inside it, so after an invalidation of an inner tag the outer function runs
+again where it used to serve its entry. Entries written before this release
+carry only their own tags until they expire or are rewritten.
+
 ### Breaking: `cache({ key })` results are stored namespaced, so a `key()` result can't name another record ([#991](https://github.com/rangojs/rango/pull/991))
 
 A route or response-route `cache({ key })` result was stored as the record
@@ -180,6 +224,45 @@ These public types change. What they drop, the built-in paths never produced.
   as on the live path: the client holds by the `transition` its copy carries
   ([#989](https://github.com/rangojs/rango/issues/989)) (#986,
   [#990](https://github.com/rangojs/rango/pull/990)).
+
+- Work that started before `updateTag()`/`revalidateTag()` of one of its
+  tags, in another request, no longer stores its value when it finishes
+  (#977). Every built-in store stamps an entry when it is written
+  (`CFCacheStore`'s `taggedAt`, `VercelCacheStore`'s `ta`) or checks
+  nothing (`MemorySegmentCacheStore`), so a `"use cache"` call that read its
+  data before another request's `updateTag("stock")` and finished after it
+  was served as newer than the invalidation until it expired; 0.18.0 closed
+  this only for the invalidating request. Now each writer checks, before its
+  store write, whether one of the entry's tags was invalidated after its
+  execution started, and skips the write if so: `"use cache"` misses and
+  stale refreshes, a loader's own `cache()` misses and refreshes, route
+  `cache()` records and response-route entries, and the document cache. The
+  check reads this isolate's invalidations from every request, and the
+  store's markers for another isolate's: KV markers on `CFCacheStore`, `tm`
+  markers on `VercelCacheStore`. A loader's own `cache()` checks from the
+  earliest run its value came from, so a value a parent layout's handler
+  started computing before the invalidation is not stored either. A skipped
+  write costs the next read a miss, never a stale read; the execution still
+  returns what it read. A `"use cache"` call also no longer joins an
+  in-flight execution that started before another request's, or another
+  isolate's, invalidation of its tags. The document cache checks from the
+  start of the request, since a middleware ahead of it can read what the
+  document bakes. Writes of one request that check at the same time share
+  a marker read in flight. A marker the check cannot read (an error, a KV
+  timeout) counts as an invalidation there, so the write is skipped.
+  Not covered: another isolate's invalidation within the execution's first
+  millisecond; a KV-less `CFCacheStore` (another isolate's invalidation
+  leaves no marker to read; ttl+swr bounds it); a KV marker another colo
+  wrote that this colo's KV read does not return yet; with `tagCacheTtl`,
+  this colo's cached marker, up to `tagCacheTtl` behind another colo; and
+  an invalidation that lands between the marker read and the store write.
+  An entry whose tag is invalidated more often than its execution takes
+  never fills, since each write started before the latest invalidation;
+  nested tags (above) make that likelier. Two routers in one isolate that
+  share a tag name skip each other's writes started before an invalidation
+  (a miss). A custom store takes part through `isTagsInvalidatedSince()`;
+  without it, only this isolate's invalidations are checked
+  ([#996](https://github.com/rangojs/rango/pull/996)).
 
 ## 0.18.0 (2026-09-30)
 

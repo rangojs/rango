@@ -195,6 +195,13 @@ per invalidated tag and compares shell generations against it:
   the entries `expireTag` had not deleted yet. The map only turns that
   request's hits into misses, so a failed `expireTag` costs it extra misses,
   never a stale read.
+- data writes (#977): `expireTag` deletes what exists when it runs, so an
+  item, segment or response written by work that started before it would
+  land after it and serve its old value. Every writer asks
+  `isTagsInvalidatedSince(tags, start + 1)` before `setItem`/`set`/
+  `putResponse` (`predatesInvalidation` in `tag-invalidation.ts`), which
+  reads the `tm` markers, and skips the write when one is newer than the
+  execution's start.
 
 Markers use the same Runtime Cache handle, not a companion store. Tagged shell
 retention is capped at the marker lifetime so an invalidated shell cannot become

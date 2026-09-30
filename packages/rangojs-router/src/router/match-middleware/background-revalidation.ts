@@ -107,6 +107,7 @@ import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
+import { executionStart } from "../../cache/tag-invalidation.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -156,6 +157,7 @@ export async function rerenderAndCacheRoute<TEnv>(
   cacheScope: CacheScope,
   routerCtx: RouterContext<TEnv>,
 ): Promise<number> {
+  const start = executionStart();
   const handleStore = routerCtx.createHandleStore();
   // Response writes land in a throwaway context nothing merges or drains. Its
   // mutators are closures over its own stub, and they keep the same guards.
@@ -253,6 +255,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       ctx.matched.params,
       segments,
       ctx.isIntercept,
+      start,
     );
     return segments.length;
   });

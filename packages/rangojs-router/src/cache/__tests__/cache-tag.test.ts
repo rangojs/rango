@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { cacheTag, normalizeTag, runWithCacheTagScope } from "../cache-tag.js";
+import {
+  cacheTag,
+  normalizeTag,
+  recordRequestTags,
+  runWithCacheTagScope,
+} from "../cache-tag.js";
 import {
   runWithRequestContext,
   type RequestContext,
@@ -153,5 +158,34 @@ describe("cacheTag render-callable fallback (#648)", () => {
     // The request document artifact is NOT touched while a "use cache" scope is
     // active — the entry owns the tag, and it propagates to _requestTags on read.
     expect(ctx._requestTags.size).toBe(0);
+  });
+});
+
+describe('recordRequestTags inside a "use cache" scope (#980)', () => {
+  it("adds the tags to the enclosing scope as well as the request", async () => {
+    const ctx = {
+      _requestTags: new Set<string>(),
+    } as unknown as RequestContext;
+    await runWithRequestContext(ctx, async () => {
+      const outer = runWithCacheTagScope(async () => {
+        cacheTag("outer");
+        // A nested "use cache" call records its tags after its own scope
+        // closed, in the caller's.
+        const inner = runWithCacheTagScope(() => cacheTag("inner"));
+        await Promise.resolve();
+        recordRequestTags([...inner.tags, " padded "], ctx);
+      });
+      await outer.result;
+      expect(outer.tags).toEqual(new Set(["outer", "inner", "padded"]));
+    });
+    expect(ctx._requestTags).toEqual(new Set(["inner", "padded"]));
+  });
+
+  it("outside any scope it records onto the request only", () => {
+    const ctx = {
+      _requestTags: new Set<string>(),
+    } as unknown as RequestContext;
+    runWithRequestContext(ctx, () => recordRequestTags(["plain"], ctx));
+    expect(ctx._requestTags).toEqual(new Set(["plain"]));
   });
 });

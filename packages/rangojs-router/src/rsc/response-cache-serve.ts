@@ -34,6 +34,11 @@ import {
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { cacheKeyBase } from "../cache/cache-key-utils.js";
+import {
+  executionStart,
+  predatesInvalidation,
+  type ExecutionStart,
+} from "../cache/tag-invalidation.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 
 /** Injected cache-scope builder (kept off this module's runtime import graph). */
@@ -161,17 +166,26 @@ export async function serveResponseRouteWithCache(
   const canServeCached = (response: Response): boolean =>
     isCacheableStatus(response.status) && !hasPerClientSignal(response.headers);
 
-  const putFresh = (
+  // A handler run that started before one of the entry's tags was
+  // invalidated is not written (#977, predatesInvalidation).
+  const putFresh = async (
     store2: SegmentCacheStore,
     fresh: Response,
-  ): Promise<void> =>
-    store2.putResponse!(
+    start: ExecutionStart,
+  ): Promise<void> => {
+    if (await predatesInvalidation(store2, responseTags, start)) {
+      // Nothing reads the copy now: release it (a tee branch buffers).
+      await fresh.body?.cancel();
+      return;
+    }
+    await store2.putResponse!(
       cacheKey,
-      fresh.clone(),
+      fresh,
       cacheScope!.ttl,
       cacheScope!.swr,
       responseTags,
     );
+  };
 
   try {
     const cached = await store.getResponse(cacheKey);
@@ -182,8 +196,9 @@ export async function serveResponseRouteWithCache(
       // Stale hit (SWR): return cached, revalidate in background.
       reqCtx.waitUntil(async () => {
         try {
+          const start = executionStart();
           const fresh = finalizeResponse(await executeHandler());
-          if (canStore(fresh)) await putFresh(store, fresh);
+          if (canStore(fresh)) await putFresh(store, fresh, start);
         } catch (error) {
           reportCacheError(
             error,
@@ -205,6 +220,7 @@ export async function serveResponseRouteWithCache(
   }
 
   // Cache miss: execute the handler and cache the result when storeable.
+  const start = executionStart();
   const response = finalizeResponse(await executeHandler());
   if (canStore(response)) {
     // Clone SYNCHRONOUSLY here, before returning. The original `response` is
@@ -219,13 +235,7 @@ export async function serveResponseRouteWithCache(
     const toCache = response.clone();
     reqCtx.waitUntil(async () => {
       try {
-        await store.putResponse!(
-          cacheKey,
-          toCache,
-          cacheScope!.ttl,
-          cacheScope!.swr,
-          responseTags,
-        );
+        await putFresh(store, toCache, start);
       } catch (error) {
         reportCacheError(
           error,

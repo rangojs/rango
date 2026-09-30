@@ -24,6 +24,10 @@ import {
   runInSegmentTagScope,
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
+import {
+  predatesInvalidation,
+  type ExecutionStart,
+} from "./tag-invalidation.js";
 // segment-codec is the only module on cache-scope's import graph that eagerly
 // pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
 // resolve). It is imported LAZILY at the two call sites below (deserializeSegments
@@ -953,12 +957,17 @@ export class CacheScope {
    * @param params - Route params for cache key generation
    * @param segments - All resolved segments to cache
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param start - Where the render of `segments` started: the record is not
+   *   written when one of its tags was invalidated since (#977,
+   *   predatesInvalidation). A shell capture's doc record passes none: it
+   *   lives only in the shell entry, which putShell gates by its own start.
    */
   async cacheRoute(
     pathname: string,
     params: Record<string, string>,
     segments: ResolvedSegment[],
     isIntercept?: boolean,
+    start?: ExecutionStart,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
     if (!this.conditionAllows("write")) return;
@@ -1095,6 +1104,11 @@ export class CacheScope {
           ]),
         };
         if (handleOwners && encodedHandles) data.handleOwners = handleOwners;
+
+        if (start && (await predatesInvalidation(store, data.tags, start))) {
+          debugCacheLog(`[CacheScope] ${key}: invalidated since render`);
+          return;
+        }
 
         if (INTERNAL_RANGO_DEBUG) {
           debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);

@@ -108,6 +108,7 @@ import {
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { recordSegmentTags } from "../../cache/cache-tag.js";
+import { executionStart } from "../../cache/tag-invalidation.js";
 import { getRouterContext } from "../router-context.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
@@ -128,6 +129,9 @@ export function withCacheStore<TEnv>(
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     const ms = ctx.metricsStore;
+    // Before the lookup and the handlers below it run: the record's write
+    // gate (#977, CacheScope.cacheRoute).
+    const renderStart = executionStart();
 
     const allSegments: ResolvedSegment[] = [];
     for await (const segment of source) {
@@ -263,6 +267,10 @@ export function withCacheStore<TEnv>(
             ctx.matched.params,
             allSegmentsToCache,
             ctx.isIntercept,
+            // A capture's doc record lives only in the shell entry, which
+            // putShell gates by the capture start; skipping it here would
+            // read as a render that produced no record.
+            cacheScope.isShellImplicitDocScope ? undefined : renderStart,
           );
           if (INTERNAL_RANGO_DEBUG) {
             const dur = performance.now() - start;

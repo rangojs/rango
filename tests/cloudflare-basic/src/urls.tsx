@@ -179,6 +179,8 @@ import { CachedHandlesPage } from "./pages/cached-handles.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { RyowActionPage } from "./pages/ryow-action.js";
+import { NestedUseCachePage } from "./pages/nested-use-cache.js";
+import { controlHeldValue, getHeldValue } from "./use-cache-tags-data.js";
 import {
   LoaderCacheIdentityLayout,
   LoaderCacheIdentityPage,
@@ -468,6 +470,23 @@ export const urlpatterns = urls(
         return { ok: true, tag: ctx.params.tag };
       },
       { name: "testRevalidateTag" },
+    ),
+    // A "use cache" body held after it read its data, and its controls
+    // (use-cache-tags-data.ts): another request changes the data and runs
+    // updateTag() while it is held, and its write must not land (#977).
+    path.json(
+      "/held-use-cache/:probe",
+      (ctx) => getHeldValue(ctx.params.probe),
+      { name: "heldUseCache" },
+    ),
+    path.json(
+      "/held-use-cache/:probe/:op",
+      async (ctx) => {
+        const result = await controlHeldValue(ctx.params.probe, ctx.params.op);
+        if (result.tag) await updateTag(result.tag);
+        return result;
+      },
+      { name: "heldUseCacheControl" },
     ),
 
     // Purge mode (tagPurge) against the real CFCacheStore in workerd, on a
@@ -1852,6 +1871,14 @@ export const urlpatterns = urls(
             loader(BodyTaggedDepLoader),
           ],
         ),
+
+        // A "use cache" function whose only tag comes from the "use cache"
+        // function it calls, and a server action that runs updateTag() on
+        // that tag: the action's own re-render must miss the outer entry
+        // (#980).
+        path("/nested-use-cache/:probe", NestedUseCachePage, {
+          name: "nestedUseCache",
+        }),
 
         // A cached loader on a store whose KV marker writes land late, and a
         // server action that runs revalidateTag() on its tag: the action's

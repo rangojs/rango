@@ -3,7 +3,12 @@ import type { HandlerContext } from "@rangojs/router";
 import { InvalidateTagButton } from "../components/InvalidateTagButton.js";
 import { RevalidateThenReadButton } from "../components/RevalidateThenReadButton.js";
 import { LoaderBodyTagDepLoader, LoaderBodyTagLoader } from "../loaders.js";
-import { getTaggedItem } from "./cache-tag-data.js";
+import {
+  controlHeldItem,
+  getHeldItem,
+  getTaggedCard,
+  getTaggedItem,
+} from "./cache-tag-data.js";
 
 /**
  * Cache-tag invalidation test fixture (memory store).
@@ -17,7 +22,10 @@ import { getTaggedItem } from "./cache-tag-data.js";
  *   - action-driven invalidation via updateTag -> /action-page
  * plus an awaitable invalidation endpoint      -> /invalidate/:tag
  * and, on /action-page, an action that runs revalidateTag() and then reads
- * /item/:id's entry in the same request (#973).
+ * /item/:id's entry in the same request (#973). /card/:id reads a "use cache"
+ * function that calls another, with an action that invalidates the inner
+ * tag (#980); /held/:id holds a "use cache" body until /held/:id/release, so
+ * another request can invalidate its tag while it runs (#977).
  */
 
 async function LoaderBodyTagPage(ctx: HandlerContext) {
@@ -89,6 +97,38 @@ export const cacheTagPatterns = urls(({ path, cache, loader }) => [
       loader(LoaderBodyTagLoader, () => [cache({ ttl: 600 })]),
       loader(LoaderBodyTagDepLoader),
     ],
+  ),
+
+  // A "use cache" function whose only tag comes from the "use cache"
+  // function it calls, and a button whose action runs updateTag() on it.
+  path(
+    "/card/:id",
+    async (ctx) => {
+      const card = await getTaggedCard(ctx.params.id);
+      return (
+        <div data-testid="nested-card-page">
+          <span data-testid="nested-card-ts">{card.ts}</span>
+          <span data-testid="nested-card-stock-ts">{card.stockTs}</span>
+          <InvalidateTagButton tag={`nested-stock:${ctx.params.id}`} />
+        </div>
+      );
+    },
+    { name: "cacheTagNestedCard" },
+  ),
+
+  // A "use cache" body held after it read its data (#977), and its controls:
+  // hold | started | mutate (new data + updateTag) | release.
+  path.json("/held/:id", (ctx) => getHeldItem(ctx.params.id), {
+    name: "cacheTagHeld",
+  }),
+  path.json(
+    "/held/:id/:op",
+    async (ctx) => {
+      const result = controlHeldItem(ctx.params.id, ctx.params.op);
+      if (ctx.params.op === "mutate") await updateTag(`held:${ctx.params.id}`);
+      return result ?? { ok: true };
+    },
+    { name: "cacheTagHeldControl" },
   ),
 
   // Action-driven invalidation: a cached, tagged page segment plus a client

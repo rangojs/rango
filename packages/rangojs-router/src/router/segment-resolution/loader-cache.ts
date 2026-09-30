@@ -74,17 +74,23 @@ import {
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
 import {
+  executionStart,
+  predatesInvalidation,
+} from "../../cache/tag-invalidation.js";
+import {
   maskNestedContainerThenables,
   overlayLoaderContainer,
 } from "./loader-snapshot.js";
 import {
   SHELL_BAKE_TAG_OWNER,
   captureRecordedTags,
+  earliestRecordedStart,
   flattenRecordedTags,
   linkLoaderTags,
   linkLoaderTagsTo,
   linkRecordedTags,
   markIdentityRead,
+  markTagSetStart,
   readValueTags,
   recordedIdentityRead,
   recordLoaderTags,
@@ -526,8 +532,10 @@ function executeLoaderData<TEnv>(
   const isOwnBodyPush = () => isInsideLoaderBody(loaderId);
   // What a reader of this value takes on (tagLoaderValue below,
   // readValueTags): the cache() tags, plus the entry's tags on a HIT or the
-  // execution's on a MISS.
+  // execution's on a MISS. A HIT's value is as old as its lookup: a cached
+  // reader gates its own write from here at the latest (#977).
   const valueTags = new Set(tags);
+  markTagSetStart(valueTags, executionStart());
 
   const dataPromise = (async () => {
     const codec = await getCodec();
@@ -630,6 +638,15 @@ function executeLoaderData<TEnv>(
           // After the handle encode: it settles pending pushes, which can read.
           const read = identityRead();
           const entryTags = [...flattenRecordedTags(bodyTags)];
+          // One of the entry's tags was invalidated after the value's oldest
+          // part started (#977): this execution, or the run of this loader or
+          // of a dependency another reader started earlier. Written now, a
+          // value that may predate it would outlive it. Skip the write; the
+          // next read runs the body.
+          const start = earliestRecordedStart(bodyTags);
+          if (start && (await predatesInvalidation(store, entryTags, start))) {
+            return;
+          }
           await store.setItem!(k, markIdentity(v, read), {
             ...o,
             tags: entryTags.length > 0 ? entryTags : undefined,
@@ -638,6 +655,7 @@ function executeLoaderData<TEnv>(
         }),
       key,
       execute: async () => {
+        markTagSetStart(bodyTags, executionStart());
         const value = await captureRecordedTags(bodyTags, runBody);
         identityRead();
         return value;

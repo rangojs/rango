@@ -14,9 +14,11 @@ import {
   linkRecordedTags,
   linkValueTags,
   loaderTagSetsArmed,
+  markTagSetStart,
   readValueTags,
   tagLoaderValue,
 } from "../cache/cache-tag.js";
+import { executionStart } from "../cache/tag-invalidation.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -716,6 +718,9 @@ function createLoaderExecutor<TEnv>(
     // capture guard does not (server/context.ts assertNotInsideShellCapture).
 
     const recordedTags = recordTags ? new Set<string>() : undefined;
+    // A loader-cache write that stores or reads this value gates on the
+    // earliest start behind it (#977, earliestRecordedStart).
+    if (recordedTags) markTagSetStart(recordedTags, executionStart());
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(
