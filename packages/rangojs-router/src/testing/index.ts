@@ -98,6 +98,8 @@ export type {
 
 export { collectHandle } from "./collect-handle.js";
 
+export { withLocationStateKey } from "./location-state-key.js";
+
 export {
   diffGeneratedRoutes,
   assertGeneratedRoutesMatch,

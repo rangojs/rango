@@ -296,13 +296,67 @@ export interface NavigationUpdate {
 }
 
 /**
- * State value for navigate/Link
- * - LocationStateEntry[]: Type-safe state entries (recommended)
- * - unknown: Plain state format (object or getter function)
+ * Plain object accepted as {@link PlainHistoryState}. The `any` string index
+ * admits interface-typed values (an `unknown` index would reject interfaces,
+ * which carry no implicit index signature). The `never` members reject:
+ * - a single typed entry (`GridState(value)` without the array) — its
+ *   `__rsc_ls_*` fields would be spread onto history.state and
+ *   `useLocationState(GridState)` would read `undefined`;
+ * - functions, including a location-state definition passed uncalled
+ *   (`Symbol.hasInstance` comes from `Function.prototype`), which throw
+ *   `DataCloneError`;
+ * - arrays and other iterables (`Symbol.iterator`), so an array must match the
+ *   typed-entry or plain-array member instead;
+ * - built-ins tagged with `Symbol.toStringTag` (`Promise`, `WeakMap`,
+ *   `WeakSet`), which throw `DataCloneError`. The cloneable tagged ones
+ *   (`Map`, `Set`, `ArrayBuffer`, typed arrays) have their own members.
+ *
+ * Members are not checked: a function, symbol, or React element inside a
+ * plain object still compiles, as does a top-level `ReactElement` or DOM node
+ * (an object with none of the keys above).
+ */
+export interface PlainHistoryObject {
+  readonly [key: string]: any;
+  readonly __rsc_ls_key?: never;
+  readonly __rsc_ls_value?: never;
+  readonly __rsc_ls_lazy?: never;
+  readonly [Symbol.iterator]?: never;
+  readonly [Symbol.hasInstance]?: never;
+  readonly [Symbol.toStringTag]?: never;
+}
+
+/**
+ * Plain (untyped) navigation state, stored under `history.state.state` and
+ * read with `useLocationState<T>()`. A structured-clone-safe value: primitives,
+ * arrays, `Map`/`Set`, `ArrayBuffer`, typed arrays, and plain objects. Excludes
+ * functions, symbols, `Promise`/`WeakMap`/`WeakSet`, and objects carrying
+ * `__rsc_ls_*` keys (a typed entry passed without its array). Arrays, `Map`,
+ * and `Set` are checked element by element; plain object members are not
+ * checked (see {@link PlainHistoryObject}).
+ */
+export type PlainHistoryState =
+  | string
+  | number
+  | boolean
+  | bigint
+  | null
+  | undefined
+  | readonly PlainHistoryState[]
+  | ReadonlyMap<PlainHistoryState, PlainHistoryState>
+  | ReadonlySet<PlainHistoryState>
+  | ArrayBuffer
+  | ArrayBufferView
+  | PlainHistoryObject;
+
+/**
+ * State value for `router.push()` / `router.replace()` / `<Link state>`.
+ * - `readonly LocationStateEntry[]`: typed entries from `createLocationState()`
+ *   definitions, e.g. `[GridState({ count: 3 })]` (recommended)
+ * - {@link PlainHistoryState}: plain structured-clone-safe state
  */
 export type HistoryState =
-  | import("./react/location-state-shared.js").LocationStateEntry[]
-  | unknown;
+  | readonly import("./react/location-state-shared.js").LocationStateEntry[]
+  | PlainHistoryState;
 
 /**
  * Options for navigation operations
@@ -350,15 +404,25 @@ export interface NavigateOptions {
    * // Plain static state
    * navigate("/product", { state: { from: "list" } });
    *
-   * // Plain just-in-time state
-   * navigate("/product", { state: () => ({ from: window.location.pathname }) });
+   * // Compile errors (and a dev-mode runtime error for untyped callers):
+   * navigate("/product", { state: ProductState(p) }); // entry without the array
+   * navigate("/product", { state: [ProductState] }); // definition not called
    * ```
    */
   state?: HistoryState;
 }
 
-/** @internal Extended options used only within the navigation bridge */
-export interface NavigateOptionsInternal extends NavigateOptions {
+/**
+ * @internal Extended options used only within the navigation bridge. `state`
+ * is widened to `unknown`: the redirect lanes pass state already resolved to
+ * a flat `history.state` record, and in dev Link passes an uncalled
+ * definition through to resolveNavigationState's check.
+ */
+export interface NavigateOptionsInternal extends Omit<
+  NavigateOptions,
+  "state"
+> {
+  state?: unknown;
   /** Skip segment cache (used by redirect-with-state to force re-render) */
   _skipCache?: boolean;
 }
@@ -631,7 +695,7 @@ export interface ServerActionBridgeConfig {
  * Navigation bridge for handling client-side navigation
  */
 export interface NavigationBridge {
-  navigate(url: string, options?: NavigateOptions): Promise<void>;
+  navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;

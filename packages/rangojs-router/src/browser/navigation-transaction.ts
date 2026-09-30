@@ -1,5 +1,5 @@
 import type {
-  NavigateOptions,
+  NavigateOptionsInternal,
   NavigationStore,
   ResolvedSegment,
   StreamingToken,
@@ -13,20 +13,12 @@ import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
 import {
   buildHistoryState,
+  hasLocationState,
   mergeLocationState,
   pushHistoryWithIdx,
 } from "./history-state.js";
 
 export { resolveNavigationState } from "./history-state.js";
-
-/** Check if a history state object contains location state keys. */
-function hasLocationState(state: unknown): boolean {
-  if (!state || typeof state !== "object") return false;
-  return (
-    "state" in state ||
-    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
-  );
-}
 
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
@@ -117,7 +109,7 @@ export function createNavigationTransaction(
   store: NavigationStore,
   eventController: EventController,
   url: string,
-  options?: NavigateOptions & { skipLoadingState?: boolean },
+  options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
 ): NavigationTransaction {
   let committed = false;
   const currentUrl = window.location.href;

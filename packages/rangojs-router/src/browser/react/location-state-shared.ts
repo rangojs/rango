@@ -27,16 +27,63 @@ type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> =
   IsAny<T> extends true ? false : unknown extends T ? true : false;
 
+type UnknownReason =
+  "`unknown` cannot be verified as serializable; give it a concrete type";
+type FunctionReason = "functions cannot be stored in location state";
+type ConstructorReason =
+  "class constructors cannot be stored in location state";
+type SymbolReason = "symbols cannot be stored in location state";
+type ReactReason =
+  "React/RSC content cannot be stored in location state; store plain data and render it on arrival";
+type DepthReason =
+  "nested too deep to locate the unsafe field; it is below this path";
+
 /**
  * Branded error surfaced when a value that cannot live in location state is
  * used. Location state is written into `history.state`, which uses the
  * structured clone algorithm; React elements, functions, and symbols throw a
- * `DataCloneError` at runtime. Carries a human-readable reason so the compile
- * error explains the fix.
+ * `DataCloneError` at runtime. Carries the reason and the offending field's
+ * path (`items[].info.values`; `<root>` for the value itself) so the compile
+ * error names the field to fix.
  */
-export type LocationStateUnsafe<Reason extends string> = {
+export type LocationStateUnsafe<
+  Reason extends string,
+  Path extends string = "<root>",
+> = {
   readonly __rango_location_state_unsafe: Reason;
+  readonly __rango_location_state_path: Path;
 };
+
+/**
+ * Why a value cannot be structured-cloned, for the kinds that fail on their
+ * own (not through something nested in them), or `never`. Distributes over a
+ * union, one reason per unsafe member.
+ */
+type UnsafeReason<T> = T extends LocationStateUnsafeFn
+  ? FunctionReason
+  : T extends LocationStateUnsafeCtor
+    ? ConstructorReason
+    : T extends symbol
+      ? SymbolReason
+      : T extends ReactElement
+        ? ReactReason
+        : never;
+
+/** Primitives and structured-clone built-ins, stored as-is. */
+type LocationStatePassthrough =
+  | string
+  | number
+  | boolean
+  | bigint
+  | null
+  | undefined
+  | Date
+  | RegExp
+  | ArrayBuffer
+  | ArrayBufferView
+  | Blob
+  | File
+  | FormData;
 
 /**
  * Maps `T` to itself when it is safe to store in location state, or to a branded
@@ -50,48 +97,134 @@ export type LocationStateUnsafe<Reason extends string> = {
  */
 export type LocationStateSafe<T> =
   IsUnknown<T> extends true
-    ? LocationStateUnsafe<"location state needs an explicit, concrete type; `unknown` cannot be verified as serializable">
-    : T extends LocationStateUnsafeFn
-      ? LocationStateUnsafe<"functions cannot be stored in location state">
-      : T extends LocationStateUnsafeCtor
-        ? LocationStateUnsafe<"class constructors cannot be stored in location state">
-        : T extends symbol
-          ? LocationStateUnsafe<"symbols cannot be stored in location state">
-          : T extends ReactElement
-            ? LocationStateUnsafe<"React/RSC content cannot be stored in location state; store plain data and render it on arrival">
-            : T extends string | number | boolean | bigint | null | undefined
-              ? T
-              : T extends
-                    | Date
-                    | RegExp
-                    | ArrayBuffer
-                    | ArrayBufferView
-                    | Blob
-                    | File
-                    | FormData
-                ? T
-                : T extends ReadonlyMap<infer K, infer V>
-                  ? ReadonlyMap<LocationStateSafe<K>, LocationStateSafe<V>>
-                  : T extends ReadonlySet<infer V>
-                    ? ReadonlySet<LocationStateSafe<V>>
-                    : T extends readonly unknown[]
-                      ? { [K in keyof T]: LocationStateSafe<T[K]> }
-                      : T extends object
-                        ? { [K in keyof T]: LocationStateSafe<T[K]> }
-                        : T;
+    ? LocationStateUnsafe<UnknownReason>
+    : T extends unknown
+      ? [UnsafeReason<T>] extends [never]
+        ? T extends LocationStatePassthrough
+          ? T
+          : T extends ReadonlyMap<infer K, infer V>
+            ? ReadonlyMap<LocationStateSafe<K>, LocationStateSafe<V>>
+            : T extends ReadonlySet<infer V>
+              ? ReadonlySet<LocationStateSafe<V>>
+              : T extends object
+                ? { [K in keyof T]: LocationStateSafe<T[K]> }
+                : T
+        : LocationStateUnsafe<UnsafeReason<T>>
+      : never;
+
+type AtPath<P extends string> = P extends "" ? "<root>" : P;
+
+/** `a.b` for a named key; `a[string]` / `a[number]` for an index signature. */
+type ChildPath<P extends string, K> = string extends K
+  ? `${P}[string]`
+  : number extends K
+    ? `${P}[number]`
+    : K extends string | number
+      ? P extends ""
+        ? `${K}`
+        : `${P}.${K}`
+      : `${P}[symbol]`;
+
+type UnsafeAt<R, P extends string> = R extends string
+  ? LocationStateUnsafe<R, AtPath<P>>
+  : never;
+
+/**
+ * Walks `T` to the fields {@link LocationStateSafe} rejects and returns one
+ * {@link LocationStateUnsafe} brand per offending path (a union when several
+ * fail). Reports the shallowest failures: a value that is itself unsafe stops
+ * the walk, and an object with unsafe fields of its own reports only those, so
+ * a class instance or DOM node stops at its methods instead of walking its
+ * whole object graph (`{ el: HTMLElement }` took 8.4M instantiations and hit
+ * TS2589 before). Descends only into children that fail the cached
+ * `LocationStateSafe` check, and stops at depth 8.
+ */
+type LocateUnsafe<
+  T,
+  P extends string,
+  D extends unknown[],
+> = D["length"] extends 8
+  ? LocationStateUnsafe<DepthReason, AtPath<P>>
+  : IsUnknown<T> extends true
+    ? LocationStateUnsafe<UnknownReason, AtPath<P>>
+    : [UnsafeReason<T>] extends [never]
+      ? LocateNested<T, P, D>
+      : UnsafeAt<UnsafeReason<T>, P>;
+
+type LocateNested<
+  T,
+  P extends string,
+  D extends unknown[],
+> = T extends LocationStatePassthrough
+  ? never
+  : T extends ReadonlyMap<infer K, infer V>
+    ? LocateChild<K, `${P}<key>`, D> | LocateChild<V, `${P}<value>`, D>
+    : T extends ReadonlySet<infer V>
+      ? LocateChild<V, `${P}[]`, D>
+      : T extends readonly unknown[]
+        ? number extends T["length"]
+          ? LocateChild<T[number], `${P}[]`, D>
+          : {
+              [K in keyof T & `${number}`]-?: LocateChild<
+                T[K],
+                `${P}[${K}]`,
+                D
+              >;
+            }[keyof T & `${number}`]
+        : T extends object
+          ? LocateFields<T, P, D, OwnUnsafeKeys<T>>
+          : never;
+
+/**
+ * Keys whose value is unsafe itself, not through something nested in it.
+ * `any` is never one: it passes LocationStateSafe, so reporting it would
+ * leave nothing to report and hide its siblings' paths.
+ */
+type OwnUnsafeKeys<T> = {
+  [K in keyof T]-?: IsAny<T[K]> extends true
+    ? never
+    : IsUnknown<T[K]> extends true
+      ? K
+      : [UnsafeReason<T[K]>] extends [never]
+        ? never
+        : K;
+}[keyof T];
+
+type LocateFields<
+  T,
+  P extends string,
+  D extends unknown[],
+  Own extends keyof T,
+> = [Own] extends [never]
+  ? { [K in keyof T]-?: LocateChild<T[K], ChildPath<P, K>, D> }[keyof T]
+  : { [K in Own]-?: LocateChild<T[K], ChildPath<P, K>, D> }[Own];
+
+type LocateChild<T, P extends string, D extends unknown[]> = [T] extends [
+  LocationStateSafe<T>,
+]
+  ? never
+  : LocateUnsafe<T, P, [...D, unknown]>;
+
+type GenericReason =
+  "location state must be serializable: React/RSC content, functions, and symbols cannot be stored — pass plain data and render it on arrival";
 
 /**
  * `unknown` (a no-op) when `T` is safe to store in location state, otherwise a
- * branded {@link LocationStateUnsafe} object. Intersected into the value
- * parameter of a definition's call and `write()` so POSTING RSC content (or any
- * non-serializable value) is a compile error whose text carries the reason —
- * without a `TState extends ...` self-constraint, which TypeScript rejects as
- * circular (TS2313). For safe `T`, `value & unknown` collapses back to `value`,
- * so valid usage is unchanged.
+ * branded {@link LocationStateUnsafe} object naming the reason and the path of
+ * each offending field, e.g. `LocationStateUnsafe<"...", "items[].info.values">`.
+ * Intersected into the value parameter of a definition's call and `write()` so
+ * POSTING RSC content (or any non-serializable value) is a compile error whose
+ * text carries the reason and the field — without a `TState extends ...`
+ * self-constraint, which TypeScript rejects as circular (TS2313). For safe `T`,
+ * `value & unknown` collapses back to `value`, so valid usage is unchanged.
  */
 export type ValidateLocationState<T> = [T] extends [LocationStateSafe<T>]
   ? unknown
-  : LocationStateUnsafe<"location state must be serializable: React/RSC content, functions, and symbols cannot be stored — pass plain data and render it on arrival">;
+  : OrGenericUnsafe<LocateUnsafe<T, "", []>>;
+
+type OrGenericUnsafe<U> = [U] extends [never]
+  ? LocationStateUnsafe<GenericReason>
+  : U;
 
 /**
  * Type-safe location state definition
@@ -101,7 +234,10 @@ export type ValidateLocationState<T> = [T] extends [LocationStateSafe<T>]
  */
 export interface LocationStateDefinition<TArgs extends unknown[], TState> {
   (...args: TArgs): LocationStateEntry;
-  /** Injected by Vite plugin - do not set manually */
+  /**
+   * Injected by Vite plugin - do not set manually. Unit tests without the
+   * plugin use withLocationStateKey() from @rangojs/router/testing.
+   */
   __rsc_ls_key: string;
   /** Whether this state auto-clears after first read */
   readonly __rsc_ls_flash: boolean;
@@ -196,12 +332,17 @@ export function createLocationState<TState>(
   const flash = options?.flash ?? false;
   let _key: string | undefined;
 
+  // Dev and test throw; production folds the check away (the plugin always
+  // injects the key there). Without it, reads and writes silently target
+  // history.state["undefined"].
   function getKey(): string {
-    if (!_key && process.env.NODE_ENV === "development") {
+    if (!_key && process.env.NODE_ENV !== "production") {
       throw new Error(
         "[rango] createLocationState key not set. " +
           "Make sure the exposeInternalIds Vite plugin is enabled and " +
-          "the state is exported with: export const MyState = createLocationState(...)",
+          "the state is exported with: export const MyState = createLocationState(...). " +
+          "In a unit test without the plugin, assign one with " +
+          "withLocationStateKey(MyState) from @rangojs/router/testing.",
       );
     }
     return _key!;
@@ -299,6 +440,28 @@ export function createLocationState<TState>(
     [(TState | (() => TState)) & ValidateLocationState<TState>],
     TState
   >;
+}
+
+/**
+ * A definition's key, or undefined when none is set, without the missing-key
+ * throw of the `__rsc_ls_key` getter. For dev checks and test helpers.
+ */
+export function peekLocationStateKey(definition: object): string | undefined {
+  try {
+    return (definition as { __rsc_ls_key?: string }).__rsc_ls_key || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Check if a value is a LocationStateDefinition (a createLocationState()
+ * result, callable, not an entry).
+ */
+export function isLocationStateDefinition(
+  value: unknown,
+): value is LocationStateDefinition<unknown[], unknown> {
+  return typeof value === "function" && "__rsc_ls_flash" in value;
 }
 
 /**

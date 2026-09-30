@@ -15,7 +15,7 @@
 | `outletPending`   | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                  |
 | `loaders`         | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                           |
 | `params`          | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                        |
-| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; written to `history.state`.                                                                                                                                                  |
+| `locationState`   | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes to `history.state`. See [Location state](#location-state).                                               |
 | `handles`         | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                 |
 | `handle`          | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                |
 | `routeMap`        | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                               |
@@ -41,7 +41,7 @@
 | `useSearchParams`              | Search params from the `request` URL.                                                         |
 | `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                   |
 | `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below). |
-| `useLocationState`             | SEEDED `history.state` value.                                                                 |
+| `useLocationState`             | SEEDED `history.state` value, or the `state` a push/replace/`<Link>` wrote (below).           |
 | `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |
 | `Outlet`                       | Renders the next segment in the chain (layout nesting).                                       |
 | `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                   |
@@ -111,6 +111,41 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
 
   await router.navigate("/products/2"); // client-only nav, re-resolves the same routes
   expect(router.pathname()).toBe("/products/2");
+});
+```
+
+## Location state
+
+A `createLocationState()` definition gets its key from the rango Vite plugin, which a bare Vitest project does not run. Outside production an unkeyed definition throws on first use (`Def(value)`, `useLocationState(Def)`, `.read()`), with a message that points here. Key it with `withLocationStateKey` from `@rangojs/router/testing`:
+
+- `withLocationStateKey(GridState, "GridState")` sets `__rsc_ls_GridState` (stable across runs).
+- `withLocationStateKey(GridState)` keeps a key that is already set, else assigns a synthetic `__rsc_ls_test_<n>` that stays the same for that definition.
+- The `locationState` seed option keys an unkeyed definition the same way, so a seeded definition needs no call. Key every definition a component reads WITHOUT a seed.
+
+A `useRouter().push/replace(url, { state })` or `<Link state>` navigation writes its history entry through production's path (`resolveNavigationState` -> `buildHistoryState` -> `pushHistoryWithIdx`, then the `__rsc_locationstate` event), so `useLocationState(Def)` re-reads after the click. The dev check for a bare entry or an uncalled definition runs too, and, as in production, a push or `<Link>` without `state` starts an entry with no location state. The URL in `window.location` does not change (renderRoute tracks location on its event controller), and `router.navigate()` from the test leaves `history.state` alone. The click starts an async navigation, so wait for the result with RTL's `waitFor`:
+
+```tsx
+// @vitest-environment happy-dom
+import { afterEach, expect, it } from "vitest";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { withLocationStateKey } from "@rangojs/router/testing";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { LoadMore } from "../src/components/LoadMore"; // router.replace(url, { state: [GridState(...)] })
+import { GridState } from "../src/location-states";
+
+afterEach(cleanup);
+withLocationStateKey(GridState, "GridState");
+
+it("shows the count it pushed", async () => {
+  const { getByTestId } = await renderRoute(
+    [{ path: "/grid", Component: LoadMore }],
+    { request: "/grid" },
+  );
+  fireEvent.click(getByTestId("load-more"));
+  await waitFor(() => expect(getByTestId("count").textContent).toBe("40"));
+  expect(window.history.state).toMatchObject({
+    __rsc_ls_GridState: { count: 40 },
+  });
 });
 ```
 

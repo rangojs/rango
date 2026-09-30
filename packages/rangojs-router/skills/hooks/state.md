@@ -81,8 +81,87 @@ definition:
 const state = useLocationState<{ from?: string }>(); // { from?: string } | undefined
 ```
 
+### State on router.push() / router.replace()
+
 The same `state` option exists on `router.push()` / `router.replace()` (see
-[`./navigation.md`](./navigation.md)).
+[`./navigation.md`](./navigation.md)), with the same type as `<Link state>`
+(minus the click-time getter): `HistoryState`, which is
+`readonly LocationStateEntry[]` (typed entries) or `PlainHistoryState` (plain,
+structured-clone-safe data). Both types are exported from
+`@rangojs/router/client`.
+
+```tsx
+"use client";
+import { useLocationState, useRouter } from "@rangojs/router/client";
+import { GridState } from "./state"; // createLocationState<{ count: number }>()
+
+function LoadMore() {
+  const router = useRouter();
+  const grid = useLocationState(GridState);
+  const count = grid?.count ?? 20;
+  return (
+    <button
+      onClick={() =>
+        router.replace("?page=2", { state: [GridState({ count: count + 20 })] })
+      }
+    >
+      Load more
+    </button>
+  );
+}
+```
+
+Typed entries always go in an array, with nothing else in it. Three mistakes
+are compile errors:
+
+```tsx
+router.push(url, { state: GridState({ count: 3 }) }); // entry without the array
+router.push(url, { state: [GridState] }); // definition, not called
+router.push(url, { state: [GridState({ count: 3 }), { from: "list" }] }); // mixed
+```
+
+Without the array, the entry's own `__rsc_ls_*` fields would land on
+`history.state` and `useLocationState(GridState)` would read `undefined`; an
+uncalled definition throws `DataCloneError` in `history.pushState`; in a mixed
+array only the first element picks the format, so the rest are lost. For
+untyped (JS) callers, development builds throw an error for each that names
+the definition's key (or the offending index) and the fix.
+
+Plain state is checked at the top level only. It rejects functions, symbols,
+`Promise`, `WeakMap`, `WeakSet`, and values typed `unknown` (narrow an
+`unknown` value, or annotate it as `PlainHistoryState`). Array, `Map`, and
+`Set` elements are checked the same way, but plain object members are not.
+These still compile and still throw `DataCloneError` at `history.pushState`:
+
+- a function, symbol, or React element inside a plain object
+  (`{ onClose: () => {} }`);
+- a top-level `ReactElement` or DOM node (`HTMLElement`), which look like
+  plain objects to the type.
+
+Store plain data and rebuild the rest on arrival, or use a typed
+`createLocationState<T>()` definition, whose `T` is checked all the way down.
+
+### When a type fails the serializability check
+
+`createLocationState<T>()` rejects values that cannot survive
+`history.state`'s structured clone: functions, class constructors, symbols,
+React/RSC content, and fields typed `unknown`. The compile error names the
+failing field and the reason:
+
+```
+Argument of type '{ items: never[]; cursor: string; }' is not assignable to
+parameter of type '... & LocationStateUnsafe<"`unknown` cannot be verified as
+serializable; give it a concrete type", "items[].info.values">'.
+```
+
+The path uses `.` for fields, `[string]` / `[number]` for index signatures
+(`Record<string, T>`), `[]` for array and `Set` elements, `[0]` for tuple
+elements, `<key>` / `<value>` for `Map` keys and values, and `<root>` when the
+value itself is unsafe. A field typed `any` is never reported. When several fields fail, the error lists one `LocationStateUnsafe` per
+path. An object's own unsafe fields are reported before anything nested
+deeper, so a class instance or DOM node stops at its methods
+(`row.el.click`); fix those and the next compile names the rest. The walk
+stops 8 levels deep, reporting the deepest path it reached.
 
 ### Flash State (read-once)
 

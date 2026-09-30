@@ -172,6 +172,49 @@ function describeLocationState(mode: "dev" | "build") {
       );
     });
 
+    // #993: router.push()/replace() with `[Def(value)]` write the typed entry
+    // to the entry they create or replace, and it survives back/forward.
+    test("router.push and router.replace typed state round-trips through history", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/action-location-state"));
+      await waitForHydration(page);
+      const listState = testId(page, "list-state");
+      await expect(listState).toHaveText("none");
+
+      await testId(page, "list-push-btn").click();
+      await expect(page).toHaveURL(f.url("/action-location-state?page=2"));
+      await expect(listState).toHaveText("pushed:20");
+      const pushed = await page.evaluate(() => window.history.state);
+      expect(
+        Object.entries(pushed as Record<string, unknown>)
+          .filter(([key]) => key.startsWith("__rsc_ls_"))
+          .map(([, value]) => value),
+      ).toEqual([{ label: "pushed", loaded: 20 }]);
+
+      await page.goBack();
+      await expect(page).toHaveURL(f.url("/action-location-state"));
+      await expect(listState).toHaveText("none");
+      await page.goForward();
+      await expect(page).toHaveURL(f.url("/action-location-state?page=2"));
+      await expect(listState).toHaveText("pushed:20");
+
+      const length = await page.evaluate(() => window.history.length);
+      await testId(page, "list-replace-btn").click();
+      await expect(page).toHaveURL(f.url("/action-location-state?page=3"));
+      await expect(listState).toHaveText("replaced:30");
+      expect(await page.evaluate(() => window.history.length)).toBe(length);
+
+      await page.goBack();
+      await expect(page).toHaveURL(f.url("/action-location-state"));
+      await expect(listState).toHaveText("none");
+      await page.goForward();
+      await expect(page).toHaveURL(f.url("/action-location-state?page=3"));
+      await expect(listState).toHaveText("replaced:30");
+    });
+
     test("should not show hydration mismatch with location state", async ({
       page,
     }) => {

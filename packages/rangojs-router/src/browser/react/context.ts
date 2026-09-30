@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, type Context } from "react";
-import type { NavigationStore, NavigateOptions } from "../types.js";
+import type { NavigationStore, NavigateOptionsInternal } from "../types.js";
 import type { EventController } from "../event-controller.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
@@ -34,7 +34,7 @@ export interface NavigationStoreContextValue {
    * @param options - Navigation options (replace, scroll)
    * @returns Promise that resolves when navigation is complete
    */
-  navigate: (url: string, options?: NavigateOptions) => Promise<void>;
+  navigate: (url: string, options?: NavigateOptionsInternal) => Promise<void>;
 
   /**
    * Refresh the current route

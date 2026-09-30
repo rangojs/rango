@@ -1,5 +1,7 @@
 import {
+  isLocationStateDefinition,
   isLocationStateEntry,
+  peekLocationStateKey,
   resolveLocationStateEntries,
 } from "./react/location-state-shared.js";
 
@@ -14,9 +16,48 @@ function isTypedLocationState(
 }
 
 /**
+ * Dev-only guard for the state mistakes `HistoryState` rejects at compile
+ * time, for untyped callers: a typed entry without its array (its `__rsc_ls_*`
+ * fields would be spread onto history.state, so useLocationState reads
+ * undefined), an uncalled definition (pushState throws DataCloneError), and an
+ * array mixing entries with plain values (only `state[0]` picks the format, so
+ * the rest land under history.state["undefined"] or are never read).
+ */
+function assertNavigationState(state: unknown): void {
+  if (isLocationStateEntry(state)) {
+    throw new Error(
+      `[rango] navigation state is a single location-state entry (key "${state.__rsc_ls_key}"). ` +
+        "Wrap it in an array: { state: [MyState(value)] }. " +
+        "Without the array, useLocationState(MyState) reads undefined.",
+    );
+  }
+  const definition = (Array.isArray(state) ? state : [state]).find(
+    isLocationStateDefinition,
+  );
+  if (definition) {
+    throw new Error(
+      `[rango] navigation state contains a location-state definition (key "${peekLocationStateKey(definition) ?? "unset"}") instead of an entry. ` +
+        "Call it with the value: { state: [MyState(value)] }, not [MyState].",
+    );
+  }
+  if (Array.isArray(state) && state.some(isLocationStateEntry)) {
+    const index = state.findIndex((item) => !isLocationStateEntry(item));
+    if (index !== -1) {
+      throw new Error(
+        `[rango] navigation state mixes location-state entries with other values (index ${index}). ` +
+          "Pass only entries ({ state: [MyState(value), Other(value)] }); plain state cannot sit next to typed entries.",
+      );
+    }
+  }
+}
+
+/**
  * Resolve navigation state - handles both LocationStateEntry[] and plain formats
  */
 export function resolveNavigationState(state: unknown): unknown {
+  if (process.env.NODE_ENV !== "production") {
+    assertNavigationState(state);
+  }
   if (
     Array.isArray(state) &&
     state.length > 0 &&
@@ -59,6 +100,15 @@ export function buildHistoryState(
   }
 
   return Object.keys(result).length > 0 ? result : null;
+}
+
+/** Check if a history state object contains location state keys. */
+export function hasLocationState(state: unknown): boolean {
+  if (!state || typeof state !== "object") return false;
+  return (
+    "state" in state ||
+    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
+  );
 }
 
 /**

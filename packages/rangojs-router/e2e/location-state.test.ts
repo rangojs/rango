@@ -333,6 +333,70 @@ test.describe("location-state", () => {
  * 3. Plain static: state={{ key: value }}
  * 4. Plain JIT: state={() => ({ key: value })}
  */
+async function expectTypedTarget(
+  page: Page,
+  name: string,
+  price: string,
+): Promise<void> {
+  await expect(page.locator('[data-testid="link-state-target"]')).toBeVisible();
+  await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+    name,
+  );
+  await expect(page.locator('[data-testid="typed-product-price"]')).toHaveText(
+    price,
+  );
+}
+
+// router.push() with `[Def(value)]` (#993): the typed entry lands on the new
+// history entry under its own key (not spread as __rsc_ls_key/__rsc_ls_value)
+// and survives back/forward.
+async function expectRouterPushTypedStateRoundTrips(
+  page: Page,
+  f: Fixture,
+): Promise<void> {
+  await page.goto(f.url("/location-state/link-state"));
+  await waitForHydration(page);
+
+  await page.locator('[data-testid="router-push-typed"]').click();
+  await expectTypedTarget(page, "Pushed Product", "11");
+  const state = (await getHistoryState(page)) as Record<string, unknown>;
+  expect(
+    Object.entries(state)
+      .filter(([key]) => key.startsWith("__rsc_ls_"))
+      .map(([, value]) => value),
+  ).toEqual([{ productName: "Pushed Product", productPrice: 11 }]);
+  expect(state).not.toHaveProperty("__rsc_ls_key");
+
+  await goBack(page);
+  await expect(page.locator('[data-testid="link-state-index"]')).toBeVisible();
+  await goForward(page);
+  await expectTypedTarget(page, "Pushed Product", "11");
+}
+
+// router.replace() with `[Def(value)]` (#993): the typed entry replaces the
+// current entry (no new history entry) and survives back/forward.
+async function expectRouterReplaceTypedStateRoundTrips(
+  page: Page,
+  f: Fixture,
+): Promise<void> {
+  await page.goto(f.url("/location-state/link-state/plain-target"));
+  await waitForHydration(page);
+  await page.locator('[data-testid="link-state-back"]').click();
+  await expect(page.locator('[data-testid="link-state-index"]')).toBeVisible();
+  const length = await page.evaluate(() => window.history.length);
+
+  await page.locator('[data-testid="router-replace-typed"]').click();
+  await expectTypedTarget(page, "Replaced Product", "12");
+  expect(await page.evaluate(() => window.history.length)).toBe(length);
+
+  await goBack(page);
+  await expect(
+    page.locator('[data-testid="link-state-plain-target"]'),
+  ).toBeVisible();
+  await goForward(page);
+  await expectTypedTarget(page, "Replaced Product", "12");
+}
+
 test.describe("link-state-prop", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -344,6 +408,20 @@ test.describe("link-state-prop", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectEvictedEntryKeepsLinkState(page, f);
+  });
+
+  test("router.push typed state round-trips through back/forward", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectRouterPushTypedStateRoundTrips(page, f);
+  });
+
+  test("router.replace typed state round-trips through back/forward", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectRouterReplaceTypedStateRoundTrips(page, f);
   });
 
   test("typed eager state is delivered to target page", async ({ page }) => {
@@ -565,6 +643,20 @@ test.describe("link-state-prop (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectEvictedEntryKeepsLinkState(page, f);
+  });
+
+  test("router.push typed state round-trips through back/forward in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectRouterPushTypedStateRoundTrips(page, f);
+  });
+
+  test("router.replace typed state round-trips through back/forward in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectRouterReplaceTypedStateRoundTrips(page, f);
   });
 
   test("typed eager state works in production build", async ({ page }) => {

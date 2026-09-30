@@ -36,6 +36,17 @@ export interface ConcurrentSlotState {
 export const ConcurrentSlotA = createLocationState<ConcurrentSlotState>();
 export const ConcurrentSlotB = createLocationState<ConcurrentSlotState>();
 
+export interface ListState {
+  label: string;
+  loaded: number;
+}
+
+/**
+ * ListLocationState - "load more" list state written by router.push() /
+ * router.replace() as a typed entry (`[ListLocationState(value)]`).
+ */
+export const ListLocationState = createLocationState<ListState>();
+
 export interface NonSerializableStateShape {
   text: string;
   bad: unknown;

@@ -1,14 +1,30 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { withLocationStateKey } from "@rangojs/router/testing";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { ActionLocationStateTest } from "../src/components/ActionLocationStateTest.js";
 import { BreadcrumbNav } from "../src/components/BreadcrumbNav.js";
 import { FeatureLoading } from "../src/components/FeatureLoading.js";
-import { ActionFlash, FeatureLocationState } from "../src/location-states.js";
+import { RouterPushStateTest } from "../src/components/RouterPushStateTest.js";
+import {
+  ActionFlash,
+  ConcurrentSlotA,
+  ConcurrentSlotB,
+  FeatureLocationState,
+  ListLocationState,
+} from "../src/location-states.js";
 import { Breadcrumbs } from "../src/handles/breadcrumbs.js";
 
 afterEach(cleanup);
+
+// No Vite plugin in this project, so definitions have no key: key the ones the
+// components read without a seed (an unkeyed definition throws outside
+// production). Seeded ones get a key from renderRoute's `locationState`.
+withLocationStateKey(ActionFlash);
+withLocationStateKey(ConcurrentSlotA);
+withLocationStateKey(ConcurrentSlotB);
+withLocationStateKey(ListLocationState, "ListLocationState");
 
 // Dogfood renderRoute's location-state + handle seeding against cloudflare-basic's
 // REAL client components. Unlike mini (built-in Breadcrumbs with a stable id),
@@ -62,6 +78,31 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
     );
     expect(getByTestId("feature-loading-skeleton-name")).toBeTruthy();
     expect(queryByTestId("feature-loading-name")).toBeNull();
+  });
+});
+
+// #993: router.push()/replace() with `[Def(value)]` reach useLocationState(Def)
+// through renderRoute (production's history-state path).
+describe("renderRoute typed state through router.push/replace (cloudflare-basic)", () => {
+  it("RouterPushStateTest reads the list state it pushed, then replaced", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/action-location-state", Component: RouterPushStateTest }],
+      { request: "/action-location-state" },
+    );
+    expect(getByTestId("list-state").textContent).toBe("none");
+
+    fireEvent.click(getByTestId("list-push-btn"));
+    await waitFor(() =>
+      expect(getByTestId("list-state").textContent).toBe("pushed:20"),
+    );
+    expect(window.history.state).toMatchObject({
+      __rsc_ls_ListLocationState: { label: "pushed", loaded: 20 },
+    });
+
+    fireEvent.click(getByTestId("list-replace-btn"));
+    await waitFor(() =>
+      expect(getByTestId("list-state").textContent).toBe("replaced:30"),
+    );
   });
 });
 

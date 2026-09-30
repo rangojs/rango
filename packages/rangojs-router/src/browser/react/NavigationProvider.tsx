@@ -17,7 +17,7 @@ import {
 import type {
   NavigationStore,
   NavigationUpdate,
-  NavigateOptions,
+  NavigateOptionsInternal,
   NavigationBridge,
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
@@ -320,7 +320,7 @@ export function NavigationProvider({
    * Navigate to a URL (delegates to bridge)
    */
   const navigate = useCallback(
-    async (url: string, options?: NavigateOptions): Promise<void> => {
+    async (url: string, options?: NavigateOptionsInternal): Promise<void> => {
       await bridge.navigate(url, options);
     },
     [],
