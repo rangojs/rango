@@ -14,7 +14,11 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
+import {
+  buildHistoryState,
+  hasLocationState,
+  pushHistoryWithIdx,
+} from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -230,16 +234,7 @@ export function createNavigationBridge(
         ensureHistoryKey();
 
         // Notify useLocationState() hooks when state changes
-        const hasOldState =
-          oldState &&
-          typeof oldState === "object" &&
-          ("state" in oldState ||
-            Object.keys(oldState).some((k) => k.startsWith("__rsc_ls_")));
-        const hasNewState =
-          historyState &&
-          ("state" in historyState ||
-            Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")));
-        if (hasOldState || hasNewState) {
+        if (hasLocationState(oldState) || hasLocationState(historyState)) {
           window.dispatchEvent(new Event("__rsc_locationstate"));
         }
 

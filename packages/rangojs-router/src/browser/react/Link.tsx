@@ -13,30 +13,23 @@ import React, {
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
-import type { NavigateOptions } from "../types.js";
+import type { HistoryState } from "../types.js";
 import {
   isHashOnlyNavigation,
   isPrefetchScopeDisabled,
   subscribeToPrefetchScopeChange,
 } from "../link-interceptor.js";
 import { subscribeToLocationChange } from "../event-controller.js";
-import {
-  isLocationStateEntry,
-  type LocationStateEntry,
-  resolveLocationStateEntries,
-} from "./location-state.js";
+import { isLocationStateDefinition } from "./location-state-shared.js";
 
-/**
- * State prop type for Link component.
- * - LocationStateEntry[]: Type-safe state entries via createLocationState()
- * - StateOrGetter: Plain state object or click-time getter function
- * - Record<string, unknown>: Plain state object passed to history.pushState
- */
 export type StateOrGetter<T = unknown> = T | (() => T);
 
-export type LinkState =
-  | LocationStateEntry[]
-  | StateOrGetter<Record<string, unknown>>;
+/**
+ * State prop type for Link component: the `router.push()` state type
+ * ({@link HistoryState}: `LocationStateEntry[]` from createLocationState(), or
+ * plain structured-clone-safe state), or a getter for it called at click time.
+ */
+export type LinkState = StateOrGetter<HistoryState>;
 
 import {
   prefetchDirect,
@@ -334,27 +327,24 @@ export const Link: ForwardRefExoticComponent<
       // Stop propagation to prevent link-interceptor from also handling this
       e.stopPropagation();
 
+      // Call a click-time getter; typed entries are resolved (and, in dev,
+      // checked) by the bridge's resolveNavigationState, like router.push().
+      // In dev an uncalled definition passes through to that check instead of
+      // being called as a getter.
       const currentState = stateRef.current;
-      let resolvedState: unknown;
-
-      if (
-        Array.isArray(currentState) &&
-        currentState.length > 0 &&
-        isLocationStateEntry(currentState[0])
-      ) {
-        resolvedState = resolveLocationStateEntries(
-          currentState as LocationStateEntry[],
-        );
-      } else if (typeof currentState === "function") {
-        resolvedState = currentState();
-      } else if (currentState != null) {
-        resolvedState = currentState;
-      }
+      const state =
+        typeof currentState === "function" &&
+        !(
+          process.env.NODE_ENV !== "production" &&
+          isLocationStateDefinition(currentState)
+        )
+          ? currentState()
+          : (currentState ?? undefined);
 
       ctx.navigate(resolvedTo, {
         replace,
         scroll,
-        state: resolvedState,
+        state,
         revalidate,
       });
     },

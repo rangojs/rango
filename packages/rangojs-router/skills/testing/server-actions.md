@@ -64,11 +64,16 @@ Low-level building blocks (all from `@rangojs/router/testing`):
 
 ```ts
 import { it, expect } from "vitest";
-import { runInRequestContext } from "@rangojs/router/testing";
-import { loginAction } from "../src/actions/login"; // sets a session cookie + flash, then throw redirect("/app")
+import {
+  runInRequestContext,
+  withLocationStateKey,
+} from "@rangojs/router/testing";
+import { loginAction } from "../src/actions/login"; // sets a session cookie, then throw redirect("/app", { state: [Flash({ text: "Welcome back" })] })
 import { logoutAction, dismissBannerAction } from "../src/actions/session"; // invalidateClientCache() / keepClientCache()
+import { Flash } from "../src/location-states"; // createLocationState<{ text: string }>({ flash: true })
 
 const env = { DB: fakeDb }; // your binding double (see ./bindings.md)
+withLocationStateKey(Flash, "Flash"); // no Vite plugin here: key -> "__rsc_ls_Flash"
 
 it("sets the session cookie + flash and redirects", async () => {
   const { thrown, cookies, locationState } = await runInRequestContext(
@@ -82,7 +87,7 @@ it("sets the session cookie + flash and redirects", async () => {
   );
   expect((thrown as Response).headers.get("Location")).toBe("/app"); // redirected
   expect(cookies.session).toBeDefined(); // cookie set before the throw, no @internal cast
-  expect(locationState).toEqual({ flash: { text: "Welcome back" } });
+  expect(locationState).toEqual({ __rsc_ls_Flash: { text: "Welcome back" } });
 });
 
 it("asserts the client-cache directives an action issued", async () => {
@@ -105,6 +110,7 @@ it("asserts the client-cache directives an action issued", async () => {
 ## Caveats
 
 - The snapshot fires whether `fn` RETURNS or THROWS. A `throw redirect("/app")` on the success path is captured on `thrown` (NOT re-thrown), so no try/catch is needed; assert on `thrown` for a throwing action.
+- Location state needs a key. A `createLocationState()` definition gets it from the Vite plugin, which a unit-test project does not run, and outside production an unkeyed `Flash(value)` throws before `redirect()` runs: `thrown` is that missing-key error, not the redirect. Call `withLocationStateKey(Flash, "Flash")` once per definition; `locationState` then holds `{ __rsc_ls_Flash: value }` (the helper adds the `__rsc_ls_` prefix; `{ [Flash.__rsc_ls_key]: value }` works for any key).
 - There is no cookies / headers option. Seed a request cookie by passing a full `Request` with the `Cookie` header (as in the recipe).
 - An action has no loader context, so `runLoader` is the wrong shape for it even when the action reads cookies or vars; use `runInRequestContext`.
 - Platform bindings are yours to double via `env` (see `./bindings.md`).

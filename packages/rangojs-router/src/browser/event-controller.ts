@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type {
   NavigationLocation,
-  NavigateOptions,
+  NavigateOptionsInternal,
   TrackedActionState,
   ActionLifecycleState,
   InflightAction,
@@ -46,7 +46,7 @@ export interface NavigationEntry {
   abort: AbortController;
   phase: NavigationPhase;
   startedAt: number;
-  options?: NavigateOptions & { skipLoadingState?: boolean };
+  options?: NavigateOptionsInternal & { skipLoadingState?: boolean };
 }
 
 /**
@@ -206,7 +206,7 @@ export interface EventController {
   // Navigation operations
   startNavigation(
     url: string,
-    options?: NavigateOptions & { skipLoadingState?: boolean },
+    options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle;
   abortNavigation(): void;
 
@@ -632,7 +632,7 @@ export function createEventController(
 
   function startNavigation(
     url: string,
-    options?: NavigateOptions & { skipLoadingState?: boolean },
+    options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
     if (currentNavigation) {

@@ -171,6 +171,103 @@ These public types change. What they drop, the built-in paths never produced.
   `readShellDocument`) is now `ShellEntryHead`, the entry without its
   `prelude` and `snapshot`, which the read delivers separately.
 
+### Breaking: `state` on `router.push()`, `router.replace()`, and `<Link>` is typed, so a bare entry or an uncalled definition no longer compiles ([#997](https://github.com/rangojs/rango/pull/997))
+
+`state` was typed `LocationStateEntry[] | unknown`, which TypeScript reduces
+to `unknown`, so any value compiled. It is now `HistoryState`:
+`readonly LocationStateEntry[] | PlainHistoryState`, where
+`PlainHistoryState` is structured-clone-safe plain data (primitives, arrays,
+`Map`/`Set`, `ArrayBuffer`, typed arrays, plain objects) that is not a
+function, symbol, `Promise`, `WeakMap`, or `WeakSet`, and carries no
+`__rsc_ls_*` fields. `<Link state>` takes the same type, or a click-time
+getter for it. `HistoryState` and `PlainHistoryState` are exported from
+`@rangojs/router/client`.
+
+Three mistakes that compiled and then failed at runtime are now compile
+errors:
+
+```tsx
+router.push(url, { state: GridState({ count: 3 }) }); // entry without the array
+router.push(url, { state: [GridState] }); // definition, not called
+router.push(url, { state: [GridState({ count: 3 }), { from: "list" }] }); // mixed
+```
+
+The first spread the entry's `__rsc_ls_key`/`__rsc_ls_value` fields onto
+`history.state`, so `useLocationState(GridState)` read `undefined`; the second
+threw `DataCloneError`; in the third only the first element picked the format,
+so the rest were lost. In development all three also throw an error that names
+the definition's key or the offending index, for JavaScript callers;
+production builds drop the check.
+
+Migration:
+
+- Put typed entries in an array of entries only, and call the definition:
+  `{ state: [GridState({ count: 3 })] }`.
+- A state value typed `unknown` no longer compiles. Narrow it, or type it as
+  `PlainHistoryState`.
+- A function as `state` on `router.push()`/`router.replace()` no longer
+  compiles. It reached `history.pushState` and threw `DataCloneError`; call it
+  yourself (`{ state: getState() }`). A getter on `<Link state>` still works.
+- `LinkState` is now `StateOrGetter<HistoryState>` (it was
+  `LocationStateEntry[] | StateOrGetter<Record<string, unknown>>`), so it also
+  accepts interface-typed objects, primitives, arrays, and readonly entry
+  arrays.
+- Plain state is checked at the top level only (array, `Map`, and `Set`
+  elements included). A function, symbol, or React element inside a plain
+  object, or a top-level React element or DOM node, still compiles and still
+  throws `DataCloneError`. A typed `createLocationState<T>()` definition checks
+  `T` all the way down.
+
+### Breaking: location state in unit tests needs a key, and `renderRoute` pushes clear it like production ([#997](https://github.com/rangojs/rango/pull/997))
+
+Two changes fail unit tests that passed on 0.18.0.
+
+A `createLocationState()` definition without its plugin-injected key now
+throws outside production, in tests as well as in development. Under
+`NODE_ENV=test` the key read returned `undefined`, so `Def(value)`,
+`useLocationState(Def)`, and `.read()`/`.write()` used
+`history.state["undefined"]` with no error. The Vite plugin that injects keys
+does not run in a unit-test project, so a test that renders a component
+reading a definition it did not seed now fails, and a server-side test whose
+code calls `Flash(value)` (`redirect(url, { state: [Flash(value)] })`,
+`ctx.setLocationState(Flash(value))`) captures the missing-key error on
+`thrown` instead of the redirect. The react-server test project runs with
+`NODE_ENV=production`, so there an unkeyed value lands on
+`locationState["undefined"]`. Production builds keep no check: the plugin
+always sets the key there
+([#993](https://github.com/rangojs/rango/issues/993)).
+
+`renderRoute` (`@rangojs/router/testing/dom`) now writes the history entry of a
+`useRouter().push()`/`replace()` or a `<Link>` click the way production does.
+A push or `<Link>` without `state` starts an entry with no location state, so
+`useLocationState()` reads `undefined` afterwards. Before, the harness left
+`history.state` untouched and a seeded value survived the navigation.
+`router.navigate()` from the test still leaves `history.state` alone.
+
+Migration:
+
+- Key each definition a test reads without a seed, once per test file:
+  `withLocationStateKey(Flash, "Flash")` from `@rangojs/router/testing`
+  (below). A definition passed to `renderRoute`'s `locationState` seed is keyed
+  for you. Assert server-side `locationState` under the prefixed key:
+  `{ __rsc_ls_Flash: value }`, or `{ [Flash.__rsc_ls_key]: value }`.
+- A test that expects location state to survive a `push()` or `<Link>` click
+  passes the state on that navigation:
+  `router.push(url, { state: [Def(value)] })`.
+
+### Added: `withLocationStateKey()` keys a location-state definition in a unit test ([#997](https://github.com/rangojs/rango/pull/997))
+
+`withLocationStateKey(def, name?)` from `@rangojs/router/testing` assigns the
+key the Vite plugin would inject: `withLocationStateKey(GridState,
+"GridState")` sets `__rsc_ls_GridState`; without a name it keeps an existing
+key or assigns a synthetic one that stays the same for that definition.
+`renderRoute`'s `locationState` seed keys a definition the same way.
+
+`renderRoute` (`@rangojs/router/testing/dom`) now applies the `state` of a
+`useRouter().push()`/`replace()` or a `<Link state>` click, so a component
+reading `useLocationState(Def)` sees the value it pushed with `[Def(value)]`.
+Before, the harness dropped `state`.
+
 ### Fixes
 
 - A document the document cache stores no longer hands the first visitor's
@@ -224,6 +321,20 @@ These public types change. What they drop, the built-in paths never produced.
   as on the live path: the client holds by the `transition` its copy carries
   ([#989](https://github.com/rangojs/rango/issues/989)) (#986,
   [#990](https://github.com/rangojs/rango/pull/990)).
+- The compile error for a `createLocationState<T>()` value that cannot be
+  structured-cloned names the failing field and the reason. It reported one
+  message for the whole type, so an `unknown` field three levels down took a
+  hand-written type probe to find. The `LocationStateUnsafe` brand now carries
+  the path, one per failing field:
+  ``LocationStateUnsafe<"`unknown` cannot be verified as serializable; give it a concrete type", "items[].info.values">``
+  (`.` for fields, `[string]`/`[number]` for index signatures, `[]` for array
+  and `Set` elements, `[0]` for tuple elements, `<key>`/`<value>` for `Map`,
+  `<root>` for the value itself). An object's own unsafe fields are reported
+  before anything nested deeper, so a DOM node or class instance stops at its
+  methods, and the walk stops 8 levels deep. Which types are accepted is
+  unchanged
+  ([#993](https://github.com/rangojs/rango/issues/993))
+  ([#997](https://github.com/rangojs/rango/pull/997)).
 
 - Work that started before `updateTag()`/`revalidateTag()` of one of its
   tags, in another request, no longer stores its value when it finishes

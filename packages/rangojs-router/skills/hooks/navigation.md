@@ -68,7 +68,8 @@ function NavigationControls() {
 
 `push` / `replace` options: `scroll` (`false` keeps the current scroll
 position), `revalidate` (default `true`, see below), and `state` (location
-state, see [`./state.md`](./state.md)).
+state: `[MyState(value)]` for typed entries, or plain structured-clone-safe
+data; see [`./state.md`](./state.md)).
 
 Target resolution: a path starting with `/` is app-absolute and gets the
 router `basename` prefixed. A relative path (`"cart"`, `"./cart"`) resolves

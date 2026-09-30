@@ -268,7 +268,7 @@ it("stores the subscriber, sets a cookie, and redirects", async () => {
 });
 ```
 
-The snapshot is the same envelope `runLoaderResult` returns, minus `handlePushes`. `result` is the return value, or `undefined` if the function threw. `thrown` holds what it threw, captured rather than re-thrown. `response` merges the status, headers, and every `Set-Cookie`, including a thrown redirect's `Location`. `cookies` is the effective cookie view (request cookies plus the run's changes), `headers` is a lowercased object without `set-cookie`, and `locationState` is the flash state set through `ctx.setLocationState()` or `redirect(url, { state })`. Pass `request` as a `Request` with a `Cookie` header to seed request cookies.
+The snapshot is the same envelope `runLoaderResult` returns, minus `handlePushes`. `result` is the return value, or `undefined` if the function threw. `thrown` holds what it threw, captured rather than re-thrown. `response` merges the status, headers, and every `Set-Cookie`, including a thrown redirect's `Location`. `cookies` is the effective cookie view (request cookies plus the run's changes), `headers` is a lowercased object without `set-cookie`, and `locationState` is the flash state set through `ctx.setLocationState()` or `redirect(url, { state })`, keyed by each definition's key. The Vite plugin that assigns keys doesn't run here, and an unkeyed definition throws outside production, so key each one with `withLocationStateKey(Flash, "Flash")` from `@rangojs/router/testing` and expect `{ __rsc_ls_Flash: value }`. Pass `request` as a `Request` with a `Cookie` header to seed request cookies.
 
 Client-cache directives produce their real server-side effect here. An action that calls `invalidateClientCache()` rotates the state cookie, so `response.headers.getSetCookie()` contains an entry starting with `stateCookieName`. One that calls `keepClientCache()` sets `headers["x-rango-keep-cache"]` to `"1"`.
 
@@ -410,6 +410,8 @@ it("renders inside the layout with seeded loader data", async () => {
 | `mount`                                | An `include()` prefix, so `useMount()`, `useHref()`, and `useReverse()` resolve under it     |
 | `basename`, `theme`, `defaultPrefetch` | The matching `createRouter()` options; `useTheme()` throws without `theme`                   |
 | `outletPending`                        | The `pending` flag `useOutlet()` reports                                                     |
+
+A location-state definition gets its key from the Vite plugin, which doesn't run in this project. Outside production, an unkeyed definition throws on first use, so key each definition a component reads without a seed: `withLocationStateKey(GridState, "GridState")` from `@rangojs/router/testing`. A seeded definition is keyed for you. `useRouter().push()`, `replace()`, and `<Link>` with `state: [GridState(value)]` write `history.state` the way production does, so `useLocationState(GridState)` re-reads after the click; wait for it with `waitFor`.
 
 Two limits to know. `router.navigate()` re-resolves the same routes without running the navigation lifecycle, so `useNavigation()`, `useLinkStatus()`, and `useAction()` stay idle; test pending and streaming states end to end. And a Suspense retry after a plain resolving promise doesn't flush in this environment, so for content read with `use(promise)`, assert the fallback with a never-resolving promise, and for the resolved state pass a promise that already carries `status: "fulfilled"` and `value`.
 

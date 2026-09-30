@@ -56,6 +56,7 @@ import {
   shouldStartViewTransition,
 } from "../browser/partial-update.js";
 import type {
+  NavigateOptionsInternal,
   NavigationStore,
   NavigationBridge,
   UpdateSubscriber,
@@ -70,6 +71,13 @@ import {
 import { normalizeBasename } from "../router/basename.js";
 import type { LoaderDefinition, TransitionConfig } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
+import {
+  buildHistoryState,
+  hasLocationState,
+  pushHistoryWithIdx,
+  resolveNavigationState,
+} from "../browser/history-state.js";
+import { withLocationStateKey } from "./location-state-key.js";
 import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
@@ -93,18 +101,15 @@ export type HandleDataSeed = Record<string, Record<string, unknown[]>>;
 const syntheticIds = new WeakMap<object, string>();
 let syntheticIdCounter = 0;
 
-function ensureSyntheticId(
-  handle: object,
-  field: "$$id" | "__rsc_ls_key",
-): string {
-  const existing = (handle as Record<string, string>)[field];
+function ensureSyntheticId(loader: object): string {
+  const existing = (loader as { $$id?: string }).$$id;
   if (existing) return existing;
-  let id = syntheticIds.get(handle);
+  let id = syntheticIds.get(loader);
   if (!id) {
     id = `__rango_test_id_${syntheticIdCounter++}`;
-    syntheticIds.set(handle, id);
+    syntheticIds.set(loader, id);
   }
-  (handle as Record<string, string>)[field] = id;
+  (loader as { $$id?: string }).$$id = id;
   return id;
 }
 
@@ -508,7 +513,7 @@ export async function renderRoute(
   ): Record<string, unknown> => {
     const out = { ...base };
     for (const [loader, data] of loaders ?? []) {
-      out[ensureSyntheticId(loader as object, "$$id")] = data;
+      out[ensureSyntheticId(loader)] = data;
     }
     return out;
   };
@@ -517,7 +522,7 @@ export async function renderRoute(
   if (typeof window !== "undefined") {
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
-      stateObj[ensureSyntheticId(def as object, "__rsc_ls_key")] = value;
+      stateObj[withLocationStateKey(def).__rsc_ls_key] = value;
     }
     window.history.replaceState(stateObj, "");
   }
@@ -597,8 +602,25 @@ export async function renderRoute(
   let warnedNavLifecycle = false;
   const navigate = async (
     target: string,
-    navOptions?: Pick<RenderRouteOptions, "loaders">,
+    navOptions?: Pick<RenderRouteOptions, "loaders"> & {
+      history?: Pick<NavigateOptionsInternal, "state" | "replace">;
+    },
   ): Promise<void> => {
+    // A useRouter().push/replace or <Link> navigation (`history`) writes its
+    // entry the way production does (navigation-bridge.ts navigate ->
+    // navigation-transaction.ts commit): the dev state check, typed entries
+    // spread onto history.state, the idx stamp, and the __rsc_locationstate
+    // event when the old or new entry carries location state. The URL stays
+    // put: renderRoute tracks location on the event controller, not
+    // window.location. router.navigate() and refresh() leave history alone.
+    const history = navOptions?.history;
+    const historyState = history
+      ? buildHistoryState(
+          history.state !== undefined
+            ? resolveNavigationState(history.state)
+            : undefined,
+        )
+      : undefined;
     // No server fetch, so the navigation lifecycle never starts: the state
     // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting
     // a pending/loading/submitting state here proves nothing. Warn once (per
@@ -630,6 +652,17 @@ export async function renderRoute(
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
     store.setSegmentIds(segments.map((s) => s.id));
+    let notifyLocationState = false;
+    if (history) {
+      notifyLocationState =
+        hasLocationState(window.history.state) ||
+        hasLocationState(historyState);
+      pushHistoryWithIdx(
+        historyState ?? null,
+        window.location.href,
+        history.replace ?? false,
+      );
+    }
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
       // Production's transition() lane (browser/partial-update.ts). Its
@@ -640,12 +673,16 @@ export async function renderRoute(
       } else {
         emit({ root, metadata });
       }
+      if (notifyLocationState) {
+        window.dispatchEvent(new Event("__rsc_locationstate"));
+      }
     });
   };
 
   let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
-    navigate: (target) => navigate(target),
+    navigate: (target, navigateOptions) =>
+      navigate(target, { history: navigateOptions ?? {} }),
     refresh: () => navigate(url.pathname + url.search),
     handlePopstate: async () => {},
     registerLinkInterception: () => () => {},

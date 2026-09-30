@@ -396,6 +396,8 @@ export { useNonce } from "./browser/react/nonce-context.js";
 export type {
   RouterInstance,
   RouterNavigateOptions,
+  HistoryState,
+  PlainHistoryState,
   ReadonlyURLSearchParams,
   ActionState,
   ActionLifecycleState,

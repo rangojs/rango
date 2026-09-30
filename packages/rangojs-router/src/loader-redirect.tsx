@@ -1,7 +1,10 @@
 "use client";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import type { NavigateOptionsInternal } from "./browser/types.js";
+import type {
+  NavigateOptionsInternal,
+  RouterNavigateOptions,
+} from "./browser/types.js";
 import { useRouter } from "./browser/react/use-router.js";
 import { validateExternalRedirect } from "./browser/validate-redirect-origin.js";
 import { resolveSameOriginRedirect } from "./redirect-origin.js";
@@ -48,8 +51,9 @@ export function LoaderRedirect({
     // so it must not log a "blocked" error on its way to the branch below.
     const sameOrigin = resolveSameOriginRedirect(to, origin);
     if (sameOrigin) {
-      const options: Omit<NavigateOptionsInternal, "replace"> | undefined =
-        state ? { state, _skipCache: true } : undefined;
+      const options:
+        | (RouterNavigateOptions & Pick<NavigateOptionsInternal, "_skipCache">)
+        | undefined = state ? { state, _skipCache: true } : undefined;
       void router.replace(sameOrigin, options);
       return;
     }

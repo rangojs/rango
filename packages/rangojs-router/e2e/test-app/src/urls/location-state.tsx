@@ -22,6 +22,7 @@ import {
   TypedJitLink,
   PlainJitLink,
   TypedJitTimingLink,
+  RouterPushStateButtons,
 } from "../components/LinkStateDisplay.js";
 import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
 import {
@@ -221,6 +222,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
             <TypedJitTimingLink />
           </li>
         </ul>
+        <RouterPushStateButtons />
       </div>
     ),
     { name: "linkState" },

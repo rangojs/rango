@@ -32,6 +32,31 @@ describe("location-state-shared", () => {
     );
   });
 
+  // #993: outside development the missing key used to return undefined, so a
+  // unit test without the Vite plugin silently read and wrote
+  // history.state["undefined"].
+  it("throws under test (NODE_ENV=test) for every key read, naming the testing helper", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const ProductState = createLocationState<{ name: string }>();
+    vi.stubGlobal("window", {
+      history: { state: { undefined: { name: "stale" } } },
+    });
+    const message =
+      /createLocationState key not set[\s\S]*withLocationStateKey\(MyState\) from @rangojs\/router\/testing/;
+    expect(() => ProductState({ name: "Widget" })).toThrow(message);
+    expect(() => ProductState.read()).toThrow(message);
+    expect(() => ProductState.__rsc_ls_key).toThrow(message);
+  });
+
+  it("does not throw in production (the plugin always injects the key there)", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const ProductState = createLocationState<{ name: string }>();
+    expect(ProductState({ name: "Widget" })).toEqual({
+      __rsc_ls_key: undefined,
+      __rsc_ls_value: { name: "Widget" },
+    });
+  });
+
   it("creates entries after key injection and resolves lazy entries", () => {
     const ProductState = createLocationState<{ id: number }>();
     (ProductState as any).__rsc_ls_key = "product";

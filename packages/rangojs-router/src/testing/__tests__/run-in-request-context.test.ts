@@ -3,7 +3,9 @@ import {
   runInRequestContext,
   runWithRequestContext,
   createTestRequestContext,
+  withLocationStateKey,
 } from "../index.js";
+import { createLocationState } from "../../browser/react/location-state-shared.js";
 import { getRequestContext } from "../../server/request-context.js";
 import {
   cookies,
@@ -136,6 +138,30 @@ describe("runInRequestContext", () => {
       return "saved";
     });
     expect(locationState).toEqual({ flash: { text: "Saved!" } });
+  });
+
+  // #993: without the Vite plugin a definition has no key, and outside
+  // production the key read throws — before redirect() runs, so `thrown` is
+  // the missing-key error, not the redirect. withLocationStateKey keys it;
+  // the flash then lands under the `__rsc_ls_`-prefixed key.
+  it("captures an unkeyed definition's missing-key throw; withLocationStateKey keys the flash", async () => {
+    const Flash = createLocationState<{ text: string }>();
+    const unkeyed = await runInRequestContext(() => {
+      throw redirect("/app", { state: [Flash({ text: "Welcome back" })] });
+    });
+    expect(unkeyed.thrown).toBeInstanceOf(Error);
+    expect((unkeyed.thrown as Error).message).toContain(
+      "withLocationStateKey(MyState)",
+    );
+
+    withLocationStateKey(Flash, "Flash");
+    const { thrown, locationState } = await runInRequestContext(() => {
+      throw redirect("/app", { state: [Flash({ text: "Welcome back" })] });
+    });
+    expect((thrown as Response).headers.get("Location")).toBe("/app");
+    expect(locationState).toEqual({
+      __rsc_ls_Flash: { text: "Welcome back" },
+    });
   });
 
   it("returns an empty locationState when the run set none", async () => {

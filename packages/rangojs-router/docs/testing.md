@@ -604,6 +604,15 @@ scoped per segment like loaders), so a LAYOUT component reading a handle (a
 component reading only `useParams` / `useReverse` / `useNavigation` needs no
 seeding.
 
+A location-state definition the component reads WITHOUT a seed needs a key:
+outside production an unkeyed definition throws on first use (the Vite plugin
+that injects keys does not run here). Call `withLocationStateKey(def, name?)`
+from `@rangojs/router/testing` once per definition. `useRouter().push/replace`
+and `<Link>` with `state: [Def(value)]` then write `history.state` through
+production's history path, so `useLocationState(Def)` re-reads after the click;
+wait for it with RTL's `waitFor` (see the testing skill,
+`client-components.md` "Location state").
+
 Model an `include('/shop', …)` mount with the `mount` option: it wraps the
 segment chain in a MountContext exactly as production does, so `useMount()`
 returns the prefix and `useHref`/`useReverse` resolve mount-prefixed URLs. A
@@ -872,8 +881,17 @@ const { result, thrown, response, cookies, headers, locationState } =
 expect(cookies.session).toBe("new-token"); // Set-Cookie, parsed
 expect(headers["cache-control"]).toBe("no-store"); // a header the handler set
 expect(headers.location).toBe("/app"); // the thrown redirect's target
-expect(locationState).toEqual({ flash: { text: "Welcome back" } });
+expect(locationState).toEqual({ __rsc_ls_Flash: { text: "Welcome back" } });
 ```
+
+That `locationState` key comes from `withLocationStateKey(Flash, "Flash")`,
+called once in the test file. A `createLocationState()` definition gets its key
+from the Vite plugin, and a unit-test project doesn't run it. Without a key,
+`Flash(value)` throws outside production (dev and test) before `redirect()`
+runs, so `thrown` holds that missing-key error instead of the redirect. In the
+react-server project (`NODE_ENV=production`) nothing throws and the value lands
+under `"undefined"`. The helper always adds the `__rsc_ls_` prefix, so assert
+`__rsc_ls_Flash`, or `{ [Flash.__rsc_ls_key]: value }` for any key.
 
 Reading **vars the handler set** is via the context, not the snapshot: pass
 `vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
