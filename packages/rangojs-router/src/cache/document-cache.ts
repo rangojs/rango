@@ -109,7 +109,10 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 /**
  * Check if response should be cached based on Cache-Control headers
  */
-function shouldCacheResponse(response: Response): CacheDirectives | null {
+function shouldCacheResponse(
+  response: Response,
+  requestCtx?: Pick<RequestContext, "_payloadVisitorTheme">,
+): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
     return null;
@@ -125,8 +128,32 @@ function shouldCacheResponse(response: Response): CacheDirectives | null {
     return null;
   }
 
+  // The payload carries the visitor's theme (#978): the render ran before the
+  // response opted in (a Cache-Control written after next()), so
+  // payloadInitialTheme could not render the default.
+  if (requestCtx?._payloadVisitorTheme) {
+    return null;
+  }
+
   const cacheControl = response.headers.get("Cache-Control");
   return parseCacheControl(cacheControl);
+}
+
+/**
+ * Whether this cache will store the response the current render produces, as
+ * far as the render can tell: the middleware runs it (a MISS or a stale
+ * refresh) and the response stub already opts in. payloadInitialTheme
+ * (rsc/full-payload.ts) then renders the no-cookie default theme (#978). A
+ * Cache-Control written after next() is not on the stub yet; for that render
+ * shouldCacheResponse refuses a payload marked `_payloadVisitorTheme`.
+ */
+export function documentCacheStoresRender(
+  reqCtx: Pick<RequestContext, "_documentCacheRender" | "res">,
+): boolean {
+  return (
+    reqCtx._documentCacheRender === true &&
+    shouldCacheResponse(reqCtx.res) !== null
+  );
 }
 
 /**
@@ -374,6 +401,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const cached = isFragmentRecovery
         ? null
         : await store.getResponse(cacheKey);
+      // Every path past the lookup either returns a fresh HIT, which renders
+      // nothing, or renders a response this cache may store.
+      requestCtx._documentCacheRender = true;
 
       if (cached && cached.response.status === 200) {
         if (!cached.shouldRevalidate) {
@@ -409,7 +439,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
-                  const directives = shouldCacheResponse(fresh);
+                  const directives = shouldCacheResponse(fresh, requestCtx);
 
                   if (!directives || !fresh.body) return;
 
@@ -456,7 +486,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const originalResponse = await next();
 
       // 3. Cache if response has appropriate headers
-      const directives = shouldCacheResponse(originalResponse);
+      const directives = shouldCacheResponse(originalResponse, requestCtx);
 
       if (directives) {
         log(

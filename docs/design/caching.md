@@ -192,6 +192,39 @@ cache({ ttl: 3600 }, () => [
 ])
 ```
 
+The shipped whole-response tier is the store-backed `createDocumentCacheMiddleware`
+(`src/cache/document-cache.ts`, `skills/document-cache`): it stores a response
+whose `Cache-Control` carries `s-maxage` and serves it to every visitor on that
+key. So nothing in the stored bytes may belong to the visitor who happened to
+render them. The router adds one such value itself: `metadata.initialTheme`,
+the theme `useTheme()` starts at. Before #978 it was the rendering visitor's
+theme cookie. A dark visitor who warmed the entry handed `"dark"` to every later
+visitor with no stored theme, for the page's lifetime, because `ThemeProvider`
+re-syncs only from an explicitly stored theme. The `<html>` class stayed right,
+because the theme script reads `document.cookie`; only `useTheme()` readers
+(a toggle label, an icon) showed the other visitor's theme.
+
+The rule now matches the PPR shell capture: a render whose response opted in
+to the document cache before `next()` carries the no-cookie default. The
+middleware marks the render it may store (`_documentCacheRender`, set after the
+store lookup, so it covers the MISS and the stale refresh), and
+`payloadInitialTheme` (`src/rsc/full-payload.ts`) returns `defaultTheme` when
+that mark is set and the response stub already opts in
+(`documentCacheStoresRender`, the same `shouldCacheResponse` predicate the
+write uses). Any other render keeps the visitor's theme. That includes the
+unmatched-route 404 (`src/rsc/handler.ts`): middleware can opt a URL in before
+`next()` while the stub is still a 200, so the 404 reads `_readTheme()`
+directly instead of going through `payloadInitialTheme`. A 404 is never stored,
+so the default would only have cost that visitor their own theme.
+
+You might ask why the render trusts the stub rather than the final response.
+The payload is built before `next()` returns, so a `Cache-Control` written
+after `await next()` or in `onResponse` is invisible to it. That case gets a
+write-side check instead: `payloadInitialTheme` marks `_payloadVisitorTheme`
+whenever it emits a theme other than the default, and `shouldCacheResponse`
+refuses to store a response carrying the mark. A late opt-in therefore stores
+only a default-theme render; it fills more slowly, but never leaks a theme.
+
 ### Layer 2: Shell Cache + Fresh Streaming
 
 Cache synchronous shell, stream fresh data through Suspense boundaries.

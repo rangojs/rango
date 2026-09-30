@@ -612,10 +612,25 @@ export interface RequestContext<
    * @internal The theme cookie (or the default) read with no identity guard.
    * The guarded reads (`theme` here, the handler and middleware `ctx.theme`)
    * call it after assertThemeReadAllowed; the router's own payload read goes
-   * through payloadInitialTheme (rsc/full-payload.ts). Undefined without
+   * through payloadInitialTheme (rsc/full-payload.ts), except the unmatched
+   * route's 404 (rsc/handler.ts), which is never stored. Undefined without
    * theme config.
    */
   _readTheme(): Theme | undefined;
+
+  /**
+   * @internal Set by the document-cache middleware (cache/document-cache.ts)
+   * before it runs a render whose response it may store: the MISS and the
+   * stale refresh. payloadInitialTheme reads it (#978).
+   */
+  _documentCacheRender?: boolean;
+
+  /**
+   * @internal Set by payloadInitialTheme when the document payload carries
+   * the visitor's theme and it differs from the no-cookie default. The
+   * document cache does not store that response (#978).
+   */
+  _payloadVisitorTheme?: boolean;
 
   /**
    * Attach location state entries to the current response.
@@ -901,6 +916,8 @@ export type PublicRequestContext<
   | "_pendingBackgroundTasks"
   | "_themeConfig"
   | "_readTheme"
+  | "_documentCacheRender"
+  | "_payloadVisitorTheme"
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"

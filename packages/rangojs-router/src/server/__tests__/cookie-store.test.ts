@@ -950,6 +950,35 @@ describe("theme read guards (#971)", () => {
     expect(payloadInitialTheme(themedRequestContext(false))).toBeUndefined();
   });
 
+  it("a render the document cache stores carries the no-cookie default; any other render marks a visitor theme (#978)", () => {
+    const stored = themedRequestContext();
+    stored._documentCacheRender = true;
+    stored.header("Cache-Control", "s-maxage=60");
+    expect(payloadInitialTheme(stored)).toBe("system");
+    expect(stored._payloadVisitorTheme).toBeUndefined();
+
+    // Not stored: no s-maxage yet, or no document-cache middleware.
+    const unstored = themedRequestContext();
+    unstored._documentCacheRender = true;
+    expect(payloadInitialTheme(unstored)).toBe("dark");
+    expect(unstored._payloadVisitorTheme).toBe(true);
+    const unmarked = themedRequestContext();
+    unmarked.header("Cache-Control", "s-maxage=60");
+    expect(payloadInitialTheme(unmarked)).toBe("dark");
+    expect(unmarked._payloadVisitorTheme).toBe(true);
+
+    // A visitor with no stored theme renders the default: nothing to mark.
+    const anonymous = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+      themeConfig: resolveThemeConfig(true),
+    });
+    expect(payloadInitialTheme(anonymous)).toBe("system");
+    expect(anonymous._payloadVisitorTheme).toBeUndefined();
+  });
+
   it("ctx.setTheme throws in a cache() boundary like cookies().set, and leaves no cookie", () => {
     const reqCtx = themedRequestContext();
     runWithRequestContext(reqCtx, () => {

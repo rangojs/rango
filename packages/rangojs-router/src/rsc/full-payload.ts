@@ -14,6 +14,7 @@ import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
+import { documentCacheStoresRender } from "../cache/document-cache.js";
 import { gateTransitions } from "./transition-gate.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 
@@ -82,20 +83,37 @@ export function buildFullPayload(
  * ThemeProvider's first state), read with no identity guard: it is the
  * router's own read, not handler code (#971).
  *
- * A shell capture carries the no-cookie default, not the capturing visitor's
- * theme. The shell and its ShellCacheEntry.initialTheme serve every visitor,
- * and ThemeProvider re-syncs only from an explicitly stored theme, so a
- * visitor with none kept the capturer's `useTheme().theme` for the page's
- * lifetime. A visitor with a stored theme gets it pre-paint (theme script)
- * and in the provider after mount.
+ * A render other visitors may be served carries the no-cookie default, not
+ * the rendering visitor's theme: a shell capture, and a render the document
+ * cache runs whose response opted in before next() (documentCacheStoresRender,
+ * #978). The shell, its ShellCacheEntry.initialTheme and the stored document
+ * serve every visitor, and ThemeProvider re-syncs only from an explicitly
+ * stored theme, so a visitor with none kept the first visitor's
+ * `useTheme().theme` for the page's lifetime. A visitor with a stored theme
+ * gets it pre-paint (theme script) and in the provider after mount.
+ *
+ * Any other render carries the visitor's theme (the unmatched-route 404 reads
+ * it without this function, rsc/handler.ts); when that differs from the
+ * default it marks `_payloadVisitorTheme`, and the document cache does not
+ * store the response.
  */
 export function payloadInitialTheme(
   reqCtx: Pick<
     RequestContext<any>,
-    "_themeConfig" | "_shellCaptureRun" | "_readTheme"
+    | "_themeConfig"
+    | "_shellCaptureRun"
+    | "_readTheme"
+    | "_documentCacheRender"
+    | "_payloadVisitorTheme"
+    | "res"
   >,
 ): Theme | undefined {
   const config = reqCtx._themeConfig;
   if (!config) return undefined;
-  return reqCtx._shellCaptureRun ? config.defaultTheme : reqCtx._readTheme();
+  if (reqCtx._shellCaptureRun || documentCacheStoresRender(reqCtx)) {
+    return config.defaultTheme;
+  }
+  const theme = reqCtx._readTheme();
+  if (theme !== config.defaultTheme) reqCtx._payloadVisitorTheme = true;
+  return theme;
 }
