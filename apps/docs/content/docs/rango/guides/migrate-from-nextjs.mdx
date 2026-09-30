@@ -212,7 +212,7 @@ Next's `(.)`/`(..)` folder conventions become an explicit `intercept()` in the l
 layout(<ShopLayout />, () => [
   path("/product/:id", ProductPage, { name: "product" }),
   intercept("@modal", ".product", <ProductModal />, {
-    when: ({ from }) => from.pathname.startsWith("/shop"),
+    when: ({ from }) => from.url.pathname.startsWith("/shop"),
   }),
 ]);
 ```

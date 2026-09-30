@@ -438,13 +438,21 @@ global map entirely.
   navigation, with implicitly-suspending `useLoader` reads (a pending first
   read suspends to its `<Suspense>` boundary while the loader streams).
 
-`transition(config)` is valid inside a `path()` use callback only and projects
-the data subset of `TransitionConfig`: ViewTransition classes
-(`enter`/`exit`/`update`/`share`/`default`), `name`, and the
-`viewTransition: "auto" | false` boundary opt-out. The `when` gate is a
-server-executed predicate and is rejected — declare it with a server-tree
-`transition()` wrapping the include. Materialization re-emits the config in
-the standard child position, so the canonical commit gets the transition
+`transition(config)` is valid inside a `path()` use callback only and
+carries `TransitionConfig`: ViewTransition classes
+(`enter`/`exit`/`update`/`share`/`default`), `name`, the
+`viewTransition: "auto" | false` boundary opt-out, and `when`. `when` is a
+browser predicate written inline in the definition, which is already a
+client module, so it needs no hoist; a non-function throws a `TypeError` at
+definition time. The server projection never holds the function: it sends a
+when reference (`{ definition, routeId }`, `transition-when-ref.ts`) that the
+browser resolves to the route's `when` in the definition it loaded. A
+cross-route navigation decides at the optimistic swap (the first
+presentation), over the destination's `when` and the kept segments outside
+the group, and the canonical commit reuses that decision; a same-route
+navigation never swaps and decides at the canonical commit, where `false`
+also opts out of the group's default hold. Materialization re-emits the config
+in the standard child position, so the canonical commit gets the transition
 config — on React 19.3+, the router's ViewTransition boundary with those
 classes. It does not change whether a param nav holds: group segments are
 keyed by the group, so `/items/one → /items/two` reconciles and holds with or

@@ -365,18 +365,20 @@ backend failure (`CACHE_READ_ERROR`) — also never falls back: it renders
 uncached, exactly as without ppr. (Document requests treat the same two
 opt-outs as a cache miss before any shell read: see the serve pipeline above.)
 
-`transition({ when })` is evaluated from the
-matched manifest before route handlers on every PPR match, so it can vary by
-URL/params/action or middleware context without disabling replay; handler-set
-context is unavailable by design. Its result gates only the transition of a
-segment the response sends; it never makes a replay send one. A replay `HIT`
+`transition({ when })` is a browser predicate: the server never evaluates
+it, so a shell, a replay and a cache entry never hold a decision. The route
+carries it as a client reference (attached right before Flight on every
+match, never stored), and the browser decides each navigation from
+`{ kind, from, to }`. Location state middleware sets reaches `to.state` on a
+replay `HIT` (middleware runs on every HIT); a handler's does not (a HIT runs
+no handler). The decision gates only how the browser commits; it never makes
+a replay send a segment. A replay `HIT`
 makes the same segment decision as the live partial path: a segment the client
 holds that the navigation does not re-send (`revalidate()` false, or a layout
 the default keeps) is omitted from the response, so the client keeps its tree
 (a list the client built up, "Load more" style, stays as it is). Intercepts, an active nonce, and an
 absent/corrupt segment snapshot fall open to the ordinary partial path when
-encountered by the shell capture. A transition already replayed from an
-explicit cache tier remains frozen by that tier's normal semantics.
+encountered by the shell capture.
 
 Two more decisions are made before any shell-store read, so probes and
 prerendered routes never spend passive `getShell` I/O:

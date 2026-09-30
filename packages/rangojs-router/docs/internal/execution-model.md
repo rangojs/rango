@@ -280,7 +280,12 @@ global middleware
   the browser decides at the navigation's first commit. Pinned by the
   `[PPR2]` row ("a HIT runs the full middleware chain and live loaders; no
   handler runs") and the `[PPR4]` row (a HIT carries the predicate, handlers
-  replay).
+  replay). Location state middleware sets still reaches the predicate's
+  `to.state` on a partial replay HIT: `attachLocationStateIfPresent` runs
+  after the replayed match (`requestRenderPlan` in `rsc/rsc-rendering.ts`),
+  pinned by the cloudflare-basic exec-matrix navigation e2e (`ppr-shell.test.ts`,
+  dev + production). A handler's location state is absent there, because the
+  HIT runs no handler.
 - **Partial navigations cache and reuse the PPR handler layer without changing
   the Flight payload or client runtime.** A normal-route partial request first
   tries to seed the snapshot's canonical
@@ -637,7 +642,8 @@ render path. Direct navigation to the same target route does not execute
 intercept middleware. Pinned by the `[I2]` semantic matrix row.
 
 Soft navigation triggers the intercept only when the route's `when()`
-predicate returns true for the navigation origin; when it returns false, the
+selector returns true for the navigation's `from`/`to` locations
+(`{ url, params, routeName }`); when it returns false, the
 soft navigation renders the full target page with no intercept. Pinned by the
 `[I1]`/`[W1]` semantic matrix rows.
 

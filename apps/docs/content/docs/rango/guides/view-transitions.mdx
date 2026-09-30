@@ -184,27 +184,70 @@ Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`
 
 ## Conditional transitions with `when`
 
-`transition({ when })` gates the hold per request. The predicate runs server-side and outside any cache scope; return `false` to drop this segment's transition for the request. The hold is navigation-wide: the navigation streams its `loading()` fallback instead of holding only when no other matched segment still has a transition (the common case is a single `transition()` on the route).
+`transition({ when })` decides, per navigation, whether the navigation holds. It is a **browser** predicate: it runs once per navigation, at the first commit that presents the destination, and never on the server, on the document load, or on progressive-enhancement paths. Return `false` and the navigation commits urgently: the `loading()` skeleton streams and no view transition runs.
 
-When it runs depends on the route:
-
-- **Ordinary routes** run it after the route handler during fresh resolution, so `get()` can read handler- and middleware-set context. Cache and prerender hits replay the stored decision.
-- **[PPR](/docs/rango/guides/ppr) routes** run it before route handlers, on every match — including runtime-cache, prerender, and partial-navigation replays. It can read URL, params, action metadata, `env`, and middleware-set context, but not values set by route handlers.
-
-Its context mirrors the `revalidate()` predicate args — navigation source (`currentUrl`, `currentParams`, `fromRouteName`), target (`nextUrl`, `nextParams`, `toRouteName`), action metadata (`actionId`, `actionUrl`, `actionResult`, `formData`), `method` — plus `get`/`env` for request-context reads. Source fields are `undefined` on the initial full load and on action error paths:
+Write it inline in `urls()`. The Vite plugin hoists the literal into a `"use client"` module, and the route carries it to the browser as a client reference:
 
 ```ts
-// Hold only when the handler marked this request (handler sets, gate reads):
-transition({ when: (ctx) => ctx.get(KeepScroll) === true });
+// Hold unless the navigation leaves the "b" tab (the navigation source):
+transition({ when: ({ from }) => from.params.tab !== "b" });
 
-// Hold only when arriving from a specific route:
-transition({ when: ({ fromRouteName }) => fromRouteName === "products.list" });
+// Hold only for forward navigations inside /list:
+transition({
+  when: ({ kind, to }) => kind !== "pop" && to.url.pathname.startsWith("/list"),
+});
+
+// Hold only after a specific action revalidated the route:
+transition({ when: ({ isAction }) => isAction(addToCart) });
 ```
 
-A predicate that throws is reported to `router.onError` (phase `"rendering"`) and treated as no-hold. Two caveats:
+For a predicate you share between routes or unit-test, export it from a `"use client"` module and import it into the urls file. Location state a `Link` pushed is on `to.state`, read with `Def.read(location)`:
 
-- **Same-route content-holds need the transition present on the first render.** Source fields are `undefined` on the initial full load; a gate that returns `false` there drops the transition before the route mounts, and every later same-route param nav remounts (skeleton flash) regardless of what the gate decides then. Write source gates to hold when there is no source — `({ currentParams }) => currentParams?.tab !== "raw"` rather than `=== "details"`.
-- **Prefetch and cache freeze the gate.** A prefetched navigation decides at prefetch time, and on ordinary routes a `cache()`/prerender hit replays the stored transition without re-running the predicate. PPR routes re-run it on the server for each match, but a completed browser prefetch still carries its earlier decision. If your gate must reflect the exact click-time source, source-scope the prefetch (`<Link prefetchKey=":source">`) and, on an ordinary route, don't `cache()` that segment.
+```tsx
+// src/transitions.ts
+"use client";
+import type { TransitionWhenContext } from "@rangojs/router";
+import { Slide } from "./location-states";
+
+export function slideWhen({ to }: TransitionWhenContext): boolean {
+  return Slide.read(to)?.animate !== false;
+}
+
+// src/urls.tsx
+path("/photos/:id", PhotoPage, { name: "photo" }, () => [
+  transition({ default: "slide", when: slideWhen }),
+]);
+
+// A Link that opts its navigation out:
+<Link to="/photos/2" state={[Slide({ animate: false })]}>
+  Next
+</Link>;
+```
+
+A predicate runs where its effect lands: the hold is a browser commit decision, so the predicate runs in the browser, and `get()`, `env` and handler state do not exist there. An inline literal may reference module-level imports only when they are client-safe (they are re-emitted into the hoisted module). A free server binding or a server-only import is a build error that names it; a server function passed by name, or a non-function, fails dev startup, the build and HMR with the route name and pattern.
+
+The context:
+
+| Field      | Meaning                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| `kind`     | `"push"`, `"replace"`, `"pop"` (back/forward), `"action"`, or `"revalidate"` (`router.refresh()`, a stale entry) |
+| `from`     | The committed location being left: `{ url, params, routeName, state }`                                           |
+| `to`       | The destination, same shape. It is `from` for `"action"` and `"revalidate"`                                      |
+| `isAction` | The `revalidate()` action matcher; `false` off-action                                                            |
+| `action`   | `{ id, formData, result, error }` on action commits, the error-boundary commit included                          |
+
+`to.state` holds what the navigation leaves on the history entry: the pushed state plus server `ctx.setLocationState()` for push and replace, the target entry's stored state for pop, and the current entry's state plus action-set state for an action. Middleware-set location state reaches it on a [PPR](/docs/rango/guides/ppr) replay too, because middleware runs on every shell HIT; a route handler's does not, because a HIT runs no handler. A `clientUrls()` cross-route navigation decides at its optimistic swap, before the server responds, so its `to.state` is the pushed state only. On back/forward after a reload, `from.state` and `from.routeName` are `undefined`.
+
+How decisions combine:
+
+- The navigation holds only when **every** committed segment's `when` returns true, kept or re-sent, so a layout the navigation keeps still gates it. The same function on several segments is called once.
+- `false` makes the whole navigation urgent. Every `<ViewTransition>` stays in the tree with its classes set to `"none"`, so a route whose predicate flips between navigations never remounts or loses component state.
+- That holds for actions and revalidations too: a gated-off action or revalidation commit is urgent, so a segment it re-renders streams its `loading()`. The router commits an action's result after the response arrives, outside the transition React opens for a form action or `useActionState` call.
+- Intercept (modal) commits, including a back/forward that opens or closes a modal, are not decided. While a modal is open, an [intercept selector's](/docs/rango/guides/intercepting-routes) `from` is the page under the modal; `transition({ when })`'s `from` is always the location on screen.
+- A predicate that throws counts as `false` and is logged with `console.error`.
+- `kind` lines up with the [direction-aware](#direction-aware-transitions) class keys: a pop restored from the history cache animates with `"navigation-back"`.
+
+To skip the transition for one navigation, pass `transition: false`: `router.push(url, { transition: false })`, `router.replace(url, { transition: false })`, or `<Link transition={false}>`. No predicate is called, and the navigation commits the way a `when` returning `false` does. Back/forward, actions and revalidation have no per-navigation options and are unaffected.
 
 ## Testing a transition() route
 
@@ -216,6 +259,8 @@ await expect(featurePage).toBeVisible();
 ```
 
 Waiting for `toHaveCount(1)` first is not enough: the count passes through 1 before the second host is inserted.
+
+Unit-test a `when` with `runTransitionWhen(when, { kind, from, to, action })` from `@rangojs/router/testing`; it builds the same context and returns `{ applied, gatedOff, context }`. `renderRoute` decides `router.navigate()` as `kind: "push"` and `router.refresh()` as `kind: "revalidate"`. Pop, action and `clientUrls()` optimistic-swap decisions are e2e territory. See [Testing](/docs/rango/guides/testing).
 
 ## Recommendations
 

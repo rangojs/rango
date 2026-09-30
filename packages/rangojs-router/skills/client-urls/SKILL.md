@@ -134,7 +134,7 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 | `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false }, use?)` — see below                                                                                                                           |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs in the browser                                                                                                                               |
-| `transition()` | Inside a `path()` use callback only (at most one). Data-only ViewTransition config — no `when`; same-route navs in a group already hold previous content without it                              |
+| `transition()` | Inside a `path()` use callback only (at most one). ViewTransition config plus an inline `when` browser predicate (see `/view-transitions`); same-route navs in a group already hold without it   |
 | `intercept()`  | Dot-local named target in the SAME definition; use may contain `loader()`/`loading()`                                                                                                            |
 
 At the top level of the builder only `path()`, `layout()` and `intercept()`

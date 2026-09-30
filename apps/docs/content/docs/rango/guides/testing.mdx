@@ -580,7 +580,7 @@ The unit and Flight helpers test the pieces. These behaviors look unit-testable 
 | A loader that awaits `ctx.rendered()` and reads handle data           | `runLoader` seeds the handle value instead of running the barrier                      | Seed `rendered` and `handles`; cover the wiring end to end        |
 | Typed search schema parsing                                           | `searchData` is seeded as-is                                                           | End-to-end                                                        |
 
-Other unit helpers not covered above: `collectHandle` runs a handle's `collect` function on per-segment values, `runTransitionWhen` evaluates a `transition({ when })` gate, and `runClientRevalidate` evaluates a `clientUrls()` revalidation predicate. The [testing skill](https://github.com/rangojs/rango/tree/main/packages/rangojs-router/skills/testing) documents each with its full options.
+Other unit helpers not covered above: `collectHandle` runs a handle's `collect` function on per-segment values, `runTransitionWhen` evaluates a `transition({ when })` browser predicate against a `{ kind, from, to, action }` context (in Vitest the inline-`when` hoist and its validation do not run, so an inline predicate stays a plain function), and `runClientRevalidate` evaluates a `clientUrls()` revalidation predicate. The [testing skill](https://github.com/rangojs/rango/tree/main/packages/rangojs-router/skills/testing) documents each with its full options.
 
 <Cards>
   <Card href="/docs/rango/features/testing" title="Testing overview">

@@ -87,9 +87,24 @@ The match-time selector is the `when` field of the `intercept()` config object
 (4th argument), not a standalone DSL helper. It is a single predicate or an
 array of predicates (AND logic); omit it to always activate.
 
-| Rule                                             | Example                                                     | Guard location                    |
-| ------------------------------------------------ | ----------------------------------------------------------- | --------------------------------- |
-| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from }) => ... })` | `route-definition/dsl-helpers.ts` |
+| Rule                                             | Example                                                         | Guard location                    |
+| ------------------------------------------------ | --------------------------------------------------------------- | --------------------------------- |
+| Only valid on `intercept()` (no standalone form) | `intercept(slot, route, Comp, { when: ({ from, to }) => ... })` | `route-definition/dsl-helpers.ts` |
+
+### `when` (transition config)
+
+`transition({ when })` is a browser predicate, so in a server `urls()` it must
+reach the browser as a client reference. An invalid value fails dev startup,
+the build and HMR re-discovery with the route name and pattern
+(`TransitionWhenError`); a route discovery did not see throws the same error
+at render.
+
+| Rule                                                                 | Example                                                                   | Guard location                                                                     |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| A function (definition time, every environment)                      | `transition({ when: true })` is a `TypeError`                             | `route-definition/dsl-helpers.ts` (`assertTransitionWhenShape`)                    |
+| An inline literal is hoisted; it may not capture server bindings     | `const limit = 3; transition({ when: ({ to }) => +to.params.n < limit })` | `vite/plugins/transition-when-hoist.ts`                                            |
+| A name must be a `"use client"` export, not a server function        | `transition({ when: serverFn })`                                          | `build/generate-manifest.ts` (discovery), `rsc/attach-transition-when.ts` (render) |
+| `clientUrls()`: inline, no hoist (the definition is a client module) | `transition({ when: ({ from }) => ... })`                                 | `client-urls/client-urls.ts`                                                       |
 
 ### Route names
 

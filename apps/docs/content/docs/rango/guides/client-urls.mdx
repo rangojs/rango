@@ -160,7 +160,7 @@ The builder receives seven helpers:
 | `loader(Def, options?, use?)`               | `path()` use, `layout()` children, `intercept()` use | The only option is `ssr` (`{ ssr: false }`). The use callback may contain `revalidate()` only                   |
 | `loading(element)`                          | `path()` use, `layout()` children, `intercept()` use | The route-level fallback around the optimistic render. Takes no options                                         |
 | `revalidate(fn)`                            | `loader()` use only                                  | Runs in the browser, see [Revalidation](#revalidation-runs-in-the-browser)                                      |
-| `transition(config)`                        | `path()` use only                                    | Data only: view transition classes, `name`, `viewTransition`. No `when`                                         |
+| `transition(config)`                        | `path()` use only                                    | View transition classes, `name`, `viewTransition`, and an inline `when` browser predicate                       |
 | `intercept(slot, ".name", Component, use?)` | builder, `layout()` children                         | A restricted form, see [Intercepts](#intercepts)                                                                |
 
 A `loader()` or `loading()` placed in a layout's children applies to every route inside that layout.
@@ -214,7 +214,7 @@ export default clientUrls(({ path, loader, transition }) => [
 ]);
 ```
 
-`when` is rejected because it is a predicate that runs on the server. For a conditional transition, declare `transition()` in the server tree around the include. See [View Transitions](/docs/rango/guides/view-transitions) for the classes and React version support.
+`when` is a browser predicate, written inline: the definition is already a client module. A cross-route navigation decides at its optimistic swap, before the server responds; a same-route navigation decides when it commits, and `false` also opts it out of the group's default hold. See [Conditional transitions](/docs/rango/guides/view-transitions#conditional-transitions-with-when). See [View Transitions](/docs/rango/guides/view-transitions) for the classes and React version support.
 
 ### Intercepts
 
