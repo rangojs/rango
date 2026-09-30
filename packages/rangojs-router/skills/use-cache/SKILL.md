@@ -229,12 +229,31 @@ export const ProductLoader = createLoader(async (ctx) => getProduct(ctx));
 per-request values (cookies, headers) are not reflected in the cache key. Without
 this guard, one user's data would be served to another.
 
+The raw reads throw the same way: `ctx.request.headers` on any `ctx` passed in
+(handler, loader, middleware; it is one `Request` object, also
+`getRequestContext().request`), and `getRequestContext().cookie()` /
+`.cookies()`. A `ctx` or a `Request` argument keys the entry by its route and
+URL only, never by its headers.
+
 Extract the value before the cached function and pass it as an argument:
 
 ```typescript
 const locale = cookies().get("locale")?.value ?? "en";
 const data = await getCachedData(locale); // locale is now in the cache key
+
+// the same for a header
+const language = ctx.request.headers.get("accept-language") ?? "en";
+const greeting = await getGreeting(language);
 ```
+
+Building the key from a `Request` argument reads only its URL.
+`ctx.request.clone()` is guarded like `ctx.request.headers`. One gap remains:
+`fetch(ctx.request)` and `new Request(ctx.request)` don't throw, and the guard
+can't see through them. The fetch forwards the visitor's `Cookie` and
+`Authorization`, so its response is per visitor, and the copy's headers are
+the visitor's; either one stored in the entry serves one visitor's data to
+the next. Don't make them in a cached body: fetch outside and pass the
+result in, or pass in the values the fetch depends on.
 
 `ctx.get()` of a **non-cacheable variable** (`createVar({ cache: false })`, or
 a value written with `ctx.set(key, value, { cache: false })`) throws the same
@@ -262,7 +281,8 @@ cached body does not.
 A LOADER body consumed inside the cached function (`await ctx.use(loader)`)
 is part of that body: its value is captured into the shared cache entry like
 any other computed data, so a `{ cache: false }` variable read there throws,
-exactly as `cookies()`, `headers()` and a theme read do (one guard follows the
+exactly as `cookies()`, `headers()`, `ctx.request.headers` and a theme read do
+(one guard follows the
 cached body's whole async chain, loaders included). Read the value outside
 and pass it in as an argument. Handler/cached-scope consumption = baked copy,
 client-side `useLoader` = live (the consumption-lane rule, `/rango` →

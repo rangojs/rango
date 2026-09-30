@@ -155,6 +155,10 @@ interface ServeInit {
  * Serve one document request through handleRscRendering and settle every
  * background task it scheduled (a MISS's capture included).
  */
+/** The partition headers' values, as the handlers render them. */
+const Tier = createVar<string | null>();
+const Locale = createVar<string | null>();
+
 async function serve(
   router: Router,
   store: MemorySegmentCacheStore,
@@ -166,6 +170,11 @@ async function serve(
     headers: { accept: "text/html", ...init.headers },
   });
   const variables: Record<string, unknown> = {};
+  // What a middleware would copy from the partition headers for the
+  // handlers to render (#976: a handler read of ctx.request.headers under
+  // cache() or a capture throws).
+  contextSet(variables, Tier, request.headers.get("x-tier"));
+  contextSet(variables, Locale, request.headers.get("x-locale"));
   for (const [token, value, options] of init.variables ?? []) {
     contextSet(variables, token as any, value, options);
   }
@@ -783,16 +792,18 @@ describe("PPR handlers baked: no HIT runs a handler", () => {
  * A route whose cache() record is partitioned by the request (its `key()`,
  * or the store's `keyGenerator`) partitions its shell the same way: each
  * partition captures and serves its own, and nothing crosses partitions.
- * The content here reads the raw request header, which the capture guards do
- * not see: the partition key is what keeps it per visitor group.
+ * The content renders middleware's copy of the request header (a handler read
+ * of ctx.request.headers refuses the capture, #976); the key() and the
+ * keyGenerator read the header, and the partition key is what keeps the
+ * content per visitor group.
  */
 describe("PPR handlers baked: request-partitioned shells", () => {
   function TierLayout(ctx: any): React.ReactNode {
     cacheTag("tiered");
-    return <main>{`tier-${ctx.request.headers.get("x-tier")}-layout`}</main>;
+    return <main>{`tier-${ctx.get(Tier)}-layout`}</main>;
   }
   function TierPage(ctx: any): React.ReactNode {
-    return <p>{`tier-${ctx.request.headers.get("x-tier")}-page`}</p>;
+    return <p>{`tier-${ctx.get(Tier)}-page`}</p>;
   }
 
   async function tieredRouter(keyCalls: string[]): Promise<Router> {
@@ -926,9 +937,7 @@ describe("PPR handlers baked: request-partitioned shells", () => {
   it("a store keyGenerator gives each locale its own shell", async () => {
     const router = await makeRouter(({ layout, path }: any) => [
       layout(
-        (ctx: any) => (
-          <main>{`locale-${ctx.request.headers.get("x-locale")}`}</main>
-        ),
+        (ctx: any) => <main>{`locale-${ctx.get(Locale)}`}</main>,
         () => [
           path("/localized", () => <p>page</p>, {
             name: "localized",

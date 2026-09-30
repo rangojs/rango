@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { urls, Meta, Breadcrumbs, nonce } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router";
+import { urls, Meta, Breadcrumbs, nonce, createVar } from "@rangojs/router";
+import type { HandlerContext, Middleware } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import {
   ShellPriceLoader,
@@ -510,21 +510,29 @@ async function ShellIdentityUsePage(ctx: HandlerContext) {
 }
 
 // A request-partitioned ppr route: its cache() key() reads the visitor's tier
-// header, so its record and its shell are per tier. The page reads the same
-// header (raw request headers are not a capture guard; the partition key is
-// what keeps a tier's content in that tier's shell).
+// header, so its record and its shell are per tier. The pages render
+// middleware's copy of the header: a handler read of ctx.request.headers
+// refuses the capture (issue #976), and the partition key is what keeps a
+// tier's content in that tier's shell.
 function shellTier(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-shell-tier") ?? "none";
 }
 
+const ShellTier = createVar<string>();
+
+const copyShellTier: Middleware = async (ctx, next) => {
+  ctx.set(ShellTier, shellTier(ctx));
+  return next();
+};
+
 function ShellTieredPage(ctx: HandlerContext) {
-  return <p data-testid="shell-tiered">{`tier-${shellTier(ctx)}`}</p>;
+  return <p data-testid="shell-tiered">{`tier-${ctx.get(ShellTier)}`}</p>;
 }
 
 function ShellTieredNestedPage(ctx: HandlerContext) {
   return (
     <>
-      <p data-testid="shell-tiered">{`tier-${shellTier(ctx)}`}</p>
+      <p data-testid="shell-tiered">{`tier-${ctx.get(ShellTier)}`}</p>
       <p>shell-tiered-nested-route</p>
     </>
   );
@@ -534,7 +542,7 @@ function ShellTieredNestedPage(ctx: HandlerContext) {
 function ShellTieredLayout(ctx: HandlerContext) {
   return (
     <div data-testid="shell-tiered-layout">
-      <p>{`layout-tier-${shellTier(ctx)}`}</p>
+      <p>{`layout-tier-${ctx.get(ShellTier)}`}</p>
       <Outlet />
     </div>
   );
@@ -1233,21 +1241,23 @@ export const shellCachePatterns = urls(
       name: "shellCacheIdentityUse",
       ppr: true,
     }),
-    cache({ ttl: 300, key: (ctx) => `tier:${shellTier(ctx)}` }, () => [
-      path("/shell-cache/tiered", ShellTieredPage, {
-        name: "shellCacheTiered",
-        ppr: true,
-      }),
-      // The same partition through a nested cache() without a key() of its
-      // own (issue #970): its record and its shell are per tier too, and its
-      // record, keyed by the tier and its own default key, never names
-      // /shell-cache/tiered's.
-      layout(ShellTieredLayout, () => [
-        cache({ ttl: 300 }, () => [
-          path("/shell-cache/tiered-nested", ShellTieredNestedPage, {
-            name: "shellCacheTieredNested",
-            ppr: true,
-          }),
+    middleware(copyShellTier, () => [
+      cache({ ttl: 300, key: (ctx) => `tier:${shellTier(ctx)}` }, () => [
+        path("/shell-cache/tiered", ShellTieredPage, {
+          name: "shellCacheTiered",
+          ppr: true,
+        }),
+        // The same partition through a nested cache() without a key() of
+        // its own (issue #970): its record and its shell are per tier too,
+        // and its record, keyed by the tier and its own default key, never
+        // names /shell-cache/tiered's.
+        layout(ShellTieredLayout, () => [
+          cache({ ttl: 300 }, () => [
+            path("/shell-cache/tiered-nested", ShellTieredNestedPage, {
+              name: "shellCacheTieredNested",
+              ppr: true,
+            }),
+          ]),
         ]),
       ]),
     ]),

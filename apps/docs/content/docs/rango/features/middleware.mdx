@@ -79,6 +79,8 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 
 Every middleware must either call `next()` or return (or throw) a `Response`. Returning or throwing a `Response` short-circuits the chain and becomes the HTTP response; headers and cookies already set are merged into it. `ctx.env` carries your platform bindings; `ctx.set()` shares data with everything downstream.
 
+Middleware reads request headers and cookies freely. A handler under `cache()` or on a `ppr` route can't: there `ctx.request.headers`, like `headers()`, throws or refuses the shell capture, since the value would be stored for every visitor. Copy what the handler renders in middleware with `ctx.set()`, and include it in the route's `cache()` `key()` so each value gets its own entry ([Freshness](/docs/rango/concepts/freshness)).
+
 Cookies and request headers are free functions, not `ctx` members: `cookies().get("session")` and `headers().get("accept-language")`, both imported from `@rangojs/router`. To set a response header, call `ctx.header(name, value)`; after `await next()` it writes to the real downstream response:
 
 ```ts

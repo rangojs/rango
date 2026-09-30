@@ -52,6 +52,7 @@ import {
   resolveTagsOption,
 } from "./cache-policy.js";
 import type { RequestContext } from "../server/request-context.js";
+import { runIdentityExempt } from "./cache-exec-scope.js";
 
 /**
  * Narrow the request's route-record window (RequestContext._routeRecordWindow)
@@ -708,7 +709,7 @@ export class CacheScope {
     let allowed = true;
     for (const condition of this.conditions) {
       try {
-        allowed = !!condition(requestCtx);
+        allowed = !!runIdentityExempt(() => condition(requestCtx));
         if (!allowed) {
           debugCacheLog(
             `[CacheScope] condition returned false, skipping cache ${op}`,

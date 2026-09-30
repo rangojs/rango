@@ -13,6 +13,7 @@
  * 4. If miss → run handler, cache if response has cache headers
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 import {
@@ -307,7 +308,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // are not visible on ctx.url in production.
     const rawUrl = new URL(ctx.request.url);
     const isFragmentRecovery =
-      ctx.request.headers.get(SEGMENT_FRAGMENT_RECOVERY_HEADER) === "1";
+      requestHeaders(ctx.request).get(SEGMENT_FRAGMENT_RECOVERY_HEADER) === "1";
 
     // Only cache GET requests — mutations and other methods must not be cached
     if (ctx.request.method !== "GET") {
@@ -376,7 +377,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // match-time capability gate.
       const fragmentSuffix =
         isPartial &&
-        (ctx.request.headers.get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) === "1" ||
+        (requestHeaders(ctx.request).get(SEGMENT_FRAGMENT_CAPABILITY_HEADER) ===
+          "1" ||
           isFragmentRecovery)
           ? ":fragments"
           : "";

@@ -6,7 +6,8 @@
  */
 
 import { createElement, type ReactNode } from "react";
-import type { EntryData } from "../server/context";
+import type { EntryData } from "../server/context.js";
+import { runIdentityExempt } from "../cache/cache-exec-scope.js";
 import type {
   ResolvedSegment,
   ErrorInfo,
@@ -92,7 +93,9 @@ export function invokeOnError<TEnv = any>(
   };
 
   try {
-    const result = onError(errorContext);
+    // An observer: a request header it logs is not rendered, so the identity
+    // guards let it read one inside a capture or a cached scope (#976).
+    const result = runIdentityExempt(() => onError(errorContext));
     // If onError returns a promise, catch any rejections
     if (result instanceof Promise) {
       result.catch((callbackError) => {

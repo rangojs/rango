@@ -922,8 +922,27 @@ Response directives (`invalidateClientCache()`, `keepClientCache()`) and cookie
 writes record nothing: a `key()` cannot make a skipped body's side effect
 reach a HIT.
 
-What stays out of reach, the same as for `"use cache"`: raw reads
-(`ctx.request.headers`, `getRequestContext().cookie()`), and a value computed
+The raw reads record too (#976): `ctx.request.headers` is an own getter on
+the request every ctx exposes (`guardRequestHeaders`,
+`src/server/cookie-store.ts`, over `shadowRequestHeaders`,
+`src/server/request-headers.ts`), and `getRequestContext().cookie()` /
+`.cookies()` call `guardRawCookieRead`; both go through `guardIdentityRead`
+and record at the access. The router's own header reads go through
+`requestHeaders()`, and the cookies() store through the unguarded
+`_readCookie()` / `_readCookies()`, so neither records.
+
+A cache's own callbacks record nothing and refuse nothing
+(`runIdentityExempt`, `src/cache/cache-exec-scope.ts`): `key()`, a store
+`keyGenerator` (`resolveCacheKey`, `src/cache/cache-policy.ts`),
+`condition()` and a `tags()` function (`resolveTagsOption`) pick or label
+the entry; their reads are never rendered. So does `onError`
+(`invokeOnError`), which only observes. The exemption is async-local, so a
+`"use cache"` body (`runWithCacheExecScope`), a loader body
+(`runInsideLoaderBodyScope`) and a funnel (`runWithStore`) end it on entry:
+a `key()` that awaited a cached function reading `cookies()` stored the
+first visitor's cookie and served it to the next.
+
+What stays out of reach, the same as for `"use cache"`: a value computed
 outside any loader execution and handed in, such as a per-request memo a
 handler filled from `cookies()` before the loader awaited it. The read ran in
 no loader's set, so nothing links it to the fill.

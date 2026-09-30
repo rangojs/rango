@@ -253,8 +253,13 @@ global middleware
   deadline; output that does not settle in time stores no shell. The capture
   guard (the first step of `guardIdentityRead` in `src/server/context.ts`,
   the one guard every identity read goes through: `cookies()`, `headers()`, a
-  `{ cache: false }` variable read, and the theme reads `ctx.theme` /
-  `getRequestContext().theme` through `readGuardedTheme`, #971) covers
+  `{ cache: false }` variable read, the theme reads `ctx.theme` /
+  `getRequestContext().theme` through `readGuardedTheme`, #971, and the raw
+  reads `ctx.request.headers` / `getRequestContext().cookie()` / `.cookies()`
+  through `guardRequestHeaders` / `guardRawCookieRead`, #976; a cache's own
+  `key()`, `keyGenerator`, `condition()` and `tags()`, and `onError`, run
+  exempt under `runIdentityExempt`, and a cached body, loader body or funnel
+  they start is guarded again) covers
   everything the
   capture waits for — handler and render code, bake-lane segment loaders, and
   handler-invoked loader bodies (no exemption on this tier; the

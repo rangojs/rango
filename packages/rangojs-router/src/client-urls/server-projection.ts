@@ -1,3 +1,4 @@
+import { requestHeaders } from "../server/request-headers.js";
 import * as React from "react";
 import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -433,7 +434,7 @@ function clientDecisionsFor(
     return decisionsByRequest.get(request) ?? null;
   }
   const decoded = decodeClientRevalidationDecisions(
-    request.headers.get(CLIENT_REVALIDATION_HEADER),
+    requestHeaders(request).get(CLIENT_REVALIDATION_HEADER),
   );
   decisionsByRequest.set(request, decoded);
   return decoded;

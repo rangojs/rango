@@ -123,7 +123,9 @@ else they allow:
 
 - **`cache()` boundary guard** (route-level) — fires while the handler runs on a
   miss. `cookies()` and `headers()` throw (request-scoped data would be baked into
-  the shared cached shell), `ctx.get(nonCacheableVar)` throws (a tainted value
+  the shared cached shell), and so do the raw reads `ctx.request.headers` and
+  `getRequestContext().cookie()` / `.cookies()` (#976);
+  `ctx.get(nonCacheableVar)` throws (a tainted value
   would be baked in), and response side effects (`ctx.headers.set()`,
   `setCookie()`, `setStatus()`, `onResponse()`) throw. `ctx.set()` of a cacheable var is
   **allowed** — children are cached too and can read it. **Loaders are exempt**
@@ -131,19 +133,33 @@ else they allow:
   loader.
 - **Loader `cache()` guard** (a loader bound with its own `cache()`) — its value
   is stored under a key that names no user, so a miss whose body read
-  `cookies()`, `headers()`, the theme or a non-cacheable `ctx.get()` fails
+  `cookies()`, `headers()`, `ctx.request.headers`, the theme or a
+  non-cacheable `ctx.get()` fails
   unless the binding has a `key()` or its store a `keyGenerator`. Either one
   switches the check off, so put what the body reads in it (`/loader` →
   "Cache Key").
 - **`"use cache"` exec-guard** (function-level) — the same request-scoped APIs
-  throw inside the cached function (`cookies()`, `headers()`, `ctx.set()`,
-  `ctx.headers.set()` and other response writes); additionally, tainted
-  `ctx`/`env`/`req` args are excluded from the cache key. The guard runs only on
-  the cached path: with no item-capable store configured the function runs
+  throw inside the cached function (`cookies()`, `headers()`,
+  `ctx.request.headers`, `ctx.set()`, `ctx.headers.set()` and other response
+  writes); additionally, tainted `ctx`/`env`/`req` args are excluded from the
+  cache key (a `Request` argument keys by its URL only). The guard runs only
+  on the cached path: with no item-capable store configured the function runs
   uncached and nothing throws.
 
-The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`, a
-theme read, a `{ cache: false }` variable read, and `ctx.dynamic()` refuse the
+All three guards leave a cache's own callbacks alone: a `key()`, a store
+`keyGenerator`, a `condition()` and a `tags()` function may read `cookies()`,
+`headers()` or `ctx.request.headers`, because the value picks or labels the
+entry rather than being rendered into it. So does `onError`, which only
+observes. A `"use cache"` function or loader they call is guarded as usual.
+
+`ctx.request.clone()` is guarded like `ctx.request.headers`. The remaining gap:
+`fetch(ctx.request)` and `new Request(ctx.request)` don't throw and aren't
+guarded. A fetch forwards the visitor's `Cookie` and `Authorization`, so its
+response is per visitor; don't make one in a cached body.
+
+The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`,
+`ctx.request.headers`, a theme read, a `{ cache: false }` variable read, and
+`ctx.dynamic()` refuse the
 capture anywhere it waits — handlers, promises they pass or push, async server
 components, `ssr: false` loaders, and loaders a handler awaits (no loader
 exemption there). The route then serves uncached; see `/ppr`.
@@ -306,8 +322,9 @@ MISS → function body runs, return value + handle data cached
 
 Runtime guards throw if you call `cookies()`, `headers()`, `ctx.set()`,
 `ctx.headers.set()` (or any response write: cookie writes, `setStatus()`,
-`onResponse()`), `ctx.setTheme()`, or `ctx.setLocationState()` inside a
-`"use cache"` function. `cookies()` and `headers()` are blocked because
+`onResponse()`), `ctx.setTheme()`, or `ctx.setLocationState()`, or read
+`ctx.request.headers`, inside a `"use cache"` function. `cookies()`,
+`headers()` and `ctx.request.headers` are blocked because
 per-request data is not in the cache key. Side-effect methods are blocked because
 their effects are lost on hit. Use `ctx.use(Handle)` instead for data — handle
 data is captured and replayed.
@@ -436,7 +453,8 @@ Neither mechanism caches response headers or cookies.
   you need headers or cookies on every response, set them in middleware, a live
   segment outside the cache boundary, or a loader.
 - **"use cache"**: `cookies()` and `headers()` throw inside the cached function
-  (both reads and writes), and so do `ctx.headers` mutations. Move them outside.
+  (both reads and writes), and so do `ctx.request.headers` reads and
+  `ctx.headers` mutations. Move them outside.
 - **`ctx.theme`** (handler and middleware) and **`getRequestContext().theme`**
   are the visitor's theme cookie, so a read throws in both scopes, like
   `cookies()`. Read it with `useTheme()` in a client component, or in a
@@ -473,16 +491,17 @@ specifies `cache: false`, the value is non-cacheable.
 
 **Behavior inside a `cache()` boundary:**
 
-| Operation                                          | Inside a `cache()` boundary                                                        |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `cookies()` / `headers()` (read or write)          | Throws (request-scoped, would poison the shared entry)                             |
-| `ctx.theme`, `getRequestContext().theme`           | Throws, like `cookies()` (#971)                                                    |
-| `ctx.get(cacheableVar)`                            | Allowed                                                                            |
-| `ctx.get(nonCacheableVar)`                         | Throws (would be baked in)                                                         |
-| `ctx.set(var, value)` (cacheable)                  | Allowed                                                                            |
-| `ctx.headers.set()` / cookie writes                | Throws (response side effect would be lost on hit)                                 |
-| Any of the above **inside a loader**               | Allowed (loaders always run fresh)                                                 |
-| The reads above in a loader with its own `cache()` | The miss fails without a `key()`; any `key()` allows them, so it must include them |
+| Operation                                                            | Inside a `cache()` boundary                                                        |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `cookies()` / `headers()` (read or write)                            | Throws (request-scoped, would poison the shared entry)                             |
+| `ctx.request.headers`, `getRequestContext().cookie()` / `.cookies()` | Throws, like `headers()` / `cookies()` (#976)                                      |
+| `ctx.theme`, `getRequestContext().theme`                             | Throws, like `cookies()` (#971)                                                    |
+| `ctx.get(cacheableVar)`                                              | Allowed                                                                            |
+| `ctx.get(nonCacheableVar)`                                           | Throws (would be baked in)                                                         |
+| `ctx.set(var, value)` (cacheable)                                    | Allowed                                                                            |
+| `ctx.headers.set()` / cookie writes                                  | Throws (response side effect would be lost on hit)                                 |
+| Any of the above **inside a loader**                                 | Allowed (loaders always run fresh)                                                 |
+| The reads above in a loader with its own `cache()`                   | The miss fails without a `key()`; any `key()` allows them, so it must include them |
 
 (Both scopes block the same request-scoped APIs — `cookies()`, `headers()`,
 response side effects, and non-cacheable `ctx.get()` — because each would leak

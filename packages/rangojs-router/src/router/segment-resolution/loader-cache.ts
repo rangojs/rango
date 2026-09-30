@@ -57,6 +57,7 @@ import {
 } from "../../cache/handle-capture.js";
 import { encodeHandles, decodeHandles } from "../../cache/handle-snapshot.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
+import { runIdentityExempt } from "../../cache/cache-exec-scope.js";
 import {
   getRequestContext,
   _getRequestContext,
@@ -528,9 +529,10 @@ function executeLoaderData<TEnv>(
 
   // Evaluate runtime condition if provided
   const options = cacheConfig.options;
-  if (options.condition) {
+  const condition = options.condition;
+  if (condition) {
     const requestCtx = getRequestContext();
-    if (requestCtx && !options.condition(requestCtx)) {
+    if (requestCtx && !runIdentityExempt(() => condition(requestCtx))) {
       return ctx.use(loaderEntry.loader);
     }
   }

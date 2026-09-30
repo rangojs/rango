@@ -6,6 +6,7 @@
  * matching, so they can run in parallel with segment resolution.
  */
 
+import { requestHeaders } from "../server/request-headers.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule, SSRRenderOptions } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
@@ -183,7 +184,7 @@ export function getSSRSetup<TEnv>(
  */
 function acceptsFlightExplicitly(request: Request, url: URL): boolean {
   if (url.searchParams.has("__html")) return false;
-  const accept = request.headers.get("accept");
+  const accept = requestHeaders(request).get("accept");
   if (accept === null || !accept.includes(RSC_WIRE_MIME)) return false;
   return prefersFlightRepresentation(parseAcceptTypes(accept));
 }
@@ -206,7 +207,7 @@ export function mayNeedSSR(request: Request, url: URL): boolean {
   if (
     url.searchParams.has("_rsc_partial") ||
     url.searchParams.has("_rsc_action") ||
-    request.headers.has("rsc-action") ||
+    requestHeaders(request).has("rsc-action") ||
     url.searchParams.has("_rsc_loader") ||
     url.searchParams.has("__rsc")
   ) {

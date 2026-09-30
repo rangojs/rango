@@ -338,7 +338,7 @@ export async function renderHandler<TEnv = any>(
     }
   });
 
-  const cookies = { ...reqCtx.cookies() };
+  const cookies = reqCtx._readCookies();
   const responseSource = didThrow
     ? thrown
     : out instanceof Response

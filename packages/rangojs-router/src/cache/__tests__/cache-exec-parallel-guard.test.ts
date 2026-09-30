@@ -73,6 +73,9 @@ function makeRequestCtx() {
     }),
     cookie: (name: string) => (name === "session" ? "abc" : undefined),
     cookies: () => ({ session: "abc" }),
+    // The unguarded reads behind the cookies() store.
+    _readCookie: (name: string) => (name === "session" ? "abc" : undefined),
+    _readCookies: () => ({ session: "abc" }),
     setCookie: vi.fn(),
     deleteCookie: vi.fn(),
     headers: new Headers({ cookie: "session=abc" }),

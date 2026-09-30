@@ -28,6 +28,7 @@ import {
 import { runInRequestContext, shellCacheKey } from "../index.js";
 import {
   createRouter,
+  createVar,
   updateTag,
   urls,
   type HandlerContext,
@@ -80,72 +81,93 @@ const defaultRegionStore = new MemorySegmentCacheStore({
 /** The store of the /app-localized route's inner cache(). */
 const appNestedStore = new MemorySegmentCacheStore();
 
+/**
+ * What the handlers render: middleware's copy of the headers (makeRouter).
+ * A handler read of ctx.request.headers under cache() or a ppr capture
+ * throws (#976); the key() and keyGenerators above read the headers and keep
+ * each partition's copy apart.
+ */
+const Tier = createVar<string>();
+const Locale = createVar<string>();
+const Region = createVar<string>();
+
 function makeRouter() {
-  return createRouter({}).routes(
-    urls(({ path, cache }) => [
-      cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
-        path(
-          "/ns/tiered",
-          (ctx: HandlerContext) => <p>{`tiered-${tierOf(ctx)}`}</p>,
-          { name: "nsTiered", ppr: true },
-        ),
-      ]),
-      // A key() returning request input as is.
-      cache({ ttl: 300, key: (ctx) => tierOf(ctx) }, () => [
-        path("/ns/bare", () => <p>bare page</p>, { name: "nsBare" }),
-      ]),
-      cache({ ttl: 300 }, () => [
-        path("/ns/victim", () => <p>victim page</p>, { name: "nsVictim" }),
-      ]),
-      cache({ condition: () => gate.allow }, () => [
+  return createRouter({})
+    .use(async (ctx, next) => {
+      ctx.set(Tier, tierOf(ctx));
+      ctx.set(Locale, localeOf(ctx));
+      ctx.set(Region, regionOf(ctx));
+      await next();
+    })
+    .routes(
+      urls(({ path, cache }) => [
+        cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+          path(
+            "/ns/tiered",
+            (ctx: HandlerContext) => <p>{`tiered-${ctx.get(Tier)}`}</p>,
+            { name: "nsTiered", ppr: true },
+          ),
+        ]),
+        // A key() returning request input as is.
+        cache({ ttl: 300, key: (ctx) => tierOf(ctx) }, () => [
+          path("/ns/bare", () => <p>bare page</p>, { name: "nsBare" }),
+        ]),
         cache({ ttl: 300 }, () => [
-          path("/gated/page", () => <p>{`gated-run-${++runs.gated}`}</p>, {
-            name: "gatedPage",
-            ppr: true,
-          }),
+          path("/ns/victim", () => <p>victim page</p>, { name: "nsVictim" }),
         ]),
-      ]),
-      cache({ tags: ["outer-catalog"] }, () => [
-        cache({ ttl: 300, tags: ["inner-prices"] }, () => [
-          path("/tagged/page", () => <p>{`tagged@g${source.generation}`}</p>, {
-            name: "taggedPage",
-            ppr: true,
-          }),
+        cache({ condition: () => gate.allow }, () => [
+          cache({ ttl: 300 }, () => [
+            path("/gated/page", () => <p>{`gated-run-${++runs.gated}`}</p>, {
+              name: "gatedPage",
+              ppr: true,
+            }),
+          ]),
         ]),
-      ]),
-      cache({ store: localizedStore }, () => [
-        cache({ store: nestedStore, ttl: 300 }, () => [
-          path(
-            "/localized/page",
-            (ctx: HandlerContext) => <p>{`locale-${localeOf(ctx)}`}</p>,
-            { name: "localizedPage", ppr: true },
-          ),
-        ]),
-      ]),
-      cache({ store: defaultLocaleStore }, () => [
-        cache({ store: defaultRegionStore, ttl: 300 }, () => [
-          path(
-            "/positional/page",
-            (ctx: HandlerContext) => (
-              <p>{`locale-${localeOf(ctx)}-region-${regionOf(ctx)}`}</p>
+        cache({ tags: ["outer-catalog"] }, () => [
+          cache({ ttl: 300, tags: ["inner-prices"] }, () => [
+            path(
+              "/tagged/page",
+              () => <p>{`tagged@g${source.generation}`}</p>,
+              {
+                name: "taggedPage",
+                ppr: true,
+              },
             ),
-            { name: "positionalPage", ppr: true },
-          ),
+          ]),
+        ]),
+        cache({ store: localizedStore }, () => [
+          cache({ store: nestedStore, ttl: 300 }, () => [
+            path(
+              "/localized/page",
+              (ctx: HandlerContext) => <p>{`locale-${ctx.get(Locale)}`}</p>,
+              { name: "localizedPage", ppr: true },
+            ),
+          ]),
+        ]),
+        cache({ store: defaultLocaleStore }, () => [
+          cache({ store: defaultRegionStore, ttl: 300 }, () => [
+            path(
+              "/positional/page",
+              (ctx: HandlerContext) => (
+                <p>{`locale-${ctx.get(Locale)}-region-${ctx.get(Region)}`}</p>
+              ),
+              { name: "positionalPage", ppr: true },
+            ),
+          ]),
+        ]),
+        // A plain cache() on the app store, which the app-store test sets up
+        // with a keyGenerator.
+        cache({ ttl: 300 }, () => [
+          cache({ store: appNestedStore, ttl: 300 }, () => [
+            path(
+              "/app-localized/page",
+              (ctx: HandlerContext) => <p>{`app-locale-${ctx.get(Locale)}`}</p>,
+              { name: "appLocalizedPage", ppr: true },
+            ),
+          ]),
         ]),
       ]),
-      // A plain cache() on the app store, which the app-store test sets up
-      // with a keyGenerator.
-      cache({ ttl: 300 }, () => [
-        cache({ store: appNestedStore, ttl: 300 }, () => [
-          path(
-            "/app-localized/page",
-            (ctx: HandlerContext) => <p>{`app-locale-${localeOf(ctx)}`}</p>,
-            { name: "appLocalizedPage", ppr: true },
-          ),
-        ]),
-      ]),
-    ]),
-  );
+    );
 }
 
 beforeEach(async () => {

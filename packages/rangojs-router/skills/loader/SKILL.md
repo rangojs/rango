@@ -139,11 +139,13 @@ A DSL loader without `ssr: false` can read `createVar({ cache: false })`
 variables: it runs on every request, `cache()` and PPR shell HITs included, so
 the read guard is bypassed for it. On a `ppr` route the capture runs an
 `ssr: false` loader, and a loader a handler awaits, and bakes their values into
-the shell: a `cookies()`, `headers()` or `{ cache: false }` read there refuses
-the capture, so the route keeps rendering without a shell (warned once per key).
+the shell: a `cookies()`, `headers()`, `ctx.request.headers` or
+`{ cache: false }` read there refuses the capture, so the route keeps
+rendering without a shell (warned once per key).
 A loader bound with its own `cache()` is the other exception: its value is
-stored and shared, so a miss whose body read `cookies()`, `headers()`, a
-non-cacheable variable or the theme fails unless the binding has a `key()` or a
+stored and shared, so a miss whose body read `cookies()`, `headers()`,
+`ctx.request.headers`, a non-cacheable variable or the theme fails unless the
+binding has a `key()` or a
 store `keyGenerator`, which must then include them (see "Cache Key"). A
 `"use cache"` function the loader calls is not a loader body: a non-cacheable
 read inside it throws, also through the loader's `ctx` passed in, so read the
@@ -191,8 +193,9 @@ the tree).
   capture-time copy served on every HIT (a HIT never runs the handler);
   `useLoader` of a loader without `ssr: false` is the live lane (an `ssr: false`
   loader is the bake lane however it is read). Unlike `cache()`, an identity
-  read inside that loader (`cookies()`, `headers()`, a `{ cache: false }`
-  variable) refuses the capture, so the route stays uncached. One rule across
+  read inside that loader (`cookies()`, `headers()`, `ctx.request.headers`, a
+  `{ cache: false }` variable) refuses the capture, so the route stays
+  uncached. One rule across
   `cache()`, `"use cache"`, and PPR: the consumption-lane rule (`/rango` →
   Invariants).
 - Non-cacheable variable reads (`createVar({ cache: false })`) inside the
@@ -256,7 +259,8 @@ export const ProductLoader = createLoader(async (ctx) => {
   // Platform bindings (DB, KV, etc.) — plain bindings from createRouter<TEnv>()
   const db = ctx.env.DB;
 
-  // Request headers
+  // Request headers (guarded like headers(): an unkeyed loader cache() fill
+  // or a ppr capture of this loader refuses the read)
   const auth = ctx.request.headers.get("Authorization");
 
   // Variables set by middleware (from Rango.Vars augmentation)
@@ -680,9 +684,10 @@ one user's data with everyone.
 names no user, so one entry serves everyone who requests the same loader, host,
 path and params. A route `cache()` around the route does not partition it
 either: a loader's own `cache()` is an independent layer, keyed only by what it
-declares. On a miss, a body that reads `cookies()`, `headers()` or a
-non-cacheable variable (`createVar({ cache: false })`, or a value written with
-`ctx.set(..., { cache: false })`) therefore **fails**, and nothing is stored,
+declares. On a miss, a body that reads `cookies()`, `headers()`,
+`ctx.request.headers` or a non-cacheable variable (`createVar({ cache: false })`,
+or a value written with `ctx.set(..., { cache: false })`) therefore **fails**,
+and nothing is stored,
 unless the binding declares identity with a `key()` or a store `keyGenerator`.
 The check tests only that one of them is there, not what it contains: any
 `key()` or store `keyGenerator` switches it off, so it must itself include the
@@ -720,11 +725,25 @@ stored, and `onError` gets the same error. A push still pending after the
 timeout drops the entry's handles, and the value is stored without them. A loader with no `cache()` of its own
 reads request data freely.
 
-Two kinds of read are not seen, the same as in `"use cache"`: raw reads such
-as `ctx.request.headers` or `getRequestContext().cookie()`, and a value
-computed outside the loader and handed in, such as a per-request memo a handler
-filled from `cookies()` before the loader awaited it. Key what those carry
-too. If the value must stay per request, drop the loader's `cache()` instead.
+The raw reads count the same: `ctx.request.headers` (the loader's
+`ctx.request` is the request's own `Request`) and `getRequestContext().cookie()`
+/ `.cookies()` fail an unkeyed miss exactly like `cookies()`. A `key()` or a
+store `keyGenerator` reads them freely, since that is how the entry is
+partitioned:
+
+```typescript
+loader(LocaleLoader, () => [
+  cache({
+    ttl: 60,
+    key: (ctx) => `lang:${ctx.request.headers.get("accept-language") ?? "en"}`,
+  }),
+]),
+```
+
+One kind of read is not seen, the same as in `"use cache"`: a value computed
+outside the loader and handed in, such as a per-request memo a handler filled
+from `cookies()` before the loader awaited it. Key what it carries too. If the
+value must stay per request, drop the loader's `cache()` instead.
 
 ### Tags for Invalidation
 
@@ -797,7 +816,8 @@ loader(ProductLoader, () => [
 ```
 
 When `condition` returns false, the loader runs fresh and the cache is bypassed
-entirely (no read, no write).
+entirely (no read, no write). Like `key()`, a `condition()` reads request
+identity freely: it decides whether the entry is used, it is not stored in it.
 
 ### Per-Loader Store Override
 

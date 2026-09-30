@@ -1,3 +1,4 @@
+import { requestHeaders } from "../server/request-headers.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface NavigationSnapshot {
@@ -40,8 +41,8 @@ export interface ResolveNavigationDeps {
  */
 export function getNavigationContextHeader(request: Request): string | null {
   return (
-    request.headers.get("X-RSC-Router-Client-Path") ||
-    request.headers.get("Referer")
+    requestHeaders(request).get("X-RSC-Router-Client-Path") ||
+    requestHeaders(request).get("Referer")
   );
 }
 
@@ -59,7 +60,7 @@ export function prerenderStoreShortCircuits(
   pr: true | undefined,
   request: Request,
 ): boolean {
-  return pr === true && !request.headers.get("X-RSC-HMR");
+  return pr === true && !requestHeaders(request).get("X-RSC-HMR");
 }
 
 /**
@@ -71,7 +72,7 @@ export function prerenderStoreShortCircuits(
  * request would report `prerender-store` for an artifact that cannot serve.
  */
 export function getInterceptSourceHeader(request: Request): string | null {
-  return request.headers.get("X-RSC-Router-Intercept-Source");
+  return requestHeaders(request).get("X-RSC-Router-Intercept-Source");
 }
 
 export async function resolveNavigation(
@@ -85,7 +86,7 @@ export async function resolveNavigation(
   const stale = url.searchParams.get("_rsc_stale") === "true";
   const previousUrl = getNavigationContextHeader(request);
   const interceptSourceUrl = getInterceptSourceHeader(request);
-  const isHmr = !!request.headers.get("X-RSC-HMR");
+  const isHmr = !!requestHeaders(request).get("X-RSC-HMR");
 
   if (!previousUrl) {
     return null;

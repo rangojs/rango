@@ -31,6 +31,7 @@ import {
   createHandle,
   createLoader,
   createRouter,
+  createVar,
   getRequestContext,
   Meta,
   revalidateTag,
@@ -108,39 +109,54 @@ function CountedPage(ctx: HandlerContext): React.ReactNode {
   return <p>{`page-run-${run}`}</p>;
 }
 
+/** The tier a key() partitions by: a key() reads the request freely. */
 function tierOf(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-tier") ?? "none";
 }
-
-function TierPage(ctx: HandlerContext): React.ReactNode {
-  return <p>{`tier-${tierOf(ctx)}-page`}</p>;
-}
-
-/** Runs of the tiered routes' key() functions, across tests. */
-const keyRuns = { header: 0, cookie: 0, nestedTier: 0, nestedVariant: 0 };
 
 function variantOf(ctx: { request: Request }): string {
   return ctx.request.headers.get("x-variant") ?? "none";
 }
 
+/**
+ * What a handler under the keyed cache() renders: middleware's copy of the
+ * headers (makeRouter). A handler read of ctx.request.headers there throws
+ * (#976); the key() keeps each partition's copy apart.
+ */
+const Tier = createVar<string>();
+const Variant = createVar<string>();
+
+function renderedTier(ctx: HandlerContext): string {
+  return ctx.get(Tier) ?? "none";
+}
+
+function TierPage(ctx: HandlerContext): React.ReactNode {
+  return <p>{`tier-${renderedTier(ctx)}-page`}</p>;
+}
+
+/** Runs of the tiered routes' key() functions, across tests. */
+const keyRuns = { header: 0, cookie: 0, nestedTier: 0, nestedVariant: 0 };
+
 /** Runs of the /nested-record page handler, across tests. */
 const nestedRuns = { record: 0 };
 
 function NestedTierLayout(ctx: HandlerContext): React.ReactNode {
-  return <header>{`layout-${tierOf(ctx)}`}</header>;
+  return <header>{`layout-${renderedTier(ctx)}`}</header>;
 }
 
 function NestedPage(ctx: HandlerContext): React.ReactNode {
-  return <p>{`nested-${tierOf(ctx)}-${variantOf(ctx)}-page`}</p>;
+  return (
+    <p>{`nested-${renderedTier(ctx)}-${ctx.get(Variant) ?? "none"}-page`}</p>
+  );
 }
 
 function NestedRecordPage(ctx: HandlerContext): React.ReactNode {
   nestedRuns.record += 1;
-  return <p>{`record-${tierOf(ctx)}-run-${nestedRuns.record}`}</p>;
+  return <p>{`record-${renderedTier(ctx)}-run-${nestedRuns.record}`}</p>;
 }
 
 function NestedRecordPageB(ctx: HandlerContext): React.ReactNode {
-  return <p>{`record-b-${tierOf(ctx)}`}</p>;
+  return <p>{`record-b-${renderedTier(ctx)}`}</p>;
 }
 
 /** Body runs of the /bake-lane loaders, across tests. */
@@ -482,416 +498,422 @@ async function Flaky(): Promise<React.ReactNode> {
  * its own key() and one with a variant key().
  */
 function makeRouter(options: RangoOptions = {}) {
-  return createRouter(options).routes(
-    urls(({ path, layout, loader, loading, cache }) => [
-      layout(ChromeLayout, () => [
-        path(
-          "/product/:id",
-          ProductPage,
-          { name: "product", ppr: { ttl: 300, tags: ["catalog"] } },
-          () => [loader(StockLoader), loading(<p>checking stock</p>)],
-        ),
-        path("/article/:id", ArticlePage, { name: "article", ppr: true }),
-        path("/about", () => <p>about</p>, { name: "about" }),
-      ]),
-      layout(StampLayout, () => [
-        path(
-          "/stamp",
-          () => <p>stamp</p>,
-          { name: "stamp", ppr: true },
-          () => [loader(StampLoader), loading(<p>stamping</p>)],
-        ),
-      ]),
-      path(
-        "/flaky",
-        () => (
-          <main>
-            <Suspense fallback={<p>pending</p>}>
-              <Flaky />
-            </Suspense>
-          </main>
-        ),
-        { name: "flaky", ppr: true },
-      ),
-      layout(CountedLayout, () => [
-        path("/counted", CountedPage, { name: "counted", ppr: true }, () => [
-          loader(CountedLoader),
-          loading(<p>counting</p>),
-        ]),
-      ]),
-      cache(
-        {
-          ttl: 300,
-          key: (ctx) => {
-            keyRuns.header += 1;
-            return `tier:${tierOf(ctx)}`;
-          },
-        },
-        () => [path("/tiered", TierPage, { name: "tiered", ppr: true })],
-      ),
-      path(
-        "/bake-lane",
-        () => <p>bake lane</p>,
-        {
-          name: "bakeLane",
-          ppr: true,
-        },
-        () => [
-          loader(PlainBakeLoader, { ssr: false }),
-          loader(HoleyBakeLoader, { ssr: false }),
-        ],
-      ),
-      path("/raced", RacedPage, { name: "raced", ppr: true }),
-      path(
-        "/bake-under-loading",
-        () => <p>bake under loading</p>,
-        { name: "bakeUnderLoading", ppr: true },
-        () => [
-          loader(UnderLoadingBakeLoader, { ssr: false }),
-          loader(UnderLoadingLiveLoader),
-          loading(<p>loading</p>),
-        ],
-      ),
-      cache({ ttl: 300 }, () => [
-        path(
-          "/owned-replay",
-          () => <p>owned replay</p>,
-          { name: "ownedReplay", ppr: { ttl: 10, swr: 300 } },
-          () => [
-            loader(OwnedLoader, { ssr: false }, () => [cache({ ttl: 300 })]),
-          ],
-        ),
-      ]),
-      path(
-        "/deferred-owned",
-        () => <p>deferred owned</p>,
-        { name: "deferredOwned", ppr: true },
-        () => [
-          loader(DeferredOwnedLoader, { ssr: false }, () => [
-            cache({ ttl: 300 }),
-          ]),
-        ],
-      ),
-      path(
-        "/shared-stamp",
-        () => <p>shared stamp</p>,
-        { name: "sharedStamp", ppr: true },
-        () => [
-          loader(BakedStampLoader, { ssr: false }),
-          loader(StampLoader),
-          loading(<p>stamping</p>),
-        ],
-      ),
-      path(
-        "/holey-stamp",
-        () => <p>holey stamp</p>,
-        { name: "holeyStamp", ppr: true },
-        () => [loader(HoleyStampLoader, { ssr: false })],
-      ),
-      path(
-        "/nested-stamp",
-        () => <p>nested stamp</p>,
-        { name: "nestedStamp", ppr: true },
-        () => [loader(NestedStampLoader, { ssr: false })],
-      ),
-      path(
-        "/outer-dep",
-        () => <p>outer dep</p>,
-        { name: "outerDep", ppr: true },
-        () => [loader(OuterDepLoader, { ssr: false })],
-      ),
-      path(
-        "/live-dep",
-        () => <p>live dep</p>,
-        { name: "liveDep", ppr: true },
-        () => [
-          loader(BakeAwaitsDepLoader, { ssr: false }),
-          loader(LiveDepLoader),
-          loading(<p>loading dep</p>),
-        ],
-      ),
-      path(
-        "/holey-live-dep",
-        () => <p>holey live dep</p>,
-        { name: "holeyLiveDep", ppr: true },
-        () => [
-          loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
-          loader(LiveDepLoader),
-          loading(<p>loading dep</p>),
-        ],
-      ),
-      path(
-        "/holey-live-dep-rev",
-        () => <p>holey live dep rev</p>,
-        { name: "holeyLiveDepRev", ppr: true },
-        () => [
-          loader(LiveDepLoader),
-          loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
-          loading(<p>loading dep</p>),
-        ],
-      ),
-      path(
-        "/holey-late-dep",
-        () => <p>holey late dep</p>,
-        { name: "holeyLateDep", ppr: true },
-        () => [
-          loader(HoleyAwaitsLateDepLoader, { ssr: false }),
-          loader(LateLiveDepLoader),
-          loading(<p>loading dep</p>),
-        ],
-      ),
-      path(
-        "/holey-nested",
-        () => <p>holey nested</p>,
-        { name: "holeyNested", ppr: true },
-        () => [
-          loader(HoleyAwaitsNestingLoader, { ssr: false }),
-          loader(NestingLiveLoader),
-          loading(<p>loading nested</p>),
-        ],
-      ),
-      path(
-        "/holey-nested-rev",
-        () => <p>holey nested rev</p>,
-        { name: "holeyNestedRev", ppr: true },
-        () => [
-          loader(NestingLiveLoader),
-          loader(HoleyAwaitsNestingLoader, { ssr: false }),
-          loading(<p>loading nested</p>),
-        ],
-      ),
-      path(
-        "/holey-failing",
-        () => <p>holey failing</p>,
-        { name: "holeyFailing", ppr: true },
-        () => [
-          loader(HoleyAwaitsFailingLoader, { ssr: false }),
-          loader(FailingLiveLoader),
-          loading(<p>loading failing</p>),
-        ],
-      ),
-      path(
-        "/holey-skipping",
-        () => <p>holey skipping</p>,
-        { name: "holeySkipping", ppr: true },
-        () => [
-          loader(HoleyAwaitsSkippingLoader, { ssr: false }),
-          loader(SkippingLiveLoader),
-          loading(<p>loading skipping</p>),
-        ],
-      ),
-      path(
-        "/after-live",
-        () => <p>after live</p>,
-        { name: "afterLive", ppr: true },
-        () => [
-          loader(BakePushesAfterLiveLoader, { ssr: false }),
-          loader(LiveDepLoader),
-          loading(<p>loading after</p>),
-        ],
-      ),
-      path(
-        "/once-noted",
-        () => <p>once noted</p>,
-        { name: "onceNoted", ppr: true },
-        () => [loader(OnceNotedBakeLoader, { ssr: false })],
-      ),
-      path(
-        "/cached-hole",
-        () => <p>cached hole</p>,
-        { name: "cachedHole", ppr: true },
-        () => [
-          loader(BakeAwaitsCachedHoleLoader, { ssr: false }),
-          loader(CachedHoleLoader, () => [cache({ ttl: 300 })]),
-          loading(<p>loading cached hole</p>),
-        ],
-      ),
-      path(
-        "/quiet-cached-hole",
-        () => <p>quiet cached hole</p>,
-        { name: "quietCachedHole", ppr: true },
-        () => [
-          loader(BakeAwaitsQuietHoleLoader, { ssr: false }),
-          loader(QuietCachedHoleLoader, () => [cache({ ttl: 300 })]),
-          loading(<p>loading quiet hole</p>),
-        ],
-      ),
-      path(
-        "/early-cached-hole",
-        (ctx) => {
-          ctx.use(LiveDepNotes)("early-handler-note");
-          return <p>early cached hole</p>;
-        },
-        { name: "earlyCachedHole", ppr: true },
-        () => [
-          loader(EarlyBakeLoader, { ssr: false }),
-          loader(EarlyCachedHoleLoader, () => [cache({ ttl: 300 })]),
-          loading(<p>loading early hole</p>),
-        ],
-      ),
-      path(
-        "/recapture-live",
-        () => <p>recapture live</p>,
-        { name: "recaptureLive", ppr: { ttl: 10, swr: 300 } },
-        () => [
-          loader(RecaptureBakeLoader, { ssr: false }),
-          loader(RecaptureLiveLoader),
-          loading(<p>loading recapture</p>),
-        ],
-      ),
-      path(
-        "/shared-dep",
-        () => <p>shared dep</p>,
-        { name: "sharedDep", ppr: true },
-        () => [
-          loader(BakeAwaitsSharedLoader, { ssr: false }),
-          loader(LiveAwaitsSharedLoader),
-          loading(<p>loading shared</p>),
-        ],
-      ),
-      path(
-        "/shared-dep-live",
-        () => <p>shared dep live</p>,
-        { name: "sharedDepLive", ppr: true },
-        () => [
-          loader(BakeAwaitsSharedLoader, { ssr: false }),
-          loader(LiveAwaitsSharedLoader),
-          loader(SharedDepLoader),
-          loading(<p>loading shared</p>),
-        ],
-      ),
-      path(
-        "/revalidate-catalog",
-        () => {
-          revalidateTag("catalog");
-          return <p>revalidated</p>;
-        },
-        { name: "revalidateCatalog" },
-      ),
-      cache({ ttl: 1 }, () => [
-        path("/short-cache", () => <p>{`short@g${source.generation}`}</p>, {
-          name: "shortCache",
-          ppr: { ttl: 300 },
-        }),
-      ]),
-      cache({ ttl: 0, swr: 60 }, () => [
-        path("/stale-record", () => <p>{`stale@g${source.generation}`}</p>, {
-          name: "staleRecord",
-          ppr: true,
-        }),
-      ]),
-      cache({ ttl: 0, swr: 0 }, () => [
-        path("/dead-record", () => <p>dead record</p>, {
-          name: "deadRecord",
-          ppr: true,
-        }),
-      ]),
-      cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
-        cache({ ttl: 1 }, () => [
+  return createRouter(options)
+    .use(async (ctx, next) => {
+      ctx.set(Tier, tierOf(ctx));
+      ctx.set(Variant, variantOf(ctx));
+      await next();
+    })
+    .routes(
+      urls(({ path, layout, loader, loading, cache }) => [
+        layout(ChromeLayout, () => [
           path(
-            "/nested-short-cache",
-            (ctx) => (
-              <p>{`nested-short-${tierOf(ctx)}@g${source.generation}`}</p>
-            ),
-            { name: "nestedShortCache", ppr: { ttl: 300 } },
+            "/product/:id",
+            ProductPage,
+            { name: "product", ppr: { ttl: 300, tags: ["catalog"] } },
+            () => [loader(StockLoader), loading(<p>checking stock</p>)],
           ),
+          path("/article/:id", ArticlePage, { name: "article", ppr: true }),
+          path("/about", () => <p>about</p>, { name: "about" }),
+        ]),
+        layout(StampLayout, () => [
+          path(
+            "/stamp",
+            () => <p>stamp</p>,
+            { name: "stamp", ppr: true },
+            () => [loader(StampLoader), loading(<p>stamping</p>)],
+          ),
+        ]),
+        path(
+          "/flaky",
+          () => (
+            <main>
+              <Suspense fallback={<p>pending</p>}>
+                <Flaky />
+              </Suspense>
+            </main>
+          ),
+          { name: "flaky", ppr: true },
+        ),
+        layout(CountedLayout, () => [
+          path("/counted", CountedPage, { name: "counted", ppr: true }, () => [
+            loader(CountedLoader),
+            loading(<p>counting</p>),
+          ]),
         ]),
         cache(
           {
             ttl: 300,
-            key: (ctx) => `tagged-v:${variantOf(ctx)}`,
-            tags: ["nested-tier"],
+            key: (ctx) => {
+              keyRuns.header += 1;
+              return `tier:${tierOf(ctx)}`;
+            },
+          },
+          () => [path("/tiered", TierPage, { name: "tiered", ppr: true })],
+        ),
+        path(
+          "/bake-lane",
+          () => <p>bake lane</p>,
+          {
+            name: "bakeLane",
+            ppr: true,
           },
           () => [
+            loader(PlainBakeLoader, { ssr: false }),
+            loader(HoleyBakeLoader, { ssr: false }),
+          ],
+        ),
+        path("/raced", RacedPage, { name: "raced", ppr: true }),
+        path(
+          "/bake-under-loading",
+          () => <p>bake under loading</p>,
+          { name: "bakeUnderLoading", ppr: true },
+          () => [
+            loader(UnderLoadingBakeLoader, { ssr: false }),
+            loader(UnderLoadingLiveLoader),
+            loading(<p>loading</p>),
+          ],
+        ),
+        cache({ ttl: 300 }, () => [
+          path(
+            "/owned-replay",
+            () => <p>owned replay</p>,
+            { name: "ownedReplay", ppr: { ttl: 10, swr: 300 } },
+            () => [
+              loader(OwnedLoader, { ssr: false }, () => [cache({ ttl: 300 })]),
+            ],
+          ),
+        ]),
+        path(
+          "/deferred-owned",
+          () => <p>deferred owned</p>,
+          { name: "deferredOwned", ppr: true },
+          () => [
+            loader(DeferredOwnedLoader, { ssr: false }, () => [
+              cache({ ttl: 300 }),
+            ]),
+          ],
+        ),
+        path(
+          "/shared-stamp",
+          () => <p>shared stamp</p>,
+          { name: "sharedStamp", ppr: true },
+          () => [
+            loader(BakedStampLoader, { ssr: false }),
+            loader(StampLoader),
+            loading(<p>stamping</p>),
+          ],
+        ),
+        path(
+          "/holey-stamp",
+          () => <p>holey stamp</p>,
+          { name: "holeyStamp", ppr: true },
+          () => [loader(HoleyStampLoader, { ssr: false })],
+        ),
+        path(
+          "/nested-stamp",
+          () => <p>nested stamp</p>,
+          { name: "nestedStamp", ppr: true },
+          () => [loader(NestedStampLoader, { ssr: false })],
+        ),
+        path(
+          "/outer-dep",
+          () => <p>outer dep</p>,
+          { name: "outerDep", ppr: true },
+          () => [loader(OuterDepLoader, { ssr: false })],
+        ),
+        path(
+          "/live-dep",
+          () => <p>live dep</p>,
+          { name: "liveDep", ppr: true },
+          () => [
+            loader(BakeAwaitsDepLoader, { ssr: false }),
+            loader(LiveDepLoader),
+            loading(<p>loading dep</p>),
+          ],
+        ),
+        path(
+          "/holey-live-dep",
+          () => <p>holey live dep</p>,
+          { name: "holeyLiveDep", ppr: true },
+          () => [
+            loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
+            loader(LiveDepLoader),
+            loading(<p>loading dep</p>),
+          ],
+        ),
+        path(
+          "/holey-live-dep-rev",
+          () => <p>holey live dep rev</p>,
+          { name: "holeyLiveDepRev", ppr: true },
+          () => [
+            loader(LiveDepLoader),
+            loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
+            loading(<p>loading dep</p>),
+          ],
+        ),
+        path(
+          "/holey-late-dep",
+          () => <p>holey late dep</p>,
+          { name: "holeyLateDep", ppr: true },
+          () => [
+            loader(HoleyAwaitsLateDepLoader, { ssr: false }),
+            loader(LateLiveDepLoader),
+            loading(<p>loading dep</p>),
+          ],
+        ),
+        path(
+          "/holey-nested",
+          () => <p>holey nested</p>,
+          { name: "holeyNested", ppr: true },
+          () => [
+            loader(HoleyAwaitsNestingLoader, { ssr: false }),
+            loader(NestingLiveLoader),
+            loading(<p>loading nested</p>),
+          ],
+        ),
+        path(
+          "/holey-nested-rev",
+          () => <p>holey nested rev</p>,
+          { name: "holeyNestedRev", ppr: true },
+          () => [
+            loader(NestingLiveLoader),
+            loader(HoleyAwaitsNestingLoader, { ssr: false }),
+            loading(<p>loading nested</p>),
+          ],
+        ),
+        path(
+          "/holey-failing",
+          () => <p>holey failing</p>,
+          { name: "holeyFailing", ppr: true },
+          () => [
+            loader(HoleyAwaitsFailingLoader, { ssr: false }),
+            loader(FailingLiveLoader),
+            loading(<p>loading failing</p>),
+          ],
+        ),
+        path(
+          "/holey-skipping",
+          () => <p>holey skipping</p>,
+          { name: "holeySkipping", ppr: true },
+          () => [
+            loader(HoleyAwaitsSkippingLoader, { ssr: false }),
+            loader(SkippingLiveLoader),
+            loading(<p>loading skipping</p>),
+          ],
+        ),
+        path(
+          "/after-live",
+          () => <p>after live</p>,
+          { name: "afterLive", ppr: true },
+          () => [
+            loader(BakePushesAfterLiveLoader, { ssr: false }),
+            loader(LiveDepLoader),
+            loading(<p>loading after</p>),
+          ],
+        ),
+        path(
+          "/once-noted",
+          () => <p>once noted</p>,
+          { name: "onceNoted", ppr: true },
+          () => [loader(OnceNotedBakeLoader, { ssr: false })],
+        ),
+        path(
+          "/cached-hole",
+          () => <p>cached hole</p>,
+          { name: "cachedHole", ppr: true },
+          () => [
+            loader(BakeAwaitsCachedHoleLoader, { ssr: false }),
+            loader(CachedHoleLoader, () => [cache({ ttl: 300 })]),
+            loading(<p>loading cached hole</p>),
+          ],
+        ),
+        path(
+          "/quiet-cached-hole",
+          () => <p>quiet cached hole</p>,
+          { name: "quietCachedHole", ppr: true },
+          () => [
+            loader(BakeAwaitsQuietHoleLoader, { ssr: false }),
+            loader(QuietCachedHoleLoader, () => [cache({ ttl: 300 })]),
+            loading(<p>loading quiet hole</p>),
+          ],
+        ),
+        path(
+          "/early-cached-hole",
+          (ctx) => {
+            ctx.use(LiveDepNotes)("early-handler-note");
+            return <p>early cached hole</p>;
+          },
+          { name: "earlyCachedHole", ppr: true },
+          () => [
+            loader(EarlyBakeLoader, { ssr: false }),
+            loader(EarlyCachedHoleLoader, () => [cache({ ttl: 300 })]),
+            loading(<p>loading early hole</p>),
+          ],
+        ),
+        path(
+          "/recapture-live",
+          () => <p>recapture live</p>,
+          { name: "recaptureLive", ppr: { ttl: 10, swr: 300 } },
+          () => [
+            loader(RecaptureBakeLoader, { ssr: false }),
+            loader(RecaptureLiveLoader),
+            loading(<p>loading recapture</p>),
+          ],
+        ),
+        path(
+          "/shared-dep",
+          () => <p>shared dep</p>,
+          { name: "sharedDep", ppr: true },
+          () => [
+            loader(BakeAwaitsSharedLoader, { ssr: false }),
+            loader(LiveAwaitsSharedLoader),
+            loading(<p>loading shared</p>),
+          ],
+        ),
+        path(
+          "/shared-dep-live",
+          () => <p>shared dep live</p>,
+          { name: "sharedDepLive", ppr: true },
+          () => [
+            loader(BakeAwaitsSharedLoader, { ssr: false }),
+            loader(LiveAwaitsSharedLoader),
+            loader(SharedDepLoader),
+            loading(<p>loading shared</p>),
+          ],
+        ),
+        path(
+          "/revalidate-catalog",
+          () => {
+            revalidateTag("catalog");
+            return <p>revalidated</p>;
+          },
+          { name: "revalidateCatalog" },
+        ),
+        cache({ ttl: 1 }, () => [
+          path("/short-cache", () => <p>{`short@g${source.generation}`}</p>, {
+            name: "shortCache",
+            ppr: { ttl: 300 },
+          }),
+        ]),
+        cache({ ttl: 0, swr: 60 }, () => [
+          path("/stale-record", () => <p>{`stale@g${source.generation}`}</p>, {
+            name: "staleRecord",
+            ppr: true,
+          }),
+        ]),
+        cache({ ttl: 0, swr: 0 }, () => [
+          path("/dead-record", () => <p>dead record</p>, {
+            name: "deadRecord",
+            ppr: true,
+          }),
+        ]),
+        cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
+          cache({ ttl: 1 }, () => [
             path(
-              "/nested-tagged",
+              "/nested-short-cache",
               (ctx) => (
-                <p>{`nested-tagged-${tierOf(ctx)}@g${source.generation}`}</p>
+                <p>{`nested-short-${renderedTier(ctx)}@g${source.generation}`}</p>
               ),
-              { name: "nestedTagged", ppr: { ttl: 300 } },
+              { name: "nestedShortCache", ppr: { ttl: 300 } },
             ),
+          ]),
+          cache(
+            {
+              ttl: 300,
+              key: (ctx) => `tagged-v:${variantOf(ctx)}`,
+              tags: ["nested-tier"],
+            },
+            () => [
+              path(
+                "/nested-tagged",
+                (ctx) => (
+                  <p>{`nested-tagged-${renderedTier(ctx)}@g${source.generation}`}</p>
+                ),
+                { name: "nestedTagged", ppr: { ttl: 300 } },
+              ),
+            ],
+          ),
+        ]),
+        cache({ ttl: 300 }, () => [
+          path("/near-expiry", () => <p>near expiry</p>, {
+            name: "nearExpiry",
+            ppr: true,
+          }),
+          path(
+            "/slow-near-expiry",
+            async () => {
+              await new Promise((resolve) => setTimeout(resolve, 200));
+              return <p>slow near expiry</p>;
+            },
+            { name: "slowNearExpiry", ppr: { captureTimeout: 50 } },
+          ),
+        ]),
+        cache({ ttl: 300 }, () => [
+          path("/echo", EchoPage, { name: "echo", ppr: true }, () => [
+            loader(EchoLoader),
+            loading(<p>echoing</p>),
+          ]),
+        ]),
+        cache(
+          {
+            ttl: 300,
+            key: () => {
+              keyRuns.cookie += 1;
+              return `tier:${cookies().get("tier")?.value ?? "none"}`;
+            },
+          },
+          () => [
+            path("/cookie-tiered", () => <p>cookie-tiered</p>, {
+              name: "cookieTiered",
+              ppr: true,
+            }),
+          ],
+        ),
+        // The outer key() names no route: an inner cache() without key() adds
+        // its own default key, so its routes keep their own records.
+        cache(
+          {
+            ttl: 300,
+            key: (ctx) => {
+              keyRuns.nestedTier += 1;
+              return `tier:${tierOf(ctx)}`;
+            },
+          },
+          () => [
+            layout(NestedTierLayout, () => [
+              cache({ ttl: 60 }, () => [
+                path("/nested-tiered", NestedPage, {
+                  name: "nestedTiered",
+                  ppr: true,
+                }),
+                path("/nested-record", NestedRecordPage, {
+                  name: "nestedRecord",
+                }),
+                path("/nested-record-b", NestedRecordPageB, {
+                  name: "nestedRecordB",
+                }),
+              ]),
+              cache(
+                {
+                  ttl: 60,
+                  key: (ctx) => {
+                    keyRuns.nestedVariant += 1;
+                    return `v:${variantOf(ctx)}`;
+                  },
+                },
+                () => [
+                  path("/nested-composed", NestedPage, {
+                    name: "nestedComposed",
+                    ppr: true,
+                  }),
+                ],
+              ),
+            ]),
           ],
         ),
       ]),
-      cache({ ttl: 300 }, () => [
-        path("/near-expiry", () => <p>near expiry</p>, {
-          name: "nearExpiry",
-          ppr: true,
-        }),
-        path(
-          "/slow-near-expiry",
-          async () => {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            return <p>slow near expiry</p>;
-          },
-          { name: "slowNearExpiry", ppr: { captureTimeout: 50 } },
-        ),
-      ]),
-      cache({ ttl: 300 }, () => [
-        path("/echo", EchoPage, { name: "echo", ppr: true }, () => [
-          loader(EchoLoader),
-          loading(<p>echoing</p>),
-        ]),
-      ]),
-      cache(
-        {
-          ttl: 300,
-          key: () => {
-            keyRuns.cookie += 1;
-            return `tier:${cookies().get("tier")?.value ?? "none"}`;
-          },
-        },
-        () => [
-          path("/cookie-tiered", () => <p>cookie-tiered</p>, {
-            name: "cookieTiered",
-            ppr: true,
-          }),
-        ],
-      ),
-      // The outer key() names no route: an inner cache() without key() adds
-      // its own default key, so its routes keep their own records.
-      cache(
-        {
-          ttl: 300,
-          key: (ctx) => {
-            keyRuns.nestedTier += 1;
-            return `tier:${tierOf(ctx)}`;
-          },
-        },
-        () => [
-          layout(NestedTierLayout, () => [
-            cache({ ttl: 60 }, () => [
-              path("/nested-tiered", NestedPage, {
-                name: "nestedTiered",
-                ppr: true,
-              }),
-              path("/nested-record", NestedRecordPage, {
-                name: "nestedRecord",
-              }),
-              path("/nested-record-b", NestedRecordPageB, {
-                name: "nestedRecordB",
-              }),
-            ]),
-            cache(
-              {
-                ttl: 60,
-                key: (ctx) => {
-                  keyRuns.nestedVariant += 1;
-                  return `v:${variantOf(ctx)}`;
-                },
-              },
-              () => [
-                path("/nested-composed", NestedPage, {
-                  name: "nestedComposed",
-                  ppr: true,
-                }),
-              ],
-            ),
-          ]),
-        ],
-      ),
-    ]),
-  );
+    );
 }
 
 beforeEach(async () => {

@@ -129,7 +129,9 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries(),
   );
-  const previousClientUrl = ctx.request.headers.get("X-RSC-Router-Client-Path");
+  // No request headers here: the page renders inside a cache() boundary, where
+  // a ctx.request.headers read throws (issue #976); the value would be stored
+  // in the shared entry and shown to every later visitor.
   const actionProbe = getBlogActionProbe(ctx.params.slug);
 
   return (
@@ -175,21 +177,6 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
               <em style={{ color: "#666" }}>none</em>
             )}
           </div>
-          {previousClientUrl && (
-            <div
-              style={{
-                fontSize: "0.75rem",
-                color: "#856404",
-                marginTop: "0.5rem",
-                paddingTop: "0.5rem",
-                borderTop: "1px solid #856404",
-              }}
-            >
-              <strong>Previous URL (from header):</strong>
-              <br />
-              <code style={{ fontSize: "0.7rem" }}>{previousClientUrl}</code>
-            </div>
-          )}
         </div>
 
         <SegmentTimer serverRenderTime={renderTime} />

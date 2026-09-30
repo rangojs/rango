@@ -1,3 +1,4 @@
+import { requestHeaders } from "../server/request-headers.js";
 import type { HostOverrideConfig } from "./types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { matchPattern, parseRequest } from "./pattern-matcher.js";
@@ -9,7 +10,7 @@ import {
 import { parseCookiesFromHeader } from "../server/cookie-parse.js";
 
 export function parseCookies(request: Request): Record<string, string> {
-  return parseCookiesFromHeader(request.headers.get("cookie"));
+  return parseCookiesFromHeader(requestHeaders(request).get("cookie"));
 }
 
 export function getCookie(request: Request, name: string): string | undefined {

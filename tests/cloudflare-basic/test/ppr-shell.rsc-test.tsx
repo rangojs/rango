@@ -24,6 +24,7 @@ import { CacheLabPage } from "../src/pages/cache-lab.js";
 import {
   PprTieredLayout,
   PprTieredPage,
+  copyPprTier,
   pprTier,
 } from "../src/pages/ppr-shell.js";
 
@@ -119,12 +120,15 @@ describe("request-partitioned PPR shell through serveShellRequest (cloudflare-ba
     const router = createRouter<AppBindings>({
       cache: { store: new MemorySegmentCacheStore() },
     }).routes(
-      urls(({ path, cache }) => [
-        cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
-          path("/ppr-tiered", PprTieredPage, {
-            name: "pprTiered",
-            ppr: { ttl: 300, swr: 120 },
-          }),
+      urls(({ path, cache, middleware }) => [
+        // The page renders middleware's copy of the tier header (#976).
+        middleware(copyPprTier, () => [
+          cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+            path("/ppr-tiered", PprTieredPage, {
+              name: "pprTiered",
+              ppr: { ttl: 300, swr: 120 },
+            }),
+          ]),
         ]),
       ]),
     );
@@ -165,14 +169,16 @@ describe("request-partitioned PPR shell through serveShellRequest (cloudflare-ba
     const router = createRouter<AppBindings>({
       cache: { store: new MemorySegmentCacheStore() },
     }).routes(
-      urls(({ path, layout, cache }) => [
-        cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
-          layout(PprTieredLayout, () => [
-            cache({ ttl: 300, key: () => "layout:v2" }, () => [
-              path("/ppr-tiered-nested", PprTieredPage, {
-                name: "pprTieredNested",
-                ppr: { ttl: 300, swr: 120 },
-              }),
+      urls(({ path, layout, cache, middleware }) => [
+        middleware(copyPprTier, () => [
+          cache({ ttl: 300, key: (ctx) => `tier:${pprTier(ctx)}` }, () => [
+            layout(PprTieredLayout, () => [
+              cache({ ttl: 300, key: () => "layout:v2" }, () => [
+                path("/ppr-tiered-nested", PprTieredPage, {
+                  name: "pprTieredNested",
+                  ppr: { ttl: 300, swr: 120 },
+                }),
+              ]),
             ]),
           ]),
         ]),

@@ -14,7 +14,11 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
-import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
+import {
+  endIdentityExempt,
+  isInsideCacheExecScope,
+  isInsideIdentityExempt,
+} from "../cache/cache-exec-scope.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -543,7 +547,8 @@ export const getContext = (): {
           // the header guard's middleware exemption depends on the latch dying
           // with the funnel scope (see assertCachedHeaderWriteAllowed).
         },
-        callback,
+        // A funnel (its cache() scope) never runs exempt (runIdentityExempt).
+        () => endIdentityExempt(callback),
       );
     },
     run: <T>(
@@ -916,11 +921,18 @@ export interface IdentityReadWording {
 
 /**
  * The one guard every request-identity read goes through: cookies(),
- * headers(), the theme reads (cookie-store.ts readGuardedTheme) and a
- * non-cacheable ctx.get() (assertNonCacheableReadAllowed). Each surface keeps
+ * headers(), the theme reads (cookie-store.ts readGuardedTheme), a
+ * non-cacheable ctx.get() (assertNonCacheableReadAllowed), and the raw reads
+ * `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()`
+ * (cookie-store.ts guardRequestHeaders, guardRawCookieRead; #976). Each surface keeps
  * its own wording; the ladder and its exemptions are shared, so the surfaces
  * refuse in exactly the same places:
  *
+ * 0. A cache's own key(), store keyGenerator, condition() and tags(), and
+ *    onError, read freely and record nothing (runIdentityExempt,
+ *    cache/cache-exec-scope.ts): the value picks or labels the entry, or is
+ *    only observed; it is never rendered. A cached body, loader body or
+ *    funnel they start is guarded again.
  * 1. A PPR shell capture (`ctx` is the capture's derived context,
  *    `_shellCaptureRun`) trips first: the capture context is flagged (so a
  *    caught throw still refuses the capture) and the read throws. The shell is
@@ -948,6 +960,7 @@ export function guardIdentityRead(
   surface: string,
   wording: IdentityReadWording,
 ): void {
+  if (isInsideIdentityExempt()) return;
   const { verb, fix } = wording;
   if (tripShellCaptureGuard(ctx, surface, fix.warning)) {
     throw new Error(
@@ -1120,6 +1133,7 @@ export function recordLoaderIdentityRead(
   surface: string,
   verb: LoaderIdentityReadVerb = "called",
 ): void {
+  if (isInsideIdentityExempt()) return;
   const recorder = (globalThis as Record<symbol, unknown>)[
     IDENTITY_READ_RECORDER_KEY
   ] as ((surface: string, verb: LoaderIdentityReadVerb) => void) | undefined;
@@ -1334,14 +1348,17 @@ export function runInsideLoaderBodyScope<T>(
   loaderId?: string,
   tags?: Set<string>,
 ): T {
-  return loaderBodyScopeALS.run(
-    {
-      active: true,
-      loaderId,
-      parent: loaderBodyScopeALS.getStore(),
-      tags,
-    },
-    fn,
+  // A loader a key() starts with ctx.use() runs guarded (runIdentityExempt).
+  return endIdentityExempt(() =>
+    loaderBodyScopeALS.run(
+      {
+        active: true,
+        loaderId,
+        parent: loaderBodyScopeALS.getStore(),
+        tags,
+      },
+      fn,
+    ),
   );
 }
 

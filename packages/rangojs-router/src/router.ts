@@ -1,3 +1,4 @@
+import { requestHeaders } from "./server/request-headers.js";
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
 import { resolveCacheProfiles } from "./cache/profile-registry.js";
@@ -1161,7 +1162,7 @@ export function createRouter<TEnv = any>(
         | null = null;
 
       return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
-        const requestedDiscoveryEpoch = request.headers.get(
+        const requestedDiscoveryEpoch = requestHeaders(request).get(
           DEV_DISCOVERY_PROBE_HEADER,
         );
         if (

@@ -250,7 +250,7 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
   locationState: Record<string, unknown>;
 } {
   return {
-    cookies: { ...ctx.cookies() },
+    cookies: ctx._readCookies(),
     locationState: resolveLocationStateEntries(ctx._locationState ?? []),
   };
 }

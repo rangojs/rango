@@ -274,6 +274,24 @@ export const myMiddleware: Middleware = async (ctx, next) => {
 Cookies and request headers are not `ctx` members; use the free functions
 `cookies()` and `headers()` from `@rangojs/router`.
 
+Middleware reads request identity freely: `cookies()`, `headers()` and
+`ctx.request.headers` alike. The same `Request` reaches handlers and loaders
+as `ctx.request`, and there `ctx.request.headers` answers like `headers()`: it
+throws inside a `cache()` boundary or a `"use cache"` function and refuses a
+`ppr` shell capture (#976). To render a header on a cached or `ppr` route,
+copy it here with `ctx.set()` (a cacheable variable) and include it in the
+route's `cache()` `key()`, so each value gets its own record and shell:
+
+```typescript
+const Tier = createVar<string>();
+
+export const tierMiddleware: Middleware = async (ctx, next) => {
+  ctx.set(Tier, ctx.request.headers.get("x-tier") ?? "free");
+  return next();
+};
+// cache({ key: (ctx) => `tier:${ctx.request.headers.get("x-tier") ?? "free"}` }, ...)
+```
+
 ### Changing the response after `next()`
 
 After `await next()`, `ctx.header()` and `ctx.headers` write to the real

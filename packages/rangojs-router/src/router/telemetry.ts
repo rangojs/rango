@@ -14,6 +14,8 @@
  *   - revalidation.decision          (revalidation evaluation)
  */
 
+import { requestHeaders } from "../server/request-headers.js";
+
 interface BaseEvent {
   /** Monotonic timestamp from performance.now() */
   timestamp: number;
@@ -294,10 +296,11 @@ export function getRequestId(request: Request): string {
   const existing = requestIds.get(request);
   if (existing) return existing;
 
+  const headers = requestHeaders(request);
   const candidate =
-    request.headers.get("x-rsc-router-request-id") ??
-    request.headers.get("x-request-id") ??
-    request.headers.get("cf-ray");
+    headers.get("x-rsc-router-request-id") ??
+    headers.get("x-request-id") ??
+    headers.get("cf-ray");
 
   let id: string;
   if (candidate) {
