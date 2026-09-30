@@ -360,4 +360,120 @@ describe("navigation-bridge transition({ when })", () => {
       transitionGatedOff: undefined,
     });
   });
+
+  it("transition: false gates a cross-route clientUrls() swap off without calling a predicate", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/items/one",
+        pathname: "/items/one",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k1" } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const destinationWhen = vi.fn(() => true);
+    const layoutWhen = vi.fn(() => true);
+    const definition = {
+      routes: [
+        { id: "items", name: "item", transition: {} },
+        { id: "about", name: "about", transition: { when: destinationWhen } },
+      ],
+      intercepts: [],
+      match: (pathname: string) =>
+        pathname === "/about"
+          ? { routeKey: "about", params: {} }
+          : pathname.startsWith("/items/")
+            ? { routeKey: "items", params: { itemId: pathname.slice(7) } }
+            : null,
+    };
+    const intents: any[] = [];
+    registerClientUrlGroup(
+      definition as any,
+      "/",
+      "",
+      (intent) => intents.push(intent),
+      "items",
+    );
+    const store = {
+      getHistoryKey: vi.fn(() => "/items/one"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [
+          seg("L0", { type: "layout", transition: { when: layoutWhen } }),
+        ],
+        stale: false,
+      })),
+      getSegmentState: vi.fn(() => ({
+        path: "/items/one",
+        currentUrl: "http://localhost/items/one",
+        currentSegmentIds: ["L0"],
+      })),
+      getHistoryEntryMemory: vi.fn(() => ({ routeName: "item" })),
+      hasHistoryCache: vi.fn(() => false),
+      updateCacheHandleData: vi.fn(),
+      setInterceptSourceUrl: vi.fn(),
+    };
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/about", { transition: false });
+
+    expect(destinationWhen).not.toHaveBeenCalled();
+    expect(layoutWhen).not.toHaveBeenCalled();
+    expect(intents[0]).toMatchObject({
+      routeId: "about",
+      transitionGatedOff: true,
+    });
+    expect(txWithMock.mock.calls[0]![0]).toMatchObject({
+      transitionGatedOff: true,
+    });
+  });
+
+  it("transition: false carries a gated-off decision to the canonical commit", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/a",
+        pathname: "/a",
+        origin: "http://localhost",
+      },
+      history: { state: { key: "k1" } },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const store = {
+      getHistoryKey: vi.fn(() => "/a"),
+      getCachedSegments: vi.fn(() => undefined),
+      hasHistoryCache: vi.fn(() => false),
+      getSegmentState: vi.fn(() => ({
+        path: "/a",
+        currentUrl: "http://localhost/a",
+        currentSegmentIds: [],
+      })),
+      updateCacheHandleData: vi.fn(),
+      setInterceptSourceUrl: vi.fn(),
+    };
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/b", { transition: false });
+    await bridge.navigate("/c", { transition: true });
+
+    expect(txWithMock.mock.calls[0]![0]).toMatchObject({
+      transitionGatedOff: true,
+    });
+    // Without the opt-out the commit decides (partial-update.ts).
+    expect(txWithMock.mock.calls[1]![0]).toMatchObject({
+      transitionGatedOff: undefined,
+    });
+  });
 });

@@ -1,8 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { act, cleanup, fireEvent } from "@testing-library/react";
+import { Outlet } from "../../client.js";
+import { Link } from "../../browser/react/Link.js";
 import { useParams } from "../../browser/react/use-params.js";
+import { useRouter } from "../../browser/react/use-router.js";
+import { useLoader } from "../../use-loader.js";
+import type { LoaderDefinition } from "../../types.js";
 import { createLocationState } from "../../browser/react/location-state-shared.js";
 import { runTransitionWhen, withLocationStateKey } from "../index.js";
 import { renderRoute } from "../dom.entry.js";
@@ -264,5 +269,103 @@ describe("renderRoute: transition({ when }) decides each commit (#995)", () => {
     expect(seen.map((ctx) => ctx.kind)).toEqual(["push", "revalidate"]);
     expect(seen[1]!.to).toBe(seen[1]!.from);
     expect(seen[1]!.from.url.pathname).toBe("/items/2");
+  });
+});
+
+describe("renderRoute: per-navigation transition: false", () => {
+  const ProductLoader = { __brand: "loader" } as unknown as LoaderDefinition<{
+    name: string;
+  }>;
+
+  function Shell() {
+    return (
+      <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
+        <Outlet />
+      </Suspense>
+    );
+  }
+
+  function Product() {
+    const { data, isLoading } = useLoader(ProductLoader);
+    const router = useRouter();
+    return (
+      <>
+        <p data-testid="price">{`${isLoading ? "stale" : "fresh"}:${data.name}`}</p>
+        <Link to="/products/2" transition={false} data-testid="link-off">
+          next
+        </Link>
+        <button
+          data-testid="push-off"
+          onClick={() => void router.push("/products/3", { transition: false })}
+        >
+          push
+        </button>
+      </>
+    );
+  }
+
+  async function renderProducts(when: () => boolean) {
+    return renderRoute(
+      [
+        { path: "/products", Component: Shell },
+        {
+          path: "/products/:id",
+          Component: Product,
+          transition: { when },
+        },
+      ],
+      {
+        request: "/products/1",
+        loaders: [[ProductLoader, { name: "Product 1" }]],
+      },
+    );
+  }
+
+  it("commits urgently without calling when: the pending read suspends to its fallback", async () => {
+    const when = vi.fn(() => true);
+    const { getByTestId, queryByTestId, router } = await renderProducts(when);
+
+    let resolve!: (value: { name: string }) => void;
+    const next = new Promise<{ name: string }>((r) => (resolve = r));
+    await router.navigate("/products/2", {
+      transition: false,
+      loaders: [[ProductLoader, next]],
+    });
+    expect(when).not.toHaveBeenCalled();
+    expect(getByTestId("skeleton")).toBeTruthy();
+
+    await act(async () => resolve({ name: "Product 2" }));
+    expect(queryByTestId("skeleton")).toBeNull();
+    expect(getByTestId("price").textContent).toBe("fresh:Product 2");
+
+    // Without the opt-out the same route holds the reader (when -> true).
+    let resolveNext!: (value: { name: string }) => void;
+    const pending = new Promise<{ name: string }>((r) => (resolveNext = r));
+    await router.navigate("/products/3", {
+      loaders: [[ProductLoader, pending]],
+    });
+    expect(when).toHaveBeenCalledTimes(1);
+    expect(queryByTestId("skeleton")).toBeNull();
+    expect(getByTestId("price").textContent).toBe("stale:Product 2");
+    await act(async () => resolveNext({ name: "Product 3" }));
+  });
+
+  it("<Link transition={false}> and router.push(url, { transition: false }) skip the predicate", async () => {
+    const when = vi.fn(() => true);
+    const { getByTestId, router } = await renderProducts(when);
+
+    await act(async () => {
+      fireEvent.click(getByTestId("link-off"));
+    });
+    expect(getByTestId("link-off").getAttribute("data-transition")).toBe(
+      "false",
+    );
+    expect(router.pathname()).toBe("/products/2");
+
+    await act(async () => {
+      fireEvent.click(getByTestId("push-off"));
+    });
+    expect(router.pathname()).toBe("/products/3");
+    expect(when).not.toHaveBeenCalled();
   });
 });

@@ -81,6 +81,14 @@ async function TxSrcContent({ n }: { n: string }) {
       >
         f (animate: false)
       </Link>
+      <Link
+        to="/tx-src/g"
+        transition={false}
+        data-testid="tx-src-to-g-no-transition"
+        prefetch="none"
+      >
+        g (transition: false)
+      </Link>
       <TxMountProbe />
       <TxActionProbe />
       {/* Prefetch reuse: c is render-prefetched from every /tx-src page (one

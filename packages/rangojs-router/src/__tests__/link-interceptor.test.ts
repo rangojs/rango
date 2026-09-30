@@ -141,3 +141,42 @@ describe("defaultShouldIntercept", () => {
     expect(defaultShouldIntercept(link)).toBe(true);
   });
 });
+
+describe("setupLinkInterception: navigation options from Link data attributes", () => {
+  async function clickLink(attrs: Record<string, string>) {
+    const listeners: Array<(event: unknown) => void> = [];
+    (globalThis as any).document = {
+      addEventListener: (_type: string, fn: (event: unknown) => void) =>
+        listeners.push(fn),
+      removeEventListener: vi.fn(),
+    };
+    try {
+      const mod = await import("../browser/link-interceptor");
+      const onNavigate = vi.fn();
+      const cleanup = mod.setupLinkInterception(onNavigate, {
+        shouldIntercept: () => true,
+      });
+      const link = createLink("http://localhost/next", attrs);
+      listeners[0]!({
+        defaultPrevented: false,
+        target: { nodeType: 1, matches: () => true, closest: () => link },
+        preventDefault: vi.fn(),
+      });
+      cleanup();
+      return onNavigate.mock.calls[0]!;
+    } finally {
+      delete (globalThis as any).document;
+    }
+  }
+
+  it('data-transition="false" navigates with transition: false', async () => {
+    const [url, options] = await clickLink({ "data-transition": "false" });
+    expect(url).toBe("http://localhost/next");
+    expect(options).toEqual({ transition: false });
+  });
+
+  it("omits transition when the attribute is absent", async () => {
+    const [, options] = await clickLink({ "data-scroll": "false" });
+    expect(options).toEqual({ scroll: false });
+  });
+});

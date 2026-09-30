@@ -352,10 +352,14 @@ export interface TestRouterHandle {
    * // reader: isLoading true, old data
    * await act(async () => resolve({ name: "Product 2" }));
    * // reader: isLoading false, new data
+   *
+   * `options.transition: false` is the per-navigation opt-out
+   * (`router.push(url, { transition: false })`, `<Link transition={false}>`):
+   * the commit is urgent and no transition({ when }) predicate is called.
    */
   navigate(
     url: string,
-    options?: Pick<RenderRouteOptions, "loaders">,
+    options?: Pick<RenderRouteOptions, "loaders"> & { transition?: boolean },
   ): Promise<void>;
   /**
    * Re-render the current location, as router.refresh() does: a spec's
@@ -618,8 +622,12 @@ export async function renderRoute(
   const navigate = async (
     target: string,
     navOptions?: Pick<RenderRouteOptions, "loaders"> & {
-      history?: Pick<NavigateOptionsInternal, "state" | "replace">;
+      history?: Pick<
+        NavigateOptionsInternal,
+        "state" | "replace" | "transition"
+      >;
       kind?: TransitionWhenKind;
+      transition?: boolean;
     },
   ): Promise<void> => {
     // A useRouter().push/replace or <Link> navigation (`history`) writes its
@@ -665,21 +673,27 @@ export async function renderRoute(
     // (browser/partial-update.ts): the committed location is the source.
     const kind: TransitionWhenKind =
       navOptions?.kind ?? (history?.replace ? "replace" : "push");
-    const gatedOff = decideTransitionGatedOff(segments, () => ({
-      kind,
-      from: {
-        url: eventController.getLocation().href,
-        params: eventController.getParams(),
-        routeName: leaf.name,
-        state: window.history.state,
-      },
-      to: {
-        url: nextUrl,
-        params: match.params,
-        routeName: leaf.name,
-        state: historyState ?? null,
-      },
-    }));
+    // `transition: false` gates off without calling a predicate
+    // (navigation-bridge.ts navigate).
+    const transitionOptOut =
+      (navOptions?.transition ?? history?.transition) === false;
+    const gatedOff =
+      transitionOptOut ||
+      decideTransitionGatedOff(segments, () => ({
+        kind,
+        from: {
+          url: eventController.getLocation().href,
+          params: eventController.getParams(),
+          routeName: leaf.name,
+          state: window.history.state,
+        },
+        to: {
+          url: nextUrl,
+          params: match.params,
+          routeName: leaf.name,
+          state: historyState ?? null,
+        },
+      }));
     const root = await renderSegments(segments, {
       outletPending: options.outletPending,
       transitionGatedOff: gatedOff,

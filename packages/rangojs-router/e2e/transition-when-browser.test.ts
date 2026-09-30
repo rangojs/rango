@@ -132,6 +132,40 @@ function browserDecisionTests(mode: "dev" | "build") {
       ]);
     });
 
+    test("<Link transition={false}> gates its navigation off without calling when", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/tx-src/a"));
+      await waitForHydration(page);
+      await expect(testId(page, "tx-src-n").last()).toHaveText("a", {
+        timeout: 8000,
+      });
+      await bump(page, 2);
+      const m0 = await mounts(page);
+
+      // From a, txSrcWhen would hold; the opt-out commits urgently instead.
+      await watchFlash(page, "tx-src-loading");
+      await goTxSrc(page, "tx-src-to-g-no-transition", "g");
+      expect(await readFlash(page), "gated off: the skeleton streams").toBe(
+        true,
+      );
+      expect(await whenLog(page), "the predicate is never called").toEqual([]);
+      // Same route: the segment reconciles, it does not remount (#995).
+      expect(await mounts(page)).toBe(m0);
+      expect(await clicks(page)).toBe("clicks:2");
+
+      // The next navigation without the opt-out decides as usual.
+      await goTxSrc(page, "tx-src-to-b", "b");
+      expect(await whenLog(page)).toEqual([
+        expect.objectContaining({
+          kind: "push",
+          from: "/tx-src/g",
+          result: true,
+        }),
+      ]);
+    });
+
     test("an action commit decides with kind action, to === from, and the action's formData and result", async ({
       page,
     }) => {
@@ -411,6 +445,29 @@ function browserDecisionTests(mode: "dev" | "build") {
           result: false,
         },
       ]);
+    });
+
+    test("clientUrls(): <Link transition={false}> gates the cross-route swap off without calling when", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/client-urls-transition/items/one"));
+      await waitForHydration(page);
+      await expect(testId(page, "ct-item-param")).toHaveText("one", {
+        timeout: 8000,
+      });
+
+      await testId(page, "ct-item-to-other-no-transition").click();
+      await expect(testId(page, "ct-other-param")).toHaveText("two", {
+        timeout: 8000,
+      });
+      await expect(testId(page, "ct-other-loader")).not.toBeEmpty();
+      await page.waitForTimeout(300);
+
+      expect(
+        await whenLog(page, "__ctWhenLog"),
+        "neither the destination's nor a kept segment's when is called",
+      ).toEqual([]);
     });
   });
 }

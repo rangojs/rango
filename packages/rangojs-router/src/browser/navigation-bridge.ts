@@ -351,34 +351,39 @@ export function createNavigationBridge(
       // presentation), over the destination route's predicate and those of
       // the segments the navigation keeps (everything outside the group's
       // route segment), and the canonical commit reuses the decision.
+      // `transition: false` gates the navigation off without calling any
+      // predicate, on both the optimistic swap and the canonical commit.
+      const transitionOptOut = options?.transition === false;
       const clientUrlPresentation = beginClientUrlNavigation(
         targetUrl,
         tx.handle.signal,
-        (destination) =>
-          decideCommitGatedOff(
-            store,
-            (
-              store.getCachedSegments(store.getHistoryKey())?.segments ?? []
-            ).filter((segment) => segment.clientGroup === undefined),
-            options?.replace ? "replace" : "push",
-            {
-              to: (from) => {
-                // Mount (include prefix) params carry over; the origin
-                // route's own params do not.
-                const params = { ...from.params };
-                for (const name of destination.originLocalParamNames) {
-                  delete params[name];
-                }
-                return {
-                  url: targetUrl,
-                  params: { ...params, ...destination.params },
-                  routeName: destination.routeName,
-                  state: buildHistoryState(resolvedState),
-                };
-              },
-              extra: destination.when,
-            },
-          ),
+        transitionOptOut
+          ? () => true
+          : (destination) =>
+              decideCommitGatedOff(
+                store,
+                (
+                  store.getCachedSegments(store.getHistoryKey())?.segments ?? []
+                ).filter((segment) => segment.clientGroup === undefined),
+                options?.replace ? "replace" : "push",
+                {
+                  to: (from) => {
+                    // Mount (include prefix) params carry over; the origin
+                    // route's own params do not.
+                    const params = { ...from.params };
+                    for (const name of destination.originLocalParamNames) {
+                      delete params[name];
+                    }
+                    return {
+                      url: targetUrl,
+                      params: { ...params, ...destination.params },
+                      routeName: destination.routeName,
+                      state: buildHistoryState(resolvedState),
+                    };
+                  },
+                  extra: destination.when,
+                },
+              ),
       );
 
       // REVALIDATE: Fetch fresh data from server
@@ -397,7 +402,9 @@ export function createNavigationBridge(
             replace: options?.replace,
             scroll: options?.scroll,
             state: resolvedState,
-            transitionGatedOff: clientUrlPresentation?.transitionGatedOff,
+            transitionGatedOff: transitionOptOut
+              ? true
+              : clientUrlPresentation?.transitionGatedOff,
           }),
           isLeavingIntercept
             ? { type: "leave-intercept" as const }
@@ -427,6 +434,7 @@ export function createNavigationBridge(
           return this.navigate(redirectUrl, {
             state: error.state,
             replace: options?.replace,
+            transition: options?.transition,
             _skipCache: true,
           } as NavigateOptionsInternal);
         }

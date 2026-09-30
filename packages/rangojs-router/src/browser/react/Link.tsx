@@ -87,6 +87,14 @@ export interface LinkProps extends Omit<
    */
   revalidate?: boolean;
   /**
+   * Set to `false` to present this navigation without a transition (urgent
+   * commit, `<ViewTransition>` classes `"none"`); no `transition({ when })`
+   * predicate is called. See `NavigateOptions.transition`.
+   *
+   * @default true
+   */
+  transition?: boolean;
+  /**
    * Prefetch strategy for the link destination. When omitted, falls back to
    * the router-wide default (`createRouter({ defaultPrefetch })`: `"none"` in
    * development, `"viewport"` in production). An explicit value always wins
@@ -219,6 +227,7 @@ export const Link: ForwardRefExoticComponent<
     scroll = true,
     reloadDocument = false,
     revalidate,
+    transition,
     prefetch,
     prefetchKey,
     state,
@@ -346,6 +355,7 @@ export const Link: ForwardRefExoticComponent<
         scroll,
         state,
         revalidate,
+        transition,
       });
     },
     [
@@ -355,6 +365,7 @@ export const Link: ForwardRefExoticComponent<
       replace,
       scroll,
       revalidate,
+      transition,
       ctx,
       onClick,
     ],
@@ -477,6 +488,7 @@ export const Link: ForwardRefExoticComponent<
       data-scroll={scroll === false ? "false" : undefined}
       data-replace={replace ? "true" : undefined}
       data-revalidate={revalidate === false ? "false" : undefined}
+      data-transition={transition === false ? "false" : undefined}
       {...props}
     >
       <LinkContext.Provider value={resolvedTo}>{children}</LinkContext.Provider>

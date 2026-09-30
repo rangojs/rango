@@ -402,6 +402,22 @@ export interface NavigateOptions {
    */
   revalidate?: boolean;
   /**
+   * Set to `false` to present this navigation without a transition: the
+   * commit is urgent and every `<ViewTransition>` class resolves to `"none"`,
+   * the same result as a `transition({ when })` predicate returning `false`.
+   * No `when` predicate is called. Back/forward, action and revalidation
+   * commits are unaffected (they are not started by this call).
+   *
+   * @default true (the route's transition config applies)
+   *
+   * @example
+   * ```tsx
+   * router.push("/photos/2", { transition: false });
+   * <Link to="/photos/2" transition={false}>Next</Link>
+   * ```
+   */
+  transition?: boolean;
+  /**
    * State to pass to history.pushState/replaceState
    * Accessible via useLocationState() hook.
    *

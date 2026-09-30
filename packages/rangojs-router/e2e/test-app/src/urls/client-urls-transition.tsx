@@ -87,6 +87,14 @@ function TransitionClientItem() {
       >
         Other one (cross-route, gated off)
       </Link>
+      <Link
+        to="/client-urls-transition/other/two"
+        transition={false}
+        prefetch="none"
+        data-testid="ct-item-to-other-no-transition"
+      >
+        Other two (cross-route, transition: false)
+      </Link>
     </article>
   );
 }
