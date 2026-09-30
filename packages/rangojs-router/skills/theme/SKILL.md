@@ -123,6 +123,7 @@ and `getRequestContext().theme` are guarded like `cookies()`:
 | middleware `ctx.set()` of the theme, read by a handler     | Not guarded: the first visitor's theme bakes into the shell or `cache()` entry, like a session object |
 | a route with no `ppr` or `cache()` above it, or middleware | Allowed: rendered per request                                                                         |
 | a loader with its own `cache()` and no `key()`             | The miss fails and stores nothing (#972), like a `cookies()` read there; key the theme                |
+| a handler on a document-cached route (`s-maxage`)          | Not guarded: the stored document shows that visitor's theme to everyone                               |
 
 The theme getters are read-only and non-enumerable: `{ ...ctx }` and
 `Object.assign({}, ctx)` do not carry `theme`, and assigning it throws.
@@ -133,10 +134,13 @@ write there; call it from middleware.
 Read the theme where it is per request instead:
 
 - `useTheme()` in a client component. The `<html>` class is right before
-  paint (the theme script sets it). On a `ppr` HIT the shell carries the
-  no-cookie default (`defaultTheme`), whoever captured it: a visitor with no
-  stored theme sees the default, and one with a stored theme sees it after
-  hydration.
+  paint (the theme script sets it). A render that other visitors may be
+  served starts `useTheme()` at the no-cookie default (`defaultTheme`),
+  whoever rendered it: a `ppr` shell, and a page whose response opted in to
+  the document cache before `next()` (#978, see `/document-cache`). A
+  visitor with no stored theme sees the default, and one with a stored theme
+  sees it after hydration. Any other render, a 404 included, starts at the
+  visitor's own theme.
 - A live loader (no `ssr: false`). Loaders do not get `ctx.theme` or
   `ctx.setTheme`; read the cookie directly. A live loader runs on every
   request, HITs included, and on a `ppr` route needs `loading()` or an inline

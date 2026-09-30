@@ -183,8 +183,17 @@ Never cached, regardless of headers:
 - Responses whose `Cache-Control` also contains `private`, `no-store`, or an unqualified `no-cache` (those win over `s-maxage` in a shared cache)
 - Responses carrying `Set-Cookie` (a per-client value must not be replayed to everyone)
 - Non-200 responses
+- Pages rendered with a visitor's stored theme other than `defaultTheme`, which happens only when `Cache-Control` was set after the render (see [Theme](#theme))
 
 So [server actions](/docs/rango/guides/server-actions) always reach the origin, and fetchable loader reads stay live even on document-cached pages.
+
+### Theme
+
+With [`theme`](/docs/rango/guides/theme) enabled, the page payload carries the theme `useTheme()` starts at. A page whose response opted in to the document cache before `next()` starts it at the no-cookie default (`defaultTheme`), whoever rendered it, so a visitor with no stored theme never inherits the theme of the visitor who warmed the entry. A visitor with a stored theme sees theirs after hydration, and the `<html>` class is right before paint either way, because the theme script reads the cookie. Any other render, a 404 included, starts at the visitor's own theme.
+
+The render decides from the `Cache-Control` your handler or middleware set before `await next()`. A header set after `next()` (or in `onResponse`) arrives once the page is rendered, so the cache stores that response only when it was rendered with the default theme. Set `Cache-Control` in the handler or before `next()` so every visitor's miss can fill the entry.
+
+A handler that reads `ctx.theme` on a stored route is not guarded: the stored document shows that visitor's theme to everyone. Read the theme with `useTheme()` instead.
 
 ## Invalidation
 

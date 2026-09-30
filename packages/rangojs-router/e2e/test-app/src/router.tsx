@@ -5,7 +5,10 @@ import {
   redirect,
   type Middleware,
 } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/cache";
+import {
+  createDocumentCacheMiddleware,
+  MemorySegmentCacheStore,
+} from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { shellSecureAuthMiddleware } from "./urls/shell-secure.js";
 import { onErrorLog } from "./error-log.js";
@@ -313,6 +316,8 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
+  // Document cache for the #978 theme routes only (e2e/theme-doc-cache.test.ts).
+  .use("/theme/doc-cache/*", createDocumentCacheMiddleware())
   // Middleware chain integration test: global layer sets var, header, cookie
   .use("/mw-chain/*", async (ctx, next) => {
     ctx.set("chainGlobal", "from-global");

@@ -1198,6 +1198,11 @@ export const pageMeta: PageMeta[] = [
         "text": "What gets cached — and what never does"
       },
       {
+        "depth": 3,
+        "id": "theme",
+        "text": "Theme"
+      },
+      {
         "depth": 2,
         "id": "invalidation",
         "text": "Invalidation"

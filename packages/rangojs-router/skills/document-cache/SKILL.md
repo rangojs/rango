@@ -219,6 +219,30 @@ the variant suffixes are still appended.
   error during the render. The current request still gets the errored render,
   the next request renders fresh, and on a stale refresh the stale entry keeps
   serving.
+- A page rendered with a visitor's stored theme other than `defaultTheme`.
+  That happens only when `Cache-Control` was set after the render (see
+  "Theme" below).
+
+## Theme
+
+With `theme` enabled, the page payload carries the theme `useTheme()` starts
+at (`initialTheme`). A page whose response opted in to this cache before
+`next()` starts it at the no-cookie default (`defaultTheme`), whoever rendered
+it (#978), so a visitor with no stored theme never inherits the theme of the
+visitor who warmed the entry. A visitor with a stored theme sees theirs after
+hydration, and the `<html>` class is right before paint either way (the theme
+script reads the cookie). Any other render, a 404 included, starts at the
+visitor's own theme.
+
+The render decides from the `Cache-Control` the handler or middleware set
+before `await next()`. A header set after `next()` (or in `onResponse`) arrives
+once the page is rendered, so the cache stores that response only when it was
+rendered with the default theme. Set `Cache-Control` in the handler or before
+`next()` so every visitor's miss can fill the entry.
+
+A handler that reads `ctx.theme` on a stored route is not guarded: the stored
+document shows that visitor's theme to everyone. Read the theme with
+`useTheme()` instead (see `/theme`).
 
 ## Invalidation
 

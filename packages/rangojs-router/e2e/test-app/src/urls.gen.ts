@@ -320,6 +320,8 @@ export const routes = {
   testManifestCacheCounter: "/__test/manifest-cache-counter",
   testPrerenderManifestEntries: "/__test/prerender-manifest-entries",
   testThrowHandlerError: "/__test/throw-handler-error",
+  "theme.docCache": "/theme/doc-cache",
+  "theme.docCacheLive": "/theme/doc-cache/live",
   "theme.index": "/theme",
   "theme.ppr": "/theme/ppr",
   "theme.pprClient": "/theme/ppr-client",

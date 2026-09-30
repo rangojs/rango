@@ -31,7 +31,6 @@ import {
 } from "./helpers.js";
 import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
 import { guardOutgoingRedirect } from "./redirect-guard.js";
-import { payloadInitialTheme } from "./full-payload.js";
 import {
   resolveSoftRedirectUrl,
   resolveExternalRedirect,
@@ -1367,7 +1366,11 @@ export function createRSCHandler<
               themeConfig: router.themeConfig,
               warmupEnabled: router.warmupEnabled,
               strictMode: router.strictMode,
-              initialTheme: payloadInitialTheme(getRequestContext()),
+              // The visitor's theme, not payloadInitialTheme (full-payload.ts):
+              // that picks the default when middleware opted the URL into the
+              // document cache before next(), but a 404 is never stored or
+              // captured (#978).
+              initialTheme: getRequestContext()._readTheme(),
             },
           };
 

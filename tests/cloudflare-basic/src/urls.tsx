@@ -158,6 +158,10 @@ import {
 import { DocumentCachePage } from "./pages/document-cache.js";
 import { DocumentCacheNoCachePage } from "./pages/document-cache-no-cache.js";
 import {
+  DocumentCacheThemeLivePage,
+  DocumentCacheThemePage,
+} from "./pages/document-cache-theme.js";
+import {
   DocumentCacheRenderErrorPage,
   PprRenderErrorPage,
   RouteCacheRenderErrorPage,
@@ -1601,6 +1605,13 @@ export const urlpatterns = urls(
         path("/document-cache-no-cache", DocumentCacheNoCachePage, {
           name: "documentCacheNoCache",
         }),
+
+        // #978: a document-cache entry carries the no-cookie default as
+        // initialTheme, whoever stored it; /live sends no s-maxage and keeps
+        // each visitor's theme. Unnamed: document-cache-theme.test.ts fetches
+        // them by URL, no gen-file entry.
+        path("/document-cache-theme", DocumentCacheThemePage),
+        path("/document-cache-theme/live", DocumentCacheThemeLivePage),
 
         // Issue #915: a 200 whose async server component threw after the
         // commit must not be stored by the document cache or the PPR shell

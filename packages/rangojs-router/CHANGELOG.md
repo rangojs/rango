@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A document the document cache stores no longer hands the first visitor's
+  theme to `useTheme()` for everyone else. The stored document carried
+  `initialTheme` from the theme cookie of the visitor who rendered it, so a
+  visitor with no stored theme kept that visitor's `useTheme().theme` for the
+  life of the page; the `<html>` class was right, since the theme script reads
+  the cookie. A page whose response opts in to the document cache before
+  `next()` (an `s-maxage` `Cache-Control` from the handler, or from
+  middleware before `await next()`) now carries the no-cookie default
+  (`defaultTheme`), as a `ppr` shell capture does, and a visitor with a stored
+  theme gets it after hydration. Any other render, a 404 included, keeps the
+  visitor's theme. A `Cache-Control` set after `await next()` or in
+  `onResponse` arrives after the page is rendered: such a response is stored
+  only when it was rendered with the default theme, so set `Cache-Control` in
+  the handler or before `next()`
+  ([#987](https://github.com/rangojs/rango/pull/987)).
+
 ## 0.18.0 (2026-09-30)
 
 ### Breaking: a nested `cache()` keys its records within the enclosing `cache()`'s `key()` partition ([#983](https://github.com/rangojs/rango/pull/983))

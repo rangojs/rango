@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { createDocumentCacheMiddleware } from "../document-cache.js";
+import {
+  createDocumentCacheMiddleware,
+  type DocumentCacheOptions,
+} from "../document-cache.js";
 import type { MiddlewareContext } from "../../router/middleware.js";
 // The REAL cacheTag + runWithRequestContext (statically bound before the
 // per-test vi.doMock of request-context, so they use the real ALS). Lets a
@@ -683,6 +686,103 @@ describe("createDocumentCacheMiddleware", () => {
         writeError,
         "cache-write",
       );
+    });
+  });
+
+  describe("initialTheme (#978)", () => {
+    type ThemeMarks = {
+      _documentCacheRender?: boolean;
+      _payloadVisitorTheme?: boolean;
+    };
+    const marks = () => mockRequestCtx as ThemeMarks;
+
+    async function run(
+      options: DocumentCacheOptions = {},
+      visitorTheme = false,
+    ) {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+      // The render records the mark it ran under; payloadInitialTheme sets
+      // _payloadVisitorTheme when it emits a non-default visitor theme.
+      const seen: Array<boolean | undefined> = [];
+      const next = vi.fn(async () => {
+        seen.push(marks()._documentCacheRender);
+        if (visitorTheme) marks()._payloadVisitorTheme = true;
+        return new Response("doc", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        });
+      });
+      const response = (await createDocumentCacheMiddleware(options)(
+        createMockMiddlewareContext("http://localhost/page"),
+        next,
+      )) as Response;
+      await vi.runAllTimersAsync();
+      return { response, seen };
+    }
+
+    it("marks the render of a MISS", async () => {
+      const { response, seen } = await run();
+
+      expect(seen).toEqual([true]);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(mockStore.cache.size).toBe(1);
+    });
+
+    it("does not mark a render it skips", async () => {
+      const { seen } = await run({ isEnabled: () => false });
+
+      expect(seen).toEqual([undefined]);
+    });
+
+    it("does not store a MISS whose payload carries the visitor's theme", async () => {
+      const { response, seen } = await run({}, true);
+
+      expect(seen).toEqual([true]);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+      expect(await response.text()).toBe("doc");
+      expect(mockStore.cache.size).toBe(0);
+    });
+
+    it("marks a stale refresh, and does not store it when its payload carries the visitor's theme", async () => {
+      mockStore.cache.set("localhost/page:html", {
+        response: new Response("stale", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+        staleAt: Date.now() - 1000,
+      });
+      const putResponse = vi.spyOn(mockStore, "putResponse");
+
+      const { response, seen } = await run({}, true);
+
+      expect(response.headers.get("x-document-cache-status")).toBe("STALE");
+      expect(seen).toEqual([true]);
+      expect(putResponse).not.toHaveBeenCalled();
+    });
+
+    it("documentCacheStoresRender needs the mark and a response stub the cache stores", async () => {
+      const { documentCacheStoresRender } =
+        await import("../document-cache.js");
+      const sMaxAge = { "Cache-Control": "s-maxage=60" };
+      const stores = (mark: boolean | undefined, init: ResponseInit) =>
+        documentCacheStoresRender({
+          _documentCacheRender: mark,
+          res: new Response(null, init),
+        });
+
+      expect(stores(true, { headers: sMaxAge })).toBe(true);
+      expect(stores(undefined, { headers: sMaxAge })).toBe(false);
+      expect(stores(true, {})).toBe(false);
+      expect(
+        stores(true, { headers: { "Cache-Control": "private, s-maxage=60" } }),
+      ).toBe(false);
+      expect(stores(true, { status: 404, headers: sMaxAge })).toBe(false);
+      expect(
+        stores(true, { headers: { ...sMaxAge, "Set-Cookie": "a=1; Path=/" } }),
+      ).toBe(false);
     });
   });
 

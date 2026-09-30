@@ -68,3 +68,18 @@ export const ThemePprClientHandler: Handler<"theme.pprClient"> = (ctx) => (
     <ThemeToggle testId="theme-ppr-client" />
   </div>
 );
+
+export const ThemeDocCacheHandler: Handler<"theme.docCache"> = (ctx) => {
+  ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
+  return (
+    <div data-testid="theme-doc-cache-page">
+      <ThemeToggle testId="theme-doc-cache" />
+    </div>
+  );
+};
+
+export const ThemeDocCacheLiveHandler: Handler<"theme.docCacheLive"> = () => (
+  <div data-testid="theme-doc-cache-live-page">
+    <ThemeToggle testId="theme-doc-cache-live" />
+  </div>
+);
