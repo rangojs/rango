@@ -282,8 +282,8 @@ export interface RequestContext<
    * capture task's derived request context (built by shell-capture.ts). This is
    * the switch every capture-specific behavior reads: loader masking
    * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
-   * cookies()/headers() capture guard (server/context.ts
-   * assertNotInsideShellCapture). The foreground render never sets it, so the
+   * identity-read capture guard (server/context.ts guardIdentityRead). The
+   * foreground render never sets it, so the
    * served response is byte-identical to axis 1. The capture descriptor itself
    * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
    * integrated PPR serve path (rsc/shell-serve.ts + rsc-rendering.ts) builds it
@@ -310,6 +310,16 @@ export interface RequestContext<
    * `runs: 1`, so a HIT still runs their bodies for those pushes.
    */
   _shellCaptureUnrecordedLoaderPush?: true;
+
+  /**
+   * @internal The lane of each loader the capture's matched route registers
+   * (loader-cache.ts routeLoaderLanes), set by createMatchContextForFull
+   * before any loader runs. The capture's push funnel credits a push made
+   * under a live-lane loader's body, at any depth, to that loader
+   * (shell-capture.ts deriveShellCaptureContext). Own property of the
+   * capture's derived context only.
+   */
+  _shellCaptureLoaderLanes?: ReadonlyMap<string, "live" | "bake">;
 
   /**
    * @internal Record keys resolved for this request (CacheScope
@@ -417,7 +427,9 @@ export interface RequestContext<
      * scope replaces any route-derived cache() scope for the tail's match
      * (resolveShellImplicitCacheScope), and a lookup that does not hit throws
      * ShellRecordUnavailableError instead of resolving segments
-     * (withCacheLookup): a HIT never runs a handler.
+     * (withCacheLookup): a HIT never runs a handler. The record's
+     * loader-owned handle pushes restore as authoritative
+     * (HandleStore.pushRestored): the prelude rendered them.
      */
     docTail?: true;
     /**
@@ -471,8 +483,9 @@ export interface RequestContext<
 
   /**
    * @internal Set by the capture guard (server/context.ts
-   * tripShellCaptureGuard) when it throws DURING a capture render: the read
-   * ("cookies()", "headers()", "ctx.get()", "ctx.theme") and the fix the
+   * guardIdentityRead) when it throws DURING a capture render: the read
+   * ("cookies()", "headers()", `ctx.get() for a non-cacheable variable`,
+   * "ctx.theme") and the fix the
    * refusal warning gives for it. Load-bearing for the
    * bake lane: a guard throw inside an executing loader is swallowed by
    * wrapLoaderPromise into per-loader error UI, which would otherwise bake
@@ -614,7 +627,7 @@ export interface RequestContext<
   /**
    * @internal The theme cookie (or the default) read with no identity guard.
    * The guarded reads (`theme` here, the handler and middleware `ctx.theme`)
-   * call it after assertThemeReadAllowed; the router's own payload read goes
+   * call it after guardIdentityRead (readGuardedTheme); the router's own payload read goes
    * through payloadInitialTheme (rsc/full-payload.ts), except the unmatched
    * route's 404 (rsc/handler.ts), which is never stored. Undefined without
    * theme config.
@@ -903,6 +916,7 @@ export type PublicRequestContext<
   | "_shellLoaderSeed"
   | "_shellCaptureLoaderRecords"
   | "_shellCaptureUnrecordedLoaderPush"
+  | "_shellCaptureLoaderLanes"
   | "_resolvedCacheKeys"
   | "_shellKey"
   | "_shellForcedMiss"

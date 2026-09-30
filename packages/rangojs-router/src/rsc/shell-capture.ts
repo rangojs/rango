@@ -65,6 +65,7 @@ import {
   type MaskReport,
 } from "../router/segment-resolution/mask-nested.js";
 import {
+  findEnclosingLoaderBody,
   getCurrentLoaderBodyId,
   isInsideLoaderScope,
 } from "../server/context.js";
@@ -87,7 +88,6 @@ import {
   getRecordingStore,
   hasDocRecord,
   pruneShellSnapshot,
-  type ShellSnapshotReaders,
 } from "../cache/shell-snapshot.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { SSRModule } from "./types.js";
@@ -443,7 +443,7 @@ function warnCaptureRefusedOnce(
  * an async server component, a bake-lane loader. The read throws where it
  * happens, but the code can catch that throw, so the flag the guard sets on
  * the capture context is what decides (server/context.ts
- * assertNotInsideShellCapture). Returns true when it refused (and warned).
+ * guardIdentityRead). Returns true when it refused (and warned).
  */
 function refuseOnCaptureGuard(
   key: string,
@@ -466,7 +466,7 @@ function refuseOnCaptureGuard(
   // Name the recorded source instead of hardcoding a lane: a trip can come
   // from a bake-lane SEGMENT loader or from handler/render code, including a
   // loader a handler awaits (issue #672). The guard recorded the read and its
-  // fix (server/context.ts tripShellCaptureGuard): cookies()/headers(), a
+  // fix (server/context.ts guardIdentityRead): cookies()/headers(), a
   // { cache: false } variable, and the theme reads (#971).
   const loaderId = derivedCtx._shellCaptureGuardTrippedLoaderId;
   const origin = loaderId
@@ -1582,24 +1582,6 @@ async function runShellCapture(
 }
 
 /**
- * Who reads the snapshot this capture stores besides its doc record
- * (docs/design/shell-entry-layout.md §2): partial replay alone for a
- * navigation-only entry ("segments"), the bake-lane loaders otherwise
- * ("loaders": a HIT serves their pins, and a loader whose body runs on the
- * HIT reads the item records it read at capture). Undefined when
- * the capture recorded no doc record, which only a prerender-served capture
- * stores: nothing is pruned from it.
- */
-function snapshotReaders(
-  capture: ShellCaptureDescriptor,
-  snapshot: readonly ShellSnapshotRecord[],
-  docKey: string | undefined,
-): ShellSnapshotReaders | undefined {
-  if (!hasDocRecord(snapshot, docKey)) return undefined;
-  return capture.navigationOnly ? "segments" : "loaders";
-}
-
-/**
  * What the record-first step produced ({@link settleCaptureRecord}):
  * - `record`: the doc record settled; `match` carries its fragments in place
  *   of the handler layer's elements, so the capture's Flight payload is the
@@ -1697,9 +1679,7 @@ export async function settleCaptureRecord(
 
   const docKey = derivedCtx._shellImplicitCache?.docKey;
   const record =
-    recording && docKey !== undefined
-      ? (recording.getRecord("segment", docKey) as CachedEntryData | undefined)
-      : undefined;
+    recording && docKey !== undefined ? recording.getRecord(docKey) : undefined;
   if (
     !record ||
     !Array.isArray(record.segments) ||
@@ -1982,7 +1962,7 @@ export function deriveShellCaptureContext(
   //    before the doc record encodes the handles a HIT replays. A route
   //    cache() record's restore (handle-snapshot.ts restoreHandles) lands
   //    here too: a value it restores through pushReplayed keeps that loader
-  //    as owner, so a HIT that runs the loader replaces it, not appends.
+  //    as owner, so a HIT restores it as that loader's (pushRestored).
   //  - DSL-LOADER pushes. Only bake-lane { ssr: false } loaders and the
   //    loaders they await via ctx.use execute at capture (live loaders are
   //    masked), their pushes are in the captured HTML (<head> title/meta,
@@ -1991,10 +1971,14 @@ export function deriveShellCaptureContext(
   //    settled, thenable-free push from a loader body keeps that loader as
   //    `owner` (HandleStore.push), the record stores it
   //    (CachedEntryData.handleOwners), and the HIT restores it through
-  //    pushReplayed; a loader that does run on the HIT (a promise-carrying
-  //    bake-lane loader, a live loader awaiting it) replaces its restored
-  //    copies in place. Nested thenables stay masked (the promise shape is
-  //    the liveness declaration, mask-nested.ts). A deferred (thenable) push,
+  //    pushRestored. Those copies stand: a promise-carrying bake-lane loader
+  //    that runs on the HIT reads the store, so its settled pushes (and those
+  //    replayed inside its body) are dropped and only its thenable ones are
+  //    added. A loader the route also runs on the live lane is a hole: its
+  //    live run replaces its copies (pushReplayed, #936), those of the
+  //    dependencies it awaits included (they are credited to it). Nested
+  //    thenables stay masked (the promise shape is the liveness
+  //    declaration, mask-nested.ts). A deferred (thenable) push,
   //    one with masked nested promises, or one outside a loader body (a
   //    loader-cache replay names its loader: pushReplayed below) stays
   //    tagged (HandleStore.push loaderPush) so the
@@ -2009,6 +1993,24 @@ export function deriveShellCaptureContext(
   // loader body: name that loader for the funnel so the record keeps them
   // under it too.
   let replayOwner: string | undefined;
+  // The live-lane loader whose body a push is made in, at any depth, unless
+  // a bake-lane loader's body is nearer (createMatchContextForFull sets the
+  // lanes before any loader runs).
+  // A replay of a live-lane loader's push (a "use cache" or loader cache()
+  // hit a recapture makes inside a bake-lane body) is that hole's too.
+  const liveLaneOwner = (): string | undefined => {
+    const lanes = derivedCtx._shellCaptureLoaderLanes;
+    if (!lanes) return undefined;
+    return (
+      findEnclosingLoaderBody(
+        (id) => lanes.get(id) === "live",
+        (id) => lanes.get(id) === "bake",
+      ) ??
+      (replayOwner !== undefined && lanes.get(replayOwner) === "live"
+        ? replayOwner
+        : undefined)
+    );
+  };
   const rawPushReplayed = freshHandleStore.pushReplayed.bind(freshHandleStore);
   freshHandleStore.pushReplayed = (handleName, segmentId, value, loaderId) => {
     replayOwner = loaderId;
@@ -2050,8 +2052,16 @@ export function deriveShellCaptureContext(
         // material (see the funnel comment above): only bake-lane loaders
         // and the loaders they await run at capture, and a HIT does not run
         // a promise-free bake-lane loader (loader-cache.ts), so the record
-        // keeps the push under the loader that made it.
-        const bodyLoaderId = getCurrentLoaderBodyId() ?? replayOwner;
+        // keeps the push under the loader that made it. A push under a
+        // live-lane loader's body, at any depth, is that hole's output: it
+        // is credited to the hole, whose live run replaces it on a HIT and
+        // a navigation. The first loader around the push that the route
+        // registers decides: a bake-lane one keeps the push under the
+        // innermost body, and a dependency on neither lane is walked past. A
+        // replay of a hole's push is that hole's, unless a live-lane body
+        // around it takes it first.
+        const bodyLoaderId =
+          liveLaneOwner() ?? getCurrentLoaderBodyId() ?? replayOwner;
         loaderPush = bodyLoaderId === undefined;
         if (!loaderPush) owner = bodyLoaderId;
       }
@@ -2140,17 +2150,16 @@ export function deriveShellCaptureContext(
   // Capture data snapshot: route the capture's cache-store calls through a
   // recording wrapper on the DERIVED context's store (own property, so the
   // shared reqCtx._cacheStore is untouched — the snapshot is per-capture). It
-  // records item-family hits and writes plus the doc segment record; they
-  // ride inside the ShellCacheEntry so a HIT can reproduce the shell's cached
-  // content byte-identically. See cache/shell-snapshot.ts and the design doc.
+  // records the doc segment record, which rides inside the ShellCacheEntry
+  // with the bake-lane loader pins; no cache read is recorded. See
+  // cache/shell-snapshot.ts and the design doc.
   //
-  // Cache writes are deferred (waitUntil): a MISS-at-capture value's setItem/set
-  // — hence its record — would otherwise land after the shell quiesces. Override
-  // the derived context's waitUntil to COLLECT those write promises (still
-  // forwarding to the parent so the write persists and the worker stays alive),
-  // then settleCaptureRecord and captureAndStoreShell await them before reading
-  // the record and draining. Reads that HIT are recorded synchronously during
-  // the render and need none of this.
+  // Cache writes are deferred (waitUntil): the doc record's write would
+  // otherwise land after the match returns. Override the derived context's
+  // waitUntil to COLLECT those write promises (still forwarding to the parent
+  // so the write persists and the worker stays alive), then
+  // settleCaptureRecord and captureAndStoreShell await them before reading
+  // the record and draining.
   if (reqCtx._cacheStore) {
     const recordingStore = new RecordingShellStore(reqCtx._cacheStore);
     derivedCtx._cacheStore = recordingStore;
@@ -2293,11 +2302,12 @@ async function captureAndStoreShell(
     }
     stats.preludeBytes = result.prelude.length;
 
-    // Drain the capture data snapshot from the recording store on the derived
-    // context. Await the deferred cache writes still pending first (a
-    // MISS-at-capture "use cache" value written during the render), so they
-    // are pinned, not just read-hits. When no recording store is installed
-    // (unit tests that call this directly), the snapshot is empty.
+    // Drain the doc record from the recording store on the derived context.
+    // The capture's own deferred cache writes ("use cache" and loader
+    // cache() misses made while it rendered) settle first, bounded, so the
+    // next HIT's holes find them in the store. When no recording store is
+    // installed (unit tests that call this directly), the snapshot starts
+    // empty.
     const recording = getRecordingStore(reqCtx._cacheStore);
     let snapshot: ShellSnapshotRecord[] = [];
     if (recording) {
@@ -2404,31 +2414,25 @@ async function captureAndStoreShell(
     const renderErrors = reqCtx._renderErrors;
     if (renderErrors && renderErrors.length > 0) throw renderErrors[0];
 
-    // Record only what a HIT reads (issue #941): the doc record, plus the
-    // bake-lane loader pins and the records those loaders read. Before the
-    // size guards, so they measure what is stored.
+    // Store only what a HIT reads (issue #941): the doc record and, for a
+    // document entry, the bake-lane loader pins. Before the size guards, so
+    // they measure what is stored.
     const docKey = reqCtx._shellImplicitCache?.docKey;
     let prunedRecords: string | undefined;
-    const readers = snapshotReaders(capture, snapshot, docKey);
-    if (recording && readers) {
-      const { kept, pruned } = pruneShellSnapshot(
-        snapshot,
-        readers,
-        recording.loaderKeys,
-        docKey!,
-      );
-      if (pruned.length > 0) {
-        prunedRecords = countSnapshotFamilies(pruned);
-        snapshot = kept;
-      }
+    const { kept, pruned } = pruneShellSnapshot(
+      snapshot,
+      capture.navigationOnly === true,
+      docKey,
+    );
+    if (pruned.length > 0) {
+      prunedRecords = countSnapshotFamilies(pruned);
+      snapshot = kept;
     }
 
-    // Snapshot size guard (issue #651): the snapshot duplicates every pinned
-    // cache value inside the shell entry. `maxSnapshotBytes` bounds the PINS
-    // (loader-family records and the item records loaders read);
-    // over it they are dropped and the entry keeps its doc record, so every
-    // HIT still replays the handler layer (the pins' loaders then read the
-    // live store: documented drift, repaired client-side). The doc record is
+    // Snapshot size guard (issue #651): `maxSnapshotBytes` bounds the loader
+    // pins; over it they are dropped and the entry keeps its doc record, so
+    // every HIT still replays the handler layer (the pins' loaders then run
+    // on the HIT: documented drift, repaired client-side). The doc record is
     // exempt: without it a HIT could not serve at all. The whole entry is
     // bounded separately below, by the store's value limit.
     if (snapshot.length > 0) {

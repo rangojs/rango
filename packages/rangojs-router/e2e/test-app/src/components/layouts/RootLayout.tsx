@@ -77,6 +77,13 @@ export function RootLayout(ctx: any) {
           PPR fragment in-flight prefetch
         </Link>
         <Link
+          to="/shell-cache/live-dep?probe=livedep-nav"
+          data-testid="nav-ppr-live-dep"
+          prefetch="none"
+        >
+          PPR live dep
+        </Link>
+        <Link
           to="/inline-bound-action?probe=ppr-nav"
           data-testid="nav-ppr-inline-action"
           prefetch="none"

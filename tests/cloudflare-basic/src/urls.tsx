@@ -126,6 +126,7 @@ import { PprJsxLoader } from "./loaders/ppr-jsx.js";
 import {
   PprDriftLayout,
   PprDriftPricePage,
+  PprSharedBakedStampLoader,
   PprSharedLayout,
   PprSharedPage,
   PprSharedStampLoader,
@@ -1396,16 +1397,17 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
-        // Shared-key route (issue #941): the shell layout and the live hole
-        // read the same "drift" item. Snapshot pruning drops the shell's item
-        // record, so after the item expires the hole shows a newer stamp than
-        // the shell.
+        // Shared-key route (issue #941): the shell layout, an ssr: false
+        // loader and the live hole read the same "drift" item. The snapshot
+        // records no cache read, so after the item expires the hole shows a
+        // newer stamp than the shell and the ssr: false loader's pin.
         layout(PprSharedLayout, () => [
           path(
             "/ppr-shared-key",
             PprSharedPage,
             { name: "pprSharedKey", ppr: { ttl: 300, swr: 120 } },
             () => [
+              loader(PprSharedBakedStampLoader, { ssr: false }),
               loader(PprSharedStampLoader),
               loading(
                 <p data-testid="ppr-shared-hole-fallback">Loading stamp...</p>,

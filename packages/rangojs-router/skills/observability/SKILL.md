@@ -97,7 +97,7 @@ and, when the tail finishes, one console line (wrapped here):
 ```
 [RSC Perf] GET /ppr-large/holes shell tail: complete snapshot=4ms
 snapshot-read=2ms snapshot-bytes=1019145b snapshot-parse-cpu=2ms
-records=segment:1 pruned=item:5 seed=4ms seed-cpu=0ms match=4ms handover=4ms
+records=segment:1 seed=4ms seed-cpu=0ms match=4ms handover=4ms
 first-html=5ms complete=55ms prelude=628949b tail=1033762b
 ```
 
@@ -116,10 +116,11 @@ first-html=5ms complete=55ms prelude=628949b tail=1033762b
   hinted marker reads ran before the entry named its tags), and `fresh-reads`
   when the request carried the cookie.
 - `records=` counts the snapshot records the tail was seeded with, by
-  family; `pruned=` counts the ones the capture dropped because no reader of
-  the entry consumes them. Here every HIT tail replays the handler layer from
-  the one segment record, so the five `"use cache"` item records that produced
-  it were not stored.
+  family. Here every HIT tail replays the handler layer from the one segment
+  record; a bake-lane loader adds `loader:N` pins. `pruned=` appears only when
+  a navigation-only entry drops the loader pins it has no reader for
+  (`pruned=loader:N`): a document entry records only the doc record and the
+  loader pins, so there is nothing else to prune.
 - `snapshot=`, `seed=`, `match=`, `first-html=` are offsets from the commit,
   not durations; `snapshot-read=`, `snapshot-parse-cpu=` and `seed-cpu=` are
   durations.

@@ -204,6 +204,64 @@ export function bindsLoaderCache(entries: readonly EntryData[]): boolean {
   return entries.some(entryBindsLoaderCache);
 }
 
+const chainLoaderEntriesMemo = new WeakMap<EntryData, readonly LoaderEntry[]>();
+
+// The loaders an entry registers, its orphan layouts' and its parallel
+// slots' included.
+function chainLoaderEntries(entry: EntryData): readonly LoaderEntry[] {
+  let loaders = chainLoaderEntriesMemo.get(entry);
+  if (loaders === undefined) {
+    loaders = [
+      ...(entry.loader ?? []),
+      ...(entry.layout ?? []).flatMap(chainLoaderEntries),
+      ...Object.values(entry.parallel ?? {}).flatMap((p) =>
+        p ? chainLoaderEntries(p) : [],
+      ),
+    ];
+    chainLoaderEntriesMemo.set(entry, loaders);
+  }
+  return loaders;
+}
+
+/**
+ * The ids of the loaders a request over the matched chain `entries` runs on
+ * the live lane (no `ssr: false`), on a chain entry, its orphan layouts or
+ * its parallel slots. A document HIT tail restores the record's pushes of
+ * every other owner as authoritative (withCacheLookup, HandleStore
+ * pushRestored); a live-lane loader is a hole, so its live run replaces its
+ * recorded pushes instead. Memoized per entry.
+ */
+export function liveLaneLoaderIds(
+  entries: readonly EntryData[],
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    for (const l of chainLoaderEntries(entry)) {
+      if (!l.bake) ids.add(l.loader.$$id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The lane of each loader the matched chain `entries` registers: "live" (no
+ * `ssr: false`) or "bake". A loader registered on both is "live". A PPR
+ * capture credits a push to the first registered loader around it when that
+ * one is live (shell-capture.ts deriveShellCaptureContext).
+ */
+export function routeLoaderLanes(
+  entries: readonly EntryData[],
+): ReadonlyMap<string, "live" | "bake"> {
+  const lanes = new Map<string, "live" | "bake">();
+  for (const entry of entries) {
+    for (const l of chainLoaderEntries(entry)) {
+      if (!l.bake) lanes.set(l.loader.$$id, "live");
+      else if (!lanes.has(l.loader.$$id)) lanes.set(l.loader.$$id, "bake");
+    }
+  }
+  return lanes;
+}
+
 function getLoaderStore(
   loaderEntry: LoaderEntry,
 ): import("../../cache/types.js").SegmentCacheStore | null {
@@ -233,31 +291,47 @@ function getLoaderStore(
  * replayed one.
  * A PPR shell capture records the replayed pushes under this loader (its
  * push funnel reads the pushReplayed owner, shell-capture.ts), so a shell
- * HIT restores them owned: the claim above then skips this replay when the
- * loader runs on that HIT, and its live pushes replace the restored ones.
+ * HIT restores them owned (HandleStore.pushRestored). This replay still
+ * runs on that HIT: the store drops its settled values, which the record
+ * already restored, and keeps the thenable ones the record could not keep
+ * (a deferred push, the reason the loader's record carries `runs`).
  */
 async function replayLoaderHandles(
-  encoded: string,
+  encoded: string | undefined,
   handleStore: HandleStore,
   segmentId: string,
+  cachedLoaderId: string,
   claim: ((loaderId: string) => boolean) | undefined,
 ): Promise<void> {
-  const recorded = await decodeHandles(encoded);
+  const recorded = encoded ? await decodeHandles(encoded) : {};
   if (!recorded) return;
   const delivers = new Map<string, boolean>();
-  for (const key in recorded) {
-    const owner = key.slice(key.indexOf(":") + 1);
+  const claims = (owner: string): boolean => {
     let deliver = delivers.get(owner);
     if (deliver === undefined) {
       deliver = claim ? claim(owner) : true;
       delivers.set(owner, deliver);
     }
-    if (!deliver) continue;
-    for (const [handleName, values] of Object.entries(recorded[key])) {
-      for (const value of values) {
-        handleStore.pushReplayed(handleName, segmentId, value, owner);
+    return deliver;
+  };
+  const replay = (): void => {
+    for (const key in recorded) {
+      const owner = key.slice(key.indexOf(":") + 1);
+      if (!claims(owner)) continue;
+      for (const [handleName, values] of Object.entries(recorded[key])) {
+        for (const value of values) {
+          handleStore.pushReplayed(handleName, segmentId, value, owner);
+        }
       }
     }
+  };
+  // A hole's entry, pushes or none, takes the place of the shell copies of
+  // its pushes (HandleStore.redeliverReplays). Not once the hole delivered
+  // in this request: a run a reader started first replaces them itself.
+  if (claims(cachedLoaderId)) {
+    handleStore.redeliverReplays(cachedLoaderId, replay);
+  } else {
+    replay();
   }
 }
 
@@ -564,7 +638,9 @@ function executeLoaderData<TEnv>(
     const bodyTags = new Set(tags);
     let revalidating = false;
     let hitHandles: string | undefined;
+    let cachedRead = false;
     const onCachedRead = (label: string, cached: CacheItemResult) => {
+      cachedRead = true;
       hitHandles = cached.handles;
       const { read } = unmarkIdentity(cached.value);
       if (read) markIdentityRead(valueTags, read);
@@ -689,12 +765,14 @@ function executeLoaderData<TEnv>(
       host: requestCtxForExecute,
     });
 
-    // An entry written before handles were recorded has none: no replay.
-    if (hitHandles && handleStore && owningSegmentId) {
+    // An entry without handles (none recorded, or dropped by an encode
+    // timeout) replays none, and still stands for a hole's shell copies.
+    if (cachedRead && handleStore && owningSegmentId) {
       await replayLoaderHandles(
         hitHandles,
         handleStore,
         owningSegmentId,
+        loaderId,
         internal._claimLoaderPushes,
       );
     }

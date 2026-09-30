@@ -162,9 +162,7 @@ async function drain(options: {
     ...(options.markerStore === false
       ? {}
       : {
-          store: new SeededShellStore(store, snapshot, {
-            segmentsOnly: true,
-          }),
+          store: new SeededShellStore(store, snapshot),
         }),
     keyPrefix: "doc",
     onHit,

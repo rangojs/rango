@@ -8,10 +8,6 @@ import {
   hasDocRecord,
   pruneShellSnapshot,
 } from "../shell-snapshot.js";
-import {
-  runInsideLoaderBodyScope,
-  runInsideLoaderScope,
-} from "../../server/context.js";
 
 // buildShellLoaderSeed lazily imports the Flight codec; the real module pulls
 // the virtual @vitejs/plugin-rsc import that unit configs cannot resolve, so
@@ -42,10 +38,10 @@ function hit(
   return r === CACHE_READ_ERROR ? null : r;
 }
 
-// The capture data snapshot: RecordingShellStore records the "use cache" item
-// reads and writes the CAPTURE render performed, and the doc record;
-// SeededShellStore replays them AS FRESH on a HIT so the fresh hydration
-// payload matches the frozen prelude while everything not recorded stays live.
+// The capture data snapshot: RecordingShellStore records the doc record the
+// CAPTURE render wrote and nothing it read; SeededShellStore serves the
+// segment records to the implicit doc scope of a HIT tail or a partial
+// replay. No cache read is pinned: a HIT's holes read the store.
 // See cache/shell-snapshot.ts and docs/design/ppr-shell-resume.md.
 
 function segData(tag: string): CachedEntryData {
@@ -58,67 +54,37 @@ function segData(tag: string): CachedEntryData {
 }
 
 describe("RecordingShellStore", () => {
-  it("records item read-HITS; segment and response reads pass through unrecorded", async () => {
+  it("records no cache read or write: every call passes through to the real store", async () => {
     const inner = new MemorySegmentCacheStore();
     await inner.set("seg1", segData("s"), 60);
-    await inner.setItem("item1", "ITEM-VALUE", {
-      ttl: 60,
-      handles: "H",
-      tags: ["it"],
-    });
-    await inner.putResponse(
-      "res1",
-      new Response("BODY", { status: 201, headers: { "x-a": "1" } }),
-      60,
-    );
+    await inner.setItem("item1", "ITEM-VALUE", { ttl: 60 });
+    await inner.putResponse("res1", new Response("BODY", { status: 201 }), 60);
 
     const rec = new RecordingShellStore(inner);
-    // Every read passes through; only the item hit is recorded.
-    expect(await rec.get("seg1")).not.toBeNull();
-    expect(await rec.getItem("item1")).not.toBeNull();
+    expect(hit(await rec.get("seg1"))).not.toBeNull();
+    expect((await rec.getItem("item1"))?.value).toBe("ITEM-VALUE");
     expect(await rec.getResponse("res1")).not.toBeNull();
-    // A read that MISSES records nothing.
-    expect(await rec.getItem("absent")).toBeNull();
+    await rec.set("seg2", segData("s2"), 60);
+    await rec.setItem("item2", "WRITTEN", { ttl: 60 });
 
-    const snapshot = rec.drainSnapshot()!;
-    expect(snapshot).toHaveLength(1);
-    const item = snapshot[0]!;
-    expect(item.key).toBe("item1");
-    expect(item.family).toBe("item");
-    expect(item.value).toMatchObject({
-      value: "ITEM-VALUE",
-      handles: "H",
-      tags: ["it"],
-    });
+    expect(rec.drainSnapshot()).toBeUndefined();
+    expect(hit(await inner.get("seg2"))).not.toBeNull();
+    expect((await inner.getItem("item2"))?.value).toBe("WRITTEN");
   });
 
-  it("records item WRITES — the value a MISS baked; segment and response writes pass through unrecorded", async () => {
+  it("records a segment write through recordSegmentWrite only, last write wins, without touching the real store", async () => {
     const inner = new MemorySegmentCacheStore();
     const rec = new RecordingShellStore(inner);
 
-    await rec.set("seg1", segData("s"), 60);
-    await rec.setItem("item1", "WRITTEN", { ttl: 60 });
-    await rec.putResponse("res1", new Response("R", { status: 200 }), 60);
+    rec.recordSegmentWrite("doc:k", segData("old"));
+    rec.recordSegmentWrite("doc:k", segData("new"));
 
-    const snapshot = rec.drainSnapshot()!;
-    expect(snapshot.map((r) => r.family)).toEqual(["item"]);
-    // Writes delegated through to the underlying store.
-    expect(await inner.getItem("item1")).not.toBeNull();
-    expect(hit(await inner.get("seg1"))).not.toBeNull();
-    expect(await inner.getResponse("res1")).not.toBeNull();
-  });
-
-  it("last-write-wins: a write after a read-hit overwrites the recorded value", async () => {
-    const inner = new MemorySegmentCacheStore();
-    await inner.setItem("item1", "OLD", { ttl: 60 });
-    const rec = new RecordingShellStore(inner);
-
-    await rec.getItem("item1"); // records OLD
-    await rec.setItem("item1", "NEW", { ttl: 60 }); // overwrites -> NEW
-
-    const snapshot = rec.drainSnapshot()!;
-    const item = snapshot.find((r) => r.key === "item1")!;
-    expect((item.value as any).value).toBe("NEW");
+    expect(rec.getRecord("doc:k")?.tags).toEqual(["new"]);
+    expect(rec.getRecord("absent")).toBeUndefined();
+    expect(rec.drainSnapshot()).toEqual([
+      { family: "segment", key: "doc:k", value: rec.getRecord("doc:k") },
+    ]);
+    expect(hit(await inner.get("doc:k"))).toBeNull();
   });
 
   it("EXCLUDES the shell family (getShell/putShell are never recorded)", async () => {
@@ -148,22 +114,20 @@ describe("RecordingShellStore", () => {
     const inner = new MemorySegmentCacheStore();
     const rec = new RecordingShellStore(inner);
 
-    // Simulate a deferred cache write (waitUntil): the setItem runs on a later
-    // microtask, exactly how cache-runtime schedules it.
+    // A deferred doc-record write (cacheRoute under waitUntil) runs on a
+    // later task.
     let resolved = false;
     rec.trackWrite(
       (async () => {
         await new Promise((r) => setTimeout(r, 10));
-        await rec.setItem("deferred", "LATE", { ttl: 60 });
+        rec.recordSegmentWrite("doc:late", segData("late"));
         resolved = true;
       })(),
     );
 
-    // Before settling, the record may not exist yet.
     await expect(rec.settleWrites(1000)).resolves.toBe(true);
     expect(resolved).toBe(true);
-    const snapshot = rec.drainSnapshot()!;
-    expect(snapshot.find((r) => r.key === "deferred")).toBeTruthy();
+    expect(rec.getRecord("doc:late")).toBeTruthy();
   });
 
   it("settleWrites is bounded: a hung write does not stall past the timeout", async () => {
@@ -177,41 +141,10 @@ describe("RecordingShellStore", () => {
     expect(Date.now() - start).toBeLessThan(500);
   });
 
-  it("getRecord reads one recorded value by family and key", async () => {
-    const rec = new RecordingShellStore(new MemorySegmentCacheStore());
-    await rec.setItem("k", "V", { ttl: 60 });
-    expect(rec.getRecord("item", "k")).toMatchObject({ value: "V" });
-    expect(rec.getRecord("segment", "k")).toBeUndefined();
-  });
-
   it("delegates defaults/keyGenerator to the underlying store", () => {
     const inner = new MemorySegmentCacheStore({ defaults: { ttl: 42 } });
     const rec = new RecordingShellStore(inner);
     expect(rec.defaults).toEqual({ ttl: 42 });
-  });
-
-  it("attributes item accesses made inside a loader scope (hits, misses, writes)", async () => {
-    const inner = new MemorySegmentCacheStore();
-    await inner.setItem("item-hit", "V", { ttl: 60 });
-    const rec = new RecordingShellStore(inner);
-
-    await runInsideLoaderScope(async () => {
-      await rec.getItem("item-hit");
-      await rec.getItem("item-miss");
-      await rec.setItem("item-write", "W", { ttl: 60 });
-    });
-    // A loader body invoked outside a DSL loader scope counts too.
-    await runInsideLoaderBodyScope(() => rec.getItem("item-body"));
-    // Handler code does not.
-    await rec.getItem("item-handler");
-    await rec.setItem("item-handler-write", "H", { ttl: 60 });
-
-    expect([...rec.loaderKeys].map((k) => k.replace("\u0000", " "))).toEqual([
-      "item item-hit",
-      "item item-miss",
-      "item item-write",
-      "item item-body",
-    ]);
   });
 
   it("getRecordingStore returns a RecordingShellStore (instanceof), ignores others", () => {
@@ -228,14 +161,14 @@ describe("SeededShellStore", () => {
     return [
       { family: "segment", key: "seg1", value: segData("pinned") },
       {
-        family: "item",
-        key: "item1",
-        value: { value: "PINNED-ITEM", handles: "PH", tags: ["pt"] },
+        family: "loader",
+        key: "M0L0D0.bake",
+        value: { value: "{}", holes: 0, runs: 0 },
       },
     ];
   }
 
-  it("serves snapshot values AS FRESH (shouldRevalidate: false) without touching the real store: items by default, segments in segmentsOnly mode", async () => {
+  it("serves the segment records AS FRESH (shouldRevalidate: false) without touching the real store", async () => {
     // Pin the clock: snapshotOf() -> segData() embeds `Date.now() + 60_000` as
     // expiresAt, and this test builds the seed and the expected value from two
     // SEPARATE snapshotOf() calls. On real timers a millisecond tick between them
@@ -245,12 +178,8 @@ describe("SeededShellStore", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     try {
       const inner = new MemorySegmentCacheStore();
-      // The real store is EMPTY / different — the seed must win and not fall through.
-      const getItemSpy = vi.spyOn(inner, "getItem");
       const getSpy = vi.spyOn(inner, "get");
-      const segments = new SeededShellStore(inner, snapshotOf(), {
-        segmentsOnly: true,
-      });
+      const segments = new SeededShellStore(inner, snapshotOf());
 
       const seg = hit(await segments.get("seg1"));
       expect(seg).toEqual({
@@ -258,127 +187,68 @@ describe("SeededShellStore", () => {
         shouldRevalidate: false,
       });
       expect(getSpy).not.toHaveBeenCalled(); // pinned key never hits the real store
-
-      const seeded = new SeededShellStore(inner, snapshotOf());
-      const item = await seeded.getItem("item1");
-      expect(item).toMatchObject({
-        value: "PINNED-ITEM",
-        handles: "PH",
-        tags: ["pt"],
-        shouldRevalidate: false, // MUST NOT kick SWR revalidation for a pinned key
-      });
-      expect(getItemSpy).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("falls through to the real store for non-pinned keys", async () => {
-    const inner = new MemorySegmentCacheStore();
-    await inner.setItem("live", "LIVE-VALUE", { ttl: 60 });
-    const seeded = new SeededShellStore(inner, snapshotOf());
-
-    const item = await seeded.getItem("live");
-    expect(item!.value).toBe("LIVE-VALUE");
-    expect(hit(await seeded.get("live-seg"))).toBeNull();
-  });
-
-  it("can seed only segments so navigation loaders keep item and response reads live", async () => {
-    const inner = new MemorySegmentCacheStore();
-    await inner.setItem("item1", "LIVE-ITEM", { ttl: 60 });
-    await inner.putResponse("res1", new Response("LIVE-RESPONSE"), 60);
-    const seeded = new SeededShellStore(inner, snapshotOf(), {
-      segmentsOnly: true,
-    });
-
-    expect(hit(await seeded.get("seg1"))?.data.tags).toEqual(["pinned"]);
-    expect((await seeded.getItem("item1"))?.value).toBe("LIVE-ITEM");
-    expect(await (await seeded.getResponse("res1"))?.response.text()).toBe(
-      "LIVE-RESPONSE",
+  it("carries only segments: no item, response or shell surface to read a capture's value through", () => {
+    const seeded = new SeededShellStore(
+      new MemorySegmentCacheStore({ defaults: { ttl: 42 } }),
+      snapshotOf(),
     );
+    expect(seeded.defaults).toEqual({ ttl: 42 });
+    for (const method of [
+      "getItem",
+      "setItem",
+      "getResponse",
+      "putResponse",
+      "getShell",
+      "putShell",
+      "isTagsInvalidatedSince",
+    ]) {
+      expect(method in seeded).toBe(false);
+    }
   });
 
-  it("isolates all segment reads and mutations in segmentsOnly mode", async () => {
+  it("isolates all segment reads and mutations", async () => {
     const inner = new MemorySegmentCacheStore();
     await inner.set("seg1", segData("original"), 60);
     await inner.set("unseeded", segData("inner"), 60);
-    const seeded = new SeededShellStore(inner, snapshotOf(), {
-      segmentsOnly: true,
-    });
+    const seeded = new SeededShellStore(inner, snapshotOf());
 
     expect(await seeded.delete("seg1")).toBe(true);
     expect(hit(await seeded.get("seg1"))).toBeNull();
     expect(hit(await seeded.get("unseeded"))).toBeNull();
 
-    await seeded.set("unseeded", segData("fresh"), 60);
+    await seeded.set("unseeded", segData("fresh"));
 
     expect(hit(await seeded.get("unseeded"))?.data.tags).toEqual(["fresh"]);
     expect(hit(await inner.get("seg1"))?.data.tags).toEqual(["original"]);
     expect(hit(await inner.get("unseeded"))?.data.tags).toEqual(["inner"]);
   });
-
-  it("passes ALL writes through to the real store unchanged (a live hole may write)", async () => {
-    const inner = new MemorySegmentCacheStore();
-    const setItemSpy = vi.spyOn(inner, "setItem");
-    const seeded = new SeededShellStore(inner, snapshotOf());
-
-    await seeded.setItem("hole-write", "FROM-HOLE", { ttl: 60 });
-    expect(setItemSpy).toHaveBeenCalledWith("hole-write", "FROM-HOLE", {
-      ttl: 60,
-    });
-    expect(await inner.getItem("hole-write")).not.toBeNull();
-  });
-
-  it("getShell/putShell always pass through", async () => {
-    const inner = new MemorySegmentCacheStore();
-    const seeded = new SeededShellStore(inner, snapshotOf());
-    await seeded.putShell(
-      "sk",
-      {
-        prelude: "p",
-        postponed: null,
-        reactVersion: "1",
-        buildVersion: "b",
-        snapshot: [],
-        createdAt: Date.now(),
-      },
-      300,
-    );
-    expect(await seeded.getShell("sk")).not.toBeNull();
-  });
 });
 
-// A capture and a HIT tail run on these wrappers as the request's store; the
-// writes they pass through gate on the inner store's markers (#977).
-describe("the shell store wrappers forward isTagsInvalidatedSince", () => {
-  it.each([
-    [
-      "RecordingShellStore",
-      (inner: SegmentCacheStore) => new RecordingShellStore(inner),
-    ],
-    [
-      "SeededShellStore",
-      (inner: SegmentCacheStore) => new SeededShellStore(inner, []),
-    ],
-  ] as const)(
-    "%s: to the inner store, and is absent without one",
-    async (_label, wrap) => {
-      const isTagsInvalidatedSince = vi.fn(async () => true);
-      const inner = { isTagsInvalidatedSince } as unknown as SegmentCacheStore;
+// A capture runs on RecordingShellStore as the request's store; the writes
+// it passes through gate on the inner store's markers (#977). A HIT tail's
+// store is the request's own, and SeededShellStore keeps its writes local.
+describe("RecordingShellStore forwards isTagsInvalidatedSince", () => {
+  it("to the inner store, and is absent without one", async () => {
+    const isTagsInvalidatedSince = vi.fn(async () => true);
+    const inner = { isTagsInvalidatedSince } as unknown as SegmentCacheStore;
 
-      expect(
-        await wrap(inner).isTagsInvalidatedSince?.(["t"], 5, {
-          failClosed: true,
-        }),
-      ).toBe(true);
-      expect(isTagsInvalidatedSince).toHaveBeenCalledWith(["t"], 5, {
+    expect(
+      await new RecordingShellStore(inner).isTagsInvalidatedSince?.(["t"], 5, {
         failClosed: true,
-      });
-      expect(
-        wrap({} as SegmentCacheStore).isTagsInvalidatedSince,
-      ).toBeUndefined();
-    },
-  );
+      }),
+    ).toBe(true);
+    expect(isTagsInvalidatedSince).toHaveBeenCalledWith(["t"], 5, {
+      failClosed: true,
+    });
+    expect(
+      new RecordingShellStore({} as SegmentCacheStore).isTagsInvalidatedSince,
+    ).toBeUndefined();
+  });
 });
 
 describe("buildShellLoaderSeed", () => {
@@ -466,13 +336,18 @@ describe("buildShellLoaderSeed", () => {
 });
 
 describe("snapshot round-trip", () => {
-  it("a full snapshot round-trips through MemorySegmentCacheStore putShell/getShell", async () => {
+  it("a doc record and a loader pin round-trip through MemorySegmentCacheStore putShell/getShell", async () => {
     const store = new MemorySegmentCacheStore();
-    const inner = new MemorySegmentCacheStore();
-    await inner.setItem("it", "V", { ttl: 60, tags: ["t"] });
-    const rec = new RecordingShellStore(inner);
-    await rec.getItem("it");
-    const snapshot = rec.drainSnapshot()!;
+    const rec = new RecordingShellStore(new MemorySegmentCacheStore());
+    rec.recordSegmentWrite("doc:host/p", segData("t"));
+    const snapshot: ShellSnapshotRecord[] = [
+      ...rec.drainSnapshot()!,
+      {
+        family: "loader",
+        key: "M0L0D0.bake",
+        value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 0 },
+      },
+    ];
 
     await store.putShell(
       "/p:shell",
@@ -494,7 +369,10 @@ describe("snapshot round-trip", () => {
       new MemorySegmentCacheStore(),
       got!.entry.snapshot!,
     );
-    expect((await seeded.getItem("it"))!.value).toBe("V");
+    expect(hit(await seeded.get("doc:host/p"))?.data.tags).toEqual(["t"]);
+    expect(
+      (await buildShellLoaderSeed(got!.entry.snapshot!))?.get("M0L0D0.bake"),
+    ).toMatchObject({ container: { a: 1 } });
   });
 });
 
@@ -508,16 +386,6 @@ describe("snapshot pruning helpers", () => {
       expiresAt: 0,
     } as unknown as CachedEntryData,
   };
-  const HANDLER_ITEM: ShellSnapshotRecord = {
-    family: "item",
-    key: "use-cache:handler",
-    value: { value: "h" },
-  };
-  const LOADER_ITEM: ShellSnapshotRecord = {
-    family: "item",
-    key: "use-cache:loader",
-    value: { value: "l" },
-  };
   const LOADER: ShellSnapshotRecord = {
     family: "loader",
     key: "M0L0D0.bake",
@@ -527,30 +395,24 @@ describe("snapshot pruning helpers", () => {
     ...DOC,
     key: "explicit:consumer-key",
   };
-  const SNAPSHOT = [DOC, EXPLICIT, HANDLER_ITEM, LOADER_ITEM, LOADER];
-  const LOADER_KEYS = new Set(["item\u0000use-cache:loader"]);
+  const SNAPSHOT = [DOC, EXPLICIT, LOADER];
 
-  it('"loaders" keeps the doc record, loader containers and loader-touched records', () => {
-    const { kept, pruned } = pruneShellSnapshot(
-      SNAPSHOT,
-      "loaders",
-      LOADER_KEYS,
-      "doc:host/p",
-    );
-    expect(kept).toEqual([DOC, LOADER_ITEM, LOADER]);
-    expect(pruned).toEqual([EXPLICIT, HANDLER_ITEM]);
-    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:1");
+  it("a document entry keeps the doc record and the loader pins", () => {
+    const { kept, pruned } = pruneShellSnapshot(SNAPSHOT, false, "doc:host/p");
+    expect(kept).toEqual([DOC, LOADER]);
+    expect(pruned).toEqual([EXPLICIT]);
+    expect(countSnapshotFamilies(pruned)).toBe("segment:1");
   });
 
-  it('"segments" keeps only the doc record', () => {
-    const { kept, pruned } = pruneShellSnapshot(
-      SNAPSHOT,
-      "segments",
-      LOADER_KEYS,
-      "doc:host/p",
-    );
+  it("a navigation-only entry keeps only the doc record", () => {
+    const { kept, pruned } = pruneShellSnapshot(SNAPSHOT, true, "doc:host/p");
     expect(kept).toEqual([DOC]);
-    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:2/loader:1");
+    expect(countSnapshotFamilies(pruned)).toBe("segment:1/loader:1");
+  });
+
+  it("an entry without a doc record keeps its loader pins alone", () => {
+    const { kept } = pruneShellSnapshot(SNAPSHOT, false, undefined);
+    expect(kept).toEqual([LOADER]);
   });
 
   it("hasDocRecord requires the named segment record with at least one segment", () => {

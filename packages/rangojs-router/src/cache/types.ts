@@ -439,11 +439,11 @@ export interface ShellCacheEntry {
   initialTheme?: string;
   /**
    * The CAPTURE DATA SNAPSHOT, in stored/serialized form: the doc segment
-   * record every HIT replays the handler layer from (`docKey`), the bake-lane
-   * loader pins, and the cache records those loaders read at capture
-   * (pruned to what a HIT reads, issue #941). Replaying them on a HIT keeps
-   * the freshly rendered hydration payload equal to the frozen prelude after
-   * the underlying cache entries have drifted. Empty when the capture
+   * record every HIT replays the handler layer from (`docKey`) and the
+   * bake-lane loader pins (pruned to what a HIT reads, issue #941). Replaying
+   * them on a HIT keeps the freshly rendered hydration payload equal to the
+   * frozen prelude after the underlying cache entries have drifted; every
+   * other read on a HIT, a hole's included, reads the store. Empty when the capture
    * recorded nothing (a prerender-served capture without bake-lane loaders,
    * a tombstone). A custom store returns it as putShell received it. See
    * docs/design/ppr-shell-resume.md ("the capture data snapshot").
@@ -451,7 +451,7 @@ export interface ShellCacheEntry {
   snapshot: ShellSnapshotRecord[];
   /**
    * Records the capture dropped from `snapshot` because no reader of this
-   * entry consumes them, by family (`item:4/loader:1`). Diagnostic only: the
+   * entry consumes them, by family (`loader:1`). Diagnostic only: the
    * HIT tail timing reports it next to the kept records. See
    * docs/design/shell-entry-layout.md ("Record only what a HIT reads").
    */
@@ -605,16 +605,13 @@ export interface ShellReadStats {
 }
 
 /**
- * The families a shell snapshot pins. The item/segment families are
- * cache-store reads/writes (recorded by RecordingShellStore); the loader family
- * pins the settled CONTAINER of a bake-lane loader (lane rule: see
- * resolveLoaderData, loader-cache.ts). Excludes the shell family itself
- * (getShell/putShell) — the snapshot rides INSIDE a shell entry, so recording
- * it would be self-referential — and the response family, which only
- * response routes and the document cache (HTTP middleware) read, and a
- * capture runs neither.
+ * The families a shell snapshot pins: the doc segment record (recorded by
+ * RecordingShellStore) and the settled CONTAINER of each bake-lane loader
+ * (lane rule: see resolveLoaderData, loader-cache.ts). No cache read is
+ * pinned: a HIT's holes, and a bake-lane loader body that runs on the HIT,
+ * read the store.
  */
-export type ShellSnapshotFamily = "item" | "segment" | "loader";
+export type ShellSnapshotFamily = "segment" | "loader";
 
 /**
  * The stored form of a loader-family snapshot value: the bake-lane loader's
@@ -648,29 +645,18 @@ export interface ShellSnapshotLoaderValue {
   runs: 0 | 1;
 }
 
-/** The stored form of an item-family (use cache / loader cache) snapshot value. */
-export interface ShellSnapshotItemValue {
-  /** RSC-serialized return value. */
-  value: string;
-  /** RSC-encoded handle data, if any. */
-  handles?: string;
-  /** The entry's cache tags. */
-  tags?: string[];
-}
-
 /**
- * One recorded cache-store read-hit or write from the capture render, or a
- * bake-lane loader pin. `value` carries the entry in its stored/serialized
- * shape so it round-trips through a JSON-serializing store (KV, CF, Vercel)
- * with the rest of the ShellCacheEntry:
- * - `item`    -> {@link ShellSnapshotItemValue}
+ * One snapshot record: the doc segment record or a bake-lane loader pin.
+ * `value` carries it in its stored/serialized shape so it round-trips
+ * through a JSON-serializing store (KV, CF, Vercel) with the rest of the
+ * ShellCacheEntry:
  * - `segment` -> {@link CachedEntryData} (already JSON-able)
  * - `loader`  -> {@link ShellSnapshotLoaderValue}
  */
 export interface ShellSnapshotRecord {
   family: ShellSnapshotFamily;
   key: string;
-  value: ShellSnapshotItemValue | CachedEntryData | ShellSnapshotLoaderValue;
+  value: CachedEntryData | ShellSnapshotLoaderValue;
 }
 
 /**
@@ -775,8 +761,10 @@ export type SegmentHandleData = Record<string, unknown[]>;
  * index (null: not owned). Only a PPR shell capture writes owners: the
  * settled pushes of the loader bodies it ran (an `ssr: false` loader's own,
  * the loaders it awaits, and its own cache() replays), which the record keeps
- * because the prelude rendered them. restoreHandles replays an owned value
- * through HandleStore.pushReplayed, so a loader that does run on the HIT
- * replaces it with its live push.
+ * because the prelude rendered them. A document HIT restores a bake-lane
+ * owner's value through HandleStore.pushRestored, and it stands against a run
+ * of its loader there; a live-lane owner's (a hole), and every owner's on
+ * any other replay of the record (a client navigation), go through
+ * pushReplayed, so a run of the loader replaces it with its live push.
  */
 export type HandleOwners = Record<string, Record<string, (string | null)[]>>;

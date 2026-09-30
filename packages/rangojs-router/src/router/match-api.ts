@@ -4,7 +4,10 @@ import {
   resolveShellImplicitCacheScope,
 } from "../cache/cache-scope.js";
 import { armLoaderTagSets, armRecordTagOwners } from "../cache/cache-tag.js";
-import { bindsLoaderCache } from "./segment-resolution/loader-cache.js";
+import {
+  bindsLoaderCache,
+  routeLoaderLanes,
+} from "./segment-resolution/loader-cache.js";
 import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
@@ -165,6 +168,12 @@ export async function createMatchContextForFull<TEnv>(
     armRecordTagOwners();
   }
   if (bindsLoaderCache(snapshot.entries)) armLoaderTagSets();
+  // A shell capture credits a push under a live-lane loader's body to that
+  // loader (shell-capture.ts deriveShellCaptureContext). The lanes are set
+  // before any loader runs: a bake-lane loader can start a later one.
+  if (reqCtx?._shellCaptureRun) {
+    reqCtx._shellCaptureLoaderLanes = routeLoaderLanes(snapshot.entries);
+  }
 
   return {
     request,

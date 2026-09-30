@@ -343,7 +343,7 @@ export interface ShellTailTiming {
   snapshotReadMs?: number;
   /** Snapshot JSON.parse CPU (reads 0 on a deployed worker: see bytes). */
   snapshotParseMs?: number;
-  /** Snapshot records by family, e.g. `segment:1/item:5` (no commas: it rides a Server-Timing desc). */
+  /** Snapshot records by family, e.g. `segment:1/loader:2` (no commas: it rides a Server-Timing desc). */
   snapshotRecords?: string;
   /** Records the capture pruned from the snapshot, same format (ShellCacheEntry.prunedRecords). */
   snapshotPruned?: string;
@@ -367,7 +367,7 @@ export interface ShellTailTiming {
 
 /**
  * Compact single-line form for the console log and the Server-Timing mirror's
- * `desc`: alphanumerics and `=`, `-`, `:`, `/` only (records=segment:1 pruned=item:5),
+ * `desc`: alphanumerics and `=`, `-`, `:`, `/` only (records=segment:1/loader:2 pruned=loader:1),
  * so no quoted-string escaping is needed. Offsets are from the commit; the
  * `-cpu` fields are CPU-only durations.
  */

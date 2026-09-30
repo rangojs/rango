@@ -1531,9 +1531,7 @@ async function matchPartialWithPprReplay<TEnv>(
   reqCtx._shellImplicitCache = {
     ttl: pprConfig.ttl,
     swr: pprConfig.swr,
-    store: new SeededShellStore(store, snapshot, {
-      segmentsOnly: true,
-    }),
+    store: new SeededShellStore(store, snapshot),
     keyPrefix: "doc",
     // Arms the bake-lane loader pins a document HIT serves (loader-cache.ts
     // resolveLoaderData), decoded only now: the lookup awaits this before
@@ -1829,10 +1827,10 @@ function serveShellHit(
     ReadableStream<Uint8Array> | { redirect: string }
   > = (async () => {
     // Snapshot seeding (docs/design/ppr-shell-resume.md): the tail render must
-    // match the frozen prelude, so pinned cache reads replay their capture-time
-    // values via a SeededShellStore overlay while unpinned reads (the holes)
-    // stay live. The overlay lives on a DERIVED context so the shared reqCtx is
-    // untouched.
+    // match the frozen prelude, so it replays the doc record and serves the
+    // bake-lane loader pins, on a DERIVED context so the shared reqCtx is
+    // untouched. Every cache read the tail makes, a hole's included, goes to
+    // the request's own store.
     // A prelude-first read delivers the snapshot on its own promise: the
     // prelude is already committed, so only the tail waits for it.
     const inMemory = await isSettled(document.snapshot);
@@ -1856,9 +1854,6 @@ function serveShellHit(
     }
     const seededCtx = createTailContext();
     const records = snapshot ?? [];
-    if (reqCtx._cacheStore && records.length > 0) {
-      seededCtx._cacheStore = new SeededShellStore(reqCtx._cacheStore, records);
-    }
     // Loader-family records (bake-lane containers, loader-container-bake):
     // decode into a seed Map for the resolveLoaderData overlay, so the
     // payload's baked container bytes match the frozen prelude while the
@@ -1892,9 +1887,7 @@ function serveShellHit(
     seededCtx._shellImplicitCache = {
       ttl: descriptor.ttl,
       swr: descriptor.swr,
-      store: new SeededShellStore(reqCtx._cacheStore!, records, {
-        segmentsOnly: true,
-      }),
+      store: new SeededShellStore(reqCtx._cacheStore!, records),
       keyPrefix: "doc",
       docTail: true,
       fixedDocKey: entry.docKey,

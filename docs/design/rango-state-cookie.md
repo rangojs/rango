@@ -273,13 +273,17 @@ history cache to mark and no sibling state worth broadcasting yet. If a
 pre-boot rotation ever must survive, queue the intent and apply it once
 `initRangoState` has resolved the name.
 
-**Server seat details.** It reuses the same cache-context guard `cookies()` and
-`headers()` use: `assertNotInsideCacheContext()` in
-`src/server/cookie-store.ts`, which combines the `INSIDE_CACHE_EXEC` taint
-(`src/cache/taint.ts`) with `isInsideCacheScope()`. (That's the same pair
-`setStatus` applies, but `setStatus` reaches them through a closure private to
-`createRequestContext`; a standalone root-entry helper must use the
-`cookie-store.ts` entry point, not those.) Note `isInsideCacheScope()` returns
+**Server seat details.** It reuses the cache-scope half of the guard
+`cookies()` and `headers()` go through: `refuseInCacheScope()` in
+`src/server/context.ts`, which throws inside a `"use cache"` body
+(`getCacheExecScope()`, `src/cache/cache-exec-scope.ts`) and inside a
+`cache()` boundary (`isInsideCacheScope()`). It takes only that half of
+`guardIdentityRead`: a directive is a response write, not an identity read, so
+it neither trips a PPR shell capture nor records a loader read. (`setStatus`
+refuses through its own guards, `assertNotInsideCacheExec` in
+`src/cache/taint.ts` plus a closure private to `createRequestContext`; a
+standalone root-entry helper must use the exported `refuseInCacheScope`, not
+those.) Note `isInsideCacheScope()` returns
 false inside loaders, so — exactly like `cookies().set()` — rotation from a
 loader running inside a cached document is permitted; that's intentional,
 loaders are the dynamic holes of a cached document.
@@ -301,7 +305,7 @@ before implementing]**:
   request context (`request-context.ts:431`). To stay inert when called outside
   a request, the helper must read through the non-throwing
   `_getRequestContext()` (`request-context.ts:444`) and apply
-  `assertNotInsideCacheContext()` only when a context is present. Document this
+  `refuseInCacheScope()` only when a context is present. Document this
   the same way for both server helpers (`keepClientCache()` already specifies the
   inert no-op; the `invalidateClientCache()` semantics table below is silent on
   the out-of-request case).
@@ -952,7 +956,7 @@ later is cheap.
   `stateCookiePrefix` option, name resolution at init, and the resolved-name
   metadata plumbing, following `prefetchCacheTTL` end to end.
 - `src/index.rsc.ts` — the server implementation of `invalidateClientCache()`,
-  guarded via the `cookie-store.ts` `assertNotInsideCacheContext` pattern, and
+  guarded by `refuseInCacheScope` (`src/server/context.ts`), and
   of `keepClientCache()` (request-scoped flag → internal directive response
   header; inert with a dev warning outside action requests).
 - `src/index.ts` — the **client** implementation (a real function, not a

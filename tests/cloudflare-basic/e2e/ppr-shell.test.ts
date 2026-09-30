@@ -988,9 +988,10 @@ function describePprShell(mode: "dev" | "build") {
 
     // Issue #941, snapshot pruning: every HIT tail of these entries replays
     // the handler layer from the doc record, so the capture stores that
-    // record alone and drops the five "use cache" item records that produced
-    // it (2.6 MB of the unpruned production snapshot; 17 MB in dev, where the
-    // unpruned snapshot overflowed the 8 MiB cap and was not stored at all).
+    // record alone and records none of the five "use cache" reads that
+    // produced it (2.6 MB of the production snapshot when they were recorded;
+    // 17 MB in dev, where that snapshot overflowed the 8 MiB cap and was not
+    // stored at all).
     for (const path of ["/ppr-large", "/ppr-large/holes"]) {
       test(`${path}: the stored snapshot keeps only the doc record and the HIT hydrates`, async ({
         page,
@@ -1011,7 +1012,7 @@ function describePprShell(mode: "dev" | "build") {
           )?.[1];
           expect(tail).toMatch(/ snapshot-bytes=\d+b /);
         }).toPass({ timeout: 15000 });
-        expect(tail).toContain(" records=segment:1 pruned=item:5 ");
+        expect(tail).toContain(" records=segment:1 seed=");
         const snapshotBytes = Number(/snapshot-bytes=(\d+)b/.exec(tail!)?.[1]);
         expect(snapshotBytes).toBeGreaterThan(500 * 1024);
         expect(snapshotBytes).toBeLessThan(2 * 1024 * 1024);
@@ -1024,12 +1025,15 @@ function describePprShell(mode: "dev" | "build") {
     }
 
     // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
-    // decision 3): /ppr-shared-key's layout and its live hole read the SAME
-    // "drift" item (ttl 2s). The capture pins the layout's value inside the doc
-    // record and drops the item record, so the hole's loader reads the store:
-    // once the item expires the hole shows a newer stamp while the shell keeps
-    // the capture stamp, and the page still hydrates cleanly.
-    test("shared key: the shell keeps the capture value while the live hole reads the store", async ({
+    // decision 3): /ppr-shared-key's layout, its ssr: false loader and its
+    // live hole read the SAME "drift" item (ttl 2s). The capture bakes the
+    // layout's value inside the doc record and pins the ssr: false loader's
+    // container; it records no cache read, so the hole's loader reads the
+    // store: once the item expires the hole shows a newer stamp while the
+    // shell and the pin keep the capture stamp, and the page still hydrates
+    // cleanly. Before, the bake-lane loader's read pinned the item for every
+    // reader on a HIT and the hole never moved on.
+    test("shared key: the shell and an ssr: false loader keep the capture value while the live hole reads the store", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -1050,6 +1054,9 @@ function describePprShell(mode: "dev" | "build") {
         expect(prelude).toContain(
           `data-testid="ppr-shared-shell">ppr-shared-${captureStamp}<`,
         );
+        expect(prelude).toContain(
+          `data-testid="ppr-shared-baked">ppr-shared-${captureStamp}<`,
+        );
         const holeStamp =
           /data-testid="ppr-shared-hole">ppr-shared-(\d+)</.exec(resumed)?.[1];
         expect(Number(holeStamp)).toBeGreaterThan(Number(captureStamp));
@@ -1059,6 +1066,9 @@ function describePprShell(mode: "dev" | "build") {
       expect(response?.headers()["x-rango-shell"]).toBe("HIT");
       await waitForHydration(page);
       await expect(testId(page, "ppr-shared-shell")).toHaveText(
+        `ppr-shared-${captureStamp}`,
+      );
+      await expect(testId(page, "ppr-shared-baked")).toHaveText(
         `ppr-shared-${captureStamp}`,
       );
       await expect(testId(page, "ppr-shared-hole")).not.toHaveText(

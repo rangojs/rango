@@ -5,9 +5,9 @@ import { Outlet } from "@rangojs/router/client";
 import { PprLargeHole } from "../components/PprLargeHole.js";
 
 // Large-shell fixture (issue #941): a storefront-sized PPR shell whose entry
-// carries a ~650 KB prelude and a multi-MB capture snapshot (the implicit doc
-// record plus the "use cache" item records that produced it). Deterministic
-// content, so every capture of a key produces the same bytes.
+// carries a ~650 KB prelude and a ~1 MB capture snapshot (the implicit doc
+// record; the "use cache" reads that produced it are not recorded).
+// Deterministic content, so every capture of a key produces the same bytes.
 
 const PRODUCT_COUNT = 380;
 const NAV_LINKS = 560;

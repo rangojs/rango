@@ -1,15 +1,18 @@
 /**
- * PPR shell snapshot pruning (issue #941) through the real serve pipeline and
- * real Flight: a MISS schedules the capture, the capture records and prunes,
- * and a later request is served as a document HIT (or a partial replay) from
- * the stored entry. Only the SSR half is stubbed: captureShellHTML returns a
- * fixed prelude and resumeShellHTML passes the tail's Flight stream through,
- * so a HIT body is the prelude followed by the tail's Flight payload bytes.
+ * What a PPR shell entry's snapshot holds (issue #941), through the real
+ * serve pipeline and real Flight: a MISS schedules the capture, the capture
+ * records and prunes, and a later request is served as a document HIT (or a
+ * partial replay) from the stored entry. The snapshot is the doc record and
+ * the bake-lane loader pins; no cache read is recorded, so every read a HIT
+ * makes (a hole's, a bake-lane loader body's) goes to the store. Only the SSR
+ * half is stubbed: captureShellHTML returns a fixed prelude and
+ * resumeShellHTML passes the tail's Flight stream through, so a HIT body is
+ * the prelude followed by the tail's Flight payload bytes.
  *
  * Every "use cache" value carries its source generation
  * (fixtures/shell-prune-data.tsx). The tests move the source on after the
- * capture and drop the store's item records, so a tail that reads an item
- * live renders a newer generation than the capture pinned.
+ * capture and drop the store's items, so a tail that reads an item
+ * live renders a newer generation than the capture saw.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
@@ -26,16 +29,16 @@ vi.mock("../../prerender/store.js", () => ({
   createPrerenderStore: () => ({ get: async () => null }),
 }));
 
-// The unpruned snapshot a capture computed, for the byte-parity comparison.
+// The snapshot a capture recorded before pruning.
 const pruneInputs = vi.hoisted(() => [] as unknown[][]);
 vi.mock("../../cache/shell-snapshot.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../cache/shell-snapshot.js")>();
   return {
     ...actual,
-    pruneShellSnapshot: ((snapshot, readers, loaderKeys, docKey) => {
-      pruneInputs.push([...snapshot]);
-      return actual.pruneShellSnapshot(snapshot, readers, loaderKeys, docKey);
+    pruneShellSnapshot: ((...args) => {
+      pruneInputs.push([...args[0]]);
+      return actual.pruneShellSnapshot(...args);
     }) satisfies typeof actual.pruneShellSnapshot,
   };
 });
@@ -43,6 +46,7 @@ vi.mock("../../cache/shell-snapshot.js", async (importOriginal) => {
 import { renderToReadableStream } from "../../testing/vitest-stubs/plugin-rsc.js";
 import { createRouter } from "../../router.js";
 import { createLoader } from "../../loader.rsc.js";
+import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import { shellReloadScript } from "../shell-serve.js";
@@ -297,7 +301,7 @@ beforeEach(() => {
 });
 
 describe("PPR snapshot pruning: a covered document capture", () => {
-  it("stores no handler-only item records, and its HIT tail is byte-identical to the unpruned HIT", async () => {
+  it("records only the doc record, and its HIT replays the capture's generation without an item read", async () => {
     const router = await makeRouter(({ layout, path }: any) => [
       layout(ShellLayout, () => [
         path("/p", CatalogPage, { name: "prunePage", ppr: { ttl: 300 } }),
@@ -305,39 +309,29 @@ describe("PPR snapshot pruning: a covered document capture", () => {
     ]);
     const harness = makeStore();
 
-    const pruned = await captureThenDrift(router, harness, "/p");
+    const entry = await captureThenDrift(router, harness, "/p");
+    // The handler layer's three "use cache" reads were not recorded.
     expect(pruneInputs).toHaveLength(1);
-    const unprunedSnapshot = pruneInputs[0] as ShellSnapshotRecord[];
-    expect(
-      families(unprunedSnapshot).filter((f) => f.startsWith("item:")),
-    ).toHaveLength(3);
-    expect(families(pruned.snapshot)).toEqual(["segment:doc"]);
-    expect(pruned.prunedRecords).toBe("item:3");
+    expect(families(pruneInputs[0] as ShellSnapshotRecord[])).toEqual([
+      "segment:doc",
+    ]);
+    expect(families(entry.snapshot)).toEqual(["segment:doc"]);
+    expect(entry.prunedRecords).toBeUndefined();
 
-    const prunedHit = await serve(router, harness.store, "/p");
-    expect(prunedHit.response.headers.get("x-rango-shell")).toBe("HIT");
+    const hit = await serve(router, harness.store, "/p");
+    expect(hit.response.headers.get("x-rango-shell")).toBe("HIT");
     expect(harness.itemReads).toEqual([]);
-
-    await harness.store.putShell(
-      SHELL_KEY("/p"),
-      { ...pruned, snapshot: unprunedSnapshot, prunedRecords: undefined },
-      300,
-    );
-    const unprunedHit = await serve(router, harness.store, "/p");
-    expect(unprunedHit.response.headers.get("x-rango-shell")).toBe("HIT");
-
-    expect(prunedHit.body.startsWith(PRELUDE)).toBe(true);
-    expect(prunedHit.body).toContain("@g1");
-    expect(prunedHit.body).not.toContain("@g2");
-    expect(prunedHit.body).toBe(unprunedHit.body);
+    expect(hit.body.startsWith(PRELUDE)).toBe(true);
+    expect(hit.body).toContain("@g1");
+    expect(hit.body).not.toContain("@g2");
   });
 });
 
 describe("PPR snapshot pruning: no HIT runs a handler, so every document entry prunes", () => {
   // Every document HIT replays the handler layer from the entry's own doc
   // record, looked up by the key the capture wrote. None of these shapes
-  // re-runs a handler any more, so none keeps a handler-read record, and every
-  // HIT renders the capture's generation (@g1) while the source moved on.
+  // re-runs a handler, so every entry is its doc record alone, and every HIT
+  // renders the capture's generation (@g1) while the source moved on.
   const explicitStore = new MemorySegmentCacheStore();
   const variants: Array<{
     name: string;
@@ -345,7 +339,6 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
     capture?: Record<string, string>;
     hit?: Record<string, string>;
     beforeHit?: () => Promise<void> | void;
-    pruned: string;
     /** The request partition the route's key() gives the capture and HIT. */
     partition?: string;
   }> = [
@@ -353,12 +346,10 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       name: "explicit miss: the explicit store lost its record",
       options: { ttl: 300, store: explicitStore },
       beforeHit: () => explicitStore.clear(),
-      pruned: "item:3",
     },
     {
       // The explicit tier writes to the app store here; the capture records
       // no segment besides the doc record.
-      pruned: "item:3",
       name: "custom key(): a HIT in the capture's own partition",
       options: {
         ttl: 300,
@@ -372,7 +363,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
 
   it.each(variants)(
     "route-derived cache() scope, $name",
-    async ({ options, capture, hit, beforeHit, pruned, partition }) => {
+    async ({ options, capture, hit, beforeHit, partition }) => {
       const router = await makeRouter(({ layout, path, cache }: any) => [
         layout(ShellLayout, () => [
           cache(options, () => [
@@ -393,7 +384,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
         partition,
       );
       expect(entry.docKey).toBe("doc:localhost/scoped");
-      expect(entry.prunedRecords).toBe(pruned);
+      expect(families(entry.snapshot)).toEqual(["segment:doc"]);
 
       await beforeHit?.();
       const served = await serve(router, harness.store, "/scoped", {
@@ -448,7 +439,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       "doc:localhost/segmented|a",
     );
     expect(entry.docKey).toBe("doc:localhost/segmented|a");
-    expect(entry.prunedRecords).toBe("item:3");
+    expect(families(entry.snapshot)).toEqual(["segment:doc"]);
 
     const served = await serve(router, harness.store, "/segmented", {
       headers: { "x-segment": "a" },
@@ -483,7 +474,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
     const harness = makeStore();
 
     const entry = await captureThenDrift(router, harness, "/priced");
-    expect(entry.prunedRecords).toBe("item:2");
+    expect(families(entry.snapshot)).toEqual(["segment:doc"]);
     const capturedPrice = `price-${priceRuns}`;
 
     const served = await serve(router, harness.store, "/priced");
@@ -494,8 +485,10 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
     expect(served.body).toContain("/priced-item-0@g1");
     expect(served.body).not.toContain("@g2");
   });
+});
 
-  it("R2.4 an item a bake-lane loader read stays pinned; handler-only items are pruned", async () => {
+describe("PPR snapshot: a bake-lane loader on a HIT", () => {
+  it('a promise-free one is served from its pin: its "use cache" read is not recorded, and nothing reads the store', async () => {
     const BakeLoader = (createLoader as Function)(
       async () => ({ stamp: await getStamp("bake") }),
       undefined,
@@ -514,25 +507,87 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
     const harness = makeStore();
 
     const entry = await captureThenDrift(router, harness, "/baked");
-    expect(
-      entry.snapshot
-        ?.filter((r) => r.family === "item")
-        .map((r) => r.key.includes("getStamp")),
-    ).toEqual([true]);
     expect(families(entry.snapshot).sort()).toEqual([
-      "item:use-cache",
       "loader:M0L0L0R0D0.test#PruneBakeLoader",
       "segment:doc",
     ]);
-    expect(entry.prunedRecords).toBe("item:3");
+    expect(entry.prunedRecords).toBeUndefined();
 
     const served = await serve(router, harness.store, "/baked");
     expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
-    // A promise-free bake-lane loader is served from its pin and does not
-    // run on the HIT: nothing reads the item store.
     expect(harness.itemReads).toEqual([]);
     expect(served.body).toContain("bake-stamp@g1");
     expect(served.body).not.toContain("@g2");
+  });
+
+  it('a promise-carrying one\'s push derived from "use cache" carries the captured value exactly once', async () => {
+    const Notes = createHandle<string>(undefined, "test#PruneStampNotes");
+    let runs = 0;
+    const HoleyLoader = (createLoader as Function)(
+      async (ctx: any) => {
+        runs++;
+        const stamp = await getStamp("holey");
+        ctx.use(Notes)(`note:${stamp}`);
+        return { stamp, later: Promise.resolve("later-live") };
+      },
+      undefined,
+      "test#PruneHoleyLoader",
+    );
+    const router = await makeRouter(({ layout, path, loader }: any) => [
+      layout(ShellLayout, () => [
+        path(
+          "/holey",
+          CatalogPage,
+          { name: "holey", ppr: { ttl: 300 } },
+          () => [loader(HoleyLoader, { ssr: false })],
+        ),
+      ]),
+    ]);
+    const harness = makeStore();
+
+    await captureThenDrift(router, harness, "/holey");
+    const captured = runs;
+    const served = await serve(router, harness.store, "/holey");
+
+    expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
+    // The body ran on the HIT and read the store (@g2); the record's push
+    // stands and the run's settled push is dropped.
+    expect(runs).toBe(captured + 1);
+    expect(harness.itemReads.some((key) => key.includes("getStamp"))).toBe(
+      true,
+    );
+    expect(served.body.match(/note:holey-stamp@g\d/g)).toEqual([
+      "note:holey-stamp@g1",
+    ]);
+    expect(served.body).toContain('"stamp":"holey-stamp@g1"');
+    expect(served.body).toContain("later-live");
+  });
+
+  it('a nested promise in its return that calls "use cache" reads the store', async () => {
+    const NestedLoader = (createLoader as Function)(
+      async () => ({ settled: "nested-settled", later: getStamp("nested") }),
+      undefined,
+      "test#PruneNestedLoader",
+    );
+    const router = await makeRouter(({ layout, path, loader }: any) => [
+      layout(ShellLayout, () => [
+        path(
+          "/nested",
+          CatalogPage,
+          { name: "nested", ppr: { ttl: 300 } },
+          () => [loader(NestedLoader, { ssr: false })],
+        ),
+      ]),
+    ]);
+    const harness = makeStore();
+
+    await captureThenDrift(router, harness, "/nested");
+    const served = await serve(router, harness.store, "/nested");
+
+    expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
+    expect(served.body).toContain('"settled":"nested-settled"');
+    expect(served.body).toContain("nested-stamp@g2");
+    expect(served.body).not.toContain("nested-stamp@g1");
   });
 });
 
@@ -565,7 +620,7 @@ describe("PPR snapshot pruning: a live hole reading a key the shell also read", 
 
     const entry = await captureThenDrift(router, harness, "/shared");
     expect(families(entry.snapshot)).toEqual(["segment:doc"]);
-    expect(entry.prunedRecords).toBe("item:1");
+    expect(entry.prunedRecords).toBeUndefined();
 
     const served = await serve(router, harness.store, "/shared");
     expect(served.response.headers.get("x-rango-shell")).toBe("HIT");
@@ -577,7 +632,7 @@ describe("PPR snapshot pruning: a live hole reading a key the shell also read", 
 });
 
 describe("PPR snapshot pruning: partial navigation replay", () => {
-  it("a pruned entry replays the same segments as the unpruned one", async () => {
+  it("replays the doc record's segments at the capture's generation", async () => {
     const router = await makeRouter(({ layout, path }: any) => [
       layout(ShellLayout, () => [
         path("/nav", CatalogPage, { name: "nav", ppr: { ttl: 300 } }),
@@ -585,31 +640,15 @@ describe("PPR snapshot pruning: partial navigation replay", () => {
     ]);
     const harness = makeStore();
 
-    const pruned = await captureThenDrift(router, harness, "/nav");
-    expect(pruned.prunedRecords).toBe("item:3");
-    const unprunedSnapshot = pruneInputs[0] as ShellSnapshotRecord[];
+    const entry = await captureThenDrift(router, harness, "/nav");
+    expect(families(entry.snapshot)).toEqual(["segment:doc"]);
 
-    const fromPruned = await serve(router, harness.store, "/nav", {
+    const replay = await serve(router, harness.store, "/nav", {
       partial: true,
     });
-    expect(fromPruned.response.headers.get("x-rango-ppr-replay")).toMatch(
-      /^HIT/,
-    );
-
-    await harness.store.putShell(
-      SHELL_KEY("/nav"),
-      { ...pruned, snapshot: unprunedSnapshot, prunedRecords: undefined },
-      300,
-    );
-    const fromUnpruned = await serve(router, harness.store, "/nav", {
-      partial: true,
-    });
-    expect(fromUnpruned.response.headers.get("x-rango-ppr-replay")).toMatch(
-      /^HIT/,
-    );
-
-    expect(fromPruned.body).toContain("/nav-item-0@g1");
-    expect(fromPruned.body).toBe(fromUnpruned.body);
+    expect(replay.response.headers.get("x-rango-ppr-replay")).toMatch(/^HIT/);
+    expect(replay.body).toContain("/nav-item-0@g1");
+    expect(replay.body).not.toContain("@g2");
   });
 });
 
@@ -630,7 +669,7 @@ describe("PPR snapshot pruning: a doc record that fails to decode on a HIT", () 
     ]);
     const harness = makeStore();
     const entry = await captureThenDrift(router, harness, "/corrupt");
-    expect(entry.prunedRecords).toBe("item:3");
+    expect(families(entry.snapshot)).toEqual(["segment:doc"]);
     await harness.store.putShell(
       SHELL_KEY("/corrupt"),
       {

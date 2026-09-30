@@ -23,6 +23,8 @@ import { runMiddleware } from "../run-middleware.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { registerCachedFunction } from "../../cache/cache-runtime.js";
 import { createVar } from "../../context-var.js";
+import { cookies } from "../../server/cookie-store.js";
+import type { LoaderContext, LoaderDefinition } from "../../types.js";
 
 function spiedStore() {
   const store = new MemorySegmentCacheStore();
@@ -173,6 +175,45 @@ describe('"use cache" with a loader or middleware ctx argument (#940)', () => {
     });
     expect(String(thrown)).toMatch(
       /non-cacheable variable cannot be called inside a "use cache" function/,
+    );
+  });
+
+  it("runLoader: a loader body entered inside the cached function throws on a { cache: false } read, like cookies()", async () => {
+    const Tenant = createVar<string>({ cache: false });
+    const TenantLoader = {
+      __brand: "loader",
+      $$id: "userland#s2:TenantLoader",
+      fn: async (ctx: LoaderContext) => ctx.get(Tenant),
+    } as unknown as LoaderDefinition<string | undefined>;
+    const SessionLoader = {
+      __brand: "loader",
+      $$id: "userland#s2:SessionLoader",
+      fn: async () => cookies().get("session")?.value,
+    } as unknown as LoaderDefinition<string | undefined>;
+    // async function getNav(ctx) { "use cache"; return `nav:${await ctx.use(Loader)}`; }
+    const navOf = (loader: LoaderDefinition<string | undefined>) =>
+      registerCachedFunction(
+        async (ctx: LoaderContext) => `nav:${await ctx.use(loader)}`,
+        `userland#s2:getNav:${loader.$$id}`,
+        "default",
+      );
+    const { options } = spiedStore();
+    const read = (loader: LoaderDefinition<string | undefined>) =>
+      runLoaderResult(async (ctx) => navOf(loader)(ctx), {
+        vars: [[Tenant, "a"]],
+        request: new Request("https://shop.example/", {
+          headers: { Cookie: "session=s1" },
+        }),
+        ...options,
+      });
+
+    // The loader's value would be stored in the "use cache" entry, keyed
+    // without it: both reads refuse.
+    expect(String((await read(TenantLoader)).thrown)).toMatch(
+      /non-cacheable variable cannot be called inside a "use cache" function/,
+    );
+    expect(String((await read(SessionLoader)).thrown)).toMatch(
+      /cookies\(\) cannot be called inside a "use cache" function/,
     );
   });
 });

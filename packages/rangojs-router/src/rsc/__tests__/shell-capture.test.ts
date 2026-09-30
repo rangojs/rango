@@ -713,26 +713,21 @@ describe("captureAndStoreShell", () => {
     expect(loaderRecords).toHaveLength(0);
   });
 
-  // Snapshot size cap (issue #651): the snapshot duplicates pinned ring data
-  // inside the shell entry, so an over-cap snapshot is SKIPPED — the shell
-  // still stores and serves (pinned reads drift, the pre-snapshot behavior) —
-  // and the skip is reported once per key.
+  // Snapshot size cap (issue #651): the loader pins duplicate loader data
+  // inside the shell entry, so over the cap they are SKIPPED — the shell
+  // still stores and serves (those loaders run on the HIT, the pre-snapshot
+  // behavior) — and the skip is reported once per key.
   it("drops over-cap loader pins, stores the shell with its doc record, and reports once per key", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const putShell = makePutShell();
       const runOnce = async () => {
-        // Fresh recording store per capture (mirrors the per-capture derived
-        // context); one recorded item-family value well over the 1 KiB cap.
-        const recording = withDocRecord(
-          new RecordingShellStore(new MemorySegmentCacheStore()),
-        );
-        // A loader pin (only loader-read records survive pruning).
-        await runInsideLoaderScope(() =>
-          recording.setItem("big-key", "x".repeat(4096)),
-        );
+        // Fresh capture context per capture (mirrors the per-capture derived
+        // context); one bake-lane loader pin well over the 1 KiB cap.
         const reqCtx = makeReqCtx();
-        reqCtx._cacheStore = recording;
+        reqCtx._shellCaptureLoaderRecords = new Map([
+          ["M0L0D0.big", Promise.resolve({ big: "x".repeat(4096) })],
+        ]);
         return captureAndStoreShell(
           makeShellSsrModule(),
           emptyStream(),
@@ -775,12 +770,10 @@ describe("captureAndStoreShell", () => {
 
   it("keeps an under-cap snapshot intact (default cap)", async () => {
     const putShell = makePutShell();
-    const recording = withDocRecord(
-      new RecordingShellStore(new MemorySegmentCacheStore()),
-    );
-    await runInsideLoaderScope(() => recording.setItem("small-key", "hello"));
     const reqCtx = makeReqCtx();
-    reqCtx._cacheStore = recording;
+    reqCtx._shellCaptureLoaderRecords = new Map([
+      ["M0L0D0.small", Promise.resolve({ small: "hello" })],
+    ]);
 
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
@@ -801,7 +794,7 @@ describe("captureAndStoreShell", () => {
     };
     expect(
       (entry.snapshot ?? []).some(
-        (r) => r.family === "item" && r.key === "small-key",
+        (r) => r.family === "loader" && r.key === "M0L0D0.small",
       ),
     ).toBe(true);
   });
@@ -1127,8 +1120,8 @@ describe("captureAndStoreShell: snapshot pruning", () => {
 
   /**
    * A capture whose recording saw what a covered document capture sees: the
-   * implicit doc record, a handler-read item, a loader-read item, a response
-   * and a bake-lane loader container. `adjust` flips one condition.
+   * implicit doc record, a handler's and a loader's "use cache" reads (never
+   * recorded) and a bake-lane loader container. `adjust` flips one condition.
    */
   async function capturePrunable(
     adjust?: (setup: PruneSetup) => void | Promise<void>,
@@ -1196,28 +1189,31 @@ describe("captureAndStoreShell: snapshot pruning", () => {
   const records = (entry: ShellCacheEntry): string[] =>
     (entry.snapshot ?? []).map((r) => `${r.family} ${r.key}`);
 
-  it("drops the item records only handler code read", async () => {
+  it("stores the doc record and the loader pins; no cache read is recorded", async () => {
     const entry = await capturePrunable();
     expect(records(entry)).toEqual([
       `segment ${DOC_KEY}`,
-      "item use-cache:loader",
       "loader M0L0D0.bake",
     ]);
-    expect(entry.prunedRecords).toBe("item:1");
+    expect(entry.prunedRecords).toBeUndefined();
     expect(entry.docKey).toBe(DOC_KEY);
   });
 
-  it("R2.4 keeps a record a loader only missed on (it joined the handler's write)", async () => {
+  it("a value a loader read or wrote at capture is not pinned: the HIT's reads go to the store", async () => {
     const entry = await capturePrunable(async ({ recording }) => {
       await runInsideLoaderScope(() => recording.getItem("use-cache:joined"));
-      await recording.setItem("use-cache:joined", "J", { ttl: 60 });
+      await runInsideLoaderScope(() =>
+        recording.setItem("use-cache:joined", "J", { ttl: 60 }),
+      );
     });
-    expect(records(entry)).toContain("item use-cache:joined");
-    expect(records(entry)).not.toContain("item use-cache:handler");
+    expect(records(entry)).toEqual([
+      `segment ${DOC_KEY}`,
+      "loader M0L0D0.bake",
+    ]);
   });
 
   // Every HIT looks the record up by the entry's own docKey and never runs a
-  // handler, so none of these conditions keeps a handler-read record.
+  // handler, so none of these conditions changes what is stored.
   it.each([
     [
       "the store has a keyGenerator",
@@ -1234,12 +1230,11 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       undefined,
     ],
   ] as const)(
-    "prunes handler-read records when %s",
+    "keeps the doc record and the loader pins when %s",
     async (_l, adjust, inner) => {
       const entry = await capturePrunable(adjust, { inner });
       expect(records(entry)).toEqual([
         `segment ${DOC_KEY}`,
-        "item use-cache:loader",
         "loader M0L0D0.bake",
       ]);
     },
@@ -1254,7 +1249,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       });
     });
     expect(records(entry)).not.toContain("segment seg:explicit");
-    expect(entry.prunedRecords).toBe("item:1/segment:1");
+    expect(entry.prunedRecords).toBe("segment:1");
   });
 
   it("R1 keeps only the doc record for a navigation-only entry", async () => {
@@ -1262,33 +1257,37 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       descriptor: { navigationOnly: true },
     });
     expect(records(entry)).toEqual([`segment ${DOC_KEY}`]);
-    expect(entry.prunedRecords).toBe("item:2/loader:1");
+    expect(entry.prunedRecords).toBe("loader:1");
   });
 
   it("applies the size cap to the pruned snapshot", async () => {
     const entry = await capturePrunable(
-      async ({ recording }) => {
-        await recording.setItem("use-cache:big", "x".repeat(4096), {
-          ttl: 60,
+      ({ recording }) => {
+        recording.recordSegmentWrite("seg:explicit", {
+          segments: [
+            { encoded: "x".repeat(4096), metadata: { id: "R0" } } as any,
+          ],
+          handles: "",
+          expiresAt: Date.now() + 60_000,
         });
       },
       { descriptor: { maxSnapshotBytes: 2048 } },
     );
     expect(records(entry)).toEqual([
       `segment ${DOC_KEY}`,
-      "item use-cache:loader",
       "loader M0L0D0.bake",
     ]);
-    expect(entry.prunedRecords).toBe("item:2");
+    expect(entry.prunedRecords).toBe("segment:1");
   });
 
   it("keeps the doc record over the cap and drops the loader pins", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const entry = await capturePrunable(
-        async ({ recording }) => {
-          await runInsideLoaderScope(() =>
-            recording.setItem("use-cache:big", "x".repeat(4096), { ttl: 60 }),
+        ({ reqCtx }) => {
+          reqCtx._shellCaptureLoaderRecords.set(
+            "M0L0D1.big",
+            Promise.resolve({ big: "x".repeat(4096) }),
           );
         },
         { descriptor: { key: "/pins-over-cap:shell", maxSnapshotBytes: 2048 } },
@@ -2877,18 +2876,16 @@ describe("runShellCapture", () => {
     expect(tags).toEqual(new Set(["ppr:static", "async-shell-tag"]));
   });
 
-  // Capture data snapshot: a cache read-HIT the capture render performs through
-  // the ambient (recording) store is recorded onto entry.snapshot, so a HIT can
-  // replay it and match the frozen prelude. See cache/shell-snapshot.ts.
-  it("records a loader's cache read-HIT performed during the capture render into entry.snapshot", async () => {
+  // Capture data snapshot: a cache read the capture render performs through
+  // the ambient (recording) store is not recorded, a loader's included: a
+  // HIT's holes and loader runs read the store. See cache/shell-snapshot.ts.
+  it("does not record a loader's cache read-HIT performed during the capture render", async () => {
     const store = new MemorySegmentCacheStore();
     await store.setItem("use-cache:x", "CAPVAL", { ttl: 60, tags: ["t1"] });
     const putShell = vi.spyOn(store, "putShell");
 
-    // Model the shell "use cache" read: the render reads the item through the
-    // ambient store (which, under capture, is the recording wrapper). The shell
-    // only quiesces once that read resolves, so captureShellHTML awaits it.
     let readDone: Promise<unknown> = Promise.resolve();
+    let read: string | undefined;
     const { ctx, ssrModule } = makeCtx(
       okMatch,
       vi.fn(async () => {
@@ -2897,11 +2894,11 @@ describe("runShellCapture", () => {
       }),
     );
     (ctx as any).renderToReadableStream = () => {
-      // A bake-lane loader's read: the records only handler code read are
-      // pruned (a HIT never runs a handler).
       readDone = runInsideLoaderScope(() =>
         getRequestContext()._cacheStore!.getItem!("use-cache:x"),
-      );
+      ).then((r) => {
+        read = r?.value;
+      });
       return emptyStream();
     };
     const reqCtx = makeReqCtx();
@@ -2918,13 +2915,12 @@ describe("runShellCapture", () => {
       0,
     );
 
+    expect(read).toBe("CAPVAL");
     expect(putShell).toHaveBeenCalledTimes(1);
     const entry = putShell.mock.calls[0]![1];
-    expect(entry.snapshot).toBeDefined();
-    const rec = entry.snapshot!.find((r) => r.key === "use-cache:x")!;
-    expect(rec.family).toBe("item");
-    expect((rec.value as any).value).toBe("CAPVAL");
-    expect((rec.value as any).tags).toEqual(["t1"]);
+    expect(entry.snapshot?.map((r) => `${r.family} ${r.key}`)).toEqual([
+      `segment ${DOC_KEY}`,
+    ]);
     // The shared foreground store is untouched by the recording wrapper.
     expect((reqCtx as any)._cacheStore).toBe(store);
   });

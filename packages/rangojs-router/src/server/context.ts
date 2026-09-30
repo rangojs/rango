@@ -14,10 +14,7 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
-import {
-  getCacheExecScope,
-  type CacheExecScope,
-} from "../cache/cache-exec-scope.js";
+import { isInsideCacheExecScope } from "../cache/cache-exec-scope.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -865,8 +862,6 @@ interface LoaderBodyScope {
   loaderId?: string;
   /** The body scope this one was entered from (a ctx.use(Loader) chain). */
   parent?: LoaderBodyScope;
-  /** The "use cache" scope the body was entered in (assertNonCacheableReadAllowed). */
-  execScope?: CacheExecScope;
   /** The tags this execution records (#964, cache-tag.ts "Recorded-tag sets"). */
   tags?: Set<string>;
 }
@@ -896,81 +891,125 @@ export function isInsideCacheScope(): boolean {
 }
 
 /**
- * Throw if called during the ACTIVE background shell-capture render
- * (`_shellCaptureRun` true on the derived request context built by
- * shell-capture.ts). The captured shell is shared across every user hitting
- * the URL, so a request-scoped read here would bake one user's cookies,
- * headers, or per-request variables into markup served to others — same
- * hazard as the cache scopes above, at the document tier. DSL segment loaders
- * need no exemption: the live lane is masked (never executed) during capture,
- * and the bake lane is exactly what this guard exists for.
- *
- * It covers everything the capture waits for, not only synchronous handler
- * code: a promise the handler passes or pushes, an async server component,
- * and a loader the handler awaits (`await ctx.use(Loader)`) all run under the
- * capture context and all bake. The last one used to be exempt (the
- * consumption-lane rule, #672/#674): while a HIT re-ran handlers, a slot
- * handler's `ctx.use` of an identity loader rendered per visitor on the HIT.
- * Now every HIT replays the capture's copy, so the exemption would bake the
- * capturing request's identity into every visitor's page. The cache()
- * guards above keep it (a cache() HIT is a separate tier).
- *
- * Keys off `_shellCaptureRun`, which only the derived capture context sets:
- * the foreground render reads cookies/headers normally to serve the real user.
- *
- * Applies only to the READ surfaces (cookies(), headers(), a { cache: false }
- * variable, and the theme reads through tripShellCaptureGuard) whose values
- * become markup. Response directives
- * (invalidateClientCache(), keepClientCache()) stay callable: during capture
- * they are header effects on a discarded response.
- *
- * The throw can be caught by the code that made the read, so the guard also
- * flags the capture context; the capture refuses on the flag
- * (shell-capture.ts refuseOnCaptureGuard), nothing is stored, and every
- * request keeps getting the normal axis-1 render.
+ * What a refused identity read says (guardIdentityRead): its `verb`, and per
+ * refusing scope the text after "<surface> cannot be <verb> ...": why the
+ * value must not reach that scope, and what to do instead. `fix.warning` is
+ * the fix the capture's refusal warning gives (shell-capture.ts
+ * refuseOnCaptureGuard).
  */
-export function assertNotInsideShellCapture(
-  ctx: unknown,
-  fnName: string,
-): void {
-  if (!tripShellCaptureGuard(ctx, `${fnName}()`, REQUEST_READ_CAPTURE_FIX)) {
-    return;
-  }
-  const what =
-    fnName === "cookies"
-      ? "cookies"
-      : fnName === "headers"
-        ? "headers"
-        : "per-request variables";
-  throw new Error(
-    `${fnName}() cannot be called while capturing a shared shell ` +
-      `(ppr shell capture). The captured shell is served to every user ` +
-      `of this URL, so request-scoped data read here would leak one user's ` +
-      `${what} to others. Read it ` +
-      `inside a loader without ssr: false and consume it with useLoader, e.g. ` +
-      `createLoader(async () => getUser(cookies().get("session")?.value)). ` +
-      PPR_LANE_HINT,
-  );
+export interface IdentityReadWording {
+  /** "called" for a function (cookies(), ctx.get()), "read" for a property (the theme getters). */
+  verb: LoaderIdentityReadVerb;
+  fix: {
+    useCache: string;
+    cacheScope: string;
+    capture: string;
+    warning: string;
+  };
+  /**
+   * False when the read is recorded later, by the returned view's read
+   * methods (cookies(), headers()): a view taken outside a loader and read
+   * inside one still counts, and a cookie write alone is not a read.
+   */
+  record?: false;
 }
 
 /**
- * The fix the capture refusal warning (shell-capture.ts refuseOnCaptureGuard)
- * gives for a cookies()/headers()/{ cache: false } variable read. Recorded
- * with the trip (tripShellCaptureGuard), so each guarded read carries its own
- * fix; the theme reads (cookie-store.ts assertThemeReadAllowed) record theirs.
+ * The one guard every request-identity read goes through: cookies(),
+ * headers(), the theme reads (cookie-store.ts readGuardedTheme) and a
+ * non-cacheable ctx.get() (assertNonCacheableReadAllowed). Each surface keeps
+ * its own wording; the ladder and its exemptions are shared, so the surfaces
+ * refuse in exactly the same places:
+ *
+ * 1. A PPR shell capture (`ctx` is the capture's derived context,
+ *    `_shellCaptureRun`) trips first: the capture context is flagged (so a
+ *    caught throw still refuses the capture) and the read throws. The shell is
+ *    shared per host+URL, and every HIT replays what the capture read. There
+ *    is no loader-body exemption here: a bake-lane loader and a loader a
+ *    handler awaits both bake.
+ * 2. A "use cache" body throws: the key does not include the value, so the
+ *    first caller's would be stored and served to later callers. That holds
+ *    for a loader body entered inside the cached function too (`await
+ *    ctx.use(Loader)` there): its value is part of what the function returns.
+ *    Before, a non-cacheable ctx.get() there was exempt while cookies() threw,
+ *    and the entry stored the first request's value.
+ * 3. A cache() boundary throws, except inside a loader body
+ *    (isInsideCacheScope): a route cache() never stores loader values.
+ * 4. The read is allowed, and recorded on the current loader execution for a
+ *    loader cache() fill without key() (#972, recordLoaderIdentityRead)
+ *    unless `wording.record` defers it to the returned view.
+ *
+ * Outside these scopes every read is allowed, a live loader's included. The
+ * response directives (invalidateClientCache(), keepClientCache()) record
+ * nothing and are not captured reads: they take refuseInCacheScope alone.
  */
-const REQUEST_READ_CAPTURE_FIX: string =
-  "Read it in a loader without ssr: false and consume it with useLoader under " +
-  "loading() or an inline <Suspense> (a live hole). A promise the handler passes " +
-  "or pushes does not help: the capture waits for it.";
+export function guardIdentityRead(
+  ctx: unknown,
+  surface: string,
+  wording: IdentityReadWording,
+): void {
+  const { verb, fix } = wording;
+  if (tripShellCaptureGuard(ctx, surface, fix.warning)) {
+    throw new Error(
+      `${surface} cannot be ${verb} while capturing a shared shell ` +
+        `(ppr shell capture). ${fix.capture}`,
+    );
+  }
+  refuseInCacheScope(surface, wording);
+  if (wording.record !== false) recordLoaderIdentityRead(surface, verb);
+}
 
 /**
- * True when `ctx` is the active capture render (assertNotInsideShellCapture
- * above). On true the capture context is flagged with the read (`surface`,
- * e.g. "cookies()", "ctx.theme") and the fix the refusal warning gives, plus
- * the loader body (if any) that made the read, and the caller throws.
+ * Steps 2 and 3 of guardIdentityRead: throw when a "use cache" body or a
+ * cache() boundary would store what `surface` produces.
  */
-export function tripShellCaptureGuard(
+export function refuseInCacheScope(
+  surface: string,
+  { verb, fix }: IdentityReadWording,
+): void {
+  if (isInsideCacheExecScope()) {
+    throw new Error(
+      `${surface} cannot be ${verb} inside a "use cache" function. ${fix.useCache}`,
+    );
+  }
+  if (isInsideCacheScope()) {
+    throw new Error(
+      `${surface} cannot be ${verb} inside a cache() boundary. ${fix.cacheScope}`,
+    );
+  }
+}
+
+/**
+ * The capture refusal for a request-scoped read (cookies(), headers(), a
+ * { cache: false } variable): the message after the surface, and the fix the
+ * refusal warning gives. `what` names the data that would leak.
+ */
+export function requestReadCaptureFix(
+  what: string,
+): Pick<IdentityReadWording["fix"], "capture" | "warning"> {
+  return {
+    capture:
+      `The captured shell is served to every user of this URL, so ` +
+      `request-scoped data read here would leak one user's ${what} to ` +
+      `others. Read it inside a loader without ssr: false and consume it ` +
+      `with useLoader, e.g. createLoader(async () => ` +
+      `getUser(cookies().get("session")?.value)). ${PPR_LANE_HINT}`,
+    warning:
+      "Read it in a loader without ssr: false and consume it with useLoader " +
+      "under loading() or an inline <Suspense> (a live hole). A promise the " +
+      "handler passes or pushes does not help: the capture waits for it.",
+  };
+}
+
+/**
+ * True when `ctx` is the active capture render: the derived request context
+ * shell-capture.ts builds (`_shellCaptureRun`), which only the capture sets,
+ * so the foreground render reads identity normally to serve the real user.
+ * On true the capture context is flagged with the read (`surface`, e.g.
+ * "cookies()", "ctx.theme"), the fix the refusal warning gives, and the loader
+ * body (if any) that made the read, and the caller throws.
+ */
+function tripShellCaptureGuard(
   ctx: unknown,
   surface: string,
   fix: string,
@@ -993,50 +1032,40 @@ export function tripShellCaptureGuard(
   return true;
 }
 
+const NON_CACHEABLE_READ: IdentityReadWording = {
+  verb: "called",
+  fix: {
+    useCache:
+      "The variable was created with { cache: false } or set with " +
+      "{ cache: false }, and the cache key does not include its value, so " +
+      "the first caller's value would be served to later callers. Read it " +
+      "before calling the cached function and pass the value in as an " +
+      "argument so it becomes part of the cache key.",
+    cacheScope:
+      "The variable was created with { cache: false } or set with " +
+      "{ cache: false }, and its value would be stale on cache hit. Move the " +
+      "read outside the cached scope.",
+    ...requestReadCaptureFix("per-request variables"),
+  },
+};
+
 /**
  * Read guard for a non-cacheable variable (`createVar({ cache: false })` or a
- * `ctx.set(..., { cache: false })` write). Callers check isNonCacheable() first
- * so ordinary reads never reach the scope lookups.
- *
- * Throws during a PPR shell capture (`requestCtx` is the ambient request
- * context; assertNotInsideShellCapture): the shell is shared per host+URL.
- *
- * Throws inside a "use cache" body: the key does not include the value, so the
- * first caller's value would be stored and served to later callers (#925). A
- * loader body entered INSIDE the cached function is exempt, the same baked-copy
- * trade isInsideCacheScope() makes for cache(). A cached function called FROM a
- * loader is not: the loader re-runs, the cached body does not. The body scope
- * records the exec scope it was entered in, so the exemption holds only while
- * that is still the innermost one.
+ * `ctx.set(..., { cache: false })` write), through guardIdentityRead.
+ * Callers check isNonCacheable() first so ordinary reads never reach the
+ * scope lookups. `requestCtx` is the ambient request context, whose capture
+ * flag the guard reads.
  */
 export function assertNonCacheableReadAllowed(
   keyOrVar: string | ContextVar<unknown>,
   requestCtx?: unknown,
 ): void {
-  // A shell capture bakes what it reads into a page every visitor gets.
-  assertNotInsideShellCapture(requestCtx, "ctx.get");
-  const execScope = getCacheExecScope();
-  const variable = ` for a non-cacheable variable${typeof keyOrVar === "string" ? ` "${keyOrVar}"` : ""}`;
-  if (
-    execScope !== undefined &&
-    loaderBodyScopeALS.getStore()?.execScope !== execScope
-  ) {
-    throw new Error(
-      `ctx.get()${variable} cannot be called inside a "use cache" function. ` +
-        `The variable was created with { cache: false } or set with { cache: false }, ` +
-        `and the cache key does not include its value, so the first caller's value ` +
-        `would be served to later callers. Read it before calling the cached function ` +
-        `and pass the value in as an argument so it becomes part of the cache key.`,
-    );
-  }
-  if (isInsideCacheScope()) {
-    throw new Error(
-      `ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary. ` +
-        `The variable was created with { cache: false } or set with { cache: false }, ` +
-        `and its value would be stale on cache hit. Move the read outside the cached scope.`,
-    );
-  }
-  recordLoaderIdentityRead(`ctx.get()${variable}`);
+  const name = typeof keyOrVar === "string" ? ` "${keyOrVar}"` : "";
+  guardIdentityRead(
+    requestCtx,
+    `ctx.get() for a non-cacheable variable${name}`,
+    NON_CACHEABLE_READ,
+  );
 }
 
 /** How the identity error words a read: a function call or a property read. */
@@ -1293,10 +1322,12 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
 
 /**
  * Run `fn` inside a loader BODY scope. Marks loader-function execution for the
- * cache-purity guard only (isInsideCacheScope), WITHOUT affecting
+ * cache() purity guard only (isInsideCacheScope), WITHOUT affecting
  * isInsideLoaderScope()/rendered() gating. Applied to every loader body (DSL
  * and handler-invoked via ctx.use) so request-scoped reads inside a loader
- * never trip the cache-scope guards — loaders always run fresh.
+ * never trip the cache() guard — a route cache() never stores loader values.
+ * A "use cache" body the loader was entered in still refuses them
+ * (guardIdentityRead).
  */
 export function runInsideLoaderBodyScope<T>(
   fn: () => T,
@@ -1308,7 +1339,6 @@ export function runInsideLoaderBodyScope<T>(
       active: true,
       loaderId,
       parent: loaderBodyScopeALS.getStore(),
-      execScope: getCacheExecScope(),
       tags,
     },
     fn,
@@ -1323,13 +1353,31 @@ export function getLoaderBodyTags(): Set<string> | undefined {
 /**
  * The $$id of the loader whose body is currently executing, or undefined
  * outside any loader body. Used by the shell-capture identity guard
- * (assertNotInsideShellCapture) so its refusal warning can name the loader that read
+ * (guardIdentityRead) so its refusal warning can name the loader that read
  * cookies()/headers() instead of blaming a lane it cannot see — the old
  * hardcoded "bake-lane loader" text misled a live-lane debugging session
  * (issue #672, secondary).
  */
 export function getCurrentLoaderBodyId(): string | undefined {
   return loaderBodyScopeALS.getStore()?.loaderId;
+}
+
+/**
+ * The innermost loader body running here, or around it through the
+ * ctx.use(Loader) chain, whose id `match` accepts (HandleStore.push, the
+ * shell capture's push funnel). A body `stop` accepts, and `match` does not,
+ * ends the walk: nothing around it is returned.
+ */
+export function findEnclosingLoaderBody(
+  match: (loaderId: string) => boolean,
+  stop?: (loaderId: string) => boolean,
+): string | undefined {
+  for (let s = loaderBodyScopeALS.getStore(); s; s = s.parent) {
+    if (s.loaderId === undefined) continue;
+    if (match(s.loaderId)) return s.loaderId;
+    if (stop?.(s.loaderId)) return undefined;
+  }
+  return undefined;
 }
 
 /**

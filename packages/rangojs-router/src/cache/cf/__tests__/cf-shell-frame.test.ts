@@ -65,9 +65,9 @@ describe("cf-shell-frame", () => {
   const prelude = bytesOf("<html><body>Grüße, 日本語 — shell</body></html>");
   const records: ShellSnapshotRecord[] = [
     {
-      family: "item",
-      key: "use-cache:ключ",
-      value: { value: "Größe 日本" },
+      family: "loader",
+      key: "M0L0D0.ключ",
+      value: { value: "Größe 日本", holes: 0, runs: 0 },
     },
   ];
   const snapshot = encodeShellSnapshot(records)!;

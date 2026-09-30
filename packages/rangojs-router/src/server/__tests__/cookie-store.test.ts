@@ -18,6 +18,7 @@ import {
   type ThemeReadSurface,
 } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
+import { createVar } from "../../context-var.js";
 import {
   RangoContext,
   latchCachedHeaderScope,
@@ -526,7 +527,7 @@ describe("shell-capture guards", () => {
    * Run `fn` inside a request context with the shell-capture flag armed,
    * mirroring what the shell-cache middleware sets on the background capture
    * re-run. The captured shell is shared per URL, so request-scoped reads
-   * must throw here (see assertNotInsideShellCapture in cookie-store.ts).
+   * must throw here (see guardIdentityRead in server/context.ts).
    */
   function withShellCaptureContext(fn: () => void) {
     const ctx = createRequestContext({
@@ -674,13 +675,13 @@ describe("cache() DSL scope guards", () => {
   });
 });
 
-describe("theme read guards (#971)", () => {
+describe("identity read guards: cookies(), headers(), the theme reads and a non-cacheable ctx.get() (#971)", () => {
   /** A theme-enabled request whose visitor has theme=dark. */
   function themedRequestContext(themed = true) {
     return createRequestContext({
       env: {},
       request: new Request("https://example.com", {
-        headers: { Cookie: "theme=dark; session=abc" },
+        headers: { Cookie: "theme=dark; session=abc", "x-probe": "probe" },
       }),
       url: new URL("https://example.com"),
       variables: {},
@@ -723,34 +724,169 @@ describe("theme read guards (#971)", () => {
 
   type Enter = (fn: () => void) => void;
   type Refusal = "use cache" | "cache()" | "capture";
-  /** The message each refusal gives, ending in its fix. */
-  const REFUSAL_TEXT: Record<Refusal, (surface: string) => string[]> = {
-    "use cache": (s) => [
-      `${s} cannot be read inside a "use cache" function`,
-      "pass it in as an argument",
-    ],
-    "cache()": (s) => [
-      `${s} cannot be read inside a cache() boundary`,
-      "useTheme()",
-      "live loader (no ssr: false)",
-    ],
-    capture: (s) => [
-      `${s} cannot be read while capturing a shared shell`,
-      "useTheme()",
-    ],
-  };
+
+  const Tenant = createVar<string>({ cache: false });
+
   /**
-   * Each scope cookies() refuses or exempts: [label, the refusal or
-   * "allowed", capture render, enter, the loader body a capture trip names].
+   * Every identity-read surface guardIdentityRead guards: its reads, the
+   * value each returns where it is allowed, and the text each refusal gives
+   * (the surface's own wording, ending in its fix). `fix` is what a capture
+   * trip records for the refusal warning.
+   */
+  const SURFACES: Array<{
+    surface: string;
+    reads: Array<[string, () => unknown]>;
+    value: unknown;
+    text: Record<Refusal, string[]>;
+    fix: string;
+  }> = [
+    {
+      surface: "cookies()",
+      reads: [["cookies()", () => cookies().get("theme")?.value]],
+      value: "dark",
+      text: {
+        "use cache": [
+          'cookies() cannot be called inside a "use cache" function',
+          "pass it as an argument",
+        ],
+        "cache()": [
+          "cookies() cannot be called inside a cache() boundary",
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          "cookies() cannot be called while capturing a shared shell",
+          "leak one user's cookies",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    {
+      surface: "headers()",
+      reads: [["headers()", () => headers().get("x-probe")]],
+      value: "probe",
+      text: {
+        "use cache": [
+          'headers() cannot be called inside a "use cache" function',
+          "pass it as an argument",
+        ],
+        "cache()": [
+          "headers() cannot be called inside a cache() boundary",
+          "Read it inside a loader instead",
+        ],
+        capture: [
+          "headers() cannot be called while capturing a shared shell",
+          "leak one user's headers",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    ...(["ctx.theme", "getRequestContext().theme"] as const).map((surface) => ({
+      surface,
+      reads: READS.filter(([s]) => s === surface).map(
+        ([s, read], i): [string, () => unknown] => [`${s} #${i}`, read],
+      ),
+      value: "dark",
+      text: {
+        "use cache": [
+          `${surface} cannot be read inside a "use cache" function`,
+          "pass it in as an argument",
+        ],
+        "cache()": [
+          `${surface} cannot be read inside a cache() boundary`,
+          "useTheme()",
+          "live loader (no ssr: false)",
+        ],
+        capture: [
+          `${surface} cannot be read while capturing a shared shell`,
+          "useTheme()",
+        ],
+      },
+      fix: "useTheme()",
+    })),
+    {
+      surface: "ctx.get() for a non-cacheable variable",
+      reads: [
+        ["getRequestContext().get", () => getRequestContext().get(Tenant)],
+        ["handler ctx.get", () => handlerCtx().get(Tenant)],
+      ],
+      value: "t1",
+      text: {
+        "use cache": [
+          'ctx.get() for a non-cacheable variable cannot be called inside a "use cache" function',
+          "pass the value in as an argument",
+        ],
+        "cache()": [
+          "ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary",
+          "Move the read outside the cached scope",
+        ],
+        capture: [
+          "ctx.get() for a non-cacheable variable cannot be called while capturing a shared shell",
+          "leak one user's per-request variables",
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+    {
+      surface: 'ctx.get() for a non-cacheable variable "site"',
+      reads: [
+        ["getRequestContext().get", () => getRequestContext().get("site")],
+      ],
+      value: "s1",
+      text: {
+        "use cache": [
+          'ctx.get() for a non-cacheable variable "site" cannot be called inside a "use cache" function',
+        ],
+        "cache()": [
+          'ctx.get() for a non-cacheable variable "site" cannot be called inside a cache() boundary',
+        ],
+        capture: [
+          'ctx.get() for a non-cacheable variable "site" cannot be called while capturing a shared shell',
+        ],
+      },
+      fix: "a loader without ssr: false",
+    },
+  ];
+
+  /**
+   * Every scope the ladder decides: [label, the refusal or "allowed",
+   * capture render, enter, the loader body a capture trip names].
    */
   const SCOPES: Array<[string, Refusal | "allowed", boolean, Enter, string?]> =
     [
       ["no shared scope", "allowed", false, (fn) => fn()],
       [
+        "a loader body outside any cache scope",
+        "allowed",
+        false,
+        (fn) => runInsideLoaderBodyScope(fn, "L"),
+      ],
+      [
         'a "use cache" body',
         "use cache",
         false,
         (fn) => runWithCacheExecScope(fn),
+      ],
+      // Its value is part of what the function returns, stored in the entry
+      // under a key that does not include what it read. A non-cacheable
+      // ctx.get() was exempt here before, and the entry kept the first
+      // request's value.
+      [
+        'a loader body entered inside a "use cache" function',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(() => runInsideLoaderBodyScope(fn, "L")),
+      ],
+      [
+        'a DSL loader inside a "use cache" function',
+        "use cache",
+        false,
+        (fn) => runWithCacheExecScope(() => runInsideLoaderScope(fn)),
+      ],
+      [
+        'a "use cache" function a loader body calls',
+        "use cache",
+        false,
+        (fn) => runInsideLoaderBodyScope(() => runWithCacheExecScope(fn), "L"),
       ],
       ["a cache() boundary", "cache()", false, inCacheScope],
       [
@@ -782,6 +918,14 @@ describe("theme read guards (#971)", () => {
         (fn) => runInsideLoaderBodyScope(fn, "L"),
         "L",
       ],
+      // The capture trips first: a caught throw still refuses the capture.
+      [
+        'a "use cache" body at capture',
+        "capture",
+        true,
+        (fn) => runWithCacheExecScope(fn),
+      ],
+      ["a cache() boundary at capture", "capture", true, inCacheScope],
     ];
 
   /** The error `fn` throws, or "allowed". */
@@ -794,37 +938,39 @@ describe("theme read guards (#971)", () => {
     }
   }
 
-  it.each(SCOPES)(
-    "in %s, every theme read is refused exactly where cookies() is",
+  describe.each(SCOPES)(
+    "in %s, every identity read gets the same answer",
     (_label, expected, capture, enter, loaderId) => {
-      const reqCtx = themedRequestContext();
-      if (capture) (reqCtx as any)._shellCaptureRun = true;
-      runWithRequestContext(reqCtx, () =>
-        enter(() => {
-          expect(readOutcome(() => cookies().get("theme")) !== "allowed").toBe(
-            expected !== "allowed",
-          );
-          for (const [surface, read] of READS) {
-            reqCtx._shellCaptureGuardTripped = undefined;
-            // The ctx is created inside the scope: creating it reads nothing.
-            if (expected === "allowed") {
-              expect(read()).toBe("dark");
-              continue;
+      it.each(SURFACES)("$surface", ({ surface, reads, value, text, fix }) => {
+        const reqCtx = themedRequestContext();
+        reqCtx.set(Tenant, "t1");
+        reqCtx.set("site", "s1", { cache: false });
+        if (capture) (reqCtx as any)._shellCaptureRun = true;
+        runWithRequestContext(reqCtx, () =>
+          enter(() => {
+            for (const [, read] of reads) {
+              reqCtx._shellCaptureGuardTripped = undefined;
+              // The ctx is created inside the scope: creating it reads nothing.
+              if (expected === "allowed") {
+                expect(read()).toBe(value);
+                continue;
+              }
+              const outcome = readOutcome(read);
+              expect(outcome).toBeInstanceOf(Error);
+              for (const part of text[expected]) {
+                expect((outcome as Error).message).toContain(part);
+              }
+              if (capture) {
+                expect(reqCtx._shellCaptureGuardTripped).toEqual({
+                  surface,
+                  fix: expect.stringContaining(fix),
+                });
+                expect(reqCtx._shellCaptureGuardTrippedLoaderId).toBe(loaderId);
+              }
             }
-            const outcome = readOutcome(read);
-            for (const text of REFUSAL_TEXT[expected](surface)) {
-              expect((outcome as Error).message).toContain(text);
-            }
-            if (capture) {
-              expect(reqCtx._shellCaptureGuardTripped).toEqual({
-                surface,
-                fix: expect.stringContaining("useTheme()"),
-              });
-              expect(reqCtx._shellCaptureGuardTrippedLoaderId).toBe(loaderId);
-            }
-          }
-        }),
-      );
+          }),
+        );
+      });
     },
   );
 

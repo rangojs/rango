@@ -113,12 +113,26 @@ global middleware
   (#972).
 - A PPR shell HIT that replays the handler layer restores the settled pushes
   of each loader body the capture ran (an `ssr: false` loader's own and those
-  of the loaders it awaits) from the shell record through the same
-  `pushReplayed` path, claiming each loader. A promise-free `ssr: false`
-  loader does not run on the HIT, so the restored pushes are the only copy; a
-  loader that does run (a hole-carrying `ssr: false` loader, a live loader
-  awaiting the same loader) replaces its restored pushes in place, and its own
-  `cache()` HIT does not replay them a second time. Owned values a capture
+  of the loaders it awaits) from the shell record. A bake-lane owner's pushes
+  go through `pushRestored` and stand, unclaimed: the prelude rendered them.
+  A promise-free `ssr: false` loader does not run on the HIT, so they are the
+  only copy; a loader that does run (a hole-carrying `ssr: false` loader)
+  reads the store, and its settled pushes, and those made anywhere inside its
+  body (a `"use cache"` hit replaying a dependency's push), are dropped, while
+  its deferred ones are added; its own `cache()` HIT replays the same way. A
+  loader the route also runs on the live lane is a hole: its pushes are
+  restored through `pushReplayed` and claimed, and its live run replaces them
+  in place (#936), even when a running bake-lane loader awaits it: a hole's
+  body ends the search for an enclosing restored loader. A dependency the
+  route registers on neither lane is credited at capture to the first
+  registered loader around it: under a live-lane loader its pushes are that
+  hole's and stay live; run only under a bake-lane loader, they are restored
+  and stand. A hole whose run settles without replacing its replayed values
+  drops them (`settleLoaderRun`); a bake-lane loader's stay, as its pin
+  does. A hole's own `cache()` HIT delivers the pushes the entry recorded
+  (none when it recorded none) in place of
+  the shell's copies (`redeliverReplays`), which the restore leaves
+  unclaimed for it. Owned values a capture
   restores from a route `cache()` record keep their owner in the shell record
   too. A PPR partial replay whose doc record hits serves the same loader pins
   as the document HIT, by each loader's own `ssr: false` flag
@@ -237,10 +251,11 @@ global middleware
   for all of it before it freezes anything (`settleCaptureRecord` in
   `src/rsc/shell-capture.ts`), bounded by the one `ppr.captureTimeout`
   deadline; output that does not settle in time stores no shell. The capture
-  guard (`assertNotInsideShellCapture` / `tripShellCaptureGuard` in
-  `src/server/context.ts`: `cookies()`, `headers()`, a `{ cache: false }`
-  variable read, and the theme reads `ctx.theme` / `getRequestContext().theme`
-  through `assertThemeReadAllowed`, #971) covers everything the
+  guard (the first step of `guardIdentityRead` in `src/server/context.ts`,
+  the one guard every identity read goes through: `cookies()`, `headers()`, a
+  `{ cache: false }` variable read, and the theme reads `ctx.theme` /
+  `getRequestContext().theme` through `readGuardedTheme`, #971) covers
+  everything the
   capture waits for — handler and render code, bake-lane segment loaders, and
   handler-invoked loader bodies (no exemption on this tier; the
   consumption-lane rule below). `ctx.dynamic()` called anywhere the capture
@@ -371,10 +386,12 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
     for a loader also registered live-lane on the route: the handler's own
     read bakes, and only the registration's `useLoader` read stays a hole.
   - The tiers split on identity reads (`cookies()`, `headers()`, a
-    `{ cache: false }` variable) inside that loader. `cache()` and
-    `"use cache"` still PERMIT them (`isInsideCacheScope` exempts any loader
-    body): the value bakes as a shared copy — a documented footgun. A PPR
-    capture REFUSES them (`assertNotInsideShellCapture` has no loader-body
+    `{ cache: false }` variable) inside that loader. `cache()` still PERMITS
+    them (`isInsideCacheScope` exempts any loader body): the value bakes as a
+    shared copy — a documented footgun. `"use cache"` REFUSES them: a loader
+    body entered inside the cached function runs in its exec scope, and its
+    value is part of what the function returns. A PPR capture REFUSES them
+    too (`guardIdentityRead` trips the capture before any loader-body
     exemption), so nothing is stored and the route serves axis 1. Why the
     split: while a PPR HIT re-ran handlers, a slot handler's `ctx.use` of an
     identity loader rendered per visitor on the HIT, so exempting it was safe.
@@ -782,16 +799,30 @@ stored value is non-cacheable.
 cache-safety metadata alongside the value but does not throw. When `ctx.get()`
 is called inside a cache scope (detected via ALS — same mechanism as the
 existing `"use cache"` guards), it checks the stored metadata and throws if
-the value is non-cacheable. Both scopes count: a `cache()` boundary
-(`isInsideCacheScope()`) and a `"use cache"` body (the exec scope in
-`cache/cache-exec-scope.ts`). One guard, `assertNonCacheableReadAllowed` in
-`server/context.ts`, serves the request, handler and response-route `ctx.get()`,
-and runs only after `isNonCacheable()` matches. It also throws during a PPR
-shell capture (it calls `assertNotInsideShellCapture` with the ambient request
-context): a non-cacheable read anywhere the capture waits — a handler, a
-promise it passes or pushes, an async server component, a bake-lane loader, a
-loader a handler awaits — refuses the capture. A cacheable (normal) variable
-is not guarded there and bakes with the capturing request's value: shell
+the value is non-cacheable. The guard is `assertNonCacheableReadAllowed` in
+`server/context.ts`, a one-line wrapper over `guardIdentityRead`, the same
+guard `cookies()`, `headers()` and the theme reads go through, so a
+non-cacheable read refuses in exactly the places they do. The request,
+handler, loader and response-route `ctx.get()` call it once `isNonCacheable()`
+matches (a middleware `ctx.get()` only inside a `"use cache"` body). In order:
+
+- During a PPR shell capture it flags the capture context (read from the
+  ambient request context) and throws, so a caught throw still refuses the
+  capture. A non-cacheable read anywhere the capture waits — a handler, a
+  promise it passes or pushes, an async server component, a bake-lane loader,
+  a loader a handler awaits — refuses the capture. There is no loader-body
+  exemption here.
+- Inside a `"use cache"` body (the exec scope in `cache/cache-exec-scope.ts`)
+  it throws, and that includes a loader body entered inside the cached
+  function (`await ctx.use(Loader)` there): the loader's value is part of
+  what the function returns, and the cache key does not include its value.
+  Before, that loader body was exempt while `cookies()` threw there, and the
+  entry stored the first request's value.
+- Inside a `cache()` boundary (`isInsideCacheScope()`) it throws, except
+  inside a loader body: a route `cache()` never stores loader values.
+
+A cacheable (normal) variable is not guarded at capture and bakes with the
+capturing request's value: shell
 material is shared per host+URL and request partition (the route's
 `cache({ key })` or the store's `keyGenerator`, `resolveShellPartition`).
 
@@ -846,11 +877,12 @@ DSL loaders (registered with `loader()`) and handler-called loaders
   consume it with `useLoader()` in a client component instead** (a fresh,
   never-cached segment). Non-cacheable variable reads in the handler
   itself still throw via the normal read guard. Response-level side
-  effects in handler code throw normally. A PPR shell capture is stricter
-  than `cache()` here: its guard (`assertNotInsideShellCapture`) has no
-  loader-body exemption, so the request-scoped read inside the
-  handler-awaited loader throws and refuses the capture (the route serves
-  axis 1) instead of baking the leak.
+  effects in handler code throw normally. A PPR shell capture and a
+  `"use cache"` body are stricter than `cache()` here: `guardIdentityRead`
+  has no loader-body exemption in either, so the request-scoped read inside
+  the handler-awaited loader throws instead of baking the leak. A capture
+  refuses (the route serves axis 1); a `"use cache"` function stores
+  nothing.
   Note: when a loader is registered via both DSL `loader()` and called
   via `ctx.use()` in the same route, the DSL registration starts the
   loader in loader scope before the handler runs. The handler's

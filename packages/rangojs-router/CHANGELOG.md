@@ -137,6 +137,97 @@ tags until they expire: on a store that doesn't version its keys
 (`VercelCacheStore` without `version`, a custom store), `updateTag(outerTag)`
 won't evict them, so purge those records or set `version` when you deploy.
 
+### Breaking: a PPR hole reads the cache store, never the shell's copy of a value ([#998](https://github.com/rangojs/rango/pull/998))
+
+A hole is a live-lane loader (no `ssr: false`) read under `loading()` or an
+inline `<Suspense>`, or a promise nested in an `ssr: false` loader's return.
+It is dynamic or has its own cache; it never reads the shell snapshot.
+
+Before, when an `ssr: false` loader read a `"use cache"` (or loader
+`cache()`) entry during the capture, the shell stored that entry and a HIT
+served it to every reader of the key, holes included. A live loader reading
+the same `"use cache"` key, or a promise in the `ssr: false` loader's own
+return calling it, showed the capture's value for the shell's whole
+lifetime: past the entry's own ttl/swr, and past a `revalidateTag()` the same
+request made.
+
+Now the shell stores its recorded handler output and the `ssr: false`
+loaders' baked containers, and nothing else. Every cache read on a HIT goes
+to the store:
+
+- a hole reading a key an `ssr: false` loader also read shows the store's
+  current value once the entry refreshes, while the baked container keeps
+  the captured one;
+- an `ssr: false` loader that runs on a HIT reads the store too. One whose
+  return holds promises runs on every HIT. So does every promise-free one on
+  a page whose capture saw a loader push it could not record (a deferred
+  push, or one holding a promise): that flag is per capture, so each such
+  loader body runs in the background on each HIT, and its `"use cache"` and
+  `cache()` reads are now real store reads there (a Cache API or KV read on
+  `CFCacheStore`, which can start a background refresh of a stale entry).
+  Its baked container paths still come from the shell, and so do its settled
+  handle pushes, those replayed inside its body included: the prelude
+  rendered them, so they stand and the settled pushes of the run are
+  dropped. Its nested promises and deferred pushes carry the run's values.
+- a loader the route registers on the live lane is a hole even when an
+  `ssr: false` loader awaited it at capture, or awaits it on the HIT: its
+  data and its handle pushes, and those of the loaders it awaits, carry its
+  run's values on a HIT and on a client navigation, also when a
+  recapture's `"use cache"` hit replayed them. A run that throws, or makes
+  no push, shows none of the capture's pushes once its run ends; a hole
+  slower than the handler barrier shows the shell's copy in the first
+  snapshot until then. A hole with its own loader `cache()` that hits shows
+  the pushes that entry recorded, none if it recorded none, matching the
+  data it serves.
+- a dependency the route does not register, awaited at capture by an
+  `ssr: false` loader outside any live loader, is on neither lane: its
+  settled handle pushes come from the shell on a HIT, as the prelude shows
+  them, even when a live loader also awaits it, while its data carries the
+  run's value. To keep its pushes live, declare it as its own `loader()` on
+  the route.
+
+If a hole needs a value that stays put, give it its own cache (a
+`"use cache"` profile, a loader `cache()`), or make it shell material (a
+promise-free `ssr: false` loader).
+
+For custom stores and diagnostics: `ShellCacheEntry.snapshot` holds only
+`"segment"` and `"loader"` records (the `"item"` member of the record-family
+union is gone), so shell entries are smaller, and the HIT tail's
+`ppr-tail` Server-Timing prints `records=segment:1` with no `pruned=item:N`
+(`pruned=` now appears only when a navigation-only entry drops its loader
+pins).
+
+### Breaking: one identity-read guard; a loader body inside `"use cache"` refuses a non-cacheable `ctx.get()` ([#998](https://github.com/rangojs/rango/pull/998))
+
+`cookies()`, `headers()`, the theme reads (`ctx.theme`,
+`getRequestContext().theme`) and `ctx.get()` of a `{ cache: false }`
+variable now go through one guard and refuse in the same places.
+
+- A loader body entered inside a `"use cache"` function
+  (`await ctx.use(Loader)` in the cached body) now throws on a non-cacheable
+  `ctx.get()`, as it already did on `cookies()`, `headers()` and a theme
+  read. Before, the read was allowed and the loader's value was stored in the
+  `"use cache"` entry, under a key that did not include it, so the next
+  caller got the first caller's value. Read the variable before calling the
+  cached function and pass it in as an argument.
+- During a PPR shell capture, an identity read refuses the capture first,
+  inside a `"use cache"` body or a `cache()` boundary too, and throws the
+  capture's error. Before, `cookies()`, `headers()` and a theme read there
+  threw the `"use cache"` or `cache()` error without flagging the capture.
+- A non-cacheable `ctx.get()` refused inside a `cache()` boundary now names
+  a string key in its message, as the `"use cache"` refusal already did.
+- A non-cacheable `ctx.get()` refused during a PPR capture now throws
+  `ctx.get() for a non-cacheable variable "<key>" cannot be called while
+capturing a shared shell` (the key named for a string key), where it threw
+  `ctx.get() cannot be called while capturing a shared shell`, and the
+  capture's refusal warning names the same surface. Update any test that
+  matches the old text.
+
+Unchanged: loader bodies may read identity under a route `cache()`, a live
+loader reads it freely, `ctx.dynamic()` still opts a render out, and
+`invalidateClientCache()`/`keepClientCache()` still only refuse inside a
+cached scope and record nothing.
+
 ### Breaking: PPR shell types lose fields nothing produced, and custom stores round-trip every entry field ([#988](https://github.com/rangojs/rango/pull/988))
 
 These public types change. What they drop, the built-in paths never produced.
@@ -270,6 +361,23 @@ Before, the harness dropped `state`.
 
 ### Fixes
 
+- A deferred handle push from an `ssr: false` loader with its own `cache()`
+  now reaches a PPR shell HIT. When the loader's `cache()` entry missed at
+  capture, the shell recorded only its settled pushes and asked for the
+  loader to run on a HIT; when that entry then hit, the shell's restore had
+  already claimed the loader, so the entry's replay was skipped and the
+  deferred push was missing from the HIT's hydration payload while the
+  prelude showed it. The replay now runs: its settled values give way to the
+  shell's, and its deferred ones are added
+  ([#998](https://github.com/rangojs/rango/pull/998)).
+- A PPR shell HIT or partial navigation replay no longer adds its
+  per-request overlay store to the handler's registry of explicit
+  `cache({ store })` stores. Each one added an entry, so every
+  `updateTag()`/`revalidateTag()` called the app store's `invalidateTags()`
+  once more per HIT served, and past the registry's cap of 64 the oldest
+  entries, a `cache({ store })` store among them, were pushed out and an
+  invalidation stopped reaching them until they were resolved again
+  ([#998](https://github.com/rangojs/rango/pull/998)).
 - A document the document cache stores no longer hands the first visitor's
   theme to `useTheme()` for everyone else. The stored document carried
   `initialTheme` from the theme cookie of the visitor who rendered it, so a

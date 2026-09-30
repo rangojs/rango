@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { createHandleStore } from "../handle-store";
+import { createElement } from "react";
 import { runInsideLoaderBodyScope, runInsideLoaderScope } from "../context.js";
+import {
+  holdsThenable,
+  maskNestedContainerThenables,
+} from "../../router/segment-resolution/mask-nested.js";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -515,5 +520,360 @@ describe("HandleStore.pushReplayed (loader-cache HIT replay)", () => {
 
     expect(yields.at(0)).toEqual(["dep-cached"]);
     expect(yields.at(-1)).toEqual(["dep-live"]);
+  });
+});
+
+describe("HandleStore.pushRestored (a document HIT's record copies stand)", () => {
+  const bodyPush = (
+    store: ReturnType<typeof createHandleStore>,
+    id: string,
+    segmentId: string,
+    value: unknown,
+  ) =>
+    runInsideLoaderScope(() =>
+      runInsideLoaderBodyScope(
+        () => store.push("crumbs", segmentId, value),
+        id,
+      ),
+    );
+
+  it("drops the loader's settled pushes on the HIT: the restored copies stand, in place", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "captured-a", "Bake");
+    store.push("crumbs", "seg1", "handler");
+    store.pushRestored("crumbs", "seg1", "captured-b", "Bake");
+
+    bodyPush(store, "Bake", "seg1", "live-a");
+    bodyPush(store, "Bake", "seg1", { label: "live-b" });
+    // A settled push to a handle or segment the record does not hold is
+    // dropped too: the prelude did not render it.
+    bodyPush(store, "Bake", "seg2", "live-extra");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "captured-a",
+      "handler",
+      "captured-b",
+    ]);
+    expect(store.getDataForSegment("seg2")).toEqual({});
+  });
+
+  it("keeps a thenable push, and one holding a nested thenable, in the loader's push order", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "captured-a", "Bake");
+    store.pushRestored("crumbs", "seg1", "captured-b", "Bake");
+    store.push("crumbs", "seg1", "handler");
+    const deferred = Promise.resolve("deferred");
+    const nested = { later: Promise.resolve("nested") };
+
+    // The run pushes: deferred, a, nested, b, deferred-tail.
+    bodyPush(store, "Bake", "seg1", deferred);
+    bodyPush(store, "Bake", "seg1", "live-a");
+    bodyPush(store, "Bake", "seg1", nested);
+    bodyPush(store, "Bake", "seg1", "live-b");
+    const tail = Promise.resolve("tail");
+    bodyPush(store, "Bake", "seg1", tail);
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      deferred,
+      "captured-a",
+      nested,
+      "captured-b",
+      tail,
+      "handler",
+    ]);
+  });
+
+  it("applies the same rule to a replay of the loader's cache() entry: settled values give way, deferred ones are added", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "captured", "Bake");
+    const deferred = Promise.resolve("deferred");
+
+    store.pushReplayed("crumbs", "seg1", "entry-settled", "Bake");
+    store.pushReplayed("crumbs", "seg1", deferred, "Bake");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "captured",
+      deferred,
+    ]);
+    // A live run after the replay replaces the replayed deferred push.
+    const live = Promise.resolve("live-deferred");
+    bodyPush(store, "Bake", "seg1", "live-settled");
+    bodyPush(store, "Bake", "seg1", live);
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["captured", live]);
+  });
+
+  it("leaves other loaders and handler pushes alone", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "captured", "Bake");
+
+    bodyPush(store, "Other", "seg1", "other-live");
+    store.push("crumbs", "seg1", "handler-late");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "captured",
+      "other-live",
+      "handler-late",
+    ]);
+  });
+
+  // The capture credits a push to the innermost loader body first, then to
+  // the replayed loader (shell-capture.ts deriveShellCaptureContext): a
+  // "use cache" HIT inside Outer's body recorded Dep's push under Outer.
+  it("a replay made inside a restored loader's body is that loader's record copy: its settled value is dropped", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "dep-captured", "Outer");
+
+    runInsideLoaderBodyScope(
+      () => store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep"),
+      "Outer",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["dep-captured"]);
+  });
+
+  it("a push made in a loader body entered from a restored loader's body is that loader's too", () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "dep-captured", "Outer");
+
+    runInsideLoaderBodyScope(
+      () =>
+        runInsideLoaderBodyScope(
+          () => store.push("crumbs", "seg1", "dep-live"),
+          "Dep",
+        ),
+      "Outer",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["dep-captured"]);
+  });
+
+  // A loader the route runs live is a hole: its body ends the walk for a
+  // restored loader, whether or not it has a replayed push to replace.
+  it("a push made in a live-lane loader's body, or in an unrestored body it entered, is not counted for a restored loader around it", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["LiveDep"]));
+    store.pushRestored("crumbs", "seg1", "outer-captured", "Outer");
+
+    runInsideLoaderBodyScope(
+      () =>
+        runInsideLoaderBodyScope(() => {
+          store.push("crumbs", "seg1", "live-dep");
+          runInsideLoaderBodyScope(
+            () => store.push("crumbs", "seg1", "inner-dep"),
+            "Dep",
+          );
+        }, "LiveDep"),
+      "Outer",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "outer-captured",
+      "live-dep",
+      "inner-dep",
+    ]);
+  });
+
+  it("a replay of a live-lane loader's push made inside a restored loader's body stays", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["LiveDep"]));
+    store.pushRestored("crumbs", "seg1", "outer-captured", "Outer");
+
+    runInsideLoaderBodyScope(
+      () => store.pushReplayed("crumbs", "seg1", "live-dep-cached", "LiveDep"),
+      "Outer",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "outer-captured",
+      "live-dep-cached",
+    ]);
+  });
+});
+
+describe("HandleStore.pushReplayed inside a replayed loader's body (navigation replay)", () => {
+  it("a replay made inside the body replaces that body's replayed copy, as the capture credited it", () => {
+    const store = createHandleStore();
+    store.pushReplayed("crumbs", "seg1", "dep-captured", "Outer");
+    store.push("crumbs", "seg1", "handler");
+
+    runInsideLoaderBodyScope(
+      () => store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep"),
+      "Outer",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "dep-cached",
+      "handler",
+    ]);
+  });
+
+  // The capture credits a push under a live-lane loader's body to that
+  // loader: its dependency, which has no replayed copy of its own, replaces
+  // the loader's.
+  it("a push in a body the replayed loader entered, with no replayed copy of its own, replaces the loader's copy", () => {
+    const store = createHandleStore();
+    store.pushReplayed("crumbs", "seg1", "inner-captured", "Live");
+    store.push("crumbs", "seg1", "handler");
+
+    runInsideLoaderBodyScope(
+      () =>
+        runInsideLoaderBodyScope(
+          () => store.push("crumbs", "seg1", "inner-live"),
+          "InnerDep",
+        ),
+      "Live",
+    );
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "inner-live",
+      "handler",
+    ]);
+  });
+});
+
+describe("HandleStore.settleLoaderRun (a replayed loader's run ended)", () => {
+  it("drops the copies a live-lane loader's run did not replace", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Live"]));
+    store.pushReplayed("crumbs", "seg1", "live-captured", "Live");
+    store.pushReplayed("crumbs", "seg2", "live-captured-2", "Live");
+    store.push("crumbs", "seg1", "handler");
+
+    store.settleLoaderRun("Live");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["handler"]);
+    expect(store.getDataForSegment("seg2").crumbs).toEqual([]);
+  });
+
+  it("keeps the live pushes of a loader that replaced its copies, and a later push lands after them", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Live"]));
+    store.pushReplayed("crumbs", "seg1", "live-captured", "Live");
+    runInsideLoaderBodyScope(
+      () => store.push("crumbs", "seg1", "live-a"),
+      "Live",
+    );
+
+    store.settleLoaderRun("Live");
+    store.push("crumbs", "seg1", "handler");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "live-a",
+      "handler",
+    ]);
+  });
+
+  it("leaves restored copies and other loaders' copies alone", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Live"]));
+    store.pushRestored("crumbs", "seg1", "bake-captured", "Bake");
+    store.pushReplayed("crumbs", "seg1", "other-captured", "Other");
+
+    store.settleLoaderRun("Bake");
+    store.settleLoaderRun("Live");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "bake-captured",
+      "other-captured",
+    ]);
+  });
+
+  // A bake-lane loader's record stays authoritative, as its pin is for its
+  // data: a navigation run that skips its push does not drop the replay.
+  it("keeps the replayed copies of a loader outside the live lane", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Live"]));
+    store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+
+    store.settleLoaderRun("Bake");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["bake-captured"]);
+  });
+});
+
+describe("HandleStore.redeliverReplays (a hole's own cache() HIT)", () => {
+  it("takes the place of the values replayed for the hole before, a dependency's included", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Hole"]));
+    store.pushReplayed("crumbs", "seg1", "hole-captured-a", "Hole");
+    store.pushReplayed("crumbs", "seg1", "hole-captured-b", "Hole");
+    store.push("crumbs", "seg1", "handler");
+
+    store.redeliverReplays("Hole", () => {
+      store.pushReplayed("crumbs", "seg1", "hole-cached-a", "Hole");
+      store.pushReplayed("crumbs", "seg1", "dep-cached", "Dep");
+    });
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "hole-cached-a",
+      "dep-cached",
+      "handler",
+    ]);
+    // Still replays: a live run of the hole replaces its own.
+    runInsideLoaderBodyScope(
+      () => store.push("crumbs", "seg1", "hole-live"),
+      "Hole",
+    );
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "hole-live",
+      "dep-cached",
+      "handler",
+    ]);
+  });
+
+  it("delivers as a plain replay for a loader outside the live lane", () => {
+    const store = createHandleStore();
+    store.markLiveLane(new Set(["Hole"]));
+    store.pushReplayed("crumbs", "seg1", "bake-captured", "Bake");
+
+    store.redeliverReplays("Bake", () => {
+      store.pushReplayed("crumbs", "seg1", "bake-cached", "Bake");
+    });
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "bake-captured",
+      "bake-cached",
+    ]);
+  });
+
+  it("appends when nothing was replayed for the loader", () => {
+    const store = createHandleStore();
+    store.push("crumbs", "seg1", "handler");
+
+    store.redeliverReplays("Hole", () => {
+      store.pushReplayed("crumbs", "seg1", "hole-cached", "Hole");
+    });
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "handler",
+      "hole-cached",
+    ]);
+  });
+});
+
+describe("holdsThenable", () => {
+  it("finds a thenable at the top, in plain containers, and in element props", () => {
+    const promise = Promise.resolve(1);
+    expect(holdsThenable(promise)).toBe(true);
+    expect(holdsThenable({ a: [{ b: promise }] })).toBe(true);
+    expect(holdsThenable(createElement("p", { data: promise }))).toBe(true);
+  });
+
+  it("walks what the capture's mask walks, an array's non-index properties included", () => {
+    const promise = Promise.resolve(1);
+    const list: unknown[] & { extra?: unknown } = ["a"];
+    list.extra = promise;
+    expect(holdsThenable(list)).toBe(true);
+    expect(maskNestedContainerThenables(list)).not.toBe(list);
+  });
+
+  it("does not walk class instances, maps or sets, and survives cycles", () => {
+    const promise = Promise.resolve(1);
+    const cyclic: Record<string, unknown> = { value: "x" };
+    cyclic.self = cyclic;
+    expect(holdsThenable("text")).toBe(false);
+    expect(holdsThenable(new Map([["p", promise]]))).toBe(false);
+    expect(holdsThenable(new Set([promise]))).toBe(false);
+    expect(holdsThenable(cyclic)).toBe(false);
   });
 });

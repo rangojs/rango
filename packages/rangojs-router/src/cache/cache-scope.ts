@@ -39,6 +39,7 @@ import {
   captureHandles,
   captureHandleOwners,
   restoreHandles,
+  type OwnedPushDelivery,
   encodeHandles,
   decodeHandles,
 } from "./handle-snapshot.js";
@@ -433,6 +434,15 @@ export class CacheScope {
    * 2. App-level store from request context
    */
   getStore(): SegmentCacheStore | null {
+    // The implicit doc scope's store is a per-request overlay
+    // (createShellImplicitDocScope: SeededShellStore on a HIT tail or a
+    // partial replay, SnapshotOnlySegmentStore at capture), never a tag
+    // invalidation target. Registered like a cache({ store }), every HIT
+    // left one in the handler's explicit-store registry, and each
+    // updateTag()/revalidateTag() then warned about it.
+    if (this.isShellImplicitDocScope && this.explicitStore) {
+      return this.explicitStore;
+    }
     return resolveCacheStore(this.explicitStore);
   }
 
@@ -724,14 +734,15 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
-   * @param claimLoaderPushes - The handler context's _claimLoaderPushes, for
-   *   restoreHandles' loader-owned values
+   * @param ownedPushes - How restoreHandles delivers the record's
+   *   loader-owned values (withCacheLookup: the handler context's
+   *   _claimLoaderPushes, and on a document HIT tail the owners it restores)
    */
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
-    claimLoaderPushes?: (loaderId: string) => boolean,
+    ownedPushes?: OwnedPushDelivery,
   ): Promise<{
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
@@ -740,7 +751,7 @@ export class CacheScope {
       pathname,
       params,
       isIntercept,
-      claimLoaderPushes,
+      ownedPushes,
     );
     return outcome.status === "hit" ? outcome.result : null;
   }
@@ -767,7 +778,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
-    claimLoaderPushes?: (loaderId: string) => boolean,
+    ownedPushes?: OwnedPushDelivery,
   ): Promise<CacheRouteLookupOutcome> {
     if (!this.enabled) return { status: "bypass" };
     if (!this.conditionAllows("read")) return { status: "bypass" };
@@ -876,7 +887,7 @@ export class CacheScope {
             handlesRecord,
             handleStore,
             cached.handleOwners,
-            claimLoaderPushes,
+            ownedPushes,
           );
         }
       }
