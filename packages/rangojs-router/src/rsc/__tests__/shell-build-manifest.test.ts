@@ -19,6 +19,7 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: React.version,
     buildVersion: BUILD_VERSION,
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }
@@ -51,14 +52,14 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
   const url = (p: string) => new URL(p, "http://app.test");
 
   it("serves a fresh manifest entry (stale=false inside ttl)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
     expect(hit).not.toBeNull();
     expect(hit!.stale).toBe(false);
   });
 
   it("marks the entry stale past createdAt + ttl (serve + recapture upgrade)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     vi.setSystemTime(Date.now() + 301_000);
     const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
     expect(hit).not.toBeNull();
@@ -66,14 +67,14 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
   });
 
   it("skips search-bearing URLs (runtime capture owns those shell keys)", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     expect(
       await lookupBuildShell(url("/pp/a?x=1"), BUILD_VERSION, store),
     ).toBeNull();
   });
 
   it("matches when the URL's only params are excluded by cache.searchParams", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     const filter = compileSearchParamsFilter({ exclude: ["utm_*", "fbclid"] });
     const hit = await lookupBuildShell(
       url("/pp/a?fbclid=abc&utm_source=tw"),
@@ -96,7 +97,7 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
   });
 
   it("misses unknown pathnames", async () => {
-    installManifest({ "/pp/a": { entry: entry(), ttl: 300, routeName: "pp" } });
+    installManifest({ "/pp/a": { entry: entry(), ttl: 300 } });
     expect(
       await lookupBuildShell(url("/pp/b"), BUILD_VERSION, store),
     ).toBeNull();
@@ -107,7 +108,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
       "/pp/a": {
         entry: entry({ buildVersion: "older-build" }),
         ttl: 300,
-        routeName: "pp",
       },
     });
     expect(
@@ -122,7 +122,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
       "/pp/a": {
         entry: entry({ prelude: "not-base64!!!" }),
         ttl: 300,
-        routeName: "pp",
       },
     });
     const hit = await lookupBuildShell(url("/pp/a"), BUILD_VERSION, store);
@@ -135,7 +134,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
       "/pp/a": {
         entry: entry({ postponed: "{" }),
         ttl: 300,
-        routeName: "pp",
       },
     });
     expect(
@@ -149,7 +147,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
         entry: entry(),
         ttl: 300,
         tags: ["pp-shell"],
-        routeName: "pp",
       },
     });
     // Not invalidated: serves.
@@ -172,9 +169,8 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
           entry: entry(),
           ttl: 300,
           tags: ["t"],
-          routeName: "pp",
         },
-        "/pp/untagged": { entry: entry(), ttl: 300, routeName: "pp" },
+        "/pp/untagged": { entry: entry(), ttl: 300 },
       });
       const bareStore = {} as any;
       expect(
@@ -201,9 +197,8 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
           entry: entry(),
           ttl: 300,
           tags: ["t"],
-          routeName: "pp",
         },
-        "/pp/untagged": { entry: entry(), ttl: 300, routeName: "pp" },
+        "/pp/untagged": { entry: entry(), ttl: 300 },
       });
       // The KV-less CFCacheStore shape: the method EXISTS but answers carry
       // no durable history — "false" here means "cannot know", so a tagged
@@ -241,7 +236,6 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
     const DEV_RECORD: BuildShellEntry = {
       entry: entry(),
       ttl: 300,
-      routeName: "pp",
     };
 
     beforeEach(() => {

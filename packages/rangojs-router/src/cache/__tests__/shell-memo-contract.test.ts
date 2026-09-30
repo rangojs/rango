@@ -29,6 +29,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: "19.2.6",
     buildVersion: "build-abc",
     createdAt: Date.now(),
+    snapshot: [],
     ...overrides,
   };
 }

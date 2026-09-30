@@ -408,9 +408,10 @@ re-runs read. Drop everything else.**
   records: no HIT tail and no partial replay reads them.
 
 **R2.4, loader attribution** (the one condition that survived, under its old
-name so older PRs and test titles still line up). A bake-lane loader re-runs on
-every HIT and must read the values the capture baked, so its reads stay
-pinned. The recording store sees every `"use cache"` call: each call does a
+name so older PRs and test titles still line up). A bake-lane loader whose
+body runs on a HIT (a promise-carrying one, or one whose pushes the record
+could not keep; a promise-free one is served from its pin and does not run)
+must read the values the capture baked, so its reads stay pinned. The recording store sees every `"use cache"` call: each call does a
 `store.getItem` before any in-flight join (`cache-runtime.ts`), so marking the
 key as loader-read on every access (hits and misses, in
 `isInsideAnyLoaderScope()`, collected in `RecordingShellStore.loaderKeys`) is
@@ -494,7 +495,7 @@ it next to the kept records: `records=segment:1 pruned=item:5`.
 
 `maxSnapshotBytes` (the route's `ppr` option, default 8 MiB,
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds only the pins: the loader-family
-records and the item/response records loaders read. The doc record is exempt,
+records and the item records loaders read. The doc record is exempt,
 because without it a HIT cannot serve at all. Over the cap the pins are dropped
 and the entry keeps its doc record: HITs still replay the handler layer, and
 the bake-lane loaders read the live store instead (drift that hydration
@@ -679,7 +680,8 @@ not the edge's constants.
 ## Other findings from the investigation
 
 **A. An async server component in the handler's tree was not held by the
-capture gate.** `holdUntil` (`shell-capture.ts`) waited for top-level handle
+capture gate.** `holdUntil` (`shell-capture.ts`, since removed: the
+record-first step settles all of it first) waited for top-level handle
 pushes and bake-lane loader containers; an async component the handler
 renders without awaiting was in neither, so a slow read inside it could arrive
 after the byte-quiet window. With no `<Suspense>` above it the root pinned and

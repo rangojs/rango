@@ -991,8 +991,8 @@ describe("VercelCacheStore", () => {
       expect(new TextDecoder().decode(read!.prelude)).toBe(
         "<html><body>SHELL</body></html>",
       );
-      expect(read!.entry.prelude).toBeUndefined();
-      expect(read!.entry.snapshot).toBeUndefined();
+      expect("prelude" in read!.entry).toBe(false);
+      expect("snapshot" in read!.entry).toBe(false);
       expect(read!.entry.postponed).toBe(JSON.stringify({ hole: 1 }));
       expect(await read!.snapshot).toEqual(snapshot);
       expect("stats" in read!).toBe(false);
@@ -1349,6 +1349,41 @@ describe("VercelCacheStore", () => {
       release();
     });
 
+    // A marker read in flight when the request invalidates the tag resolves
+    // to the marker before the invalidation: the mask is checked again after
+    // the read, as CFCacheStore.isGloballyInvalidated does.
+    it("a shell read and the shell write gate whose marker read was in flight when it ran see it", async () => {
+      const { cache } = makeFakeCache();
+      const s = new VercelCacheStore({ cache });
+      await s.putShell("k", shellEntry(), 60, 300, ["home"]);
+      vi.setSystemTime(new Date(T0 + 100));
+      let releaseMarkers!: () => void;
+      const markersHeld = new Promise<void>((r) => (releaseMarkers = r));
+      let markerReads = 0;
+      let markerReadStarted!: () => void;
+      const started = new Promise<void>((r) => (markerReadStarted = r));
+      const get = cache.get.bind(cache);
+      vi.spyOn(cache, "get").mockImplementation(async (key) => {
+        if (key.startsWith("rg:tm:")) {
+          if (++markerReads === 2) markerReadStarted();
+          await markersHeld;
+        }
+        return get(key);
+      });
+      const release = holdInvalidation(cache);
+
+      await runWithRequestContext(requestWith(s), async () => {
+        const gate = s.isTagsInvalidatedSince(["home"], T0);
+        const shell = s.getShell("k");
+        await started;
+        revalidateTag("home");
+        releaseMarkers();
+        expect(await gate).toBe(true);
+        expect(await shell).toBeNull();
+      });
+      release();
+    });
+
     it("a shell read and the shell write gate see it after a memoized marker read", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
@@ -1377,6 +1412,7 @@ function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
     reactVersion: "19.2.6",
     buildVersion: "build-abc",
     createdAt: T0,
+    snapshot: [],
     ...overrides,
   };
 }

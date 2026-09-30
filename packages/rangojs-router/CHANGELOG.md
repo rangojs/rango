@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Breaking: PPR shell types lose fields nothing produced, and custom stores round-trip every entry field ([#988](https://github.com/rangojs/rango/pull/988))
+
+These public types change. What they drop, the built-in paths never produced.
+
+- `PprReplayBypassReason` (`@rangojs/router/testing`) no longer has
+  `stale-build-entry`. A partial navigation never reported it: a build-time
+  shell never carries the doc segment record partial replay consumes, and a
+  prerendered URL's partial is served from its prerender artifact first
+  (`prerender-store`). Remove the member from any exhaustive `switch` or
+  list over the reasons; `parsePprReplayStatus()` returns `null` for it.
+- `ShellCaptureDebugEvent` (`debugShellCapture`) no longer has
+  `bakeWaitMs`, and the console line no longer prints `bake=`. The capture
+  waits for pushed handle promises and `ssr: false` loader containers in its
+  record-first step, so the field measured about 0 ms. Read
+  `recordSettleMs` (`record=`) instead: it covers the same wait.
+- `ShellCacheEntry` (`@rangojs/router/cache`) makes `buildVersion` and
+  `snapshot` required, and the `holes`/`runs` bits of a snapshot's loader
+  records are required too. The capture always set `buildVersion` and the
+  bits, and now stores `snapshot: []` when it recorded nothing. A custom
+  `SegmentCacheStore` with its own `getShell`/`putShell` must return every
+  field `putShell` received, `buildVersion` and `snapshot` included (the
+  snapshot can be an empty array). An entry read back without them is no
+  longer read through a fallback: `CFCacheStore` and `VercelCacheStore`
+  treat a stored shell without `buildVersion` as malformed (a reported miss,
+  and the entry is evicted). A loader record without its bits (one stored
+  before they existed) still reads as carrying holes and runs its loader
+  body on a HIT.
+- The record-family union on `ShellCacheEntry.snapshot` no longer has
+  `"response"`: a capture never records the response family. Drop the
+  member from any `switch` over `record.family` in a custom store.
+- `ShellDocumentRead.entry` (the result of the `@internal`
+  `readShellDocument`) is now `ShellEntryHead`, the entry without its
+  `prelude` and `snapshot`, which the read delivers separately.
+
 ### Fixes
 
 - A document the document cache stores no longer hands the first visitor's
@@ -19,6 +53,26 @@
   only when it was rendered with the default theme, so set `Cache-Control` in
   the handler or before `next()`
   ([#987](https://github.com/rangojs/rango/pull/987)).
+- A PPR capture whose in-place retry ran out of its route `cache()` record
+  now ends as a terminal no-shell: the key backs off and the route warns once.
+  Before, a cold first attempt followed by an `expired` retry left the key
+  without backoff, so every later request started a capture again
+  ([#988](https://github.com/rangojs/rango/pull/988)).
+- A PPR capture that waited in the isolate's capture queue is no longer
+  treated as stranded while it runs inside its 25 s hard cap. The stampede
+  guard counted the cap from scheduling, so a capture read as abandoned once
+  its queue wait plus its run time passed 25 s, while it was still inside
+  its own cap, and the next request for the same URL scheduled a duplicate
+  capture beside it. The guard's age now counts from the task's start, so
+  the queue wait and the SSR module load are not held against it, and from
+  the cap's start once the capped run begins
+  ([#988](https://github.com/rangojs/rango/pull/988)).
+- A navigation-only PPR capture no longer makes a document MISS skip its own
+  capture. A corrupt-snapshot heal stores a navigation-only entry under the
+  document key, which document serving reads as a MISS; counting it as a
+  stored shell made a document MISS that read the store just before skip its
+  capture (`skip-stored`), for one extra MISS
+  ([#988](https://github.com/rangojs/rango/pull/988)).
 
 ## 0.18.0 (2026-09-30)
 

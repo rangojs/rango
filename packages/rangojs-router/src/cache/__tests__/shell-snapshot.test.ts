@@ -42,11 +42,11 @@ function hit(
   return r === CACHE_READ_ERROR ? null : r;
 }
 
-// The capture data snapshot: RecordingShellStore records the cache-store reads
-// and writes the CAPTURE render performed; SeededShellStore replays them AS
-// FRESH on a HIT so the fresh hydration payload matches the frozen prelude while
-// everything not recorded stays live. See cache/shell-snapshot.ts and
-// docs/design/ppr-shell-resume.md.
+// The capture data snapshot: RecordingShellStore records the "use cache" item
+// reads and writes the CAPTURE render performed, and the doc record;
+// SeededShellStore replays them AS FRESH on a HIT so the fresh hydration
+// payload matches the frozen prelude while everything not recorded stays live.
+// See cache/shell-snapshot.ts and docs/design/ppr-shell-resume.md.
 
 function segData(tag: string): CachedEntryData {
   return {
@@ -58,7 +58,7 @@ function segData(tag: string): CachedEntryData {
 }
 
 describe("RecordingShellStore", () => {
-  it("records read-HITS for the item, segment, and response families (last-write-wins)", async () => {
+  it("records item read-HITS; segment and response reads pass through unrecorded", async () => {
     const inner = new MemorySegmentCacheStore();
     await inner.set("seg1", segData("s"), 60);
     await inner.setItem("item1", "ITEM-VALUE", {
@@ -73,34 +73,26 @@ describe("RecordingShellStore", () => {
     );
 
     const rec = new RecordingShellStore(inner);
-    // Reads that HIT are recorded.
+    // Every read passes through; only the item hit is recorded.
     expect(await rec.get("seg1")).not.toBeNull();
     expect(await rec.getItem("item1")).not.toBeNull();
     expect(await rec.getResponse("res1")).not.toBeNull();
     // A read that MISSES records nothing.
-    expect(await rec.get("absent")).toBeNull();
+    expect(await rec.getItem("absent")).toBeNull();
 
     const snapshot = rec.drainSnapshot()!;
-    const byKey = new Map(snapshot.map((r) => [r.key, r]));
-    expect(byKey.size).toBe(3);
-
-    expect(byKey.get("seg1")!.family).toBe("segment");
-    expect((byKey.get("seg1")!.value as CachedEntryData).tags).toEqual(["s"]);
-
-    const item = byKey.get("item1")!;
+    expect(snapshot).toHaveLength(1);
+    const item = snapshot[0]!;
+    expect(item.key).toBe("item1");
     expect(item.family).toBe("item");
     expect(item.value).toMatchObject({
       value: "ITEM-VALUE",
       handles: "H",
       tags: ["it"],
     });
-
-    const resp = byKey.get("res1")!;
-    expect(resp.family).toBe("response");
-    expect((resp.value as any).status).toBe(201);
   });
 
-  it("records WRITES (setItem/set/putResponse) — the value a MISS baked", async () => {
+  it("records item WRITES — the value a MISS baked; segment and response writes pass through unrecorded", async () => {
     const inner = new MemorySegmentCacheStore();
     const rec = new RecordingShellStore(inner);
 
@@ -109,13 +101,11 @@ describe("RecordingShellStore", () => {
     await rec.putResponse("res1", new Response("R", { status: 200 }), 60);
 
     const snapshot = rec.drainSnapshot()!;
-    expect(snapshot.map((r) => r.family).sort()).toEqual([
-      "item",
-      "response",
-      "segment",
-    ]);
+    expect(snapshot.map((r) => r.family)).toEqual(["item"]);
     // Writes delegated through to the underlying store.
     expect(await inner.getItem("item1")).not.toBeNull();
+    expect(hit(await inner.get("seg1"))).not.toBeNull();
+    expect(await inner.getResponse("res1")).not.toBeNull();
   });
 
   it("last-write-wins: a write after a read-hit overwrites the recorded value", async () => {
@@ -141,6 +131,8 @@ describe("RecordingShellStore", () => {
         prelude: "x",
         postponed: null,
         reactVersion: "1",
+        buildVersion: "b",
+        snapshot: [],
         createdAt: Date.now(),
       },
       300,
@@ -198,18 +190,15 @@ describe("RecordingShellStore", () => {
     expect(rec.defaults).toEqual({ ttl: 42 });
   });
 
-  it("attributes item and response accesses made inside a loader scope (hits, misses, writes)", async () => {
+  it("attributes item accesses made inside a loader scope (hits, misses, writes)", async () => {
     const inner = new MemorySegmentCacheStore();
     await inner.setItem("item-hit", "V", { ttl: 60 });
-    await inner.putResponse("resp-hit", new Response("r"), 60);
     const rec = new RecordingShellStore(inner);
 
     await runInsideLoaderScope(async () => {
       await rec.getItem("item-hit");
       await rec.getItem("item-miss");
       await rec.setItem("item-write", "W", { ttl: 60 });
-      await rec.getResponse("resp-hit");
-      await rec.putResponse("resp-write", new Response("w"), 60);
     });
     // A loader body invoked outside a DSL loader scope counts too.
     await runInsideLoaderBodyScope(() => rec.getItem("item-body"));
@@ -221,13 +210,11 @@ describe("RecordingShellStore", () => {
       "item item-hit",
       "item item-miss",
       "item item-write",
-      "response resp-hit",
-      "response resp-write",
       "item item-body",
     ]);
   });
 
-  it("getRecordingStore duck-types a RecordingShellStore, ignores others", () => {
+  it("getRecordingStore returns a RecordingShellStore (instanceof), ignores others", () => {
     const inner = new MemorySegmentCacheStore();
     const rec = new RecordingShellStore(inner);
     expect(getRecordingStore(rec)).toBe(rec);
@@ -245,15 +232,10 @@ describe("SeededShellStore", () => {
         key: "item1",
         value: { value: "PINNED-ITEM", handles: "PH", tags: ["pt"] },
       },
-      {
-        family: "response",
-        key: "res1",
-        value: { status: 203, headers: [["x-h", "v"]], body: btoa("PINNED") },
-      },
     ];
   }
 
-  it("serves snapshot values AS FRESH (shouldRevalidate: false) without touching the real store", async () => {
+  it("serves snapshot values AS FRESH (shouldRevalidate: false) without touching the real store: items by default, segments in segmentsOnly mode", async () => {
     // Pin the clock: snapshotOf() -> segData() embeds `Date.now() + 60_000` as
     // expiresAt, and this test builds the seed and the expected value from two
     // SEPARATE snapshotOf() calls. On real timers a millisecond tick between them
@@ -266,15 +248,18 @@ describe("SeededShellStore", () => {
       // The real store is EMPTY / different — the seed must win and not fall through.
       const getItemSpy = vi.spyOn(inner, "getItem");
       const getSpy = vi.spyOn(inner, "get");
-      const seeded = new SeededShellStore(inner, snapshotOf());
+      const segments = new SeededShellStore(inner, snapshotOf(), {
+        segmentsOnly: true,
+      });
 
-      const seg = hit(await seeded.get("seg1"));
+      const seg = hit(await segments.get("seg1"));
       expect(seg).toEqual({
         data: (snapshotOf()[0] as any).value,
         shouldRevalidate: false,
       });
       expect(getSpy).not.toHaveBeenCalled(); // pinned key never hits the real store
 
+      const seeded = new SeededShellStore(inner, snapshotOf());
       const item = await seeded.getItem("item1");
       expect(item).toMatchObject({
         value: "PINNED-ITEM",
@@ -283,12 +268,6 @@ describe("SeededShellStore", () => {
         shouldRevalidate: false, // MUST NOT kick SWR revalidation for a pinned key
       });
       expect(getItemSpy).not.toHaveBeenCalled();
-
-      const resp = await seeded.getResponse("res1");
-      expect(resp!.shouldRevalidate).toBe(false);
-      expect(resp!.response.status).toBe(203);
-      expect(resp!.response.headers.get("x-h")).toBe("v");
-      expect(await resp!.response.text()).toBe("PINNED");
     } finally {
       vi.useRealTimers();
     }
@@ -359,6 +338,8 @@ describe("SeededShellStore", () => {
         prelude: "p",
         postponed: null,
         reactVersion: "1",
+        buildVersion: "b",
+        snapshot: [],
         createdAt: Date.now(),
       },
       300,
@@ -368,28 +349,18 @@ describe("SeededShellStore", () => {
 });
 
 describe("buildShellLoaderSeed", () => {
-  it("maps the stored hole and runs bits onto seed entries; a record without a bit reads as hole-carrying and as runs", async () => {
+  it("maps the stored hole and runs bits onto seed entries", async () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",
         key: "K-full",
         value: { value: JSON.stringify({ a: 1 }), holes: 0, runs: 0 },
       },
-      // Written before the runs bit: its snapshot lacks the pushes a capture
-      // now records, so the HIT runs the body for them.
-      {
-        family: "loader",
-        key: "K-pre-runs",
-        value: { value: JSON.stringify({ a: 1 }), holes: 0 },
-      },
       {
         family: "loader",
         key: "K-holey",
-        value: { value: JSON.stringify({ a: 1 }), holes: 1 },
+        value: { value: JSON.stringify({ a: 1 }), holes: 1, runs: 0 },
       },
-      // Legacy record (stored before the hole bit existed): hole-ness is
-      // unknown, so the seed must keep the gated path.
-      { family: "loader", key: "K-legacy", value: { value: "{}" } },
       {
         family: "loader",
         key: "K-runs",
@@ -403,16 +374,40 @@ describe("buildShellLoaderSeed", () => {
       holes: false,
       runs: false,
     });
-    expect(seed?.get("K-pre-runs")).toMatchObject({ holes: false, runs: true });
     expect(seed?.get("K-holey")?.holes).toBe(true);
-    expect(seed?.get("K-legacy")?.holes).toBe(true);
     // A capture that saw an unrecordable loader push asks the HIT to run it.
     expect(seed?.get("K-runs")).toMatchObject({ holes: false, runs: true });
   });
 
+  it("a record stored before the bits existed reads as hole-carrying and as runs (the body supplies what the pin lacks)", async () => {
+    // A v0.17 entry: its snapshot lacks the loader-owned pushes, so serving it
+    // pin-only would drop them.
+    const legacy = {
+      family: "loader",
+      key: "K-legacy",
+      value: { value: JSON.stringify({ a: 1 }) },
+    } as unknown as ShellSnapshotRecord;
+    const preRuns = {
+      family: "loader",
+      key: "K-pre-runs",
+      value: { value: JSON.stringify({ a: 1 }), holes: 0 },
+    } as unknown as ShellSnapshotRecord;
+
+    const seed = await buildShellLoaderSeed([legacy, preRuns]);
+    expect(seed?.get("K-legacy")).toMatchObject({ holes: true, runs: true });
+    expect(seed?.get("K-pre-runs")).toMatchObject({
+      holes: false,
+      runs: true,
+    });
+  });
+
   it("skips a record that fails to decode (that loader drifts, the pre-snapshot behavior)", async () => {
     const snapshot: ShellSnapshotRecord[] = [
-      { family: "loader", key: "K-bad", value: { value: "%broken%" } },
+      {
+        family: "loader",
+        key: "K-bad",
+        value: { value: "%broken%", holes: 0, runs: 0 },
+      },
       {
         family: "loader",
         key: "K-good",
@@ -438,43 +433,13 @@ describe("buildShellLoaderSeed", () => {
 });
 
 describe("snapshot round-trip", () => {
-  it("the response family round-trips body/headers/status through record -> JSON -> seed", async () => {
-    const inner = new MemorySegmentCacheStore();
-    await inner.putResponse(
-      "r",
-      new Response("HELLO-BODY", {
-        status: 202,
-        headers: { "content-type": "text/plain", "x-custom": "yes" },
-      }),
-      60,
-    );
-    const rec = new RecordingShellStore(inner);
-    await rec.getResponse("r");
-    const snapshot = rec.drainSnapshot()!;
-
-    // The wire form must survive a JSON store round-trip.
-    const roundTripped: ShellSnapshotRecord[] = JSON.parse(
-      JSON.stringify(snapshot),
-    );
-
-    const seeded = new SeededShellStore(
-      new MemorySegmentCacheStore(),
-      roundTripped,
-    );
-    const served = await seeded.getResponse("r");
-    expect(served!.response.status).toBe(202);
-    expect(served!.response.headers.get("content-type")).toBe("text/plain");
-    expect(served!.response.headers.get("x-custom")).toBe("yes");
-    expect(await served!.response.text()).toBe("HELLO-BODY");
-  });
-
   it("a full snapshot round-trips through MemorySegmentCacheStore putShell/getShell", async () => {
     const store = new MemorySegmentCacheStore();
     const inner = new MemorySegmentCacheStore();
     await inner.setItem("it", "V", { ttl: 60, tags: ["t"] });
     const rec = new RecordingShellStore(inner);
     await rec.getItem("it");
-    const snapshot = rec.drainSnapshot();
+    const snapshot = rec.drainSnapshot()!;
 
     await store.putShell(
       "/p:shell",
@@ -482,6 +447,7 @@ describe("snapshot round-trip", () => {
         prelude: btoa("<html></html>"),
         postponed: null,
         reactVersion: "1",
+        buildVersion: "b",
         snapshot,
         createdAt: Date.now(),
       },
@@ -519,21 +485,16 @@ describe("snapshot pruning helpers", () => {
     key: "use-cache:loader",
     value: { value: "l" },
   };
-  const RESPONSE: ShellSnapshotRecord = {
-    family: "response",
-    key: "resp",
-    value: { status: 200, headers: [], body: "" },
-  };
   const LOADER: ShellSnapshotRecord = {
     family: "loader",
     key: "M0L0D0.bake",
-    value: { value: "{}", holes: 0 },
+    value: { value: "{}", holes: 0, runs: 0 },
   };
   const EXPLICIT: ShellSnapshotRecord = {
     ...DOC,
     key: "explicit:consumer-key",
   };
-  const SNAPSHOT = [DOC, EXPLICIT, HANDLER_ITEM, LOADER_ITEM, RESPONSE, LOADER];
+  const SNAPSHOT = [DOC, EXPLICIT, HANDLER_ITEM, LOADER_ITEM, LOADER];
   const LOADER_KEYS = new Set(["item\u0000use-cache:loader"]);
 
   it('"loaders" keeps the doc record, loader containers and loader-touched records', () => {
@@ -544,8 +505,8 @@ describe("snapshot pruning helpers", () => {
       "doc:host/p",
     );
     expect(kept).toEqual([DOC, LOADER_ITEM, LOADER]);
-    expect(pruned).toEqual([EXPLICIT, HANDLER_ITEM, RESPONSE]);
-    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:1/response:1");
+    expect(pruned).toEqual([EXPLICIT, HANDLER_ITEM]);
+    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:1");
   });
 
   it('"segments" keeps only the doc record', () => {
@@ -556,9 +517,7 @@ describe("snapshot pruning helpers", () => {
       "doc:host/p",
     );
     expect(kept).toEqual([DOC]);
-    expect(countSnapshotFamilies(pruned)).toBe(
-      "segment:1/item:2/response:1/loader:1",
-    );
+    expect(countSnapshotFamilies(pruned)).toBe("segment:1/item:2/loader:1");
   });
 
   it("hasDocRecord requires the named segment record with at least one segment", () => {

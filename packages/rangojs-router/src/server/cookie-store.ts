@@ -8,7 +8,12 @@
  */
 
 import type { CookieOptions } from "../router/middleware-types.js";
-import { getRequestContext, _getRequestContext } from "./request-context.js";
+import type { Theme } from "../theme/types.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+  type RequestContext,
+} from "./request-context.js";
 import {
   isInsideCacheScope,
   assertNotInsideShellCapture,
@@ -211,6 +216,22 @@ export function assertThemeReadAllowed(
   // An identity read like a cookies() read method: a loader cache() fill with
   // no key() refuses an execution that made one (#972).
   recordLoaderIdentityRead(surface, "read");
+}
+
+/**
+ * `ctx`'s theme through assertThemeReadAllowed: the one body of every public
+ * theme read (handler and middleware `ctx.theme`, `getRequestContext().theme`).
+ * The guard reads the ambient context, as cookies() does, and falls back to
+ * `ctx`; the value is `ctx`'s unguarded `_readTheme()`. Undefined without a
+ * theme config.
+ */
+export function readGuardedTheme(
+  ctx: RequestContext<any> | undefined,
+  surface: ThemeReadSurface,
+): Theme | undefined {
+  if (!ctx?._themeConfig) return undefined;
+  assertThemeReadAllowed(_getRequestContext() ?? ctx, surface);
+  return ctx._readTheme();
 }
 
 const HEADERS_MUTATION_METHODS = new Set(["set", "append", "delete"]);

@@ -31,7 +31,7 @@ import {
 } from "../cache/taint.js";
 import { getCacheExecScope } from "../cache/cache-exec-scope.js";
 import { assertNonCacheableReadAllowed } from "../server/context.js";
-import { assertThemeReadAllowed } from "../server/cookie-store.js";
+import { readGuardedTheme } from "../server/cookie-store.js";
 import type { Theme } from "../theme/types.js";
 
 // Re-export types consumed through this module's path.
@@ -52,10 +52,7 @@ export type {
  */
 const MIDDLEWARE_THEME_DESCRIPTOR: PropertyDescriptor = {
   get(): Theme | undefined {
-    const reqCtx = _getRequestContext();
-    if (!reqCtx?._themeConfig) return undefined;
-    assertThemeReadAllowed(reqCtx, "ctx.theme");
-    return reqCtx._readTheme();
+    return readGuardedTheme(_getRequestContext(), "ctx.theme");
   },
   enumerable: false,
   configurable: true,

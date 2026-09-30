@@ -45,6 +45,7 @@ import {
 } from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
+import { requestRoot } from "./request-tag-mask.js";
 import type { SegmentCacheStore } from "./types.js";
 
 /**
@@ -161,7 +162,7 @@ export function invalidatedSince(
   tags: readonly string[] | undefined,
   since: number,
 ): boolean {
-  const record = (ctx?._requestRoot ?? ctx)?._tagInvalidations;
+  const record = ctx && requestRoot(ctx)._tagInvalidations;
   if (!record || !tags) return false;
   for (const tag of tags) {
     const at = record.get(tag);
@@ -177,7 +178,7 @@ export function invalidatedSince(
 function markInvalidated(tags: readonly string[]): void {
   const ctx = _getRequestContext();
   if (!ctx) return;
-  const root = ctx._requestRoot ?? ctx;
+  const root = requestRoot(ctx);
   const at = ++cacheSeq;
   const record = (root._tagInvalidations ??= new Map());
   for (const tag of tags) record.set(tag, at);

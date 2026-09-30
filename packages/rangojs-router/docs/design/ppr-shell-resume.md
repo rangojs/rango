@@ -209,9 +209,10 @@ stale end gives no window at all, and nothing is stored. The window notes
 whether the capture wrote that record (`written`, from cacheRoute) or read
 it. A record it read was only near its end (its age, queue wait): the
 attempt returns `expired` and `runShellCapture` retries once in place,
-where the fresh match reads or renders a newer record. A second `expired`,
-or too little of `SHELL_CAPTURE_TASK_HARD_CAP_MS` left for a whole second
-attempt, is terminal `no-shell` (backoff, one warning per route). A record
+where the fresh match reads or renders a newer record. An `expired` retry
+(after an `expired` or a cold `no-shell` first attempt), or too little of
+`SHELL_CAPTURE_TASK_HARD_CAP_MS` left for a whole second attempt, is terminal
+`no-shell` (backoff, one warning per route): the retry is the last attempt. A record
 the attempt wrote ran out between its write and the store, which a retry
 repeats: the attempt is refused (the URL backs off) and warns once per
 route with the record's cache() config. `CFCacheStore` writes a shell
@@ -264,8 +265,8 @@ Semantics, in dependency order:
   record-first step (`settleCaptureRecord`, see "Shell/payload parity" below)
   spends what it needs of the rest, and `captureShellHTML` gets the remainder
   as its `maxWaitMs`. So one value bounds the match, the handler layer's settle
-  and the fizz prerender; the `holdUntil` gate and the quiesce race are inputs
-  to the same deadline. There is no second timer to drift. The build-time
+  and the fizz prerender; the quiesce race is an input to the same deadline.
+  There is no second timer to drift. The build-time
   capture (`runBuildCaptureFinal`) matches from the prerender store (no handler
   runs) and splits the same deadline the same way, its match included. A match
   that loses the race keeps running (it has no abort signal), so a capture
@@ -276,8 +277,8 @@ Semantics, in dependency order:
   handler push (`settleNestedThenables`), and every bake-lane container has
   settled, and writing it Flight-serializes the handler output, which waits for
   the rest (async server components, promises passed as props). The capture's
-  own Flight payload renders from that record, so the gate
-  (`gateFlightForCapture`'s `holdUntil`) normally has nothing left to hold for.
+  own Flight payload renders from that record, so the capture gate
+  (`gateFlightForCapture`) sees no shell row still pending.
   `SsrRoot` still suspends at the ROOT until the handles snapshot fully
   settles (`resolvedHandleStream` yields once, after EVERY push resolves). A
   partial prefix of the settlement sequence is unrepresentable in a stored
@@ -298,7 +299,7 @@ Semantics, in dependency order:
   ~30s past response completion — so a `captureTimeout` near or past that
   ceiling gets killed by the platform, not by rango (see Platform notes).
   Ceiling math for the default: an attempt that consumed the whole budget is
-  not retried (`noShellCauses`), so the envelope is one budget plus store
+  not retried (`CaptureAttemptStats.noShellCause`), so the envelope is one budget plus store
   I/O, well inside ~30s. The in-place retry follows only an attempt that
   ended early (a cold-module abort), so the two attempts together stay near
   one budget; past the ceiling the platform kill degrades to the existing
@@ -317,7 +318,13 @@ Semantics, in dependency order:
   the stampede guard and the serialized queue slot; and the guard itself is
   staleness-aware with a token-guarded release, so an entry stranded by a
   killed workerd context (where no timer survives to fire) is reclaimed by
-  the next schedule past the cap. The cap bounds rango's bookkeeping, not the
+  the next schedule past the cap. The entry's age counts from scheduling
+  while the capture waits in the queue (which drops it at
+  `CAPTURE_QUEUE_WAIT_BUDGET_MS`, under the cap), then from the task's start
+  while its SSR module loads, then from the cap's start. Stamped only at
+  scheduling, a capture that waited in the queue read
+  as stranded while still inside its cap, and the next request scheduled a
+  duplicate capture of the key. The cap bounds rango's bookkeeping, not the
   wedged render itself — its awaits are never cancelled and die with the
   context. The capture's `"use cache"` leader registrations are separately
   bounded by the in-flight leader trust window (`use-cache-api-design.md`).
@@ -330,7 +337,7 @@ Semantics, in dependency order:
   bound, so there the option is the only ceiling.
 - **Validation.** Non-finite or sub-1ms values normalize to undefined (the
   capture default applies); the default's single owner stays
-  `SHELL_CAPTURE_MAX_WAIT_MS` in `src/rsc/shell-capture.ts`.
+  `SHELL_CAPTURE_MAX_WAIT_MS` in `src/rsc/shell-capture-constants.ts`.
 
 Deliberately unchanged: `SHELL_CAPTURE_WRITE_BARRIER_MS` (1.5s pre-render
 write barrier), `SHELL_SNAPSHOT_WRITE_SETTLE_MS` (1s settle for the deferred
@@ -569,8 +576,9 @@ the deadline: no-shell, and the warning names the cause), or `refused` (a
 capture guard tripped, the route's `cache()` refused the write, or the handler
 output failed to render). A capture with no doc record is refused ("the
 capture produced no doc segment record"), because a HIT could not replay it;
-the only captures allowed to store an entry without one are a
-prerender-served capture and a navigation-only entry.
+the only capture allowed to store an entry without one is a prerender-served
+capture. A navigation-only capture is no exception: partial replay consumes
+nothing but the record.
 
 Scar tissue for step 4: before it, server components rendered TWICE per
 capture, once in the capture's Flight render and once inside the record's
@@ -628,8 +636,8 @@ body carries the capture's generation).
 The LOADER family (docs/design/loader-container-bake.md) carries the same
 invariant for BAKE-lane loaders (`loader(Def, { ssr: false })`, whatever the
 entry's `loading()`; before #813 the trigger was a missing `loading()`): they
-EXECUTE during capture (the record-first step and the flight gate's
-`holdUntil` both wait for their real latency), their settled containers are
+EXECUTE during capture (the record-first step waits for their real
+latency), their settled containers are
 promise-elided and recorded as
 `{ family: "loader", key: <loader segment id>, value: <Flight string> }`, and
 on a HIT `serveShellHit` deserializes them into `_shellLoaderSeed` so
@@ -668,13 +676,17 @@ Mechanics (`src/cache/shell-snapshot.ts`):
 1. **Recording.** The capture render reads through a `RecordingShellStore` wrapping
    the derived context's `_cacheStore` (own property, so the shared foreground
    store is untouched). It passes every call through and RECORDS, last-write-wins
-   per `(family, key)`: read-HITS (`get`/`getItem`/`getResponse` returning
-   non-null — the value that fed the shell) and WRITES (`set`/`setItem`/
-   `putResponse` — the value a MISS computed and baked). The shell family
-   (`getShell`/`putShell`) is never recorded (the snapshot rides inside a shell
-   entry — recording it would be self-referential). Reads that MISS are not
-   recorded. Every item/response access made inside a loader scope (hit, miss,
-   or write) also marks its key in `loaderKeys`, which pruning reads.
+   per key, the item family: read-HITS (`getItem` returning non-null — the value
+   that fed the shell) and WRITES (`setItem` — the value a MISS computed and
+   baked). The segment family records the doc record alone
+   (`recordSegmentWrite`): an explicit `cache()` tier's reads and writes are
+   keyed where no HIT tail and no partial replay looks. The response family is
+   never reached by a capture (only response routes and the document cache,
+   HTTP middleware, read it), and the shell family (`getShell`/`putShell`) is
+   never recorded (the snapshot rides inside a shell entry — recording it would
+   be self-referential). Reads that MISS are not recorded. Every item access
+   made inside a loader scope (hit, miss, or write) also marks its key in
+   `loaderKeys`, which pruning reads.
 2. **Two write asymmetries you must know about.** An item-family `"use cache"`
    write runs INLINE during the render (cache-runtime schedules it on
    `requestCtx.waitUntil`), so it flows through the recording store naturally. A
@@ -683,18 +695,19 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    capture builds no Response, so it never fires on its own. The capture
    therefore FIRES its ISOLATED `_onResponseCallbacks` with a synthetic 200:
    `settleCaptureRecord` does it before the capture's Flight render (that
-   write is the record), and `captureAndStoreShell` fires whatever registered
-   later. (Only capture match-middleware callbacks live in that array — HTTP
-   middleware never runs for a capture — so firing them is safe.) Both write
+   write is the record). The match registers them all; nothing registers one
+   after it. (Only capture match-middleware callbacks live in that array —
+   HTTP middleware never runs for a capture — so firing them is safe.) Both write
    kinds are DEFERRED under `waitUntil`, so the derived context's `waitUntil`
    is overridden to COLLECT the write promises, and `settleWrites` drains them
    ITERATIVELY (a write can schedule a nested write — `cacheRoute` schedules
    its actual `store.set` in a second `waitUntil`) before the record is read
    and again before the snapshot is drained. Miss this and a MISS-at-capture
    value silently drifts.
-3. **Storage.** The snapshot is an optional `ShellCacheEntry.snapshot` array of
-   `{ family, key, value }`, kept JSON-serializable (responses carry base64
-   body + headers + status; items/segments are already JSON-able stored forms).
+3. **Storage.** The snapshot is the `ShellCacheEntry.snapshot` array of
+   `{ family, key, value }` (empty when the capture recorded nothing), kept
+   JSON-serializable (items and segments are already JSON-able stored forms;
+   loader pins are Flight strings).
    `ShellCacheEntry.docKey` names the doc record inside it. It rides with the
    rest of the entry. NOTE: the CF and Vercel stores cherry-pick entry fields
    into their own layouts, so `snapshot` (and `initialTheme`) are explicitly
@@ -703,14 +716,16 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    `ShellCacheEntry` that those layouts forget silently no-ops on the real
    stores. The CF frame stores the snapshot BEHIND the prelude, so a document
    HIT commits before reading it (docs/design/shell-entry-layout.md).
-4. **Seeding.** `serveShellHit`'s tail runs through `SeededShellStore`
+4. **Seeding.** `serveShellHit`'s tail runs through two `SeededShellStore`
    overlays (on a derived context, for the tail render ONLY — the shared
-   `reqCtx` is untouched). A read for a snapshotted key returns the recorded
-   value AS FRESH (`shouldRevalidate: false` — a pinned key must NOT kick SWR
-   revalidation); every other read falls through to the real store (the holes
-   stay live); all writes pass through (a live hole's loader may legitimately
-   write); the shell family always passes through. The implicit doc scope's
-   overlay is `segmentsOnly`: the real store never holds a `doc:` record.
+   `reqCtx` is untouched). The tail's `_cacheStore` serves the recorded item
+   records AS FRESH (`shouldRevalidate: false` — a pinned key must NOT kick
+   SWR revalidation); every other read falls through to the real store (the
+   holes stay live); all writes pass through (a live hole's loader may
+   legitimately write); the shell family always passes through. The implicit
+   doc scope's overlay is `segmentsOnly` and serves the doc record: the real
+   store never holds a `doc:` record, and no other scope reads a segment on a
+   HIT tail (`docTail` replaces the route's own scope).
 5. **Pruning: record only what a HIT reads (issue #941).** Recording keeps
    every read, but a HIT consumes only two things: the doc record (the handler
    layer) and what the loaders it re-runs read. `captureAndStoreShell` drops
@@ -719,13 +734,13 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    `src/cache/shell-snapshot.ts`). One rule:
    - the doc record is always kept;
    - a document entry (`"loaders"`) also keeps the loader-family records and
-     the item/response records a loader touched during the capture (R2.4);
+     the item records a loader touched during the capture (R2.4);
    - a navigation-only entry (`"segments"`) keeps nothing else: partial
      replay seeds the doc record alone.
 
-   Everything else is dropped, including the other segment records: an
-   explicit `cache()` tier's reads and writes are keyed where no HIT tail and
-   no partial replay looks. On `tests/cloudflare-basic` `/ppr-large` the
+   Everything else is dropped (the recording keeps no segment record besides
+   the doc record: an explicit `cache()` tier's reads and writes are keyed
+   where no HIT tail and no partial replay looks). On `tests/cloudflare-basic` `/ppr-large` the
    handler-only `"use cache"` items were 1.6 MB of a 2.6 MB snapshot before
    #941. `snapshotReaders` reduces to "the record exists"; the old per-entry
    conditions (the fast path arming, no store `keyGenerator`, the route's own
@@ -831,15 +846,16 @@ Two edges worth stating out loud:
   (decided in issue #941; before pruning the key was seeded everywhere and the
   hole showed the capture value too). This now holds for every document entry:
   no route shape keeps a handler-only item record any more. The one exception
-  is a key a bake-lane loader also read: that record is kept for the loader's
-  re-run, and the hole then reads the pinned value too. The hole's live read
+  is a key a bake-lane loader also read: that record is kept for a run of the
+  loader's body on the HIT (a promise-carrying one, or one whose pushes the
+  record could not keep), and the hole then reads the pinned value too. The hole's live read
   happens after the commit, never before the first byte: 7-19 ms in the #941
   edge model for a 1-594 KB item, against a seed hit's 0.002 ms.
 - The record pins the WHOLE handler layer, cached or not: a raw
   `Date.now()`/`Math.random()`/uncached `fetch` rendered in a handler or an
   async server component bakes its capture value and every HIT shows it. What
-  still drifts is uncached nondeterminism in a bake-lane loader (it re-runs on
-  every HIT and only its cache reads are pinned) and anything a pin over the
+  still drifts is uncached nondeterminism in a bake-lane loader whose body runs
+  on a HIT (only its cache reads are pinned) and anything a pin over the
   size cap no longer covers (see Operability). Per-request values belong in a
   live loader under a hole.
 
@@ -1061,22 +1077,22 @@ tells them apart with `isInsideLoaderScope()`:
     or class instance is not walked; if its encode does not finish, the
     capture is refused with a message saying to push plain objects and
     arrays.
-- **DSL loader pushes** keep "nesting = liveness": the loader re-runs on every
+- **DSL loader pushes** keep "nesting = liveness": a live loader runs on every
   HIT, so its captured pushes never enter the record's handle snapshot
   (replay would duplicate the fresh push). A nested promise is masked
-  (`maskNestedContainerThenables`) and stays a hole the HIT's re-run fills.
+  (`maskNestedContainerThenables`) and stays a hole the HIT's run fills.
   Settled, thenable-free pushes from a bake-lane (`ssr: false`) loader are
   the exception: they carry their loader as `owner`, the record stores them,
-  and the HIT's re-run replaces the restored copies in place.
+  a HIT restores them, and a run of that loader on the HIT replaces the
+  restored copies in place.
 
-The capture gate is still HELD open for the top-level await
-(`gateFlightForCapture`'s `holdUntil` = `getData().then(
-resolveDeferredHandleValues)`), because a pushed promise with real latency
-would otherwise lose the byte-quiet race, freeze out the handles row, and
-root-suspend the prerender. On the runtime path `settleCaptureRecord` already
-waited for these, so the hold normally releases at once. Holding the gate can
-never delay a hole (holes emit no bytes; holding only admits shell rows) and is
-bounded by the capture deadline.
+The capture gate holds nothing open: `settleCaptureRecord` waited for the
+top-level await (`getData().then(resolveDeferredHandleValues)`) and the
+bake-lane containers before the capture's Flight render began, so the
+handles row and the baked loader rows emit at once. Before the record-first
+step, the gate was held open for them (`holdUntil`): a pushed promise with
+real latency lost the byte-quiet race, froze out the handles row, and
+root-suspended the prerender.
 
 The asymmetry versus loaders, stated once: a live (non-`ssr: false`) LOADER
 container is a hole at its boundary (the entire loader value is the live
@@ -1414,8 +1430,8 @@ export interface ShellCacheEntry {
   prelude: string;          // base64-encoded prelude bytes
   postponed: string | null; // JSON.stringify of React postponed state
   reactVersion: string;     // React.version at capture time
-  buildVersion?: string;    // build stamp at capture time (second validity gate)
-  snapshot?: ShellSnapshotRecord[]; // doc record + loader pins (parity section)
+  buildVersion: string;     // build stamp at capture time (second validity gate)
+  snapshot: ShellSnapshotRecord[]; // doc record + loader pins (parity section)
   docKey?: string;          // the doc record every HIT replays
   navigationOnly?: true;    // partial-replay-only entry (no document half)
   createdAt: number;        // epoch ms
@@ -1467,7 +1483,7 @@ which the RSC handler stores before dispatching the render — available before
 
 The only request-context flag left is `_shellCaptureRun` (the ACTIVE capture
 marker; internal). The capture descriptor (`ShellCaptureDescriptor` in
-`shell-capture.ts`: key/ttl/swr/tags/store/debug) is passed by value.
+`shell-capture.ts`: key/ttl/swr/tags/store/debug sink) is passed by value.
 
 There is NO public middleware: `createShellCacheMiddleware`/`ShellCacheOptions`
 were removed (see the dead-ideas ledger).
@@ -1500,7 +1516,7 @@ the page: `router.match()` (mixed-chain; live loaders masked),
 `settleCaptureRecord` (the record-first step), `buildFullPayload`
 (`full-payload.ts`, shared with the foreground so the captured tree matches
 the served tree — the `resume` precondition) over the record's fragments, a
-Flight render, then the holdUntil/quiesce → `captureShellHTML` → prune/size
+Flight render, then the quiesce → `captureShellHTML` → prune/size
 guards → `putShell` flow. A redirecting match aborts with no store write;
 every error routes through `reportCacheError`.
 
@@ -1556,10 +1572,10 @@ with no `loading()` or inline `<Suspense>` above it; before #813, any loader
 route without `loading()`), and its text names both causes with the
 distinguishing signal (does the route ever flip to HIT). When the capture
 knows the cause, the warning names it instead: a handler layer that missed the
-deadline reports "did not settle within ppr.captureTimeout" (`noShellCauses`,
-filled from `settleCaptureRecord`'s `timeout` outcome). Under
-`descriptor.debug` (INTERNAL_RANGO_DEBUG) each attempt emits one concise
-breadcrumb instead of a stack dump.
+deadline reports "did not settle within ppr.captureTimeout"
+(`CaptureAttemptStats.noShellCause`, filled from `settleCaptureRecord`'s
+`timeout` outcome). With INTERNAL_RANGO_DEBUG (or `debugShellCapture`) the
+capture debug sink prints one line per attempt instead of a stack dump.
 
 ### Refused-capture backoff (declaring ppr on an ineligible route)
 
@@ -1834,9 +1850,11 @@ The drift class PPR introduces: without PPR the HTML and the hydration payload
 always agree because they come from one render. With a cached prelude they can
 diverge for shell content that is recomputed on a HIT. Handler output is not:
 the HIT's payload carries the capture's record, the same bytes the prelude
-froze. What a HIT recomputes is the loader layer: bake-lane loaders re-run,
-seeded from the snapshot pins, so they drift only when their pins were dropped
-(over `maxSnapshotBytes`) or they read something uncached. The payload is
+froze. What a HIT can recompute is the loader layer: a promise-free
+bake-lane loader is served from its pin and does not run; one that runs
+(promise-carrying, or with pushes the record could not keep) reads the item
+records its capture read, so it drifts only when its pins were dropped (over
+`maxSnapshotBytes`) or it read something uncached. The payload is
 hydration's source of truth, so React repairs such a mismatch at hydration
 (console warning + client re-render of the subtree) — degraded, not corrupt,
 and bounded by TTL/SWR. Consumer guidance: put per-request data in live
@@ -1850,10 +1868,10 @@ loaders (holes); keep bake-lane loaders deterministic or cached.
 | Multi-tenant / host-router | the default key incorporates `url.host` so one tenant's shell can never compose into another tenant's page on a shared worker + store; custom `keyGenerator`s own host scoping themselves                                                                                                                                                                                                                                                                |
 | Status/headers/cookies     | committed with the live response's headers before the first shell byte; a failing hole cannot become a 500/redirect — error UI renders inline via Suspense/error boundaries. Handler/loader header WRITES on a ppr route throw — see "The header doctrine" below                                                                                                                                                                                         |
 | Actions / PE / formState   | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Partial RSC navigation     | replays the capture's canonical segment record when eligible, then applies normal `matchPartial()` diff/revalidation with fresh DSL loaders; otherwise ordinary axis 1. No HTML/Flight resume and no client-visible protocol flag                                                                                                                                                                                                                        |
+| Partial RSC navigation     | replays the capture's canonical segment record when eligible, then applies normal `matchPartial()` diff/revalidation, live loaders fresh and bake-lane loaders from their pins; otherwise ordinary axis 1. No HTML/Flight resume and no client-visible protocol flag                                                                                                                                                                                     |
 | Per-request nonce          | always axis 1                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | React/router upgrade       | shells invalidated via `reactVersion` check (treated as a miss on mismatch; recapture overwrites and TTL ages the entry out — v1 has no `deleteShell`)                                                                                                                                                                                                                                                                                                   |
-| App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Pre-field entries miss the same way. Corrupt entries fail `openShellDocument` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture                           |
+| App redeploy (same React)  | shells invalidated via the `buildVersion` check — a persistent shared store (KV/runtime-cache) survives deploys, and resuming an old build's postponed blob against the new build's tree would tree-mismatch AFTER the 200 + prelude committed. Corrupt entries fail `openShellDocument` pre-commit and degrade identically; a tail failure on a served HIT schedules a healing recapture                                                                |
 | Dev server                 | works; shells are memory-store-scoped and cheap to recapture; HMR edits produce stale shells until TTL/recapture — documented, acceptable                                                                                                                                                                                                                                                                                                                |
 | Composite response         | per-request; only the shell entry is cacheable. Note ordering with the document cache: if the document-cache middleware wraps a ppr route, it may cache the composite — correct output, but it makes shell caching redundant for that route. Pick one per route.                                                                                                                                                                                         |
 
@@ -2028,7 +2046,7 @@ could push the stored envelope toward store value limits (Cloudflare KV caps
 a value at 25 MiB) — and the failure was invisible: `kv.put` rejects deep
 inside `waitUntil`. `PartialPrerenderProps.maxSnapshotBytes` (default 8 MiB,
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) now bounds only the PINS: the loader-family
-records and the item/response records loaders read. The doc record is exempt,
+records and the item records loaders read. The doc record is exempt,
 because without it a HIT could not serve at all. Over the cap
 `captureAndStoreShell` drops the pins, stores the entry with its doc record
 alone, and warns once per key. HITs still replay the handler layer; the trade
@@ -2259,8 +2277,8 @@ are not revived.
   descriptor policy (default ttl 300, PartialPrerenderProps flow-through),
   HIT composition (prelude-first byte order), stale/SWR recapture, reactVersion
   gate, host-scoped keys, and the bypass set (no ppr = zero cost/logs, nonce,
-  allReady, missing store family warn-once); the capture gate incl. the
-  `holdUntil` handles hold; the shell store family. The handlers-baked contract
+  allReady, missing store family warn-once); the capture gate; the shell
+  store family. The handlers-baked contract
   runs through the real serve pipeline and real Flight in
   `src/rsc/__tests__/shell-handlers-baked.rsc-test.tsx` (settle, parity, live
   hole, `rendered()` on replayed handles, deadline, no handler re-run for the

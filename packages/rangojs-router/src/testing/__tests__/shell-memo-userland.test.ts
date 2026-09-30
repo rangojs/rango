@@ -55,6 +55,7 @@ const SHELL = {
   postponed: null,
   reactVersion: "19.2.6",
   buildVersion: "app-build",
+  snapshot: [],
 };
 
 describe("PPR shell memo through the public store API", () => {

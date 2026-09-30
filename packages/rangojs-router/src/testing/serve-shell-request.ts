@@ -261,24 +261,27 @@ function buildRequest(url: URL, options: ServeShellRequestOptions): Request {
 /**
  * Reset the per-isolate PPR state requests leave behind, so the next test
  * starts as a fresh worker would: the capture's stampede guard, its backoff
- * (a refused capture backs its URL off for later tests too), the capture's
- * and the serve path's once-per-key warnings, the build-shell manifest memo,
- * and CFCacheStore's isolate memos (shells, tag markers, tag hints), which
- * every CFCacheStore in the process shares by namespace and URL. Call it in
- * `beforeEach`, never while a request is in flight. VercelCacheStore's memos
- * live on the `cache` handle it is given: a new handle starts empty.
+ * (a refused capture backs its URL off for later tests too), the shell path's
+ * once-per-key warnings, the build-shell manifest memo, the "use cache"
+ * in-flight leaders and warnings, and CFCacheStore's isolate memos (shells,
+ * tag markers, tag hints) and warnings, which every CFCacheStore in the
+ * process shares by namespace and URL. Call it in `beforeEach`, never while
+ * a request is in flight. VercelCacheStore's memos live on the `cache`
+ * handle it is given: a new handle starts empty.
  */
 export async function resetShellTestState(): Promise<void> {
-  const [capture, serve, buildShells, cf] = await Promise.all([
+  const [capture, serve, buildShells, cf, cacheRuntime] = await Promise.all([
     import("../rsc/shell-capture.js"),
     import("../rsc/shell-serve.js"),
     import("../rsc/shell-build-manifest.js"),
     import("../cache/cf/cf-cache-store.js"),
+    import("../cache/cache-runtime.js"),
   ]);
   capture.resetShellCaptureStateForTests();
   serve.resetShellServeStateForTests();
   buildShells.resetBuildShellManifestForTests();
   cf.resetCFShellMemoForTests();
+  cacheRuntime.resetCacheRuntimeForTests();
 }
 
 /** Settle background tasks, including ones scheduled while settling. */

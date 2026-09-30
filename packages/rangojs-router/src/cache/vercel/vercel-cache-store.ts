@@ -75,10 +75,7 @@ import {
   base64ToBuffer,
   base64ToBytes,
 } from "../cf/cf-base64.js";
-import {
-  perRequestStoreValue,
-  type PerRequestStoreMap,
-} from "../cf/cf-tag-marker-memo.js";
+import { maskRequestTags, maskedForRequest } from "../request-tag-mask.js";
 import {
   ShellMemo,
   freshReadsWindowMs,
@@ -237,7 +234,7 @@ interface VercelShellEnvelope {
   /** React.version at capture. */
   rv: string;
   /** Build version at capture (ShellCacheEntry.buildVersion). */
-  bv?: string;
+  bv: string;
   /** Capture-generation start time, used by tag marker checks. */
   c: number;
   /** staleAt (ms since epoch). */
@@ -248,8 +245,8 @@ interface VercelShellEnvelope {
   t?: string[];
   /** initialTheme the capture render was built with (resume theme fidelity). */
   i?: string;
-  /** Capture data snapshot: recorded cache-store hits/writes for HIT parity. */
-  sn?: ShellSnapshotRecord[];
+  /** Capture data snapshot (ShellCacheEntry.snapshot). */
+  sn: ShellSnapshotRecord[];
   /**
    * ShellCacheEntry.docKey. Must round-trip: navigation-replay eligibility
    * requires the exact canonical doc segment record named here — dropping the
@@ -416,18 +413,6 @@ function handleMemos(cache: VercelRuntimeCache): VercelHandleMemos {
   }
   return memos;
 }
-
-/**
- * The tags a request invalidated through a store, with their invalidatedAt:
- * request root context (RequestContext._requestRoot, so contexts derived
- * from the request share it) -> store -> tag -> ms (#973). invalidateTags()
- * writes it before its first await, and every read in that request treats an entry
- * carrying one of the tags, written at or before that time, as invalidated.
- * The platform's expireTag() and the tm marker writes are what other
- * requests see, and revalidateTag() does not wait for them.
- */
-const requestInvalidations: PerRequestStoreMap<Map<string, number>> =
-  new WeakMap();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -1342,6 +1327,9 @@ export class VercelCacheStore<
             this.readTagMarker(tag, isolateMemo, outcomes),
         ),
       );
+      // A read in flight when this request invalidated one of the tags
+      // resolved to the marker before it.
+      if (this.maskedForRequest(tags, sinceMs)) return true;
       for (const at of markers) {
         if (at !== null && at >= sinceMs) return true;
       }
@@ -1408,42 +1396,24 @@ export class VercelCacheStore<
 
   /**
    * The request-local half of invalidateTags(), run before its first await
-   * (#973): see requestInvalidations. revalidateTag() waits for nothing
-   * after it.
+   * (#973): the request masks the tags (request-tag-mask.ts). The platform's
+   * expireTag() and the tm marker writes are what other requests see, and
+   * revalidateTag() does not wait for them.
    */
   private maskTagsForRequest(tags: string[], at: number): void {
     const ctx = _getRequestContext();
-    if (!ctx) return;
-    const mask = perRequestStoreValue(
-      requestInvalidations,
-      ctx._requestRoot ?? ctx,
-      this,
-      () => new Map<string, number>(),
-    );
-    for (const tag of tags) mask.set(tag, at);
+    if (ctx) maskRequestTags(ctx, this, tags, at);
   }
 
   /**
-   * Whether this request invalidated one of `tags` through this store at or
-   * after `taggedAt`. `>=`, as the marker check: an entry written in the
-   * invalidation's millisecond may hold a value computed before it, so it
-   * misses (a false miss, never a stale read). An entry without a stamp was
-   * written before the stamp existed and counts as older.
+   * Whether this request masked one of `tags` through this store at or after
+   * `taggedAt`. An entry without a stamp counts as older than any mask.
    */
   private maskedForRequest(
     tags: string[] | undefined,
     taggedAt: number | undefined,
   ): boolean {
-    if (!tags?.length) return false;
-    const ctx = _getRequestContext();
-    const mask =
-      ctx && requestInvalidations.get(ctx._requestRoot ?? ctx)?.get(this);
-    if (!mask) return false;
-    for (const tag of tags) {
-      const at = mask.get(tag);
-      if (at !== undefined && at >= (taggedAt ?? 0)) return true;
-    }
-    return false;
+    return maskedForRequest(_getRequestContext(), this, tags, taggedAt ?? 0);
   }
 
   /** A data read's mask check: reports the miss and returns true when masked. */
@@ -1700,7 +1670,7 @@ export class VercelCacheStore<
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
     const { p, po, rv, bv, c, s, e, t, i, sn, dk, pr, no } = raw;
-    if (typeof rv !== "string") return null;
+    if (typeof rv !== "string" || typeof bv !== "string") return null;
     // Document half: required unless navigationOnly (`no`), which stores
     // neither field. Tolerate a legacy navigationOnly envelope that still
     // carries them.
@@ -1716,13 +1686,14 @@ export class VercelCacheStore<
       ...(typeof p === "string" ? { p } : {}),
       ...(po !== undefined ? { po: po as string | null } : {}),
       rv,
-      bv: typeof bv === "string" ? bv : undefined,
+      bv,
       c,
       s,
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
-      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : undefined,
+      // A non-array field reads as no records.
+      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
       dk: typeof dk === "string" ? dk : undefined,
       pr: typeof pr === "string" ? pr : undefined,
       no: no === true ? true : undefined,

@@ -185,7 +185,8 @@ per invalidated tag and compares shell generations against it:
 - shell path: reject a write whose capture generation predates a marker, and
   repeat the marker check on read to cover the check-to-write race.
 - the invalidating request (#973): before its first await, `invalidateTags`
-  records the tags and the time in a per-request map (`requestInvalidations`).
+  records the tags and the time in the request's tag mask
+  (`request-tag-mask.ts`, shared with `CFCacheStore`).
   For the rest of that request a segment, item or response hit carrying one
   of the tags and written at or before that time (the envelope's `ta` stamp;
   an entry without one counts as older) misses, and the shell checks treat

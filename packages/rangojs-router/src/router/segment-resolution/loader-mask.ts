@@ -8,10 +8,9 @@
  * fresh into it.
  *
  * Capture mode is signalled by `requestCtx._shellCaptureRun`, set to true ONLY on
- * the derived request context of the background capture task (shell-capture.ts) —
- * NOT by the foreground render, whose `_shellCapture` descriptor merely means "a
- * capture is wanted" and must not change behavior. This module is the single home
- * for the mask so every loader execution site gates the same way (loader-cache.ts
+ * the derived request context of the background capture task (shell-capture.ts);
+ * the foreground render never sets it. This module is the single home for the
+ * mask so every loader execution site gates the same way (loader-cache.ts
  * `resolveLoaderData`, fresh.ts `resolveLoaders`).
  */
 

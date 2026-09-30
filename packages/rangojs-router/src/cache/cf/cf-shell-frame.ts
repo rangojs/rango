@@ -34,7 +34,7 @@ export interface ShellFrameHead {
   /** ShellCacheEntry.reactVersion */
   rv: string;
   /** ShellCacheEntry.buildVersion */
-  bv?: string;
+  bv: string;
   /** Capture-generation start time (ms epoch), used by tag marker checks. */
   c: number;
   /** When the entry becomes stale (ms epoch). */
@@ -70,7 +70,7 @@ function isShellFrameHead(value: unknown): value is ShellFrameHead {
   const head = value as Partial<ShellFrameHead>;
   return (
     typeof head.rv === "string" &&
-    (head.bv === undefined || typeof head.bv === "string") &&
+    typeof head.bv === "string" &&
     isFiniteNumber(head.c) &&
     isFiniteNumber(head.s) &&
     isFiniteNumber(head.e) &&

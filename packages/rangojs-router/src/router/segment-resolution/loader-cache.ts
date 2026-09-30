@@ -79,7 +79,6 @@ import {
 } from "./loader-snapshot.js";
 import {
   SHELL_BAKE_TAG_OWNER,
-  armLoaderTagSets,
   captureRecordedTags,
   flattenRecordedTags,
   linkLoaderTags,
@@ -149,7 +148,7 @@ async function resolveLoaderKey(
   const defaultKey = getDefaultLoaderCacheKey(loaderId, host, pathname, params);
   if (options === false) return { key: defaultKey, declared: false };
   return {
-    key: await resolveCacheKey(options.key, store, defaultKey, "LoaderCache"),
+    key: await resolveCacheKey(options.key, store, defaultKey),
     declared: Boolean(options.key || store.keyGenerator),
   };
 }
@@ -508,11 +507,8 @@ function executeLoaderData<TEnv>(
   const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
   recordLoaderTags(loaderId, tags);
-  // Production arms at match, before any loader runs (match-api.ts,
-  // bindsLoaderCache); no production path relies on this. It only keeps a
-  // resolveLoaders call outside a match from running unarmed after this
-  // point (loaders it started earlier stay unrecorded).
-  armLoaderTagSets();
+  // The per-execution loader tag sets were armed before any loader ran: by
+  // the match (match-api.ts, bindsLoaderCache), or by runLoader.
   // An execution of this loader outside the binding (a reader started it
   // first, a stale refresh) answers for the cache() tags too.
   if (tags && tags.length > 0) {

@@ -32,47 +32,27 @@
  * (Playwright — same pure helpers, no Vite virtuals).
  */
 
+import { composeCacheKeys } from "../cache/cache-key-utils.js";
 import {
-  composeCacheKeys,
-  sortedSearchString,
-} from "../cache/cache-key-utils.js";
-import { partitionShellKey } from "../rsc/shell-capture-constants.js";
+  PPR_REPLAY_BYPASS_REASONS,
+  PPR_REPLAY_STATUS_HEADER,
+  SHELL_STATUS_HEADER,
+  buildShellKey,
+  partitionShellKey,
+  type PprReplayBypassReason,
+} from "../rsc/shell-capture-constants.js";
 import {
   compileSearchParamsFilter,
   type CacheSearchParams,
 } from "../cache/search-params-filter.js";
 
-/** Production header name (`rsc/shell-serve.ts` `SHELL_STATUS_HEADER`). */
-export const SHELL_STATUS_HEADER: string = "x-rango-shell";
-
-/** Partial-navigation replay decision header from `rsc/rsc-rendering.ts`. */
-export const PPR_REPLAY_STATUS_HEADER: string = "x-rango-ppr-replay";
+// The production header names and bypass reasons, from the React-free leaf
+// the serve path reads them from.
+export { PPR_REPLAY_STATUS_HEADER, SHELL_STATUS_HEADER };
+export type { PprReplayBypassReason };
 
 /** Values the serve path writes on `x-rango-shell`. */
 export type ShellStatus = "HIT" | "MISS";
-
-const PPR_REPLAY_BYPASS_REASONS = [
-  "method",
-  "dynamic",
-  "nonce",
-  "store-unavailable",
-  "passive-read-unsupported",
-  "no-navigation-context",
-  "prerender-store",
-  "intercept",
-  "cache-disabled",
-  "read-error",
-  "no-entry",
-  "invalid-version",
-  "corrupt-entry",
-  "no-segment-snapshot",
-  "snapshot-miss",
-  "explicit-cache-hit",
-  "stale-build-entry",
-] as const;
-
-/** Bounded reasons a PPR partial request can fall open to ordinary matching. */
-export type PprReplayBypassReason = (typeof PPR_REPLAY_BYPASS_REASONS)[number];
 
 /** Parsed `x-rango-ppr-replay` value. */
 export type PprReplayStatus =
@@ -83,12 +63,10 @@ export type PprReplayStatus =
 export type ShellStatusTarget = Response | { headers: Headers };
 
 /**
- * Shell store key for a document URL — same formula as production
- * `buildShellKey` in `rsc/shell-serve.ts` (host + pathname + sorted search +
- * `:shell`), then the production `partitionShellKey` itself (the leaf
- * `rsc/shell-capture-constants.ts`). The base is kept here so the testing
- * barrel never imports the shell-serve module (it pulls React). A parity test
- * pins the two implementations.
+ * Shell store key for a document URL: the production `buildShellKey` (host +
+ * pathname + sorted search + `:shell`) and `partitionShellKey`, both from the
+ * React-free leaf `rsc/shell-capture-constants.ts`, so the testing barrel never
+ * imports the shell-serve module (it pulls React).
  *
  * Accepts a `URL` or an absolute/relative request URL string (relative strings
  * resolve against `http://localhost`). Pass the router's `cache.searchParams`
@@ -109,12 +87,7 @@ export function shellCacheKey(
 ): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
-  const sorted = sortedSearchString(
-    resolved.searchParams,
-    compileSearchParamsFilter(searchParams),
-  );
-  const searchSuffix = sorted ? `?${sorted}` : "";
-  const key = `${resolved.host}${resolved.pathname}${searchSuffix}:shell`;
+  const key = buildShellKey(resolved, compileSearchParamsFilter(searchParams));
   if (partition === undefined) return key;
   if (typeof partition === "string") return partitionShellKey(key, partition);
   // No key() results: no partition, as when `partition` is omitted.

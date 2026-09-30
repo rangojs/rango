@@ -46,7 +46,7 @@ function prerenderServed(): {
   return { routeName: "shop.category", params: { category: "power-set" } };
 }
 
-/** The 5th arg captureAndStoreShell receives — the shell descriptor + sink. */
+/** The 4th arg captureAndStoreShell receives — the shell descriptor + sink. */
 interface CaptureDescriptorStub {
   store: {
     putShell: (
@@ -188,7 +188,7 @@ describe("captureShellForBuild", () => {
   it("runs global + route middleware to completion (no opt-out) and stores the shell", async () => {
     captureAndStoreShellMock.mockReset();
     captureAndStoreShellMock.mockImplementation(async (..._args: unknown[]) => {
-      const descriptor = _args[4] as CaptureDescriptorStub;
+      const descriptor = _args[3] as CaptureDescriptorStub;
       await descriptor.store.putShell(
         descriptor.key,
         { buildVersion: "test-version" },
@@ -328,7 +328,7 @@ describe("captureShellForBuild", () => {
     // captured shell is collected but then discarded because the request opted
     // onto the dynamic axis (build-shell-capture reads derivedCtx._dynamic).
     captureAndStoreShellMock.mockImplementation(async (..._args: unknown[]) => {
-      const descriptor = _args[4] as CaptureDescriptorStub;
+      const descriptor = _args[3] as CaptureDescriptorStub;
       getRequestContext()!.dynamic();
       await descriptor.store.putShell(descriptor.key, {});
       return "stored";

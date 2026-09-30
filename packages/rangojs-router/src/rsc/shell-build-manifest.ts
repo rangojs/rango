@@ -37,7 +37,11 @@ import {
   hasIntactShellPayload,
   isValidShellHit,
 } from "./shell-serve.js";
-import { SHELL_CAPTURE_MAX_WAIT_MS } from "./shell-capture.js";
+import {
+  SHELL_CAPTURE_MAX_WAIT_MS,
+  resetShellWarningsForTests,
+  warnOnce,
+} from "./shell-capture-constants.js";
 import { buildShellManifestKey } from "../prerender/shell-manifest-key.js";
 
 /** One baked manifest record (the __ps asset module's default export). */
@@ -45,10 +49,8 @@ export interface BuildShellEntry {
   entry: ShellCacheEntry;
   /** Resolved ppr ttl (seconds) — drives staleness/recapture, never expiry. */
   ttl: number;
-  swr?: number;
   /** The putShell-barrier tag union baked at build (static + recorded). */
   tags?: string[];
-  routeName: string;
 }
 
 interface ShellManifestModule {
@@ -121,14 +123,15 @@ async function validatedManifestRecord(
   return verdict ?? undefined;
 }
 
-/** Reset the memoized manifest (unit tests swap the global loader). */
+/**
+ * Reset the memoized manifest (unit tests swap the global loader) and the
+ * shell path's once-per-key warnings, the tag-check one included.
+ */
 export function resetBuildShellManifestForTests(): void {
   manifestPromise = null;
   validatedSpecs.clear();
+  resetShellWarningsForTests();
 }
-
-/** Keys already warned about a tag-check-incapable store (once per key). */
-const warnedTagCheckUnsupported = new Set<string>();
 
 export interface BuildShellHit {
   entry: DocumentShellCacheEntry;
@@ -333,20 +336,19 @@ export async function lookupBuildShell(
         // memo-only answers would let the immutable asset resurrect on the
         // next request). Declared intent that cannot be honored deserves a
         // diagnostic; the route keeps runtime-capture semantics.
-        const key = buildShellManifestKey(url.pathname);
-        if (!warnedTagCheckUnsupported.has(key)) {
-          warnedTagCheckUnsupported.add(key);
-          console.warn(
+        warnOnce(
+          "build-shell-tag-check",
+          buildShellManifestKey(url.pathname),
+          () =>
             `[rango] Build-time shell for "${url.pathname}" carries cache tags, but ` +
-              "the app cache store cannot answer tag-invalidation history durably " +
-              (typeof check !== "function"
-                ? "(isTagsInvalidatedSince() is not implemented), "
-                : "(no durable tag history — a CFCacheStore without a KV namespace), ") +
-              "so updateTag() could not evict it. The entry is not served; the route " +
-              "keeps runtime shell capture. Use MemorySegmentCacheStore, a KV-backed " +
-              "CFCacheStore, or VercelCacheStore (or add the method to your custom store).",
-          );
-        }
+            "the app cache store cannot answer tag-invalidation history durably " +
+            (typeof check !== "function"
+              ? "(isTagsInvalidatedSince() is not implemented), "
+              : "(no durable tag history — a CFCacheStore without a KV namespace), ") +
+            "so updateTag() could not evict it. The entry is not served; the route " +
+            "keeps runtime shell capture. Use MemorySegmentCacheStore, a KV-backed " +
+            "CFCacheStore, or VercelCacheStore (or add the method to your custom store).",
+        );
         return null;
       }
       if (await check.call(store, record.tags, entry.createdAt)) return null;

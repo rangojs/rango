@@ -915,17 +915,14 @@ export function isInsideCacheScope(): boolean {
  * capturing request's identity into every visitor's page. The cache()
  * guards above keep it (a cache() HIT is a separate tier).
  *
- * Keys off `_shellCaptureRun`, NOT the `_shellCapture` descriptor: the descriptor
- * is also present during the FOREGROUND render (it means "a capture is wanted"),
- * and the foreground must read cookies/headers normally to serve the real user.
- * Only the derived capture context sets `_shellCaptureRun`.
+ * Keys off `_shellCaptureRun`, which only the derived capture context sets:
+ * the foreground render reads cookies/headers normally to serve the real user.
  *
  * Applies only to the READ surfaces (cookies(), headers(), a { cache: false }
  * variable, and the theme reads through tripShellCaptureGuard) whose values
  * become markup. Response directives
  * (invalidateClientCache(), keepClientCache()) stay callable: during capture
- * they are header effects on a discarded response, and on the live HIT path
- * the full pipeline runs so their headers flow to the client normally.
+ * they are header effects on a discarded response.
  *
  * The throw can be caught by the code that made the read, so the guard also
  * flags the capture context; the capture refuses on the flag

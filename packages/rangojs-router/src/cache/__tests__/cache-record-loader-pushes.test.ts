@@ -341,7 +341,7 @@ describe("cache() record vs a loader with its own cache()", () => {
  * Run the real PPR capture match (deriveShellCaptureContext + router.match),
  * fire its onResponse callbacks as captureAndStoreShell does, and return the
  * shell snapshot plus the Crumbs values in the doc segment record that a
- * fast-path HIT replays.
+ * document HIT replays.
  */
 async function captureShell(
   pathname: string,
@@ -403,13 +403,18 @@ async function serveShellHitTail(
     url: new URL(request.url),
     variables: {},
   } as any) as RequestContext<any>;
-  reqCtx._cacheStore = new SeededShellStore(
-    new MemorySegmentCacheStore(),
-    snapshot,
-  );
+  const inner = new MemorySegmentCacheStore();
+  reqCtx._cacheStore = new SeededShellStore(inner, snapshot);
   const loaderSeed = await buildShellLoaderSeed(snapshot);
   if (loaderSeed) reqCtx._shellLoaderSeed = loaderSeed;
-  reqCtx._shellImplicitCache = { ttl: 60, swr: 0, keyPrefix: "doc" };
+  reqCtx._shellImplicitCache = {
+    ttl: 60,
+    swr: 0,
+    // The doc record is read through the implicit scope's own segment
+    // overlay, as serveShellHit arms it.
+    store: new SeededShellStore(inner, snapshot, { segmentsOnly: true }),
+    keyPrefix: "doc",
+  };
   await runWithRequestContext(reqCtx, async () => {
     await router.match(request, { env: {} });
     reqCtx._handleStore.seal();
