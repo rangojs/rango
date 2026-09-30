@@ -64,6 +64,8 @@ export const NamedRoutes = {
   inlineDocs: "/inline/docs",
   inlineIndex: "/inline",
   inlinePricing: "/inline/pricing",
+  "interceptWhenShape.item": "/intercept-when-shape/item/:id",
+  "interceptWhenShape.list": "/intercept-when-shape/list/:section",
   itemDetail: "/item/:itemId/detail",
   loaderCacheDep: "/loader-cache-dep",
   loaderCacheIdentityKeyed: "/loader-cache-identity/keyed",

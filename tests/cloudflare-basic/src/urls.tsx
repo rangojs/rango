@@ -91,6 +91,8 @@ import {
   PprPrerenderSeqSlot,
 } from "./pages/ppr-shell.js";
 import { PprShellBadge } from "./components/PprShellBadge.js";
+import { pprExecWhen } from "./components/transition-when.js";
+import { PprExecMark } from "./location-states.js";
 import {
   CfPhgDynamicPage,
   CfPhgHandlerPage,
@@ -251,6 +253,7 @@ import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
+import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import mixedClientUrls from "./mixed-client/urls.js";
@@ -962,8 +965,7 @@ export const urlpatterns = urls(
           { name: "pprLoadMore", ppr: { ttl: 300, swr: 120 } },
           () => [
             transition({
-              when: ({ currentUrl, nextUrl }) =>
-                currentUrl?.pathname === nextUrl.pathname,
+              when: ({ from, to }) => from.url.pathname === to.url.pathname,
             }),
             revalidate(({ currentUrl, nextUrl }) =>
               currentUrl.pathname === nextUrl.pathname &&
@@ -1184,8 +1186,13 @@ export const urlpatterns = urls(
         // layer-by-layer across consecutive HITs on workerd/KV. The middleware
         // is scoped to this subtree so its counter isolates the fixture.
         middleware(
-          async (_ctx, next) => {
+          async (ctx, next) => {
             pprExecCounters.middleware += 1;
+            // Rides a partial navigation (a replay HIT included) to the
+            // browser, where pprExecWhen reads it from `to.state`.
+            ctx.setLocationState([
+              PprExecMark({ middleware: pprExecCounters.middleware }),
+            ]);
             return next();
           },
           () => [
@@ -1200,12 +1207,7 @@ export const urlpatterns = urls(
                 PprExecPage,
                 { name: "pprShellExecMatrix", ppr: { ttl: 300, swr: 120 } },
                 () => [
-                  transition({
-                    when: ({ nextUrl }) => {
-                      pprExecCounters.transitionWhen += 1;
-                      return nextUrl.searchParams.get("transition") !== "drop";
-                    },
-                  }),
+                  transition({ when: pprExecWhen }),
                   loader(PprShellExecLoader),
                   loading(
                     <div data-testid="ppr-exec-fallback">
@@ -2216,6 +2218,11 @@ export const urlpatterns = urls(
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),
+        // intercept({ when }) from/to locations (mirrors the router e2e app's
+        // intercept-when-shape).
+        include("/intercept-when-shape", interceptWhenShapePatterns, {
+          name: "interceptWhenShape",
+        }),
 
         // Deferred-handle navigation contract + history-cache fixes
         // (#622 follow-ups), exercised through client (soft) navigation under
