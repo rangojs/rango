@@ -73,6 +73,36 @@ function NestedKeySiblingPage(ctx: { request: Request }) {
   );
 }
 
+// /cache-test/nested-condition and /cache-test/nested-tags (issue #974): a
+// run count a HIT replays unchanged. /cache-test/raw-key* (issue #975): runs
+// of two cached response routes.
+let nestedScopeRenders = 0;
+let rawKeyRuns = 0;
+
+function NestedScopePage() {
+  return (
+    <p data-testid="nested-scope-render">{`run:${++nestedScopeRenders}`}</p>
+  );
+}
+
+// /cache-test/cross-store (issue #974): the outer cache()'s store partitions
+// by locale; the inner cache() writes to the app store.
+function crossStoreLocale(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-locale") ?? "none";
+}
+
+const crossStoreLocaleStore = new MemorySegmentCacheStore({
+  keyGenerator: (ctx, defaultKey) => `${defaultKey}|${crossStoreLocale(ctx)}`,
+});
+
+function CrossStorePage(ctx: { request: Request }) {
+  return (
+    <p data-testid="nested-scope-render">
+      {`${crossStoreLocale(ctx)}:${++nestedScopeRenders}`}
+    </p>
+  );
+}
+
 // Render counts for /cache-test/path-children (issue #912).
 let pathChildrenShellRenders = 0;
 let pathChildrenRouteRenders = 0;
@@ -185,6 +215,73 @@ export const cachePatterns = urls(
         ),
       ],
     ),
+
+    // An outer condition() gates the cache() nested in it (issue #974): a
+    // request it refuses (x-cache-bypass: 1) renders live, and neither reads
+    // nor writes the inner record.
+    cache(
+      {
+        condition: (ctx) => ctx.request.headers.get("x-cache-bypass") !== "1",
+      },
+      () => [
+        cache({ ttl: 600 }, () => [
+          path("/cache-test/nested-condition", NestedScopePage, {
+            name: "cacheTest.nestedCondition",
+          }),
+        ]),
+      ],
+    ),
+
+    // The outer cache()'s tags tag the record of the cache() nested in it
+    // (issue #974): updateTag() of the outer tag evicts it. The probe gives
+    // each test its own tag and record.
+    cache(
+      {
+        tags: (ctx) => [
+          `nested-outer:${ctx.url.searchParams.get("probe") ?? ""}`,
+        ],
+      },
+      () => [
+        cache({ ttl: 600, tags: ["nested-inner"] }, () => [
+          path("/cache-test/nested-tags", NestedScopePage, {
+            name: "cacheTest.nestedTags",
+          }),
+        ]),
+      ],
+    ),
+
+    // An outer cache({ store }) whose keyGenerator partitions by locale
+    // partitions the cache() nested in it on the app store (issue #974): a
+    // locale never reads another locale's inner record.
+    cache({ store: crossStoreLocaleStore }, () => [
+      cache({ ttl: 600 }, () => [
+        path("/cache-test/cross-store", CrossStorePage, {
+          name: "cacheTest.crossStore",
+        }),
+      ]),
+    ]),
+
+    // A key() returning request input as is (issue #975): its result is
+    // namespaced, so a header value spelling the victim route's default key
+    // (`json:<host>/cache-test/raw-key-victim?probe=...`) can no longer write
+    // this route's body under the victim's entry.
+    cache(
+      { ttl: 600, key: (ctx) => ctx.request.headers.get("x-raw-key") ?? "" },
+      () => [
+        path.json(
+          "/cache-test/raw-key",
+          () => ({ from: "raw-key", run: ++rawKeyRuns }),
+          { name: "cacheTest.rawKey" },
+        ),
+      ],
+    ),
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/cache-test/raw-key-victim",
+        () => ({ from: "victim", run: ++rawKeyRuns }),
+        { name: "cacheTest.rawKeyVictim" },
+      ),
+    ]),
 
     // A cache() among a path's own children caches that path: the route and
     // the layout declared after the cache() replay from the cache, and the

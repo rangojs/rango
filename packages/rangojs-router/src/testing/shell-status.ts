@@ -63,6 +63,25 @@ export type PprReplayStatus =
 export type ShellStatusTarget = Response | { headers: Headers };
 
 /**
+ * What partitions a ppr route's shell, for {@link shellCacheKey}: the
+ * request's results of the functions that partition the route's cache()
+ * record.
+ */
+export interface ShellCachePartition {
+  /** The route's cache() `key()` results, outermost first. */
+  keys?: readonly string[];
+  /**
+   * Store `keyGenerator` results, one per store, outermost first: an
+   * enclosing cache() on another store's, then the store's of the route's
+   * own cache() when it sets no `key()` (with no route cache(), the app
+   * store's). When every one returns the default key they partition
+   * nothing: leave them out. Otherwise each keeps its position, and one
+   * that returns the default key is `""`.
+   */
+  generated?: readonly string[];
+}
+
+/**
  * Shell store key for a document URL: the production `buildShellKey` (host +
  * pathname + sorted search + `:shell`) and `partitionShellKey`, both from the
  * React-free leaf `rsc/shell-capture-constants.ts`, so the testing barrel never
@@ -72,28 +91,40 @@ export type ShellStatusTarget = Response | { headers: Headers };
  * resolve against `http://localhost`). Pass the router's `cache.searchParams`
  * config as `searchParams` when the app under test sets one — the production
  * key applies it, so the expected key must too. When the route's record is
- * partitioned by the request — its `cache({ key })`, or the store's
- * `keyGenerator` — its shell is too: pass the key that function returns for
- * the request as `partition` (appended URI-encoded; a result equal to the
- * default key partitions nothing, so pass none). Under nested keyed
- * `cache()` scopes, pass their `key()` results as an array, outermost first:
- * they compose as the production record key composes them
- * (`composeCacheKeys`).
+ * partitioned by the request, its shell is too: pass what partitions it as
+ * `partition`, composed as production composes it (`composeCacheKeys`,
+ * which namespaces each `key()` result):
+ * - its `cache({ key })` result, as a string;
+ * - nested keyed `cache()` scopes' `key()` results, as an array, outermost
+ *   first;
+ * - store `keyGenerator` results, with or without `key()` results, as
+ *   `{ keys, generated }` (see {@link ShellCachePartition}).
  */
 export function shellCacheKey(
   url: URL | string,
   searchParams?: CacheSearchParams,
-  partition?: string | readonly string[],
+  partition?: string | readonly string[] | ShellCachePartition,
 ): string {
   const resolved =
     typeof url === "string" ? new URL(url, "http://localhost") : url;
   const key = buildShellKey(resolved, compileSearchParamsFilter(searchParams));
   if (partition === undefined) return key;
-  if (typeof partition === "string") return partitionShellKey(key, partition);
-  // No key() results: no partition, as when `partition` is omitted.
-  return partition.length === 0
+  const { keys = [], generated = [] }: ShellCachePartition =
+    typeof partition === "string"
+      ? { keys: [partition] }
+      : isPartitionList(partition)
+        ? { keys: partition }
+        : partition;
+  // Nothing partitions: the key as when `partition` is omitted.
+  return keys.length === 0 && generated.length === 0
     ? key
-    : partitionShellKey(key, composeCacheKeys(partition));
+    : partitionShellKey(key, composeCacheKeys(keys, generated));
+}
+
+function isPartitionList(
+  partition: readonly string[] | ShellCachePartition,
+): partition is readonly string[] {
+  return Array.isArray(partition);
 }
 
 function getHeaders(target: ShellStatusTarget): Headers {

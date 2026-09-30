@@ -366,7 +366,7 @@ describe("PPR snapshot pruning: no HIT runs a handler, so every document entry p
       },
       capture: { "x-variant": "a" },
       hit: { "x-variant": "a" },
-      partition: "variant:a",
+      partition: "key:variant%3Aa",
     },
   ];
 

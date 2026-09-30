@@ -9,7 +9,7 @@ import {
   redirect,
   type HandlerContext,
 } from "@rangojs/router";
-import { CFCacheStore } from "@rangojs/router/cache";
+import { CFCacheStore, MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Suspense, type ReactNode } from "react";
 import { Link, Outlet } from "@rangojs/router/client";
 import { StreamTest } from "./components/StreamTest.js";
@@ -310,6 +310,30 @@ function NestedKeySiblingPage(ctx: { request: Request }): ReactNode {
   );
 }
 
+// /nested-condition and /nested-tags (issue #974): a token a HIT replays
+// unchanged.
+function NestedScopePage(): ReactNode {
+  return <p data-testid="nested-scope-render">{crypto.randomUUID()}</p>;
+}
+
+// /cross-store (issue #974): the outer cache()'s store partitions by locale;
+// the inner cache() writes to the app's CFCacheStore.
+function crossStoreLocale(ctx: { request: Request }): string {
+  return ctx.request.headers.get("x-cache-locale") ?? "none";
+}
+
+const crossStoreLocaleStore = new MemorySegmentCacheStore({
+  keyGenerator: (ctx, defaultKey) => `${defaultKey}|${crossStoreLocale(ctx)}`,
+});
+
+function CrossStorePage(ctx: { request: Request }): ReactNode {
+  return (
+    <p data-testid="nested-scope-render">
+      {`${crossStoreLocale(ctx)}:${crypto.randomUUID()}`}
+    </p>
+  );
+}
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -395,6 +419,27 @@ export const urlpatterns = urls(
           ts: Date.now(),
         }),
         { name: "testSpkCached" },
+      ),
+    ]),
+    // A key() returning request input as is (issue #975): its result is
+    // namespaced, so a header value spelling the victim route's default key
+    // (`json:<host>/test/raw-key-victim?probe=...`) can no longer write this
+    // route's body under the victim's entry.
+    cache(
+      { ttl: 600, key: (ctx) => ctx.request.headers.get("x-raw-key") ?? "" },
+      () => [
+        path.json(
+          "/test/raw-key",
+          () => ({ from: "raw-key", token: crypto.randomUUID() }),
+          { name: "testRawKey" },
+        ),
+      ],
+    ),
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/raw-key-victim",
+        () => ({ from: "victim", token: crypto.randomUUID() }),
+        { name: "testRawKeyVictim" },
       ),
     ]),
     // Test fixture only: the tag comes from the URL param so the e2e can
@@ -1544,6 +1589,48 @@ export const urlpatterns = urls(
             ),
           ],
         ),
+
+        // An outer condition() gates the cache() nested in it (issue #974):
+        // a request it refuses (x-cache-bypass: 1) renders live, and neither
+        // reads nor writes the inner record.
+        cache(
+          {
+            condition: (ctx) =>
+              ctx.request.headers.get("x-cache-bypass") !== "1",
+          },
+          () => [
+            cache({ ttl: 60 }, () => [
+              path("/nested-condition", NestedScopePage, {
+                name: "nestedCondition",
+              }),
+            ]),
+          ],
+        ),
+
+        // The outer cache()'s tags tag the record of the cache() nested in
+        // it (issue #974): updateTag() of the outer tag evicts it. The probe
+        // gives each test its own tag and record.
+        cache(
+          {
+            tags: (ctx) => [
+              `nested-outer:${ctx.url.searchParams.get("probe") ?? ""}`,
+            ],
+          },
+          () => [
+            cache({ ttl: 60, tags: ["nested-inner"] }, () => [
+              path("/nested-tags", NestedScopePage, { name: "nestedTags" }),
+            ]),
+          ],
+        ),
+
+        // An outer cache({ store }) whose keyGenerator partitions by locale
+        // partitions the cache() nested in it on the app store (issue #974):
+        // a locale never reads another locale's inner record.
+        cache({ store: crossStoreLocaleStore }, () => [
+          cache({ ttl: 60 }, () => [
+            path("/cross-store", CrossStorePage, { name: "crossStore" }),
+          ]),
+        ]),
 
         // A layout after a bare cache() wraps every route of the enclosing
         // layout: live on the route before the cache(), stored in the cache

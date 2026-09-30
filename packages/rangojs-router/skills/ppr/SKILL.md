@@ -165,12 +165,17 @@ cache(
 
 The partition follows nested scopes (issue #970): a `ppr` route under a
 `cache()` nested in a keyed one is partitioned by the outer `key()` when the
-inner boundary has none, and by both composed (outermost first, each
-URI-encoded, joined by `|`) when it has its own. The route's record adds the
-inner boundary's own default key when it has no `key`; the shell partition
-does not, since the shell key already carries the URL (a store
-`keyGenerator`'s result is kept when it adds anything). See `/caching`,
-"Keys nest".
+inner boundary has none, and by both composed (outermost first, joined by
+`|`) when it has its own. Each `key()` result is namespaced as `key:` plus
+its URI encoding (issue #975), exactly as in the record key, so the shell of
+`key: () => "tier:gold"` is `<host><path>:shell|key%3Atier%253Agold`. The
+route's record adds the inner boundary's own default key when it has no
+`key`; the shell partition does not, since the shell key already carries the
+URL (a store `keyGenerator`'s result is kept when it adds anything, an
+enclosing `cache({ store })`'s on another store included, issue #974). An
+enclosing `condition()` that refuses the request means no shell, as the
+route's own does. See `/caching`, "Keys nest" and "Conditions and tags
+inherit".
 
 ```tsx
 cache({ ttl: 300, key: (ctx) => `tier:${tierOf(ctx)}` }, () => [
@@ -211,9 +216,11 @@ value of it.
 
 In tests, `serveShellRequest` reports the key the serve path resolved
 (`result.key`, partition included); `shellCacheKey(url, searchParams,
-partition)` builds the same key from the partition. Under nested keyed
-scopes, pass the `key()` results as an array, outermost first
-(`shellCacheKey(url, undefined, ["tier:gold", "v:a"])`).
+partition)` builds the same key from the `key()` result, namespacing it as
+production does. Under nested keyed scopes, pass the `key()` results as an
+array, outermost first (`shellCacheKey(url, undefined, ["tier:gold",
+"v:a"])`); for a store `keyGenerator` partition pass
+`{ keys, generated }` (`/testing`, `cache-prerender.md`).
 
 ## Where PPR sits: the cache onion
 

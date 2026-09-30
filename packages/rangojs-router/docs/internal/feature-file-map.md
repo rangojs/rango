@@ -152,10 +152,13 @@ The public DOM seam is
 - Default prefetch strategy: [router/prefetch-default.ts](../../src/router/prefetch-default.ts), [browser/prefetch/default-strategy.ts](../../src/browser/prefetch/default-strategy.ts), [browser/prefetch/invalidation.ts](../../src/browser/prefetch/invalidation.ts), [browser/prefetch/loader.ts](../../src/browser/prefetch/loader.ts), [browser/prefetch/observer.ts](../../src/browser/prefetch/observer.ts), [browser/react/Link.tsx](../../src/browser/react/Link.tsx), [browser/link-interceptor.ts](../../src/browser/link-interceptor.ts).
 - Prefetch-aware e2e helpers: [testing/e2e/page-helpers.ts](../../src/testing/e2e/page-helpers.ts), [testing/e2e/parity.ts](../../src/testing/e2e/parity.ts).
 - Server entrypoint: [rsc/handler.ts](../../src/rsc/handler.ts), [ssr/index.tsx](../../src/ssr/index.tsx).
-- Nested `cache()` keys (#970): [cache/cache-scope.ts](../../src/cache/cache-scope.ts)
-  (`CacheScope.keyFns`, `resolveKeyFrom`, `resolvePartition`) composes a chain
-  of `key()` results, plus an inner no-key scope's default key for the record,
-  with `composeCacheKeys` ([cache/cache-key-utils.ts](../../src/cache/cache-key-utils.ts));
+- Nested `cache()` keys (#970, #974, #975): [cache/cache-scope.ts](../../src/cache/cache-scope.ts)
+  (`CacheScope.keyFns`, `storeScopes`, `resolveKeyFrom`, `resolvePartition`,
+  `resolvePartitionParts`) composes a chain of `key()` results and enclosing
+  cross-store `keyGenerator` results, plus an inner no-key scope's default key
+  for the record, with `composeCacheKeys` ([cache/cache-key-utils.ts](../../src/cache/cache-key-utils.ts),
+  which namespaces every `key()` result); inherited `condition()`s and `tags`
+  live on the same scope (`conditions`/`allowsCache`, `tagOptions`/`resolveTags`);
   the PPR shell partition (`resolveShellPartition`), the response-route entry
   ([rsc/response-cache-serve.ts](../../src/rsc/response-cache-serve.ts)) and the
   testing `shellCacheKey` ([testing/shell-status.ts](../../src/testing/shell-status.ts))

@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 // Mock cache-scope to avoid virtual module chain
 vi.mock("../cache/cache-scope.js", () => ({
   createCacheScope: vi.fn(() => null),
-  resolveCacheTags: vi.fn((config: any) =>
-    config && config !== false && Array.isArray(config.tags)
-      ? config.tags
-      : undefined,
-  ),
 }));
 
 import {
@@ -432,7 +427,9 @@ describe("response-route-handler", () => {
           ttl: 60,
           condition,
         },
-        keyFns: [],
+        allowsCache: () => (condition ? condition(undefined) : true),
+        resolveKeyFrom: async (defaultKey: string) => defaultKey,
+        resolveTags: () => undefined,
         ttl: 60,
         swr: 0,
         getStore: () => store,
@@ -582,7 +579,9 @@ describe("response-route-handler", () => {
       const scope = {
         enabled: true,
         config: { ttl: 60 },
-        keyFns: [],
+        allowsCache: () => true,
+        resolveKeyFrom: async (defaultKey: string) => defaultKey,
+        resolveTags: () => undefined,
         ttl: 60,
         swr: 0,
         getStore: () => store,

@@ -276,7 +276,7 @@ shared response.
 
 ## Per-user data
 
-The shell is shared per host + URL across all users (per request partition too, when the route's `cache({ key })` or the store's `keyGenerator` partitions its record: each partition gets its own shell), so identity must never bake. The partition follows nested `cache()` boundaries: a `ppr` route under a `cache()` nested in a keyed one is partitioned by the outer `key()`, composed with the inner one's when it has its own (see [Caching](/docs/rango/features/caching#nested-caches)).
+The shell is shared per host + URL across all users (per request partition too, when the route's `cache({ key })` or the store's `keyGenerator` partitions its record: each partition gets its own shell), so identity must never bake. The partition follows nested `cache()` boundaries: a `ppr` route under a `cache()` nested in a keyed one is partitioned by the outer `key()`, composed with the inner one's when it has its own, and by the `keyGenerator` of an enclosing `cache({ store })` on another store. An enclosing `condition()` that refuses the request means no shell, like the route's own (see [Caching](/docs/rango/features/caching#nested-caches)).
 
 What the guards refuse:
 

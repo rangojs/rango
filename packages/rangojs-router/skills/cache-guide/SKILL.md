@@ -245,14 +245,18 @@ honors `createRouter({ cache: { searchParams } })`.
 
 A custom `key` function replaces the whole default key (e.g., to key by user role
 or locale); it also bypasses the store's `keyGenerator` and the search-param
-filter. It runs once per request and may read `cookies()`. A nested `cache()`
+filter. It runs once per request and may read `cookies()`. Its result is
+stored namespaced (`key:` plus its URI encoding), so no value it returns, raw
+request input included, names another route's record. A nested `cache()`
 keys its records within the enclosing `key()` partition (`/caching` → "Keys
-nest"). Never return raw request input from `key()`: normalize it to the
-values you serve or prefix it. On a `ppr` route, `key()` (and a store
-`keyGenerator` that returns a non-default key) also partitions the shell: one
-shell per value, and a partitioned request never reads a build-time shell.
-Keep the values to a small set. `condition` can disable caching entirely at
-runtime (e.g., skip for authenticated users).
+nest"). Normalize the result to the values you serve: each distinct value is
+a record. On a `ppr` route, `key()` (and a store `keyGenerator` that returns
+a non-default key) also partitions the shell: one shell per value, and a
+partitioned request never reads a build-time shell. Keep the values to a
+small set. `condition` can disable caching entirely at runtime (e.g., skip
+for authenticated users), for every `cache()` nested under it too, and an
+outer `cache()`'s `tags` tag the nested records (`/caching` → "Conditions
+and tags inherit").
 
 ### "use cache" Cache Key
 

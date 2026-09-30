@@ -11,7 +11,7 @@ import { getRequestContext } from "../server/request-context.js";
 import { contextGet, isNonCacheable } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
-import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
+import { createCacheScope } from "../cache/cache-scope.js";
 import { serveResponseRouteWithCache } from "./response-cache-serve.js";
 import { executeMiddleware } from "../router/middleware.js";
 import {
@@ -220,7 +220,7 @@ export async function handleResponseRoute<TEnv>(
       responseType: preview.responseType,
       url,
       executeHandler,
-      deps: { createCacheScope, resolveCacheTags },
+      deps: { createCacheScope },
     });
     if (cached !== undefined) return cached;
   }

@@ -1513,8 +1513,9 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
       };
 
       if (nested) {
-        // /shell-cache/tiered's record sits under the bare outer key
-        // ("tier:gold"). Write it first: the nested route must not read it.
+        // /shell-cache/tiered's record sits under the outer key alone
+        // ("key:tier%3Agold"). Write it first: the nested route must not read
+        // it.
         const flat = f.url(
           `/shell-cache/tiered?probe=${crypto.randomUUID().slice(0, 8)}`,
         );

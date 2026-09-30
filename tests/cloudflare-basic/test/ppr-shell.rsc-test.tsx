@@ -136,8 +136,12 @@ describe("request-partitioned PPR shell through serveShellRequest (cloudflare-ba
 
     const goldMiss = await serve("gold");
     expect(goldMiss.shellStatus).toBe("MISS");
-    // The key the serve path resolved: the route's key() result, encoded.
-    expect(goldMiss.key).toBe("localhost/ppr-tiered:shell|tier%3Agold");
+    // The key the serve path resolved: the route's key() result, namespaced
+    // (#975) and encoded.
+    expect(goldMiss.key).toBe("localhost/ppr-tiered:shell|key%3Atier%253Agold");
+    expect(goldMiss.key).toBe(
+      shellCacheKey("http://localhost/ppr-tiered", undefined, "tier:gold"),
+    );
     expect(await goldMiss.readEntry()).not.toBeNull();
     const silverMiss = await serve("silver");
     expect(silverMiss.shellStatus).toBe("MISS");

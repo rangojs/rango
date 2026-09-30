@@ -141,9 +141,13 @@ cache({ ttl: 60 }, () => [
 
 ### Nested Cache Boundaries
 
-Override TTL or opt out. A `key()` is the exception to "the inner boundary
-overrides": it composes, so nested records stay in the enclosing partition
-(see "Nested keys compose" under Cache Key Customization):
+Override TTL or opt out. `key`, `condition`, `tags` and a store
+`keyGenerator` are the exceptions to "the inner boundary overrides": a
+`key()` composes, so nested records stay in the enclosing partition, every
+enclosing `condition()` must allow a nested read or write, nested records
+carry the enclosing `tags`, and an enclosing store's `keyGenerator`
+partitions a nested scope on another store (see "Nested keys compose" and
+"Conditions and tags inherit" under Cache Key Customization):
 
 ```typescript
 cache({ ttl: 60 }, () => [
@@ -1137,6 +1141,9 @@ cache(
 );
 ```
 
+A `condition()` gates every `cache()` nested under it too (issue #974); see
+"Conditions and tags inherit" below.
+
 ### Cache Key Customization
 
 ```typescript
@@ -1167,13 +1174,14 @@ So `CacheScope` carries the chain of `key()` functions from the outermost
 `resolveKeyFrom` resolves the record key from it. The parts are the chain's
 `key()` results, outermost first; a scope whose own config sets no `key()`
 appends its own default key (`resolveDefaultKey`: its store's
-`keyGenerator(ctx, defaultKey)` result, else the default key). Two or more
-parts are joined by `composeCacheKeys`, each URI-encoded:
+`keyGenerator(ctx, defaultKey)` result, else the default key). The parts are
+joined by `composeCacheKeys` (every `key()` result namespaced since #975, see
+"Key results are namespaced" below):
 
 | The route's scope                                     | Record key                                                         |
 | ----------------------------------------------------- | ------------------------------------------------------------------ |
 | no `key()` on the chain                               | its default key (unchanged)                                        |
-| a single keyed scope (`key()` of its own, none above) | its raw `key()` result (byte-identical to before)                  |
+| a single keyed scope (`key()` of its own, none above) | `compose(its key() result)`: `key:` + its URI encoding             |
 | no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                 |
 | its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result)`                |
 | `cache(false)` innermost                              | no read, no write (unchanged)                                      |
@@ -1200,18 +1208,6 @@ the key. The same trick keeps the PPR shell key unambiguous
 partition again). The collision probe in
 `src/cache/__tests__/nested-cache-key.test.ts` pins it.
 
-That guarantee holds among composed keys, not against a single raw one. A
-single keyed scope stores its `key()` result as is (byte-identical to before
-#970), and nothing stops that string from equalling a composed key: a
-`key()` returning the header value `gold|doc%3Alocalhost%2Fpricing` raw
-names gold's inner `/pricing` record, which is cross-route poisoning when
-the value is untrusted. The class is older than #970, since a raw `key()`
-could always name a `doc:` default key. The defence is at the call site:
-never return raw request input from `key()`; normalize, prefix or encode
-it. A composed key holds no `:` (`encodeURIComponent` escapes it in every
-part), so a prefixed result like `tier:${value}` never equals one; the
-probe pins that too.
-
 A scope with its own `key()` skips the store's `keyGenerator`, as a single
 `key()` always did. Each `key()` is memoized on the request context by
 function (`_resolvedCacheKeys`), so it runs once per request however many
@@ -1234,6 +1230,116 @@ be too.
 To share an inner cache across partitions on purpose, declare it outside
 the keyed `cache()`.
 
+#### Key results are namespaced (issue #975)
+
+You might think the composition above settled collisions. It settled them
+among composed keys, and #970 left a hole it could see but not close: a
+single keyed scope stored its `key()` result raw, byte-identical to before.
+A record key carries no route or scope discriminator (`store.get(key)`), and
+a `key()` result is often request input, so a raw result could name any
+other record. The header value `doc:localhost/pricing` returned by a
+`key()` on `/other` wrote `/other`'s content under `/pricing`'s default-keyed
+record, and `gold|doc%3Alocalhost%2Fpricing` named gold's inner `/pricing`
+record. On a response route (`response:` + the raw result) the header
+`json:localhost/api/b` named `/api/b`'s default entry, and `/api/b` then
+served `/api/a`'s body. The old defence was call-site advice ("prefix or
+encode request input"), which is easy to miss.
+
+So every `key()` result is namespaced now, by the one scheme in
+`composeCacheKeys` (`src/cache/cache-key-utils.ts`, whose JSDoc carries the
+invariant):
+
+- a `key()` part is `key:` + `encodeURIComponent(result)`;
+- a default part (a default key or a keyGenerator result inside a composed
+  key) is `encodeURIComponent(value)`;
+- one `key()` part is the key; two or more parts join with `|`, `key()`
+  parts first; a lone default part stays raw, so a chain without `key()`
+  keeps its default key or keyGenerator result byte for byte.
+
+Why nothing collides: the router's default keys (`doc:`, `partial:`,
+`intercept:`, `response:<type>:`) never start with `key:` and always hold a
+`:`. A namespaced result starts with `key:` and holds no `|`. A composed key
+holds a `|` and either starts with `key:` or, with no `key()` part, holds no
+`:` at all. Among composed keys, splitting on `|` recovers each part, its
+kind (a `key:` prefix, or no `:`) and its value. The probe in
+`src/cache/__tests__/cache-scope-chain.test.ts` checks raw results against
+default keys (`doc:...`), raw against composed (`gold|doc%3A...` and the new
+`key:gold|doc%3A...`), and composed against composed.
+
+Every key site uses it: route records and response routes
+(`resolveKeyFrom`, the response family behind `response:`), the ppr shell
+partition (`resolvePartition`, which `partitionShellKey` encodes once more),
+and with it partial navigation replay, which reads the same partitioned shell
+key and its `:navigation` sibling. The testing helper `shellCacheKey` calls
+`composeCacheKeys` too, so a test builds the production key. The implicit doc
+scope of a document HIT tail used to pin the shell entry's `docKey` through a
+`key()`; namespacing would have missed the record, so it pins it directly
+(`FIXED_KEYS` in `cache-scope.ts`).
+
+The cost is one change of stored key strings. `CFCacheStore` keys every
+family under a per-build version and shells are gated on `buildVersion`, so
+a deploy is already cold; `MemorySegmentCacheStore` is cold after a restart.
+Only `VercelCacheStore` without `version` sees a one-time miss for existing
+keyed entries.
+
+#### Conditions and tags inherit; stores partition across stores (issue #974)
+
+`ttl`, `swr` and `store` are "the nearest `cache()` wins" settings, and that
+is right for them: they describe how the inner record lives. Three options
+answer a different question, whether and where a record may be shared, and
+innermost-wins broke each of them:
+
+- **`condition` (AND).** Only the innermost config's predicate ran
+  (`conditionAllows`), so a request an outer `condition()` refused (a
+  preview, a signed-in visitor) still read and wrote the nested record, and
+  a `ppr` route under it served and captured a shell. `CacheScope.conditions`
+  now carries every predicate on the chain, outermost first; a read or write
+  needs all of them (the first false or throwing one decides). The write
+  decision is still memoized once per scope and request. The response-route
+  path uses the same `allowsCache("read")` instead of reading
+  `config.condition`. `cache(false)` stays as is, and a `cache()` re-enabled
+  under it is still gated by the conditions above it.
+- **`tags` (union).** Records carried only their own scope's `tags`
+  (`resolveCacheTags(config)`), so `updateTag(outerTag)` left nested records
+  and the shells built from them. `CacheScope.tagOptions` carries the chain's
+  `tags` options, static and function forms, and `resolveTags` unions them;
+  the record write (`cacheRoute`), the synchronous request-tag record
+  (`recordTags`), the capture's doc record (`recordShellCaptureDocRecord`)
+  and the response entry all read it, so the shell takes the tags through the
+  existing flow.
+- **Cross-store `keyGenerator`.** `getStore()` is the innermost store, so an
+  outer `cache({ store: A })` whose `A.keyGenerator` split records by locale
+  did nothing for an inner `cache({ store: B })`: B's records, and a `ppr`
+  shell under them, were shared across locales. `CacheScope.storeScopes` lists
+  the enclosing enabled scopes without a `key()` whose `store` option differs;
+  `resolvePartitionParts` adds each distinct store's keyGenerator result as a
+  default part, following the #970 rule for a keyGenerator in the shell
+  partition: a result equal to the default key partitions nothing. The parts
+  keep their positions (`positionalParts`): when every result is the default
+  key they are all dropped and the key is unchanged, and otherwise a default
+  one is an empty part. A first cut dropped only the defaults, and a review
+  probe showed why that is wrong: with a locale store that returns the default
+  key for `en` and a region store that does for `us`, `{ en, de }` and
+  `{ de, us }` both kept one part `…|de`, so the `de`-locale visitor was served
+  the `en` shell. That makes an empty keyGenerator result ambiguous with a
+  default one, so `generatedPart` rejects it: the request renders uncached (as
+  for a throwing keyGenerator) and a once-per-keyGenerator warning names the
+  store. The stores are deduplicated by `keyGenerator` function, not by store
+  object: a shell capture wraps the app store (`RecordingShellStore` in
+  `shell-capture.ts`) but not an explicit one, and the wrapper returns the
+  inner store's `keyGenerator`, so a chain naming the app store explicitly
+  added it twice in the capture and resolved a record key the request never
+  wrote. On the same store nothing changes: the inner scope's own
+  default key already carries the keyGenerator result, or its own `key()`
+  overrides it. The app-level store counts as a store here: a
+  `cache({ store })` under a plain `cache()` on an app store with a
+  `keyGenerator` is split by its result.
+
+What does not inherit, by decision: a loader's own `cache()` and
+`"use cache"` are independent layers keyed only by what they declare (their
+`key()` or arguments); see "Identity: keyed only by what the binding
+declares" under Loader Caching Policy.
+
 ### Tags for Invalidation
 
 > Flow diagrams (write / read / invalidate) for human review: [cache-tags-flow.md](./cache-tags-flow.md).
@@ -1248,7 +1354,7 @@ cache(
 );
 ```
 
-Tags can be attached three ways: statically via `cache({ tags: [...] })`, dynamically via `cache({ tags: (ctx) => [...] })`, or at runtime inside a `"use cache"` function via `cacheTag(...tags)`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate them.
+Tags can be attached three ways: statically via `cache({ tags: [...] })`, dynamically via `cache({ tags: (ctx) => [...] })`, or at runtime inside a `"use cache"` function via `cacheTag(...tags)`. The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag and invalidate them. A `cache({ tags })` tags the records of every `cache()` nested under it too (issue #974, `CacheScope.resolveTags`).
 
 To invalidate on demand, call one of (both variadic, server-only, exported from `@rangojs/router`):
 

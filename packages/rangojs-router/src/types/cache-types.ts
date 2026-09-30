@@ -72,7 +72,13 @@ export interface CacheOptions<TEnv = unknown> {
   /**
    * Override the cache store for this boundary.
    * When specified, this boundary and its children use this store
-   * instead of the app-level store from handler config.
+   * instead of the app-level store from handler config. The records of a
+   * boundary with a store here are partitioned by the `keyGenerator` of each
+   * enclosing cache() without a `key` whose store differs, the app-level
+   * store included: under `cache(() => [...])` on an app store with a
+   * `keyGenerator`, `cache({ store })` records are split by its result too.
+   * Likewise, without a `key` of its own, this store's `keyGenerator`
+   * partitions a nested cache() on another store.
    *
    * Useful for:
    * - Different backends per route section (memory vs KV vs Redis)
@@ -108,6 +114,8 @@ export interface CacheOptions<TEnv = unknown> {
   /**
    * Conditional cache read function.
    * Return false to skip cache for this request (always fetch fresh).
+   * It gates every cache() nested under this one too: a nested boundary
+   * caches only when every enclosing condition allows it.
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
    * Runs after global and route middleware on RSC routes; on response routes,
@@ -130,7 +138,10 @@ export interface CacheOptions<TEnv = unknown> {
 
   /**
    * Custom cache key function - FULL OVERRIDE.
-   * Bypasses default key generation AND store's keyGenerator.
+   * Bypasses default key generation AND store's keyGenerator. The result is
+   * stored namespaced (`key:` plus its URI encoding), so no value it returns
+   * names another route's record; a nested cache() keys its records within
+   * this partition.
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
    * Runs after global and route middleware on RSC routes; on response routes,
@@ -154,7 +165,8 @@ export interface CacheOptions<TEnv = unknown> {
 
   /**
    * Tags for cache invalidation.
-   * Can be a static array or a function that returns tags.
+   * Can be a static array or a function that returns tags. They tag the
+   * records of every cache() nested under this one too.
    *
    * The built-in `MemorySegmentCacheStore`, `CFCacheStore`, and
    * `VercelCacheStore` index by tag.

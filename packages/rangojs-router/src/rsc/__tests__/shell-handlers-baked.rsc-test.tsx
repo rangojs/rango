@@ -824,9 +824,9 @@ describe("PPR handlers baked: request-partitioned shells", () => {
 
     const goldMiss = await serve(router, harness.store, "/tiered", gold);
     expect(goldMiss.response.headers.get("x-rango-shell")).toBe("MISS");
-    expect(await storedEntry(harness.store, "/tiered", "tier:gold")).not.toBe(
-      null,
-    );
+    expect(
+      await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
+    ).not.toBe(null);
     // No unpartitioned shell exists for a partitioned route.
     expect(await storedEntry(harness.store, "/tiered")).toBeNull();
 
@@ -859,9 +859,11 @@ describe("PPR handlers baked: request-partitioned shells", () => {
 
     // updateTag() of a tag every partition carries evicts every partition.
     await harness.store.invalidateTags(["tiered"]);
-    expect(await storedEntry(harness.store, "/tiered", "tier:gold")).toBeNull();
     expect(
-      await storedEntry(harness.store, "/tiered", "tier:silver"),
+      await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
+    ).toBeNull();
+    expect(
+      await storedEntry(harness.store, "/tiered", "key:tier%3Asilver"),
     ).toBeNull();
   });
 
@@ -906,7 +908,7 @@ describe("PPR handlers baked: request-partitioned shells", () => {
         headers: { "x-tier": "gold" },
       });
       expect(
-        await storedEntry(harness.store, "/tiered", "tier:gold"),
+        await storedEntry(harness.store, "/tiered", "key:tier%3Agold"),
       ).not.toBeNull();
 
       fail = true;

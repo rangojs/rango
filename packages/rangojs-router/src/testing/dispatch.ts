@@ -627,9 +627,9 @@ export async function dispatch<TEnv = any>(
       const manifestEntry = preview?.manifestEntry;
       if (manifestEntry) {
         // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
-        // import note above): the leaf takes createCacheScope/resolveCacheTags as
-        // INJECTED deps so it never imports plugin-rsc; we hand it the lazily
-        // imported pair here, only once a response route actually matched.
+        // import note above): the leaf takes createCacheScope as an INJECTED
+        // dep so it never imports plugin-rsc; we hand it the lazily imported
+        // builder here, only once a response route actually matched.
         const cacheScopeMod = await import("../cache/cache-scope.js");
         const { serveResponseRouteWithCache } =
           await import("../rsc/response-cache-serve.js");
@@ -645,10 +645,7 @@ export async function dispatch<TEnv = any>(
           responseType: responseType as string,
           url,
           executeHandler,
-          deps: {
-            createCacheScope: cacheScopeMod.createCacheScope,
-            resolveCacheTags: cacheScopeMod.resolveCacheTags,
-          },
+          deps: { createCacheScope: cacheScopeMod.createCacheScope },
         });
         if (cached !== undefined) return cached;
       }

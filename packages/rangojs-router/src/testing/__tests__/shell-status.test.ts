@@ -27,10 +27,10 @@ function entry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
 }
 
 describe("shellCacheKey (production key identity)", () => {
-  it("appends a request partition exactly as the serve path does", () => {
+  it("appends a key() result's partition exactly as the serve path does: namespaced (#975)", () => {
     const url = new URL("http://shop.test/p?b=2&a=1");
     expect(shellCacheKey(url, undefined, "tier:gold")).toBe(
-      partitionShellKey(buildShellKey(url), "tier:gold"),
+      partitionShellKey(buildShellKey(url), "key:tier%3Agold"),
     );
     expect(shellCacheKey(url, undefined, "tier:gold")).not.toBe(
       shellCacheKey(url, undefined, "tier:silver"),
@@ -40,22 +40,19 @@ describe("shellCacheKey (production key identity)", () => {
   it("encodes the partition, so no partition can end in another key's suffix", () => {
     const url = new URL("http://shop.test/p");
     const key = shellCacheKey(url, undefined, "tier:gold:navigation");
-    expect(key).toBe("shop.test/p:shell|tier%3Agold%3Anavigation");
-    expect(key).toBe(
-      partitionShellKey(buildShellKey(url), "tier:gold:navigation"),
-    );
+    expect(key).toBe("shop.test/p:shell|key%3Atier%253Agold%253Anavigation");
     expect(key).not.toBe(
       `${shellCacheKey(url, undefined, "tier:gold")}:navigation`,
     );
     expect(shellCacheKey(url, undefined, "a|b")).toBe(
-      "shop.test/p:shell|a%7Cb",
+      "shop.test/p:shell|key%3Aa%257Cb",
     );
   });
 
   it("composes nested cache() key() results, outermost first, as the record key does (#970)", () => {
     const url = new URL("http://shop.test/p");
     expect(shellCacheKey(url, undefined, ["tier:gold", "v:a"])).toBe(
-      partitionShellKey(buildShellKey(url), "tier%3Agold|v%3Aa"),
+      partitionShellKey(buildShellKey(url), "key:tier%3Agold|key:v%3Aa"),
     );
     // One key() result is the plain partition.
     expect(shellCacheKey(url, undefined, ["tier:gold"])).toBe(
@@ -66,9 +63,36 @@ describe("shellCacheKey (production key identity)", () => {
     );
   });
 
-  it("an empty array of key() results is no partition", () => {
+  it("takes store keyGenerator results as `generated`: a lone one raw, with key() results encoded after them", () => {
+    const url = new URL("http://shop.test/p");
+    const generated = "doc:shop.test/p|de";
+    expect(shellCacheKey(url, undefined, { generated: [generated] })).toBe(
+      partitionShellKey(buildShellKey(url), generated),
+    );
+    expect(
+      shellCacheKey(url, undefined, {
+        keys: ["tier:gold"],
+        generated: [generated],
+      }),
+    ).toBe(
+      partitionShellKey(
+        buildShellKey(url),
+        "key:tier%3Agold|doc%3Ashop.test%2Fp%7Cde",
+      ),
+    );
+    expect(shellCacheKey(url, undefined, { keys: ["tier:gold"] })).toBe(
+      shellCacheKey(url, undefined, "tier:gold"),
+    );
+    // A store whose result is the default key keeps its position as "".
+    expect(shellCacheKey(url, undefined, { generated: ["", generated] })).toBe(
+      partitionShellKey(buildShellKey(url), "|doc%3Ashop.test%2Fp%7Cde"),
+    );
+  });
+
+  it("no key() or keyGenerator result is no partition", () => {
     const url = new URL("http://shop.test/p");
     expect(shellCacheKey(url, undefined, [])).toBe(buildShellKey(url));
+    expect(shellCacheKey(url, undefined, {})).toBe(buildShellKey(url));
   });
 
   it("matches rsc/shell-serve buildShellKey for host+path+search", () => {
