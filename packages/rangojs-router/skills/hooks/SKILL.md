@@ -66,7 +66,7 @@ the one for your case.
   Rango-specific hook for tracking actions called outside a
   `<form action={...}>` flow.
 - [`./state.md`](./state.md) — `useLocationState` (persistent + flash state,
-  `.read()`/`.write()`/`.delete()`, typed `state` on `router.push()` /
+  `.read()`/`.read(location)`/`.write()`/`.delete()`, typed `state` on `router.push()` /
   `router.replace()`, serializability errors that name the failing field),
   `invalidateClientCache()`.
 - [`./outlets.md`](./outlets.md) — `Outlet`, `ParallelOutlet`, `useOutlet`.

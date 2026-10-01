@@ -238,17 +238,17 @@ local/dev behavior, not as proof that segment SWR is active.
 
 ## Key Differences
 
-|                      | `cache()` DSL                                         | `"use cache"` directive                           |
-| -------------------- | ----------------------------------------------------- | ------------------------------------------------- |
-| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                      |
-| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top               |
-| **Cache key**        | Request type + host + pathname + params + search      | Function identity + serialized non-tainted args   |
-| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs |
-| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches     |
-| **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw      |
-| **Handle data**      | Handler pushes replayed; loader pushes re-run live    | Captured and replayed when it receives `ctx`      |
-| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                        |
-| **Nesting**          | Inner TTLs override; `key()` partitions compose       | Compose by calling cached functions from uncached |
+|                      | `cache()` DSL                                         | `"use cache"` directive                                                             |
+| -------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                                                        |
+| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top                                                 |
+| **Cache key**        | Request type + host + pathname + params + search      | Function identity + serialized non-tainted args                                     |
+| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs                                   |
+| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches                                       |
+| **Side effects**     | Response side effects throw inside the boundary       | `ctx.headers.set()`, `ctx.set()`, etc. throw                                        |
+| **Handle data**      | Handler pushes replayed; loader pushes re-run live    | Captured and replayed when it receives `ctx`                                        |
+| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                                                          |
+| **Nesting**          | Inner TTLs override; `key()` partitions compose       | Compose by calling cached functions from uncached; inner tags reach the outer entry |
 
 ### cache() Cache Key
 
@@ -551,14 +551,18 @@ breeds the false confidence that makes the derived leak _more_ likely. The guard
 is deliberately non-propagating (propagation would cost a wrapper per derivation
 on the hot path), and it is scoped to the `cache()` segment boundary and the
 `"use cache"` body. `"use cache"` functions block the same request-scoped reads
-(`cookies()` / `headers()` and non-cacheable `ctx.get()` throw inside them) and
+(`cookies()` / `headers()`, `ctx.request.headers` and non-cacheable `ctx.get()` throw inside them) and
 additionally exclude tainted `ctx`/`env`/`req` args from the cache key — pass a
 non-cacheable value in as an argument so it becomes part of the key. The pattern that stays safe is also the natural one:
 **read tainted context at the point of use, in the path that needs it (a loader or
 live segment) — never extract user data into a plain value and cache that.**
-Loaders are exempt because they run outside the cache scope and resolve fresh
-every request. A loader with its own `cache()` does not: its value is stored,
-so it falls under the loader `cache()` guard above.
+Loaders are exempt from the `cache()` guard because they run outside the cache
+scope and resolve fresh every request. A loader with its own `cache()` does not:
+its value is stored, so it falls under the loader `cache()` guard above. Nor
+does a loader awaited inside a `"use cache"` body: its value is part of what the
+function returns, so the same reads throw there when the cached function is
+the first to read it in the request (an already-started loader's value is
+stored unchecked).
 
 ## Loaders Are Always Fresh
 
@@ -680,7 +684,7 @@ data is cached independently from the route's segment cache, together with
 the handle pushes its body made (replayed on every hit). Loader caching
 supports custom keys, tags, SWR, conditional bypass, and per-loader store
 overrides — see `/loader` for the full reference. A body that reads
-`cookies()`, `headers()` or a non-cacheable variable needs a `key()`, which
+`cookies()`, `headers()`, `ctx.request.headers` or a non-cacheable variable needs a `key()`, which
 must include the value: without one the miss fails, and any `key()` switches
 that check off. The entry also carries the tags its body recorded
 (`cacheTag()` calls, `"use cache"` reads, and those of the loaders it reads

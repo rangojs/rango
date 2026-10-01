@@ -813,7 +813,7 @@ another, request-scoped APIs are guarded inside a cache scope:
 | Any read in the boundary's own `key()`, `keyGenerator`, `condition()` or `tags()`  | **allowed** — it picks or labels the entry, never rendered |
 
 A loader body invoked from a handler with `await ctx.use(Loader)` may read
-`cookies()`/`headers()`, but its response writes still throw: on a hit the
+`cookies()`/`headers()`/`ctx.request.headers`, but its response writes still throw: on a hit the
 handler is skipped, so that loader never runs.
 
 `ctx.request.clone()` is guarded the same way. `fetch(ctx.request)` and
@@ -869,9 +869,12 @@ cached handler.
 This is the **consumption-lane rule**, and it holds for every shared
 artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`): handler
 consumption = baked copy; client-side `useLoader` = live. The tiers differ on
-identity reads inside a handler-consumed loader: `cache()` and `"use cache"`
-permit them (the leak above), while a PPR shell capture refuses them and the
-route stays uncached. It is stated once in `/rango` → Invariants.
+identity reads inside a handler-consumed loader: `cache()` permits them (the
+leak above); `"use cache"` throws when the cached function is the first to
+read the loader in the request, because the loader body then runs inside it
+and its value is part of the result (a loader already started elsewhere
+returns its value unchecked, and that value is stored); a PPR shell capture
+refuses them and the route stays uncached. It is stated once in `/rango` → Invariants.
 
 ```typescript
 // WRONG — throws: cookies() read directly in a cached handler

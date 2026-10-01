@@ -12,6 +12,9 @@ import { useLocationState, createLocationState } from "@rangojs/router/client";
 
 // Define typed state (all export patterns supported)
 // Keys are auto-injected by the Vite plugin -- no manual key needed.
+// In a unit test (no plugin), key it with withLocationStateKey(ProductState,
+// "ProductState") from @rangojs/router/testing: outside production, an
+// unkeyed definition throws on first use.
 export const ProductState = createLocationState<{
   name: string;
   price: number;
@@ -239,6 +242,15 @@ const flash = FlashMessage.read();
 const product = ProductState.read();
 ```
 
+`.read(location)` reads this definition's slot from any `{ state }` snapshot
+instead of the current entry, such as the `from` / `to` of a
+`transition({ when })` context. It works without `window` and never clears
+flash state:
+
+```tsx
+transition({ when: ({ to }) => ProductState.read(to) !== undefined });
+```
+
 > **Hydration:** `.read()` returns `undefined` on the server but may return
 > a real value on the first client render (history state survives reload).
 > Do not call `.read()` directly during the initial render of a component;
@@ -270,11 +282,12 @@ const current = ProductState.read();
 ProductState.delete();
 ```
 
-| Method      | Updates `history.state` | Fires `useLocationState` rerender | SSR behavior        |
-| ----------- | ----------------------- | --------------------------------- | ------------------- |
-| `.read()`   | no                      | n/a (returns snapshot)            | returns `undefined` |
-| `.write()`  | yes (replace this slot) | no                                | throws              |
-| `.delete()` | yes (remove this slot)  | no                                | throws              |
+| Method            | Updates `history.state` | Fires `useLocationState` rerender | SSR behavior        |
+| ----------------- | ----------------------- | --------------------------------- | ------------------- |
+| `.read()`         | no                      | n/a (returns snapshot)            | returns `undefined` |
+| `.read(location)` | no                      | n/a (reads the given snapshot)    | reads the snapshot  |
+| `.write()`        | yes (replace this slot) | no                                | throws              |
+| `.delete()`       | yes (remove this slot)  | no                                | throws              |
 
 ## Cache Control
 

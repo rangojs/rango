@@ -414,7 +414,8 @@ global map entirely.
 `clientUrls()` supports:
 
 - `path()`, `layout()`, `loader()`, `loading()`, a restricted `intercept()`,
-  a data-only `transition()`, and a client-run per-loader `revalidate()`
+  a `transition()` (ViewTransition classes/name, `viewTransition`, and a
+  browser-run `when`), and a client-run per-loader `revalidate()`
   inside `clientUrls()`;
 - named client component values for paths, layouts, and intercepts;
 - mounting through `include()` in the canonical `urls()` tree, with URL and

@@ -224,17 +224,17 @@ path("/photos/:id", PhotoPage, { name: "photo" }, () => [
 </Link>;
 ```
 
-A predicate runs where its effect lands: the hold is a browser commit decision, so the predicate runs in the browser, and `get()`, `env` and handler state do not exist there. An inline literal may reference module-level imports only when they are client-safe (they are re-emitted into the hoisted module). A free server binding or a server-only import is a build error that names it; a server function passed by name, or a non-function, fails dev startup, the build and HMR with the route name and pattern.
+A predicate runs where its effect lands: the hold is a browser commit decision, so the predicate runs in the browser, and `get()`, `env` and handler state do not exist there. An inline literal may reference module-level imports only when they are client-safe (they are re-emitted into the hoisted module). A free server binding (a module-level binding that is not an import, or a binding of an enclosing function), a server-only import, `import()`, `import.meta` other than `import.meta.env`, or `this` / `arguments` of the enclosing function is a build error that names it; a server function passed by name, or a non-function, fails dev startup, the build and HMR with the route name and pattern.
 
 The context:
 
-| Field      | Meaning                                                                                                          |
-| ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| `kind`     | `"push"`, `"replace"`, `"pop"` (back/forward), `"action"`, or `"revalidate"` (`router.refresh()`, a stale entry) |
-| `from`     | The committed location being left: `{ url, params, routeName, state }`                                           |
-| `to`       | The destination, same shape. It is `from` for `"action"` and `"revalidate"`                                      |
-| `isAction` | The `revalidate()` action matcher; `false` off-action                                                            |
-| `action`   | `{ id, formData, result, error }` on action commits, the error-boundary commit included                          |
+| Field      | Meaning                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `kind`     | `"push"`, `"replace"`, `"pop"` (back/forward), `"action"`, or `"revalidate"` (`router.refresh()`, cross-tab invalidation, a stale entry's background revalidation) |
+| `from`     | The committed location being left: `{ url, params, routeName, state }`                                                                                             |
+| `to`       | The destination, same shape. It is `from` for `"action"` and `"revalidate"`                                                                                        |
+| `isAction` | The `revalidate()` action matcher; `false` off-action                                                                                                              |
+| `action`   | `{ id, formData, result, error }` on action commits, the error-boundary commit included                                                                            |
 
 `to.state` holds what the navigation leaves on the history entry: the pushed state plus server `ctx.setLocationState()` for push and replace, the target entry's stored state for pop, and the current entry's state plus action-set state for an action. Middleware-set location state reaches it on a [PPR](/docs/rango/guides/ppr) replay too, because middleware runs on every shell HIT; a route handler's does not, because a HIT runs no handler. A `clientUrls()` cross-route navigation decides at its optimistic swap, before the server responds, so its `to.state` is the pushed state only. On back/forward after a reload, `from.state` and `from.routeName` are `undefined`.
 

@@ -339,3 +339,11 @@ the value at click time; `ctx.setLocationState(entry)` attaches state from a
 handler; `redirect(url, { state })` carries it through a redirect; and
 `ProductPreview.read()` / `.write(value)` / `.delete()` access the current
 history entry outside React (client-only, non-reactive).
+`ProductPreview.read(location)` reads the slot from any `{ state }` snapshot,
+such as a `transition({ when })` context's `from` / `to`, and works without
+`window`.
+
+The `state` option on `<Link>`, `router.push()` and `router.replace()` is typed
+`HistoryState`: an array of called entries (`[ProductPreview({ ... })]`) or
+plain structured-clone data. A bare entry (`state: ProductPreview({ ... })`) or
+an uncalled definition (`state: [ProductPreview]`) is a compile error.

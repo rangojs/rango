@@ -283,8 +283,11 @@ is part of that body: its value is captured into the shared cache entry like
 any other computed data, so a `{ cache: false }` variable read there throws,
 exactly as `cookies()`, `headers()`, `ctx.request.headers` and a theme read do
 (one guard follows the
-cached body's whole async chain, loaders included). Read the value outside
-and pass it in as an argument. Handler/cached-scope consumption = baked copy,
+cached body's whole async chain, loaders included). The check runs only when
+the loader body starts inside the cached function: a loader something else in
+the request already started (a handler's `ctx.use()`, a route `loader()`)
+returns its memoized value without it, and that value is still stored in the
+entry. Read the value outside and pass it in as an argument. Handler/cached-scope consumption = baked copy,
 client-side `useLoader` = live (the consumption-lane rule, `/rango` →
 Invariants). Under a route `cache()` a loader body's reads stay allowed (the
 route entry never stores a loader's value); during a PPR capture they refuse
@@ -553,7 +556,7 @@ so `updateTag()` of one evicts the enclosing entry and any `ppr` shell or
 document built from it. A loader's own `cache()` entry does the same for the
 reads in its body, and a `"use cache"` function for the `"use cache"`
 functions it calls: the outer entry bakes the inner value, so it carries the
-inner tags, whether the inner call ran or was a hit. That includes calls made
+inner tags, whether the inner call ran, was a hit, or joined another call's execution. That includes calls made
 by the server components a cached component returns, which render when the
 value is stored.
 
@@ -595,9 +598,8 @@ this isolate's invalidations are caught; ttl+swr bounds the rest.
 Inside a `ppr` shell, a `"use cache"` value that renders as shell material is
 pinned at capture time for the life of that shell (see `/ppr` → Pitfalls). A
 hole's own read (in a loader without `ssr: false` under `loading()` or an
-inline `<Suspense>`) returns the current entry, not the shell's copy, unless a
-loader the capture ran (an `ssr: false` loader, or one a handler awaits) read
-the same entry.
+inline `<Suspense>`) always returns the store's current entry, never the
+shell's copy, even when a loader the capture ran read the same entry.
 
 ## Dev Mode and tests
 

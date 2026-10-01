@@ -107,7 +107,8 @@ The guards are correctness-first: anything that would bake one user's request in
 | `ctx.request.headers` (any `ctx` passed in), `getRequestContext().cookie()` / `.cookies()`                              | Throws               | Same reason: a `ctx` or `Request` argument is keyed by its route and URL only    |
 | `ctx.set()`, `ctx.headers.set()` (and the other mutating `Headers` methods), `ctx.setTheme()`, `ctx.setLocationState()` | Throws               | Effects are lost on a hit (the body is skipped)                                  |
 | Request-context writers: `header()`, `setCookie()`, `deleteCookie()`, `setStatus()`, `onResponse()`                     | Throws               | Same reason                                                                      |
-| `ctx.get()`                                                                                                             | Allowed              | It's a read                                                                      |
+| `ctx.get()` of a cacheable variable                                                                                     | Allowed              | It's a read                                                                      |
+| `ctx.get()` of a `{ cache: false }` variable                                                                            | Throws               | The value isn't in the cache key; pass it in as an argument                      |
 | `ctx.use(Handle)`                                                                                                       | Allowed              | Captured on miss, replayed on hit                                                |
 
 These guards run only on the cached path. With no store configured the function runs uncached and nothing throws, so a guard violation only shows up once a store exists.
@@ -146,7 +147,7 @@ async function NavLayout(ctx) {
 }
 ```
 
-The guard reaches into loader bodies consumed inside the cached function (`await ctx.use(loader)`): the consumed value is captured into the shared entry like any other computed data, so a `{ cache: false }` variable read there throws, as `cookies()` and `headers()` do. If loader data must stay per-request live, consume it client-side with `useLoader` instead — see [Loaders](/docs/rango/features/loaders).
+The guard reaches into loader bodies consumed inside the cached function (`await ctx.use(loader)`): the consumed value is captured into the shared entry like any other computed data, so a `{ cache: false }` variable read there throws, as `cookies()`, `headers()` and `ctx.request.headers` do. The guard runs when the loader body starts inside the cached function: a loader something else in the request already started returns its value without the check, and that value is still stored in the entry, so pass the value in as an argument instead. If loader data must stay per-request live, consume it client-side with `useLoader` instead — see [Loaders](/docs/rango/features/loaders).
 
 The key is only what the function declares: its id and arguments. Called inside a route `cache()` that has a `key()`, the function does not inherit that key, so pass the value the route partitions by as an argument. A loader's own `cache()` works the same way: its body's request-scoped reads must be in its own `key()`.
 
@@ -162,7 +163,7 @@ Three placements throw at boot because caching there is either wrong or redundan
 
 `"use cache"` reads and writes the app-level store from `createRouter({ cache })` — the same store `cache()` boundaries and cached loaders use. One store, one configuration. (`Static()`/`Prerender()` output is not in this store; it is built into the server bundle.)
 
-Entries are tagged by the profile's `tags` plus any runtime `cacheTag(...tags)` calls in the function body. Then invalidate:
+Entries are tagged by the profile's `tags` plus any runtime `cacheTag(...tags)` calls in the function body, plus the tags of every `"use cache"` function it calls. Then invalidate:
 
 - `updateTag(...tags)` — awaitable, read-your-own-writes; for server actions.
 - `revalidateTag(...tags)` — background, non-blocking; for route handlers and webhooks.
@@ -191,7 +192,13 @@ export async function renameProduct(id: string, name: string) {
 
 Both hard-purge; the difference is awaitability, not stale-serving. All built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`) index by tag. For `CFCacheStore`, cross-colo invalidation needs a `kv` namespace (markers live in that same namespace) or `tagPurge`.
 
-A `"use cache"` entry's tags do not propagate to an enclosing `cache()` segment entry: invalidating them re-runs the function on the next miss of the outer boundary, not before (see [Nesting](/docs/rango/concepts/freshness#nesting-the-outer-window-bounds-the-inner)). Inside a [PPR](/docs/rango/guides/ppr) shell, a `"use cache"` value that renders as shell material is pinned at capture time, and its tags ride the shell.
+A `"use cache"` call's tags ride on every entry that holds its value, so `updateTag()` of an inner tag evicts those entries too:
+
+- an enclosing route `cache()` record (and a `ppr` shell or document built from it);
+- a loader's own `cache()` entry;
+- an outer `"use cache"` entry, whether the inner call ran, hit the store, or joined another call's execution.
+
+An outer `"use cache"` entry written before 0.19 carries only its own tags until it expires or is rewritten. Inside a [PPR](/docs/rango/guides/ppr) shell, a `"use cache"` value that renders as shell material is pinned at capture time, and its tags ride the shell.
 
 Don't confuse this with the `revalidate()` export — that's the client-update axis (which segments re-render after a navigation or action), not a cache bust. The two compose; see [Caching & Revalidation](/docs/rango/features/caching).
 

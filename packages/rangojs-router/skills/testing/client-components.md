@@ -54,13 +54,19 @@ Extends RTL's `RenderResult` (`getByTestId`, `getByText`, `getByRole`, `containe
 ```ts
 type RenderRouteResult = RenderResult & {
   router: {
-    // client-only nav, re-resolves the same routes; `loaders` seeds THIS nav
+    // client-only nav, re-resolves the same routes; `loaders` seeds THIS nav.
+    // A spec's transition({ when }) decides it as kind "push";
+    // `transition: false` commits urgently and calls no predicate.
     navigate(
       url: string,
       options?: {
         loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+        transition?: boolean;
       },
     ): Promise<void>;
+    // re-render the current location, as router.refresh() does:
+    // a spec's when gets kind "revalidate" (`to` is `from`)
+    refresh(): Promise<void>;
     pathname(): string;
     params(): Record<string, string>;
     store: NavigationStore; // advanced

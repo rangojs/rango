@@ -59,6 +59,8 @@ Everything cacheable shares one identity scheme and one store. Entries expire by
 
 There is no path-based busting; use tags.
 
+A `"use cache"` call's tags also ride on every entry that holds its value: the enclosing route `cache()` record, a loader's own `cache()` entry, and an outer `"use cache"` entry that called it (whether the inner call ran, hit the store, or joined another call). Invalidating an inner tag evicts them all. Work that started before an invalidation of one of its tags, in any request, returns what it read but skips its store write, so the next read misses. This isolate's invalidations are checked from every request; another isolate's only where the store keeps tag markers (`CFCacheStore` with KV, `VercelCacheStore`), and ttl+swr bounds the rest.
+
 ## Axis 2: revalidate()
 
 `revalidate()` decides which segments re-run and stream to the client on a navigation or after a server action. Without any `revalidate()`, the defaults are:

@@ -131,11 +131,13 @@ stated, greppable contract.
 - **The consumption-lane rule.** For every shared artifact (`cache()`,
   `"use cache"`, the PPR shell): server-side handler consumption
   (`await ctx.use(loader)`) yields a BAKED copy — the capture-time value
-  freezes into the shared artifact. Identity reads (`cookies()`/`headers()`,
-  a `{ cache: false }` variable) inside that loader are permitted under
-  `cache()`/`"use cache"` (a documented footgun; see `/caching` → "Cache
-  purity & tainted objects") but REFUSE a PPR capture: the route serves
-  uncached until the read moves to a live loader. Client-side consumption
+  freezes into the shared artifact. Identity reads (`cookies()`/`headers()`/
+  `ctx.request.headers`, a `{ cache: false }` variable) inside that loader
+  are permitted under a route `cache()` (a documented footgun; see
+  `/caching` → "Cache purity & tainted objects"). They throw inside
+  `"use cache"` (when the cached function is the first to read the loader in
+  the request; an already-started loader's value is stored unchecked) and REFUSE a PPR capture: the route serves uncached until
+  the read moves to a live loader. Client-side consumption
   (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
   `loader()` segments follow their PPR lane (only `ssr: false` bakes; see
   `/ppr` → The loader lane rule).
@@ -146,7 +148,7 @@ stated, greppable contract.
   only when its return carries promises). Live data belongs in a loader without
   `ssr: false`, read with `useLoader` under `loading()` or an inline
   `<Suspense>`.
-- Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
+- Inside `"use cache"`: `cookies()`/`headers()`/`ctx.request.headers` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
   is captured on miss and replayed on hit. A non-cacheable variable read
   (`createVar({ cache: false })`) throws too — see the correctness bullet below.
@@ -178,7 +180,8 @@ when })` selector decides what the server renders, so it runs on the server;
 - **A throwing predicate yields the conservative default.** For
   `transition({ when })` that is no hold (an urgent commit) plus
   `console.error`; for a `revalidate()` it is the default decision it would
-  have deferred to, logged.
+  have deferred to, logged; for an `intercept({ when })` selector it is no
+  intercept (the full page renders), logged with the route name.
 
 ## Don't confuse
 
