@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.1 (2026-10-01)
 
 ### Breaking: `"use cache"` refuses a loader value read with `ctx.use()` or `getRequestContext().use()` when the loader's run read `cookies()`, whichever code started it ([#1014](https://github.com/rangojs/rango/pull/1014))
 
