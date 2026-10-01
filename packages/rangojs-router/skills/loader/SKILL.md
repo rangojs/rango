@@ -1055,8 +1055,8 @@ The costs and constraints:
   loader lane rule. On a HIT, a flagged loader whose return has no promises is
   served from the shell and does not run (unless the capture marked it to run:
   see `/ppr` → On a shell HIT); one whose return carries promises
-  runs on every HIT, with its baked parts overlaid. A `cookies()`, `headers()`
-  or `{ cache: false }` read in it refuses the capture. The
+  runs on every HIT, with its baked parts overlaid. A `cookies()`, `headers()`,
+  `ctx.request.headers` or `{ cache: false }` read in it refuses the capture. The
   `progressiveChunkSize` auto-raise is live-document only; captured shells
   outline per the explicit option or React's default.
 

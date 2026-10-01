@@ -757,7 +757,7 @@ from two hosts, route scopes, param sets, or query variants therefore does not
 collapse into one entry just because both calls received a `ctx` object.
 
 The same boundary guards operations whose meaning cannot survive a hit. Direct
-`cookies()`/`headers()` reads and request/response mutations such as `ctx.set()`,
+`cookies()`/`headers()`/`ctx.request.headers` reads and request/response mutations such as `ctx.set()`,
 `ctx.header()`, status, theme, and location-state writes throw inside
 `"use cache"`. If a cached function pushes typed handles through
 `ctx.use(Breadcrumbs)` or `ctx.use(Meta)`, Rango captures those pushes on a miss and

@@ -65,10 +65,9 @@ export interface PartialPrerenderProps {
   tags?: string[];
   /**
    * Upper bound (serialized UTF-8 bytes) on the loader pins in the capture
-   * data snapshot: the loader records and the cache values loaders read,
-   * duplicated into the shell entry. The doc record (the handler layer every
-   * HIT replays) is exempt. Over the cap the pins are dropped: the shell is
-   * still stored and every HIT still replays the handler layer, but the
+   * data snapshot: the bake-lane loader records. The doc record (the handler
+   * layer every HIT replays) is exempt. Over the cap the pins are dropped: the
+   * shell is still stored and every HIT still replays the handler layer, but the
    * pinned loaders read the live store, so drifted cached content can
    * hydration-mismatch and be repaired client-side. Reported once per key.
    * Defaults to 8 MiB. The whole entry is bounded separately by the store's

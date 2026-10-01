@@ -208,8 +208,8 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 helpers are `path()`, `layout()`, `loader()`, `loading()`, a restricted
 `intercept()` (dot-local named target, `loader()`/`loading()` use only, no
 `when`/middleware; module-local origin scoping via a materialization-synthesized
-`when`), a data-only `transition()` (ViewTransition classes/name/boundary
-opt-out, path-use position only, no `when`), and a client-run per-loader
+`when`), a `transition()` (ViewTransition classes/name, `viewTransition`,
+and a browser-run `when`; path-use position only), and a client-run per-loader
 `revalidate()` (loader-use position only; the predicate executes in the
 browser and its decision rides the `X-Rango-Client-Reval` header, honored by
 synthesized predicates on the materialized loader stubs —

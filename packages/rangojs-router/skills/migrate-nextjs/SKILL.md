@@ -504,8 +504,8 @@ Differences that matter during migration:
   gives one shell per key value, and `cache(false)` or a false `condition()`
   means no shell.
 - **Request-scoped reads in shell material refuse the capture** (in Next they
-  silently force dynamic rendering). `cookies()`, `headers()`, a
-  `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
+  silently force dynamic rendering). `cookies()`, `headers()`,
+  `ctx.request.headers`, a `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
   capture waits: a handler, a promise it passes or pushes, an async component,
   a loader it awaits. Per-user reads must move into a live loader (no
   `ssr: false`; a nested promise does not help). A normal `ctx.get()` value is

@@ -21,11 +21,11 @@ Every field is optional. A location (`from` / `to`) is a URL string, a `URL`, or
 
 ### Returns — `RunTransitionWhenResult`
 
-| Field      | Type                    | Meaning                                                                              |
-| ---------- | ----------------------- | ------------------------------------------------------------------------------------ |
-| `applied`  | `boolean`               | True when the navigation holds (the predicate returned true, or there is no `when`). |
-| `gatedOff` | `boolean`               | `!applied`: the navigation commits urgently with no view transition.                 |
-| `context`  | `TransitionWhenContext` | The context the predicate received.                                                  |
+| Field      | Type                    | Meaning                                                                                                               |
+| ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `applied`  | `boolean`               | True when the navigation holds: the predicate returned anything but `false` and did not throw, or there is no `when`. |
+| `gatedOff` | `boolean`               | `!applied`: the navigation commits urgently with no view transition.                                                  |
+| `context`  | `TransitionWhenContext` | The context the predicate received.                                                                                   |
 
 ### Recipe
 

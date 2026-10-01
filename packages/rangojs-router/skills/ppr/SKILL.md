@@ -334,8 +334,8 @@ replay its eligible snapshot. In both cases `matchPartial()`:
 - keeps the existing prefetch key, source scope, and in-flight lock unchanged.
 
 This is deliberately invisible to the browser: the response is the same
-`RscPayload` shape as any other partial navigation. Captured item values
-are NOT replayed on this path. Bake-lane loader pins are, when the replayed
+`RscPayload` shape as any other partial navigation. A shell snapshot holds no
+`"use cache"` or loader `cache()` values. Bake-lane loader pins are, when the replayed
 snapshot is a shell a document request captured, as on a document HIT: a
 promise-free `ssr: false` loader is served from its pin without running
 (unless the capture marked it to run: see "On a shell HIT"), and one whose
@@ -795,7 +795,8 @@ identifiers — served to anonymous visitors.)
   consumer's `<Suspense>` on every HIT (the same mask as bake-lane loader data,
   at any depth of plain objects, arrays and JSX props; a promise inside a
   `Map`, `Set`, or class instance is not masked). A live-lane
-  loader never runs at capture unless an `ssr: false` loader awaits it; either
+  loader never runs at capture unless a handler or an `ssr: false` loader
+  awaits it; either
   way its pushes, and those of the loaders it awaits, are live on every HIT.
 
 ### Want a hole for already-resolved data?
@@ -936,7 +937,7 @@ Four hard edges (each e2e/unit-pinned):
   response. The one exception: a handler that calls `ctx.dynamic()` FIRST
   re-permits its own header/cookie write (#735) — a dynamic() render never
   HITs, so the write is deterministic (see "Opting out per request").
-- **Identity refuses.** `cookies()`/`headers()` inside a bake-lane loader
+- **Identity refuses.** `cookies()`/`headers()`/`ctx.request.headers` inside a bake-lane loader
   throws during capture and the capture REFUSES (deterministic, once-per-key
   warned) — identity can never bake into the shared shell. Drop the loader's
   `ssr: false` flag (the live lane is exempt; give it a boundary) or move the
@@ -982,7 +983,8 @@ their data should bake vs stay live. Your levers, in order of preference:
    shared/config data returns as plain values (bakes, pinned per shell);
    per-request data returns as NESTED promises consumed under the widget's own
    `<Suspense>` (live holes). No `loading()`, no restructuring. One wall: a
-   bake-lane loader that reads `cookies()`/`headers()` refuses the capture —
+   bake-lane loader that reads `cookies()`/`headers()`/`ctx.request.headers`
+   refuses the capture —
    identity belongs on the live lane (a separate unflagged loader); a nested
    promise inside the flagged loader still runs during capture and trips the
    guard.
@@ -1040,8 +1042,9 @@ The identity rule, stated once: per-user data on a PPR page lives in a
 live-lane loader (no `ssr: false`) consumed CLIENT-side with `useLoader` under
 `loading()` or an inline `<Suspense>`, or in a NESTED promise inside a
 bake-lane loader (a hole, fresh per request). A nested promise's body still
-runs at capture, so it must not call `cookies()`/`headers()` itself — identity
-reads belong in the live-lane loader. Reading `cookies()`, `headers()`, or a
+runs at capture, so it must not call `cookies()`/`headers()` or read
+`ctx.request.headers` itself — identity reads belong in the live-lane loader.
+Reading `cookies()`, `headers()`, `ctx.request.headers`, or a
 `{ cache: false }` variable anywhere the capture waits for refuses the capture
 by construction: handler/render code, a promise the handler passes or pushes,
 an async server component, a bake-lane loader, and a loader a handler awaits
@@ -1126,7 +1129,9 @@ load-bearing: `cookies()`, `headers()`, `ctx.request.headers`,
 `{ cache: false }` variable read THROW during a capture render, and the capture
 is refused even when the code catches that throw, so identity can never leak
 into a shared shell through them. Live-lane loaders (every loader without
-`ssr: false`) are exempt: masked at capture, they never run there.
+`ssr: false`) are exempt when only a client component reads them: masked at
+capture, they never run there. One a handler or an `ssr: false` loader awaits
+runs at capture, and its identity reads refuse it.
 
 ## allReady: the SEO/bot story
 
@@ -1155,8 +1160,9 @@ a handler, a promise it passes or pushes, an async server component, a
 bake-lane loader, and a loader a handler awaits (`await ctx.use(Loader)`). The
 capture is refused even if your code catches the throw, and the route keeps
 serving MISSes with a once-per-key warning. `ctx.dynamic()` called there
-refuses it too. The live lane (no `ssr: false`) stays exempt: masked at capture, it never
-runs there.
+refuses it too. The live lane (no `ssr: false`) stays exempt when only a client
+component reads it; one a handler or an `ssr: false` loader awaits runs at
+capture, and its identity reads refuse it.
 
 **(c) Residual hazard — middleware-derived per-user state.** A NORMAL `ctx`
 variable (no `cache: false`) set by an upstream auth middleware and rendered by
@@ -1228,13 +1234,13 @@ path(
 );
 ```
 
-| Field              | Default | Notes                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                                                                         |
-| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                                                               |
-| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                                                                   |
-| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (bake-lane loader records and the cached items/responses those loaders read). The recorded handler layer is exempt. Over the cap the pins are dropped and the shell is stored with its handler layer (warned once per key); bake-lane loaders then read the live store, and drift is repaired client-side |
-| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                                                                   |
+| Field              | Default | Notes                                                                                                                                                                                                                                                                                                      |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                           |
+| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                 |
+| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                     |
+| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (the bake-lane loader records). The recorded handler layer is exempt. Over the cap the pins are dropped and the shell is stored with its handler layer (warned once per key); bake-lane loaders then read the live store, and drift is repaired client-side |
+| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                     |
 
 A shell never outlives the route `cache()` entry it was captured from: under
 a route `cache()`, the shell is fresh no longer than that entry is (at most
@@ -1283,8 +1289,8 @@ render-callable `cacheTag()` in a plain server component (no
 `"use cache"`/`cache()` in its tree) — plus the tags of loaders on the BAKE
 lane (they execute during capture and their data is in the shell). A tag
 recorded outside what the shell renders is not on it. A live-lane loader's tags (every loader without `ssr: false`)
-attach only when a handler consumes its value with `ctx.use()`, which bakes
-it; one read only by the client stays off, since it is masked at capture and
+attach only when a handler or an `ssr: false` loader consumes its value with
+`ctx.use()`, which bakes it; one read only by the client stays off, since it is masked at capture and
 its hole is already live. `ppr.tags` adds
 operational tags the render cannot know (a tenant id, a deploy marker).
 
@@ -1312,7 +1318,7 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
 
 ## Pitfalls
 
-- **A bake-lane loader that reads `cookies()`/`headers()`**: the capture is
+- **A bake-lane loader that reads `cookies()`/`headers()`/`ctx.request.headers`**: the capture is
   REFUSED (deterministic, once-per-key warned) — the route keeps serving
   MISSes. Move identity onto the live lane (drop `ssr: false`, or split the read into
   a separate unflagged loader; give the reader a boundary). A nested promise
@@ -1398,10 +1404,10 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   same `"use cache"` entry reads it from the store on every HIT. It is still
   cached under its own profile; once the entry expires or is invalidated and
   refreshes, the hole shows the refreshed value next to the shell's old one. The
-  capture stores only what a HIT reads: every HIT replays the handler layer
-  from the captured segment record, so the `"use cache"` items only handler
-  code read are not stored. When a bake-lane loader read the same entry at
-  capture, the shell keeps it, and the hole gets that pinned value too.
+  shell stores no `"use cache"` value, only its recorded handler output and the
+  `ssr: false` loaders' baked containers. A hole reads the store even when a
+  bake-lane loader read the same entry at capture: the baked container keeps
+  the capture's value, and the hole shows the current entry.
 - **Uncached nondeterminism in server output is frozen, not drifting**: a raw
   `Date.now()` / `Math.random()` / uncached `fetch` in a handler or server
   component renders once per capture, and the prelude and every HIT show that
