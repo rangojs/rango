@@ -34,6 +34,7 @@ vi.mock("../internal-debug.js", () => ({
 }));
 
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache";
+import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
 import { createMetricsStore } from "../router/metrics";
 import { resolveTracing } from "../router/tracing.js";
 import { serializeResult, deserializeResult } from "../cache/segment-codec";
@@ -244,7 +245,9 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/products");
 
-      expect(store.getItem).toHaveBeenCalledWith("custom-key-override");
+      expect(store.getItem).toHaveBeenCalledWith(
+        "loader:loader-custom-key:key:custom-key-override",
+      );
     });
 
     it("priority 2: store.keyGenerator modifies default key", async () => {
@@ -282,7 +285,79 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       expect(store.keyGenerator).not.toHaveBeenCalled();
-      expect(store.getItem).toHaveBeenCalledWith("custom-key-wins");
+      expect(store.getItem).toHaveBeenCalledWith(
+        "loader:loader-precedence:key:custom-key-wins",
+      );
+    });
+
+    describe("a key() result can't name another loader's entry (#1009)", () => {
+      async function load(
+        store: MemorySegmentCacheStore,
+        id: string,
+        pathname: string,
+        key?: () => string,
+      ): Promise<unknown> {
+        const setItem = vi.spyOn(store, "setItem");
+        const writes = setItem.mock.calls.length;
+        const loader = createMockLoader(id, { from: id });
+        const value = await resolveLoaderData(
+          createLoaderEntry(loader, { store, key }),
+          createMockCtx(),
+          pathname,
+        );
+        // A MISS writes in the background: settle it before the next read.
+        if (loader.mock.calls.length > 0) {
+          await vi.waitFor(() =>
+            expect(setItem.mock.calls.length).toBeGreaterThan(writes),
+          );
+          await Promise.all(setItem.mock.results.map((r) => r.value));
+        }
+        return value;
+      }
+      const otherDefaultKey = "loader:account:localhost/account";
+
+      it("a key() equal to another loader's default key does not read its entry", async () => {
+        const store = new MemorySegmentCacheStore();
+        expect(await load(store, "account", "/account")).toEqual({
+          from: "account",
+        });
+        expect(
+          await load(store, "variant", "/other", () => otherDefaultKey),
+        ).toEqual({ from: "variant" });
+      });
+
+      it("a key() equal to another loader's default key does not overwrite its entry", async () => {
+        const store = new MemorySegmentCacheStore();
+        await load(store, "variant", "/other", () => otherDefaultKey);
+        expect(await load(store, "account", "/account")).toEqual({
+          from: "account",
+        });
+      });
+
+      it("two loaders whose key() returns the same value keep their own entries", async () => {
+        const store = new MemorySegmentCacheStore();
+        await load(store, "first", "/a", () => "shared");
+        expect(await load(store, "second", "/b", () => "shared")).toEqual({
+          from: "second",
+        });
+        expect(await store.getItem("shared")).toBeNull();
+        expect(await store.getItem("loader:second:key:shared")).not.toBeNull();
+      });
+
+      it("the result is URI-encoded after loader:<id>:key:", async () => {
+        const store = createMockStore();
+        await resolveLoaderData(
+          createLoaderEntry(createMockLoader("enc"), {
+            store,
+            key: () => "loader:a:b/c|d",
+          }),
+          createMockCtx(),
+          "/x",
+        );
+        expect(store.getItem).toHaveBeenCalledWith(
+          "loader:enc:key:loader%3Aa%3Ab%2Fc%7Cd",
+        );
+      });
     });
 
     it("throws when options.key throws (hard-fail, no silent fallback)", async () => {

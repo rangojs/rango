@@ -180,6 +180,8 @@ export const NamedRoutes = {
   testKvL2Check: "/test/kv-l2-check",
   testLastError: "/__test/last-error",
   testLinkExternalOrigin: "/test/link-external-origin",
+  testLoaderKeyCrafted: "/test/loader-key-crafted",
+  testLoaderKeyVictim: "/test/loader-key-victim/:probe",
   testMimeAny: "/test/mime/any",
   testMimeHtml: "/test/mime/html",
   testMimeImage: "/test/mime/image",

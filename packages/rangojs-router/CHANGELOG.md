@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Breaking: a loader's own `cache({ key })` result is stored namespaced, so it can't name another loader's entry ([#1012](https://github.com/rangojs/rango/pull/1012))
+
+A loader's own `cache({ key })` result was stored as the entry key verbatim
+(#1009). The default loader key is `loader:<loaderId>:<host><path>`, and a
+`key()` often returns request input, so a request could send a value equal
+to another loader's key: a `key()` returning the `x-variant` header, sent
+`loader:<AccountLoader id>:localhost/account`, read `AccountLoader`'s entry
+(serving its data from the wrong loader) or, on a miss, overwrote it. Two
+loaders whose `key()` returned the same value shared one entry, and a value
+equal to a `"use cache"` key (`use-cache:<id>:...`, the same store item
+family) named that entry. #991 closed this for route and response-route
+keys; loader keys were left raw.
+
+A loader's `key()` result is now stored as `loader:<loaderId>:key:` plus its
+URI encoding, so it can't equal a default loader key, another loader's key,
+or a `"use cache"` key:
+
+```tsx
+loader(ProductLoader, () => [
+  cache({ ttl: 300, key: (ctx) => `product:${ctx.params.slug}` }),
+]);
+// Before: the entry key was "product:shoe".
+// After:  it is "loader:<ProductLoader id>:key:product%3Ashoe".
+```
+
+A store `keyGenerator` result is stored as returned, as on routes, and the
+default key is unchanged. Any `key()` or `keyGenerator` still declares
+request identity (#972).
+
+The breaking part: stored key strings change for loaders with a `key()`, so
+those entries miss once. `CFCacheStore` versions its keys per build and
+`MemorySegmentCacheStore` starts cold on restart; the one-time miss applies
+to a `CFCacheStore` with a pinned `version`, to `VercelCacheStore` without
+`version` and to custom `SegmentCacheStore`s that don't version their keys.
+Tests that assert a loader's raw `key()` result as the store key need the
+namespaced form.
+
+Migration: nothing to change in `key()` functions. On `CFCacheStore` the
+result is URI-encoded twice in the Cache API URL (here, then by the store),
+so a reserved character such as `:` takes 5 bytes there; a 2 KB result of
+reserved characters still caches (8 KB measured locally on workerd), but
+keep request-derived keys short or hash them.
+
 ### Fixed: a prefetched intercept target opens the modal from a page where the intercept applies ([#1008](https://github.com/rangojs/rango/pull/1008))
 
 A prefetch of a route an intercept targets, made from a page where the

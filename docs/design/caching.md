@@ -823,8 +823,9 @@ path("post/:slug", () => [
 You might expect a loader's `cache()` inside a keyed route `cache()` to pick
 up the route's partition. It doesn't. A loader's own `cache()` and `"use
 cache"` are independent layers, keyed only by what they declare: the loader
-entry by `key()`, else the store's `keyGenerator`, else the default
-`loader:{id}:{host}{pathname}:{sortedParams}`
+entry by `key()` (stored as `loader:{id}:key:{encoded result}`, see "Loader
+key results are namespaced" below), else the store's `keyGenerator`, else
+the default `loader:{id}:{host}{pathname}:{sortedParams}`
 (`resolveLoaderKey` in `src/router/segment-resolution/loader-cache.ts`); a
 `"use cache"` entry by its id and arguments. The default loader key names no
 user, so one entry serves everyone.
@@ -1324,6 +1325,50 @@ family under a per-build version and shells are gated on `buildVersion`, so
 a deploy is already cold; `MemorySegmentCacheStore` is cold after a restart.
 Only `VercelCacheStore` without `version` sees a one-time miss for existing
 keyed entries.
+
+#### Loader key results are namespaced (issue #1009)
+
+#975 left one key site raw: a loader's own `cache({ key })`. Its result was
+the entry key verbatim (`resolveCacheKey`, `src/cache/cache-policy.ts`).
+Loader entries live in the store's item family (`getItem`/`setItem`), which
+they share with `"use cache"` entries (`use-cache:<id>:...`,
+`src/cache/cache-runtime.ts`); route records use `get`/`set`. An item key
+has no other discriminator, so a `key()` returning request input could name
+another loader's entry: the header value
+`loader:<otherId>:localhost/account` read and overwrote that loader's
+default-keyed entry, and two loaders whose `key()` returned the same value
+shared one entry. It could name a `"use cache"` entry the same way.
+
+So a loader's `key()` result is now `loader:{id}:key:` plus
+`encodeURIComponent(result)` (`loaderKeyFromResult` in `loader-cache.ts`),
+the route scheme's `key:` part (`KEY_PART_PREFIX`) behind the loader's own
+`loader:{id}:` prefix. Why nothing collides:
+
+- It starts with `loader:`, which no `"use cache"` key does, so the
+  `"use cache"` case is closed outright.
+- An encoded result holds no `:`, so a namespaced key reads unambiguously
+  from the right: the result, then `key:`, then the loader id. Two
+  namespaced keys are equal only for the same loader and the same result.
+- A default key `loader:{id}:{host}{pathname}...` holds a `/` past its id,
+  and an encoded result holds none. So a namespaced key equals a default key
+  only if one loader's id is literally `<other id>:<host>/<path>...`.
+
+You might expect the argument to rest on loader ids holding no `:`. It
+can't: a dev id is a root-relative path plus `#<export>`, and on Windows a
+path can be absolute (`D:/...`). Build ids are hashes. A store `keyGenerator`
+result stays raw, as #975 decided for routes: it is the store's own
+namespace, gets the default key to build on, and is configured by the app
+rather than chosen per request by a single binding. The `declared` flag
+(#972) is unchanged: any `key()` or `keyGenerator` still declares identity.
+
+Nothing else reads loader keys back. Tag invalidation finds entries through
+the store's tag index, the ppr snapshot's loader pins are keyed by segment
+(`bakeSegmentKey`), and the testing helpers (`runLoader`'s `cache` option)
+run the same `resolveLoaderKey`. The cost is the same one-time miss as
+#975, for keyed loader entries only. The e2e pin is the `loader-key` pair in
+`cache-nested-scope.test.ts` of the router test-app and cloudflare-basic:
+the header spells the victim loader's default key with its real (in build,
+hashed) id, through `CFCacheStore` in the latter.
 
 #### Conditions and tags inherit; stores partition across stores (issue #974)
 

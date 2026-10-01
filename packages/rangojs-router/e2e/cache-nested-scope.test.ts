@@ -19,6 +19,10 @@ import { useFixture } from "./fixture";
  *   is. Before, the header value `json:<host>/cache-test/raw-key-victim?...`
  *   named the victim's default-keyed entry, so the victim served the other
  *   route's body.
+ * - /cache-test/loader-key-* (issue #1009): a loader's own key() returns a
+ *   request header as is. Before, the header value
+ *   `loader:<victim id>:<host>/cache-test/loader-key-victim/<probe>:...`
+ *   read the victim loader's entry, and on a miss wrote over it.
  */
 
 async function renderOf(
@@ -133,6 +137,60 @@ async function expectRawKeyCannotNameVictim(
   expect(await readJson(victim)).toMatchObject({ from: "victim" });
 }
 
+/**
+ * /cache-test/loader-key-*: the victim page at `probe`, the crafted page, and
+ * the header spelling the victim loader's default key for a probe. The
+ * victim's id comes from its page (a hash in build).
+ */
+async function loaderKeyFixture(
+  request: APIRequestContext,
+  url: (path: string) => string,
+) {
+  const host = new URL(url("/")).host;
+  const victim = (probe: string) =>
+    url(`/cache-test/loader-key-victim/${probe}`);
+  const html = await (
+    await request.get(victim("id"), { headers: { Accept: "text/html" } })
+  ).text();
+  const victimId = /data-testid="loader-key-victim-id"[^>]*>([^<]*)</.exec(
+    html,
+  )![1];
+  return {
+    victim,
+    crafted: url("/cache-test/loader-key-crafted"),
+    victimKey: (probe: string) => ({
+      "x-loader-key": `loader:${victimId}:${host}/cache-test/loader-key-victim/${probe}:probe=${probe}`,
+    }),
+  };
+}
+
+async function expectLoaderKeyCannotReadVictim(
+  request: APIRequestContext,
+  url: (path: string) => string,
+): Promise<void> {
+  const { victim, crafted, victimKey } = await loaderKeyFixture(request, url);
+  const probe = crypto.randomUUID().slice(0, 8);
+
+  expect(await untilStable(() => renderOf(request, victim(probe)))).toMatch(
+    /^victim:/,
+  );
+  expect(await renderOf(request, crafted, victimKey(probe))).toMatch(
+    /^crafted:/,
+  );
+}
+
+async function expectLoaderKeyCannotOverwriteVictim(
+  request: APIRequestContext,
+  url: (path: string) => string,
+): Promise<void> {
+  const { victim, crafted, victimKey } = await loaderKeyFixture(request, url);
+  const probe = crypto.randomUUID().slice(0, 8);
+
+  // The crafted request's own entry is written (its value replays).
+  await untilStable(() => renderOf(request, crafted, victimKey(probe)));
+  expect(await renderOf(request, victim(probe))).toMatch(/^victim:/);
+}
+
 test.describe("nested cache() inherits the enclosing scopes", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 
@@ -158,6 +216,18 @@ test.describe("nested cache() inherits the enclosing scopes", () => {
     request,
   }) => {
     await expectRawKeyCannotNameVictim(request, f.url);
+  });
+
+  test("a loader's own key() result cannot read another loader's entry", async ({
+    request,
+  }) => {
+    await expectLoaderKeyCannotReadVictim(request, f.url);
+  });
+
+  test("a loader's own key() result cannot overwrite another loader's entry", async ({
+    request,
+  }) => {
+    await expectLoaderKeyCannotOverwriteVictim(request, f.url);
   });
 });
 
@@ -186,5 +256,17 @@ test.describe("nested cache() inherits the enclosing scopes (production)", () =>
     request,
   }) => {
     await expectRawKeyCannotNameVictim(request, f.url);
+  });
+
+  test("a loader's own key() result cannot read another loader's entry", async ({
+    request,
+  }) => {
+    await expectLoaderKeyCannotReadVictim(request, f.url);
+  });
+
+  test("a loader's own key() result cannot overwrite another loader's entry", async ({
+    request,
+  }) => {
+    await expectLoaderKeyCannotOverwriteVictim(request, f.url);
   });
 });

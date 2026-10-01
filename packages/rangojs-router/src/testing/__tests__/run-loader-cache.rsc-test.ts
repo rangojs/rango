@@ -140,4 +140,52 @@ describe("runLoader: a loader's own cache()", () => {
     expect(await load("1")).toEqual({ id: "1" });
     expect(runs).toBe(2);
   });
+
+  describe("a key() that returns request input (#1009)", () => {
+    const accountLoader = async () => ({ from: "account" });
+    const variantLoader = async () => ({ from: "variant" });
+    type Store = ReturnType<typeof spiedStore>;
+    const loadAccount = (store: Store) =>
+      runLoader(accountLoader, {
+        request: "http://localhost/account",
+        cacheStore: store.cacheStore,
+        cache: { ttl: 300 },
+      });
+    const loadVariant = (store: Store, variant: string) =>
+      runLoader(variantLoader, {
+        request: new Request("http://localhost/other", {
+          headers: { "x-variant": variant },
+        }),
+        cacheStore: store.cacheStore,
+        cache: {
+          ttl: 300,
+          key: (ctx) => ctx.request.headers.get("x-variant") ?? "",
+        },
+      });
+    /** The key the account loader's own entry is stored under. */
+    async function accountKey(): Promise<string> {
+      const store = spiedStore();
+      await loadAccount(store);
+      await store.written(1);
+      return store.setItem.mock.calls[0][0];
+    }
+
+    it("naming another loader's entry does not read it", async () => {
+      const store = spiedStore();
+      await loadAccount(store);
+      await store.written(1);
+      const key = store.setItem.mock.calls[0][0];
+
+      expect(await loadVariant(store, key)).toEqual({ from: "variant" });
+    });
+
+    it("naming another loader's entry does not overwrite it", async () => {
+      const key = await accountKey();
+      const store = spiedStore();
+      await loadVariant(store, key);
+      await store.written(1);
+
+      expect(await loadAccount(store)).toEqual({ from: "account" });
+    });
+  });
 });
