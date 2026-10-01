@@ -79,6 +79,8 @@ export const NamedRoutes = {
   "cacheTest.interceptDetail": "/cache-test/intercept/:itemId",
   "cacheTest.interceptIndex": "/cache-test/intercept",
   "cacheTest.layoutCache": "/cache-test/layout-cache",
+  "cacheTest.loaderKeyCrafted": "/cache-test/loader-key-crafted",
+  "cacheTest.loaderKeyVictim": "/cache-test/loader-key-victim/:probe",
   "cacheTest.markerAfter": "/cache-test/marker-after",
   "cacheTest.markerBefore": "/cache-test/marker-before",
   "cacheTest.nestedCondition": "/cache-test/nested-condition",

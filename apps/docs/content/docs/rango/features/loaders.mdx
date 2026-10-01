@@ -73,7 +73,7 @@ loader(AccountLoader, () => [
 ]),
 ```
 
-Without the `key()`, the first visitor's account would be stored and served to everyone for the TTL. If the value must stay per request, leave the loader uncached.
+Without the `key()`, the first visitor's account would be stored and served to everyone for the TTL. If the value must stay per request, leave the loader uncached. The `key()` result is stored namespaced by the loader (`loader:<id>:key:` plus its URI encoding), so no value it returns, request input included, can name another loader's entry.
 
 Which loaders re-run on a client update is the other axis. After an action every loader re-runs by default; on a navigation, loaders inside the matched `path()` re-run when params or search change and loaders above the route don't. A `revalidate()` inside the loader's use callback adjusts that — see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate).
 

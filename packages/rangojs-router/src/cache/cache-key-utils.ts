@@ -96,8 +96,12 @@ export function cacheKeyBase(
   return key;
 }
 
-/** The prefix of a `key()` result's part in a record key (#975). */
-const KEY_PART_PREFIX = "key:";
+/**
+ * The prefix of a `key()` result's part in a record key (#975), and of a
+ * loader's own `key()` result after its `loader:<id>:` namespace (#1009,
+ * loader-cache.ts loaderKeyFromResult).
+ */
+export const KEY_PART_PREFIX = "key:";
 
 /**
  * A cache() record key, or ppr shell partition, from its parts

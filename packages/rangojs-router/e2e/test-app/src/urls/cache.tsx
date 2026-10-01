@@ -48,6 +48,10 @@ import {
   CacheNullCachedHandler,
   CacheNullNonCachedHandler,
 } from "./cache.handlers.js";
+import {
+  LoaderKeyCraftedLoader,
+  LoaderKeyVictimLoader,
+} from "./loader-cache-key-loader.js";
 
 // Render counts for /cache-test/outer-live (issue #906). A cache HIT skips the
 // route handler, so its count holds; the layout above the boundary re-runs.
@@ -118,6 +122,23 @@ function CrossStorePage(ctx: HandlerContext) {
       {`${ctx.get(CacheLocale)}:${++nestedScopeRenders}`}
     </p>
   );
+}
+
+// /cache-test/loader-key-* (issue #1009): the loader's value, and the
+// victim loader's id, which its default key carries.
+async function LoaderKeyVictimPage(ctx: HandlerContext<{ probe: string }>) {
+  const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  return (
+    <div>
+      <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
+      <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+    </div>
+  );
+}
+
+async function LoaderKeyCraftedPage(ctx: HandlerContext) {
+  const { from, stamp } = await ctx.use(LoaderKeyCraftedLoader);
+  return <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>;
 }
 
 // Render counts for /cache-test/path-children (issue #912).
@@ -304,6 +325,31 @@ export const cachePatterns = urls(
         { name: "cacheTest.rawKeyVictim" },
       ),
     ]),
+
+    // A loader's own cache() with a key() returning request input as is
+    // (issue #1009): its result is namespaced by the loader, so a header
+    // value spelling the victim loader's default key
+    // (`loader:<id>:<host>/cache-test/loader-key-victim/<probe>:probe=<probe>`)
+    // neither reads nor overwrites the victim's entry.
+    path(
+      "/cache-test/loader-key-crafted",
+      LoaderKeyCraftedPage,
+      { name: "cacheTest.loaderKeyCrafted" },
+      () => [
+        loader(LoaderKeyCraftedLoader, () => [
+          cache({
+            ttl: 600,
+            key: (ctx) => ctx.request.headers.get("x-loader-key") ?? "",
+          }),
+        ]),
+      ],
+    ),
+    path(
+      "/cache-test/loader-key-victim/:probe",
+      LoaderKeyVictimPage,
+      { name: "cacheTest.loaderKeyVictim" },
+      () => [loader(LoaderKeyVictimLoader, () => [cache({ ttl: 600 })])],
+    ),
 
     // A cache() among a path's own children caches that path: the route and
     // the layout declared after the cache() replay from the cache, and the

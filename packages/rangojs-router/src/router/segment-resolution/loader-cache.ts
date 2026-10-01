@@ -6,7 +6,8 @@
  * getItem()/setItem() methods on SegmentCacheStore.
  *
  * Cache key resolution (3-tier, matching CacheScope.resolveKey):
- *   1. options.key(requestCtx) — full override
+ *   1. options.key(requestCtx) — full override, stored namespaced as
+ *      loader:{loaderId}:key:{encodeURIComponent(result)} (#1009)
  *   2. store.keyGenerator(requestCtx, defaultKey) — store-level modification
  *   3. loader:{loaderId}:{host}{pathname}:{sortedParams} — default
  *
@@ -64,7 +65,10 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { observePhase, PHASES } from "../instrument.js";
-import { sortedRouteParams } from "../../cache/cache-key-utils.js";
+import {
+  KEY_PART_PREFIX,
+  sortedRouteParams,
+} from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
   resolveSwrWindow,
@@ -135,6 +139,28 @@ function getDefaultLoaderCacheKey(
 }
 
 /**
+ * A loader's own `key()` result as its entry key (#1009). The result is
+ * often request input, and the item family (`getItem`/`setItem`) has no
+ * other discriminator, so stored raw it could name another loader's entry
+ * or a `"use cache"` entry (`use-cache:<id>:...`, cache-runtime.ts), which
+ * shares that family; route records use `get`/`set`. Namespaced, it can't:
+ * - it starts with `loader:`, which no `"use cache"` key does;
+ * - an encoded result holds no `:`, so the key reads unambiguously from
+ *   the right (result, `key:`, loader id), and two namespaced keys are
+ *   equal only for the same loader and result;
+ * - a default key `loader:<id>:<host><pathname>...` holds a `/` past its
+ *   id, and an encoded result holds none, so the two are equal only if one
+ *   loader's id is literally `<other id>:<host>/<path>...`. Loader ids can
+ *   hold `:` (a dev id is a root-relative path, absolute `D:/...` on
+ *   Windows), so this is the guarantee, not "ids hold no `:`".
+ * A store keyGenerator result stays the store's own namespace, as on routes
+ * (composeCacheKeys).
+ */
+function loaderKeyFromResult(loaderId: string, result: string): string {
+  return `loader:${loaderId}:${KEY_PART_PREFIX}${encodeURIComponent(result)}`;
+}
+
+/**
  * Resolve cache key using the shared 3-tier priority. `declared`: a key() or
  * store keyGenerator produced it, so it can carry request identity (#972).
  */
@@ -154,9 +180,14 @@ async function resolveLoaderKey(
   const host = getRequestContext()?.url?.host ?? "localhost";
   const defaultKey = getDefaultLoaderCacheKey(loaderId, host, pathname, params);
   if (options === false) return { key: defaultKey, declared: false };
+  const keyFn = options.key;
   return {
-    key: await resolveCacheKey(options.key, store, defaultKey),
-    declared: Boolean(options.key || store.keyGenerator),
+    key: await resolveCacheKey(
+      keyFn && (async (ctx) => loaderKeyFromResult(loaderId, await keyFn(ctx))),
+      store,
+      defaultKey,
+    ),
+    declared: Boolean(keyFn || store.keyGenerator),
   };
 }
 

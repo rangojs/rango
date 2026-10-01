@@ -31,6 +31,10 @@ import {
   BodyTaggedLoader,
 } from "./loaders/loader-cache-tag.js";
 import { CachedSessionLoader } from "./loaders/loader-cache-identity.js";
+import {
+  LoaderKeyCraftedLoader,
+  LoaderKeyVictimLoader,
+} from "./loaders/loader-cache-key.js";
 import { setOverlayCookie } from "./middleware/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 import { purgeModeStore, purgeLog, clearPurgeLog } from "./purge-store.js";
@@ -367,6 +371,25 @@ function CrossStorePage(ctx: HandlerContext): ReactNode {
   );
 }
 
+// /test/loader-key-* (issue #1009): the loader's value, and the victim
+// loader's id, which its default key carries.
+async function LoaderKeyVictimPage(
+  ctx: HandlerContext<{ probe: string }>,
+): Promise<ReactNode> {
+  const { from, stamp } = await ctx.use(LoaderKeyVictimLoader);
+  return (
+    <div>
+      <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>
+      <p data-testid="loader-key-victim-id">{LoaderKeyVictimLoader.$$id}</p>
+    </div>
+  );
+}
+
+async function LoaderKeyCraftedPage(ctx: HandlerContext): Promise<ReactNode> {
+  const { from, stamp } = await ctx.use(LoaderKeyCraftedLoader);
+  return <p data-testid="nested-scope-render">{`${from}:${stamp}`}</p>;
+}
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -475,6 +498,30 @@ export const urlpatterns = urls(
         { name: "testRawKeyVictim" },
       ),
     ]),
+    // A loader's own cache() with a key() returning request input as is
+    // (issue #1009): its result is namespaced by the loader, so a header
+    // value spelling the victim loader's default key
+    // (`loader:<id>:<host>/test/loader-key-victim/<probe>:probe=<probe>`)
+    // neither reads nor overwrites the victim's entry.
+    path(
+      "/test/loader-key-crafted",
+      LoaderKeyCraftedPage,
+      { name: "testLoaderKeyCrafted" },
+      () => [
+        loader(LoaderKeyCraftedLoader, () => [
+          cache({
+            ttl: 600,
+            key: (ctx) => ctx.request.headers.get("x-loader-key") ?? "",
+          }),
+        ]),
+      ],
+    ),
+    path(
+      "/test/loader-key-victim/:probe",
+      LoaderKeyVictimPage,
+      { name: "testLoaderKeyVictim" },
+      () => [loader(LoaderKeyVictimLoader, () => [cache({ ttl: 600 })])],
+    ),
     // Test fixture only: the tag comes from the URL param so the e2e can
     // exercise arbitrary tags. Never do this in production code - deriving
     // invalidation tags from untrusted input lets an attacker grow the

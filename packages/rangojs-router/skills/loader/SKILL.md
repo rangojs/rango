@@ -658,6 +658,7 @@ at two levels:
 import { cookies } from "@rangojs/router";
 
 // Full override — key function replaces the default entirely
+// Stored as "loader:{loaderId}:key:product%3Ashoe%3Aen"
 loader(ProductLoader, () => [
   cache({
     ttl: 300,
@@ -669,11 +670,21 @@ loader(ProductLoader, () => [
 // Set in the store configuration, applies to all entries in that store
 ```
 
-Resolution priority (same as route-level `cache()`):
+Resolution priority (same order as route-level `cache()`):
 
-1. `key(ctx)` from cache options — full override
-2. `store.keyGenerator(ctx, defaultKey)` — store-level modification
+1. `key(ctx)` from cache options — full override, stored namespaced as
+   `loader:{loaderId}:key:` plus the result's URI encoding
+2. `store.keyGenerator(ctx, defaultKey)` — store-level modification, stored
+   as returned
 3. Default key — `loader:{loaderId}:{host}{pathname}:{sortedParams}`
+
+Because the `key()` result is namespaced by the loader id, no value it
+returns, request input included, can name another loader's entry or a
+default key: two loaders whose `key()` returns the same value keep separate
+entries. A readable prefix is still good practice. A store `keyGenerator`
+result is stored as returned, so build it on the `defaultKey` it receives
+(which carries the loader id): a generator that returns raw request input
+can still name another entry.
 
 A `key` function (or store `keyGenerator`) that throws is **not** caught: the
 loader fails as if its body threw. There is no silent fallback to the default

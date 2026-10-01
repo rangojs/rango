@@ -346,7 +346,10 @@ server projection.
   the pre-flush await and must not re-suspend at the read site.
 - Loader-level cache (`loader(Def, () => [cache({...})])`,
   `router/segment-resolution/loader-cache.ts`): item-family read-through with
-  SWR. The `ctx.use(Handle)` pushes of the body and of the loaders it awaits
+  SWR. A `key()` result is stored as `loader:<id>:key:` plus its URI
+  encoding (`loaderKeyFromResult`, #1009), so it never names another
+  loader's entry; a store `keyGenerator` result stays raw. The
+  `ctx.use(Handle)` pushes of the body and of the loaders it awaits
   via `ctx.use` are recorded on a MISS (`startHandleCapture` with an `accept`
   predicate on the loader body scope, `isInsideLoaderBody`) into
   the item's `handles` blob (`encodeHandles`, as `"use cache"`) and appended
