@@ -230,6 +230,40 @@ Or via `ctx.setLocationState()` on any response (handlers and middleware):
 };
 ```
 
+### Version and validate
+
+The slot key is the file path plus the export name, so it stays the same across
+deploys. History entries survive reloads and back/forward. A tab left open
+across a release that changed the shape would otherwise restore the old value
+typed as the new one.
+
+`version` is the cheap check for a deliberate shape change. Writers store
+`{ v, value }`. A missing `v`, a different `v`, or a non-object reads as
+`undefined` — the same as no state. A pre-version raw object is not treated as
+the new state. The value you get back is the inner `value`, the same reference
+that was stored.
+
+```ts
+export const GridState = createLocationState<GridSnapshot>({ version: 2 });
+// stored as { v: 2, value }; a different or missing version reads as undefined
+```
+
+`validate` also covers state written by other code under the same key. The
+stored shape stays the raw value. The check runs on read; `false` reads as
+`undefined`.
+
+```ts
+export const GridState = createLocationState<GridSnapshot>({
+  validate: (value): value is GridSnapshot => isGridSnapshot(value),
+});
+// run on read; a failing value reads as undefined
+```
+
+Both may be set. A version mismatch returns `undefined` without calling
+`validate`. A match runs `validate` on the inner value. `flash: true` still
+clears the slot after paint; when `version` is set the slot holds the envelope
+and readers still see `TState | undefined`.
+
 ### .read() (non-hook access)
 
 Read current location state outside React components (client-side only):

@@ -12,11 +12,31 @@ export interface LocationStateEntry {
 }
 
 /**
+ * Read-time check for one slot. `false` reads as `undefined`, the same as no
+ * state. The key is stable across deploys, so a value written by an older
+ * shape — or by other code under the same key — must not come back typed as
+ * `TState`.
+ */
+export type LocationStateValidate<TState> = (value: unknown) => value is TState;
+
+/**
  * Options for createLocationState
  */
-export interface LocationStateOptions {
+export interface LocationStateOptions<TState = unknown> {
   /** When true, the state is cleared from history after first read (flash message pattern) */
   flash?: boolean;
+  /**
+   * Writers store `{ v, value }`. A read whose `v` is missing or not this
+   * number returns `undefined` — the same as no state. The key is stable
+   * across deploys (file path + export name), so an old tab would otherwise
+   * restore the previous shape typed as the new one.
+   */
+  version?: number;
+  /**
+   * Run on read against the stored value. With `version`, a mismatch returns
+   * `undefined` without calling this, and a match checks the inner value.
+   */
+  validate?: LocationStateValidate<TState>;
 }
 
 type LocationStateUnsafeFn = (...args: never[]) => unknown;
@@ -304,6 +324,16 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * // Flash state (cleared after first read)
  * export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
  *
+ * // Versioned state. Writers store `{ v: 2, value }`. A different or missing
+ * // version reads as undefined: the key is stable across deploys, so an old
+ * // tab must not see the previous shape typed as this one.
+ * export const GridState = createLocationState<GridSnapshot>({ version: 2 });
+ *
+ * // Read-time check. A failing value reads as undefined, the same as no state.
+ * export const GridState = createLocationState<GridSnapshot>({
+ *   validate: (value): value is GridSnapshot => isGridSnapshot(value),
+ * });
+ *
  * // Use in Link
  * <Link to="/product/123" state={[ProductState({ name: "Widget", price: 9.99 })]}>
  *
@@ -350,13 +380,48 @@ export function replaceCurrentHistoryState(state: unknown): void {
   onCurrentStateReplaced?.();
 }
 
+/** `{ v, value }` when `version` is set; otherwise the value itself. */
+function encodeLocationStateSlot<TState>(
+  value: TState,
+  version: number | undefined,
+): unknown {
+  if (version === undefined) return value;
+  return { v: version, value };
+}
+
+/**
+ * One decoder for every read. A version mismatch returns `undefined` without
+ * calling `validate`, and does not treat a pre-version raw value as `TState`.
+ * A matching version validates the inner value; validate-only checks the raw
+ * slot. Either failure reads as `undefined`.
+ */
+function decodeLocationStateSlot<TState>(
+  stored: unknown,
+  version: number | undefined,
+  validate: LocationStateValidate<TState> | undefined,
+): TState | undefined {
+  let value = stored;
+  if (version !== undefined) {
+    if (stored === null || typeof stored !== "object") return undefined;
+    const envelope = stored as { v?: unknown; value?: unknown };
+    if (envelope.v !== version) return undefined;
+    value = envelope.value;
+  }
+  if (validate !== undefined) {
+    return validate(value) ? value : undefined;
+  }
+  return value as TState;
+}
+
 export function createLocationState<TState>(
-  options?: LocationStateOptions,
+  options?: LocationStateOptions<TState>,
 ): LocationStateDefinition<
   [(TState | (() => TState)) & ValidateLocationState<TState>],
   TState
 > {
   const flash = options?.flash ?? false;
+  const version = options?.version;
+  const validate = options?.validate;
   let _key: string | undefined;
 
   // Dev and test throw; production folds the check away (the plugin always
@@ -377,16 +442,21 @@ export function createLocationState<TState>(
 
   const fn = (stateOrGetter: TState | (() => TState)): LocationStateEntry => {
     if (typeof stateOrGetter === "function") {
-      // Store getter as-is; resolved at navigation time by resolveLocationStateEntries()
+      // Store getter as-is; resolved at navigation time by resolveLocationStateEntries().
+      // A versioned slot encodes when that resolve runs, not when the entry is built.
+      const getter = stateOrGetter as () => TState;
       return {
         __rsc_ls_key: getKey(),
-        __rsc_ls_value: stateOrGetter,
+        __rsc_ls_value:
+          version === undefined
+            ? stateOrGetter
+            : () => encodeLocationStateSlot(getter(), version),
         __rsc_ls_lazy: true,
       };
     }
     return {
       __rsc_ls_key: getKey(),
-      __rsc_ls_value: stateOrGetter,
+      __rsc_ls_value: encodeLocationStateSlot(stateOrGetter, version),
     };
   };
 
@@ -410,12 +480,18 @@ export function createLocationState<TState>(
     value: (location?: { readonly state: unknown }): TState | undefined => {
       if (location !== undefined) {
         const state = location.state;
-        return state !== null && typeof state === "object"
-          ? ((state as Record<string, unknown>)[getKey()] as TState | undefined)
-          : undefined;
+        const stored =
+          state !== null && typeof state === "object"
+            ? (state as Record<string, unknown>)[getKey()]
+            : undefined;
+        return decodeLocationStateSlot(stored, version, validate);
       }
       if (typeof window === "undefined") return undefined;
-      return window.history.state?.[getKey()] as TState | undefined;
+      return decodeLocationStateSlot(
+        window.history.state?.[getKey()],
+        version,
+        validate,
+      );
     },
     enumerable: true,
   });
@@ -437,7 +513,10 @@ export function createLocationState<TState>(
       const existing = window.history.state;
       const current =
         existing !== null && typeof existing === "object" ? existing : {};
-      replaceCurrentHistoryState({ ...current, [key]: value });
+      replaceCurrentHistoryState({
+        ...current,
+        [key]: encodeLocationStateSlot(value, version),
+      });
     },
     enumerable: true,
   });

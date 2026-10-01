@@ -282,6 +282,7 @@ export {
   type LocationStateDefinition,
   type LocationStateEntry,
   type LocationStateOptions,
+  type LocationStateValidate,
 } from "./browser/react/location-state-shared.js";
 
 // Path and response types are ambient on the `Rango` namespace (`Rango.Path`,

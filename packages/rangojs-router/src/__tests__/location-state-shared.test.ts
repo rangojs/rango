@@ -365,3 +365,253 @@ describe("location-state-shared", () => {
     });
   });
 });
+
+type GridSnapshot = { rows: number[] };
+
+function historyWithReplace(): {
+  state: unknown;
+  replaceState: ReturnType<typeof vi.fn>;
+} {
+  const history: {
+    state: unknown;
+    replaceState: ReturnType<typeof vi.fn>;
+  } = {
+    state: { idx: 1 },
+    replaceState: vi.fn(),
+  };
+  history.replaceState.mockImplementation((next: unknown) => {
+    history.state = next;
+  });
+  return history;
+}
+
+describe("createLocationState version", () => {
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+  });
+
+  it("write stores { v, value } and read returns the same inner reference", () => {
+    const Grid = createLocationState<GridSnapshot>({ version: 2 });
+    (Grid as any).__rsc_ls_key = "grid";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+
+    const snapshot = { rows: [1, 2] };
+    Grid.write(snapshot);
+
+    expect(history.state).toEqual({
+      idx: 1,
+      grid: { v: 2, value: snapshot },
+    });
+    expect(Grid.read()).toBe(snapshot);
+    expect(Grid.read({ state: history.state })).toBe(snapshot);
+    expect(Grid.read()).toBe(Grid.read());
+
+    Grid.delete();
+    expect(history.state).toEqual({ idx: 1 });
+    expect(Grid.read()).toBeUndefined();
+  });
+
+  it("version 0 still stores an envelope", () => {
+    const Grid = createLocationState<GridSnapshot>({ version: 0 });
+    (Grid as any).__rsc_ls_key = "grid";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+    const snapshot = { rows: [0] };
+    Grid.write(snapshot);
+    expect((history.state as { grid: unknown }).grid).toEqual({
+      v: 0,
+      value: snapshot,
+    });
+    expect(Grid.read()).toBe(snapshot);
+  });
+
+  it("a raw object, a different version, and a non-object read as undefined", () => {
+    const Grid = createLocationState<GridSnapshot>({ version: 2 });
+    (Grid as any).__rsc_ls_key = "grid";
+    const snapshot = { rows: [1] };
+    const cases = [
+      { grid: snapshot },
+      { grid: { v: 1, value: snapshot } },
+      { grid: "stale" },
+    ];
+    for (const state of cases) {
+      vi.stubGlobal("window", { history: { state } });
+      expect(Grid.read()).toBeUndefined();
+      expect(Grid.read({ state })).toBeUndefined();
+    }
+  });
+
+  it("flash with version stores the envelope and read returns the inner value", () => {
+    const Grid = createLocationState<GridSnapshot>({
+      flash: true,
+      version: 2,
+    });
+    (Grid as any).__rsc_ls_key = "grid";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+    const snapshot = { rows: [4] };
+    Grid.write(snapshot);
+    expect((history.state as { grid: { value: unknown } }).grid.value).toBe(
+      snapshot,
+    );
+    expect(Grid.read()).toBe(snapshot);
+    expect(history.state).toEqual({
+      idx: 1,
+      grid: { v: 2, value: snapshot },
+    });
+  });
+
+  it("a direct entry and a lazy getter persist the envelope", () => {
+    const Grid = createLocationState<GridSnapshot>({ version: 2 });
+    (Grid as any).__rsc_ls_key = "grid";
+    const snapshot = { rows: [1] };
+    const eager = Grid(snapshot);
+    expect(eager).toEqual({
+      __rsc_ls_key: "grid",
+      __rsc_ls_value: { v: 2, value: snapshot },
+    });
+    expect((eager.__rsc_ls_value as { value: GridSnapshot }).value).toBe(
+      snapshot,
+    );
+
+    let current = snapshot;
+    const lazy = Grid(() => current);
+    expect(lazy.__rsc_ls_lazy).toBe(true);
+    expect(resolveLocationStateEntries([eager, lazy])).toEqual({
+      grid: { v: 2, value: snapshot },
+    });
+
+    const next = { rows: [9] };
+    current = next;
+    const resolved = resolveLocationStateEntries([lazy]);
+    expect(resolved).toEqual({ grid: { v: 2, value: next } });
+    expect((resolved.grid as { value: GridSnapshot }).value).toBe(next);
+  });
+});
+
+function isGridSnapshot(value: unknown): value is GridSnapshot {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Array.isArray((value as { rows?: unknown }).rows)
+  );
+}
+
+describe("createLocationState validate", () => {
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps the raw stored value and returns it only when validate passes", () => {
+    const validate = vi.fn(isGridSnapshot);
+    const Grid = createLocationState<GridSnapshot>({ validate });
+    (Grid as any).__rsc_ls_key = "grid";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+
+    const snapshot = { rows: [1] };
+    Grid.write(snapshot);
+    expect(history.state).toEqual({ idx: 1, grid: snapshot });
+    expect(Grid(snapshot).__rsc_ls_value).toBe(snapshot);
+    expect(resolveLocationStateEntries([Grid(() => snapshot)])).toEqual({
+      grid: snapshot,
+    });
+
+    expect(Grid.read()).toBe(snapshot);
+    expect(Grid.read({ state: history.state })).toBe(snapshot);
+    expect(validate).toHaveBeenCalledWith(snapshot);
+
+    const rejected = { rows: "nope" };
+    history.state = { idx: 1, grid: rejected };
+    validate.mockClear();
+    expect(Grid.read()).toBeUndefined();
+    expect(Grid.read({ state: history.state })).toBeUndefined();
+    expect(validate).toHaveBeenCalledWith(rejected);
+  });
+
+  it("does not unwrap a value that only looks like a version envelope", () => {
+    const stored = { v: 2, value: { rows: [1] } };
+    const validate = vi.fn(
+      (value: unknown): value is typeof stored => value === stored,
+    );
+    const Grid = createLocationState<typeof stored>({ validate });
+    (Grid as any).__rsc_ls_key = "grid";
+    const state = { grid: stored };
+    vi.stubGlobal("window", { history: { state } });
+
+    expect(Grid.read()).toBe(stored);
+    expect(Grid.read({ state })).toBe(stored);
+    expect(validate).toHaveBeenCalledWith(stored);
+  });
+});
+
+describe("createLocationState version and validate", () => {
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+  });
+
+  it("does not validate a version mismatch, and drops a match that fails validate", () => {
+    const snapshot = { rows: [1] };
+    const validate = vi.fn(isGridSnapshot);
+    const Grid = createLocationState<GridSnapshot>({ version: 2, validate });
+    (Grid as any).__rsc_ls_key = "grid";
+
+    const mismatches = [
+      { grid: snapshot },
+      { grid: { v: 1, value: snapshot } },
+      { grid: "stale" },
+    ];
+    for (const state of mismatches) {
+      vi.stubGlobal("window", { history: { state } });
+      expect(Grid.read()).toBeUndefined();
+      expect(Grid.read({ state })).toBeUndefined();
+    }
+    expect(validate).not.toHaveBeenCalled();
+
+    const badInner = { rows: "nope" };
+    const matchedBad = { grid: { v: 2, value: badInner } };
+    vi.stubGlobal("window", { history: { state: matchedBad } });
+    expect(Grid.read()).toBeUndefined();
+    expect(Grid.read({ state: matchedBad })).toBeUndefined();
+    expect(validate).toHaveBeenCalledWith(badInner);
+
+    validate.mockClear();
+    const matched = { grid: { v: 2, value: snapshot } };
+    vi.stubGlobal("window", { history: { state: matched } });
+    expect(Grid.read()).toBe(snapshot);
+    expect(Grid.read({ state: matched })).toBe(snapshot);
+    expect(validate).toHaveBeenCalledWith(snapshot);
+
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+    Grid.write(snapshot);
+    expect(Grid(snapshot).__rsc_ls_value).toEqual({ v: 2, value: snapshot });
+    expect(resolveLocationStateEntries([Grid(() => snapshot)])).toEqual({
+      grid: { v: 2, value: snapshot },
+    });
+    expect(history.state).toEqual({
+      idx: 1,
+      grid: { v: 2, value: snapshot },
+    });
+    expect(Grid.read()).toBe(snapshot);
+  });
+});

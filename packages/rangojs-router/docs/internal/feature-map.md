@@ -551,7 +551,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Location State
 
-- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`
+- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`. `LocationStateOptions` is `{ flash?, version?, validate? }` (`LocationStateValidate<TState>` is `(value: unknown) => value is TState`). `version` stores `{ v, value }` and a missing or different `v` reads as `undefined` (the key is stable across deploys, so an old tab must not see the new shape). `validate` runs on read; `false` reads as `undefined`. Together, a version mismatch does not call `validate`. Neither option keeps the raw slot.
 - `useLocationState()` -- reactive hook; updates on popstate / `__rsc_locationstate` (does NOT update on static `.write()` / `.delete()`)
 - `redirect()` integration with location state
 - Serializability check: `ValidateLocationState<T>` rejects values `history.state` cannot structured-clone; the `LocationStateUnsafe<reason, path>` brand names each failing field (`items[].info.values`; an object's own unsafe fields first, so a DOM node stops at its methods; depth-bounded at 8)
