@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import {
   replaceCurrentHistoryState,
   type LocationStateDefinition,
@@ -26,11 +26,13 @@ function readLocationStateValue<TState>(
   return window.history.state?.state as TState | undefined;
 }
 
-function hasHydrated(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.documentElement.hasAttribute("data-hydrated")
-  );
+/**
+ * Server and hydration renders must match the SSR output (`undefined`).
+ * React then re-renders with `getSnapshot`, including a reader whose Suspense
+ * boundary hydrates after the root has set `data-hydrated`.
+ */
+function getServerSnapshot(): undefined {
+  return undefined;
 }
 
 /**
@@ -68,58 +70,70 @@ export function useLocationState<TArgs extends unknown[], TState>(
   const key = definition?.__rsc_ls_key;
   const isFlash = definition?.__rsc_ls_flash ?? false;
 
-  // Track whether the initial render returned undefined because the page
-  // hadn't hydrated yet. If so, the mount effect catches up by reading
-  // history.state once. If not, we already have the right value and must
-  // not re-read on mount — under StrictMode, the flash-cleanup effect runs
-  // before the second setup pass, so a re-read would clobber the captured
-  // value with the now-cleared `undefined`.
-  const initialReadDeferredRef = useRef(false);
+  // Flash is shown once, then removed from history after paint. Keep returning
+  // that captured value: under StrictMode the clear effect runs before the
+  // second setup pass, and a re-read would clobber it with the now-cleared
+  // `undefined`. A new definition must not keep the previous slot's capture.
+  const flashSnapshotRef = useRef<TState | undefined>(undefined);
+  const flashCapturedRef = useRef(false);
+  const slotRef = useRef(key);
+  const slotFlashRef = useRef(isFlash);
+  if (slotRef.current !== key || slotFlashRef.current !== isFlash) {
+    slotRef.current = key;
+    slotFlashRef.current = isFlash;
+    flashSnapshotRef.current = undefined;
+    flashCapturedRef.current = false;
+  }
 
-  const [state, setState] = useState<TState | undefined>(() => {
-    if (!hasHydrated()) {
-      initialReadDeferredRef.current = true;
-      return undefined;
+  const getSnapshot = useCallback((): TState | undefined => {
+    const current = readLocationStateValue<TState>(key);
+    if (!isFlash) return current;
+    if (flashCapturedRef.current) return flashSnapshotRef.current;
+    if (current !== undefined) {
+      flashSnapshotRef.current = current;
+      flashCapturedRef.current = true;
     }
-    return readLocationStateValue<TState>(key);
-  });
-
-  // Subscribe to popstate and programmatic state changes
-  useEffect(() => {
-    const handlePopstate = () => {
-      setState(readLocationStateValue<TState>(key));
-    };
-
-    // Handle programmatic state changes (same-page navigation with
-    // ctx.setLocationState where components don't remount)
-    const handleLocationState = () => {
-      if (key) {
-        const val = readLocationStateValue<TState>(key);
-        if (isFlash) {
-          // For flash state, only update if there's a new value
-          if (val !== undefined) {
-            setState(val);
-          }
-        } else {
-          setState(val);
-        }
-      } else {
-        setState(readLocationStateValue<TState>(key));
-      }
-    };
-
-    if (initialReadDeferredRef.current) {
-      initialReadDeferredRef.current = false;
-      setState(readLocationStateValue<TState>(key));
-    }
-
-    window.addEventListener("popstate", handlePopstate);
-    window.addEventListener("__rsc_locationstate", handleLocationState);
-    return () => {
-      window.removeEventListener("popstate", handlePopstate);
-      window.removeEventListener("__rsc_locationstate", handleLocationState);
-    };
+    return current;
   }, [key, isFlash]);
+
+  // popstate always applies the destination entry, including an empty flash
+  // slot. `__rsc_locationstate` for flash ignores an empty slot: the
+  // clear-after-paint does not dispatch this event, and a clear-only
+  // notification must not wipe the value already shown. Update the capture
+  // before notifying — the store reads getSnapshot inside that call.
+  const subscribe = useCallback(
+    (onStoreChange: () => void): (() => void) => {
+      const handlePopstate = (): void => {
+        if (isFlash) {
+          flashSnapshotRef.current = readLocationStateValue<TState>(key);
+          flashCapturedRef.current = true;
+        }
+        onStoreChange();
+      };
+      const handleLocationState = (): void => {
+        if (isFlash && key) {
+          const next = readLocationStateValue<TState>(key);
+          if (next === undefined) return;
+          flashSnapshotRef.current = next;
+          flashCapturedRef.current = true;
+        }
+        onStoreChange();
+      };
+      window.addEventListener("popstate", handlePopstate);
+      window.addEventListener("__rsc_locationstate", handleLocationState);
+      return () => {
+        window.removeEventListener("popstate", handlePopstate);
+        window.removeEventListener("__rsc_locationstate", handleLocationState);
+      };
+    },
+    [key, isFlash],
+  );
+
+  const state = useSyncExternalStore<TState | undefined>(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
 
   // Flash: clear from history.state after paint so subsequent navigations don't see it.
   // Depends on `state` so it re-runs when state is set via the event listener.
