@@ -383,10 +383,12 @@ encountered by the shell capture.
 Two more decisions are made before any shell-store read, so probes and
 prerendered routes never spend passive `getShell` I/O:
 
-- A partial request carrying neither `X-RSC-Router-Client-Path` nor `Referer`
-  (a curl probe, a synthetic monitor) can never produce a partial match; it
-  reports `BYPASS; reason=no-navigation-context`. Alert on replay hit-rate
-  with this in mind — such probes are not cache misses.
+- A partial request carrying neither `X-RSC-Router-Client-Path` nor a
+  same-origin `Referer` (a curl probe, a synthetic monitor) can never produce
+  a partial match; it reports `BYPASS; reason=no-navigation-context`. A
+  `Referer` on another origin counts as absent: only its pathname would be
+  matched, as if it were a route of this app. Alert on replay hit-rate with
+  this in mind — such probes are not cache misses.
 - A `Prerender()` route's partial is served from the build-time prerender
   store inside matching (a better-than-HIT outcome); it reports
   `BYPASS; reason=prerender-store`. Its captures never record the page's
@@ -436,7 +438,7 @@ The bounded bypass tokens, grouped by when they are decided:
 | Token                                                                         | Decided           | Meaning                                                                                                                                                                                                              |
 | ----------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `method`, `dynamic`, `nonce`, `store-unavailable`, `passive-read-unsupported` | pre-read          | request/route/store ineligible for replay                                                                                                                                                                            |
-| `no-navigation-context`                                                       | pre-read          | no `X-RSC-Router-Client-Path`/`Referer`; a partial match is impossible                                                                                                                                               |
+| `no-navigation-context`                                                       | pre-read          | no `X-RSC-Router-Client-Path` and no same-origin `Referer`; a partial match is impossible                                                                                                                            |
 | `prerender-store`                                                             | pre-read or match | `Prerender()` route served by its baked artifact (pre-read probe of the normal variant; reclassified post-match when the store actually served, either variant)                                                      |
 | `intercept`                                                                   | match             | the navigation resolved to an intercept — replay is never armed for intercepts (they keep their normal cache path); no heal capture                                                                                  |
 | `cache-disabled`                                                              | pre-read or match | `cache(false)` (pre-read, static) or `condition()` false (decided at the lookup); consumer opt-out is absolute                                                                                                       |

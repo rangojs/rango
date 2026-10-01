@@ -354,7 +354,9 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   (snapshot-only — never the real store), and stamps its key on the entry
   (`ShellCacheEntry.docKey`); replay eligibility requires that exact record.
   Three decisions bypass before any shell-store read: a partial without
-  navigation context (`no-navigation-context`), a route whose baked prerender
+  navigation context (`no-navigation-context`: no `X-RSC-Router-Client-Path`
+  and no same-origin `Referer`, the predicate `getNavigationContextHeader`
+  shares with `resolveNavigation`), a route whose baked prerender
   artifact EXISTS (`prerender-store` — probed through the memoized prerender
   store, because the trie's `pr` flag alone is not a serve guarantee for
   `Passthrough(Prerender())` params that render live), and a STATICALLY

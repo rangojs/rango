@@ -93,6 +93,32 @@ Covered by:
 - Unit: `src/rsc/__tests__/origin-guard.test.ts`
 - E2E: `e2e/origin-guard.test.ts` (dev + production)
 
+## Navigation Context from `Referer`
+
+A partial request tells the server which page it is leaving. The rango client
+sends that as `X-RSC-Router-Client-Path`; when the header is absent the server
+falls back to `Referer`. The fallback matches only the pathname, so a
+`Referer` on another site used to be read as a route of this app and picked
+the segment diff, the intercept and `from` for a page the visitor was never on
+(#1005).
+
+`getNavigationContextHeader` (`src/router/navigation-snapshot.ts`) now accepts
+a `Referer` only when it resolves to the request URL's origin (scheme, host
+and port). Anything else, including a value that does not parse, is no
+navigation context: the request takes the full match, and PPR replay reports
+`no-navigation-context`. A relative `Referer` resolves against the request
+origin and is kept.
+
+As with the origin guard, `X-Forwarded-Host` and `X-Forwarded-Proto` are not
+consulted. Behind a proxy that hands the app an internal URL, every `Referer`
+on the public origin fails the comparison. That only affects requests without
+`X-RSC-Router-Client-Path`, which the rango client always sends, and it
+degrades to a full match.
+
+Covered by:
+
+- Unit: `src/router/__tests__/navigation-snapshot.test.ts`
+
 ## Outgoing Redirect Guard (Open-Redirect Protection)
 
 `originCheck` validates the INCOMING request origin (CSRF). The redirect guard

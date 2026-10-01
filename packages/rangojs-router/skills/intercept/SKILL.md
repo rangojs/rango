@@ -238,6 +238,12 @@ always activates. `when` is not re-evaluated during action revalidation, so
 an open modal stays open after an action. A selector that throws does not
 intercept: the full page renders and the error is logged with the route name.
 
+The server learns `from` from the `X-RSC-Router-Client-Path` header, which the
+rango client sends on every navigation. A partial request without it falls
+back to `Referer`, and only when that `Referer` is on the request's own origin
+(scheme, host and port). A request with no usable navigation context is not
+intercepted: it gets the full page.
+
 A prefetch of a route an intercept targets is stored per source page, whether
 or not the intercept applies from that page (`rsc-rendering.ts`
 `x-rsc-prefetch-scope: source`, set from `MatchResult.interceptTargeted`). A

@@ -1336,7 +1336,7 @@ async function matchPartialWithPprReplay<TEnv>(
   // null and the seeded record could not have been consulted, which used to
   // read as a misleading `snapshot-miss` AFTER two wasted getShell reads.
   // Same predicate as resolveNavigation, decided before any store I/O.
-  if (!getNavigationContextHeader(request)) {
+  if (!getNavigationContextHeader(request, url.origin)) {
     return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
   }
   // Fragment passthrough (#700), extended to partial replay. Navigation

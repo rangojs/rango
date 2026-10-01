@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a partial request ignores a `Referer` from another origin as its navigation context ([#1019](https://github.com/rangojs/rango/pull/1019))
+
+A partial (navigation) request tells the server which page it is leaving. The
+rango client sends that in `X-RSC-Router-Client-Path`. A request without the
+header fell back to `Referer`, and only the pathname was matched:
+`Referer: https://other.example/product/42` was read as `/product/42` on this
+app, so the segment diff, the intercept and `from` were chosen for a page the
+visitor was never on (#1005).
+
+The fallback now accepts a `Referer` only when it is on the request's own
+origin (scheme, host and port). Otherwise the request has no navigation
+context and gets the full match; PPR replay reports
+`BYPASS; reason=no-navigation-context`.
+
+| Partial request                                      | Before                                  | Now                               |
+| ---------------------------------------------------- | --------------------------------------- | --------------------------------- |
+| `X-RSC-Router-Client-Path` present                   | header used                             | unchanged                         |
+| no header, same-origin or relative `Referer`         | `Referer` used                          | unchanged                         |
+| no header, `Referer` on another host, port or scheme | pathname matched as a route of this app | no navigation context, full match |
+| no header, `Referer` that does not parse             | no navigation context                   | unchanged                         |
+
+Nothing changes for navigations made by the rango client, which always sends
+the header. `X-Forwarded-Host` and `X-Forwarded-Proto` are not consulted, as
+with `originCheck`: behind a proxy that hands the app an internal URL, a
+header-less partial request whose `Referer` is on the public origin now takes
+the full match.
+
 ## 0.20.0 (2026-10-03)
 
 ### Breaking: the default `clientChunks` strategy splits `app/routes/<id>` per route instead of one `app-routes` group ([#1023](https://github.com/rangojs/rango/pull/1023))
