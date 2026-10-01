@@ -1,6 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.19.0 (2026-10-01)
+
+Upgrading from 0.18: what to change. Each entry below has the details.
+
+- **`transition({ when })` runs in the browser.**
+  - Write the predicate inline in `urls()`, or export it from a `"use client"` module.
+  - Read `from` / `to` (`url`, `params`, `routeName`, `state`) instead of `currentUrl` / `currentParams` / `ctx.get()`.
+  - Read location state with `Def.read(to)`.
+  - A server function now fails dev startup and the build.
+- **`intercept({ when })` reads the same shape.**
+  - `from.pathname` is now `from.url.pathname`.
+  - `params` is now `to.params`.
+- **Identity reads in cached code.**
+  - `ctx.request.headers` and `getRequestContext().cookie()` / `.cookies()` now refuse where `cookies()` does: in a `"use cache"` body, in a handler under `cache()`, and in a `ppr` capture.
+  - The same applies to a loader body that starts inside `"use cache"`, including a `{ cache: false }` `ctx.get()`.
+  - Copy the value in middleware and include it in `key()`, read it in a live loader, or pass it into the `"use cache"` function.
+- **Typed location state.**
+  - `state` on `push()` / `replace()` / `<Link>` takes called entries (`[Def(value)]`).
+  - In unit tests, key a definition with `withLocationStateKey()`.
+- **Cache keys.** `cache({ key })` results (route, response route, and a loader's own `cache()`) are stored namespaced, and a nested `cache()` inherits `condition()` and `tags`. Stored key strings change, so entries on stores that don't version per build miss once.
+- **PPR.** A hole always reads the cache store, never the shell's copy. Give a hole its own cache, or make it shell material.
+- **Custom shell stores.** `ShellCacheEntry` lost fields nothing produced, and every entry field must round-trip.
 
 ### Breaking: a loader's own `cache({ key })` result is stored namespaced, so it can't name another loader's entry ([#1012](https://github.com/rangojs/rango/pull/1012))
 
