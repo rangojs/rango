@@ -90,8 +90,13 @@ global middleware
   started (`overrides.set` at kickoff in `executeLoaderData`), every
   `ctx.use` of it, from a handler or from another loader's body, gets the
   binding's value, a HIT included; the bound body never runs a second time
-  for a reader. A reader that ran before the binding started got the value
-  of its own run, as it does on main. A stale refresh reads its loaders on
+  for a reader. A loader declared ahead of a sibling `cache()` binding
+  yields once so that binding can register (`useLoader` in
+  `loader-resolution.ts`, `bindLoaderCacheIds`); it then gets the binding's
+  value, a HIT included, and the pushes that entry recorded (#1002). A
+  reader that ran before that entry's kickoff (a layout loader reading a
+  route's cached loader) still gets the value of its own run: waiting for
+  the later binding would deadlock an awaited parent. A stale refresh reads its loaders on
   its own executor, never through the page's bindings, so it is not rebuilt
   from another stale entry. Source: `_loaderCacheOverrides` in
   `loader-cache.ts` (the handler interceptor), `useLoader` and
@@ -136,7 +141,11 @@ global middleware
   restores from a route `cache()` record keep their owner in the shell record
   too. A PPR partial replay whose doc record hits serves the same loader pins
   as the document HIT, by each loader's own `ssr: false` flag
-  (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Source: `restoreHandles` in `handle-snapshot.ts`
+  (`LoaderEntry.bake`), whatever `loading()` sits on its entry, and restores
+  bake-lane handle pushes the same way (`pushRestored`, unclaimed in
+  `withCacheLookup`). A live-lane owner on that replay stays `pushReplayed`.
+  An explicit route `cache()` hit is not the shell record and still claims.
+  Source: `restoreHandles` in `handle-snapshot.ts`
   (`CachedEntryData.handleOwners`, written from the capture's push wrapper
   in `shell-capture.ts`), `matchPartialWithPprReplay` in `rsc-rendering.ts`;
   pinned by `cache-record-loader-pushes.test.ts` and

@@ -7,6 +7,7 @@ import {
 import { armLoaderTagSets, armRecordTagOwners } from "../cache/cache-tag.js";
 import {
   bindsLoaderCache,
+  loaderCacheBoundIds,
   routeLoaderLanes,
 } from "./segment-resolution/loader-cache.js";
 import { RouteNotFoundError } from "../errors";
@@ -21,7 +22,7 @@ import {
   createHandlerContext,
   stripInternalParams,
 } from "./handler-context.js";
-import { setupLoaderAccess } from "./loader-resolution.js";
+import { bindLoaderCacheIds, setupLoaderAccess } from "./loader-resolution.js";
 import { loadManifest, clearManifestCache } from "./manifest.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import { traverseBack } from "./pattern-matching.js";
@@ -142,6 +143,7 @@ export async function createMatchContextForFull<TEnv>(
 
   const loaderPromises = new Map<string, Promise<any>>();
   setupLoaderAccess(handlerContext, loaderPromises);
+  bindLoaderCacheIds(handlerContext, loaderCacheBoundIds(snapshot.entries));
 
   const Store = getContext().getOrCreateStore(matched.routeKey);
   Store.run = <T>(fn: () => T | Promise<T>) =>
@@ -337,6 +339,7 @@ export async function createMatchContextForPartial<TEnv>(
 
   const loaderPromises = new Map<string, Promise<any>>();
   setupLoaderAccess(handlerContext, loaderPromises);
+  bindLoaderCacheIds(handlerContext, loaderCacheBoundIds(snapshot.entries));
 
   const Store = getContext().getOrCreateStore(matched.routeKey);
   Store.run = <T>(fn: () => T | Promise<T>) =>

@@ -380,6 +380,19 @@ function detectLoaderCycle(
   return dfs(to);
 }
 
+const loaderCacheBoundIdsByCtx = new WeakMap<object, ReadonlySet<string>>();
+
+/**
+ * The matched chain's cache()-bound loader ids (loaderCacheBoundIds).
+ * useLoader reads this before starting a live run.
+ */
+export function bindLoaderCacheIds(
+  ctx: object,
+  ids: ReadonlySet<string>,
+): void {
+  loaderCacheBoundIdsByCtx.set(ctx, ids);
+}
+
 /**
  * Creates a memoizing loader executor with cycle detection.
  * Shared by setupLoaderAccess and setupLoaderAccessSilent; only the handle
@@ -436,6 +449,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    deferred?: boolean,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -486,6 +500,24 @@ function createLoaderExecutor<TEnv>(
       // A "use cache" body reading it refuses an identity read the run made
       // (#1011): the body ran outside the cached function, unguarded.
       return readStartedLoaderValue(memo, loader.$$id);
+    }
+
+    // A sibling cache() binding in this entry's kickoff has not registered.
+    // Yield once so the map can start it; this reader then takes the
+    // binding's value (a HIT's data and the pushes that entry recorded),
+    // not a live run the binding's claim would refuse (#1002). One yield: a
+    // binding that starts later (a child route, after this loader is awaited)
+    // is still this reader's own run. Waiting for it would deadlock an
+    // awaited parent, and starting it here would attribute its pushes to
+    // this entry's segment.
+    if (
+      deferred !== true &&
+      callerLoaderId !== null &&
+      loaderCacheBoundIdsByCtx.get(ctx)?.has(loader.$$id) === true
+    ) {
+      return Promise.resolve().then(() =>
+        useLoader(loader, callerLoaderId, true),
+      );
     }
 
     // Get loader function - either from loader object or fetchable registry

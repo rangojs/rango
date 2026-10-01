@@ -105,9 +105,11 @@ therefore stores them next to its `cache({ tags })`, and they invalidate it:
     its config-only tags. It needs all three of: a reader that starts a cached
     loader before its binding, a cached loader downstream, and config tags the
     body does not also record with `cacheTag()`.
-  - A reader that started a loader before its binding keeps the value of its
-    own run; one value per request holds from the binding's start on (as on
-    main).
+  - A loader declared ahead of a sibling `cache()` binding yields once and
+    takes the binding's value. A reader that started a loader before that
+    entry's kickoff (a layout loader reading a route's cached loader) keeps
+    the value of its own run; one value per request holds from the binding's
+    start on.
   - The sets and links cost a Set and a WeakMap entry per loader execution,
     so they run only for a request that can read them: the match arms them
     when a matched entry, parallel slot, orphan layout or intercept binds a

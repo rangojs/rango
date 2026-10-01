@@ -547,18 +547,25 @@ export function withCacheLookup<TEnv>(
     }
 
     // A record's loader-owned handle values claim their loader, so its own
-    // cache() HIT does not replay them again (restoreHandles). A document
-    // HIT tail restores a bake-lane owner's values as the prelude's, unclaimed:
-    // they stand against any later push of that loader
-    // (HandleStore.pushRestored). An owner the route runs on the live lane is
-    // a hole, so its live run still replaces them, even inside a restored
-    // loader's body.
+    // cache() HIT does not replay them again (restoreHandles). A shell doc
+    // record — the document HIT tail, or a navigation replay whose lookup is
+    // that record — restores a bake-lane owner's values as the prelude's,
+    // unclaimed: they stand against any later settled push of that loader
+    // (HandleStore.pushRestored), and the loader's own cache() HIT can still
+    // deliver a thenable the record could not keep. An explicit route cache()
+    // hit on a navigation is not that record and keeps the claim. An owner
+    // the route runs on the live lane is a hole, so its live run still
+    // replaces them, even inside a restored loader's body.
     const ownedPushes: OwnedPushDelivery = {
       claim: (ctx.handlerContext as InternalHandlerContext)._claimLoaderPushes,
     };
     if (tailMarker) {
       ownedPushes.liveLane = liveLaneLoaderIds(ctx.entries);
-      ownedPushes.restore = tailMarker.docTail === true;
+      // Capture renders also carry the marker and an implicit doc scope, but
+      // their snapshot store starts empty, so this restore is never applied.
+      ownedPushes.restore =
+        tailMarker.docTail === true ||
+        ctx.cacheScope.isShellImplicitDocScope === true;
     }
     const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
       ctx.pathname,
@@ -608,7 +615,9 @@ export function withCacheLookup<TEnv>(
           ctx.pathname,
           ctx.matched.params,
           ctx.isIntercept,
-          ownedPushes,
+          // The seeded record is the shell's doc record, same delivery as a
+          // document HIT tail. The explicit lookup above keeps its own.
+          { ...ownedPushes, restore: true },
         );
       } else if (explicitLookup.status === "bypass") {
         // condition() refused at lookup time (the gate only pre-decides the

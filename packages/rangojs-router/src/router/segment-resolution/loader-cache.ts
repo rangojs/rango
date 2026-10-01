@@ -277,6 +277,26 @@ export function liveLaneLoaderIds(
 }
 
 /**
+ * Loader ids the matched chain registers with their own cache(). A loader
+ * body that reads one of these before that binding has registered yields so
+ * the binding can start (loader-resolution.ts useLoader).
+ */
+export function loaderCacheBoundIds(
+  entries: readonly EntryData[],
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    for (const loaderEntry of chainLoaderEntries(entry)) {
+      const cache = loaderEntry.cache;
+      if (cache !== undefined && cache.options !== false) {
+        ids.add(loaderEntry.loader.$$id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
  * The lane of each loader the matched chain `entries` registers: "live" (no
  * `ssr: false`) or "bake". A loader registered on both is "live". A PPR
  * capture credits a push to the first registered loader around it when that

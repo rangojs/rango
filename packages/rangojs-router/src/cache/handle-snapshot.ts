@@ -151,8 +151,9 @@ export interface OwnedPushDelivery {
    */
   liveLane?: ReadonlySet<string>;
   /**
-   * A document HIT tail: every owner outside `liveLane` goes through
-   * pushRestored and stands, unclaimed.
+   * A shell doc record (document HIT tail, or a navigation replay of that
+   * record): every owner outside `liveLane` goes through pushRestored and
+   * stands, unclaimed. An explicit route cache() hit does not set this.
    */
   restore?: boolean;
 }
@@ -164,23 +165,25 @@ export interface OwnedPushDelivery {
  *
  * A segment with `owners` is replaced with empty arrays and re-pushed in
  * recorded order, an owned value through pushReplayed: if the owning loader
- * runs (a client navigation replaying a ppr route's cache() record runs its
- * `ssr: false` loaders), its live pushes replace the recorded ones in place
+ * runs (an explicit route cache() hit — not the shell doc record, which uses
+ * `owned.restore`), its live pushes replace the recorded ones in place
  * instead of appending a second copy. `owned.claim` is asked once per
  * owner, so the loader's own cache() HIT does not replay its pushes a second
  * time (loader-cache.ts replayLoaderHandles). A record without owners
  * restores as a plain replay.
  *
- * `owned.restore`: a document HIT tail restoring the shell's doc record
- * (withCacheLookup). A bake-lane owner's values are the prelude's, so they go
- * through pushRestored and stand: a run of that loader on the HIT (a
- * promise-carrying `ssr: false` loader, one whose record asks for a run)
- * reads the store, and its settled pushes are dropped, not swapped in.
- * Nothing is claimed, so the loader's own cache() HIT still replays the
- * pushes the record could not keep (the thenable ones pushRestored lets
- * through). A loader the route also runs on the live lane is a hole: its
- * values keep pushReplayed, unclaimed, and its live run replaces them
- * (#936), even inside a restored loader's body (`owned.liveLane`).
+ * `owned.restore`: a shell doc record (withCacheLookup) — a document HIT
+ * tail, or a navigation replay whose lookup is that record. A bake-lane
+ * owner's values are the prelude's, so they go through pushRestored and
+ * stand: a run of that loader (a promise-carrying `ssr: false` loader, one
+ * whose record asks for a run) reads the store, and its settled pushes are
+ * dropped, not swapped in. Nothing is claimed, so the loader's own cache()
+ * HIT still replays the pushes the record could not keep (the thenable ones
+ * pushRestored lets through) exactly once — the settled copy is the record's,
+ * and a later settled pushReplayed of the same loader is dropped. A loader
+ * the route also runs on the live lane is a hole: its values keep
+ * pushReplayed, unclaimed, and its live run replaces them (#936), even
+ * inside a restored loader's body (`owned.liveLane`).
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
