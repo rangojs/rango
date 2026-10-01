@@ -17,11 +17,19 @@ import {
 } from "../server/request-context.js";
 import {
   getCurrentLoaderBodyId,
+  getLoaderRunIdentity,
   getLoaderBodyTags,
   isInsideLoaderScope,
+  useCacheLoaderIdentityError,
   type LoaderIdentityRead,
   type LoaderIdentityReadVerb,
+  type LoaderRunIdentity,
 } from "../server/context.js";
+import {
+  getCacheExecScope,
+  isInsideIdentityExempt,
+  type CacheExecScope,
+} from "./cache-exec-scope.js";
 import type { ExecutionStart } from "./tag-invalidation.js";
 
 const cacheTagStorage = new AsyncLocalStorage<Set<string>>();
@@ -479,6 +487,102 @@ export function recordedIdentityRead(
     for (const linked of tagLinks.get(set) ?? []) queue.push(linked);
   }
   return undefined;
+}
+
+/**
+ * Loader value identity (#1011). Each loader execution's value promise maps to
+ * its LoaderRunIdentity (server/context.ts); a loader-cache binding's value
+ * carries its reads on its recorded-tag set instead (tagLoaderValue,
+ * markIdentityRead). On globalThis like identityReads: the executor that
+ * tracks a value and the reader that checks it must share the map.
+ */
+const loaderRuns: WeakMap<object, LoaderRunIdentity> = ((globalThis as any)[
+  Symbol.for("rangojs-router:loader-runs")
+] ??= new WeakMap());
+
+/**
+ * `value` is the promise of the execution `run` records, started by the
+ * current execution (if any), which reads it. Both loader runners call it
+ * (loader-resolution.ts createLoaderExecutor, request-context.ts
+ * createUseFunction).
+ */
+export function trackLoaderRun(value: object, run: LoaderRunIdentity): void {
+  loaderRuns.set(value, run);
+  linkLoaderRun(value);
+}
+
+/** The current loader execution reads `value`: its record links the value's. */
+function linkLoaderRun(value: object): void {
+  const reader = getLoaderRunIdentity();
+  const run = loaderRuns.get(value);
+  if (reader && run && reader !== run) (reader.reads ??= new Set()).add(run);
+}
+
+/**
+ * The identity read behind a loader value: its execution's or one it read
+ * (nearest first), or the one its recorded-tag set links to.
+ */
+function loaderValueIdentityRead(
+  value: object,
+): LoaderIdentityRead | undefined {
+  const root = loaderRuns.get(value);
+  if (root) {
+    const queue = [root];
+    const seen = new Set<LoaderRunIdentity>();
+    for (let i = 0; i < queue.length; i++) {
+      const run = queue[i]!;
+      if (seen.has(run)) continue;
+      seen.add(run);
+      if (run.read) return run.read;
+      for (const linked of run.reads ?? []) queue.push(linked);
+    }
+  }
+  const tags = loaderValueTags.get(value);
+  return tags && recordedIdentityRead(tags);
+}
+
+/**
+ * A ctx.use(Loader) or getRequestContext().use(Loader) read that returns an
+ * already-started value (the request memo, a loader cache() binding's value).
+ * The current loader execution, if any, links it (it reads the value).
+ * Inside a "use cache" body the value is refused when its execution read
+ * request identity, as a body entered there would have been
+ * (guardIdentityRead). The check runs once the value settles, so a read the
+ * body makes after an await counts. Each enclosing execution also notes the
+ * value, and checks it again after encoding its result
+ * (assertLoaderReadsClean): a read that settles after the value (a nested
+ * promise in it) then fails the write instead.
+ */
+export function readStartedLoaderValue<T>(
+  value: Promise<T>,
+  loaderId: string,
+): Promise<T> {
+  linkLoaderRun(value);
+  const scope = getCacheExecScope();
+  if (!scope || isInsideIdentityExempt()) return value;
+  for (let s: CacheExecScope | undefined = scope; s; s = s.parent) {
+    (s.loaderReads ??= new Map()).set(value, loaderId);
+  }
+  const checked = value.then((resolved) => {
+    assertLoaderValueClean(value, loaderId);
+    return resolved;
+  });
+  // A read the body never awaits must not crash the process as an unhandled
+  // rejection; the write check (assertLoaderReadsClean) still refuses it.
+  checked.catch(() => {});
+  return checked;
+}
+
+/** Throw when a loader value `scope` read carries an identity read. */
+export function assertLoaderReadsClean(scope: CacheExecScope): void {
+  for (const [value, loaderId] of scope.loaderReads ?? []) {
+    assertLoaderValueClean(value, loaderId);
+  }
+}
+
+function assertLoaderValueClean(value: object, loaderId: string): void {
+  const read = loaderValueIdentityRead(value);
+  if (read) throw useCacheLoaderIdentityError(read, loaderId);
 }
 
 /** `root` and every set it links to, transitively. */

@@ -64,7 +64,10 @@ import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
   clearPprHeaderScope,
+  runInsideLoaderRun,
+  type LoaderRunIdentity,
 } from "./context.js";
+import { readStartedLoaderValue, trackLoaderRun } from "../cache/cache-tag.js";
 import {
   guardRawCookieRead,
   guardRequestHeaders,
@@ -1859,8 +1862,11 @@ export function createUseFunction<TEnv>(
 
     const loader = item as LoaderDefinition<any, any>;
 
-    if (loaderPromises.has(loader.$$id)) {
-      return loaderPromises.get(loader.$$id);
+    const memo = loaderPromises.get(loader.$$id);
+    if (memo) {
+      // Same refusal as the handler ctx.use memo hit (#1011): a "use cache"
+      // body reading a value whose run read request identity.
+      return readStartedLoaderValue(memo, loader.$$id);
     }
 
     let loaderFn = loader.fn;
@@ -1947,9 +1953,11 @@ export function createUseFunction<TEnv>(
     // (observePhase), so a loader resolved via this base request-context ctx.use
     // co-emits the "loader:<id>" perf metric AND the "rango.loader" span — no
     // drift between the two ctx.use implementations.
+    const run: LoaderRunIdentity = { loaderId: loader.$$id };
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
-      Promise.resolve(loaderFn(loaderCtx)),
+      Promise.resolve(runInsideLoaderRun(run, () => loaderFn(loaderCtx))),
     );
+    trackLoaderRun(promise, run);
 
     loaderPromises.set(loader.$$id, promise);
 

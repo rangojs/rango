@@ -96,6 +96,7 @@ import {
   linkRecordedTags,
   markIdentityRead,
   markTagSetStart,
+  readStartedLoaderValue,
   readValueTags,
   recordedIdentityRead,
   recordLoaderTags,
@@ -591,7 +592,7 @@ function executeLoaderData<TEnv>(
         // useLoader.
         linkLoaderTags(item.$$id);
         readValueTags(cached);
-        return cached;
+        return readStartedLoaderValue(cached, item.$$id);
       }
       return originalUse(item);
     }) as typeof ctx.use;

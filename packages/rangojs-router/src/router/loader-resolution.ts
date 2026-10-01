@@ -15,8 +15,10 @@ import {
   linkValueTags,
   loaderTagSetsArmed,
   markTagSetStart,
+  readStartedLoaderValue,
   readValueTags,
   tagLoaderValue,
+  trackLoaderRun,
 } from "../cache/cache-tag.js";
 import { executionStart } from "../cache/tag-invalidation.js";
 import type {
@@ -57,8 +59,10 @@ import {
   assertNonCacheableReadAllowed,
   isInsideLoaderScope,
   runInsideLoaderBodyScope,
+  runInsideLoaderRun,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
+  type LoaderRunIdentity,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
@@ -479,7 +483,9 @@ function createLoaderExecutor<TEnv>(
     const memo = bound || loaderPromises.get(loader.$$id);
     if (memo) {
       if (recordTags) readValueTags(memo);
-      return memo;
+      // A "use cache" body reading it refuses an identity read the run made
+      // (#1011): the body ran outside the cached function, unguarded.
+      return readStartedLoaderValue(memo, loader.$$id);
     }
 
     // Get loader function - either from loader object or fetchable registry
@@ -724,8 +730,10 @@ function createLoaderExecutor<TEnv>(
     // BAKED copy in every shared artifact (cache(), "use cache", the PPR
     // shell). The cache() guard permits its identity reads; a "use cache"
     // body it was entered in and a PPR capture do not (server/context.ts
-    // guardIdentityRead).
+    // guardIdentityRead), and a "use cache" body that reads the value after
+    // another reader started it refuses what `identity` recorded (#1011).
 
+    const identity: LoaderRunIdentity = { loaderId: loader.$$id };
     const recordedTags = recordTags ? new Set<string>() : undefined;
     // A loader-cache write that stores or reads this value gates on the
     // earliest start behind it (#977, earliestRecordedStart).
@@ -736,7 +744,10 @@ function createLoaderExecutor<TEnv>(
     const promise = observePhase(PHASES.loader(loader.$$id), () =>
       Promise.resolve(
         runInsideLoaderBodyScope(
-          () => loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+          () =>
+            runInsideLoaderRun(identity, () =>
+              loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+            ),
           loader.$$id,
           recordedTags,
         ),
@@ -747,6 +758,7 @@ function createLoaderExecutor<TEnv>(
         runEndStore?.settleLoaderRun(loader.$$id);
       }),
     );
+    trackLoaderRun(promise, identity);
     if (recordedTags) {
       tagLoaderValue(promise, recordedTags);
       readValueTags(promise);

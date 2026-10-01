@@ -220,6 +220,10 @@ export const NamedRoutes = {
   txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
   useCacheDep: "/use-cache-dep",
+  useCacheMemoBinding: "/use-cache-memo/binding",
+  useCacheMemoHandlerFirst: "/use-cache-memo/handler-first",
+  useCacheMemoPlain: "/use-cache-memo/plain",
+  useCacheMemoRequestContext: "/use-cache-memo/request-context",
 } as const;
 
 // Aliased so the augmentation below does not pay a homomorphic mapped-type

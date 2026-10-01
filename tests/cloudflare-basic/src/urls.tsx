@@ -217,6 +217,14 @@ import {
   answerForwarded,
   visitorOf,
 } from "./pages/identity-raw.js";
+import {
+  UcmBindingPage,
+  UcmError,
+  UcmHandlerFirstPage,
+  UcmPlainPage,
+  UcmRequestContextPage,
+  UcmVisitorLoader,
+} from "./pages/use-cache-memo.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import {
   InlineIndexPage,
@@ -2099,6 +2107,33 @@ export const urlpatterns = urls(
               name: "identityRawKeyed",
             }),
           ],
+        ),
+
+        // "use cache" refuses a memoized loader value that read cookies()
+        // (#1011); fetched only by use-cache-memoized-loader.test.ts.
+        path(
+          "/use-cache-memo/handler-first",
+          UcmHandlerFirstPage,
+          { name: "useCacheMemoHandlerFirst" },
+          () => [errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/binding",
+          UcmBindingPage,
+          { name: "useCacheMemoBinding" },
+          () => [loader(UcmVisitorLoader), errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/request-context",
+          UcmRequestContextPage,
+          { name: "useCacheMemoRequestContext" },
+          () => [errorBoundary(UcmError)],
+        ),
+        path(
+          "/use-cache-memo/plain",
+          UcmPlainPage,
+          { name: "useCacheMemoPlain" },
+          () => [errorBoundary(UcmError)],
         ),
 
         // Cookie overlay test route

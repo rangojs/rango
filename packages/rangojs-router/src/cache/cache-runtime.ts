@@ -47,6 +47,7 @@ import { encodeKV } from "../encode-kv.js";
 import { runBackground } from "./background-task.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
+  assertLoaderReadsClean,
   normalizeTags,
   outsideCacheTagScope,
   recordRequestTags,
@@ -753,6 +754,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                       // An error row would replace the stale entry; the catch
                       // below reports it and the stale entry keeps serving.
                       if (flightErrors.length > 0) throw flightErrors[0];
+                      assertLoaderReadsClean(bgScope);
                       const freshTags = entryTags(scoped.tags);
                       // One of the refreshed value's tags was invalidated after
                       // the refresh started: written now, a value that may
@@ -972,6 +974,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         // promise in the result or a handle value, as an error row and
         // completes normally; stored, every hit would serve that error.
         if (flightErrors.length > 0) throw flightErrors[0];
+        // The encode awaited the result's nested promises: an identity read a
+        // loader value made after it settled is recorded now (#1011).
+        assertLoaderReadsClean(execScope);
       } catch (buildError) {
         // Serialize/handle-encode failed: no envelope for followers (they run
         // fresh) and nothing to write.

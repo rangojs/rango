@@ -870,10 +870,10 @@ This is the **consumption-lane rule**, and it holds for every shared
 artifact — `cache()`, `"use cache"`, and the PPR shell (`/ppr`): handler
 consumption = baked copy; client-side `useLoader` = live. The tiers differ on
 identity reads inside a handler-consumed loader: `cache()` permits them (the
-leak above); `"use cache"` throws when the cached function is the first to
-read the loader in the request, because the loader body then runs inside it
-and its value is part of the result (a loader already started elsewhere
-returns its value unchecked, and that value is stored); a PPR shell capture
+leak above); `"use cache"` throws, because the loader's value is part of the
+result: inside the loader body when the cached function starts it, and at
+`ctx.use()` when a handler or a `loader()` binding started it first and its
+run made such a read; a PPR shell capture
 refuses them and the route stays uncached. It is stated once in `/rango` → Invariants.
 
 ```typescript
