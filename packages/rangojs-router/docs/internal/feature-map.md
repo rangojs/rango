@@ -382,7 +382,16 @@ server projection.
   declared-key entry whose MISS recorded one stores it as an identity mark
   ahead of the value (`markIdentity`), and a HIT restores it
   (`markIdentityRead`) for unkeyed readers. A read that settles after the
-  value only refuses the write.
+  value only refuses the write. Every loader execution also records its
+  first identity read, and the runs it read, on a `LoaderRunIdentity`
+  (`server/context.ts` `runInsideLoaderRun`, armed or not, in both loader
+  runners: `createLoaderExecutor` and the request context's
+  `createUseFunction`): a `"use cache"` body's `ctx.use` or
+  `getRequestContext().use` of an already-started loader (either runner's
+  memo, or a loader-cache binding's value) goes
+  through `readStartedLoaderValue` (`cache/cache-tag.ts`) and rejects with
+  `useCacheLoaderIdentityError` once the value settles; a later read fails the
+  function's write (`assertLoaderReadsClean` in `cache-runtime.ts`, #1011).
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group

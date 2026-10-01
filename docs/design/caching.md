@@ -948,6 +948,95 @@ outside any loader execution and handed in, such as a per-request memo a
 handler filled from `cookies()` before the loader awaited it. The read ran in
 no loader's set, so nothing links it to the fill.
 
+#### `"use cache"` reading a loader something else started (#1011)
+
+`"use cache"` throws at the read: a loader body entered inside the cached
+function runs in its `runWithCacheExecScope` chain, so `guardIdentityRead`
+refuses `cookies()` there. That only works when the cached function is the
+loader's first reader. When a handler's `ctx.use`, the route's `loader()`
+binding or a parent layout's binding started the loader first, the cached
+function's `ctx.use` got the request memo (`useLoader`'s memo hit in
+`src/router/loader-resolution.ts`, or a loader-cache binding's value through
+`loader-cache.ts`'s `ctx.use` override). The body had already run outside the
+scope, nothing was checked, and the entry (keyed by route, URL and args, not
+the cookie) stored the first visitor's value and served it to the next. This
+is the same ordering problem #972 solved for a loader `cache()` fill, and it
+predates 0.19.
+
+The #972 recorded-tag sets could not carry it: they are allocated only in a
+request that binds a loader `cache()` (`armLoaderTagSets`), and that is not
+where a `"use cache"` function usually reads a loader. So every loader
+execution now carries a small `LoaderRunIdentity` (`src/server/context.ts`),
+entered around the loader function with `runInsideLoaderRun`:
+`recordLoaderIdentityRead` stores the first read there too, and a read inside
+a run links the reader's record to the value's (`trackLoaderRun` and
+`readStartedLoaderValue`, `src/cache/cache-tag.ts`). The cost is one object
+per execution (the async-local store itself, so it cannot be allocated lazily)
+and one link per loader-to-loader read.
+
+There are two loader runners, and both enter it. `createLoaderExecutor`
+(`src/router/loader-resolution.ts`) serves the handler and loader `ctx.use`.
+`createUseFunction` (`src/server/request-context.ts`) serves
+`getRequestContext().use(Loader)`, which server actions and code without a
+handler ctx reach for; it has its own memo and runs no loader body scope. It
+gets its own async-local scope rather than a `LoaderBodyScope` field for that
+reason: a body scope would also hand it the `cache()` read exemption, which
+it never had. Covering only the first runner leaves the hole open: a handler
+that reads the loader with `getRequestContext().use()` before a cached
+function does the same stores visitor a's value for visitor b.
+
+Every memo path returns through `readStartedLoaderValue`: both runners' memo
+hits and the loader-cache binding override. Outside a `"use cache"` scope (or
+inside a cache's own `key()`/`tags()`) it returns the memo itself. Inside one,
+it returns the memo chained with a check that runs
+when the value settles: if the run, or any run it read, recorded an identity
+read, or the value's recorded-tag set does (a loader-cache binding's MISS, or
+its HIT through the identity mark), it throws `useCacheLoaderIdentityError`.
+The message starts like the first-reader error (`cookies() cannot be called
+inside a "use cache" function.`) and names the loader that read and the loader
+the function consumed. Checking at settle instead of at the call covers a
+pending memo whose body reads after an `await`. The checked promise carries a
+no-op `catch`: a cached function that calls `ctx.use(Loader)` without
+awaiting it would otherwise leave an unhandled rejection, which crashes a Node
+process running with the default `--unhandled-rejections=throw`. The write
+check below still refuses that entry.
+
+Two consequences that fail closed. The read refuses even when the function
+never uses the value: it cannot know, and the first-reader path throws there
+too. And a refusal inside a nested `"use cache"` reaches every enclosing
+execution (each one notes the value, `CacheExecScope.loaderReads`, keyed by
+value so a repeated read is noted once), so an outer function that catches the
+inner rejection still has its write refused.
+
+A read the run makes after its value settled (a nested promise in the value,
+the `/late` shape of #972) is not on the record yet when the check runs. Each
+enclosing exec scope notes the value (`CacheExecScope.loaderReads`), and
+`registerCachedFunction`'s `finalizeAndWrite` (and the stale refresh) calls
+`assertLoaderReadsClean` after `serializeResult` and `encodeHandles`, which
+awaited the nested promises. A recorded read then fails the write: the caller
+already rendered its own value, followers of the in-flight envelope run
+fresh, nothing is stored, and `onError` gets the error (`cache-write`). A read
+recorded after the encode cannot be in the stored bytes. One cost of that
+check: it cannot tell which value a late read feeds, so a loader that pushes a
+handle whose promise reads `cookies()` after the value settled (a handle the
+cached function does not store) also fails the write when the read lands
+before the encode finishes. That fails closed, and the result is timing
+dependent; read the loader outside and pass the value in instead.
+
+| A `"use cache"` body reads a loader with `ctx.use`                      | Result                                                    |
+| ----------------------------------------------------------------------- | --------------------------------------------------------- |
+| The function starts it; its body reads `cookies()`                      | throws at the read (`guardIdentityRead`, unchanged)       |
+| A handler, the route's or a layout's `loader()` started it; it read     | the read rejects when the value settles                   |
+| `getRequestContext().use()` started it, and the function reads it so    | the same                                                  |
+| The function calls `ctx.use()` and never awaits it                      | no unhandled rejection; the write is refused              |
+| It read a loader that read (`ctx.use` chain)                            | rejects, naming both loaders                              |
+| A loader `cache()` binding's value with a `key()`; its MISS or HIT read | rejects (the value's recorded-tag set or identity mark)   |
+| The read settles after the value (nested promise)                       | write only: served to its own caller, stored nowhere      |
+| The run read no identity                                                | value returned and stored, as before                      |
+| A handler reads the memo under a route `cache()` (no `"use cache"`)     | allowed, as before (loader bodies are exempt there)       |
+| PPR capture                                                             | unchanged: the capture's own run throws at the read first |
+| A ppr route's foreground render                                         | rejects like any route, so no capture is scheduled        |
+
 ### Implementation Notes
 
 When serving cached segments:

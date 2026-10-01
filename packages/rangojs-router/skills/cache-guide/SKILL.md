@@ -560,9 +560,9 @@ Loaders are exempt from the `cache()` guard because they run outside the cache
 scope and resolve fresh every request. A loader with its own `cache()` does not:
 its value is stored, so it falls under the loader `cache()` guard above. Nor
 does a loader awaited inside a `"use cache"` body: its value is part of what the
-function returns, so the same reads throw there when the cached function is
-the first to read it in the request (an already-started loader's value is
-stored unchecked).
+function returns, so the same reads throw there, whether the cached function
+starts the loader or reads a value a handler or a `loader()` binding already
+started.
 
 ## Loaders Are Always Fresh
 

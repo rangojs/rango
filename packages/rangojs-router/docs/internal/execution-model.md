@@ -402,7 +402,14 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
     them (`isInsideCacheScope` exempts any loader body): the value bakes as a
     shared copy — a documented footgun. `"use cache"` REFUSES them: a loader
     body entered inside the cached function runs in its exec scope, and its
-    value is part of what the function returns. A PPR capture REFUSES them
+    value is part of what the function returns. The order does not matter
+    (#1011): when a handler or a `loader()` binding started the loader
+    first, the cached function's `ctx.use` (or `getRequestContext().use`)
+    read of the memo rejects once the
+    value settles if that run (or a run it read) recorded an identity read
+    (`LoaderRunIdentity`, `readStartedLoaderValue` in `cache/cache-tag.ts`),
+    and a read that settles after the value fails the entry's write
+    (`assertLoaderReadsClean`). A PPR capture REFUSES them
     too (`guardIdentityRead` trips the capture before any loader-body
     exemption), so nothing is stored and the route serves axis 1. Why the
     split: while a PPR HIT re-ran handlers, a slot handler's `ctx.use` of an

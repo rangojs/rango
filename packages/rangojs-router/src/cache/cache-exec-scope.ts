@@ -34,6 +34,12 @@ import { _setCacheExecScopeProbe } from "./taint.js";
  */
 export interface CacheExecScope {
   readonly parent?: CacheExecScope;
+  /**
+   * Loader values its chain read through an already-started execution, to
+   * their loader ids (cache-tag.ts readStartedLoaderValue), checked again
+   * before its write (#1011).
+   */
+  loaderReads?: Map<object, string>;
 }
 
 const cacheExecStorage = new AsyncLocalStorage<CacheExecScope>();

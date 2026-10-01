@@ -135,8 +135,8 @@ stated, greppable contract.
   `ctx.request.headers`, a `{ cache: false }` variable) inside that loader
   are permitted under a route `cache()` (a documented footgun; see
   `/caching` → "Cache purity & tainted objects"). They throw inside
-  `"use cache"` (when the cached function is the first to read the loader in
-  the request; an already-started loader's value is stored unchecked) and REFUSE a PPR capture: the route serves uncached until
+  `"use cache"` (whichever code started the loader first: a handler, a
+  `loader()` binding, or the cached function itself) and REFUSE a PPR capture: the route serves uncached until
   the read moves to a live loader. Client-side consumption
   (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
   `loader()` segments follow their PPR lane (only `ssr: false` bakes; see

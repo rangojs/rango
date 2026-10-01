@@ -283,11 +283,14 @@ is part of that body: its value is captured into the shared cache entry like
 any other computed data, so a `{ cache: false }` variable read there throws,
 exactly as `cookies()`, `headers()`, `ctx.request.headers` and a theme read do
 (one guard follows the
-cached body's whole async chain, loaders included). The check runs only when
-the loader body starts inside the cached function: a loader something else in
-the request already started (a handler's `ctx.use()`, a route `loader()`)
-returns its memoized value without it, and that value is still stored in the
-entry. Read the value outside and pass it in as an argument. Handler/cached-scope consumption = baked copy,
+cached body's whole async chain, loaders included). The order does not
+matter: a loader something else in the request already started (a handler's
+`ctx.use()`, the route's or a parent layout's `loader()`) returns its memoized
+value, and `ctx.use()` (or `getRequestContext().use()`) inside the cached function rejects with the same error
+when that run, or a loader it read, made such a read. A read the run makes
+after its value settled (a nested promise in the value) fails the entry's
+write instead: the caller gets its own value, nothing is stored, and `onError`
+reports it. Read the value outside and pass it in as an argument. Handler/cached-scope consumption = baked copy,
 client-side `useLoader` = live (the consumption-lane rule, `/rango` →
 Invariants). Under a route `cache()` a loader body's reads stay allowed (the
 route entry never stores a loader's value); during a PPR capture they refuse

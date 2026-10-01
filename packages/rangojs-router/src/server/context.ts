@@ -1131,16 +1131,89 @@ const IDENTITY_READ_RECORDER_KEY = Symbol.for(
  * (cache-tag.ts recordedIdentityRead), so both orders fail the same way.
  * Response directives do not record: a key cannot make a skipped body's side
  * effect reach a HIT.
+ *
+ * The read also lands on the execution's LoaderRunIdentity (#1011), which
+ * every execution has, from either loader runner (runInsideLoaderRun).
  */
 export function recordLoaderIdentityRead(
   surface: string,
   verb: LoaderIdentityReadVerb = "called",
 ): void {
   if (isInsideIdentityExempt()) return;
+  const run = loaderRunALS.getStore();
+  if (run && run.read === undefined) {
+    run.read = { surface, verb, bodyId: run.loaderId };
+  }
   const recorder = (globalThis as Record<symbol, unknown>)[
     IDENTITY_READ_RECORDER_KEY
   ] as ((surface: string, verb: LoaderIdentityReadVerb) => void) | undefined;
   recorder?.(surface, verb);
+}
+
+/**
+ * One loader execution's request-identity record (#1011): the first identity
+ * read its body made, and the executions whose values it read with
+ * ctx.use(Loader). Every execution has one; the recorded-tag sets that carry
+ * the same reads for a loader cache() fill (cache-tag.ts) exist only in a
+ * request that binds one.
+ *
+ * A "use cache" function that reads a loader's value through the request
+ * memo (a handler, the route's loader() binding or a parent layout's started
+ * it first) does not run the body, so guardIdentityRead never sees the read.
+ * Scar: the entry, keyed without the cookie, stored the first visitor's value
+ * and served it to the next. cache-tag.ts readStartedLoaderValue refuses such
+ * a value through this record.
+ */
+export interface LoaderRunIdentity {
+  readonly loaderId: string;
+  read?: LoaderIdentityRead;
+  reads?: Set<LoaderRunIdentity>;
+}
+
+// Its own scope, not a LoaderBodyScope field: the request-context runner
+// (request-context.ts createUseFunction) records reads too, but does not
+// enter a loader body scope, whose cache() exemption it never had.
+const loaderRunALS: AsyncLocalStorage<LoaderRunIdentity> = ((globalThis as any)[
+  Symbol.for("rangojs-router:loader-run-identity")
+] ??= new AsyncLocalStorage<LoaderRunIdentity>());
+
+/**
+ * Run a loader body with `run` as its identity record: both loader runners
+ * (loader-resolution.ts createLoaderExecutor, request-context.ts
+ * createUseFunction) enter it around the loader function.
+ */
+export function runInsideLoaderRun<T>(run: LoaderRunIdentity, fn: () => T): T {
+  return loaderRunALS.run(run, fn);
+}
+
+/** The innermost loader execution's identity record (runInsideLoaderRun). */
+export function getLoaderRunIdentity(): LoaderRunIdentity | undefined {
+  return loaderRunALS.getStore();
+}
+
+/**
+ * The error a "use cache" function's read of a loader value fails with when
+ * the loader's execution, or one whose value it read, made `read` (#1011).
+ * Worded like guardIdentityRead's "use cache" refusal, naming the loaders.
+ */
+export function useCacheLoaderIdentityError(
+  read: LoaderIdentityRead,
+  loaderId: string,
+): Error {
+  const bodyId = read.bodyId ?? loaderId;
+  const source =
+    bodyId === loaderId
+      ? `Loader "${loaderId}" ${read.verb} it, and the cached function reads that loader's value`
+      : `Loader "${bodyId}" ${read.verb} it, and the cached function reads loader "${loaderId}", whose value is built from it`;
+  return new Error(
+    `${read.surface} cannot be ${read.verb} inside a "use cache" function. ` +
+      `${source}. The loader ran outside the function (a handler or a ` +
+      `loader() binding started it first), but its value becomes part of ` +
+      `what the function returns, and the cache key does not include it, so ` +
+      `the first caller's value would be stored and served to later callers. ` +
+      `Read the loader before calling the cached function and pass the value ` +
+      `in as an argument so it becomes part of the cache key.`,
+  );
 }
 
 /** The error a loader cache() fill with no declared key fails with (#972). */
@@ -1344,7 +1417,8 @@ export function runInsideLoaderScope<T>(fn: () => T): T {
  * and handler-invoked via ctx.use) so request-scoped reads inside a loader
  * never trip the cache() guard — a route cache() never stores loader values.
  * A "use cache" body the loader was entered in still refuses them
- * (guardIdentityRead).
+ * (guardIdentityRead); one that reads the value later refuses what the run
+ * recorded (runInsideLoaderRun, cache-tag.ts readStartedLoaderValue).
  */
 export function runInsideLoaderBodyScope<T>(
   fn: () => T,

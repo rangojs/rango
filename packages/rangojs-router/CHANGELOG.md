@@ -1,5 +1,78 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: `"use cache"` refuses a loader value read with `ctx.use()` or `getRequestContext().use()` when the loader's run read `cookies()`, whichever code started it ([#1014](https://github.com/rangojs/rango/pull/1014))
+
+A `"use cache"` function that reads a loader threw when the loader's body
+read `cookies()`, `headers()`, `ctx.request.headers`, the theme or a
+`{ cache: false }` variable, but only when the cached function was the first
+to read that loader in the request (#1011). When a handler's `ctx.use()` or
+`getRequestContext().use()`, the route's `loader()` binding or a parent
+layout's binding started it first, the cached function got the request's
+memoized value unchecked. The entry, keyed by route, URL and args, stored the
+first visitor's value and served it to every later visitor of that URL.
+
+```ts
+export const UserLoader = createLoader(
+  async () => `user-${cookies().get("u")?.value}`,
+);
+
+async function greetingFor(ctx: HandlerContext) {
+  "use cache";
+  return `greeting:${await ctx.use(UserLoader)}`;
+}
+
+path("/b", async (ctx) => [await ctx.use(UserLoader), await greetingFor(ctx)]);
+path(
+  "/c",
+  (ctx) => greetingFor(ctx),
+  {},
+  () => [loader(UserLoader)],
+);
+
+// Before: visitor b on /b or /c is served "greeting:user-a".
+// After: greetingFor rejects with `cookies() cannot be called inside a
+// "use cache" function. Loader "..." called it, and the cached function
+// reads that loader's value. ...`, as it already did when it read first.
+// The same holds when both reads use getRequestContext().use(UserLoader)
+// (server actions and code without a handler ctx).
+
+// Migration: read the loader outside and pass the value in; it becomes part
+// of the key.
+async function greetingFor(user: string) {
+  "use cache";
+  return `greeting:${user}`;
+}
+const greeting = await greetingFor(await ctx.use(UserLoader));
+```
+
+| The cached function reads a loader that read identity             | Before                                                                | After                                                                                             |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| The cached function starts it                                     | throws                                                                | throws (unchanged)                                                                                |
+| A handler, the route's or a parent layout's `loader()` started it | stores visitor a's value                                              | throws the same error once the value settles                                                      |
+| A handler and the function both use `getRequestContext().use()`   | stores visitor a's value                                              | throws the same error once the value settles                                                      |
+| It reads a loader that read (`ctx.use` chain)                     | stores visitor a's value                                              | throws, naming both loaders                                                                       |
+| A loader `cache()` binding with a `key()` (MISS or HIT)           | stores visitor a's value                                              | throws                                                                                            |
+| The read settles after the value (a nested promise in it)         | stores visitor a's value                                              | each visitor gets their own value; nothing is stored; `onError` reports a `cache-write` error     |
+| The function calls `ctx.use()` and never awaits it                | stored the function's result (the loader value was not in it)         | nothing is stored (fails closed); `onError` reports a `cache-write` error; no unhandled rejection |
+| On a `ppr` route                                                  | the render stored visitor a's value in the entry; the capture refused | the render fails (500, or the error boundary) for every visitor; no shell capture is scheduled    |
+| The loader read no identity                                       | stored                                                                | stored (unchanged)                                                                                |
+| A handler reads it under a route `cache()`, no `"use cache"`      | reads                                                                 | reads (unchanged)                                                                                 |
+
+Three cases fail closed:
+
+- The read refuses even when the cached function never uses the value
+  (`await ctx.use(UserLoader)` and then returns something else). It can't
+  tell, and the first-reader path throws there too.
+- A refusal inside a nested `"use cache"` function also refuses every
+  enclosing `"use cache"` function's write, even when the outer one catches
+  the inner rejection: the outer entry would hold what the inner one read.
+- A read whose result does not reach the cached value but settles before the
+  entry is encoded (a handle push from the same loader whose promise reads
+  `cookies()` later) also fails the write: the check cannot tell which value
+  a late read feeds.
+
 ## 0.19.0 (2026-10-01)
 
 Upgrading from 0.18: what to change. Each entry below has the details.
