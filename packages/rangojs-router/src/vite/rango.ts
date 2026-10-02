@@ -32,6 +32,7 @@ import {
   getManualChunks,
 } from "./utils/shared-utils.js";
 import {
+  clientChunksReport,
   resolveClientChunks,
   type ClientChunkContext,
 } from "./utils/client-chunks.js";
@@ -537,6 +538,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     );
     plugins.push(clientRefDedup());
   }
+  plugins.push(clientChunksReport());
 
   plugins.push({
     name: "@rangojs/router:client-component-hmr",

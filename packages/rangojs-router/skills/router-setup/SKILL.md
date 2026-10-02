@@ -234,8 +234,14 @@ Notes:
 
 - `clientChunks` default groups app client components by the directory after a
   route root (`routes/`, `app/`, `pages/`, `features/`, `handlers/`, ...), so
-  `routes/dashboard/**` becomes chunk `app-dashboard`. Flat folders such as
-  `src/components/` stay in the shared chunk. `false` restores
+  `routes/dashboard/**` becomes chunk `app-dashboard`. An `app/` directly
+  followed by another marker with a directory after it is a source root, so
+  `app/routes/product/**` is `app-product`; `app/<segment>/**`,
+  `app/components/**` and files directly in `app/routes/` keep `app-<segment>`
+  / `app-components` / `app-routes`. Flat folders such as
+  `src/components/` stay in the shared chunk. A group is the loading unit:
+  rendering any member downloads the whole group's chunk;
+  `DEBUG=rango:chunks vite build` logs each group's size. `false` restores
   `@vitejs/plugin-rsc`'s grouping (one client chunk per router). A function
   `(meta) => string | undefined` names the group per module (`undefined` keeps
   the default); `directoryClientChunks(meta)`, the default strategy, is

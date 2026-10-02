@@ -1,5 +1,7 @@
+import { format } from "node:util";
 import { describe, it, expect } from "vitest";
 import {
+  clientChunksReport,
   directoryClientChunks,
   resolveClientChunks,
 } from "../utils/client-chunks.js";
@@ -170,6 +172,18 @@ describe("directoryClientChunks (built-in strategy)", () => {
     ).toBe("app-widgets");
   });
 
+  it("keeps the first marker when a marker name is the route id (only app/ defers)", () => {
+    // A route literally named "view" under routes/: routes stays the marker.
+    expect(
+      directoryClientChunks(
+        meta(
+          "/proj/src/routes/view/edit/Form.tsx",
+          "src/routes/view/edit/Form.tsx",
+        ),
+      ),
+    ).toBe("app-view");
+  });
+
   it("sanitizes the route id into a safe chunk fragment", () => {
     expect(
       directoryClientChunks(
@@ -179,6 +193,65 @@ describe("directoryClientChunks (built-in strategy)", () => {
         ),
       ),
     ).toBe("app-my_widgets");
+  });
+});
+
+describe("directoryClientChunks (app/ source root, #1022)", () => {
+  const group = (normalizedId: string) =>
+    directoryClientChunks(meta(`/proj/${normalizedId}`, normalizedId));
+
+  it("splits app/routes/<id> per route instead of one app-routes group", () => {
+    expect(group("app/routes/home/Hero.tsx")).toBe("app-home");
+    expect(group("app/routes/product/Gallery.tsx")).toBe("app-product");
+    expect(group("app/routes/product/components/Thumbs.tsx")).toBe(
+      "app-product",
+    );
+  });
+
+  it("splits app/features/<id> and app/pages/<id> on the inner marker", () => {
+    expect(group("app/features/auth/LoginForm.tsx")).toBe("app-auth");
+    expect(group("app/pages/cart/Cart.tsx")).toBe("app-cart");
+  });
+
+  it("skips a nested src/app/ root the same way", () => {
+    expect(group("src/app/routes/cart/components/Cart.tsx")).toBe("app-cart");
+  });
+
+  it("matches the app/ root case-insensitively", () => {
+    expect(group("App/Routes/home/Hero.tsx")).toBe("app-home");
+  });
+
+  it("keeps app/components as its own shared group", () => {
+    expect(group("app/components/Header.tsx")).toBe("app-components");
+    expect(group("app/components/nav/Menu.tsx")).toBe("app-components");
+  });
+
+  it("keeps Next-style app/<segment> grouping", () => {
+    expect(group("app/dashboard/page.tsx")).toBe("app-dashboard");
+    expect(group("app/dashboard/routes/x/Widget.tsx")).toBe("app-dashboard");
+    // A marker-named route folder that directly holds the file is a route.
+    expect(group("app/features/page.tsx")).toBe("app-features");
+    // Files directly under app/routes/ have no inner route id.
+    expect(group("app/routes/Layout.tsx")).toBe("app-routes");
+    // Flat-file route modules (React Router / Remix) pool as one group.
+    expect(group("app/routes/products.$id.tsx")).toBe("app-routes");
+  });
+
+  it("merges the same route id under different markers into one group", () => {
+    expect(group("app/routes/cart/X.tsx")).toBe("app-cart");
+    expect(group("app/features/cart/Z.tsx")).toBe("app-cart");
+    expect(group("src/routes/cart/Y.tsx")).toBe("app-cart");
+    // A route folder named "components" joins app/components/.
+    expect(group("app/routes/components/C.tsx")).toBe("app-components");
+  });
+
+  it("defers once: app/app/routes/<id> still keys on the inner app", () => {
+    expect(group("app/app/routes/x/W.tsx")).toBe("app-routes");
+  });
+
+  it("leaves src/routes/<id> and src/pages/<id> unchanged", () => {
+    expect(group("src/routes/home/Hero.tsx")).toBe("app-home");
+    expect(group("src/pages/product/Gallery.tsx")).toBe("app-product");
   });
 });
 
@@ -239,5 +312,64 @@ describe("directoryClientChunks (registered fallbacks)", () => {
         meta("/p/src/routes/a/X.tsx", "src/routes/a/X.tsx"),
       ),
     ).toBe("app-a");
+  });
+});
+
+describe("clientChunksReport", () => {
+  const PREFIX = "\0virtual:vite-rsc/client-references/group/";
+
+  function report(bundle: Record<string, unknown>): string[] {
+    const lines: string[] = [];
+    const plugin = clientChunksReport((fmt, ...args) =>
+      lines.push(format(fmt, ...args)),
+    );
+    const hook = plugin!.generateBundle as (
+      this: unknown,
+      options: unknown,
+      bundle: unknown,
+    ) => void;
+    hook.call(
+      { getModuleInfo: () => ({ importedIds: ["a", "b"] }) },
+      {},
+      bundle,
+    );
+    return lines;
+  }
+
+  it("is not registered when the debug namespace is off", () => {
+    expect(clientChunksReport(undefined)).toBeUndefined();
+  });
+
+  it("logs one line per client group with count and size, NUL escaped", () => {
+    const lines = report({
+      "assets/app-hero.js": {
+        type: "chunk",
+        facadeModuleId: `${PREFIX}app-hero`,
+        code: "export const a = 1;",
+        fileName: "assets/app-hero.js",
+      },
+      // plugin-rsc's default group name embeds the NUL-prefixed entry id.
+      "assets/index.js": {
+        type: "chunk",
+        facadeModuleId: `${PREFIX}facade:\0virtual:rsc-router/entry.rsc.js`,
+        code: "export const b = 2;",
+        fileName: "assets/index.js",
+      },
+      "assets/other.js": {
+        type: "chunk",
+        facadeModuleId: "/proj/src/main.tsx",
+        code: "",
+        fileName: "assets/other.js",
+      },
+      "assets/x.css": { type: "asset", fileName: "assets/x.css" },
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(
+      /^group app-hero: 2 client reference\(s\), 19 B \(\d+ B gzip\) -> assets\/app-hero\.js$/,
+    );
+    expect(lines[1]).toContain(
+      "group facade:\\0virtual:rsc-router/entry.rsc.js:",
+    );
+    for (const line of lines) expect(line).not.toContain("\0");
   });
 });

@@ -699,7 +699,11 @@ Tooling ────────────┘
   `ClientChunks`, `ClientChunkMeta`) — per-route/per-feature splitting of the
   client (`"use client"`) bundle. The built-in strategy (`true`) groups app client
   modules by **route id** (the segment after a route-root marker such as
-  `routes`/`app`/`pages`/`features`/`handlers`), and returns `undefined` where
+  `routes`/`app`/`pages`/`features`/`handlers`; an `app/` directly followed by
+  another marker with a directory after it is a source root, so
+  `app/routes/<id>/…` keys on `<id>` while `app/routes/Layout.tsx` stays
+  `app-routes`, #1022),
+  and returns `undefined` where
   there is no route structure so flat layouts and host-split sub-apps inherit the
   default grouping unchanged (no collision, no cross-app merge). A function is
   forwarded to `@vitejs/plugin-rsc`'s `clientChunks`. Shared runtime
@@ -708,6 +712,9 @@ Tooling ────────────┘
   The built-in strategy is exported as `directoryClientChunks` so a custom
   function can OVERLAY it (route a few modules to a dedicated chunk, delegate
   the rest) instead of silently replacing route splitting for the whole app.
+  A group is the loading unit (rendering any member downloads the whole group's
+  chunk); `DEBUG=rango:chunks` logs each emitted group's client-reference count
+  and size at build end (`clientChunksReport` in `vite/utils/client-chunks.ts`).
 - Runtime CLI route extraction (`rango generate <paths>`) for CI and repo bootstrapping
 - Debug surfaces: `debugManifest()`, `getMatchDebugStats()`, strict runtime/per-route tracing in development
 - Internal instrumentation and plugin internals for multi-router deployments and manifest isolation

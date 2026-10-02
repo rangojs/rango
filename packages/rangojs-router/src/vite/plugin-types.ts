@@ -83,6 +83,12 @@ export interface ClientChunkMeta {
  *   strategy**. It splits app `"use client"` modules by **route id** — the segment
  *   after a route-root directory (`routes`, `app`, `pages`, `features`, `handlers`,
  *   …) — so `routes/dashboard/**` becomes `app-dashboard` at any nesting depth.
+ *   The first marker in the path wins, except that an `app/` directly followed
+ *   by another marker with a directory after it is treated as a source root:
+ *   `app/routes/product/**` becomes `app-product`, while `app/dashboard/**`
+ *   (Next-style), `app/components/**` and files directly in `app/routes/` stay
+ *   `app-dashboard` / `app-components` / `app-routes`. The same route id under
+ *   different markers is one group.
  *   Where it finds NO route structure (a flat `src/components/`, or host sub-apps
  *   already split by a dynamic `import()`), it inherits the default grouping
  *   unchanged — so the shared `src/components` chunk stays shared and host apps do
@@ -94,10 +100,14 @@ export interface ClientChunkMeta {
  *   back to the default grouping for that one module. Forwarded directly to
  *   `@vitejs/plugin-rsc`'s `clientChunks`.
  *
- * Every module maps to exactly one group, so there is no byte duplication: a
- * component used by two routes lives in one group and is fetched whenever it
- * renders. Put genuinely shared client components OUTSIDE route directories so
- * they land in the shared group rather than one route's chunk.
+ * Every module maps to exactly one group, so there is no byte duplication. A
+ * group is also the loading unit: rendering any one member downloads the whole
+ * group's chunk, every other member included. A component used by two routes
+ * lives in one group, and rendering it on either route fetches that entire
+ * group. Put genuinely shared client components OUTSIDE route directories so
+ * they land in the shared group rather than one route's chunk, and keep an
+ * always-rendered component (a layout header) out of a large group.
+ * `DEBUG=rango:chunks vite build` logs each group's module count and size.
  *
  * @default true
  */
