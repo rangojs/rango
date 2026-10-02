@@ -234,7 +234,8 @@ export interface RenderRouteOptions {
    * Location-state values to seed by REFERENCE, for components that call
    * `useLocationState(StateDef)`. Like loaders, a real `createLocationState()`
    * handle has an empty injected key in a bare test, so pass `[def, value]`
-   * pairs; renderRoute assigns a synthetic key and writes it to `history.state`.
+   * pairs; renderRoute assigns a synthetic key and writes the definition's
+   * stored slot to `history.state` (`{ v, value }` when `version` is set).
    *
    * @example
    * renderRoute([{ path: "/", Component: FlashBanner }], {
@@ -602,7 +603,8 @@ export async function renderRoute(
   if (typeof window !== "undefined") {
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
-      stateObj[withLocationStateKey(def).__rsc_ls_key] = value;
+      const keyed = withLocationStateKey(def);
+      stateObj[keyed.__rsc_ls_key] = keyed(value).__rsc_ls_value;
     }
     window.history.replaceState(stateObj, "");
   }

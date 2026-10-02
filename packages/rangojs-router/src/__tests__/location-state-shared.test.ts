@@ -515,7 +515,11 @@ describe("createLocationState validate", () => {
   });
 
   it("keeps the raw stored value and returns it only when validate passes", () => {
-    const validate = vi.fn(isGridSnapshot);
+    const seen = vi.fn();
+    const validate = (value: unknown): value is GridSnapshot => {
+      seen(value);
+      return isGridSnapshot(value);
+    };
     const Grid = createLocationState<GridSnapshot>({ validate });
     (Grid as any).__rsc_ls_key = "grid";
     const history = historyWithReplace();
@@ -534,21 +538,23 @@ describe("createLocationState validate", () => {
 
     expect(Grid.read()).toBe(snapshot);
     expect(Grid.read({ state: history.state })).toBe(snapshot);
-    expect(validate).toHaveBeenCalledWith(snapshot);
+    expect(seen).toHaveBeenCalledWith(snapshot);
 
     const rejected = { rows: "nope" };
     history.state = { idx: 1, grid: rejected };
-    validate.mockClear();
+    seen.mockClear();
     expect(Grid.read()).toBeUndefined();
     expect(Grid.read({ state: history.state })).toBeUndefined();
-    expect(validate).toHaveBeenCalledWith(rejected);
+    expect(seen).toHaveBeenCalledWith(rejected);
   });
 
   it("does not unwrap a value that only looks like a version envelope", () => {
     const stored = { v: 2, value: { rows: [1] } };
-    const validate = vi.fn(
-      (value: unknown): value is typeof stored => value === stored,
-    );
+    const seen = vi.fn();
+    const validate = (value: unknown): value is typeof stored => {
+      seen(value);
+      return value === stored;
+    };
     const Grid = createLocationState<typeof stored>({ validate });
     (Grid as any).__rsc_ls_key = "grid";
     const state = { grid: stored };
@@ -556,7 +562,7 @@ describe("createLocationState validate", () => {
 
     expect(Grid.read()).toBe(stored);
     expect(Grid.read({ state })).toBe(stored);
-    expect(validate).toHaveBeenCalledWith(stored);
+    expect(seen).toHaveBeenCalledWith(stored);
   });
 });
 
@@ -568,7 +574,11 @@ describe("createLocationState version and validate", () => {
 
   it("does not validate a version mismatch, and drops a match that fails validate", () => {
     const snapshot = { rows: [1] };
-    const validate = vi.fn(isGridSnapshot);
+    const seen = vi.fn();
+    const validate = (value: unknown): value is GridSnapshot => {
+      seen(value);
+      return isGridSnapshot(value);
+    };
     const Grid = createLocationState<GridSnapshot>({ version: 2, validate });
     (Grid as any).__rsc_ls_key = "grid";
 
@@ -582,21 +592,21 @@ describe("createLocationState version and validate", () => {
       expect(Grid.read()).toBeUndefined();
       expect(Grid.read({ state })).toBeUndefined();
     }
-    expect(validate).not.toHaveBeenCalled();
+    expect(seen).not.toHaveBeenCalled();
 
     const badInner = { rows: "nope" };
     const matchedBad = { grid: { v: 2, value: badInner } };
     vi.stubGlobal("window", { history: { state: matchedBad } });
     expect(Grid.read()).toBeUndefined();
     expect(Grid.read({ state: matchedBad })).toBeUndefined();
-    expect(validate).toHaveBeenCalledWith(badInner);
+    expect(seen).toHaveBeenCalledWith(badInner);
 
-    validate.mockClear();
+    seen.mockClear();
     const matched = { grid: { v: 2, value: snapshot } };
     vi.stubGlobal("window", { history: { state: matched } });
     expect(Grid.read()).toBe(snapshot);
     expect(Grid.read({ state: matched })).toBe(snapshot);
-    expect(validate).toHaveBeenCalledWith(snapshot);
+    expect(seen).toHaveBeenCalledWith(snapshot);
 
     const history = historyWithReplace();
     vi.stubGlobal("window", {
