@@ -44,6 +44,44 @@ describe("getVirtualEntrySSR headScripts wiring", () => {
     }
   });
 
+  it("string modes leave the head script priority to the hook default", () => {
+    expect(getVirtualEntrySSR("preinit")).toContain(
+      "installClientReferencePreinit(setOnClientReference);",
+    );
+  });
+
+  it("object form threads fetchPriority to the hook and the mode to the handlers", () => {
+    for (const fetchPriority of ["low", "auto"] as const) {
+      const entry = getVirtualEntrySSR({ mode: "preinit", fetchPriority });
+      expect(entry).toContain(
+        `installClientReferencePreinit(setOnClientReference, { fetchPriority: "${fetchPriority}" });`,
+      );
+      expect(entry.split('headScripts: "preinit"').length - 1).toBe(3);
+      expect(entry).toContain("getClientEntryUrl");
+    }
+    expect(getVirtualEntrySSR({ mode: "preinit" })).toContain(
+      "installClientReferencePreinit(setOnClientReference);",
+    );
+  });
+
+  it("rejects an object form outside preinit or with an unknown priority", () => {
+    expect(() => getVirtualEntrySSR({ mode: "preload" } as never)).toThrow(
+      /requires mode: "preinit"/,
+    );
+    expect(() =>
+      getVirtualEntrySSR({ mode: "preinit", fetchPriority: "high" } as never),
+    ).toThrow(/must be "low" or "auto"/);
+  });
+
+  it("rejects an unknown string mode instead of running it as preinit", () => {
+    expect(() => getVirtualEntrySSR("prenit" as never)).toThrow(
+      /must be "preinit", "preload" or/,
+    );
+    expect(() => getVirtualEntrySSR(null as never)).toThrow(
+      /must be "preinit", "preload" or/,
+    );
+  });
+
   it("omitting progressiveChunkSize emits no key at all", () => {
     expect(getVirtualEntrySSR()).not.toContain("progressiveChunkSize");
   });

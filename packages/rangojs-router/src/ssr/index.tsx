@@ -8,9 +8,10 @@ import {
 } from "../rsc/shell-capture-constants.js";
 import { isThenable } from "../handles/is-thenable.js";
 import type { ErrorPhase } from "../types.js";
-import type { HeadScriptsOption } from "../vite/plugin-types.js";
+import type { HeadScriptsMode } from "../vite/plugin-types.js";
 
 export { installClientReferencePreinit } from "./preinit-client-references.js";
+export type { ClientReferencePreinitOptions } from "./preinit-client-references.js";
 
 /**
  * Options for injectRSCPayload
@@ -189,8 +190,11 @@ export interface SSRDependencies<TEnv = unknown> {
    * undefined keeps the inline bootstrap verbatim, so a custom SSR entry that
    * never installed the preinit hook cannot drift into the half-converted
    * state on upgrade (the generated entry always passes an explicit value).
+   * Only the mode lands here; the head chunk script priority is the
+   * `installClientReferencePreinit(setOnClientReference, { fetchPriority })`
+   * argument.
    */
-  headScripts?: HeadScriptsOption;
+  headScripts?: HeadScriptsMode;
 
   /**
    * Fizz `progressiveChunkSize`, forwarded verbatim to renderToReadableStream
