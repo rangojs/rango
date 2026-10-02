@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -320,5 +320,51 @@ describe("useLocationState late hydration (#992)", () => {
       window.dispatchEvent(new Event("popstate"));
     });
     expect(container.textContent).toBe("back");
+  });
+
+  it("replaceState without an event does not update a mounted reader", async () => {
+    function Count() {
+      const state = useLocationState(GridState);
+      const [, bump] = useState(0);
+      return (
+        <p>
+          <span data-testid="count">{state?.count ?? 0}</span>
+          <button type="button" onClick={() => bump((n) => n + 1)}>
+            bump
+          </button>
+        </p>
+      );
+    }
+
+    window.history.replaceState({}, "");
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<Count />);
+    });
+    expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
+      "0",
+    );
+
+    await act(async () => {
+      window.history.replaceState(
+        { [GridState.__rsc_ls_key]: { count: 9 } },
+        "",
+      );
+      container
+        .querySelector("button")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
+      "0",
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(container.querySelector("[data-testid='count']")?.textContent).toBe(
+      "9",
+    );
   });
 });

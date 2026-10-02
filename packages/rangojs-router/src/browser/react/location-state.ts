@@ -76,6 +76,14 @@ export function useLocationState<TArgs extends unknown[], TState>(
   // `undefined`. A new definition must not keep the previous slot's capture.
   const flashSnapshotRef = useRef<TState | undefined>(undefined);
   const flashCapturedRef = useRef(false);
+  // First client read only. Later renders return this, so write()/delete()
+  // (replaceState, no event) stay invisible until popstate or
+  // __rsc_locationstate. useSyncExternalStore would otherwise re-read history
+  // on any parent render.
+  const clientSnapshotRef = useRef<{
+    read: boolean;
+    value: TState | undefined;
+  }>({ read: false, value: undefined });
   const slotRef = useRef(key);
   const slotFlashRef = useRef(isFlash);
   if (slotRef.current !== key || slotFlashRef.current !== isFlash) {
@@ -83,17 +91,20 @@ export function useLocationState<TArgs extends unknown[], TState>(
     slotFlashRef.current = isFlash;
     flashSnapshotRef.current = undefined;
     flashCapturedRef.current = false;
+    clientSnapshotRef.current = { read: false, value: undefined };
   }
 
   const getSnapshot = useCallback((): TState | undefined => {
-    const current = readLocationStateValue<TState>(key);
-    if (!isFlash) return current;
-    if (flashCapturedRef.current) return flashSnapshotRef.current;
-    if (current !== undefined) {
-      flashSnapshotRef.current = current;
-      flashCapturedRef.current = true;
+    if (!clientSnapshotRef.current.read) {
+      const current = readLocationStateValue<TState>(key);
+      clientSnapshotRef.current = { read: true, value: current };
+      if (isFlash && current !== undefined) {
+        flashSnapshotRef.current = current;
+        flashCapturedRef.current = true;
+      }
     }
-    return current;
+    if (isFlash && flashCapturedRef.current) return flashSnapshotRef.current;
+    return clientSnapshotRef.current.value;
   }, [key, isFlash]);
 
   // popstate always applies the destination entry, including an empty flash
@@ -104,19 +115,22 @@ export function useLocationState<TArgs extends unknown[], TState>(
   const subscribe = useCallback(
     (onStoreChange: () => void): (() => void) => {
       const handlePopstate = (): void => {
+        const next = readLocationStateValue<TState>(key);
+        clientSnapshotRef.current = { read: true, value: next };
         if (isFlash) {
-          flashSnapshotRef.current = readLocationStateValue<TState>(key);
+          flashSnapshotRef.current = next;
           flashCapturedRef.current = true;
         }
         onStoreChange();
       };
       const handleLocationState = (): void => {
+        const next = readLocationStateValue<TState>(key);
         if (isFlash && key) {
-          const next = readLocationStateValue<TState>(key);
           if (next === undefined) return;
           flashSnapshotRef.current = next;
           flashCapturedRef.current = true;
         }
+        clientSnapshotRef.current = { read: true, value: next };
         onStoreChange();
       };
       window.addEventListener("popstate", handlePopstate);
