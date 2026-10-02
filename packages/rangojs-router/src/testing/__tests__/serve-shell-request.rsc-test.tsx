@@ -1911,11 +1911,12 @@ describe("serveShellRequest: restored handle pushes on a HIT and a navigation re
       flight?.match(/sch-note@g\d/g)?.at(-1);
 
     schRuns.hole = 0;
-    const ppr = setup();
+    const cacheStore = new MemorySegmentCacheStore();
+    const ppr = setup({ cacheStore });
     expect((await ppr.serve("/sch")).shellStatus).toBe("MISS");
     expect((await ppr.serve("/sch-hole-first")).shellStatus).toBe("MISS");
     source.generation = 2;
-    const refillMiss = forceLoaderMiss(ppr.cacheStore);
+    const refillMiss = forceLoaderMiss(cacheStore);
     await ppr.serve("/sch");
     await ppr.serve("/sch-hole-first");
     refillMiss.mockRestore();

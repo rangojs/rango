@@ -34,6 +34,7 @@ vi.mock("../handler-context.js", () => ({
 
 vi.mock("../loader-resolution.js", () => ({
   setupLoaderAccess: vi.fn(),
+  bindLoaderCacheIds: vi.fn(),
 }));
 
 vi.mock("../pattern-matching.js", () => ({
