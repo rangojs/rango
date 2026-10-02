@@ -13,12 +13,15 @@ shrinking the client bundle of a given route.
 - The default is **safe because it only splits where it recognizes a route
   structure**. Three branches:
   - **Structured route dirs** (`routes/<id>/…`, `app/<id>/…`, `handlers/<id>/…`, …)
-    → split into a per-route chunk `app-<id>` (+ its CSS).
+    → split into a per-route chunk `app-<id>` (+ its CSS). Under an `app/`
+    source root, `app/routes/<id>/…` also becomes `app-<id>`.
   - **Flat `src/components/…`** (no route structure) → **stays shared**: one app
     chunk, exactly as if splitting were off. No change for flat apps.
   - **Host sub-apps** loaded via a dynamic `import()` → already split per app by
     their server boundary; the default leaves that untouched (no cross-app merge).
   - A **custom `clientChunks` function** fully overrides all of the above.
+- A group is the **loading unit**: rendering any member downloads the whole
+  group's chunk. `DEBUG=rango:chunks` logs each group's size at build end.
 - React (~115 KB gzip) and the Rango runtime (~50 KB gzip) are shared on every
   route regardless. Splitting only moves **route-specific** client code, so it
   helps most when routes carry material client weight (editors, charts, grids).
@@ -99,12 +102,61 @@ leakage). The chunk loads only when a dashboard route renders; visiting
 (`app-dashboard-*.css`).
 
 The **first** marker directory in the path wins (the match is
-case-insensitive). If your source root is itself named after a marker — an
-`app/` root, say — every module under it keys on the next segment:
-`app/components/Button.tsx` becomes `app-components`, and
-`app/routes/dashboard/Chart.tsx` becomes `app-routes`, not `app-dashboard`. Run
-the debug namespace below to confirm the grouping, and use a `clientChunks`
-function if the built-in rule does not fit your layout.
+case-insensitive), with one exception for `app/`. Many projects use `app/` as
+their source root (`app/components`, `app/routes/<id>`), while others use it as
+a Next-style route root (`app/<segment>/…`). When `app/` is directly followed by
+another marker that has a directory after it, `app/` is treated as a source
+root and the inner marker keys the group. Otherwise `app/` is the route root, as
+before:
+
+| Path                                    | Group            |
+| --------------------------------------- | ---------------- |
+| `app/routes/dashboard/Chart.tsx`        | `app-dashboard`  |
+| `app/features/auth/LoginForm.tsx`       | `app-auth`       |
+| `src/app/routes/cart/Cart.tsx`          | `app-cart`       |
+| `src/routes/cart/Cart.tsx`              | `app-cart`       |
+| `src/pages/cart/Cart.tsx`               | `app-cart`       |
+| `app/dashboard/widgets/Chart.tsx`       | `app-dashboard`  |
+| `app/components/Header.tsx`             | `app-components` |
+| `app/routes/Layout.tsx` (no route dir)  | `app-routes`     |
+| `app/routes/products.$id.tsx`           | `app-routes`     |
+| `app/app/routes/x/W.tsx`                | `app-routes`     |
+| `routes/view/edit/Form.tsx` (not `app`) | `app-view`       |
+| `app/routes/cart/X.tsx`                 | `app-cart`       |
+| `app/features/cart/Z.tsx`               | `app-cart`       |
+| `app/routes/components/C.tsx`           | `app-components` |
+
+Through 0.19.1, `app/routes/dashboard/Chart.tsx` grouped as `app-routes`, so
+every route under `app/routes/` shared one chunk (#1022).
+
+The same route id under different markers is **one group**, and the group is
+the loading unit. `app/routes/cart/`, `app/features/cart/` and
+`src/routes/cart/` all become `app-cart` (through 0.19.1 the first two were
+`app-routes` and `app-features`), so rendering a component from any of them
+downloads all three. A route folder named `components` (`app/routes/components/`)
+joins the shared `app/components/` group. Rename the folder or use a
+`clientChunks` function if that pooling is unwanted.
+
+Files directly in `app/routes/` (the React Router / Remix flat-file layout,
+`app/routes/products.$id.tsx`) have no route directory after the marker, so they
+still share one `app-routes` group and load as one unit. Use a `clientChunks`
+function to split them per file. The deferral applies once: `app/app/routes/<id>/`
+keys on the inner `app` and pools as `app-routes`.
+
+`app/components/` is not followed by a marker, so it keeps its own
+`app-components` group. That separates shared components from every route's
+group. A path-only rule cannot tell `app/components/` under a source root from a
+Next-style route folder named `components`, and returning `undefined` would not
+help: the module would join the default `serverChunk` group, which for a router
+that imports every route statically holds every other unmarked client module
+too. If `app-components` mixes a small always-rendered header with heavy
+components that only some routes use, move the heavy ones under their route
+directory or name the group yourself with a `clientChunks` function.
+
+A Next-style project whose top-level route folder is itself named after a marker
+and holds subdirectories (`app/features/<sub>/…`) now groups by `<sub>`; a
+`clientChunks` function keeps the old grouping. Run the debug namespace below to
+confirm the grouping.
 
 When the path has **no** route-root directory (e.g. a flat `src/components/`),
 the strategy returns `undefined` and the module **inherits `@vitejs/plugin-rsc`'s
@@ -129,10 +181,17 @@ with the `rango:chunks` debug namespace:
 DEBUG=rango:chunks pnpm build
 # rango:chunks split src/routes/dashboard/Chart.tsx -> app-dashboard
 # rango:chunks shared src/parts/editor/Editor.tsx (no route-root marker; inherits default grouping)
+# rango:chunks group app-dashboard: 3 client reference(s), 48211 B (14020 B gzip) -> assets/app-dashboard-Bx1.js
 ```
 
 Every `"use client"` module the built-in strategy sees is logged with its group,
-or with the reason it fell back to shared. If your app code shows up as `shared`
+or with the reason it fell back to shared. At the end of the client build, one
+`group` line per emitted group gives its client-reference count and the size of
+the group's own chunk (React and the router runtime live in shared chunks and
+are not counted). The `group` lines also cover groups named by a custom
+`clientChunks` function or by the default grouping. A large group that an
+always-rendered component belongs to is downloaded on every route; this is where
+you see it. If your app code shows up as `shared`
 when you expected a split, either colocate it under a marker directory or take
 full control with a `clientChunks` **function** (next). Widening the built-in
 marker list is deliberately **not** the configurability mechanism — the function
@@ -187,13 +246,18 @@ renders — independent of `clientChunks` grouping.
 ## The shared-component rule
 
 Every `"use client"` module maps to exactly **one** group, so there is never byte
-duplication. The only question is _which_ group a shared component lands in:
+duplication. A group is also the **loading unit**: `@vitejs/plugin-rsc` resolves
+a client reference by importing its group's module, so rendering any one member
+downloads the whole group's chunk, every other member included. A layout header
+that sits in a group with 40 route-specific components brings all 40 to every
+page. The only question is _which_ group a shared component lands in:
 
 - Put genuinely shared client components **outside** route directories (e.g.
   `src/components/` or `src/shared/`) so they form one shared group loaded once.
 - A component placed under `routes/dashboard/` but also rendered by `/settings`
-  still works — visiting `/settings` will load the `app-dashboard` chunk for it —
-  but it is clearer to hoist shared components to a shared directory.
+  still works, but visiting `/settings` loads the whole `app-dashboard` chunk
+  for it, not just that component. Hoist shared components to a shared
+  directory.
 
 ## Error / not-found fallbacks: the `app-fallback` chunk
 

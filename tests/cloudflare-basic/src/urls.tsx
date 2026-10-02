@@ -57,6 +57,8 @@ import { AboutPage } from "./pages/about.js";
 import { LinkExternalOriginPage } from "./pages/link-external-origin.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
+import { SplitHero } from "./app/routes/split-hero/SplitHero.js";
+import { SplitGallery } from "./app/routes/split-gallery/SplitGallery.js";
 import {
   ClientPackageResolutionLayout,
   ClientPackageResolutionPage,
@@ -829,6 +831,10 @@ export const urlpatterns = urls(
         path("/", HomePage, { name: "home" }),
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
+        // app/-rooted client components (issue #1022): app/routes/<id> splits
+        // per route. Nameless so the named-routes gen files stay unchanged.
+        path("/app-root/hero", () => <SplitHero />),
+        path("/app-root/gallery", () => <SplitGallery />),
         layout(ClientPackageResolutionLayout, () => [
           path("/client-package-resolution", ClientPackageResolutionPage, {
             name: "clientPackageResolution",

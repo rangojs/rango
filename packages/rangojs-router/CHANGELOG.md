@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: the default `clientChunks` strategy splits `app/routes/<id>` per route instead of one `app-routes` group ([#1023](https://github.com/rangojs/rango/pull/1023))
+
+The built-in strategy keys a client component's group on the segment after
+the first route-root marker (`routes`, `pages`, `features`, `app`, …). `app`
+is in that list for Next-style `app/<segment>/` layouts, so in a project that
+uses `app/` as its source root every route under `app/routes/` landed in one
+`app-routes` group (#1022). A group is the loading unit: plugin-rsc imports
+the group's module to resolve any one member, so rendering one component
+downloads every component in its group. In those projects every route
+downloaded every other route's client code.
+
+An `app/` directly followed by another marker that has a directory after it
+is now treated as a source root, and the inner marker keys the group. In every
+other position `app/` is the route root, as before. Only `app` defers this
+way; `routes/view/<sub>/` keeps `view` as the route id.
+
+| Path                                       | Before           | After            |
+| ------------------------------------------ | ---------------- | ---------------- |
+| `app/routes/product/Gallery.tsx`           | `app-routes`     | `app-product`    |
+| `app/routes/product/components/Thumbs.tsx` | `app-routes`     | `app-product`    |
+| `app/features/auth/LoginForm.tsx`          | `app-features`   | `app-auth`       |
+| `app/pages/cart/Cart.tsx`                  | `app-pages`      | `app-cart`       |
+| `src/app/routes/cart/Cart.tsx`             | `app-routes`     | `app-cart`       |
+| `src/routes/product/Gallery.tsx`           | `app-product`    | unchanged        |
+| `src/pages/product/Gallery.tsx`            | `app-product`    | unchanged        |
+| `app/dashboard/widgets/Chart.tsx` (Next)   | `app-dashboard`  | unchanged        |
+| `app/features/page.tsx` (Next, file)       | `app-features`   | unchanged        |
+| `app/routes/Layout.tsx` (no route dir)     | `app-routes`     | unchanged        |
+| `app/routes/products.$id.tsx` (flat files) | `app-routes`     | unchanged        |
+| `app/app/routes/x/W.tsx`                   | `app-routes`     | unchanged        |
+| `app/components/Header.tsx`                | `app-components` | unchanged        |
+| `src/components/Button.tsx`                | default group    | unchanged        |
+| `app/routes/cart/X.tsx`                    | `app-routes`     | `app-cart`       |
+| `app/features/cart/Z.tsx`                  | `app-features`   | `app-cart`       |
+| `src/routes/cart/Y.tsx`                    | `app-cart`       | `app-cart`       |
+| `app/routes/components/C.tsx`              | `app-routes`     | `app-components` |
+
+The same route id under different markers is one group, and a group is the
+loading unit. The last four rows were three groups before; now
+`app/routes/cart/`, `app/features/cart/` and `src/routes/cart/` share
+`app-cart`, so rendering any of them downloads all three. A route folder named
+`components` (`app/routes/components/`) joins the shared `app/components/`
+group. Rename the folder or use a `clientChunks` function if that pooling is
+unwanted.
+
+`app/components/` keeps its own `app-components` group, apart from every route
+group. Returning the default grouping instead would put it in the router's
+`serverChunk` group, which holds every other unmarked client module too.
+
+Files directly in `app/routes/` (the React Router / Remix flat-file layout,
+e.g. `app/routes/products.$id.tsx`) have no route directory after the marker,
+so they still share one `app-routes` group and load as one unit; a
+`clientChunks` function can split them per file. The deferral applies once:
+`app/app/routes/<id>/` still keys on the inner `app` and pools as `app-routes`.
+
+What changes for you: chunk file names are hashed, but the group name prefixes
+them (`app-routes-<hash>.js` becomes `app-product-<hash>.js`, …). Update a
+bundle-size check or CDN rule keyed on `app-routes-*`, and a `clientChunks`
+function that compares `directoryClientChunks(meta)` with `"app-routes"`. A
+Next-style project with a top-level route folder named after a marker that holds
+subdirectories (`app/features/<sub>/`) now groups by `<sub>`; pass a
+`clientChunks` function to keep the old grouping. The existing apps in this
+repository have no `app/` directory, so their grouping is unchanged; only the
+`src/app/` fixtures added for this fix (mini, cloudflare-basic) use one.
+
+`DEBUG=rango:chunks vite build` now also logs one line per emitted client
+group at the end of the client build, with its client-reference count and the
+size of its chunk:
+
+```
+rango:chunks group app-product: 4 client reference(s), 48211 B (14020 B gzip) -> assets/app-product-Bx1.js
+```
+
+The `ClientChunks` JSDoc and `docs/client-chunking.md` now state that rendering
+any member of a group downloads the whole group's chunk.
+
 ## 0.19.1 (2026-10-01)
 
 ### Breaking: `"use cache"` refuses a loader value read with `ctx.use()` or `getRequestContext().use()` when the loader's run read `cookies()`, whichever code started it ([#1014](https://github.com/rangojs/rango/pull/1014))
