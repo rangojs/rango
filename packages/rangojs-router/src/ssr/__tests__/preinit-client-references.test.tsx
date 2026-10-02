@@ -6,7 +6,10 @@ import {
   installClientReferencePreinit,
   type SSRDependencies,
 } from "../index";
-import type { OnClientReference } from "../preinit-client-references.js";
+import type {
+  ClientReferencePreinitOptions,
+  OnClientReference,
+} from "../preinit-client-references.js";
 
 // Mock renderSegments so SsrRoot can render without the full segment system
 // (same setup as ssr-handler.test.tsx).
@@ -234,20 +237,33 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     href: string;
     nonce?: string;
     preloadFirst?: boolean;
+    install?: ClientReferencePreinitOptions;
+    /** Client-reference accesses of the same chunk within one render. */
+    uses?: number;
   }) => {
     let onRef: OnClientReference | undefined;
     installClientReferencePreinit((cb) => {
       onRef = cb;
-    });
+    }, opts.install);
     function ChunkUser() {
       if (opts.preloadFirst) {
-        preloadModule(opts.href, { as: "script", crossOrigin: "" });
+        // plugin-rsc's preloadDeps shape for a non-entry chunk (a variable:
+        // PreloadModuleOptions does not declare fetchPriority).
+        const hint = {
+          as: "script",
+          crossOrigin: "",
+          fetchPriority: "low",
+        } as const;
+        preloadModule(opts.href, hint);
       }
       onRef!({ id: "src/Widget.tsx", deps: { js: [opts.href], css: [] } });
       return React.createElement("div", null, "ok");
     }
+    const users = Array.from({ length: opts.uses ?? 1 }, (_, i) =>
+      React.createElement(ChunkUser, { key: i }),
+    );
     mockedRenderSegments.mockImplementation(() =>
-      Promise.resolve(React.createElement(ChunkUser)),
+      Promise.resolve(React.createElement(React.Fragment, null, users)),
     );
     const renderHTML = createSSRHandler(realDeps());
     return consumeStream(
@@ -285,5 +301,61 @@ describe("installClientReferencePreinit (real fizz render)", () => {
     )?.[0];
     expect(tag).toBeTruthy();
     expect(tag).toContain('nonce="test-nonce-123"');
+  });
+
+  const chunkTags = (html: string, href: string): string[] =>
+    html.match(
+      new RegExp(
+        `<script[^>]*src="${href.replace(/[./]/g, "\\$&")}"[^>]*>`,
+        "g",
+      ),
+    ) ?? [];
+
+  it("leaves fetchpriority off by default, even after plugin-rsc's low preload", async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-d.js",
+      preloadFirst: true,
+    });
+    const tags = chunkTags(html, "/assets/chunk-d.js");
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).not.toMatch(/fetchpriority/i);
+    expect(tags[0]).toContain('type="module"');
+  });
+
+  it('fetchPriority "auto" omits the attribute', async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-e.js",
+      install: { fetchPriority: "auto" },
+    });
+    const tags = chunkTags(html, "/assets/chunk-e.js");
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).not.toMatch(/fetchpriority/i);
+  });
+
+  it('fetchPriority "low" stamps fetchpriority="low" on the head chunk script (#1021)', async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-g.js",
+      install: { fetchPriority: "low" },
+    });
+    const tags = chunkTags(html, "/assets/chunk-g.js");
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatch(/fetchpriority="low"/i);
+    expect(tags[0]).toContain('type="module"');
+    expect(tags[0]).toContain("async");
+  });
+
+  it('a chunk referenced twice after plugin-rsc\'s low preload emits one "low" tag', async () => {
+    const html = await installAndRender({
+      href: "/assets/chunk-f.js",
+      preloadFirst: true,
+      uses: 2,
+      install: { fetchPriority: "low" },
+    });
+    const tags = chunkTags(html, "/assets/chunk-f.js");
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatch(/fetchpriority="low"/i);
+    expect(html).not.toContain('rel="modulepreload"');
+    // Hoisted ahead of the body content.
+    expect(html.indexOf(tags[0]!)).toBeLessThan(html.indexOf(">ok<"));
   });
 });

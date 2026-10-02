@@ -1,5 +1,42 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { preinitModule } from "react-dom";
+import type { HeadScriptFetchPriority } from "../vite/plugin-types.js";
+
+/**
+ * Head chunk script priority when neither `rango({ headScripts })` nor
+ * {@link installClientReferencePreinit} names one. `"auto"`: no attribute, the
+ * output before the option existed.
+ *
+ * The option exists because of issue #1021: Chromium fetches a parser-inserted
+ * `<script type="module" async>` at High, so the head chunks share bandwidth
+ * with the render-blocking stylesheet and the LCP image. Marking them
+ * `fetchpriority="low"` measured, under Slow 4G + 4x CPU on three pages,
+ * FCP -200..-290 ms and LCP -120..-520 ms with the first React commit
+ * unchanged. The default stays `"auto"` until a measurement also covers
+ * image-heavy pages, HTTP/1.1 and early interaction, where Low chunks can
+ * queue behind images and delay hydration.
+ */
+export const DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY: HeadScriptFetchPriority =
+  "auto";
+
+/** Options for {@link installClientReferencePreinit}. */
+export interface ClientReferencePreinitOptions {
+  /**
+   * `fetchpriority` for the emitted head chunk scripts; `"auto"` omits the
+   * attribute.
+   * @default "auto"
+   */
+  fetchPriority?: HeadScriptFetchPriority;
+}
+
+/**
+ * react-dom >= 19.3.0 forwards `fetchPriority` from `preinitModule` to Fizz's
+ * preinitModuleScript, which spreads every option onto the tag; the published
+ * PreinitModuleOptions type does not declare it.
+ */
+type PreinitModuleWithPriority = NonNullable<
+  Parameters<typeof preinitModule>[1]
+> & { fetchPriority?: "low" };
 
 /**
  * JS/CSS asset deps plugin-rsc resolves for a client reference. Structural
@@ -81,11 +118,25 @@ export function runWithPreinitNonce<T>(
  *
  * Known trades (deliberate, measured neutral-to-positive on the e2e apps —
  * PR #694 has the Lighthouse/hydration numbers):
- * - Fetch priority: an executing async module script fetches at Chromium's
- *   async-script priority, below a bare modulepreload hint; preinitModule
- *   forwards no fetchPriority (react-dom's public API drops it — only
- *   `preinit` forwards it). Execution-overlap is bought with hint priority,
- *   the same trade Next.js ships via ReactDOM.preinit.
+ * - Fetch priority: Chromium gives a parser-inserted `async` module script
+ *   initial priority High: above the entry's `modulepreload
+ *   fetchpriority="low"` hint (Low), below the render-blocking stylesheet
+ *   (Highest), and alongside the LCP image once Chromium boosts the
+ *   in-viewport image to High (#1021). Every head chunk gets the same
+ *   priority: the shared dependency chunks (react, router, entry.rsc and the
+ *   bundler runtime) and every client-component chunk; the entry itself is a
+ *   Fizz bootstrapModules
+ *   hint, not a preinit, and stays Low. `fetchPriority: "low"` opts the
+ *   chunks down; the default is `"auto"`
+ *   ({@link DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY}). react-dom < 19.3.0 and the
+ *   experimental channel up to at least 0.0.0-experimental-247fbb45-20260622
+ *   drop `fetchPriority` in the public `preinitModule`, so there the tags
+ *   render without the attribute. A hoistable
+ *   `<script async type="module" fetchPriority>` element would render the
+ *   attribute on every version (Fizz routes it through the same
+ *   moduleScriptResources dedupe and spreads its props), but this hook is a
+ *   callback from plugin-rsc's module proxy, not a component: it has no tree
+ *   position to render an element into.
  * - Build only: plugin-rsc's dev load path reports `js: []` per reference, so
  *   dev documents have no head chunk scripts — a client module whose module
  *   scope assumes body-parsed DOM can break in production only. The
@@ -96,11 +147,20 @@ export function runWithPreinitNonce<T>(
  */
 export function installClientReferencePreinit(
   setOnClientReference: SetOnClientReference,
+  options?: ClientReferencePreinitOptions,
 ): void {
+  const priority = options?.fetchPriority ?? DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY;
+  const fetchPriority = priority === "auto" ? undefined : priority;
   setOnClientReference(({ deps }) => {
     const nonce = preinitNonceStorage.getStore();
     for (const href of deps.js) {
-      preinitModule(href, { as: "script", crossOrigin: "", nonce });
+      const preinitOptions: PreinitModuleWithPriority = {
+        as: "script",
+        crossOrigin: "",
+        nonce,
+        fetchPriority,
+      };
+      preinitModule(href, preinitOptions);
     }
   });
 }

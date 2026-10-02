@@ -1,20 +1,23 @@
 import test, { expect } from "@playwright/test";
 import {
+  expectClientLinkNavigation,
   fetchDocument,
   fizzBootstrapScript,
+  headChunkScripts,
   modulepreloadHrefs,
-  scriptAndLinkTags,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
  * Script-strategy e2e: client-reference chunks ship as EXECUTING
- * `<script type="module" async>` tags hoisted into <head> (preinitModule
- * upgrade of plugin-rsc's modulepreload hints), and the browser entry ships as
- * `bootstrapModules` — a head `<link rel="modulepreload" fetchpriority="low">`
- * hint paired with the executing `<script type="module" id="_R_" async>` at
- * end of shell. See src/ssr/preinit-client-references.ts.
+ * `<script type="module" async>` tags hoisted into <head>
+ * (preinitModule upgrade of plugin-rsc's modulepreload hints), and the browser
+ * entry ships as `bootstrapModules` — a head
+ * `<link rel="modulepreload" fetchpriority="low">` hint paired with the
+ * executing `<script type="module" id="_R_" async>` at end of shell. See
+ * src/ssr/preinit-client-references.ts. The opt-in `fetchPriority: "low"`
+ * build is covered by head-script-priority-low.test.ts.
  */
 
 test.describe("head-script-preinit", () => {
@@ -37,6 +40,24 @@ test.describe("head-script-preinit", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
   });
+
+  test("dev: no head chunk scripts to prioritize", async () => {
+    // plugin-rsc reports no JS deps per client reference in dev, so the
+    // fetchpriority assertions live in the production describes. A dev
+    // document that starts carrying head chunk scripts fails here first.
+    expect(headChunkScripts(await fetchDocument(f.url("/")))).toEqual([]);
+  });
+
+  test("dev: a client Link navigates after hydration", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await expectClientLinkNavigation(
+      page,
+      "product-link-product-a",
+      "/product/product-a",
+    );
+  });
 });
 
 test.describe("head-script-preinit (production)", () => {
@@ -44,19 +65,9 @@ test.describe("head-script-preinit (production)", () => {
 
   test("head has executing module scripts for client chunks, no leftover hints", async () => {
     const html = await fetchDocument(f.url("/"));
-    const headEnd = html.indexOf("</head>");
-    expect(headEnd).toBeGreaterThan(0);
-    const head = html.slice(0, headEnd);
 
     // Client-reference chunks are executing async module scripts in <head>.
-    const headModuleScripts = scriptAndLinkTags(head).filter(
-      (t) =>
-        t.startsWith("<script") &&
-        t.includes('type="module"') &&
-        t.includes('src="') &&
-        t.includes("async"),
-    );
-    expect(headModuleScripts.length).toBeGreaterThan(0);
+    expect(headChunkScripts(html).length).toBeGreaterThan(0);
 
     // The preinit UPGRADE removed their modulepreload hints: the only
     // modulepreload left is the entry's, and it pairs with the executing
@@ -66,11 +77,30 @@ test.describe("head-script-preinit (production)", () => {
     expect(tag).toContain('type="module"');
   });
 
+  test("head chunk scripts carry no fetchpriority by default", async () => {
+    const scripts = headChunkScripts(await fetchDocument(f.url("/")));
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const tag of scripts) {
+      expect(tag).not.toMatch(/\bfetchpriority=/i);
+    }
+  });
+
   test("page hydrates cleanly under the head-executing scripts", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
     await page.goto(f.url("/"));
     await waitForHydration(page);
+  });
+
+  test("a client Link navigates after hydration", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await expectClientLinkNavigation(
+      page,
+      "product-link-product-a",
+      "/product/product-a",
+    );
   });
 });

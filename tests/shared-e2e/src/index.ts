@@ -349,6 +349,47 @@ export function modulepreloadHrefs(html: string): string[] {
 }
 
 /**
+ * The executing `<script type="module" async src>` client-reference chunk tags
+ * in `<head>` (the `headScripts: "preinit"` upgrade). Fizz renders the
+ * attribute as `fetchPriority=`; HTML attribute names are case-insensitive, so
+ * match `fetchpriority` with the `i` flag.
+ */
+export function headChunkScripts(html: string): string[] {
+  const headEnd = html.indexOf("</head>");
+  expect(headEnd, "the document has a </head>").toBeGreaterThan(0);
+  return scriptAndLinkTags(html.slice(0, headEnd)).filter(
+    (t) =>
+      t.startsWith("<script") &&
+      t.includes('type="module"') &&
+      t.includes('src="') &&
+      t.includes("async"),
+  );
+}
+
+/**
+ * Hydration made a client component interactive: clicking a rango `<Link>`
+ * (a client component) performs a client navigation to `pathname`, and the
+ * window marker set before the click survives (no document reload).
+ */
+export async function expectClientLinkNavigation(
+  page: Page,
+  linkTestId: string,
+  pathname: string,
+): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as { __noReload?: boolean }).__noReload = true;
+  });
+  await page.getByTestId(linkTestId).first().click();
+  await page.waitForURL((url) => url.pathname === pathname);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __noReload?: boolean }).__noReload,
+    ),
+    "client navigation kept the document (no reload)",
+  ).toBe(true);
+}
+
+/**
  * The Fizz bootstrap script — the executing entry tag React stamps with the
  * completed-shell id (`id="_R_"`). Throws (via expect) when absent.
  */

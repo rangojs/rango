@@ -1,13 +1,21 @@
 import { defineConfig, devices } from "@playwright/test";
 import { checkoutPortOffset } from "@shared/e2e";
 
+// The app built with the opt-in
+// rango({ headScripts: { mode: "preinit", fetchPriority: "low" } })
+// (RANGO_E2E_HEAD_SCRIPTS=priority-low). The default ("auto", no attribute)
+// is asserted by e2e/head-script-preinit.test.ts under the main config.
+// priority-low-production depends on priority-low-dev, so CI runs the whole
+// config as ONE job (`--project=priority-low-production`, deps included):
+// one build for both modes.
+
 const PORT_OFFSET = checkoutPortOffset();
-const DEV_PORT = 5308 + PORT_OFFSET;
-const PREVIEW_PORT = 5309 + PORT_OFFSET;
-const CACHE_DIR = "node_modules/.vite-e2e-test-app-preload";
+const DEV_PORT = 5338 + PORT_OFFSET;
+const PREVIEW_PORT = 5339 + PORT_OFFSET;
+const CACHE_DIR = "node_modules/.vite-e2e-test-app-priority-low";
 const SERVER_ENV = {
   ...process.env,
-  RANGO_E2E_HEAD_SCRIPTS: "preload",
+  RANGO_E2E_HEAD_SCRIPTS: "priority-low",
   RANGO_E2E_VITE_CACHE_DIR: CACHE_DIR,
 };
 const browserConfig = {
@@ -48,7 +56,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "preload-dev-warmup",
+      name: "priority-low-dev-warmup",
       testMatch: "**/head-script-variant-warmup.setup.ts",
       use: {
         ...browserConfig,
@@ -56,23 +64,24 @@ export default defineConfig({
       },
     },
     {
-      name: "preload-dev",
-      testMatch: "**/head-script-preload.test.ts",
+      name: "priority-low-dev",
+      testMatch: "**/head-script-priority-low.test.ts",
       grep: /^(?!.*\(production\))/,
       use: {
         ...browserConfig,
         baseURL: `http://localhost:${DEV_PORT}`,
       },
-      dependencies: ["preload-dev-warmup"],
+      dependencies: ["priority-low-dev-warmup"],
     },
     {
-      name: "preload-production",
-      testMatch: "**/head-script-preload.test.ts",
+      name: "priority-low-production",
+      testMatch: "**/head-script-priority-low.test.ts",
       grep: /\(production\)/,
       use: {
         ...browserConfig,
         baseURL: `http://localhost:${PREVIEW_PORT}`,
       },
+      dependencies: ["priority-low-dev"],
     },
   ],
   workers: 2,

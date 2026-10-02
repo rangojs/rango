@@ -78,6 +78,88 @@ rango:chunks group app-product: 4 client reference(s), 48211 B (14020 B gzip) ->
 The `ClientChunks` JSDoc and `docs/client-chunking.md` now state that rendering
 any member of a group downloads the whole group's chunk.
 
+### Added: `headScripts: { mode: "preinit", fetchPriority: "low" }` lowers the fetch priority of the head chunk scripts ([#1024](https://github.com/rangojs/rango/pull/1024))
+
+With `headScripts: "preinit"` (the default), every client-reference chunk
+ships as an executing `<script type="module" async>` in `<head>`. Chromium
+fetches those at High, so on a slow connection they share bandwidth with the
+render-blocking stylesheet and the LCP image, while the entry's own
+`modulepreload` already runs at Low (#1021). The new object form lets you mark
+them `fetchpriority="low"`. Issue #1021 measured that under Slow 4G + 4x CPU
+on three pages: FCP 200 to 290 ms earlier, LCP 120 to 520 ms earlier, time to
+the first React commit unchanged.
+
+Nothing changes by default: `fetchPriority` defaults to `"auto"`, which adds no
+attribute. It stays `"auto"` until a measurement also covers image-heavy pages,
+HTTP/1.1 and early interaction; the default is the single constant
+`DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY` in `src/ssr/preinit-client-references.ts`.
+
+To opt in, change:
+
+```ts
+rango({ headScripts: "preinit" });
+```
+
+to:
+
+```ts
+rango({ headScripts: { mode: "preinit", fetchPriority: "low" } });
+```
+
+The production document goes from:
+
+```html
+<script
+  src="/assets/router-X-zd0ptY.js"
+  type="module"
+  async=""
+  crossorigin=""
+></script>
+```
+
+to:
+
+```html
+<script
+  src="/assets/router-X-zd0ptY.js"
+  type="module"
+  async=""
+  crossorigin=""
+  fetchpriority="low"
+></script>
+```
+
+React writes the attribute name in camelCase; HTML attribute names are
+case-insensitive, so browsers read it as `fetchpriority`.
+
+`"low"` applies to every head chunk script: the shared dependency chunks
+(react, router, `entry.rsc`, the bundler runtime) and every client-component
+chunk. It does not apply to the entry, whose `modulepreload` hint is already
+Low. The risk: on image-heavy pages and on HTTP/1.1, the Low chunks can queue
+behind images, so hydration waits for them.
+
+| `headScripts`                                      | Head chunk scripts                  |
+| -------------------------------------------------- | ----------------------------------- |
+| omitted / `"preinit"` / `{ mode: "preinit" }`      | no attribute (unchanged)            |
+| `{ mode: "preinit", fetchPriority: "auto" }`       | no attribute (unchanged)            |
+| `{ mode: "preinit", fetchPriority: "low" }`        | `fetchpriority="low"`               |
+| `"preload"`                                        | none; hints keep plugin-rsc's `low` |
+| unknown string, `{ mode: "preload" }`, other value | `rango()` throws at config time     |
+
+- The attribute needs react-dom >= 19.3.0. 19.2.x and the experimental
+  channel (`0.0.0-experimental-247fbb45-20260622`) drop `fetchPriority` in
+  `ReactDOM.preinitModule`, so there the tags render unchanged.
+- An unknown string mode such as `"prenit"` used to run as `"preinit"`
+  silently; it now throws when the generated SSR entry is built.
+- Dev documents have no head chunk scripts (plugin-rsc reports no JS deps in
+  dev), so the attribute shows in builds only.
+- Custom SSR entries pass the priority to the hook:
+  `installClientReferencePreinit(setOnClientReference, { fetchPriority: "low" })`
+  (`ClientReferencePreinitOptions`, from `@rangojs/router/ssr`).
+  `SSRDependencies.headScripts` takes the mode string only.
+- `@rangojs/router/vite` exports `HeadScriptsMode` and
+  `HeadScriptFetchPriority` next to `HeadScriptsOption`.
+
 ## 0.19.1 (2026-10-01)
 
 ### Breaking: `"use cache"` refuses a loader value read with `ctx.use()` or `getRequestContext().use()` when the loader's run read `cookies()`, whichever code started it ([#1014](https://github.com/rangojs/rango/pull/1014))

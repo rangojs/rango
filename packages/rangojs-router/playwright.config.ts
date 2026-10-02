@@ -175,6 +175,7 @@ export default defineConfig({
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/head-script-preload.test.ts",
+            "**/head-script-priority-low.test.ts",
             "**/*.setup.ts",
             // mini is a Vitest dogfood app nested under e2e/; its vitest
             // test/*.test.tsx files must not be collected by Playwright.
@@ -191,6 +192,7 @@ export default defineConfig({
           testIgnore: [
             "**/smoke.test.ts",
             "**/head-script-preload.test.ts",
+            "**/head-script-priority-low.test.ts",
             "**/mini/**",
           ],
           use: {
@@ -332,6 +334,7 @@ export default defineConfig({
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/head-script-preload.test.ts",
+            "**/head-script-priority-low.test.ts",
             "**/*.setup.ts",
             // host-routing runs in its own `host` project (with its own servers),
             // not the sharded dev bucket -- see the RUN_HOST block above.
@@ -354,6 +357,7 @@ export default defineConfig({
             // host-routing "(production)" runs in the `host` project.
             "**/host-routing.test.ts",
             "**/head-script-preload.test.ts",
+            "**/head-script-priority-low.test.ts",
             "**/mini/**",
           ],
           use: {
