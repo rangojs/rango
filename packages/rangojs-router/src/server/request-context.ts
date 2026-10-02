@@ -1220,7 +1220,12 @@ export function createRequestContext<TEnv>(
         NODE_INSPECT
       ];
       if (typeof hook === "function") return hook.apply(rawStubHeaders, args);
-      return Object.fromEntries(rawStubHeaders.entries());
+      // DOM Headers has forEach and not entries. Node always has the hook above.
+      const listed: Record<string, string> = {};
+      rawStubHeaders.forEach((value, key) => {
+        listed[key] = value;
+      });
+      return listed;
     },
     configurable: true,
     writable: true,
