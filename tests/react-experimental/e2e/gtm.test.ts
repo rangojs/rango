@@ -101,6 +101,30 @@ async function checkCspAndNonce(page: Page, url: Url, enforced: boolean) {
       `nonce="${cspNonce}"`,
     );
   }
+  // The entry's modulepreload hint keeps the request nonce through the SSR
+  // handler's rewrite (#1025: no fetchpriority, moved after the head chunk
+  // scripts).
+  const bootstrapSrc = html
+    .match(/<script\b[^>]*\bid="_R_"[^>]*>/)?.[0]
+    .match(/\bsrc="([^"]+)"/)?.[1];
+  expect(bootstrapSrc, "the _R_ bootstrap module script").toBeTruthy();
+  const entryHints = [...html.matchAll(/<link\b[^>]*>/g)]
+    .map((m) => m[0])
+    .filter(
+      (t) =>
+        t.includes('rel="modulepreload"') &&
+        t.includes(`href="${bootstrapSrc}"`),
+    );
+  expect(entryHints).toHaveLength(1);
+  expect(entryHints[0]).toContain(`nonce="${cspNonce}"`);
+  expect(entryHints[0]).not.toMatch(/\bfetchpriority=/i);
+  const hintAt = html.indexOf(entryHints[0]!);
+  expect(hintAt).toBeLessThan(html.indexOf("</head>"));
+  for (const tag of moduleScripts.filter((t) => !t.includes('id="_R_"'))) {
+    expect(html.indexOf(tag), `${tag} precedes the entry hint`).toBeLessThan(
+      hintAt,
+    );
+  }
   expect(html).toContain('event:"page_view"');
 
   // dataLayer initialised before gtm.js is injected (both in the inline script).

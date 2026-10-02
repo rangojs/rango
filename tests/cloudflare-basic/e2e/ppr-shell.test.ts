@@ -8,7 +8,11 @@ import {
   waitForNavigation,
   goBack,
 } from "./helper";
-import { guardHydrationErrors, waitForShellHydration } from "@shared/e2e";
+import {
+  expectEntryHintAfterHeadChunks,
+  guardHydrationErrors,
+  waitForShellHydration,
+} from "@shared/e2e";
 import {
   assertPprReplayStatus,
   assertShellStatus,
@@ -386,6 +390,21 @@ function describePprShell(mode: "dev" | "build") {
 
       // First byte (the cached prelude) does not wait on the ~400ms live loader.
       expect(ttfb).toBeLessThan(LOADER_DELAY_MS);
+    });
+
+    // #1025: the capture stores the prelude with the client entry hint
+    // already rewritten (src/ssr/entry-preload-priority.ts); a HIT replays
+    // those bytes and the resume never re-emits the hint.
+    test("HIT: the frozen prelude carries the entry hint at default fetch priority, after the head chunks", async ({
+      request,
+    }) => {
+      const url = f.url("/ppr-shell?probe=entry-hint");
+      await warmToHit(request, url);
+      const res = await request.get(url, { headers: HTML_HEADERS });
+      expect(res.headers()["x-rango-shell"]).toBe("HIT");
+      const html = await res.text();
+      const hint = expectEntryHintAfterHeadChunks(html);
+      expect(splitPrelude(html).prelude).toContain(hint);
     });
 
     // --- Replay-only capture: the shell is a PHOTOGRAPH, not a re-render. ---

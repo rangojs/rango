@@ -84,7 +84,8 @@ With `headScripts: "preinit"` (the default), every client-reference chunk
 ships as an executing `<script type="module" async>` in `<head>`. Chromium
 fetches those at High, so on a slow connection they share bandwidth with the
 render-blocking stylesheet and the LCP image, while the entry's own
-`modulepreload` already runs at Low (#1021). The new object form lets you mark
+`modulepreload` ran at Low (#1021; see the next entry for the entry hint).
+The new object form lets you mark
 them `fetchpriority="low"`. Issue #1021 measured that under Slow 4G + 4x CPU
 on three pages: FCP 200 to 290 ms earlier, LCP 120 to 520 ms earlier, time to
 the first React commit unchanged.
@@ -134,8 +135,9 @@ case-insensitive, so browsers read it as `fetchpriority`.
 
 `"low"` applies to every head chunk script: the shared dependency chunks
 (react, router, `entry.rsc`, the bundler runtime) and every client-component
-chunk. It does not apply to the entry, whose `modulepreload` hint is already
-Low. The risk: on image-heavy pages and on HTTP/1.1, the Low chunks can queue
+chunk. It does not apply to the entry, whose `modulepreload` hint keeps the
+default priority (next entry). The risk: on image-heavy pages and on HTTP/1.1,
+the Low chunks can queue
 behind images, so hydration waits for them.
 
 | `headScripts`                                      | Head chunk scripts                  |
@@ -159,6 +161,106 @@ behind images, so hydration waits for them.
   `SSRDependencies.headScripts` takes the mode string only.
 - `@rangojs/router/vite` exports `HeadScriptsMode` and
   `HeadScriptFetchPriority` next to `HeadScriptsOption`.
+
+### Fixed: the client entry's `modulepreload` is fetched at default priority after the head chunk scripts, so hydration doesn't wait behind images ([#1026](https://github.com/rangojs/rango/pull/1026))
+
+With `headScripts: "preinit"` (the default), React writes the browser entry's
+preload hint as `<link rel="modulepreload" fetchPriority="low">`, ahead of the
+head chunk scripts. React hard-codes that priority for `bootstrapModules`
+(react-dom 19.3.0 `react-dom-server.edge.production.js:546`) and claims the
+URL (`:565`), so no `preloadModule` or `preinitModule` call can replace it.
+Chromium fetches the hint at Low. Once it raises in-viewport images to High
+after the first layout, the entry queues behind them, and hydration waits for
+a few-hundred-byte file long after the head chunk scripts it imports have
+arrived (#1025).
+
+The SSR handler now rewrites that one tag, in the live HTML stream and in the
+stored PPR shell prelude: it drops `fetchPriority="low"` and moves the tag
+after the head chunk scripts and preloads React writes right behind it, ahead
+of your own head content (`<title>`, `<meta>`, inline scripts and styles).
+The request nonce, the executing `id="_R_"` script,
+React's URL claim, PPR resume, and the single entry fetch stay as they were.
+Nothing to change in your config. The production document goes from:
+
+```html
+<head>
+  <link rel="stylesheet" href="/assets/entry-Bv9651rI.css" />
+  <link
+    rel="modulepreload"
+    fetchpriority="low"
+    href="/assets/index-xuT08BmS.js"
+  />
+  <script src="/assets/entry.rsc--Kjc-IQx.js" type="module" async=""></script>
+  <script src="/assets/react-CiYhaMbR.js" type="module" async=""></script>
+  <script src="/assets/router-CQUOyATP.js" type="module" async=""></script>
+</head>
+```
+
+to:
+
+```html
+<head>
+  <link rel="stylesheet" href="/assets/entry-Bv9651rI.css" />
+  <script src="/assets/entry.rsc--Kjc-IQx.js" type="module" async=""></script>
+  <script src="/assets/react-CiYhaMbR.js" type="module" async=""></script>
+  <script src="/assets/router-CQUOyATP.js" type="module" async=""></script>
+  <link rel="modulepreload" href="/assets/index-xuT08BmS.js" />
+</head>
+```
+
+(Trimmed from the measured fixture: `crossorigin`, `data-precedence`, the
+meta tags and the other head chunks are left out. The fixture has no head
+content of its own after the chunks, so there the tag closes `<head>`.)
+
+This is a trade-off. Image pages where the Low entry gated hydration
+hydrate 0.15 to 3.3 s earlier (4 of the 12 image cells); the other image cells
+are unchanged. Text-only pages served over a priority-honouring HTTP/2 link
+hydrate or take the first click 12 to 56 ms later (at most 2.5%). Without the attribute, Chromium fetches
+the hint at High. As the last High request, it is sent after the head chunks:
+the HTTP/2 server sends streams of equal priority first in, first out, so the
+346-byte entry arrives with the last head chunk instead of before it. Placing
+the hint first instead (High, where React writes it) took one of HTTP/1.1's
+six connections ahead of the react chunk: on image pages over HTTP/1.1 that
+measured LCP +84 ms (Fast 4G) and hydration +91 ms (Slow 4G), so the tag
+moves.
+
+Measured with Chromium 153 through CDP, 20 interleaved runs per variant and
+cell, 36 cells: image, text and text+CSS pages; HTTP/1.1 and HTTP/2; six link
+profiles. The fixture has a 346-byte entry, ten head chunk scripts of about
+304 KB gzip, and, on the image page, a 342 KB hero plus 12 thumbnails above the
+fold. `relay-*` profiles run through a link emulator that keeps the server's
+priority order; the others use DevTools throttling. Median change, after minus
+before, in ms, with 95% CIs:
+
+| Page / protocol / link   | Hydration                   | First click                 | LCP                    |
+| ------------------------ | --------------------------- | --------------------------- | ---------------------- |
+| images / h1 / Fast 4G    | -912 [-915, -908] (-47%)    | -906 [-913, -904] (-47%)    | -160 [-172, -150]      |
+| images / h1 / relay Fast | -884 [-894, -870] (-55%)    | -860 [-883, -845] (-53%)    | -96 [-122, -60]        |
+| images / h2 / relay Slow | -3321 [-3498, -3315] (-43%) | -3333 [-3452, -3261] (-43%) | -322 [-1040, 142] n.s. |
+| images / h2 / relay Fast | -153 [-157, -137] (-14%)    | -158 [-167, -150] (-14%)    | +22 [-32, 86] n.s.     |
+| text / h2 / relay Slow   | +56 [4, 58] (+2.5%)         | +4 [-2, 42] n.s.            | -14 [-16, -12]         |
+| text / h2 / relay Fast   | +34 [-1, 53] n.s.           | +12 [3, 35] (+2.0%)         | -4 [-4, 0] n.s.        |
+
+- No FCP or LCP regression is significant in any of the 36 cells. The other
+  significant regressions are +9 ms hydration on text / h1 / Slow 4G
+  (CI [2, 109], +0.3%) and +2 ms first click on text+CSS / h1 with no
+  throttling at 1x CPU (CI [1, 4]).
+- CDP confirms the priority change: the entry request is `Low` (initial and
+  final) in all 1440 runs before and `High` in all 1440 runs after, with
+  exactly one entry request per run in both.
+- Limits: one machine (Apple M5 Pro), loopback, emulated links with no TCP slow
+  start, loss or jitter, one synthetic fixture. The HTTP/2 server is Node's
+  `http2` (nghttp2), which honours Chromium's priorities and sends
+  equal-priority streams first in, first out. CDNs schedule differently, and
+  the text-page cost depends on that scheduling.
+- `headScripts: "preload"` and custom SSR entries without `headScripts` keep
+  the inline `import()` bootstrap, which has no entry hint: unchanged.
+- With `headScripts: { mode: "preinit", fetchPriority: "low" }` the head
+  chunks are Low while the entry hint is now High, after them. That
+  combination was not measured.
+- The tag is only ever placed between two complete tags React wrote: an
+  inline `<script>` or `<style>` in your `<head>` is never scanned, so text
+  such as `"<body>"` or `"</head>"` inside it can't attract the tag.
 
 ## 0.19.1 (2026-10-01)
 

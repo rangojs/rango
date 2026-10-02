@@ -119,15 +119,15 @@ export function runWithPreinitNonce<T>(
  * Known trades (deliberate, measured neutral-to-positive on the e2e apps —
  * PR #694 has the Lighthouse/hydration numbers):
  * - Fetch priority: Chromium gives a parser-inserted `async` module script
- *   initial priority High: above the entry's `modulepreload
- *   fetchpriority="low"` hint (Low), below the render-blocking stylesheet
- *   (Highest), and alongside the LCP image once Chromium boosts the
- *   in-viewport image to High (#1021). Every head chunk gets the same
- *   priority: the shared dependency chunks (react, router, entry.rsc and the
- *   bundler runtime) and every client-component chunk; the entry itself is a
- *   Fizz bootstrapModules
- *   hint, not a preinit, and stays Low. `fetchPriority: "low"` opts the
- *   chunks down; the default is `"auto"`
+ *   initial priority High: below the render-blocking stylesheet (Highest),
+ *   and alongside the LCP image once Chromium boosts the in-viewport image to
+ *   High (#1021). Every head chunk gets the same priority: the shared
+ *   dependency chunks (react, router, entry.rsc and the bundler runtime) and
+ *   every client-component chunk. The entry itself is a Fizz bootstrapModules
+ *   hint, not a preinit (Fizz claims its URL, so this hook's call for it is
+ *   inert); the handlers serve that hint at default priority, High as well,
+ *   after these scripts (entry-preload-priority.ts, #1025).
+ *   `fetchPriority: "low"` opts the chunks down; the default is `"auto"`
  *   ({@link DEFAULT_HEAD_SCRIPT_FETCH_PRIORITY}). react-dom < 19.3.0 and the
  *   experimental channel up to at least 0.0.0-experimental-247fbb45-20260622
  *   drop `fetchPriority` in the public `preinitModule`, so there the tags
