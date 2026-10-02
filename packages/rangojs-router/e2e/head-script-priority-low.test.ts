@@ -1,6 +1,7 @@
 import test, { expect } from "@playwright/test";
 import {
   expectClientLinkNavigation,
+  expectEntryHintAfterHeadChunks,
   fetchDocument,
   headChunkScripts,
 } from "@shared/e2e";
@@ -20,6 +21,10 @@ test.describe("head-script-priority-low", () => {
   test("no head chunk scripts in dev", async () => {
     // plugin-rsc reports no JS deps per client reference in dev.
     expect(headChunkScripts(await fetchDocument(f.url("/")))).toEqual([]);
+  });
+
+  test("the entry hint keeps the default priority (#1025)", async () => {
+    expectEntryHintAfterHeadChunks(await fetchDocument(f.url("/")));
   });
 
   test("a client Link navigates after hydration", async ({ page }) => {
@@ -43,6 +48,17 @@ test.describe("head-script-priority-low (production)", () => {
     for (const tag of scripts) {
       expect(tag).toMatch(/\bfetchpriority="low"/i);
     }
+  });
+
+  test("the entry hint keeps the default priority, after the Low head chunks (#1025)", async () => {
+    // fetchPriority applies to the head chunk scripts only: the entry hint is
+    // served without the attribute and after them, so here it is the one High
+    // script request in the head.
+    const html = await fetchDocument(f.url("/"));
+    const hint = expectEntryHintAfterHeadChunks(html);
+    const chunks = headChunkScripts(html);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(html.indexOf(hint)).toBeGreaterThan(html.indexOf(chunks.at(-1)!));
   });
 
   test("a client Link navigates after hydration", async ({ page }) => {

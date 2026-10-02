@@ -258,7 +258,8 @@ Notes:
   default `"auto"` adds no attribute) stamps `fetchpriority="low"` on every
   head chunk script: the shared dependency chunks (react, router, entry.rsc,
   the bundler runtime) and every client-component chunk. The entry is not one
-  of them; its `modulepreload` hint is already Low. Chromium otherwise fetches
+  of them: its `modulepreload` hint stays at the default priority, so
+  hydration does not wait behind images (#1025). Chromium otherwise fetches
   those scripts at High, next to the stylesheet and the LCP image; #1021
   measured earlier FCP and LCP under Slow 4G with hydration unchanged. The
   risk: on image-heavy pages and on HTTP/1.1 the Low chunks can queue behind

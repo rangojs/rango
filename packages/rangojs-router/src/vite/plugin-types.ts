@@ -160,8 +160,10 @@ interface RangoBaseOptions {
    * - `"preinit"` (**default**): client-reference chunks render as EXECUTING
    *   `<script type="module" async>` tags hoisted into `<head>` (upgrading
    *   plugin-rsc's modulepreload hints in place), and the browser entry ships
-   *   as Fizz `bootstrapModules` — a head `modulepreload fetchpriority=low`
-   *   hint plus the executing end-of-shell `id="_R_"` module script. Chunk
+   *   as Fizz `bootstrapModules` — a `modulepreload` hint after the head
+   *   chunk scripts (default priority; Fizz's `fetchpriority=low` is dropped,
+   *   #1025)
+   *   plus the executing end-of-shell `id="_R_"` module script. Chunk
    *   execution overlaps body streaming instead of waiting for the hydration
    *   import walk; under PPR everything lands in the stored shell prelude.
    * - `"preload"`: the previous behavior — `<link rel="modulepreload">` hints
@@ -172,7 +174,8 @@ interface RangoBaseOptions {
    *   the same output as `"preinit"`. `"low"` stamps `fetchpriority="low"` on
    *   every head chunk script: the shared dependency chunks (react, router,
    *   entry.rsc, the bundler runtime) and every client-component chunk. The
-   *   entry is not one of them; its `modulepreload` hint is already Low.
+   *   entry is not one of them; its `modulepreload` hint keeps the default
+   *   priority.
    *   Chromium fetches these scripts at High otherwise, sharing bandwidth
    *   with the render-blocking stylesheet and the LCP image; #1021 measured
    *   `"low"` under Slow 4G at 200-290 ms earlier FCP and 120-520 ms earlier

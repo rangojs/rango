@@ -3,6 +3,10 @@ import { createSsrRootComponent, deserializeSsrPayload } from "./ssr-root.js";
 import { injectRSCPayloadEager } from "./inject-rsc-eager.js";
 import { runWithPreinitNonce } from "./preinit-client-references.js";
 import {
+  entryPreloadPriorityTransform,
+  rewriteEntryPreloadPriority,
+} from "./entry-preload-priority.js";
+import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
@@ -554,13 +558,18 @@ type BootstrapOptions = Pick<
  * `headScripts: "preinit"`, getClientEntryUrl() (sync — nothing to race)
  * short-circuits to bootstrapModules, and inline content that is exactly
  * `import("<entry-url>")` converts to the URL. React then emits a
- * `<link rel="modulepreload" fetchpriority="low">` hint in the head plus the
- * executing `<script type="module" src async>` at end of shell — the entry
- * fetch starts with the first flushed bytes instead of when the parser reaches
- * an opaque inline script that only reveals the URL once executed. Fizz stamps
- * the request nonce on both tags, and under PPR both land in the stored
- * prelude; on resume React has already cleared the bootstrap fields from the
- * postponed state, so nothing re-emits. The conversion is an explicit opt-in:
+ * `<link rel="modulepreload">` hint in the head plus the executing
+ * `<script type="module" src async>` at end of shell — the entry fetch starts
+ * with the first flushed bytes instead of when the parser reaches an opaque
+ * inline script that only reveals the URL once executed. Fizz writes that hint
+ * with `fetchPriority="low"` ahead of the head chunk scripts; the handlers
+ * serve it without the attribute after the head chunk scripts
+ * (entry-preload-priority.ts, issue #1025), because at Low the entry queued
+ * behind in-viewport images and gated hydration (+3.8 s measured on a
+ * prioritising HTTP/2 link). Fizz stamps the request nonce on both tags, and
+ * under PPR both land in the stored prelude; on resume React has already
+ * cleared the bootstrap fields from the postponed state, so nothing re-emits.
+ * The conversion is an explicit opt-in:
  * undefined headScripts (a custom SSR entry that predates the option, which
  * also never installed the preinit hook) keeps the inline bootstrap
  * byte-for-byte — converting by default would break CSPs that allowlist the
@@ -750,8 +759,15 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         await htmlStream.allReady;
       }
 
+      // The entry's Fizz hint at default priority, after the head chunk
+      // scripts (entry-preload-priority.ts).
+      const entryUrl = bootstrap.bootstrapModules?.[0];
+      const html = entryUrl
+        ? htmlStream.pipeThrough(entryPreloadPriorityTransform(entryUrl, nonce))
+        : htmlStream;
+
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
-      return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
+      return html.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
     } catch (error) {
       reportRenderError(onError, error);
       throw error;
@@ -956,6 +972,12 @@ export function createShellCaptureHandler<TEnv = unknown>(
         const result = await prerenderPromise;
         prelude = await readStreamToUint8Array(result.prelude);
         postponed = result.postponed;
+        // Same hint rewrite as renderHTML, applied to the stored prelude; a
+        // resume never re-emits the bootstrap pair (Fizz clears it).
+        const entryUrl = bootstrap.bootstrapModules?.[0];
+        if (entryUrl) {
+          prelude = rewriteEntryPreloadPriority(prelude, entryUrl);
+        }
       } catch (error) {
         // Identity match: swallow ONLY our own deliberate abort
         // (error === abortReason). Not error.name — capture aborts before this

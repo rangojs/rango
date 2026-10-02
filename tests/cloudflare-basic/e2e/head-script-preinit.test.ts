@@ -1,6 +1,7 @@
 import test, { expect } from "@playwright/test";
 import {
   expectClientLinkNavigation,
+  expectEntryHintAfterHeadChunks,
   fetchDocument,
   fizzBootstrapScript,
   headChunkScripts,
@@ -14,7 +15,8 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * chunks ship as EXECUTING `<script type="module" async>` tags
  * hoisted into <head> (preinitModule upgrade of plugin-rsc's
  * modulepreload hints), and the browser entry ships as `bootstrapModules` — a
- * head modulepreload hint paired with the executing
+ * head modulepreload hint at default fetch priority, after the head chunk
+ * scripts (#1025), paired with the executing
  * `<script type="module" id="_R_" async>` at end of shell.
  * Mirrors packages/rangojs-router/e2e/head-script-preinit.test.ts; the workerd
  * copy pins that the preinit path (node:async_hooks import included) loads and
@@ -34,6 +36,10 @@ test.describe("head-script-preinit (dev)", () => {
 
     expect(tag).toContain('type="module"');
     expect(modulepreloadHrefs(html)).toContain(src);
+  });
+
+  test("the entry hint is at default fetch priority, in the head (#1025)", async () => {
+    expectEntryHintAfterHeadChunks(await fetchDocument(f.url("/")));
   });
 
   test("page hydrates cleanly under the module bootstrap", async ({ page }) => {
@@ -68,6 +74,18 @@ test.describe("head-script-preinit (production)", () => {
     const { tag, src } = fizzBootstrapScript(html);
     expect(modulepreloadHrefs(html)).toEqual([src]);
     expect(tag).toContain('type="module"');
+  });
+
+  test("the entry hint is at default fetch priority, once, after the head chunk scripts (#1025)", async () => {
+    const html = await fetchDocument(f.url("/"));
+    // Fizz writes this hint as fetchPriority="low" ahead of the head chunk
+    // scripts; the SSR handler drops the attribute (hydration no longer
+    // queues behind in-viewport images) and moves the tag after the
+    // head chunk scripts (it no longer takes a connection ahead of a chunk).
+    const hint = expectEntryHintAfterHeadChunks(html);
+    const chunks = headChunkScripts(html);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(html.indexOf(hint)).toBeGreaterThan(html.indexOf(chunks.at(-1)!));
   });
 
   test("head chunk scripts carry no fetchpriority by default", async () => {

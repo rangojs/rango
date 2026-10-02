@@ -1,6 +1,7 @@
 import test, { expect } from "@playwright/test";
 import {
   expectClientLinkNavigation,
+  expectEntryHintAfterHeadChunks,
   fetchDocument,
   fizzBootstrapScript,
   headChunkScripts,
@@ -13,10 +14,11 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Script-strategy e2e: client-reference chunks ship as EXECUTING
  * `<script type="module" async>` tags hoisted into <head>
  * (preinitModule upgrade of plugin-rsc's modulepreload hints), and the browser
- * entry ships as `bootstrapModules` — a head
- * `<link rel="modulepreload" fetchpriority="low">` hint paired with the
- * executing `<script type="module" id="_R_" async>` at end of shell. See
- * src/ssr/preinit-client-references.ts. The opt-in `fetchPriority: "low"`
+ * entry ships as `bootstrapModules` — a head `<link rel="modulepreload">` hint
+ * (default fetch priority, after the head chunk scripts, #1025) paired with
+ * the executing `<script type="module" id="_R_" async>` at end of shell. See
+ * src/ssr/preinit-client-references.ts and src/ssr/entry-preload-priority.ts.
+ * The opt-in `fetchPriority: "low"`
  * build is covered by head-script-priority-low.test.ts.
  */
 
@@ -31,6 +33,10 @@ test.describe("head-script-preinit", () => {
     // script (not an inline import()) whose hint precedes it in <head>.
     expect(tag).toContain('type="module"');
     expect(modulepreloadHrefs(html)).toContain(src);
+  });
+
+  test("dev: the entry hint is at default fetch priority, in the head (#1025)", async () => {
+    expectEntryHintAfterHeadChunks(await fetchDocument(f.url("/")));
   });
 
   test("dev: page hydrates cleanly under the module bootstrap", async ({
@@ -75,6 +81,18 @@ test.describe("head-script-preinit (production)", () => {
     const { tag, src } = fizzBootstrapScript(html);
     expect(modulepreloadHrefs(html)).toEqual([src]);
     expect(tag).toContain('type="module"');
+  });
+
+  test("the entry hint is at default fetch priority, once, after the head chunk scripts (#1025)", async () => {
+    const html = await fetchDocument(f.url("/"));
+    // Fizz writes this hint as fetchPriority="low" ahead of the head chunk
+    // scripts; the SSR handler drops the attribute (hydration no longer
+    // queues behind in-viewport images) and moves the tag after the
+    // head chunk scripts (it no longer takes a connection ahead of a chunk).
+    const hint = expectEntryHintAfterHeadChunks(html);
+    const chunks = headChunkScripts(html);
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(html.indexOf(hint)).toBeGreaterThan(html.indexOf(chunks.at(-1)!));
   });
 
   test("head chunk scripts carry no fetchpriority by default", async () => {

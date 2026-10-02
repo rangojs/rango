@@ -349,6 +349,40 @@ export function modulepreloadHrefs(html: string): string[] {
 }
 
 /**
+ * The `<link rel="modulepreload">` tags for `href`, in document order. For the
+ * client entry Fizz writes exactly one (the `bootstrapModules` hint).
+ */
+export function modulepreloadTagsFor(html: string, href: string): string[] {
+  return scriptAndLinkTags(html).filter(
+    (t) => t.includes('rel="modulepreload"') && t.includes(`href="${href}"`),
+  );
+}
+
+/**
+ * The client entry's `<link rel="modulepreload">` hint as the SSR handler
+ * serves it (#1025): exactly one, no `fetchpriority` (Chromium's
+ * modulepreload default, High, instead of Fizz's Low), inside `<head>`, and
+ * after every head chunk script. Returns the tag.
+ */
+export function expectEntryHintAfterHeadChunks(html: string): string {
+  const { src } = fizzBootstrapScript(html);
+  const hints = modulepreloadTagsFor(html, src);
+  expect(hints, "exactly one entry modulepreload hint").toHaveLength(1);
+  const hint = hints[0]!;
+  expect(hint).not.toMatch(/\bfetchpriority=/i);
+  const hintAt = html.indexOf(hint);
+  expect(hintAt, "the entry hint is in <head>").toBeLessThan(
+    html.indexOf("</head>"),
+  );
+  for (const tag of headChunkScripts(html)) {
+    expect(html.indexOf(tag), `${tag} precedes the entry hint`).toBeLessThan(
+      hintAt,
+    );
+  }
+  return hint;
+}
+
+/**
  * The executing `<script type="module" async src>` client-reference chunk tags
  * in `<head>` (the `headScripts: "preinit"` upgrade). Fizz renders the
  * attribute as `fetchPriority=`; HTML attribute names are case-insensitive, so
