@@ -257,6 +257,8 @@ path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
 | Replay of a shell without pins when the loader's run makes no push                                          | new price, **captured** note                          | new price, no note                 |
 | Replay of a shell without pins, loader with its own `cache()` whose entry is newer than the shell           | entry's price, **shell's** note                       | entry's price, entry's note        |
 | `ppr` route under a route `cache()`, document request that hits the route record and the loader's own entry | entry's price, **record's** note                      | entry's price, entry's note        |
+| Any replay, pinned loader that pushed no note at capture and pushes one when it runs on the replay          | captured price, **new** note                          | captured price, no note            |
+| Replay of a shell without pins, loader with its own `cache()` whose entry was stored without its pushes     | entry's price, **shell's** note                       | entry's price, no note             |
 | Client navigation that replays a shell captured by a navigation alone (no pins), loader pushes on its run   | new price, new note                                   | unchanged                          |
 | Loader without `ssr: false` (a hole)                                                                        | its run's or its entry's data and pushes              | unchanged                          |
 
@@ -273,18 +275,38 @@ What an app that never saw these bugs can notice:
   data on that navigation was already the captured data; the pushes now match
   it. They change when the shell is recaptured (TTL/SWR or a tag), or make the
   value live: push it from a loader without `ssr: false`, or push a promise.
-- When a shell is stored without loader pins, a run that pushes nothing, or
-  pushes in a different order, now decides the handle output on a document
-  HIT too. A loader that pushes, awaits another loader that pushes, and
-  pushes again gets its own pushes next to each other on such a replay.
+- A pinned loader's settled pushes are exactly the ones its capture made. A
+  loader that pushes behind a condition shows the capture's answer on every
+  replay of that shell, a push or none. Before, a push it made only on the
+  replay showed next to the captured data. A deferred (promise) push is still
+  delivered on every replay.
+- When a shell is stored without loader pins, a run that pushes nothing now
+  decides the handle output on a document HIT too.
+- Handle pushes keep the order the loader made them in, wherever a run
+  replaces recorded copies of them (a shell without pins, a `"use cache"` or
+  loader `cache()` replay followed by a live run). A loader that pushes,
+  awaits another loader that pushes, and pushes again shows
+  `[own, other, own]`, the order an uncached render and its own cache entry
+  give. Before, such a run put the loader's own pushes next to each other
+  (`[own, own, other]`).
+- A loader `cache()` entry that was stored without its pushes shows none on
+  a replay of a shell without pins, where the shell's copy used to stay. Such
+  an entry is written when another loader started the cached loader first
+  (#1002, below) or when its handle encode timed out. It refills with its
+  pushes on its next miss.
+- A corner that got worse: a shell entry that lost one loader pin but not all
+  of them (a pin that failed to encode or decode) shows, on a document HIT,
+  the live push of a loader that a still-pinned `ssr: false` loader awaits
+  with `ctx.use()`, next to that loader's captured data. Before, a document
+  HIT kept the captured push there; a client navigation already showed the
+  live one. Registering the awaited loader on the route with
+  `loader(Dep, { ssr: false })` gives it a pin of its own.
 
 Not fixed here: a loader that reads a `cache()`-bound loader with `ctx.use()`
 before that binding starts (a loader declared ahead of it, a parent layout)
 still runs it live while the binding serves its cache entry, so the page can
 show the entry's data next to the live run's push (#1002). Declare the cached
-loader first, or read it from the handler, until that lands. And an
-`ssr: false` loader that pushed nothing when the shell was captured but pushes
-on a replay still shows that push next to its captured data.
+loader first, or read it from the handler, until that lands.
 
 ## 0.20.0 (2026-10-03)
 

@@ -939,13 +939,19 @@ in the background, and that push reaches the page (from the loader's own
 a client navigation alike; a push that lands after the document's handle
 snapshot reaches the client after hydration.
 
-Two arrangements still mix sources, and both are tracked in
+A pinned loader's pushes are exactly the ones its capture made. If its body
+pushes a settled value only on some runs (behind a condition), a replay that
+runs it shows the capture's answer, a push or none, never a later run's next
+to the pinned data. A deferred push is the exception by design: it is
+delivered on every replay.
+
+One arrangement still mixes sources, tracked in
 `docs/design/handle-push-ownership.md`. A loader that reads a `cache()`-bound
 loader with `ctx.use()` before that binding starts (a loader declared ahead
 of it, a parent layout) runs it live while the binding serves its entry
-(#1002): declare the cached loader first, or read it from the handler. And
-an `ssr: false` loader that pushed nothing at capture but pushes on a replay
-shows that push next to its pinned data: push from every run, or from none.
+(#1002): declare the cached loader first, or read it from the handler. An
+entry such a request writes holds no pushes, and a later HIT of it then
+shows none for that loader.
 
 Four hard edges (each e2e/unit-pinned):
 

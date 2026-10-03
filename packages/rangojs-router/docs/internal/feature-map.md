@@ -606,7 +606,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
   against the settled pushes of a run of that loader on the replay (made in
   its body or replayed from a cache entry inside it), on a document HIT and
   a client navigation alike; every other owner's, a live-lane loader's and a
-  loader's whose pin the entry lost, go through `pushReplayed` as
+  loader's whose pin the entry lost, go through `pushPlaceholder` as
   placeholders its run or its own `cache()` entry replaces; see
   `docs/design/caching.md` and `docs/design/handle-push-ownership.md`).
 

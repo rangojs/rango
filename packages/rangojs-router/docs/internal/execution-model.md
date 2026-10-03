@@ -80,10 +80,15 @@ global middleware
   loader's pushes at most once per request: a dependency that a sibling loader
   or the handler already ran keeps its live pushes, and a dependency that
   runs after the replay replaces its replayed values with its live pushes,
-  in their position (handle output stays live like the data). A stale hit's
+  in their position (handle output stays live like the data). The order is
+  the push order of the run that produced the value, whether an entry
+  replays it or a run replaces copies: a loader that pushes, awaits a
+  dependency that pushes, and pushes again shows `[own, dependency, own]`
+  on both. A stale hit's
   background refresh runs on its own loader executor, so it never takes the
   page's run of a dependency. Source: `replayLoaderHandles` in
-  `loader-cache.ts`, `_claimLoaderPushes` in `loader-resolution.ts`
+  `loader-cache.ts`, `appendHandles` in `handle-snapshot.ts`,
+  `_claimLoaderPushes` in `loader-resolution.ts`
   (`setupLoaderAccess`), `pushReplayed` in `handle-store.ts`; pinned by
   `loader-cache-handles.test.ts` and `handle-store.test.ts`.
 - One value per loader per request: once a loader's `cache()` binding
@@ -117,28 +122,31 @@ global middleware
   settled pushes of each loader body the capture ran (an `ssr: false`
   loader's own and those of the loaders it awaits), and a replay restores
   them by where it takes each loader's data from, which the loader seed
-  answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`), not
-  the request's type:
+  answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`, the
+  seed keyed by loader id), not the request's type:
   - A loader served from its pin: its pushes go through `pushRestored` and
     stand, unclaimed. A promise-free `ssr: false` loader does not run on the
     replay, so they are the only copy; a loader that does run (a
     hole-carrying `ssr: false` loader) reads the store, and its settled
     pushes, and those made anywhere inside its body (a `"use cache"` hit
     replaying a dependency's push), are dropped, while its deferred ones are
-    added; its own `cache()` HIT replays the same way. This holds on a
+    added; its own `cache()` HIT replays the same way. The record is the
+    whole of that loader's settled pushes, so this holds when it has no copy
+    too: a push the capture's run did not make is not shown next to the
+    pinned data. This holds on a
     document HIT, a client navigation and a prefetch that replay the shell,
     and on the seeded fallback after an explicit route `cache()` miss (#1001,
     #1003).
   - Any other loader is a hole: one the route runs on the live lane, or an
     `ssr: false` loader the entry has no pin for (a navigation-only entry,
     pins dropped by `maxSnapshotBytes`). Its pushes are restored through
-    `pushReplayed` as placeholders, unclaimed. Its run replaces them in place
+    `pushPlaceholder`, unclaimed. Its run replaces them in place
     (#936), even when a running pinned loader awaits it (a hole's body ends
     the search for an enclosing restored loader); a run that settles without
     a push drops them (`settleLoaderRun`); and its own `cache()` HIT delivers
     the pushes the entry recorded, none when it recorded none, in their
     place, for itself and for the dependencies the entry recorded
-    (`redeliverReplays`).
+    (`replacePlaceholders`).
   - A dependency the route registers on neither lane is credited at capture
     to the first registered loader around it: under a live-lane loader its
     pushes are that hole's; run only under a bake-lane loader, they are

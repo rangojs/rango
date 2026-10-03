@@ -208,16 +208,18 @@ produces is baked" below):
    `restoreHandles` decides each owner's values by where the request takes
    that loader's data from, and the answer comes from the loader seed, the
    same thing `resolveLoaderData` serves the data from (`servedPins` and
-   `loaderPins` in `router/segment-resolution/loader-cache.ts`). A loader the
-   replay serves from its pin gets its values back through
-   `HandleStore.pushRestored`, and they stand: its run on the replay reads
-   the store, so its settled pushes, and those made anywhere inside its body
-   (a `"use cache"` hit replaying a dependency's push), are dropped, and only
-   its thenable pushes are added. Every other owner is a hole, and its values
-   are placeholders that go back through `pushReplayed` (the mechanism a
-   loader's own `cache()` replay uses): its run's first push removes them and
-   takes the first one's position, so each value appears once and the run's
-   value wins, even when a restored loader running on the replay awaits it.
+   `loaderPins` in `router/segment-resolution/loader-cache.ts`; the seed is
+   keyed by loader id). A loader the replay serves from its pin gets its
+   values back through `HandleStore.pushRestored`, and they stand: its run
+   on the replay reads the store, so its settled pushes, and those made
+   anywhere inside its body (a `"use cache"` hit replaying a dependency's
+   push), are dropped, and only its thenable pushes are added. That holds
+   for a pinned loader the record has no copy for too: its capture pushed
+   nothing, so its run on the replay adds no settled push. Every other owner
+   is a hole, and its values are placeholders (`pushPlaceholder`): its run's
+   first push removes them and takes the first one's position, so each value
+   appears once and the run's value wins, even when a restored loader
+   running on the replay awaits it.
    A loader the route runs on the live lane is always a hole. An `ssr: false`
    loader is one exactly when the entry has no pin for it: a navigation-only
    entry, an entry whose pins `maxSnapshotBytes` dropped, a pin that failed

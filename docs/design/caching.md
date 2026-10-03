@@ -644,31 +644,44 @@ in `CachedEntryData.handleOwners`.
 **An owned value follows its loader's value.** A copy of a loader's push in a
 record is only right next to the loader data of the same run, so
 `restoreHandles` asks where this request takes that loader's value from
-before it decides what the copy is (`OwnedPushDelivery`, built by `loaderPins`
-in `src/router/segment-resolution/loader-cache.ts` over the same seed
-`resolveLoaderData` reads the value from):
+before it decides what the copy is. The answer is one function per record
+hit, `OwnedPushDelivery = (loaderId) => RecordAuthority`, built by
+`loaderPins` in `src/router/segment-resolution/loader-cache.ts` over the pins
+`resolveLoaderData` reads the value from (`servedPins`; the seed is keyed by
+loader id, so both look a loader up the same way). `CacheScope` hands the
+same function to the store (`HandleStore.setRecordAuthority`), with or
+without a handles blob in the record:
 
-| The request serves the loader from                                         | Its copy in the record is                                                                                                                                                                                                          |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the pin stored with this record (a shell replay that kept its loader pins) | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its settled pushes, anywhere inside its body, are dropped; its thenable pushes, which the record could not keep, are added |
-| anything else: a run, or the loader's own `cache()` entry                  | a placeholder (`pushReplayed`, unclaimed, and the loader a hole): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                    |
+| The request serves the loader from                                         | Authority | Its copy in the record is                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the pin stored with this record (a shell replay that kept its loader pins) | `"pin"`   | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its settled pushes, anywhere inside its body, are dropped, with or without a copy in the record; its thenable pushes are added |
+| anything else: a run, or the loader's own `cache()` entry                  | `"hole"`  | a placeholder (`pushPlaceholder`, unclaimed): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                                            |
 
-The left column is a document HIT, a navigation replay, a prefetch replay and
+Two more answers cover what the record cannot say. `"copies"`: the copies
+stand and nothing is claimed about the loader's other pushes (a pin stored
+before captures recorded every push, v0.17, whose record may hold none of
+them; a dependency of pinned loaders). `"placeholders"`: the copies are
+placeholders and the loader is no hole in itself (a dependency while a pin is
+missing).
+
+The first row is a document HIT, a navigation replay, a prefetch replay and
 the seeded fallback after an explicit route `cache()` miss, all alike. The
-right column is every live-lane loader, and every loader of a record without
+second is every live-lane loader, and every loader of a record without
 pins: a shell entry that lost them (a navigation-only entry,
 `ppr.maxSnapshotBytes`), a route `cache()` record a capture wrote, and any
-record restored during a capture. Until #1001 and #1003 the request's type
+record restored during a capture. Only a ppr route gets a delivery at all
+(`isPprEntry`, in `withCacheLookup`): no other route's records hold a loader
+push, so they restore as a plain replay. Until #1001 and #1003 the request's type
 decided instead (`docTail` restored, a navigation replayed and claimed): a
 navigation showed pinned data next to a live push and lost the deferred push
 of the loader's `cache()` entry, and a document HIT of an entry without pins
 showed fresh data next to the capture's push. The design, and what is still
 open, is in `docs/design/handle-push-ownership.md`.
 
-A hole's body also ends the search for a restored loader around a push
-(`HandleStore.markHoles`), so a live loader that a running bake-lane loader
-awaits keeps its live pushes. A dependency the route registers on neither
-lane is credited at capture to the first registered loader around it: under
+A hole's body also ends the search for a restored loader around a push (a
+`"hole"` loader, or one with placeholders), so a live loader that a running
+bake-lane loader awaits keeps its live pushes. A dependency the route
+registers on neither lane is credited at capture to the first registered loader around it: under
 a live-lane loader its pushes are that hole's and stay live; run only under
 a bake-lane loader, its pushes are recorded under its own id. Such a
 dependency has no pin of its own, and the record does not name the loader
@@ -1096,10 +1109,14 @@ This requires separating:
   tags the slot with its loader. When that loader's live run pushes (the
   store reads the innermost loader body, `getCurrentLoaderBodyId()`), its
   first push removes every slot replayed for it and takes the first one's
-  position in that handle/segment array, and its later pushes follow the
-  previous one. A live push to another segment (the dependency's owning
-  segment is its kickoff's `_currentSegmentId`) removes the replayed slots
-  and lands where it is pushed.
+  position in that handle/segment array, and the pushes of that run follow
+  in push order: a dependency's push made inside the run counts toward the
+  loader's position too (`SlotTag.under`), so a loader that pushes, awaits
+  a dependency that pushes, and pushes again ends as
+  `[own, dependency, own]`, the order its entry's HIT replays. A live push
+  to another segment (the dependency's owning segment is its kickoff's
+  `_currentSegmentId`) removes the replayed slots and lands where it is
+  pushed.
 
   Why the position and not an append: the common shape is a cached loader
   that pushes its own crumb after awaiting the dependency. On the miss the
@@ -1120,21 +1137,27 @@ This requires separating:
   The live pushes go through `push()`, so a capture that accepts them sees
   them: another cached loader whose miss reads the same dependency records
   them. A live run that pushes nothing leaves the replayed values in place,
-  unless the loader is a hole (`HandleStore.markHoles`: a loader a restored
-  record does not serve from a pin, see "An owned value follows its loader's
-  value" above): a hole's run ending without a push drops them
-  (`settleLoaderRun`).
+  unless the loader is a hole (a loader a restored record does not serve
+  from a pin, see "An owned value follows its loader's value" above): a
+  hole's run ending without a push drops them (`settleLoaderRun`). A
+  record's placeholders always go when their loader's run ends without a
+  push.
 
   **A HIT takes the place of a record's placeholders.** A record restored
   before the loaders resolve can hold placeholders for the loaders this
   entry is about to deliver: the cached loader itself and the dependencies
   its entry recorded. `restoreHandles` leaves them unclaimed for that reason.
-  The replay claims each of those loaders and hands the claimed ones to
-  `HandleStore.redeliverReplays`, which removes their placeholders and puts
-  the entry's pushes at the first one's position in each array, in recorded
-  order, none when the entry recorded none. So the page shows the pushes of
-  the run that produced the entry's data, each once. A loader that already
-  ran in this request is not claimed and replaces its placeholders itself.
+  The replay (`appendHandles`, the one replay for a loader entry and a
+  `"use cache"` entry) claims each of those loaders and hands the claimed
+  ones to `HandleStore.replacePlaceholders`, which removes their
+  placeholders and puts the entry's pushes at the first one's position in
+  each array, in recorded order, none when the entry recorded none. So the
+  page shows the pushes of the run that produced the entry's data, each
+  once. A loader that already ran in this request is not claimed and
+  replaces its placeholders itself. An entry stored without handles (a MISS
+  a reader started first, #1002, or a handle encode that timed out) is taken
+  as it is: the cached loader's placeholder goes and no push shows for it.
+  An entry that always holds its pushes belongs to the #1002 change.
 
   The stale revalidation runs on its own loader executor
   (`ctx._runLoaderIsolated`, a fresh memo map). Sharing the request's
@@ -1156,13 +1179,15 @@ This requires separating:
   caller ctx's `_claimLoaderPushes` and replays it through
   `HandleStore.pushReplayed`, so the table above applies unchanged, and a
   claimed loader's record placeholders give way to the entry's copy through
-  `redeliverReplays`, as for a loader's own entry. The stale
-  refresh reads loaders through `ctx._runLoaderIsolated` and never claims
-  (`refreshView`, `src/cache/cache-runtime.ts`); without a claim nothing is
-  redelivered, because the refresh's pushes are diverted and removing the
-  page's placeholders for them would leave the page without the push. Entries
-  written before owner keys carry segment-id keys (no `:`) and replay in
-  full, as before.
+  `replacePlaceholders`. A loader's own entry goes through the same function
+  with the cached loader as `unitLoader`. The stale refresh reads loaders
+  through `ctx._runLoaderIsolated` and never claims (`refreshView`,
+  `src/cache/cache-runtime.ts`). No claim means exactly that: the caller's
+  pushes are diverted off the page, so every group is delivered (into the
+  diverting capture) and no placeholder is touched, or the page would lose
+  the push. A group without an owner (`${seq}:`, or a segment-id key from an
+  entry written before owner keys) is the unit's own: the cached loader's
+  for a loader entry, a plain push for a function.
 
 ---
 
