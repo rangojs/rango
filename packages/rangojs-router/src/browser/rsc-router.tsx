@@ -43,6 +43,7 @@ import {
   clearLocationStateOnDocumentLoad,
   stripShellMissMarker,
 } from "./history-state.js";
+import { setLocationStateVersion } from "./react/location-state-shared.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 // Vite HMR types are provided by vite/client
@@ -217,6 +218,8 @@ export async function initBrowserApp(
   // default name active during that wait would discard this router's messages.
   const version = initialPayload.metadata?.version;
   initRangoState(version ?? "0", initialPayload.metadata?.stateCookieName);
+  // Before anything can read location state: hydration starts further down.
+  setLocationStateVersion(version);
 
   // Seed the intercept-target set for the initial location so the FIRST
   // clientUrls navigation already declines intercepted targets (refreshed on

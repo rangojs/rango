@@ -20,8 +20,9 @@ import { LoaderRedirect } from "../../loader-redirect.js";
 // (history-state.ts clearLocationStateOnDocumentLoad) before hydrating.
 //
 // A seed is `[definition, value]` and lands under the definition's own key,
-// so "state another deploy stored" is a seed through that deploy's definition
-// (the same name, other options).
+// so "state an older release stored" is a seed through that release's
+// definition (the same name, its type and options). The app version of
+// location state is covered in location-state-version.test.tsx.
 
 type Grid = { count: number };
 
@@ -31,25 +32,22 @@ afterEach(() => {
   window.history.replaceState(null, "");
 });
 
-describe("renderRoute: createLocationState({ version, validate })", () => {
+describe("renderRoute: createLocationState({ validate })", () => {
   const isGrid = (value: unknown): value is Grid =>
     typeof (value as Grid | null)?.count === "number";
-  const GridV2 = withLocationStateKey(
-    createLocationState<Grid>({ version: 2, validate: isGrid }),
+  const GridState = withLocationStateKey(
+    createLocationState<Grid>({ validate: isGrid }),
     "Grid",
   );
-  const GridV1 = withLocationStateKey(
-    createLocationState<{ total: number }>({ version: 1 }),
-    "Grid",
-  );
-  const GridUnversioned = withLocationStateKey(
+  // The same slot as an older release typed it.
+  const OlderGridState = withLocationStateKey(
     createLocationState<{ total: number }>(),
     "Grid",
   );
 
   function Reader() {
     const router = useRouter();
-    const grid = useLocationState(GridV2);
+    const grid = useLocationState(GridState);
     return (
       <div>
         <p data-testid="count">{grid ? grid.count : "none"}</p>
@@ -57,7 +55,7 @@ describe("renderRoute: createLocationState({ version, validate })", () => {
           data-testid="more"
           onClick={() =>
             router.push("/grid?page=2", {
-              state: [GridV2({ count: (grid?.count ?? 0) + 1 })],
+              state: [GridState({ count: (grid?.count ?? 0) + 1 })],
             })
           }
         />
@@ -66,55 +64,46 @@ describe("renderRoute: createLocationState({ version, validate })", () => {
   }
   const routes = [{ path: "/grid", Component: Reader }];
 
-  it("reads its own version on a mount, after a push and after a document load", async () => {
+  it("reads a value it accepts on a mount, after a push and after a document load", async () => {
     const mounted = await renderRoute(routes, {
-      locationState: [[GridV2, { count: 3 }]],
+      locationState: [[GridState, { count: 3 }]],
     });
     expect(mounted.getByTestId("count").textContent).toBe("3");
-    expect(window.history.state).toEqual({ "__rsc_ls_Grid~v2": { count: 3 } });
+    expect(window.history.state).toEqual({ __rsc_ls_Grid: { count: 3 } });
 
     fireEvent.click(mounted.getByTestId("more"));
     await waitFor(() =>
       expect(mounted.getByTestId("count").textContent).toBe("4"),
     );
     expect(window.history.state).toMatchObject({
-      "__rsc_ls_Grid~v2": { count: 4 },
+      __rsc_ls_Grid: { count: 4 },
     });
     mounted.unmount();
 
     const loaded = await renderRoute(routes, {
       hydrate: true,
-      locationState: [[GridV2, { count: 3 }]],
+      locationState: [[GridState, { count: 3 }]],
     });
     expect(loaded.serverHtml).toContain(">none<");
     expect(loaded.recoverableErrors).toEqual([]);
     expect(loaded.getByTestId("count").textContent).toBe("3");
   });
 
-  it.each([
-    ["an older version", GridV1, { total: 9 }],
-    ["the definition before it had a version", GridUnversioned, { total: 9 }],
-    ["its own version, in a shape validate rejects", GridV2, { total: 9 }],
-  ] as const)(
-    "state stored by %s reads as none, on a mount and on a document load",
-    async (_label, definition, value) => {
-      const seeds = [[definition, value]] as const;
-      const mounted = await renderRoute(routes, { locationState: seeds });
-      expect(mounted.getByTestId("count").textContent).toBe("none");
-      mounted.unmount();
+  it("a value it rejects reads as none, on a mount and on a document load", async () => {
+    const seeds = [[OlderGridState, { total: 9 }]] as const;
+    const mounted = await renderRoute(routes, { locationState: seeds });
+    expect(mounted.getByTestId("count").textContent).toBe("none");
+    mounted.unmount();
 
-      const loaded = await renderRoute(routes, {
-        hydrate: true,
-        locationState: seeds,
-      });
-      expect(loaded.recoverableErrors).toEqual([]);
-      expect(loaded.getByTestId("count").textContent).toBe("none");
-      // The slot nobody reads stays where its writer put it.
-      expect(window.history.state).toEqual({
-        [definition.__rsc_ls_key]: value,
-      });
-    },
-  );
+    const loaded = await renderRoute(routes, {
+      hydrate: true,
+      locationState: seeds,
+    });
+    expect(loaded.recoverableErrors).toEqual([]);
+    expect(loaded.getByTestId("count").textContent).toBe("none");
+    // A rejected slot stays where its writer put it.
+    expect(window.history.state).toEqual({ __rsc_ls_Grid: { total: 9 } });
+  });
 });
 
 describe("renderRoute: createLocationState({ clearOnReload })", () => {

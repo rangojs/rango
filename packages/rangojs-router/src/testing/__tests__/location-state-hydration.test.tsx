@@ -371,10 +371,6 @@ describe("useLocationState late hydration (#992)", () => {
 });
 
 describe("useLocationState with createLocationState options (#994)", () => {
-  const VersionedFlash = withLocationStateKey(
-    createLocationState<{ count: number }>({ flash: true, version: 2 }),
-    "VersionedFlash",
-  );
   // A validate that throws out of the popstate / __rsc_locationstate listeners
   // would leave the reader on the previous entry's value.
   const ThrowingGrid = withLocationStateKey(
@@ -391,34 +387,6 @@ describe("useLocationState with createLocationState options (#994)", () => {
     const state = useLocationState(ThrowingGrid);
     return <p data-testid="count">{state?.count ?? 0}</p>;
   }
-
-  it("a versioned flash reader reads and clears the slot under its own key", async () => {
-    function Flash() {
-      const state = useLocationState(VersionedFlash);
-      return <p data-testid="count">{state?.count ?? 0}</p>;
-    }
-    expect(VersionedFlash.__rsc_ls_key).toBe("__rsc_ls_VersionedFlash~v2");
-    seedHydrated({
-      "__rsc_ls_VersionedFlash~v2": { count: 2 },
-      // The previous version's slot and a pre-version one: never read.
-      "__rsc_ls_VersionedFlash~v1": { count: 1 },
-      __rsc_ls_VersionedFlash: { count: 0 },
-      idx: 1,
-    });
-    const { container, recoverable } = await hydrate(
-      <Flash />,
-      '<p data-testid="count">0</p>',
-      true,
-    );
-
-    expect(recoverable).toEqual([]);
-    expect(container.textContent).toBe("2");
-    expect(window.history.state).toEqual({
-      "__rsc_ls_VersionedFlash~v1": { count: 1 },
-      __rsc_ls_VersionedFlash: { count: 0 },
-      idx: 1,
-    });
-  });
 
   it.each(["popstate", "__rsc_locationstate"])(
     "%s to a slot whose validate throws drops the previous entry's value",

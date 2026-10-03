@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import {
-  replaceCurrentHistoryState,
+  readableLocationState,
   type LocationStateDefinition,
 } from "./location-state-shared.js";
 
@@ -19,11 +19,10 @@ export {
 function readLocationStateValue<TArgs extends unknown[], TState>(
   definition: LocationStateDefinition<TArgs, TState> | undefined,
 ): TState | undefined {
-  if (typeof window === "undefined") return undefined;
   // history.state[key], through the definition so its `validate` applies.
   if (definition) return definition.read();
   // Plain state: stored under history.state.state
-  return window.history.state?.state as TState | undefined;
+  return readableLocationState()?.state as TState | undefined;
 }
 
 /**
@@ -152,12 +151,8 @@ export function useLocationState<TArgs extends unknown[], TState>(
   // Flash: clear from history.state after paint so subsequent navigations don't see it.
   // Depends on `state` so it re-runs when state is set via the event listener.
   useEffect(() => {
-    if (isFlash && key && state !== undefined) {
-      const cleaned = { ...window.history.state };
-      delete cleaned[key];
-      replaceCurrentHistoryState(cleaned);
-    }
-  }, [isFlash, key, state]);
+    if (isFlash && state !== undefined) definition!.delete();
+  }, [isFlash, definition, state]);
 
   return state;
 }

@@ -42,6 +42,7 @@ import {
   type TransitionWhenActionInput,
 } from "./transition-when.js";
 import { buildHistoryState } from "./history-state.js";
+import { addLocationState } from "./react/location-state-shared.js";
 import type { TransitionWhenKind } from "../types/segments.js";
 
 function toScrollPayload(
@@ -279,7 +280,7 @@ export function createPartialUpdater(
             params: metadata.params ?? mergeSegmentParams(segmentsToCommit),
             routeName: metadata.routeName,
             state: tx.traversal
-              ? { ...window.history.state, ...metadata.locationState }
+              ? addLocationState(window.history.state, metadata.locationState)
               : buildHistoryState(tx.state, undefined, metadata.locationState),
           }),
           action:

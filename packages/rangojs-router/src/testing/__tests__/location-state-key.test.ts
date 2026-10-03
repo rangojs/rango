@@ -40,35 +40,36 @@ describe("withLocationStateKey", () => {
     expect(Injected.__rsc_ls_key).toBe("__rsc_ls_Renamed");
   });
 
-  // #994: `version` / `clearOnReload` are a suffix the definition appends to
-  // whatever key it is given, so two definitions of one slot can share a name.
+  // #994: `clearOnReload` is a suffix the definition appends to whatever key
+  // it is given, so two definitions of one slot can share a name.
   it("the definition appends its option suffix to the name; re-keying does not stack it", () => {
-    const V2 = createLocationState<{ count: number }>({
-      version: 2,
+    const Carried = createLocationState<{ count: number }>({
       clearOnReload: true,
     });
-    const V1 = createLocationState<{ count: number }>({ version: 1 });
-    withLocationStateKey(V2, "GridState");
-    withLocationStateKey(V2, "GridState");
-    withLocationStateKey(V1, "GridState");
-    expect(V2.__rsc_ls_key).toBe("__rsc_ls_GridState~v2~r");
-    expect(V1.__rsc_ls_key).toBe("__rsc_ls_GridState~v1");
+    const Plain = createLocationState<{ count: number }>();
+    withLocationStateKey(Carried, "GridState");
+    withLocationStateKey(Carried, "GridState");
+    withLocationStateKey(Plain, "GridState");
+    expect(Carried.__rsc_ls_key).toBe("__rsc_ls_GridState~r");
+    expect(Plain.__rsc_ls_key).toBe("__rsc_ls_GridState");
 
     const Synthetic = withLocationStateKey(
-      createLocationState<{ count: number }>({ version: 3 }),
+      createLocationState<{ count: number }>({ clearOnReload: true }),
     );
     const key = Synthetic.__rsc_ls_key;
-    expect(key).toMatch(/^__rsc_ls_test_\d+~v3$/);
+    expect(key).toMatch(/^__rsc_ls_test_\d+~r$/);
     expect(withLocationStateKey(Synthetic).__rsc_ls_key).toBe(key);
   });
 
   it("rejects a name that contains the reserved suffix separator", () => {
-    const V2 = createLocationState<{ count: number }>({ version: 2 });
-    withLocationStateKey(V2, "GridState");
+    const Carried = createLocationState<{ count: number }>({
+      clearOnReload: true,
+    });
+    withLocationStateKey(Carried, "GridState");
     const Other = createLocationState<{ count: number }>();
-    // Passing a derived key as a name would let a definition without options
-    // read a versioned slot.
-    expect(() => withLocationStateKey(Other, V2.__rsc_ls_key)).toThrow(
+    // Passing a derived key as a name would let a definition without the
+    // option read a clearOnReload slot.
+    expect(() => withLocationStateKey(Other, Carried.__rsc_ls_key)).toThrow(
       /"~", which is reserved/,
     );
     expect(() => withLocationStateKey(Other, "a~b")).toThrow(/reserved/);

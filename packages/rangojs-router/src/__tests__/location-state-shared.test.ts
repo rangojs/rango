@@ -3,6 +3,7 @@ import {
   createLocationState,
   isLocationStateEntry,
   resolveLocationStateEntries,
+  setLocationStateVersion,
 } from "../browser/react/location-state-shared";
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
@@ -393,9 +394,9 @@ function isGridSnapshot(value: unknown): value is GridSnapshot {
   );
 }
 
-// #994: `version` and `clearOnReload` live in the storage KEY, never in the
-// stored value. The key is the persistence contract: slots outlive deploys, so
-// the exact strings are pinned here.
+// #994: `clearOnReload` lives in the storage KEY, never in the stored value.
+// The key is the persistence contract: slots outlive deploys, so the exact
+// strings are pinned here.
 describe("createLocationState storage key", () => {
   // What the Vite plugin injects: `__rsc_ls_<path or hash>#<ExportName>`.
   const INJECTED = "__rsc_ls_a1b2c3d4#Grid";
@@ -428,20 +429,11 @@ describe("createLocationState storage key", () => {
     ["flash", { flash: true }, INJECTED],
     ["validate", { validate: isGridSnapshot }, INJECTED],
     ["clearOnReload: false", { clearOnReload: false }, INJECTED],
-    ["version", { version: 2 }, `${INJECTED}~v2`],
-    ["version 0", { version: 0 }, `${INJECTED}~v0`],
-    ["a fractional version", { version: 1.5 }, `${INJECTED}~v1.5`],
-    ["flash + version", { flash: true, version: 2 }, `${INJECTED}~v2`],
-    [
-      "version + validate",
-      { version: 2, validate: isGridSnapshot },
-      `${INJECTED}~v2`,
-    ],
     ["clearOnReload", { clearOnReload: true }, `${INJECTED}~r`],
     [
-      "version + clearOnReload",
-      { version: 2, clearOnReload: true },
-      `${INJECTED}~v2~r`,
+      "clearOnReload + validate",
+      { clearOnReload: true, validate: isGridSnapshot },
+      `${INJECTED}~r`,
     ],
   ] as const)(
     "%s: every writer stores the raw value under one key",
@@ -473,64 +465,23 @@ describe("createLocationState storage key", () => {
     },
   );
 
-  it("a release without the options never sees a slot written with one", () => {
-    for (const options of [{ version: 2 }, { clearOnReload: true }]) {
-      const history = stubHistory();
-      define(options).write({ rows: [1] });
-
-      // The pre-feature read: history.state[<injected key>], unchecked.
-      expect(
-        (history.state as Record<string, unknown>)[INJECTED],
-      ).toBeUndefined();
-      expect(define().read()).toBeUndefined();
-    }
-  });
-
-  it("each version reads only its own slot, and versions coexist in one entry", () => {
+  // Adopting the option, removing it, and a release older than the option all
+  // come down to this: the two keys never read each other.
+  it("a definition with clearOnReload and one without read separate slots", () => {
     const history = stubHistory();
-    const [V1, V2, Unversioned] = [
-      define({ version: 1 }),
-      define({ version: 2 }),
-      define(),
-    ];
-    const [one, two, plain] = [{ rows: [1] }, { rows: [2] }, { rows: [0] }];
+    const [Carried, Plain] = [define({ clearOnReload: true }), define()];
+    const [carried, plain] = [{ rows: [1] }, { rows: [2] }];
 
-    V1.write(one);
-    expect(V2.read()).toBeUndefined();
-    expect(Unversioned.read()).toBeUndefined();
+    Carried.write(carried);
+    // The read of a release without the option: history.state[<injected key>].
+    expect(
+      (history.state as Record<string, unknown>)[INJECTED],
+    ).toBeUndefined();
+    expect(Plain.read()).toBeUndefined();
 
-    V2.write(two);
-    Unversioned.write(plain);
-    expect(V1.read()).toBe(one);
-    expect(V2.read()).toBe(two);
-    expect(Unversioned.read()).toBe(plain);
-    expect(history.state).toEqual({
-      idx: 1,
-      [`${INJECTED}~v1`]: one,
-      [`${INJECTED}~v2`]: two,
-      [INJECTED]: plain,
-    });
-  });
-
-  it("a slot written before the definition adopted an option is not read", () => {
-    stubHistory();
-    const before = { rows: [9] };
-    define().write(before);
-
-    expect(define({ clearOnReload: true }).read()).toBeUndefined();
-    expect(define({ version: 1 }).read()).toBeUndefined();
-  });
-
-  it("after an option is removed the definition reads the plain key again", () => {
-    stubHistory();
-    const [written, plain] = [{ rows: [1] }, { rows: [2] }];
-    define({ clearOnReload: true }).write(written);
-    const Removed = define();
-
-    expect(Removed.read()).toBeUndefined();
-    Removed.write(plain);
-    expect(Removed.read()).toBe(plain);
-    expect(define({ clearOnReload: true }).read()).toBe(written);
+    Plain.write(plain);
+    expect(Plain.read()).toBe(plain);
+    expect(Carried.read()).toBe(carried);
   });
 
   it("rejects flash with clearOnReload outside production", () => {
@@ -548,6 +499,7 @@ describe("createLocationState validate", () => {
     restoreWindow();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    setLocationStateVersion(undefined);
   });
 
   function stubHistory(state: unknown): void {
@@ -572,26 +524,33 @@ describe("createLocationState validate", () => {
     }
   });
 
-  it("is never called for an empty slot, or for another version's slot", () => {
+  it("is never called for an empty slot, or for state another app version wrote", () => {
     const seen = vi.fn();
     const validate = (value: unknown): value is GridSnapshot => {
       seen(value);
       return true;
     };
-    const Grid = createLocationState<GridSnapshot>({ validate, version: 2 });
+    const Grid = createLocationState<GridSnapshot>({ validate });
     Grid.__rsc_ls_key = "grid";
+    setLocationStateVersion("build-2");
 
     for (const state of [
       null,
       {},
       "primitive",
-      { grid: { rows: [1] }, "grid~v1": { rows: [1] } },
+      { __rsc_lsv: "build-2" },
+      { grid: { rows: [1] } },
+      { grid: { rows: [1] }, __rsc_lsv: "build-1" },
     ]) {
       stubHistory(state);
       expect(Grid.read()).toBeUndefined();
       expect(Grid.read({ state })).toBeUndefined();
     }
     expect(seen).not.toHaveBeenCalled();
+
+    stubHistory({ grid: { rows: [1] }, __rsc_lsv: "build-2" });
+    expect(Grid.read()).toEqual({ rows: [1] });
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 
   it("a throw reads as undefined and is reported once per definition, naming its key", () => {
@@ -604,10 +563,10 @@ describe("createLocationState validate", () => {
     Grid.__rsc_ls_key = "__rsc_ls_grid";
     const Other = createLocationState<GridSnapshot>({
       validate: throwing,
-      version: 2,
+      clearOnReload: true,
     });
     Other.__rsc_ls_key = "__rsc_ls_other";
-    const state = { __rsc_ls_grid: { rows: 1 }, "__rsc_ls_other~v2": 1 };
+    const state = { __rsc_ls_grid: { rows: 1 }, "__rsc_ls_other~r": 1 };
     stubHistory(state);
 
     expect(Grid.read()).toBeUndefined();
@@ -618,7 +577,7 @@ describe("createLocationState validate", () => {
 
     expect(Other.read()).toBeUndefined();
     expect(error).toHaveBeenCalledTimes(2);
-    expect(error.mock.calls[1]?.[0]).toContain('"__rsc_ls_other~v2"');
+    expect(error.mock.calls[1]?.[0]).toContain('"__rsc_ls_other~r"');
   });
 
   it("does not report a throw in production", () => {

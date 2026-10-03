@@ -85,7 +85,10 @@ import type {
   TransitionConfig,
   TransitionWhenKind,
 } from "../types.js";
-import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
+import {
+  setLocationStateVersion,
+  type LocationStateDefinition,
+} from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
   clearLocationStateOnDocumentLoad,
@@ -603,6 +606,9 @@ export async function renderRoute(
   const loaderData = seedLoaders(options.loaderData ?? {}, options.loaders);
 
   if (typeof window !== "undefined") {
+    // The tree has no app version (its bridge reports none), so a seed needs
+    // none either. Reset what an initBrowserApp in the same file may have left.
+    setLocationStateVersion(undefined);
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
       stateObj[withLocationStateKey(def).__rsc_ls_key] = value;

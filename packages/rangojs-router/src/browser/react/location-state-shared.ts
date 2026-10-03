@@ -19,27 +19,102 @@ export function isLocationStateKey(key: string): boolean {
 }
 
 /**
- * `version` and `clearOnReload` are part of a slot's KEY (`<key>~v<n>`,
- * `<key>~r`, `<key>~v<n>~r`); the value is always stored raw. Slots outlive
- * deploys, so nothing that reads one may depend on a stored format: a release
- * without these options, or a definition without them, reads the plain key and
- * never sees such a slot, and another version reads another key.
+ * `clearOnReload` is part of a slot's KEY (`<key>~r`); the value is always
+ * stored raw. Slots outlive deploys, so nothing that reads one may depend on a
+ * stored format: a definition without the option reads the plain key and never
+ * sees such a slot.
  *
  * An injected key ends in `#<ExportName>` (expose-id-utils.ts makeStubId; only
  * identifier exports are keyed) and "~" cannot occur in an identifier, so no
  * file or export name produces a suffix. withLocationStateKey rejects it.
  */
 export const LOCATION_STATE_KEY_SUFFIX_SEPARATOR: string = "~";
-const VERSION_KEY_SUFFIX = "~v";
-const CLEAR_ON_RELOAD_KEY_SUFFIX = "~r";
+export const CLEAR_ON_RELOAD_KEY_SUFFIX: string = "~r";
 
 /**
- * Whether client start-up removes the slot
- * (history-state.ts clearLocationStateOnDocumentLoad). Decided by the key
- * alone: at start-up the module that defines the slot may not be loaded.
+ * A history entry records the app version its location state (typed slots and
+ * plain `state`) was written under, in this one field; a read returns only
+ * state recorded under the version this document loaded with. Entries outlive
+ * deploys, and state an older release stored would otherwise reach code that
+ * no longer expects its shape. An entry without the field counts as another
+ * version.
+ *
+ * Not a slot key (no LOCATION_STATE_KEY_PREFIX): hasLocationState must not
+ * count it.
  */
-export function isClearOnReloadLocationStateKey(key: string): boolean {
-  return isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX);
+const LOCATION_STATE_VERSION_KEY = "__rsc_lsv";
+
+let documentVersion: string | undefined;
+
+/**
+ * @internal The version the document loaded under (rsc-router.tsx
+ * initBrowserApp). Deliberately not getAppVersion(): a dev HMR bump moves that
+ * one inside a running session (bridge.updateVersion), and the state that
+ * session wrote must stay readable until the next document load.
+ */
+export function setLocationStateVersion(version: string | undefined): void {
+  documentVersion = version;
+}
+
+/**
+ * The state of a `{ state }` snapshot when its location state may be read:
+ * recorded under the client's version. Without a snapshot, the current entry
+ * (`window.history` is a `{ state }`), and nothing on the server.
+ *
+ * A null or primitive state comes back as it is when the client has no
+ * version; index the result with `?.`, which reads nothing from either.
+ */
+export function readableLocationState(
+  location: { readonly state: unknown } | undefined = typeof window ===
+  "undefined"
+    ? undefined
+    : window.history,
+): Record<string, unknown> | null | undefined {
+  const state = location?.state as Record<string, unknown> | null | undefined;
+  return state?.[LOCATION_STATE_VERSION_KEY] === documentVersion
+    ? state
+    : undefined;
+}
+
+/**
+ * Record the client's version on a state object that carries location state
+ * and no record yet. A client without a version (a renderRoute tree) writes
+ * none.
+ */
+export function stampLocationState(state: Record<string, unknown>): void {
+  if (documentVersion !== undefined) {
+    state[LOCATION_STATE_VERSION_KEY] = documentVersion;
+  }
+}
+
+/**
+ * `entryState` plus `additions`, recorded under the client's version. The
+ * record is per entry, so location state another version left there is dropped
+ * first, with its record: under the new one it would be readable again. Router
+ * bookkeeping (idx, scroll key, intercept) is kept.
+ */
+export function addLocationState(
+  entryState: unknown,
+  additions?: Record<string, unknown>,
+): Record<string, unknown> {
+  // history.state may be a primitive if non-Rango code stored one; spreading a
+  // string would yield indexed char keys.
+  const next: Record<string, unknown> = {
+    ...(typeof entryState === "object" ? entryState : null),
+  };
+  if (next[LOCATION_STATE_VERSION_KEY] !== documentVersion) {
+    for (const key in next) {
+      if (
+        key === "state" ||
+        key === LOCATION_STATE_VERSION_KEY ||
+        isLocationStateKey(key)
+      ) {
+        delete next[key];
+      }
+    }
+    stampLocationState(next);
+  }
+  return Object.assign(next, additions);
 }
 
 /**
@@ -60,8 +135,6 @@ export interface LocationStateOptions<TState = unknown> {
    * without it. Not together with `flash`.
    */
   clearOnReload?: boolean;
-  /** A definition reads only state stored under the same version. */
-  version?: number;
   /**
    * Checked on every read of a non-empty slot; `false` or a throw reads as
    * `undefined`.
@@ -288,7 +361,7 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * Injected by Vite plugin - do not set manually. Unit tests without the
    * plugin use withLocationStateKey() from @rangojs/router/testing. Reads back
    * as the slot's key in `history.state`: the injected key plus the
-   * `version` / `clearOnReload` suffix.
+   * `clearOnReload` suffix.
    */
   __rsc_ls_key: string;
   /** Whether this state auto-clears after first read */
@@ -410,18 +483,13 @@ export function createLocationState<TState>(
   TState
 > {
   const flash = options?.flash ?? false;
-  const clearOnReload = options?.clearOnReload ?? false;
   const validate = options?.validate;
-  // Empty without `version` / `clearOnReload`: the injected key is then the
-  // storage key, as it was before the options existed.
-  const keySuffix =
-    (options?.version === undefined
-      ? ""
-      : VERSION_KEY_SUFFIX + options.version) +
-    (clearOnReload ? CLEAR_ON_RELOAD_KEY_SUFFIX : "");
+  // Empty without `clearOnReload`: the injected key is then the storage key,
+  // as it was before the option existed.
+  const keySuffix = options?.clearOnReload ? CLEAR_ON_RELOAD_KEY_SUFFIX : "";
   // Flash state ends at its first read, so the pair could only drop a message
   // nobody has seen. Folded out of production, like the missing-key check.
-  if (process.env.NODE_ENV !== "production" && flash && clearOnReload) {
+  if (process.env.NODE_ENV !== "production" && flash && keySuffix) {
     throw new Error(
       "[rango] createLocationState: `flash` and `clearOnReload` cannot be combined. " +
         "Flash state is removed at its first read, so `clearOnReload` could only " +
@@ -477,42 +545,29 @@ export function createLocationState<TState>(
     enumerable: true,
   });
 
-  let read = (location?: { readonly state: unknown }): TState | undefined => {
-    if (location !== undefined) {
-      const state = location.state;
-      return state !== null && typeof state === "object"
-        ? ((state as Record<string, unknown>)[getKey()] as TState | undefined)
-        : undefined;
-    }
-    if (typeof window === "undefined") return undefined;
-    return window.history.state?.[getKey()] as TState | undefined;
-  };
-
-  if (validate) {
-    const readStored: (location?: { readonly state: unknown }) => unknown =
-      read;
-    // Once per definition: reads run in render and on every popstate.
-    let throwReported = false;
+  // Once per definition: reads run in render and on every popstate.
+  let validateThrowReported = false;
+  const read = (location?: { readonly state: unknown }): TState | undefined => {
+    const stored = readableLocationState(location)?.[getKey()] as
+      | TState
+      | undefined;
+    if (!validate || stored === undefined) return stored;
     // A throw reads as undefined. It must not escape into render or into the
     // hook's popstate / __rsc_locationstate listeners (location-state.ts),
     // where the reader would keep the previous entry's value.
-    read = (location) => {
-      const stored = readStored(location);
-      if (stored === undefined) return undefined;
-      try {
-        return validate(stored) ? stored : undefined;
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production" && !throwReported) {
-          throwReported = true;
-          console.error(
-            `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
-            error,
-          );
-        }
-        return undefined;
+    try {
+      return validate(stored) ? stored : undefined;
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production" && !validateThrowReported) {
+        validateThrowReported = true;
+        console.error(
+          `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
+          error,
+        );
       }
-    };
-  }
+      return undefined;
+    }
+  };
 
   Object.defineProperty(fn, "read", { value: read, enumerable: true });
 
@@ -524,16 +579,9 @@ export function createLocationState<TState>(
             "It mutates window.history.state and cannot run on the server.",
         );
       }
-      const key = getKey();
-      // history.state may be a non-null primitive (string/number/boolean) if
-      // non-Rango code called pushState/replaceState with one. `?? {}` only
-      // catches null/undefined, so spreading a primitive would yield indexed
-      // char/no keys and corrupt history.state. Coerce any non-object to a fresh
-      // dict — mirrors the delete() guard.
-      const existing = window.history.state;
-      const current =
-        existing !== null && typeof existing === "object" ? existing : {};
-      replaceCurrentHistoryState({ ...current, [key]: value });
+      replaceCurrentHistoryState(
+        addLocationState(window.history.state, { [getKey()]: value }),
+      );
     },
     enumerable: true,
   });

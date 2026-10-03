@@ -1,11 +1,13 @@
 import {
-  isClearOnReloadLocationStateKey,
+  addLocationState,
+  CLEAR_ON_RELOAD_KEY_SUFFIX,
   isLocationStateDefinition,
   isLocationStateEntry,
   isLocationStateKey,
   peekLocationStateKey,
   replaceCurrentHistoryState,
   resolveLocationStateEntries,
+  stampLocationState,
 } from "./react/location-state-shared.js";
 
 /**
@@ -102,6 +104,8 @@ export function buildHistoryState(
     Object.assign(result, serverState);
   }
 
+  if (hasLocationState(result)) stampLocationState(result);
+
   return Object.keys(result).length > 0 ? result : null;
 }
 
@@ -162,13 +166,17 @@ export function stripShellMissMarker(): void {
  * the page began as a document load, and a slot nobody reads is removed too.
  * No server-set state exists yet to lose: a document response carries none
  * (rsc-rendering.ts attaches it to partial payloads only).
+ *
+ * A slot is recognised by its key alone (the `~r` suffix): at start-up the
+ * module that defines it may not be loaded.
  */
 export function clearLocationStateOnDocumentLoad(): void {
-  const state: unknown = window.history.state;
-  if (state === null || typeof state !== "object") return;
+  // Typed as the object it usually is; no runtime guard: `for...in` visits
+  // nothing for null and only index keys for a primitive, none a slot key.
+  const state = window.history.state as Record<string, unknown>;
   let next: Record<string, unknown> | undefined;
   for (const key in state) {
-    if (isClearOnReloadLocationStateKey(key)) {
+    if (isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX)) {
       next ??= { ...state };
       delete next[key];
     }
@@ -184,11 +192,9 @@ export function clearLocationStateOnDocumentLoad(): void {
 export function mergeLocationState(
   locationState: Record<string, unknown>,
 ): void {
-  const merged = {
-    ...window.history.state,
-    ...locationState,
-  };
-  replaceCurrentHistoryState(merged);
+  replaceCurrentHistoryState(
+    addLocationState(window.history.state, locationState),
+  );
   if (Object.keys(locationState).some(isLocationStateKey)) {
     window.dispatchEvent(new Event("__rsc_locationstate"));
   }

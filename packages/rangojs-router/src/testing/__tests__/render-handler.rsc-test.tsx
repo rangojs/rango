@@ -183,10 +183,10 @@ describe("renderHandler", () => {
     expect(locationState).toEqual({ flash: { text: "Welcome" } });
   });
 
-  // #994: the options are in the key, the value is what the handler passed.
-  test("locationState of a definition with version / clearOnReload is keyed by Def.__rsc_ls_key", async () => {
+  // #994: the option is in the key, the value is what the handler passed.
+  test("locationState of a definition with clearOnReload is keyed by Def.__rsc_ls_key", async () => {
     const Flash = withLocationStateKey(
-      createLocationState<{ text: string }>({ flash: true, version: 2 }),
+      createLocationState<{ text: string }>({ flash: true }),
       "RenderHandlerFlash",
     );
     const Carried = withLocationStateKey(
@@ -199,11 +199,11 @@ describe("renderHandler", () => {
     }
     const { locationState } = await renderHandler(Page);
 
-    expect(locationState).toEqual({
-      "__rsc_ls_RenderHandlerFlash~v2": { text: "Welcome" },
+    expect(locationState).toStrictEqual({
+      __rsc_ls_RenderHandlerFlash: { text: "Welcome" },
       "__rsc_ls_RenderHandlerCarried~r": ["p1"],
     });
-    expect(Flash.__rsc_ls_key).toBe("__rsc_ls_RenderHandlerFlash~v2");
+    expect(Carried.__rsc_ls_key).toBe("__rsc_ls_RenderHandlerCarried~r");
   });
 
   test("an unseeded ctx.use(loader) throws a helpful error", async () => {

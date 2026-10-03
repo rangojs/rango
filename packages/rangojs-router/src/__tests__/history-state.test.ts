@@ -166,17 +166,16 @@ describe("clearLocationStateOnDocumentLoad", () => {
   it("removes every key that ends in ~r, with no definition loaded, and nothing else", () => {
     const kept = {
       "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
-      "__rsc_ls_a1b2c3d4#Grid~v2": { rows: [1] },
       "__rsc_ls_src/~r/state.ts#InDirNamedLikeTheSuffix": ["kept"],
       state: { from: "list" },
       "foreign~r": "not a location-state key",
+      __rsc_lsv: "build-1",
       idx: 4,
       key: "scroll-key",
     };
     historyState = {
       ...kept,
       "__rsc_ls_a1b2c3d4#Carried~r": ["a"],
-      "__rsc_ls_a1b2c3d4#Carried~v3~r": ["b"],
       "__rsc_ls_src/state.ts#Carried~r": ["dev key"],
     };
 
@@ -194,8 +193,8 @@ describe("clearLocationStateOnDocumentLoad", () => {
       "slots without the suffix",
       {
         "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
-        "__rsc_ls_a1b2c3d4#Grid~v2": { rows: [1] },
         state: { from: "list" },
+        __rsc_lsv: "build-1",
       },
     ],
     ["the suffix outside the __rsc_ls_ prefix", { "other~r": 1, state: 2 }],

@@ -360,7 +360,6 @@ describe("createLocationState options typing", () => {
     const options: GridOptions = {
       flash: false,
       clearOnReload: true,
-      version: 2,
       validate: isGrid,
       label: "grid",
     };
@@ -382,5 +381,13 @@ describe("createLocationState options typing", () => {
       validate: (value: unknown): boolean => value !== null,
     };
     void loose;
+  });
+
+  it("has no version option: state is versioned by the app version", () => {
+    expectTypeOf<keyof LocationStateOptions>().toEqualTypeOf<
+      "flash" | "clearOnReload" | "validate"
+    >();
+    // @ts-expect-error - not an option
+    createLocationState<Grid>({ version: 2 });
   });
 });

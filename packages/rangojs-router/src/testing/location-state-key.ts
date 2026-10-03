@@ -16,13 +16,13 @@ let syntheticKeyCounter = 0;
  *
  * - `withLocationStateKey(GridState, "GridState")` sets `__rsc_ls_GridState`
  *   (a name that already starts with `__rsc_ls_` is used as-is). A definition
- *   with `version` / `clearOnReload` appends its suffix, so read the stored
- *   key back from `GridState.__rsc_ls_key` (`__rsc_ls_GridState~v2`).
+ *   with `clearOnReload` appends its suffix, so read the stored key back from
+ *   `GridState.__rsc_ls_key` (`__rsc_ls_GridState~r`).
  * - Without a name, a key already set (by the plugin or an earlier call) is
  *   kept; otherwise the definition gets a synthetic `__rsc_ls_test_<n>` key,
  *   which then stays on it.
  *
- * A name may not contain "~": that separator is reserved for those suffixes.
+ * A name may not contain "~": that separator is reserved for the suffix.
  *
  * Returns the definition.
  *
@@ -41,7 +41,7 @@ export function withLocationStateKey<
     if (name.includes(LOCATION_STATE_KEY_SUFFIX_SEPARATOR)) {
       throw new Error(
         `withLocationStateKey: "${name}" contains "${LOCATION_STATE_KEY_SUFFIX_SEPARATOR}", ` +
-          "which is reserved for the key suffix of the `version` / `clearOnReload` options. " +
+          "which is reserved for the key suffix of the `clearOnReload` option. " +
           "Pass the name without a suffix; the definition appends its own.",
       );
     }
