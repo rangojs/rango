@@ -1,6 +1,7 @@
 import {
   isLocationStateDefinition,
   isLocationStateEntry,
+  isLocationStateEnvelope,
   peekLocationStateKey,
   replaceCurrentHistoryState,
   resolveLocationStateEntries,
@@ -154,6 +155,46 @@ export function stripShellMissMarker(): void {
   if (!url.searchParams.has(SHELL_MISS_MARKER)) return;
   url.searchParams.delete(SHELL_MISS_MARKER);
   window.history.replaceState(window.history.state, "", url.href);
+}
+
+/**
+ * Remove the `clearOnReload` slots of the entry a document load starts on
+ * (createLocationState's option; the slot's envelope records it). The server
+ * rendered this document without `history.state`, so applying those slots
+ * after hydration would change content already on screen.
+ *
+ * Runs once at start-up, before hydration (initBrowserApp; renderRoute's
+ * `hydrate` mode calls it for the same reason), not from the readers: a
+ * definition with no reader mounted at load would keep a stale slot, and a
+ * reader that hydrates late, or mounts later on the page, would have to know
+ * the page began as a document load. With the slot gone there is nothing left
+ * to time.
+ *
+ * It cannot drop state the server sets for this load, because none exists
+ * yet: a document response carries no location state (rsc-rendering.ts
+ * attaches it to partial payloads only), and every lane that writes one
+ * (navigation and action payloads, LoaderRedirect's effect) starts after
+ * initBrowserApp's synchronous prefix, where this is called.
+ *
+ * Only `__rsc_ls_*` keys are read: plain state (`history.state.state`) and
+ * foreign keys are never the router's to remove. Nothing is written when no
+ * slot is marked.
+ */
+export function clearLocationStateOnDocumentLoad(): void {
+  const state: unknown = window.history.state;
+  if (state === null || typeof state !== "object") return;
+  let next: Record<string, unknown> | undefined;
+  for (const [key, slot] of Object.entries(state)) {
+    if (
+      key.startsWith("__rsc_ls_") &&
+      isLocationStateEnvelope(slot) &&
+      slot.clearOnReload === true
+    ) {
+      next ??= { ...state };
+      delete next[key];
+    }
+  }
+  if (next) window.history.replaceState(next, "");
 }
 
 /**

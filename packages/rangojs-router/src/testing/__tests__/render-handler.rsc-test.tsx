@@ -14,6 +14,8 @@ import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import { Counter } from "./fixtures/Counter.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import { createLocationState } from "../../browser/react/location-state-shared.js";
+import { withLocationStateKey } from "../location-state-key.js";
 import type { HandlerContext } from "../../types/handler-context.js";
 
 const Tenant = createVar<{ name: string }>();
@@ -179,6 +181,40 @@ describe("renderHandler", () => {
     expect(headers.location).toBe("/app");
     expect(headers["x-auth"]).toBe("ok");
     expect(locationState).toEqual({ flash: { text: "Welcome" } });
+  });
+
+  // #994: `locationState` holds what history.state receives. A definition
+  // with `version` or `clearOnReload` stores an envelope there, and
+  // Def.read({ state }) is the assertion that decodes either form.
+  test("locationState of a versioned / clearOnReload definition decodes through Def.read", async () => {
+    const Flash = withLocationStateKey(
+      createLocationState<{ text: string }>({ flash: true, version: 2 }),
+      "RenderHandlerFlash",
+    );
+    const Carried = withLocationStateKey(
+      createLocationState<string[]>({ clearOnReload: true }),
+      "RenderHandlerCarried",
+    );
+    function Page(ctx: HandlerContext) {
+      ctx.setLocationState([Flash({ text: "Welcome" }), Carried(["p1"])]);
+      return <main>page</main>;
+    }
+    const { locationState } = await renderHandler(Page);
+
+    expect(locationState).toEqual({
+      __rsc_ls_RenderHandlerFlash: {
+        __rsc_ls_env: 1,
+        v: 2,
+        value: { text: "Welcome" },
+      },
+      __rsc_ls_RenderHandlerCarried: {
+        __rsc_ls_env: 1,
+        clearOnReload: true,
+        value: ["p1"],
+      },
+    });
+    expect(Flash.read({ state: locationState })).toEqual({ text: "Welcome" });
+    expect(Carried.read({ state: locationState })).toEqual(["p1"]);
   });
 
   test("an unseeded ctx.use(loader) throws a helpful error", async () => {

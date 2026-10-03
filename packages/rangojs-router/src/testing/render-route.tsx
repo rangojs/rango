@@ -88,6 +88,7 @@ import type {
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
+  clearLocationStateOnDocumentLoad,
   hasLocationState,
   pushHistoryWithIdx,
   resolveNavigationState,
@@ -234,8 +235,15 @@ export interface RenderRouteOptions {
    * Location-state values to seed by REFERENCE, for components that call
    * `useLocationState(StateDef)`. Like loaders, a real `createLocationState()`
    * handle has an empty injected key in a bare test, so pass `[def, value]`
-   * pairs; renderRoute assigns a synthetic key and writes the definition's
-   * stored slot to `history.state` (`{ v, value }` when `version` is set).
+   * pairs; renderRoute assigns a synthetic key and writes the slot to
+   * `history.state` through the definition. `value` is what you would pass to
+   * `def(value)`, never the stored form: a definition with `version` or
+   * `clearOnReload` stores an envelope, and renderRoute builds it.
+   *
+   * Without `hydrate` the tree mounts as during a client navigation, so every
+   * seed is applied. With `hydrate: true` the seed is what the entry held when
+   * its document loaded: a `clearOnReload` slot is removed before hydration,
+   * as at production start-up, and its readers stay `undefined`.
    *
    * @example
    * renderRoute([{ path: "/", Component: FlashBanner }], {
@@ -603,10 +611,15 @@ export async function renderRoute(
   if (typeof window !== "undefined") {
     const stateObj: Record<string, unknown> = {};
     for (const [def, value] of options.locationState ?? []) {
+      // Through the definition, so the slot holds what its writers store (an
+      // envelope for `version` / `clearOnReload`) and the seed is the value.
       const keyed = withLocationStateKey(def);
       stateObj[keyed.__rsc_ls_key] = keyed(value).__rsc_ls_value;
     }
     window.history.replaceState(stateObj, "");
+    // Hydrate mode is a document load of the seeded entry: production's
+    // start-up step (initBrowserApp), not a copy of it.
+    if (options.hydrate) clearLocationStateOnDocumentLoad();
   }
 
   const resolve = (pathname: string): ResolvedMatch => {

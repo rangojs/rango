@@ -752,3 +752,168 @@ describe("createLocationState version/validate: stale and hostile slots", () => 
     expect(seen).not.toHaveBeenCalled();
   });
 });
+
+// The slot itself records `clearOnReload`: client start-up
+// (history-state.ts clearLocationStateOnDocumentLoad) has no definitions to
+// ask, only history.state.
+describe("createLocationState clearOnReload", () => {
+  afterEach(() => {
+    restoreWindow();
+    vi.unstubAllEnvs();
+  });
+
+  it("every writer stores the marked envelope and read returns the same inner reference", () => {
+    const Carried = createLocationState<GridSnapshot>({ clearOnReload: true });
+    (Carried as any).__rsc_ls_key = "carried";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/list" },
+    });
+    const snapshot = { rows: [1, 2] };
+    const stored = { __rsc_ls_env: 1, clearOnReload: true, value: snapshot };
+
+    Carried.write(snapshot);
+    expect(history.state).toEqual({ idx: 1, carried: stored });
+    expect(Carried.read()).toBe(snapshot);
+    expect(Carried.read({ state: history.state })).toBe(snapshot);
+
+    expect(Carried(snapshot).__rsc_ls_value).toEqual(stored);
+    const lazy = Carried(() => snapshot);
+    expect(lazy.__rsc_ls_lazy).toBe(true);
+    expect(resolveLocationStateEntries([lazy])).toEqual({ carried: stored });
+
+    Carried.delete();
+    expect(history.state).toEqual({ idx: 1 });
+  });
+
+  it("is orthogonal to version and validate", () => {
+    const seen = vi.fn();
+    const Carried = createLocationState<GridSnapshot>({
+      clearOnReload: true,
+      version: 2,
+      validate: (value): value is GridSnapshot => {
+        seen(value);
+        return isGridSnapshot(value);
+      },
+    });
+    (Carried as any).__rsc_ls_key = "carried";
+    const snapshot = { rows: [3] };
+
+    expect(Carried(snapshot).__rsc_ls_value).toEqual({
+      __rsc_ls_env: 1,
+      v: 2,
+      clearOnReload: true,
+      value: snapshot,
+    });
+
+    const read = (carried: unknown) => Carried.read({ state: { carried } });
+    expect(
+      read({ __rsc_ls_env: 1, v: 2, clearOnReload: true, value: snapshot }),
+    ).toBe(snapshot);
+    // The flag is not part of the read contract: the same version reads with
+    // or without it.
+    expect(read({ __rsc_ls_env: 1, v: 2, value: snapshot })).toBe(snapshot);
+    expect(seen).toHaveBeenCalledTimes(2);
+
+    seen.mockClear();
+    expect(
+      read({ __rsc_ls_env: 1, v: 1, clearOnReload: true, value: snapshot }),
+    ).toBeUndefined();
+    expect(
+      read({ __rsc_ls_env: 1, clearOnReload: true, value: snapshot }),
+    ).toBeUndefined();
+    expect(read(snapshot)).toBeUndefined();
+    expect(seen).not.toHaveBeenCalled();
+
+    expect(
+      read({
+        __rsc_ls_env: 1,
+        v: 2,
+        clearOnReload: true,
+        value: { rows: "nope" },
+      }),
+    ).toBeUndefined();
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("a definition that gained or lost the option still reads the other stored form", () => {
+    const snapshot = { rows: [5] };
+    const WithOption = createLocationState<GridSnapshot>({
+      clearOnReload: true,
+    });
+    (WithOption as any).__rsc_ls_key = "carried";
+    const WithoutOption = createLocationState<GridSnapshot>();
+    (WithoutOption as any).__rsc_ls_key = "carried";
+
+    expect(WithOption.read({ state: { carried: snapshot } })).toBe(snapshot);
+    expect(
+      WithoutOption.read({
+        state: resolveLocationStateEntries([WithOption(snapshot)]),
+      }),
+    ).toBe(snapshot);
+  });
+
+  it("rejects flash together with clearOnReload when the definition is created", () => {
+    expect(() =>
+      createLocationState<string>({
+        flash: true,
+        clearOnReload: true,
+        // The pair is also a compile error; untyped callers reach the throw.
+      } as never),
+    ).toThrow(/`flash` and `clearOnReload` cannot be combined/);
+    expect(() =>
+      createLocationState<string>({ flash: false, clearOnReload: true }),
+    ).not.toThrow();
+    expect(() =>
+      createLocationState<string>({ flash: true, clearOnReload: false }),
+    ).not.toThrow();
+  });
+
+  it("folds the flash + clearOnReload check out of production, like the missing-key check", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() =>
+      createLocationState<string>({
+        flash: true,
+        clearOnReload: true,
+      } as never),
+    ).not.toThrow();
+  });
+});
+
+// A definition that sets no option, flash only, or validate only stores the
+// raw value: no envelope, no extra field.
+describe("createLocationState stored shape without version or clearOnReload", () => {
+  afterEach(() => {
+    restoreWindow();
+  });
+
+  it.each([
+    ["no options", undefined],
+    ["flash", { flash: true }],
+    ["validate", { validate: isGridSnapshot }],
+    ["clearOnReload: false", { clearOnReload: false }],
+  ] as const)("%s stores the raw value", (_label, options) => {
+    const Grid = createLocationState<GridSnapshot>(options);
+    (Grid as any).__rsc_ls_key = "grid";
+    const history = historyWithReplace();
+    vi.stubGlobal("window", {
+      history,
+      location: { href: "https://example.test/grid" },
+    });
+    const snapshot = { rows: [1] };
+
+    Grid.write(snapshot);
+    expect(history.state).toEqual({ idx: 1, grid: snapshot });
+    expect((history.state as { grid: unknown }).grid).toBe(snapshot);
+    expect(Grid(snapshot)).toEqual({
+      __rsc_ls_key: "grid",
+      __rsc_ls_value: snapshot,
+    });
+    expect(Grid(snapshot).__rsc_ls_value).toBe(snapshot);
+    expect(resolveLocationStateEntries([Grid(() => snapshot)]).grid).toBe(
+      snapshot,
+    );
+    expect(Grid.read()).toBe(snapshot);
+  });
+});

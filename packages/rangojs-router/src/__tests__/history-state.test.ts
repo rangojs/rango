@@ -43,6 +43,7 @@ let mergeLocationState: typeof import("../browser/history-state").mergeLocationS
 let resolveNavigationState: typeof import("../browser/history-state").resolveNavigationState;
 let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
 let stripShellMissMarker: typeof import("../browser/history-state").stripShellMissMarker;
+let clearLocationStateOnDocumentLoad: typeof import("../browser/history-state").clearLocationStateOnDocumentLoad;
 let SHELL_MISS_MARKER: string;
 
 beforeEach(async () => {
@@ -52,6 +53,7 @@ beforeEach(async () => {
   resolveNavigationState = mod.resolveNavigationState;
   pushHistoryWithIdx = mod.pushHistoryWithIdx;
   stripShellMissMarker = mod.stripShellMissMarker;
+  clearLocationStateOnDocumentLoad = mod.clearLocationStateOnDocumentLoad;
   SHELL_MISS_MARKER = mod.SHELL_MISS_MARKER;
 });
 
@@ -154,6 +156,76 @@ describe("stripShellMissMarker", () => {
     (globalThis as any).window.location.href = "http://localhost/page?a=1";
 
     stripShellMissMarker();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("clearLocationStateOnDocumentLoad", () => {
+  const Carried = withLocationStateKey(
+    createLocationState<string[]>({ clearOnReload: true }),
+    "Carried",
+  );
+  const CarriedVersioned = withLocationStateKey(
+    createLocationState<string[]>({ clearOnReload: true, version: 3 }),
+    "CarriedVersioned",
+  );
+  const Versioned = withLocationStateKey(
+    createLocationState<string[]>({ version: 3 }),
+    "Versioned",
+  );
+  const Plain = withLocationStateKey(createLocationState<string[]>(), "Plain");
+
+  it("removes every clearOnReload slot and leaves the rest of the entry's state", () => {
+    const kept = {
+      [Versioned.__rsc_ls_key]: Versioned(["v"]).__rsc_ls_value,
+      [Plain.__rsc_ls_key]: ["p"],
+      state: { from: "list" },
+      idx: 4,
+      key: "scroll-key",
+    };
+    historyState = {
+      ...kept,
+      [Carried.__rsc_ls_key]: Carried(["a"]).__rsc_ls_value,
+      [CarriedVersioned.__rsc_ls_key]: CarriedVersioned(["b"]).__rsc_ls_value,
+    };
+
+    clearLocationStateOnDocumentLoad();
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(replaceStateSpy.mock.calls[0]).toEqual([kept, ""]);
+    expect(Carried.read()).toBeUndefined();
+    expect(CarriedVersioned.read()).toBeUndefined();
+    expect(Versioned.read()).toEqual(["v"]);
+    expect(Plain.read()).toEqual(["p"]);
+  });
+
+  it("leaves history untouched when no slot is marked", () => {
+    const states: unknown[] = [
+      null,
+      "primitive",
+      { idx: 1 },
+      {
+        [Plain.__rsc_ls_key]: ["p"],
+        [Versioned.__rsc_ls_key]: Versioned(["v"]).__rsc_ls_value,
+        state: { from: "list" },
+      },
+      // A raw value written before the definition had the option.
+      { [Carried.__rsc_ls_key]: ["legacy"] },
+    ];
+    for (const state of states) {
+      historyState = state;
+      clearLocationStateOnDocumentLoad();
+      expect(historyState).toBe(state);
+    }
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("only reads slots under the __rsc_ls_ prefix", () => {
+    const lookalike = Carried(["a"]).__rsc_ls_value;
+    historyState = { state: lookalike, other: lookalike };
+
+    clearLocationStateOnDocumentLoad();
+
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 });

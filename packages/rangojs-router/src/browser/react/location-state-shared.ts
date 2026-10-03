@@ -22,12 +22,7 @@ export interface LocationStateEntry {
  */
 export type LocationStateGuard<TState> = (value: unknown) => value is TState;
 
-/**
- * Options for createLocationState
- */
-export interface LocationStateOptions<TState = unknown> {
-  /** When true, the state is cleared from history after first read (flash message pattern) */
-  flash?: boolean;
+interface LocationStateReadOptions<TState> {
   /**
    * Writers store the value in a marked envelope that records this number. A
    * read returns `undefined` — the same as no state — unless the slot is such
@@ -49,6 +44,51 @@ export interface LocationStateOptions<TState = unknown> {
    */
   validate?: LocationStateGuard<TState>;
 }
+
+interface LocationStateFlashOptions<
+  TState,
+> extends LocationStateReadOptions<TState> {
+  /** When true, the state is cleared from history after first read (flash message pattern) */
+  flash?: boolean;
+  /** Cannot be combined with `flash`: see the other member of the union. */
+  clearOnReload?: false;
+}
+
+interface LocationStateReloadOptions<
+  TState,
+> extends LocationStateReadOptions<TState> {
+  /** Cannot be combined with `clearOnReload`. */
+  flash?: false;
+  /**
+   * When true, the state does not survive a document load of its history
+   * entry: a refresh, or a back/forward that loads the document from the
+   * server. The server renders without `history.state`, so state restored
+   * after hydration changes content the visitor already sees (a "load more"
+   * list growing above the page the server rendered).
+   *
+   * The client removes the slot from `history.state` at start-up, before
+   * hydration: readers stay `undefined`, and a reader mounted later or a
+   * navigation back to the entry does not bring it back. A reader that mounts
+   * during a client navigation, popstate and server-set state in the running
+   * app are unaffected, and a page restored from the back/forward cache keeps
+   * its state.
+   *
+   * Writers store the value in a marked envelope that records the option,
+   * because start-up sees only `history.state`. A release older than this
+   * option reads that envelope object as the state after a rollback.
+   *
+   * Cannot be combined with `flash`, which already ends the slot at its first
+   * read: the pair would only drop a flash message nobody has seen yet.
+   */
+  clearOnReload?: boolean;
+}
+
+/**
+ * Options for createLocationState
+ */
+export type LocationStateOptions<TState = unknown> =
+  | LocationStateFlashOptions<TState>
+  | LocationStateReloadOptions<TState>;
 
 type LocationStateUnsafeFn = (...args: never[]) => unknown;
 
@@ -300,7 +340,8 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    * event, so components reading via useLocationState() will NOT re-render
    * until the next navigation/popstate. Use it when you only need the value
    * to be there on the next read() or on the next mount (including after
-   * back/forward and hard refresh of the same entry).
+   * back/forward and hard refresh of the same entry; a `clearOnReload`
+   * definition's slot does not survive the refresh).
    *
    * Client-only: throws when called on the server (no history available).
    */
@@ -344,6 +385,13 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * // Read-time check. A failing value reads as undefined, the same as no state.
  * export const GridState = createLocationState<GridSnapshot>({
  *   validate: (value): value is GridSnapshot => isGridSnapshot(value),
+ * });
+ *
+ * // State that does not survive a document load of its entry (a refresh, or
+ * // a back/forward that loads the document from the server): the server
+ * // rendered without it. Client navigations and popstate still apply it.
+ * export const CarriedProducts = createLocationState<Product[]>({
+ *   clearOnReload: true,
  * });
  *
  * // Use in Link
@@ -393,16 +441,23 @@ export function replaceCurrentHistoryState(state: unknown): void {
 }
 
 /**
- * Stored form of a slot whose definition sets `version`. `history.state` is
+ * Stored form of a slot whose definition sets `version` or `clearOnReload`;
+ * every other definition stores the raw value. `history.state` is
  * structured-cloned, so the mark has to be a plain property: `__rsc_ls_env`
  * sits in the `__rsc_ls_` prefix the router already reserves there
  * (history-state.ts isTypedLocationState, isLocationStateEntry), where
  * `{ v, value }` alone are field names a user's own state can carry.
+ *
+ * `clearOnReload` is recorded in the slot because its consumer
+ * (history-state.ts clearLocationStateOnDocumentLoad) runs at client start-up
+ * with nothing but `history.state`: the module that defines the slot may not
+ * be loaded yet, and may never be on this page.
  */
 export interface LocationStateEnvelope {
-  readonly __rsc_ls_env: 1;
-  readonly v?: number;
-  readonly value: unknown;
+  __rsc_ls_env: 1;
+  v?: number;
+  clearOnReload?: true;
+  value: unknown;
 }
 
 export function isLocationStateEnvelope(
@@ -415,55 +470,6 @@ export function isLocationStateEnvelope(
   );
 }
 
-/** An envelope when `version` is set; otherwise the value itself. */
-function encodeLocationStateSlot<TState>(
-  value: TState,
-  version: number | undefined,
-): unknown {
-  if (version === undefined) return value;
-  const envelope: LocationStateEnvelope = {
-    __rsc_ls_env: 1,
-    v: version,
-    value,
-  };
-  return envelope;
-}
-
-/**
- * One decoder for every read. An empty slot is `undefined` without consulting
- * `validate`. An envelope is read only by the version that wrote it (a reader
- * without `version` included), and a versioned reader does not treat a raw
- * value as `TState`; neither mismatch calls `validate`. Otherwise `validate`
- * checks the inner (or raw) value, and `false` or a throw reads as
- * `undefined`: a throw must not escape into render or the hook's popstate /
- * `__rsc_locationstate` listeners (location-state.ts), where the reader would
- * keep the previous entry's value.
- */
-function decodeLocationStateSlot<TState>(
-  stored: unknown,
-  version: number | undefined,
-  validate: LocationStateGuard<TState> | undefined,
-  onValidateThrow: (error: unknown) => void,
-): TState | undefined {
-  if (stored === undefined) return undefined;
-  let value: unknown = stored;
-  if (isLocationStateEnvelope(stored)) {
-    if (stored.v !== version) return undefined;
-    value = stored.value;
-  } else if (version !== undefined) {
-    return undefined;
-  }
-  if (validate !== undefined) {
-    try {
-      if (!validate(value)) return undefined;
-    } catch (error) {
-      onValidateThrow(error);
-      return undefined;
-    }
-  }
-  return value as TState;
-}
-
 export function createLocationState<TState>(
   options?: LocationStateOptions<TState>,
 ): LocationStateDefinition<
@@ -471,9 +477,30 @@ export function createLocationState<TState>(
   TState
 > {
   const flash = options?.flash ?? false;
+  const clearOnReload = options?.clearOnReload ?? false;
   const version = options?.version;
   const validate = options?.validate;
+  // LocationStateOptions rejects the pair at compile time; this is for
+  // untyped callers. Like the missing-key check below, production folds it
+  // away: the module that defines the pair already threw in dev and test.
+  if (flash && clearOnReload && process.env.NODE_ENV !== "production") {
+    throw new Error(
+      "[rango] createLocationState: `flash` and `clearOnReload` cannot be combined. " +
+        "Flash state is removed at its first read, so `clearOnReload` could only " +
+        "drop a flash message that has not been shown yet.",
+    );
+  }
   let _key: string | undefined;
+
+  // An envelope when `version` or `clearOnReload` is set; otherwise the value
+  // itself, so a definition without them stores what it always did.
+  function encode(value: TState): unknown {
+    if (version === undefined && !clearOnReload) return value;
+    const envelope: LocationStateEnvelope = { __rsc_ls_env: 1, value };
+    if (version !== undefined) envelope.v = version;
+    if (clearOnReload) envelope.clearOnReload = true;
+    return envelope;
+  }
 
   // Dev and test throw; production folds the check away (the plugin always
   // injects the key there). Without it, reads and writes silently target
@@ -493,41 +520,61 @@ export function createLocationState<TState>(
 
   // Once per definition: reads run in render and on every popstate.
   let validateThrowReported = false;
-  function reportValidateThrow(error: unknown): void {
-    if (process.env.NODE_ENV === "production" || validateThrowReported) return;
-    validateThrowReported = true;
-    console.error(
-      `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
-      error,
-    );
-  }
 
+  /**
+   * The one decoder behind every read. An envelope is read only by the
+   * version that wrote it: `v` must equal `version`, both absent included, so
+   * a definition without `version` rejects a versioned envelope and reads one
+   * that only records `clearOnReload`. A versioned definition does not treat a
+   * raw value as `TState`. Neither mismatch reaches `validate`, and neither
+   * does an empty slot. Otherwise `validate` checks the inner (or raw) value;
+   * `false` or a throw reads as `undefined`. A throw must not escape into
+   * render or the hook's popstate / `__rsc_locationstate` listeners
+   * (location-state.ts), where the reader would keep the previous entry's
+   * value.
+   */
   function decode(stored: unknown): TState | undefined {
-    return decodeLocationStateSlot(
-      stored,
-      version,
-      validate,
-      reportValidateThrow,
-    );
+    let value = stored;
+    if (isLocationStateEnvelope(stored)) {
+      if (stored.v !== version) return undefined;
+      value = stored.value;
+    } else if (version !== undefined) {
+      return undefined;
+    }
+    if (value === undefined || validate === undefined) {
+      return value as TState | undefined;
+    }
+    try {
+      return validate(value) ? value : undefined;
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production" && !validateThrowReported) {
+        validateThrowReported = true;
+        console.error(
+          `[rango] createLocationState({ validate }) for "${_key}" threw; the state reads as undefined.`,
+          error,
+        );
+      }
+      return undefined;
+    }
   }
 
   const fn = (stateOrGetter: TState | (() => TState)): LocationStateEntry => {
     if (typeof stateOrGetter === "function") {
       // Store getter as-is; resolved at navigation time by resolveLocationStateEntries().
-      // A versioned slot encodes when that resolve runs, not when the entry is built.
+      // An enveloped slot encodes when that resolve runs, not when the entry is built.
       const getter = stateOrGetter as () => TState;
       return {
         __rsc_ls_key: getKey(),
         __rsc_ls_value:
-          version === undefined
+          version === undefined && !clearOnReload
             ? stateOrGetter
-            : () => encodeLocationStateSlot(getter(), version),
+            : () => encode(getter()),
         __rsc_ls_lazy: true,
       };
     }
     return {
       __rsc_ls_key: getKey(),
-      __rsc_ls_value: encodeLocationStateSlot(stateOrGetter, version),
+      __rsc_ls_value: encode(stateOrGetter),
     };
   };
 
@@ -582,7 +629,7 @@ export function createLocationState<TState>(
         existing !== null && typeof existing === "object" ? existing : {};
       replaceCurrentHistoryState({
         ...current,
-        [key]: encodeLocationStateSlot(value, version),
+        [key]: encode(value),
       });
     },
     enumerable: true,

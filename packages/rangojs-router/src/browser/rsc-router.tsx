@@ -39,7 +39,10 @@ import {
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
-import { stripShellMissMarker } from "./history-state.js";
+import {
+  clearLocationStateOnDocumentLoad,
+  stripShellMissMarker,
+} from "./history-state.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
 
 // Vite HMR types are provided by vite/client
@@ -174,6 +177,11 @@ export async function initBrowserApp(
   // event controller): the server rendered the marked request for the clean
   // URL, so the client starts from the same one and hydration agrees.
   stripShellMissMarker();
+  // Before the first await: nothing reads or writes history.state earlier
+  // (the store's entry memory, a reader, a navigation or action payload), so
+  // a clearOnReload slot is gone before anyone can see it and no state the
+  // server sets for this page can be dropped with it.
+  clearLocationStateOnDocumentLoad();
   bootLog("flight decode: awaiting initial payload from document stream");
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);

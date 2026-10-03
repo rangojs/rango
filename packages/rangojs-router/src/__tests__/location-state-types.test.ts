@@ -3,6 +3,8 @@ import type { ReactNode, ReactElement } from "react";
 import {
   createLocationState,
   type LocationStateEntry,
+  type LocationStateGuard,
+  type LocationStateOptions,
   type LocationStateUnsafe,
   type ValidateLocationState,
 } from "../browser/react/location-state-shared.js";
@@ -342,5 +344,57 @@ describe("navigation state typing", () => {
     expectTypeOf<ReturnType<typeof GridState>>().not.toExtend<LinkState>();
     expectTypeOf<(typeof GridState)[]>().not.toExtend<LinkState>();
     expectTypeOf<typeof GridState>().not.toExtend<LinkState>();
+  });
+});
+
+describe("createLocationState options typing", () => {
+  type Grid = { count: number };
+  const isGrid = (value: unknown): value is Grid =>
+    typeof (value as Grid | null)?.count === "number";
+
+  it("accepts each option, and version / validate with either of flash and clearOnReload", () => {
+    const accepted: LocationStateOptions<Grid>[] = [
+      {},
+      { flash: true },
+      { clearOnReload: true },
+      { version: 2 },
+      { validate: isGrid },
+      { flash: true, version: 2, validate: isGrid },
+      { clearOnReload: true, version: 2, validate: isGrid },
+      { flash: true, clearOnReload: false },
+      { flash: false, clearOnReload: true },
+    ];
+    void accepted;
+    expectTypeOf(
+      createLocationState<Grid>({ clearOnReload: true, version: 2 }).read(),
+    ).toEqualTypeOf<Grid | undefined>();
+  });
+
+  it("rejects flash together with clearOnReload", () => {
+    // @ts-expect-error - flash state ends at its first read; the pair is rejected
+    const both: LocationStateOptions<Grid> = {
+      flash: true,
+      clearOnReload: true,
+    };
+    void both;
+    const either: boolean = true;
+    // @ts-expect-error - two booleans may both be true
+    const dynamic: LocationStateOptions<Grid> = {
+      flash: either,
+      clearOnReload: either,
+    };
+    void dynamic;
+  });
+
+  it("validate is a LocationStateGuard: a type predicate, not a boolean function", () => {
+    expectTypeOf(isGrid).toExtend<LocationStateGuard<Grid>>();
+    expectTypeOf<
+      NonNullable<LocationStateOptions<Grid>["validate"]>
+    >().toEqualTypeOf<LocationStateGuard<Grid>>();
+    const loose: LocationStateOptions<Grid> = {
+      // @ts-expect-error - a boolean-returning check does not narrow to Grid
+      validate: (value: unknown): boolean => value !== null,
+    };
+    void loose;
   });
 });
