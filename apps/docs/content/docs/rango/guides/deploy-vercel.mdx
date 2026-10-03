@@ -95,10 +95,8 @@ const defaults = { ttl: 60, swr: 300 };
 const memoryStore = new MemorySegmentCacheStore({ defaults });
 // One handle per process: getCache() resolves the platform cache on every
 // call, and VercelCacheStore keeps its PPR shell and tag-marker memos per
-// handle.
-const runtimeCache = process.env.VERCEL
-  ? getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })
-  : undefined;
+// handle. No deployment id in the namespace: the store versions its keys.
+const runtimeCache = process.env.VERCEL ? getCache() : undefined;
 
 function resolveCache() {
   if (runtimeCache) {
@@ -118,7 +116,7 @@ export const router = createRouter({ cache: resolveCache }).routes(/* ... */);
 
 The cache factory receives `(env, ctx)`; on Vercel `env` is `process.env` and `ctx` is `{ waitUntil }`, and off-platform `ctx` is `undefined`.
 
-`VercelCacheStore` indexes entries by tag, so `updateTag()` / `revalidateTag()` work as on the other built-in stores. Unlike `CFCacheStore`, it does not version its keys automatically: the per-deploy `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })` above (or the store's `version` option) is what keeps one deploy from reading another deploy's entries. See [Caching & Revalidation](/docs/rango/features/caching) and [Freshness](/docs/rango/concepts/freshness) for cache semantics.
+`VercelCacheStore` indexes entries by tag, so `updateTag()` / `revalidateTag()` work as on the other built-in stores. Like `CFCacheStore`, it versions its keys itself: cached data (families `s`, `i`) by a data version, a hash of the router's server code, and stored HTML (families `r`, `h`) by a document version, computed per `createRouter()` by `vite build`. A deploy that does not change a router keeps that router's entries; a deploy that changes it reads under new keys. Tag markers carry no version, so `updateTag()` reaches entries of every version. The store's `version` option (or `createRouter({ version })`) replaces both versions. To clear the cache on every deploy, set `version` to a per-deploy value or keep a deployment-scoped `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`. Two environments built from the same code share entries if they share a cache namespace, so give each its own namespace or `version`. See [Caching & Revalidation](/docs/rango/features/caching) and [Freshness](/docs/rango/concepts/freshness) for cache semantics.
 
 ## Multi-app host routers
 

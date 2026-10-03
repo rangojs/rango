@@ -359,8 +359,12 @@ first, so a runtime capture supersedes the baked entry once it exists.
 A build-baked shell is not on a wall clock the way a pure runtime `ppr` shell is.
 It serves from the first request after a deploy and keeps serving until one of:
 
-- **a redeploy** — the `buildVersion` gate retires every build entry (like a
-  React-version bump); the new build re-bakes;
+- **a redeploy** — the new build ships its own build shell manifest and
+  re-bakes. A shell stored at runtime for the route is replaced when the
+  router's document version changes, and a change of the prerendered payload
+  changes it (a Prerender payload is part of its router's document version, not
+  its data version, so cached data is kept); a React-version bump also retires
+  it;
 - **`updateTag`** on a tag the shell carries — drops it, so the next request
   MISSes and a runtime capture takes over.
 
@@ -697,7 +701,7 @@ emitted — wrap the route in `Passthrough()` when its segments must re-render.
 `updateTag()`/`revalidateTag()` evict runtime cache entries. They do not refresh
 a prerendered route's build-time Flight payload, which is served before the tag
 system is consulted, and a `cacheTag()` inside a `"use cache"` function that runs
-during the build has no runtime effect. A redeploy replaces the payload. To make
+during the build has no runtime effect. A redeploy replaces the payload; because a Prerender payload is part of its router's document version, a deploy whose only change is new prerendered content keeps cached data and replaces stored HTML (shells, document-cache responses) for that router. To make
 a route tag-invalidatable, serve it from the runtime cache instead (`cache()`,
 or a `Passthrough()` live handler). A build-baked **ppr shell** is different: a
 tag it carries does drop it (see "Freshness of a build shell").

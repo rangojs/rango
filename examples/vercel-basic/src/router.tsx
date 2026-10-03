@@ -32,8 +32,10 @@ const defaults = { ttl: 60, swr: 300 };
 
 // Local dev/preview has no Vercel Runtime Cache, so fall back to the in-memory
 // store there. On Vercel (process.env.VERCEL is set by the platform) use the
-// Runtime Cache store, namespaced by the deployment id so a redeploy does not
-// serve stale-shaped entries (Vercel does not reconcile TTL/tags across deploys).
+// Runtime Cache store. The store puts a per-router version in front of every
+// key (data version for segments and items, document version for HTML), so the
+// namespace carries no deployment id: a redeploy that does not change the
+// router keeps its entries.
 const memoryStore = new MemorySegmentCacheStore({ defaults });
 
 let e2eRuntimeCache: VercelRuntimeCache | undefined;
@@ -96,9 +98,7 @@ function resolveCache() {
   if (process.env.VERCEL) {
     return {
       store: new VercelCacheStore({
-        cache: (vercelRuntimeCache ??= getCache({
-          namespace: process.env.VERCEL_DEPLOYMENT_ID,
-        })),
+        cache: (vercelRuntimeCache ??= getCache()),
         waitUntil,
         defaults,
       }),

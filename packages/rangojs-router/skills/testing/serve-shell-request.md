@@ -99,6 +99,35 @@ it("replays the captured segments on a client navigation", async () => {
 
 A store built per request from a function `cache` config gets the request's execution context (`ctx`), so its own `waitUntil` writes (`CFCacheStore({ ctx })`) settle with the call. A store built outside the request with its own `waitUntil` (`VercelCacheStore`'s option) is not settled by the call. For `CFCacheStore`, stub the `caches` global and pass a KV double in `env`; for `VercelCacheStore`, pass a `cache` double. A store's shell memo then behaves as in production (count your double's reads across two HITs).
 
+## Simulating a deploy: setBuildVersions
+
+A stored shell is stamped with the router's document version and a HIT requires the stamp to match. In a build, `vite build` computes that version per `createRouter()`; under test there is no build, so the primitives run unversioned. `setBuildVersions` (from `@rangojs/router/testing`) installs the versions a build would ship, and calling it again with a different `document` is a deploy that changed the router:
+
+```ts
+import { setBuildVersions } from "@rangojs/router/testing";
+
+afterEach(() => setBuildVersions()); // remove the versions: unversioned again
+
+it("a deploy that changes the document version retires the shell", async () => {
+  const cacheStore = new MemorySegmentCacheStore();
+  setBuildVersions({ data: "d1", document: "h1" });
+
+  expect(
+    (await serveShellRequest(router, "/product/4", { cacheStore })).shellStatus,
+  ).toBe("MISS");
+  expect(
+    (await serveShellRequest(router, "/product/4", { cacheStore })).shellStatus,
+  ).toBe("HIT");
+
+  setBuildVersions({ data: "d1", document: "h2" }); // new SSR output or client assets
+  expect(
+    (await serveShellRequest(router, "/product/4", { cacheStore })).shellStatus,
+  ).toBe("MISS");
+});
+```
+
+`setBuildVersions({ data, document, routers?: { [routerId]: { data, document } } })` takes the whole-build pair and, optionally, a pair per router id (a router with no entry gets the whole-build pair). `setBuildVersions()` with no argument removes them. The types `BuildVersions` and `RouterVersions` are exported too. `dispatch` sees the same versions.
+
 ## A HIT runs no handler
 
 A HIT replays what the capture's handlers produced — their elements, the promises they passed or pushed, their handle values — and runs only middleware and loaders. Count runs to pin it:
